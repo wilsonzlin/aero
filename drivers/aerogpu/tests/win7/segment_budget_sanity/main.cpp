@@ -2,6 +2,8 @@
 #include "..\\common\\aerogpu_test_kmt.h"
 #include "..\\common\\aerogpu_test_report.h"
 
+#include "..\\..\\..\\protocol\\aerogpu_win7_abi.h"
+
 using aerogpu_test::kmt::D3DKMT_FUNCS;
 using aerogpu_test::kmt::D3DKMT_HANDLE;
 using aerogpu_test::kmt::NTSTATUS;
@@ -10,9 +12,37 @@ namespace {
 
 static const uint64_t kOneMiB = 1024ull * 1024ull;
 
+static const uint32_t kExpectedPagingBufferPrivateDataSize = AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES;
+static const uint32_t kExpectedPagingBufferSegmentId = 1;  // AEROGPU_SEGMENT_ID_SYSTEM
+
 struct SegmentGroupSize {
   uint64_t LocalMemorySize;
   uint64_t NonLocalMemorySize;
+};
+
+struct QuerySegmentParsed {
+  bool present;
+  UINT type;
+
+  uint32_t nb_segments;
+  uint32_t paging_buffer_private_data_size;
+  uint32_t paging_buffer_segment_id;
+
+  uint64_t seg0_base;
+  uint64_t seg0_size;
+  uint32_t seg0_flags_value;
+  uint32_t seg0_group;
+
+  QuerySegmentParsed()
+      : present(false),
+        type(0xFFFFFFFFu),
+        nb_segments(0),
+        paging_buffer_private_data_size(0),
+        paging_buffer_segment_id(0),
+        seg0_base(0),
+        seg0_size(0),
+        seg0_flags_value(0),
+        seg0_group(0) {}
 };
 
 static bool IsOs64Bit() {
@@ -24,11 +54,207 @@ static uint64_t ClampMaxNonLocalBytesForOs() {
   return (IsOs64Bit() ? 2048ull : 1024ull) * kOneMiB;
 }
 
+static bool ReadU32At(const unsigned char* buf, size_t buf_size, size_t off, uint32_t* out) {
+  if (out) {
+    *out = 0;
+  }
+  if (!buf || !out || off + 4 > buf_size) {
+    return false;
+  }
+  uint32_t v = 0;
+  memcpy(&v, buf + off, sizeof(v));
+  *out = v;
+  return true;
+}
+
+static bool ReadU64At(const unsigned char* buf, size_t buf_size, size_t off, uint64_t* out) {
+  if (out) {
+    *out = 0;
+  }
+  if (!buf || !out || off + 8 > buf_size) {
+    return false;
+  }
+  uint64_t v = 0;
+  memcpy(&v, buf + off, sizeof(v));
+  *out = v;
+  return true;
+}
+
+static bool ReadPtrAt(const unsigned char* buf, size_t buf_size, size_t off, size_t ptr_size, uintptr_t* out) {
+  if (out) {
+    *out = 0;
+  }
+  if (!buf || !out || (ptr_size != 4 && ptr_size != 8) || off + ptr_size > buf_size) {
+    return false;
+  }
+  if (ptr_size == 4) {
+    uint32_t v32 = 0;
+    memcpy(&v32, buf + off, sizeof(v32));
+    *out = (uintptr_t)v32;
+    return true;
+  }
+  uint64_t v64 = 0;
+  memcpy(&v64, buf + off, sizeof(v64));
+  *out = (uintptr_t)v64;
+  return true;
+}
+
+static bool ParseSegmentDescriptorAt(const unsigned char* buf,
+                                    size_t buf_size,
+                                    size_t desc_off,
+                                    uint64_t* out_base,
+                                    uint64_t* out_size,
+                                    uint32_t* out_flags,
+                                    uint32_t* out_group) {
+  if (out_base) *out_base = 0;
+  if (out_size) *out_size = 0;
+  if (out_flags) *out_flags = 0;
+  if (out_group) *out_group = 0;
+  if (!buf) {
+    return false;
+  }
+
+  uint64_t base = 0;
+  if (!ReadU64At(buf, buf_size, desc_off + 0, &base)) {
+    return false;
+  }
+
+  // Try a 64-bit size layout first:
+  //   base(u64), size(u64), flags(u32), group(u32)
+  {
+    uint64_t size64 = 0;
+    uint32_t flags = 0;
+    uint32_t group = 0;
+    if (ReadU64At(buf, buf_size, desc_off + 8, &size64) &&
+        ReadU32At(buf, buf_size, desc_off + 16, &flags) &&
+        ReadU32At(buf, buf_size, desc_off + 20, &group)) {
+      if (size64 >= 16ull * kOneMiB && size64 <= (1ull << 50) && (size64 % kOneMiB) == 0) {
+        if (out_base) *out_base = base;
+        if (out_size) *out_size = size64;
+        if (out_flags) *out_flags = flags;
+        if (out_group) *out_group = group;
+        return true;
+      }
+    }
+  }
+
+  // Fallback: some layouts use a 32-bit size on x86:
+  //   base(u64), size(u32), flags(u32), group(u32)
+  {
+    uint32_t size32 = 0;
+    uint32_t flags = 0;
+    uint32_t group = 0;
+    if (ReadU32At(buf, buf_size, desc_off + 8, &size32) &&
+        ReadU32At(buf, buf_size, desc_off + 12, &flags) &&
+        ReadU32At(buf, buf_size, desc_off + 16, &group)) {
+      uint64_t size64 = (uint64_t)size32;
+      if (size64 >= 16ull * kOneMiB && size64 <= (1ull << 32) && (size64 % kOneMiB) == 0) {
+        if (out_base) *out_base = base;
+        if (out_size) *out_size = size64;
+        if (out_flags) *out_flags = flags;
+        if (out_group) *out_group = group;
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+static bool TryParseQuerySegment(const unsigned char* buf, size_t buf_size, QuerySegmentParsed* out) {
+  if (!out) {
+    return false;
+  }
+  *out = QuerySegmentParsed();
+  if (!buf || buf_size < 32) {
+    return false;
+  }
+
+  // We expect (based on WDDM) the first fields to be:
+  //   NbSegments, PagingBufferPrivateDataSize, PagingBufferSegmentId, ...
+  uint32_t nb = 0;
+  uint32_t pb_priv = 0;
+  uint32_t pb_seg = 0;
+  if (!ReadU32At(buf, buf_size, 0, &nb) ||
+      !ReadU32At(buf, buf_size, 4, &pb_priv) ||
+      !ReadU32At(buf, buf_size, 8, &pb_seg)) {
+    return false;
+  }
+  out->nb_segments = nb;
+  out->paging_buffer_private_data_size = pb_priv;
+  out->paging_buffer_segment_id = pb_seg;
+
+  // Best-effort: locate the segment descriptor pointer (if present) by scanning for a pointer
+  // value that points back into this output buffer.
+  const uintptr_t base = (uintptr_t)buf;
+  const uintptr_t end = base + buf_size;
+  size_t desc_off = (size_t)-1;
+
+  // Try pointer-sized fields first (matches the process bitness), then fall back to the other size
+  // in case the thunk uses a fixed-width pointer field.
+  const size_t ptr_sizes[2] = {sizeof(void*), sizeof(void*) == 8 ? (size_t)4 : (size_t)8};
+  for (int ptr_pass = 0; ptr_pass < 2; ++ptr_pass) {
+    const size_t ptr_size = ptr_sizes[ptr_pass];
+    if (ptr_size == 8 && !aerogpu_test::Is64BitProcess()) {
+      // Don't try 8-byte pointers in a 32-bit process; they cannot be valid user pointers.
+      continue;
+    }
+    const size_t scan_limit = (buf_size < 64) ? buf_size : 64;
+    for (size_t off = 0; off + ptr_size <= scan_limit; off += 4) {
+      uintptr_t ptr = 0;
+      if (!ReadPtrAt(buf, buf_size, off, ptr_size, &ptr)) {
+        continue;
+      }
+      if (ptr < base || ptr >= end) {
+        continue;
+      }
+      const size_t cand_off = (size_t)(ptr - base);
+      uint64_t seg_base = 0;
+      uint64_t seg_size = 0;
+      uint32_t seg_flags = 0;
+      uint32_t seg_group = 0;
+      if (ParseSegmentDescriptorAt(buf, buf_size, cand_off, &seg_base, &seg_size, &seg_flags, &seg_group)) {
+        desc_off = cand_off;
+        out->seg0_base = seg_base;
+        out->seg0_size = seg_size;
+        out->seg0_flags_value = seg_flags;
+        out->seg0_group = seg_group;
+        return true;
+      }
+    }
+  }
+
+  // Fallback: scan the buffer for a plausible descriptor with base==0.
+  for (size_t off = 0; off + 24 <= buf_size; off += 4) {
+    uint64_t seg_base = 0;
+    if (!ReadU64At(buf, buf_size, off, &seg_base)) {
+      continue;
+    }
+    if (seg_base != 0) {
+      continue;
+    }
+    uint64_t seg_size = 0;
+    uint32_t seg_flags = 0;
+    uint32_t seg_group = 0;
+    if (ParseSegmentDescriptorAt(buf, buf_size, off, &seg_base, &seg_size, &seg_flags, &seg_group)) {
+      desc_off = off;
+      out->seg0_base = seg_base;
+      out->seg0_size = seg_size;
+      out->seg0_flags_value = seg_flags;
+      out->seg0_group = seg_group;
+      return true;
+    }
+  }
+
+  // Header parsed, but couldn't find the descriptor array reliably.
+  return true;
+}
+
 static bool ProbeGetSegmentGroupSizeType(const D3DKMT_FUNCS* kmt,
-                                        D3DKMT_HANDLE adapter,
-                                        UINT* out_type,
-                                        SegmentGroupSize* out_sizes,
-                                        NTSTATUS* out_last_status) {
+                                         D3DKMT_HANDLE adapter,
+                                         UINT* out_type,
+                                         SegmentGroupSize* out_sizes,
+                                         NTSTATUS* out_last_status) {
   if (out_type) {
     *out_type = 0xFFFFFFFFu;
   }
@@ -102,6 +328,86 @@ static bool ProbeGetSegmentGroupSizeType(const D3DKMT_FUNCS* kmt,
   return false;
 }
 
+static bool ProbeQuerySegmentType(const D3DKMT_FUNCS* kmt,
+                                  D3DKMT_HANDLE adapter,
+                                  UINT* out_type,
+                                  QuerySegmentParsed* out_parsed,
+                                  NTSTATUS* out_last_status) {
+  if (out_type) {
+    *out_type = 0xFFFFFFFFu;
+  }
+  if (out_parsed) {
+    *out_parsed = QuerySegmentParsed();
+  }
+  if (out_last_status) {
+    *out_last_status = 0;
+  }
+
+  if (!kmt || !kmt->QueryAdapterInfo || !adapter) {
+    if (out_last_status) {
+      *out_last_status = aerogpu_test::kmt::kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  // Best-effort probe: avoid hard-coding KMTQAITYPE_QUERYSEGMENT.
+  std::vector<unsigned char> buf;
+  buf.resize(1024);
+
+  NTSTATUS last_status = 0;
+  for (UINT type = 0; type < 256; ++type) {
+    memset(&buf[0], 0, buf.size());
+    NTSTATUS st = 0;
+    if (!aerogpu_test::kmt::D3DKMTQueryAdapterInfoWithTimeout(
+            kmt, adapter, type, &buf[0], (UINT)buf.size(), 2000, &st)) {
+      last_status = st;
+      if (st == (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */) {
+        break;
+      }
+      continue;
+    }
+    last_status = st;
+
+    QuerySegmentParsed parsed;
+    if (!TryParseQuerySegment(&buf[0], buf.size(), &parsed)) {
+      continue;
+    }
+
+    // Heuristic: AeroGPU's QUERYSEGMENT reports a single segment + known paging buffer fields.
+    if (parsed.nb_segments != 1) {
+      continue;
+    }
+    if (parsed.paging_buffer_private_data_size != kExpectedPagingBufferPrivateDataSize) {
+      continue;
+    }
+    if (parsed.paging_buffer_segment_id != kExpectedPagingBufferSegmentId) {
+      continue;
+    }
+    if (parsed.seg0_size == 0 || (parsed.seg0_size % kOneMiB) != 0) {
+      // We require a parsable segment0 size to treat this as a match.
+      continue;
+    }
+
+    if (out_type) {
+      *out_type = type;
+    }
+    if (out_parsed) {
+      *out_parsed = parsed;
+      out_parsed->present = true;
+      out_parsed->type = type;
+    }
+    if (out_last_status) {
+      *out_last_status = st;
+    }
+    return true;
+  }
+
+  if (out_last_status) {
+    *out_last_status = last_status;
+  }
+  return false;
+}
+
 static int RunSegmentBudgetSanity(int argc, char** argv) {
   const char* kTestName = "segment_budget_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -109,9 +415,9 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
         "Usage: %s.exe [--json[=PATH]] [--allow-remote] [--strict-default] [--min-nonlocal-mb=N]",
         kTestName);
     aerogpu_test::PrintfStdout(
-        "Queries WDDM segment budget via D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE) and validates that the non-local "
-        "segment size is sane. For AeroGPU, this budget is controlled by the registry value "
-        "HKR\\Parameters\\NonLocalMemorySizeMB (default 512; clamped 128..1024 on x86, 128..2048 on x64).");
+      "Queries WDDM segment budget via D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE) and validates that the non-local "
+      "segment size is sane. For AeroGPU, this budget is controlled by the registry value "
+      "HKR\\Parameters\\NonLocalMemorySizeMB (default 512; clamped 128..1024 on x86, 128..2048 on x64).");
     return 0;
   }
 
@@ -165,18 +471,25 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
   UINT seg_group_type = 0xFFFFFFFFu;
   SegmentGroupSize sizes;
   ZeroMemory(&sizes, sizeof(sizes));
-  NTSTATUS last_status = 0;
+  NTSTATUS last_status_group = 0;
 
-  const bool have_sizes = ProbeGetSegmentGroupSizeType(&kmt, adapter, &seg_group_type, &sizes, &last_status);
+  const bool have_sizes = ProbeGetSegmentGroupSizeType(&kmt, adapter, &seg_group_type, &sizes, &last_status_group);
+
+  UINT query_segment_type = 0xFFFFFFFFu;
+  QuerySegmentParsed query_segment;
+  NTSTATUS last_status_query = 0;
+  const bool have_query_segment =
+      ProbeQuerySegmentType(&kmt, adapter, &query_segment_type, &query_segment, &last_status_query);
 
   aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
   aerogpu_test::kmt::UnloadD3DKMT(&kmt);
 
   if (!have_sizes || seg_group_type == 0xFFFFFFFFu) {
-    if (last_status == (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */) {
+    if (last_status_group == (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */) {
       return reporter.Fail("D3DKMTQueryAdapterInfo(GETSEGMENTGROUPSIZE) timed out");
     }
-    return reporter.Fail("failed to query GETSEGMENTGROUPSIZE (probe last NTSTATUS=0x%08lX)", (unsigned long)last_status);
+    return reporter.Fail("failed to query GETSEGMENTGROUPSIZE (probe last NTSTATUS=0x%08lX)",
+                         (unsigned long)last_status_group);
   }
 
   aerogpu_test::PrintfStdout(
@@ -187,6 +500,36 @@ static int RunSegmentBudgetSanity(int argc, char** argv) {
       (unsigned long long)(sizes.NonLocalMemorySize / kOneMiB),
       (unsigned long long)sizes.LocalMemorySize,
       (unsigned long long)sizes.NonLocalMemorySize);
+
+  if (have_query_segment && query_segment.present && query_segment_type != 0xFFFFFFFFu) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: QUERYSEGMENT type=%lu nbSegments=%lu pagingPrivSize=%lu pagingSegId=%lu "
+        "seg0_base=0x%I64X seg0_size=%I64u MiB (flags=0x%08lX group=%lu)",
+        kTestName,
+        (unsigned long)query_segment_type,
+        (unsigned long)query_segment.nb_segments,
+        (unsigned long)query_segment.paging_buffer_private_data_size,
+        (unsigned long)query_segment.paging_buffer_segment_id,
+        (unsigned long long)query_segment.seg0_base,
+        (unsigned long long)(query_segment.seg0_size / kOneMiB),
+        (unsigned long)query_segment.seg0_flags_value,
+        (unsigned long)query_segment.seg0_group);
+
+    if (query_segment.seg0_size != 0 && query_segment.seg0_size != sizes.NonLocalMemorySize) {
+      aerogpu_test::PrintfStdout(
+          "WARN: %s: QUERYSEGMENT segment0 size (%I64u MiB) does not match GETSEGMENTGROUPSIZE NonLocalMemorySize (%I64u MiB). "
+          "This may indicate inconsistent budget reporting.",
+          kTestName,
+          (unsigned long long)(query_segment.seg0_size / kOneMiB),
+          (unsigned long long)(sizes.NonLocalMemorySize / kOneMiB));
+    }
+  } else if (last_status_query == (NTSTATUS)0xC0000102L /* STATUS_TIMEOUT */) {
+    aerogpu_test::PrintfStdout("INFO: %s: QUERYSEGMENT probe timed out; skipping", kTestName);
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: QUERYSEGMENT not available (probe last NTSTATUS=0x%08lX); skipping",
+                               kTestName,
+                               (unsigned long)last_status_query);
+  }
 
   if (sizes.NonLocalMemorySize == 0) {
     return reporter.Fail("NonLocalMemorySize==0 (expected a nonzero system-memory-backed segment budget)");
@@ -234,4 +577,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunSegmentBudgetSanity(argc, argv);
 }
-
