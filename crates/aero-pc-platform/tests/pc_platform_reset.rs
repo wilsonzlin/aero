@@ -5,7 +5,10 @@ use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{
     AHCI_ABAR_CFG_OFFSET, IDE_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9, USB_UHCI_PIIX3, VIRTIO_BLK,
 };
-use aero_devices::pci::{PciIntxRouterConfig, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{
+    PciBdf, PciConfigSpace, PciDevice, PciInterruptPin, PciIntxRouterConfig, PCI_CFG_ADDR_PORT,
+    PCI_CFG_DATA_PORT,
+};
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
@@ -17,6 +20,31 @@ use memory::MemoryBus as _;
 struct DropDetectDisk {
     inner: RawDisk<MemBackend>,
     dropped: Arc<AtomicBool>,
+}
+
+struct DummyPciConfigDevice {
+    config: PciConfigSpace,
+}
+
+impl DummyPciConfigDevice {
+    fn new(vendor_id: u16, device_id: u16) -> Self {
+        Self {
+            config: PciConfigSpace::new(vendor_id, device_id),
+        }
+    }
+}
+
+impl PciDevice for DummyPciConfigDevice {
+    fn config(&self) -> &PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut PciConfigSpace {
+        &mut self.config
+    }
+    // Intentionally do *not* override `reset`: we want the default `PciDevice::reset` behavior
+    // (clear COMMAND only) so config-space interrupt line/pin writes persist unless the platform
+    // explicitly reprograms them on reset.
 }
 
 impl Drop for DropDetectDisk {
@@ -291,18 +319,30 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
 fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
 
-    // Pick a device that is wired through `pci_intx_sources` so `PcPlatform::reset_pci` must
-    // repopulate its INTx routing metadata in config space.
-    let bdf = SATA_AHCI_ICH9.bdf;
+    // Add a dummy PCI endpoint that uses the *default* `PciDevice::reset` implementation (clears
+    // COMMAND only). This ensures `PcPlatform::reset` must explicitly reprogram INTx metadata in
+    // config space via `PciIntxRouter::configure_device_intx`.
+    let bdf = PciBdf::new(0, 4, 0);
+    let expected_pin = PciInterruptPin::IntC;
+
+    {
+        let mut pci_cfg = pc.pci_cfg.borrow_mut();
+        pci_cfg
+            .bus_mut()
+            .add_device(bdf, Box::new(DummyPciConfigDevice::new(0x1af4, 0x1000)));
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("dummy device config should be accessible");
+        pc.pci_intx
+            .configure_device_intx(bdf, Some(expected_pin), cfg);
+    }
+    pc.register_pci_intx_source(bdf, expected_pin, |_pc| false);
 
     let pin_before = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
     let line_before = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
 
-    let expected_pin = SATA_AHCI_ICH9
-        .interrupt_pin
-        .expect("AHCI profile should provide an interrupt pin")
-        .to_config_u8();
-    assert_eq!(pin_before, expected_pin);
+    assert_eq!(pin_before, expected_pin.to_config_u8());
     assert!(
         (1..=4).contains(&pin_before),
         "interrupt pin must be in PCI config-space encoding (1=INTA..4=INTD)"
@@ -331,7 +371,7 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
 
     let pin_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
     let line_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
-    assert_eq!(pin_after, expected_pin);
+    assert_eq!(pin_after, expected_pin.to_config_u8());
 
     let pirq_index_after = (usize::from(bdf.device) + usize::from(pin_after - 1)) & 3;
     let expected_line_after = u8::try_from(pirq_to_gsi[pirq_index_after]).unwrap();
