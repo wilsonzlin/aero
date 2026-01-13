@@ -234,6 +234,7 @@ produced by the Win7 driver pipeline and emits Guest Tools media into `out/artif
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/install-wdk.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -RequireDrivers
+pwsh -NoProfile -ExecutionPolicy Bypass -File ci/build-aerogpu-dbgctl.ps1 -ToolchainJson out/toolchain.json
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh -NoProfile -ExecutionPolicy Bypass -File ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
 

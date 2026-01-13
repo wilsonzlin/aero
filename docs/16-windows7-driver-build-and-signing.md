@@ -18,6 +18,7 @@ The repo provides PowerShell entrypoints that CI and local builds can share:
 - `ci/install-wdk.ps1` → locate/install toolchain components and write `out/toolchain.json`
 - `ci/validate-toolchain.ps1` → smoke-test that `Inf2Cat /os:7_X86,7_X64` works (catches runner/toolchain regressions early)
 - `ci/build-drivers.ps1` → build binaries into `out/drivers/`
+- `ci/build-aerogpu-dbgctl.ps1` → build AeroGPU dbgctl helper tool (required by CI packaging manifests that reference it)
 - `ci/make-catalogs.ps1` → stage packages + run `Inf2Cat` into `out/packages/`
 - `ci/sign-drivers.ps1` → create a test cert + sign `.sys`/`.cat` under `out/packages/` (signed catalogs cover INF-referenced payload files like user-mode DLLs)
 - `ci/package-drivers.ps1` → create `.zip` bundles and an optional `.iso` for “Load driver” installs
@@ -159,7 +160,21 @@ Outputs:
 - Binaries staged under `out/drivers/<driver>/<arch>/...`
 - MSBuild logs under `out/logs/drivers/` (including `.binlog` for deep debugging)
 
-### 3) Stage packages + generate catalogs (`Inf2Cat`)
+### 3) Build AeroGPU dbgctl (required for CI-style packaging)
+
+Some driver packages (notably `drivers/aerogpu`) include auxiliary tooling that is pulled into the staged package via the driver’s `ci-package.json` manifest (see `toolFiles`).
+
+`ci/make-catalogs.ps1` expects the dbgctl binary to exist at:
+
+- `drivers/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
+
+Build it before catalog generation:
+
+```powershell
+.\ci\build-aerogpu-dbgctl.ps1 -ToolchainJson .\out\toolchain.json
+```
+
+### 4) Stage packages + generate catalogs (`Inf2Cat`)
 
 `ci/make-catalogs.ps1` stages driver packages under `out/packages/` by combining:
 
@@ -179,7 +194,7 @@ Outputs:
 - Staged packages under `out/packages/<driver>/<arch>/`
 - `.cat` files generated inside each package directory
 
-### 4) Test-sign the packages (`signtool`)
+### 5) Test-sign the packages (`signtool`)
 
 Default (max Win7 compatibility):
 
@@ -216,7 +231,7 @@ For releases you may want a consistent test certificate across runs. `ci/sign-dr
 
 If both are set, the script uses the provided PFX instead of generating a new self-signed certificate, and still exports the public cert as `out/certs/aero-test.cer`.
 
-### 5) Package artifacts (ZIP + optional ISO)
+### 6) Package artifacts (ZIP + optional ISO)
 
 Compatibility note: for maximum compatibility with unpatched Windows 7 when using `-Digest sha1` (or `-DualSign`), the *certificate itself* should also be SHA-1-signed (i.e. its signature algorithm should be `sha1RSA`/`sha1WithRSAEncryption`). The script will refuse to use a SHA-256-signed stable certificate for SHA-1 driver signing unless you pass `-AllowSha2CertFallback`.
 
@@ -238,7 +253,7 @@ The packaged artifacts include:
 
 These driver bundle artifacts include **all** staged CI-packaged drivers under `out/packages/`. If you opt a dev/test driver into CI packaging, it will appear in the bundle artifacts; ensure its INF does not bind production HWIDs so it cannot steal device binding when multiple driver packages are present.
 
-### 6) Package Guest Tools media (ISO/ZIP) (optional)
+### 7) Package Guest Tools media (ISO/ZIP) (optional)
 
 `ci/package-guest-tools.ps1` consumes the signed driver packages under `out/packages/` and produces the Guest Tools ISO/zip. Unlike the driver bundle ZIP/ISO, Guest Tools includes only the drivers selected by a packager spec (`-SpecPath`):
 
@@ -397,7 +412,8 @@ Policy in this repo:
 - Drivers that require a WDF coinstaller must declare it in `drivers/<driver>/ci-package.json`, and CI must be run with explicit opt-in:
 
 ```powershell
-.\ci\make-catalogs.ps1 -IncludeWdfCoInstaller
+.\ci\build-aerogpu-dbgctl.ps1 -ToolchainJson .\out\toolchain.json
+.\ci\make-catalogs.ps1 -ToolchainJson .\out\toolchain.json -IncludeWdfCoInstaller
 ```
 
 See: `docs/16-driver-packaging-and-signing.md` and `docs/13-legal-considerations.md`.
