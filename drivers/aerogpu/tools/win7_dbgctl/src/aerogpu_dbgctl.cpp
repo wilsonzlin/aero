@@ -1132,6 +1132,8 @@ static const wchar_t *SelftestErrorToString(uint32_t code) {
     return L"CURSOR_RW_MISMATCH";
   case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED:
     return L"VBLANK_IRQ_NOT_DELIVERED";
+  case AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED:
+    return L"TIME_BUDGET_EXHAUSTED";
   default:
     return L"UNKNOWN";
   }

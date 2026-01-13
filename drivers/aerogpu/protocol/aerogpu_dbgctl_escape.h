@@ -62,6 +62,8 @@ enum aerogpu_dbgctl_selftest_error {
   AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH = 12,
   /* IRQ delivery sanity (optional, gated by AEROGPU_FEATURE_VBLANK + scanout enabled). */
   AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED = 13,
+  /* Selftest could not complete within timeout_ms (time budget exhausted). */
+  AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED = 14,
 };
 
 #pragma pack(push, 1)

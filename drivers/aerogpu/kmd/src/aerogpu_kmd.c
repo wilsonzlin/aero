@@ -8367,10 +8367,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     seqWaitMs = 2000u;
                 }
                 const ULONGLONG seqNow100ns = KeQueryInterruptTime();
-                ULONGLONG seqDeadline = seqNow100ns + ((ULONGLONG)seqWaitMs * 10000ull);
-                if (seqDeadline > deadline) {
-                    seqDeadline = deadline;
+                const ULONGLONG seqWait100ns = ((ULONGLONG)seqWaitMs * 10000ull);
+                if (seqNow100ns >= deadline || (deadline - seqNow100ns) < seqWait100ns) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED;
+                    return STATUS_SUCCESS;
                 }
+                const ULONGLONG seqDeadline = seqNow100ns + seqWait100ns;
 
                 const ULONGLONG seq0 = AeroGpuReadRegU64HiLoHi(adapter,
                                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
@@ -8565,10 +8567,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     deliveryWaitMs = 5000u;
                 }
                 const ULONGLONG deliveryNow100ns = KeQueryInterruptTime();
-                ULONGLONG deliveryDeadline = deliveryNow100ns + ((ULONGLONG)deliveryWaitMs * 10000ull);
-                if (deliveryDeadline > deadline) {
-                    deliveryDeadline = deadline;
+                const ULONGLONG deliveryWait100ns = ((ULONGLONG)deliveryWaitMs * 10000ull);
+                if (deliveryNow100ns >= deadline || (deadline - deliveryNow100ns) < deliveryWait100ns) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED;
+                    return STATUS_SUCCESS;
                 }
+                const ULONGLONG deliveryDeadline = deliveryNow100ns + deliveryWait100ns;
 
                 BOOLEAN delivered = FALSE;
                 while (KeQueryInterruptTime() < deliveryDeadline) {
