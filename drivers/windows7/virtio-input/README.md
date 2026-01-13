@@ -337,6 +337,9 @@ If you are using the deterministic release ZIP produced by `scripts/package-rele
 ### Device Manager
 
 - The device should move under **Human Interface Devices** (HIDClass).
+- When the device exposes the Aero contract subsystem IDs, the two virtio-input PCI functions appear as:
+  - **Aero VirtIO Keyboard**
+  - **Aero VirtIO Mouse**
 - Driver details should show `aero_virtio_input.sys`.
 
 ### Service state
