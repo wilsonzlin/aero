@@ -85,7 +85,7 @@ pub fn run(
         ReferenceBackend::new().map_err(|e| format!("reference backend unavailable: {e}"))?;
     let mut aero = aero::AeroBackend::new();
 
-    let templates = corpus::templates();
+    let templates = templates_for_run()?;
     let mut rng = corpus::XorShift64::new(seed);
     let mut report = ConformanceReport::new(cases);
 
@@ -113,6 +113,53 @@ pub fn run(
 
     report.print_summary();
     Ok(report)
+}
+
+fn templates_for_run() -> Result<Vec<InstructionTemplate>, String> {
+    let templates = corpus::templates();
+    let filter = std::env::var("AERO_CONFORMANCE_FILTER")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let Some(filter) = filter else {
+        return Ok(templates);
+    };
+
+    let terms = parse_filter_terms(&filter);
+    if terms.is_empty() {
+        return Ok(templates);
+    }
+
+    let filtered: Vec<InstructionTemplate> = templates
+        .into_iter()
+        .filter(|t| template_matches_filter(t, &terms))
+        .collect();
+
+    if filtered.is_empty() {
+        return Err(format!(
+            "AERO_CONFORMANCE_FILTER={filter:?} matched 0 templates"
+        ));
+    }
+
+    Ok(filtered)
+}
+
+fn parse_filter_terms(filter: &str) -> Vec<String> {
+    filter
+        .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect()
+}
+
+fn template_matches_filter(template: &InstructionTemplate, terms: &[String]) -> bool {
+    let name = template.name.to_ascii_lowercase();
+    let coverage_key = template.coverage_key.to_ascii_lowercase();
+    terms.iter().any(|term| {
+        coverage_key == *term || name.contains(term)
+    })
 }
 
 fn compare_outcomes(
@@ -143,4 +190,58 @@ fn compare_outcomes(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, val: &str) -> Self {
+            let prev = std::env::var_os(key);
+            std::env::set_var(key, val);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.prev.take() {
+                std::env::set_var(self.key, prev);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn template_filter_reduces_set() {
+        let all = crate::corpus::templates();
+        let _guard = EnvGuard::set("AERO_CONFORMANCE_FILTER", "add");
+
+        let filtered = templates_for_run().expect("filter should match at least one template");
+
+        assert!(
+            filtered.len() < all.len(),
+            "expected filter to reduce template count (all={}, filtered={})",
+            all.len(),
+            filtered.len()
+        );
+        assert!(!filtered.is_empty());
+        for template in filtered {
+            let term_match =
+                template.coverage_key.eq_ignore_ascii_case("add") || template.name.contains("add");
+            assert!(
+                term_match,
+                "template unexpectedly matched filter: {:?} (coverage_key={})",
+                template.name,
+                template.coverage_key
+            );
+        }
+    }
 }

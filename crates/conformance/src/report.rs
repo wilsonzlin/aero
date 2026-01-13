@@ -140,16 +140,30 @@ pub fn format_failure(
         .map(|b| format!("{b:02x}"))
         .collect::<Vec<_>>()
         .join(" ");
-    let decoded = decode_instruction(bytes);
+    let effective_rip = case.init.rip;
+    let decoded = decode_instruction_iced(bytes, effective_rip);
+    let aero_decoded = decode_instruction_aero(bytes, effective_rip);
 
     let _ = writeln!(
         &mut out,
-        "conformance mismatch (case {}): {}",
-        case.case_idx, template.name
+        "conformance mismatch (case {}): {} (coverage_key={})",
+        case.case_idx, template.name, template.coverage_key
     );
     let _ = writeln!(&mut out, "bytes: {byte_hex}");
+    let _ = writeln!(&mut out, "effective_rip: {effective_rip:#x}");
+    if template.mem_compare_len > 0 {
+        let mem_base = case.init.rdi;
+        let _ = writeln!(
+            &mut out,
+            "mem_base: {mem_base:#x} (compare_len={} bytes)",
+            template.mem_compare_len
+        );
+    }
     if let Some(decoded) = decoded {
-        let _ = writeln!(&mut out, "decoded: {decoded}");
+        let _ = writeln!(&mut out, "iced-x86: {decoded}");
+    }
+    if let Some(aero) = aero_decoded {
+        let _ = writeln!(&mut out, "aero-decoder: {aero}");
     }
 
     if expected.fault != actual.fault {
@@ -158,7 +172,6 @@ pub fn format_failure(
             "fault: expected={:?} actual={:?}",
             expected.fault, actual.fault
         );
-        return out;
     }
 
     let _ = writeln!(&mut out, "initial state:");
@@ -178,10 +191,33 @@ pub fn format_failure(
         template.flags_mask,
     );
     if template.mem_compare_len > 0 {
+        let mem_base = case.init.rdi;
+        format_memory_dump(
+            &mut out,
+            "initial",
+            &case.memory,
+            mem_base,
+            template.mem_compare_len,
+        );
+        format_memory_dump(
+            &mut out,
+            "expected",
+            &expected.memory,
+            mem_base,
+            template.mem_compare_len,
+        );
+        format_memory_dump(
+            &mut out,
+            "actual",
+            &actual.memory,
+            mem_base,
+            template.mem_compare_len,
+        );
         format_memory_diff(
             &mut out,
             &expected.memory,
             &actual.memory,
+            mem_base,
             template.mem_compare_len,
         );
     }
@@ -189,16 +225,87 @@ pub fn format_failure(
     out
 }
 
-fn decode_instruction(bytes: &[u8]) -> Option<String> {
-    let mut decoder = iced_x86::Decoder::with_ip(64, bytes, 0, iced_x86::DecoderOptions::NONE);
+fn decode_instruction_iced(bytes: &[u8], ip: u64) -> Option<String> {
+    let mut decoder = iced_x86::Decoder::with_ip(64, bytes, ip, iced_x86::DecoderOptions::NONE);
     let instruction = decoder.decode();
     if instruction.is_invalid() {
         return None;
     }
+
     let mut formatter = iced_x86::IntelFormatter::new();
     let mut decoded = String::new();
     formatter.format(&instruction, &mut decoded);
-    Some(decoded)
+    Some(format!(
+        "{decoded} (len={} code={:?} mnemonic={:?})",
+        instruction.len(),
+        instruction.code(),
+        instruction.mnemonic()
+    ))
+}
+
+fn decode_instruction_aero(bytes: &[u8], ip: u64) -> Option<String> {
+    // Optional: this is best-effort and intentionally avoids pulling in the full CPU core.
+    let decoded = aero_cpu_decoder::decode_one(aero_cpu_decoder::DecodeMode::Bits64, ip, bytes)
+        .ok()?;
+
+    let mut formatter = iced_x86::IntelFormatter::new();
+    let mut disasm = String::new();
+    formatter.format(&decoded.instruction, &mut disasm);
+
+    let prefixes = format_aero_prefixes(&decoded.prefixes);
+    Some(format!(
+        "{disasm} (len={} code={:?} mnemonic={:?}{prefixes})",
+        decoded.instruction.len(),
+        decoded.instruction.code(),
+        decoded.instruction.mnemonic(),
+    ))
+}
+
+fn format_aero_prefixes(prefixes: &aero_cpu_decoder::Prefixes) -> String {
+    let mut parts = Vec::new();
+    if prefixes.lock {
+        parts.push("lock");
+    }
+    if prefixes.rep {
+        parts.push("rep");
+    }
+    if prefixes.repne {
+        parts.push("repne");
+    }
+    if let Some(seg) = prefixes.segment {
+        parts.push(match seg {
+            aero_cpu_decoder::Segment::Es => "es",
+            aero_cpu_decoder::Segment::Cs => "cs",
+            aero_cpu_decoder::Segment::Ss => "ss",
+            aero_cpu_decoder::Segment::Ds => "ds",
+            aero_cpu_decoder::Segment::Fs => "fs",
+            aero_cpu_decoder::Segment::Gs => "gs",
+        });
+    }
+    if prefixes.operand_size_override {
+        parts.push("66");
+    }
+    if prefixes.address_size_override {
+        parts.push("67");
+    }
+    if let Some(rex) = prefixes.rex {
+        parts.push(if rex.w() { "rex.w" } else { "rex" });
+    }
+    if prefixes.vex.is_some() {
+        parts.push("vex");
+    }
+    if prefixes.evex.is_some() {
+        parts.push("evex");
+    }
+    if prefixes.xop.is_some() {
+        parts.push("xop");
+    }
+
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" prefixes=[{}]", parts.join(" "))
+    }
 }
 
 fn format_state(out: &mut String, state: &CpuState, flags_mask: u64) {
@@ -285,7 +392,28 @@ fn format_flags(rflags: u64, mask: u64) -> String {
     parts.join(" ")
 }
 
-fn format_memory_diff(out: &mut String, expected: &[u8], actual: &[u8], len: usize) {
+fn format_memory_dump(out: &mut String, label: &str, memory: &[u8], base: u64, len: usize) {
+    let len = len.min(64);
+    let memory = memory.get(..len).unwrap_or(memory);
+
+    let _ = writeln!(out, "{label} memory dump (first {} bytes):", memory.len());
+    for (line_idx, chunk) in memory.chunks(16).enumerate() {
+        let offset = line_idx * 16;
+        let addr = base.wrapping_add(offset as u64);
+        let hex = chunk
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ascii = chunk
+            .iter()
+            .map(|b| if b.is_ascii_graphic() { *b as char } else { '.' })
+            .collect::<String>();
+        let _ = writeln!(out, "  {addr:#018x}: {hex:<47} |{ascii}|");
+    }
+}
+
+fn format_memory_diff(out: &mut String, expected: &[u8], actual: &[u8], base: u64, len: usize) {
     let expected = expected.get(..len).unwrap_or(expected);
     let actual = actual.get(..len).unwrap_or(actual);
 
@@ -300,8 +428,12 @@ fn format_memory_diff(out: &mut String, expected: &[u8], actual: &[u8], len: usi
         return;
     }
 
-    let _ = writeln!(out, "memory diff (first {} bytes):", len);
+    let _ = writeln!(out, "memory diff (first {} bytes):", len.min(64));
     for (idx, exp, act) in diffs.into_iter().take(16) {
-        let _ = writeln!(out, "  +0x{idx:02x}: expected={exp:02x} actual={act:02x}");
+        let addr = base.wrapping_add(idx as u64);
+        let _ = writeln!(
+            out,
+            "  +0x{idx:02x} ({addr:#018x}): expected={exp:02x} actual={act:02x}"
+        );
     }
 }
