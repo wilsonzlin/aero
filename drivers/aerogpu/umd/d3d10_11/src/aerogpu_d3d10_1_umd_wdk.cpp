@@ -5055,6 +5055,84 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateRTVSize(D3D10DDI_HDEVICE, const D3D10DDIARG_C
   return sizeof(AeroGpuRenderTargetView);
 }
 
+static bool ValidateFullResourceRtvDesc(const AeroGpuResource* res,
+                                        const D3D10DDIARG_CREATERENDERTARGETVIEW* pDesc,
+                                        const char** reason_out) {
+  if (reason_out) {
+    *reason_out = nullptr;
+  }
+  if (!res || !pDesc) {
+    if (reason_out) {
+      *reason_out = "null resource/desc";
+    }
+    return false;
+  }
+  if (res->kind != ResourceKind::Texture2D) {
+    if (reason_out) {
+      *reason_out = "resource kind is not Texture2D";
+    }
+    return false;
+  }
+
+  // Reject format reinterpretation; allow UNKNOWN/0 to mean "use resource format".
+  __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Format) {
+    const uint32_t view_format = static_cast<uint32_t>(pDesc->Format);
+    if (view_format != 0 && view_format != res->dxgi_format) {
+      if (reason_out) {
+        *reason_out = "format reinterpretation";
+      }
+      return false;
+    }
+  }
+
+  // RTVs address a single mip level. Only support "full resource" when the
+  // resource itself has a single mip level and the view targets mip 0.
+  if (res->mip_levels != 1) {
+    if (reason_out) {
+      *reason_out = "mip-slice view on mipmapped resource";
+    }
+    return false;
+  }
+
+  // Mip slice: must be 0.
+  __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
+    if (static_cast<uint32_t>(pDesc->Tex2D.MipSlice) != 0) {
+      if (reason_out) {
+        *reason_out = "MipSlice != 0";
+      }
+      return false;
+    }
+  }
+
+  // If the resource is an array, require the view to span the entire array.
+  if (res->array_size > 1) {
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) {
+      const uint32_t first_slice = static_cast<uint32_t>(pDesc->Tex2DArray.FirstArraySlice);
+      const uint32_t array_size = static_cast<uint32_t>(pDesc->Tex2DArray.ArraySize);
+      if (first_slice != 0) {
+        if (reason_out) {
+          *reason_out = "FirstArraySlice != 0";
+        }
+        return false;
+      }
+      if (array_size != res->array_size && array_size != 0xFFFFFFFFu) {
+        if (reason_out) {
+          *reason_out = "ArraySize does not span full resource";
+        }
+        return false;
+      }
+    }
+    __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) {
+      if (reason_out) {
+        *reason_out = "Tex2DArray view fields unavailable in this WDK";
+      }
+      return false;
+    }
+  }
+
+  return true;
+}
+
 HRESULT AEROGPU_APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                                                 const D3D10DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                                 D3D10DDI_HRENDERTARGETVIEW hRtv,
@@ -5078,6 +5156,16 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  const char* reject_reason = nullptr;
+  if (!ValidateFullResourceRtvDesc(res, pDesc, &reject_reason)) {
+    AEROGPU_D3D10_11_LOG("D3D10.1 CreateRenderTargetView: rejecting unsupported view (res=%p fmt=%u mips=%u array=%u): %s",
+                         res_private,
+                         res ? static_cast<unsigned>(res->dxgi_format) : 0u,
+                         res ? static_cast<unsigned>(res->mip_levels) : 0u,
+                         res ? static_cast<unsigned>(res->array_size) : 0u,
+                         reject_reason ? reject_reason : "unsupported view desc");
+    AEROGPU_D3D10_RET_HR(E_NOTIMPL);
+  }
   auto* rtv = new (hRtv.pDrvPrivate) AeroGpuRenderTargetView();
   rtv->texture = res ? res->handle : 0;
   rtv->resource = res;
@@ -5096,6 +5184,82 @@ void AEROGPU_APIENTRY DestroyRenderTargetView(D3D10DDI_HDEVICE, D3D10DDI_HRENDER
 SIZE_T AEROGPU_APIENTRY CalcPrivateDSVSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATEDEPTHSTENCILVIEW*) {
   AEROGPU_D3D10_TRACEF("CalcPrivateDepthStencilViewSize");
   return sizeof(AeroGpuDepthStencilView);
+}
+
+static bool ValidateFullResourceDsvDesc(const AeroGpuResource* res,
+                                        const D3D10DDIARG_CREATEDEPTHSTENCILVIEW* pDesc,
+                                        const char** reason_out) {
+  if (reason_out) {
+    *reason_out = nullptr;
+  }
+  if (!res || !pDesc) {
+    if (reason_out) {
+      *reason_out = "null resource/desc";
+    }
+    return false;
+  }
+  if (res->kind != ResourceKind::Texture2D) {
+    if (reason_out) {
+      *reason_out = "resource kind is not Texture2D";
+    }
+    return false;
+  }
+
+  // Reject format reinterpretation; allow UNKNOWN/0 to mean "use resource format".
+  __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Format) {
+    const uint32_t view_format = static_cast<uint32_t>(pDesc->Format);
+    if (view_format != 0 && view_format != res->dxgi_format) {
+      if (reason_out) {
+        *reason_out = "format reinterpretation";
+      }
+      return false;
+    }
+  }
+
+  // DSVs address a single mip level; only support mip 0 on single-mip resources.
+  if (res->mip_levels != 1) {
+    if (reason_out) {
+      *reason_out = "mip-slice view on mipmapped resource";
+    }
+    return false;
+  }
+
+  __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
+    if (static_cast<uint32_t>(pDesc->Tex2D.MipSlice) != 0) {
+      if (reason_out) {
+        *reason_out = "MipSlice != 0";
+      }
+      return false;
+    }
+  }
+
+  // If the resource is an array, require the view to span the entire array.
+  if (res->array_size > 1) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) {
+      const uint32_t first_slice = static_cast<uint32_t>(pDesc->Tex2DArray.FirstArraySlice);
+      const uint32_t array_size = static_cast<uint32_t>(pDesc->Tex2DArray.ArraySize);
+      if (first_slice != 0) {
+        if (reason_out) {
+          *reason_out = "FirstArraySlice != 0";
+        }
+        return false;
+      }
+      if (array_size != res->array_size && array_size != 0xFFFFFFFFu) {
+        if (reason_out) {
+          *reason_out = "ArraySize does not span full resource";
+        }
+        return false;
+      }
+    }
+    __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) {
+      if (reason_out) {
+        *reason_out = "Tex2DArray view fields unavailable in this WDK";
+      }
+      return false;
+    }
+  }
+
+  return true;
 }
 
 HRESULT AEROGPU_APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
@@ -5121,6 +5285,16 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  const char* reject_reason = nullptr;
+  if (!ValidateFullResourceDsvDesc(res, pDesc, &reject_reason)) {
+    AEROGPU_D3D10_11_LOG("D3D10.1 CreateDepthStencilView: rejecting unsupported view (res=%p fmt=%u mips=%u array=%u): %s",
+                         res_private,
+                         res ? static_cast<unsigned>(res->dxgi_format) : 0u,
+                         res ? static_cast<unsigned>(res->mip_levels) : 0u,
+                         res ? static_cast<unsigned>(res->array_size) : 0u,
+                         reject_reason ? reject_reason : "unsupported view desc");
+    AEROGPU_D3D10_RET_HR(E_NOTIMPL);
+  }
   auto* dsv = new (hDsv.pDrvPrivate) AeroGpuDepthStencilView();
   dsv->texture = res ? res->handle : 0;
   dsv->resource = res;
@@ -5179,6 +5353,109 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateShaderResourceViewSize(D3D10DDI_HDEVICE, cons
   return sizeof(AeroGpuShaderResourceView);
 }
 
+static bool ValidateFullResourceSrvDesc(const AeroGpuResource* res,
+                                        const D3D10DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
+                                        const char** reason_out) {
+  if (reason_out) {
+    *reason_out = nullptr;
+  }
+  if (!res || !pDesc) {
+    if (reason_out) {
+      *reason_out = "null resource/desc";
+    }
+    return false;
+  }
+  if (res->kind != ResourceKind::Texture2D) {
+    if (reason_out) {
+      *reason_out = "resource kind is not Texture2D";
+    }
+    return false;
+  }
+
+  // Reject format reinterpretation; allow UNKNOWN/0 to mean "use resource format".
+  __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Format) {
+    const uint32_t view_format = static_cast<uint32_t>(pDesc->Format);
+    if (view_format != 0 && view_format != res->dxgi_format) {
+      if (reason_out) {
+        *reason_out = "format reinterpretation";
+      }
+      return false;
+    }
+  }
+
+  uint32_t most_detailed_mip = 0;
+  uint32_t mip_levels = 0;
+  bool have_mip_fields = false;
+
+  // Prefer reading the view fields from the dimension-specific union member.
+  __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+    most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
+    mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
+    have_mip_fields = true;
+  }
+
+  if (res->array_size > 1) {
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) {
+      most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2DArray.MostDetailedMip);
+      mip_levels = static_cast<uint32_t>(pDesc->Tex2DArray.MipLevels);
+      have_mip_fields = true;
+    }
+    __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) {
+      if (reason_out) {
+        *reason_out = "Tex2DArray view fields unavailable in this WDK";
+      }
+      return false;
+    }
+  }
+
+  if (!have_mip_fields) {
+    if (reason_out) {
+      *reason_out = "missing mip fields in SRV desc";
+    }
+    return false;
+  }
+
+  if (most_detailed_mip != 0) {
+    if (reason_out) {
+      *reason_out = "MostDetailedMip != 0";
+    }
+    return false;
+  }
+
+  const uint32_t requested_mips =
+      (mip_levels == 0 || mip_levels == 0xFFFFFFFFu) ? res->mip_levels : mip_levels;
+  if (requested_mips != res->mip_levels) {
+    if (reason_out) {
+      *reason_out = "MipLevels does not span full resource";
+    }
+    return false;
+  }
+
+  // If the resource is an array, require the view to span the entire array.
+  if (res->array_size > 1) {
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) {
+      const uint32_t first_slice = static_cast<uint32_t>(pDesc->Tex2DArray.FirstArraySlice);
+      const uint32_t array_size = static_cast<uint32_t>(pDesc->Tex2DArray.ArraySize);
+      if (first_slice != 0) {
+        if (reason_out) {
+          *reason_out = "FirstArraySlice != 0";
+        }
+        return false;
+      }
+      const uint32_t requested_slices =
+          (array_size == 0 || array_size == 0xFFFFFFFFu) ? res->array_size : array_size;
+      if (requested_slices != res->array_size) {
+        if (reason_out) {
+          *reason_out = "ArraySize does not span full resource";
+        }
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
                                                   const D3D10DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
                                                   D3D10DDI_HSHADERRESOURCEVIEW hView,
@@ -5199,6 +5476,16 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  const char* reject_reason = nullptr;
+  if (!ValidateFullResourceSrvDesc(res, pDesc, &reject_reason)) {
+    AEROGPU_D3D10_11_LOG("D3D10.1 CreateShaderResourceView: rejecting unsupported view (res=%p fmt=%u mips=%u array=%u): %s",
+                         hResource.pDrvPrivate,
+                         res ? static_cast<unsigned>(res->dxgi_format) : 0u,
+                         res ? static_cast<unsigned>(res->mip_levels) : 0u,
+                         res ? static_cast<unsigned>(res->array_size) : 0u,
+                         reject_reason ? reject_reason : "unsupported view desc");
+    return E_NOTIMPL;
+  }
   auto* srv = new (hView.pDrvPrivate) AeroGpuShaderResourceView();
   srv->texture = res ? res->handle : 0;
   srv->resource = res;
