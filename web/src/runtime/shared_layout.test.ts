@@ -17,6 +17,7 @@ import {
   CONTROL_BYTES,
   CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
   EVENT_RING_CAPACITY_BYTES,
+  HIGH_RAM_START,
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
   IO_IPC_HID_IN_QUEUE_KIND,
@@ -25,6 +26,7 @@ import {
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
   IO_IPC_RING_CAPACITY_BYTES,
+  LOW_RAM_END,
   RUNTIME_RESERVED_BYTES,
   STATUS_BYTES,
   STATUS_INTS,
@@ -33,9 +35,13 @@ import {
   allocateSharedMemorySegments,
   computeGuestRamLayout,
   createSharedMemoryViews,
+  guestPaddrToRamOffset,
+  guestRangeInBounds,
+  guestToLinear,
   readGuestRamLayoutFromStatus,
   ringRegionsForWorker,
   setReadyFlag,
+  type GuestRamLayout,
 } from "./shared_layout";
 
 describe("runtime/shared_layout", () => {
@@ -270,5 +276,118 @@ describe("runtime/shared_layout", () => {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThan(STATUS_INTS);
     }
+  });
+
+  describe("guest physical address translation (PC/Q35 low RAM + hole + high RAM remap)", () => {
+    function layoutForTesting(guest_size: number, guest_base = 0): GuestRamLayout {
+      return {
+        guest_base,
+        guest_size,
+        runtime_reserved: guest_base,
+        wasm_pages: 0,
+      };
+    }
+
+    it("guestPaddrToRamOffset: identity mapping for small RAM (guest_size <= LOW_RAM_END)", () => {
+      const ram = 0x2000;
+      const layout = layoutForTesting(ram);
+
+      expect(guestPaddrToRamOffset(layout, 0)).toBe(0);
+      expect(guestPaddrToRamOffset(layout, 0x1234)).toBe(0x1234);
+      expect(guestPaddrToRamOffset(layout, ram - 1)).toBe(ram - 1);
+      // End is out of range for a single address.
+      expect(guestPaddrToRamOffset(layout, ram)).toBeNull();
+    });
+
+    it("guestRangeInBounds: end boundary + zero-length semantics for small RAM", () => {
+      const ram = 0x2000;
+      const layout = layoutForTesting(ram);
+
+      expect(guestRangeInBounds(layout, 0, 0)).toBe(true);
+      expect(guestRangeInBounds(layout, 0, 1)).toBe(true);
+      expect(guestRangeInBounds(layout, 0x1234, 4)).toBe(true);
+      expect(guestRangeInBounds(layout, ram - 1, 1)).toBe(true);
+
+      // Out-of-bounds for non-empty ranges.
+      expect(guestRangeInBounds(layout, ram, 1)).toBe(false);
+      expect(guestRangeInBounds(layout, ram - 1, 2)).toBe(false);
+
+      // Empty slice at end is OK (mirrors slice indexing semantics).
+      expect(guestRangeInBounds(layout, ram, 0)).toBe(true);
+      expect(guestRangeInBounds(layout, ram + 1, 0)).toBe(false);
+    });
+
+    it("guestPaddrToRamOffset: rejects hole and remaps high RAM when guest_size > LOW_RAM_END", () => {
+      const ram = LOW_RAM_END + 0x2000;
+      const layout = layoutForTesting(ram);
+
+      // Low RAM is identity-mapped.
+      expect(guestPaddrToRamOffset(layout, LOW_RAM_END - 4)).toBe(LOW_RAM_END - 4);
+
+      // ECAM/PCI/MMIO hole is not backed by RAM.
+      expect(guestPaddrToRamOffset(layout, LOW_RAM_END)).toBeNull();
+      expect(guestPaddrToRamOffset(layout, LOW_RAM_END + 0x1000)).toBeNull();
+      expect(guestPaddrToRamOffset(layout, HIGH_RAM_START - 4)).toBeNull();
+
+      // High RAM is remapped above 4GiB: physical 4GiB corresponds to RAM offset LOW_RAM_END.
+      expect(guestPaddrToRamOffset(layout, HIGH_RAM_START)).toBe(LOW_RAM_END);
+      expect(guestPaddrToRamOffset(layout, HIGH_RAM_START + 0x1ffc)).toBe(LOW_RAM_END + 0x1ffc);
+
+      // Past the end of high RAM.
+      expect(guestPaddrToRamOffset(layout, HIGH_RAM_START + 0x2000)).toBeNull();
+    });
+
+    it("guestRangeInBounds: rejects hole/out-of-range and cross-region ranges when guest_size > LOW_RAM_END", () => {
+      const ram = LOW_RAM_END + 0x2000;
+      const layout = layoutForTesting(ram);
+
+      // Low RAM: fully in bounds.
+      expect(guestRangeInBounds(layout, LOW_RAM_END - 4, 4)).toBe(true);
+      // Range ending exactly at the low-RAM boundary is OK.
+      expect(guestRangeInBounds(layout, LOW_RAM_END - 2, 2)).toBe(true);
+
+      // Hole rejected.
+      expect(guestRangeInBounds(layout, LOW_RAM_END, 4)).toBe(false);
+      expect(guestRangeInBounds(layout, HIGH_RAM_START - 4, 4)).toBe(false);
+
+      // Empty slices at boundaries are OK.
+      expect(guestRangeInBounds(layout, LOW_RAM_END, 0)).toBe(true);
+      expect(guestRangeInBounds(layout, HIGH_RAM_START, 0)).toBe(true);
+      // But empty slice inside the hole is still rejected.
+      expect(guestRangeInBounds(layout, HIGH_RAM_START - 1, 0)).toBe(false);
+
+      // High RAM: remapped region in bounds.
+      expect(guestRangeInBounds(layout, HIGH_RAM_START, 4)).toBe(true);
+      expect(guestRangeInBounds(layout, HIGH_RAM_START + 0x1ffc, 4)).toBe(true);
+
+      // Range ending exactly at the end of high RAM is OK.
+      expect(guestRangeInBounds(layout, HIGH_RAM_START + 0x1ffe, 2)).toBe(true);
+      expect(guestRangeInBounds(layout, HIGH_RAM_START + 0x2000, 0)).toBe(true);
+
+      // Cross-region rejected (low -> hole).
+      expect(guestRangeInBounds(layout, LOW_RAM_END - 2, 4)).toBe(false);
+      // Hole -> high.
+      expect(guestRangeInBounds(layout, HIGH_RAM_START - 2, 4)).toBe(false);
+
+      // Out of range beyond end of high RAM.
+      expect(guestRangeInBounds(layout, HIGH_RAM_START + 0x2000, 1)).toBe(false);
+    });
+
+    it("guestToLinear throws for hole/out-of-range addresses", () => {
+      const base = 0x1000;
+      const small = layoutForTesting(0x2000, base);
+      expect(guestToLinear(small, 0x1234)).toBe(base + 0x1234);
+      expect(() => guestToLinear(small, 0x2000)).toThrow(RangeError);
+
+      const big = layoutForTesting(LOW_RAM_END + 0x2000, base);
+      // Valid low + high addresses.
+      expect(guestToLinear(big, LOW_RAM_END - 1)).toBe(base + (LOW_RAM_END - 1));
+      expect(guestToLinear(big, HIGH_RAM_START)).toBe(base + LOW_RAM_END);
+
+      // Hole + out-of-range throws.
+      expect(() => guestToLinear(big, LOW_RAM_END)).toThrow(RangeError);
+      expect(() => guestToLinear(big, HIGH_RAM_START - 1)).toThrow(RangeError);
+      expect(() => guestToLinear(big, HIGH_RAM_START + 0x2000)).toThrow(RangeError);
+    });
   });
 });
