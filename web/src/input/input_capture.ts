@@ -24,6 +24,13 @@ export interface InputCaptureOptions {
    */
   mouseSensitivity?: number;
   /**
+   * Multiply touch drag deltas by this scaling factor before converting to
+   * relative mouse motion.
+   *
+   * Defaults to `mouseSensitivity`.
+   */
+  touchSensitivity?: number;
+  /**
    * How often to flush input to the I/O worker.
    *
    * 125Hz matches the classic PS/2 mouse sample rate and keeps latency <8ms
@@ -80,6 +87,7 @@ export class InputCapture {
 
   private readonly flushHz: number;
   private readonly mouseSensitivity: number;
+  private readonly touchSensitivity: number;
   private readonly releaseChord?: PointerLockReleaseChord;
   private readonly logCaptureLatency: boolean;
   private readonly recycleBuffers: boolean;
@@ -116,6 +124,14 @@ export class InputCapture {
   private mouseFracY = 0;
   private wheelFrac = 0;
 
+  private touchPrimaryPointerId: number | null = null;
+  private touchStartX = 0;
+  private touchStartY = 0;
+  private touchStartTimeStamp = 0;
+  private touchMaxDistSq = 0;
+  private touchHadMultiTouch = false;
+  private readonly touchPointers = new Map<number, { x: number; y: number }>();
+
   private latencyLogLastMs = 0;
   private latencyLogCount = 0;
   private latencyLogSumUs = 0;
@@ -130,6 +146,7 @@ export class InputCapture {
       // deltas from the prior session so they can't leak into a later session and cause a
       // spurious pixel or wheel tick.
       this.resetAccumulatedMotion();
+      this.cancelTouchCapture();
     }
 
     if (locked || this.hasFocus) {
@@ -162,6 +179,7 @@ export class InputCapture {
     this.hasFocus = false;
     this.pointerLock.exit();
     this.resetAccumulatedMotion();
+    this.cancelTouchCapture();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
@@ -175,6 +193,7 @@ export class InputCapture {
     this.windowFocused = false;
     this.pointerLock.exit();
     this.resetAccumulatedMotion();
+    this.cancelTouchCapture();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
@@ -194,6 +213,7 @@ export class InputCapture {
 
     this.pointerLock.exit();
     this.resetAccumulatedMotion();
+    this.cancelTouchCapture();
     this.suppressedKeyUps.clear();
     this.releaseAllKeys();
     this.setMouseButtons(0);
@@ -411,11 +431,152 @@ export class InputCapture {
     }
   };
 
+  private readonly handlePointerDown = (event: PointerEvent): void => {
+    if (this.pointerLock.isLocked) {
+      return;
+    }
+    if (!this.windowFocused || !this.pageVisible) {
+      return;
+    }
+
+    // Only treat touch / stylus pointers as the "touch capture" fallback. Mouse pointers continue
+    // to flow through the existing mouse + pointer lock path.
+    if (event.pointerType !== "touch" && event.pointerType !== "pen") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Attempt to focus so the keyboard path becomes active (best-effort).
+    this.canvas.focus();
+
+    const id = event.pointerId;
+    const x = event.clientX;
+    const y = event.clientY;
+
+    if (this.touchPointers.size === 0) {
+      this.touchPrimaryPointerId = id;
+      this.touchStartX = x;
+      this.touchStartY = y;
+      this.touchStartTimeStamp = event.timeStamp;
+      this.touchMaxDistSq = 0;
+      this.touchHadMultiTouch = false;
+      // Pointer/touch sessions are a natural "capture boundary". Drop any fractional remainder so
+      // it cannot leak into a later session and cause a spurious pixel or wheel tick.
+      this.resetAccumulatedMotion();
+    } else {
+      this.touchHadMultiTouch = true;
+    }
+
+    this.touchPointers.set(id, { x, y });
+
+    try {
+      (this.canvas as unknown as { setPointerCapture?: (id: number) => void }).setPointerCapture?.(id);
+    } catch {
+      // Ignore; pointer capture is best-effort.
+    }
+  };
+
+  private readonly handlePointerMove = (event: PointerEvent): void => {
+    if (this.pointerLock.isLocked) {
+      return;
+    }
+    if (event.pointerType !== "touch" && event.pointerType !== "pen") {
+      return;
+    }
+
+    const prev = this.touchPointers.get(event.pointerId);
+    if (!prev) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const x = event.clientX;
+    const y = event.clientY;
+
+    // Track max distance for tap detection (primary pointer only).
+    if (event.pointerId === this.touchPrimaryPointerId) {
+      const dx0 = x - this.touchStartX;
+      const dy0 = y - this.touchStartY;
+      const distSq = dx0 * dx0 + dy0 * dy0;
+      if (distSq > this.touchMaxDistSq) {
+        this.touchMaxDistSq = distSq;
+      }
+    }
+
+    if (this.touchPointers.size === 1) {
+      const dxRaw = x - prev.x;
+      const dyRaw = y - prev.y;
+      prev.x = x;
+      prev.y = y;
+
+      this.mouseFracX += dxRaw * this.touchSensitivity;
+      this.mouseFracY += dyRaw * this.touchSensitivity;
+
+      const dx = this.takeWholeMouseDelta("x");
+      const dy = this.takeWholeMouseDelta("y");
+      if (dx === 0 && dy === 0) {
+        return;
+      }
+
+      const tsUs = toTimestampUs(event.timeStamp);
+      // PS/2 convention: positive Y is up (DOM is typically positive down).
+      this.queue.pushMouseMove(tsUs, dx, -dy);
+      return;
+    }
+
+    // Two-finger gesture: translate average vertical movement into a wheel.
+    if (this.touchPointers.size === 2) {
+      this.touchHadMultiTouch = true;
+
+      let sumYBefore = 0;
+      for (const p of this.touchPointers.values()) {
+        sumYBefore += p.y;
+      }
+
+      prev.x = x;
+      prev.y = y;
+
+      let sumYAfter = 0;
+      for (const p of this.touchPointers.values()) {
+        sumYAfter += p.y;
+      }
+
+      const dyAvg = (sumYAfter - sumYBefore) / 2;
+      // Match wheelEventToDeltaSteps pixel behavior: ~100px per wheel "click", and invert so
+      // positive is wheel up.
+      this.wheelFrac += (-dyAvg) / 100;
+      const dz = this.takeWholeWheelDelta();
+      if (dz !== 0) {
+        const tsUs = toTimestampUs(event.timeStamp);
+        this.queue.pushMouseWheel(tsUs, dz);
+      }
+      return;
+    }
+
+    // 3+ touches: just track coordinates and avoid generating guest input.
+    this.touchHadMultiTouch = true;
+    prev.x = x;
+    prev.y = y;
+  };
+
+  private readonly handlePointerUp = (event: PointerEvent): void => {
+    this.handlePointerEnd(event, { allowTap: true });
+  };
+
+  private readonly handlePointerCancel = (event: PointerEvent): void => {
+    this.handlePointerEnd(event, { allowTap: false });
+  };
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly ioWorker: InputBatchTarget,
     {
       mouseSensitivity = 1.0,
+      touchSensitivity = mouseSensitivity,
       flushHz = 125,
       releasePointerLockChord,
       logCaptureLatency = false,
@@ -426,6 +587,7 @@ export class InputCapture {
     }: InputCaptureOptions = {}
   ) {
     this.mouseSensitivity = mouseSensitivity;
+    this.touchSensitivity = touchSensitivity;
     this.flushHz = flushHz;
     this.releaseChord = releasePointerLockChord;
     this.logCaptureLatency = logCaptureLatency;
@@ -481,6 +643,14 @@ export class InputCapture {
     this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
     this.canvas.addEventListener('contextmenu', this.handleContextMenu);
 
+    // Touch fallback via Pointer Events (when available).
+    if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
+      this.canvas.addEventListener("pointerdown", this.handlePointerDown as EventListener, { passive: false });
+      this.canvas.addEventListener("pointermove", this.handlePointerMove as EventListener, { passive: false });
+      this.canvas.addEventListener("pointerup", this.handlePointerUp as EventListener, { passive: false });
+      this.canvas.addEventListener("pointercancel", this.handlePointerCancel as EventListener, { passive: false });
+    }
+
     const intervalMs = Math.max(1, Math.round(1000 / this.flushHz));
     this.flushTimer = window.setInterval(() => this.flushNow(), intervalMs);
     (this.flushTimer as unknown as { unref?: () => void }).unref?.();
@@ -494,6 +664,7 @@ export class InputCapture {
     this.hasFocus = false;
     this.suppressedKeyUps.clear();
     this.resetAccumulatedMotion();
+    this.cancelTouchCapture();
 
     window.clearInterval(this.flushTimer);
     this.flushTimer = null;
@@ -526,6 +697,13 @@ export class InputCapture {
 
     this.canvas.removeEventListener('wheel', this.handleWheel as EventListener);
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
+
+    if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
+      this.canvas.removeEventListener("pointerdown", this.handlePointerDown as EventListener);
+      this.canvas.removeEventListener("pointermove", this.handlePointerMove as EventListener);
+      this.canvas.removeEventListener("pointerup", this.handlePointerUp as EventListener);
+      this.canvas.removeEventListener("pointercancel", this.handlePointerCancel as EventListener);
+    }
 
     this.pointerLock.dispose();
   }
@@ -630,6 +808,68 @@ export class InputCapture {
     this.mouseFracX = 0;
     this.mouseFracY = 0;
     this.wheelFrac = 0;
+  }
+
+  private cancelTouchCapture(): void {
+    if (this.touchPointers.size === 0) {
+      return;
+    }
+    this.touchPointers.clear();
+    this.touchPrimaryPointerId = null;
+    this.touchHadMultiTouch = false;
+    this.touchMaxDistSq = 0;
+  }
+
+  private handlePointerEnd(event: PointerEvent, { allowTap }: { allowTap: boolean }): void {
+    if (this.pointerLock.isLocked) {
+      return;
+    }
+    if (event.pointerType !== "touch" && event.pointerType !== "pen") {
+      return;
+    }
+
+    if (!this.touchPointers.has(event.pointerId)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    this.touchPointers.delete(event.pointerId);
+
+    // Only treat the interaction as a tap if:
+    // - it was a single-touch session (no multi-touch),
+    // - it did not move beyond a small threshold, and
+    // - it ended on the primary pointer.
+    if (
+      allowTap &&
+      this.touchPointers.size === 0 &&
+      !this.touchHadMultiTouch &&
+      event.pointerId === this.touchPrimaryPointerId
+    ) {
+      // 6px movement, 250ms duration. (Small enough to allow a little finger jitter.)
+      const moved = this.touchMaxDistSq > 6 * 6;
+      const durationMs = event.timeStamp - this.touchStartTimeStamp;
+      const longPress = durationMs > 250;
+      if (!moved && !longPress) {
+        // Tap -> click. Use down at touch-start + up at touch-end for realistic timing.
+        this.setMouseButtons(this.mouseButtons | 1, this.touchStartTimeStamp);
+        this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
+      }
+    }
+
+    if (this.touchPointers.size === 0) {
+      this.touchPrimaryPointerId = null;
+      this.touchHadMultiTouch = false;
+      this.touchMaxDistSq = 0;
+      this.resetAccumulatedMotion();
+    }
+
+    try {
+      (this.canvas as unknown as { releasePointerCapture?: (id: number) => void }).releasePointerCapture?.(event.pointerId);
+    } catch {
+      // Ignore.
+    }
   }
 
   private takeWholeWheelDelta(): number {
