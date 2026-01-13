@@ -21,6 +21,9 @@ namespace {
 constexpr uint32_t kBaseSupportedFormats[] = {
     22u, // D3DFMT_X8R8G8B8
     21u, // D3DFMT_A8R8G8B8
+    23u, // D3DFMT_R5G6B5
+    24u, // D3DFMT_X1R5G5B5
+    25u, // D3DFMT_A1R5G5B5
     32u, // D3DFMT_A8B8G8R8
     23u, // D3DFMT_R5G6B5
     24u, // D3DFMT_X1R5G5B5

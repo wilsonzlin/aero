@@ -942,6 +942,9 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   constexpr uint32_t kExpectedFormats[12] = {
       22u, // D3DFMT_X8R8G8B8
       21u, // D3DFMT_A8R8G8B8
+      23u, // D3DFMT_R5G6B5
+      24u, // D3DFMT_X1R5G5B5
+      25u, // D3DFMT_A1R5G5B5
       32u, // D3DFMT_A8B8G8R8
       23u, // D3DFMT_R5G6B5
       24u, // D3DFMT_X1R5G5B5
@@ -1567,6 +1570,161 @@ bool TestRgb16FormatMappingAndLayout() {
     return false;
   }
   return Check(layout.total_size_bytes == 84ull, "R5G6B5 total_size_bytes (mip chain)");
+}
+
+bool TestCreateResourceComputes16BitTexturePitchAndFormat() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyResource != nullptr, "DestroyResource must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
+  std::vector<uint8_t> dma(4096, 0);
+
+  struct Case {
+    uint32_t d3d9_format;
+    uint32_t agpu_format;
+    const char* name;
+  };
+
+  const Case cases[] = {
+      {23u, AEROGPU_FORMAT_B5G6R5_UNORM, "R5G6B5"},       // D3DFMT_R5G6B5
+      {24u, AEROGPU_FORMAT_B5G5R5A1_UNORM, "X1R5G5B5"},   // D3DFMT_X1R5G5B5
+      {25u, AEROGPU_FORMAT_B5G5R5A1_UNORM, "A1R5G5B5"},   // D3DFMT_A1R5G5B5
+  };
+
+  constexpr uint32_t kWidth = 13;
+  constexpr uint32_t kHeight = 7;
+  constexpr uint32_t kExpectedRowPitch = kWidth * 2;
+  constexpr uint32_t kExpectedSlicePitch = kExpectedRowPitch * kHeight;
+  constexpr uint32_t kExpectedSize = kExpectedSlicePitch;
+
+  for (const Case& c : cases) {
+    std::memset(dma.data(), 0, dma.size());
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = 0;
+    create_res.format = c.d3d9_format;
+    create_res.width = kWidth;
+    create_res.height = kHeight;
+    create_res.depth = 1;
+    create_res.mip_levels = 1;
+    create_res.usage = 0;
+    create_res.pool = 0; // default pool (GPU resource)
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr;
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
+
+    char create_msg[128] = {};
+    std::snprintf(create_msg, sizeof(create_msg), "CreateResource(%s)", c.name);
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    if (!Check(hr == S_OK, create_msg)) {
+      return false;
+    }
+    if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned resource handle")) {
+      return false;
+    }
+
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(res->row_pitch == kExpectedRowPitch, "16-bit row_pitch bytes")) {
+      return false;
+    }
+    if (!Check(res->slice_pitch == kExpectedSlicePitch, "16-bit slice_pitch bytes")) {
+      return false;
+    }
+    if (!Check(res->size_bytes == kExpectedSize, "16-bit size_bytes")) {
+      return false;
+    }
+
+    dev->cmd.finalize();
+    if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+      return false;
+    }
+
+    const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+      return false;
+    }
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+    if (!Check(cmd->format == c.agpu_format, "CREATE_TEXTURE2D format matches expected")) {
+      return false;
+    }
+    if (!Check(cmd->row_pitch_bytes == kExpectedRowPitch, "CREATE_TEXTURE2D row_pitch_bytes matches expected")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnDestroyResource(create_dev.hDevice, create_res.hResource);
+    if (!Check(hr == S_OK, "DestroyResource")) {
+      return false;
+    }
+  }
+
+  // Make cleanup safe: switch back to vector mode so subsequent destroy calls
+  // can't fail due to span-buffer capacity constraints.
+  dev->cmd.set_vector();
+  return true;
 }
 
 bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
@@ -9900,6 +10058,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
   failures += !aerogpu::TestRgb16FormatMappingAndLayout();
+  failures += !aerogpu::TestCreateResourceComputes16BitTexturePitchAndFormat();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked();
   failures += !aerogpu::TestAllocBackedUnlockEmitsDirtyRange();

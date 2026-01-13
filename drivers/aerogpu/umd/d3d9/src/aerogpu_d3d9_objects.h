@@ -109,6 +109,16 @@ inline uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format) {
       return AEROGPU_FORMAT_B8G8R8A8_UNORM;
     case 22u:
       return AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    // D3DFMT_R5G6B5
+    case 23u:
+      return AEROGPU_FORMAT_B5G6R5_UNORM;
+    // D3DFMT_X1R5G5B5 / D3DFMT_A1R5G5B5
+    //
+    // Note: X1R5G5B5 has no alpha channel; map it to B5G5R5A1 and treat the
+    // alpha bit as "opaque" (D3D9 semantics are equivalent to alpha=1).
+    case 24u:
+    case 25u:
+      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
     // D3DFMT_A8B8G8R8
     case 32u:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
