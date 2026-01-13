@@ -3905,6 +3905,13 @@ impl Machine {
         (self.display_width, self.display_height)
     }
 
+    /// Return the BIOS-reported VBE linear framebuffer (LFB) base address.
+    ///
+    /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`).
+    pub fn vbe_lfb_base(&self) -> u32 {
+        self.bios.video.vbe.lfb_base
+    }
+
     /// Install an external scanout descriptor that should receive legacy VGA/VBE mode updates.
     ///
     /// When present, BIOS INT 10h mode transitions publish updates to this descriptor so an

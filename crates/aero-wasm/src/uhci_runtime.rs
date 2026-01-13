@@ -9,7 +9,9 @@ use wasm_bindgen::prelude::*;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::UsbWebUsbPassthroughDevice;
-use aero_usb::hid::passthrough::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
+use aero_usb::hid::passthrough::{
+    UsbHidPassthroughFeatureReportRequest, UsbHidPassthroughHandle, UsbHidPassthroughOutputReport,
+};
 use aero_usb::hid::webhid;
 use aero_usb::hub::{UsbHub, UsbHubDevice};
 use aero_usb::passthrough::{
@@ -507,6 +509,86 @@ impl UhciRuntime {
             }
         }
         out.into()
+    }
+
+    /// Drain pending HID GET_REPORT(Feature) passthrough requests from all attached WebHID-backed
+    /// passthrough devices.
+    ///
+    /// Returns `Array<{ deviceId, requestId, reportId }>` where `requestId` is an opaque u32 that
+    /// must be echoed back into [`UhciRuntime::webhid_push_feature_report_result`].
+    pub fn webhid_drain_feature_report_requests(&mut self) -> JsValue {
+        let out = Array::new();
+        for (&device_id, state) in self.webhid_devices.iter_mut() {
+            for req in state.dev.drain_feature_report_requests() {
+                out.push(&webhid_feature_report_request_to_js(device_id, req));
+            }
+        }
+        out.into()
+    }
+
+    /// Complete a pending HID GET_REPORT(Feature) passthrough request.
+    ///
+    /// - `device_id`: WebHID device ID as passed to `webhid_attach`.
+    /// - `request_id`: opaque request ID from `webhid_drain_feature_report_requests`.
+    /// - `report_id`: HID report ID (0..=255).
+    /// - `ok`: whether the host-side `receiveFeatureReport` succeeded.
+    /// - `data`: feature report payload bytes (without report ID prefix), when `ok=true`.
+    ///
+    /// `data` may be `Uint8Array`, `number[]`, `null`, or `undefined`.
+    pub fn webhid_push_feature_report_result(
+        &mut self,
+        device_id: u32,
+        request_id: u32,
+        report_id: u32,
+        ok: bool,
+        data: JsValue,
+    ) -> Result<(), JsValue> {
+        let Some(state) = self.webhid_devices.get(&device_id) else {
+            return Ok(());
+        };
+        let report_id = u8::try_from(report_id)
+            .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
+
+        let bytes = if ok {
+            if data.is_null() || data.is_undefined() {
+                None
+            } else if let Ok(buf) = data.clone().dyn_into::<Uint8Array>() {
+                Some(buf.to_vec())
+            } else if Array::is_array(&data) {
+                let arr = Array::from(&data);
+                let mut out = Vec::with_capacity(arr.length() as usize);
+                for i in 0..arr.length() {
+                    let b = arr
+                        .get(i)
+                        .as_f64()
+                        .and_then(|v| {
+                            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= 255.0 {
+                                Some(v as u8)
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| {
+                            js_error(
+                                "Invalid feature report result: data must be a Uint8Array or number[]",
+                            )
+                        })?;
+                    out.push(b);
+                }
+                Some(out)
+            } else {
+                return Err(js_error(
+                    "Invalid feature report result: data must be a Uint8Array, number[], or undefined",
+                ));
+            }
+        } else {
+            None
+        };
+
+        state
+            .dev
+            .push_feature_report_result(request_id, report_id, ok, bytes);
+        Ok(())
     }
 
     pub fn webusb_attach(&mut self, preferred_port: Option<u8>) -> Result<u32, JsValue> {
@@ -1778,6 +1860,30 @@ fn webhid_output_report_to_js(device_id: u32, report: UsbHidPassthroughOutputRep
     let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
     obj.into()
 }
+
+fn webhid_feature_report_request_to_js(
+    device_id: u32,
+    req: UsbHidPassthroughFeatureReportRequest,
+) -> JsValue {
+    let obj = Object::new();
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("deviceId"),
+        &JsValue::from_f64(f64::from(device_id)),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("requestId"),
+        &JsValue::from_f64(f64::from(req.request_id)),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("reportId"),
+        &JsValue::from_f64(f64::from(req.report_id)),
+    );
+    obj.into()
+}
+
 fn webusb_setup_packet_to_js(setup: PassthroughSetupPacket) -> JsValue {
     let obj = Object::new();
     let _ = Reflect::set(

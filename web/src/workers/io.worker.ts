@@ -578,6 +578,9 @@ function estimateQueuedSnapshotPausedBytes(msg: unknown): number {
   if (isHidInputReportMessage(msg)) {
     return msg.data.byteLength >>> 0;
   }
+  if (isHidFeatureReportResultMessage(msg)) {
+    return (msg.data?.byteLength ?? 0) >>> 0;
+  }
   if (isHidPassthroughInputReportMessage(msg)) {
     return msg.data.byteLength >>> 0;
   }
@@ -2442,6 +2445,10 @@ class CompositeHidGuestBridge implements HidGuestBridge {
 
   inputReport(msg: HidInputReportMessage): void {
     for (const sink of this.sinks) sink.inputReport(msg);
+  }
+
+  featureReportResult(msg: HidFeatureReportResultMessage): void {
+    for (const sink of this.sinks) sink.featureReportResult?.(msg);
   }
 
   poll(): void {

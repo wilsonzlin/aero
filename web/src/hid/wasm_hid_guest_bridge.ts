@@ -1,7 +1,7 @@
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import type { WasmApi } from "../runtime/wasm_context";
 
-import type { HidAttachMessage, HidDetachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
+import type { HidAttachMessage, HidDetachMessage, HidFeatureReportResultMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 
 export type HidTopologyManager = {
   attachDevice(deviceId: number, path: GuestUsbPath, kind: "webhid" | "usb-hid-passthrough", device: unknown): void;
@@ -19,6 +19,7 @@ export interface HidGuestBridge {
   attach(msg: HidAttachMessage): void;
   detach(msg: HidDetachMessage): void;
   inputReport(msg: HidInputReportMessage): void;
+  featureReportResult?(msg: HidFeatureReportResultMessage): void;
   poll?(): void;
   completeFeatureReportRequest?(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean;
   failFeatureReportRequest?(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean;

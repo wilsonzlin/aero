@@ -1,11 +1,12 @@
 import type { GuestUsbPath, GuestUsbPort } from "../platform/hid_passthrough_protocol";
 import { EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort } from "../usb/uhci_external_hub";
 
-import type { HidAttachMessage, HidDetachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
+import type { HidAttachMessage, HidDetachMessage, HidFeatureReportResultMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
 
 const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
 const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
+const MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK = 64;
 
 export type UhciRuntimeHidApi = {
   webhid_attach(
@@ -33,6 +34,15 @@ export type UhciRuntimeHidApi = {
   webhid_detach(deviceId: number): void;
   webhid_push_input_report(deviceId: number, reportId: number, data: Uint8Array): void;
   webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }>;
+
+  webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }>;
+  webhid_push_feature_report_result?(
+    deviceId: number,
+    requestId: number,
+    reportId: number,
+    ok: boolean,
+    data?: Uint8Array,
+  ): void;
 };
 
 function normalizePreferredPort(path: GuestUsbPath | undefined, guestPort: GuestUsbPort | undefined): number | undefined {
@@ -58,6 +68,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
   readonly #uhci: UhciRuntimeHidApi;
   readonly #host: HidHostSink;
   readonly #attached = new Set<number>();
+  readonly #pendingFeatureRequests: Array<{ deviceId: number; requestId: number; reportId: number }> = [];
 
   constructor(opts: { uhci: UhciRuntimeHidApi; host: HidHostSink }) {
     this.#uhci = opts.uhci;
@@ -141,17 +152,83 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
       return;
     }
 
-    if (!Array.isArray(drained) || drained.length === 0) return;
-    let remaining = MAX_HID_OUTPUT_REPORTS_PER_TICK;
-    for (const report of drained) {
-      if (remaining <= 0) return;
-      remaining -= 1;
-      this.#host.sendReport({
-        deviceId: report.deviceId >>> 0,
-        reportType: report.reportType,
-        reportId: report.reportId >>> 0,
-        data: report.data,
+    if (Array.isArray(drained) && drained.length) {
+      let remaining = MAX_HID_OUTPUT_REPORTS_PER_TICK;
+      for (const report of drained) {
+        if (remaining <= 0) break;
+        remaining -= 1;
+        this.#host.sendReport({
+          deviceId: report.deviceId >>> 0,
+          reportType: report.reportType,
+          reportId: report.reportId >>> 0,
+          data: report.data,
+        });
+      }
+    }
+
+    const drainFeatureRequests = this.#uhci.webhid_drain_feature_report_requests;
+    // The underlying runtime drain is destructive; only attempt it when supported.
+    if (typeof drainFeatureRequests !== "function") return;
+
+    let drainedFeature: Array<{ deviceId: number; requestId: number; reportId: number }> = [];
+    try {
+      drainedFeature = drainFeatureRequests.call(this.#uhci);
+    } catch {
+      return;
+    }
+
+    if (Array.isArray(drainedFeature) && drainedFeature.length) {
+      this.#pendingFeatureRequests.push(...drainedFeature);
+    }
+
+    let remainingFeature = MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK;
+    while (remainingFeature > 0 && this.#pendingFeatureRequests.length > 0) {
+      remainingFeature -= 1;
+      const req = this.#pendingFeatureRequests.shift()!;
+      this.#host.requestFeatureReport({
+        deviceId: req.deviceId >>> 0,
+        requestId: req.requestId >>> 0,
+        reportId: req.reportId >>> 0,
       });
+    }
+  }
+
+  completeFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean {
+    const apply = this.#uhci.webhid_push_feature_report_result;
+    if (typeof apply !== "function") return false;
+    try {
+      apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, true, msg.data);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.#host.error(`UHCI runtime completeFeatureReportRequest failed: ${message}`, msg.deviceId);
+      return false;
+    }
+  }
+
+  failFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean {
+    const apply = this.#uhci.webhid_push_feature_report_result;
+    if (typeof apply !== "function") return false;
+    try {
+      apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.#host.error(`UHCI runtime failFeatureReportRequest failed: ${message}`, msg.deviceId);
+      return false;
+    }
+  }
+
+  featureReportResult(msg: HidFeatureReportResultMessage): void {
+    if (msg.ok) {
+      this.completeFeatureReportRequest({
+        deviceId: msg.deviceId,
+        requestId: msg.requestId,
+        reportId: msg.reportId,
+        data: msg.data ?? new Uint8Array(),
+      });
+    } else {
+      this.failFeatureReportRequest({ deviceId: msg.deviceId, requestId: msg.requestId, reportId: msg.reportId, error: msg.error });
     }
   }
 

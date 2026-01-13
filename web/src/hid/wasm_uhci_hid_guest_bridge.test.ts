@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { WasmUhciHidGuestBridge, type UhciRuntimeHidApi } from "./wasm_uhci_hid_guest_bridge";
-import type { HidAttachMessage } from "./hid_proxy_protocol";
+import type { HidAttachMessage, HidFeatureReportResultMessage } from "./hid_proxy_protocol";
 import {
   EXTERNAL_HUB_ROOT_PORT,
   UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
@@ -173,7 +173,6 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     };
 
     const guest = new WasmUhciHidGuestBridge({ uhci, host });
-
     const huge = new Uint8Array(1024 * 1024);
     huge.set([1, 2, 3], 0);
     guest.inputReport({ type: "hid.inputReport", deviceId: 1, reportId: 2, data: huge as Uint8Array<ArrayBuffer> });
@@ -182,5 +181,71 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     const arg = webhid_push_input_report.mock.calls[0]![2] as Uint8Array;
     expect(arg.byteLength).toBe(64);
     expect(Array.from(arg.slice(0, 3))).toEqual([1, 2, 3]);
+  });
+
+  it("forwards drained feature report requests to the host sink", () => {
+    const webhid_attach = vi.fn(() => 0);
+    const webhid_detach = vi.fn();
+    const webhid_push_input_report = vi.fn();
+    const webhid_drain_output_reports = vi.fn(() => []);
+    const webhid_drain_feature_report_requests = vi.fn(() => [{ deviceId: 1, requestId: 10, reportId: 2 }]);
+
+    const uhci: UhciRuntimeHidApi = {
+      webhid_attach,
+      webhid_detach,
+      webhid_push_input_report,
+      webhid_drain_output_reports,
+      webhid_drain_feature_report_requests,
+    };
+
+    const host = {
+      sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const guest = new WasmUhciHidGuestBridge({ uhci, host });
+    guest.poll();
+
+    expect(webhid_drain_feature_report_requests).toHaveBeenCalled();
+    expect(host.requestFeatureReport).toHaveBeenCalledWith({ deviceId: 1, requestId: 10, reportId: 2 });
+  });
+
+  it("applies feature report results back into the UHCI runtime API", () => {
+    const webhid_attach = vi.fn(() => 0);
+    const webhid_detach = vi.fn();
+    const webhid_push_input_report = vi.fn();
+    const webhid_drain_output_reports = vi.fn(() => []);
+    const webhid_push_feature_report_result = vi.fn();
+
+    const uhci: UhciRuntimeHidApi = {
+      webhid_attach,
+      webhid_detach,
+      webhid_push_input_report,
+      webhid_drain_output_reports,
+      webhid_push_feature_report_result,
+    };
+
+    const host = {
+      sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const guest = new WasmUhciHidGuestBridge({ uhci, host });
+
+    const res: HidFeatureReportResultMessage = {
+      type: "hid.featureReportResult",
+      deviceId: 3,
+      requestId: 99,
+      reportId: 1,
+      ok: true,
+      data: Uint8Array.of(1, 2, 3),
+    };
+    guest.completeFeatureReportRequest({ deviceId: res.deviceId, requestId: res.requestId, reportId: res.reportId, data: res.data! });
+
+    expect(webhid_push_feature_report_result).toHaveBeenCalledWith(3, 99, 1, true, res.data);
   });
 });

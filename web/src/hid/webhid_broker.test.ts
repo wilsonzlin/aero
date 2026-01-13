@@ -9,7 +9,7 @@ import { HID_REPORT_RING_CTRL_BYTES, HidReportRing, HidReportType } from "../usb
 import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import { decodeHidInputReportRingRecord } from "./hid_input_report_ring";
 import { WebHidBroker } from "./webhid_broker";
-import type { HidAttachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
+import type { HidAttachMessage, HidFeatureReportResultMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 
 type FakeListener = (ev: MessageEvent<unknown>) => void;
 
@@ -1025,12 +1025,15 @@ describe("hid/WebHidBroker", () => {
       await flushMicrotasks();
 
       expect(order).toEqual(["sendReport", "receiveFeatureReport"]);
+      expect(device.receiveFeatureReport).toHaveBeenCalledWith(7);
 
       const result = port.posted.find(
         (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 1,
-      ) as any;
+      ) as { msg: HidFeatureReportResultMessage; transfer?: Transferable[] } | undefined;
       expect(result).toBeTruthy();
-      expect(result.msg).toMatchObject({ deviceId: id, reportId: 7, requestId: 1, ok: true });
+      expect(result!.msg).toMatchObject({ deviceId: id, reportId: 7, requestId: 1, ok: true });
+      expect(Array.from(result!.msg.data!)).toEqual([1, 2, 3]);
+      expect(result!.transfer?.[0]).toBe(result!.msg.data!.buffer);
     } finally {
       broker?.destroy();
       vi.useRealTimers();
