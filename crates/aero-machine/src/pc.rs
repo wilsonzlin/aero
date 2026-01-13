@@ -32,7 +32,7 @@ use crate::{GuestTime, MachineError, RunExit, SharedDisk, SPARSE_RAM_THRESHOLD_B
 pub struct PcMachineConfig {
     /// Guest RAM size in bytes.
     pub ram_size_bytes: u64,
-    /// Number of vCPUs (currently must be 1).
+    /// Number of vCPUs exposed via firmware tables (SMBIOS + ACPI).
     pub cpu_count: u8,
 
     pub enable_hda: bool,
@@ -156,7 +156,7 @@ impl PcMachine {
         cfg: PcMachineConfig,
         e1000_mac_addr: Option<[u8; 6]>,
     ) -> Result<Self, MachineError> {
-        if cfg.cpu_count != 1 {
+        if cfg.cpu_count == 0 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
 

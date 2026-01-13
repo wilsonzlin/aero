@@ -113,7 +113,10 @@ pub use pc::{PcMachine, PcMachineConfig};
 pub struct MachineConfig {
     /// Guest RAM size in bytes.
     pub ram_size_bytes: u64,
-    /// Number of vCPUs (currently must be 1).
+    /// Number of vCPUs exposed via firmware tables (SMBIOS + ACPI).
+    ///
+    /// Note: CPU execution in [`Machine`] is still single-core today, but guests may enumerate the
+    /// configured CPU topology via ACPI (e.g. MADT) for SMP bring-up contract testing.
     pub cpu_count: u8,
     /// Whether to attach canonical PC platform devices (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET).
     ///
@@ -396,10 +399,7 @@ impl fmt::Display for MachineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MachineError::InvalidCpuCount(count) => {
-                write!(
-                    f,
-                    "unsupported cpu_count {count} (only 1 is supported today)"
-                )
+                write!(f, "invalid cpu_count {count} (must be >= 1)")
             }
             MachineError::InvalidDiskSize(len) => write!(
                 f,
@@ -1875,7 +1875,7 @@ impl Machine {
     pub const DISK_ID_IDE_PRIMARY_MASTER: u32 = 2;
 
     pub fn new(cfg: MachineConfig) -> Result<Self, MachineError> {
-        if cfg.cpu_count != 1 {
+        if cfg.cpu_count == 0 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
         if cfg.enable_e1000 && cfg.enable_virtio_net {
