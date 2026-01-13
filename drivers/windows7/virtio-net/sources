@@ -10,6 +10,7 @@ INCLUDES=$(INCLUDES);.\include;..\virtio\common\include;..\virtio\common\os_shim
 
 SOURCES=src\aero_virtio_net.c \
         src\aero_virtio_net_offload.c \
+        src\virtio_net_hdr_offload.c \
         ..\virtio\common\src\virtio_pci_aero_layout_miniport.c \
         ..\virtio\common\src\virtio_pci_modern_miniport.c \
         ..\virtio\common\src\virtqueue_split_legacy.c \

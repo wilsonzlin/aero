@@ -19,3 +19,6 @@ set_target_properties(aero_virtio_net_offload_tests PROPERTIES
 
 add_test(NAME aero_virtio_net_offload_tests COMMAND aero_virtio_net_offload_tests)
 
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/host/CMakeLists.txt")
+    add_subdirectory(host)
+endif ()

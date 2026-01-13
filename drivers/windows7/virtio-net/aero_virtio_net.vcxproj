@@ -73,6 +73,7 @@
   <ItemGroup>
     <ClCompile Include="src\aero_virtio_net.c" />
     <ClCompile Include="src\aero_virtio_net_offload.c" />
+    <ClCompile Include="src\virtio_net_hdr_offload.c" />
     <ClCompile Include="..\virtio\common\src\virtio_pci_aero_layout_miniport.c" />
     <ClCompile Include="..\virtio\common\src\virtio_pci_modern_miniport.c" />
     <ClCompile Include="..\virtio\common\src\virtqueue_split_legacy.c" />
@@ -80,6 +81,7 @@
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
     <ClInclude Include="include\aero_virtio_net.h" />
     <ClInclude Include="include\aero_virtio_net_offload.h" />
+    <ClInclude Include="include\virtio_net_hdr_offload.h" />
     <None Include="inf\aero_virtio_net.inf" />
   </ItemGroup>
 

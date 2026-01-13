@@ -47,10 +47,6 @@
 // virtio-net device status bits (config.status) if VIRTIO_NET_F_STATUS is negotiated.
 #define VIRTIO_NET_S_LINK_UP 1u
 
-// virtio-net header flags (struct virtio_net_hdr::flags).
-#define VIRTIO_NET_HDR_F_NEEDS_CSUM 1u
-#define VIRTIO_NET_HDR_F_DATA_VALID 2u
-
 #pragma pack(push, 1)
 typedef struct _VIRTIO_NET_HDR {
   UCHAR Flags;
@@ -67,7 +63,6 @@ C_ASSERT(sizeof(VIRTIO_NET_HDR) == 10);
 // These are used on both TX and RX when checksum/GSO features are negotiated.
 #define VIRTIO_NET_HDR_F_NEEDS_CSUM 0x01u
 #define VIRTIO_NET_HDR_F_DATA_VALID 0x02u
-
 typedef struct _VIRTIO_NET_CONFIG {
   UCHAR Mac[6];
   USHORT Status;
