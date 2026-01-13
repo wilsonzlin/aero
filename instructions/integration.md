@@ -151,8 +151,8 @@ relevant crates/tests.
 | DM-001 | PIC (8259A) | Implemented | P0 | None | Medium | `crates/devices/src/pic8259.rs` |
 | DM-002 | PIT (8254) | Implemented | P0 | None | Medium | `crates/devices/src/pit8254.rs` |
 | DM-003 | CMOS/RTC | Implemented | P0 | None | Medium | `crates/devices/src/rtc_cmos.rs` |
-| DM-004 | Local APIC | Implemented (multi-LAPIC topology; BSP-centric delivery) | P0 | None | High | `crates/platform/src/interrupts/*`, MMIO adapters in `crates/aero-machine/src/lib.rs` |
-| DM-005 | I/O APIC | Implemented | P0 | DM-004 | High | `crates/platform/src/interrupts/*`, MMIO adapters in `crates/aero-machine/src/lib.rs` |
+| DM-004 | Local APIC | Implemented (multi-LAPIC topology; BSP-centric delivery) | P0 | None | High | Core model: `crates/aero-interrupts/src/apic/local_apic.rs`; routing glue in `crates/platform/src/interrupts/router.rs`; MMIO adapters in `crates/aero-machine/src/lib.rs` |
+| DM-005 | I/O APIC | Implemented | P0 | DM-004 | High | Core model: `crates/aero-interrupts/src/apic/io_apic.rs`; routing glue in `crates/platform/src/interrupts/router.rs`; MMIO adapters in `crates/aero-machine/src/lib.rs` |
 | DM-006 | HPET | Implemented | P0 | None | Medium | `crates/devices/src/hpet.rs` |
 | DM-007 | PCI configuration space | Implemented | P0 | None | High | `crates/devices/src/pci/*` |
 | DM-008 | PCI device enumeration | Implemented | P0 | DM-007 | Medium | `aero_devices::pci::bios_post` + `crates/aero-machine/tests/win7_storage_topology.rs` |
