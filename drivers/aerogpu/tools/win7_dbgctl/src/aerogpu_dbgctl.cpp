@@ -703,6 +703,8 @@ static const wchar_t *SelftestErrorToString(uint32_t code) {
     return L"CURSOR_REGS_OUT_OF_RANGE";
   case AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH:
     return L"CURSOR_RW_MISMATCH";
+  case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED:
+    return L"VBLANK_IRQ_NOT_DELIVERED";
   default:
     return L"UNKNOWN";
   }

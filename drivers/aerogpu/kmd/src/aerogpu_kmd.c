@@ -7352,11 +7352,33 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
 
             if (scanoutEnabled) {
+                ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+                if (periodNs == 0) {
+                    periodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+                }
+                ULONG periodMs = (periodNs + 999999u) / 1000000u;
+                if (periodMs == 0) {
+                    periodMs = 1;
+                }
+
+                ULONG seqWaitMs = periodMs * 2u;
+                if (seqWaitMs < 10u) {
+                    seqWaitMs = 10u;
+                }
+                if (seqWaitMs > 2000u) {
+                    seqWaitMs = 2000u;
+                }
+                const ULONGLONG seqNow100ns = KeQueryInterruptTime();
+                ULONGLONG seqDeadline = seqNow100ns + ((ULONGLONG)seqWaitMs * 10000ull);
+                if (seqDeadline > deadline) {
+                    seqDeadline = deadline;
+                }
+
                 const ULONGLONG seq0 = AeroGpuReadRegU64HiLoHi(adapter,
                                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
                                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
                 ULONGLONG seqNow = seq0;
-                while (KeQueryInterruptTime() < deadline) {
+                while (KeQueryInterruptTime() < seqDeadline) {
                     LARGE_INTEGER interval;
                     interval.QuadPart = -10000; /* 1ms */
                     KeDelayExecutionThread(KernelMode, FALSE, &interval);
@@ -7403,14 +7425,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                      * Keep OS interrupt delivery disabled only briefly. A long disable window can
                      * starve dxgkrnl of DMA completion interrupts.
                      */
-                    ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
-                    if (periodNs == 0) {
-                        periodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
-                    }
-                    ULONG periodMs = (periodNs + 999999u) / 1000000u;
-                    if (periodMs == 0) {
-                        periodMs = 1;
-                    }
                     ULONG irqWaitMs = periodMs * 3u;
                     if (irqWaitMs < 10u) {
                         irqWaitMs = 10u;
@@ -7519,6 +7533,75 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 }
 
             skip_vblank_irq_test:;
+
+                /*
+                 * IRQ delivery sanity: ensure the vblank interrupt reaches our ISR.
+                 *
+                 * This uses PerfIrqVblankDelivered which is incremented in the ISR only.
+                 */
+                if (!adapter->InterruptRegistered) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED;
+                    return STATUS_SUCCESS;
+                }
+
+                const LONGLONG delivered0 = InterlockedCompareExchange64(&adapter->PerfIrqVblankDelivered, 0, 0);
+                BOOLEAN origVblankEnabled = FALSE;
+                {
+                    KIRQL oldIrql;
+                    KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                    const ULONG cur = adapter->IrqEnableMask;
+                    origVblankEnabled = ((cur & AEROGPU_IRQ_SCANOUT_VBLANK) != 0);
+                    const ULONG enable = cur | AEROGPU_IRQ_SCANOUT_VBLANK;
+                    adapter->IrqEnableMask = enable;
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                    KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                }
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+
+                ULONG deliveryWaitMs = periodMs * 2u;
+                if (deliveryWaitMs < 10u) {
+                    deliveryWaitMs = 10u;
+                }
+                if (deliveryWaitMs > 5000u) {
+                    deliveryWaitMs = 5000u;
+                }
+                const ULONGLONG deliveryNow100ns = KeQueryInterruptTime();
+                ULONGLONG deliveryDeadline = deliveryNow100ns + ((ULONGLONG)deliveryWaitMs * 10000ull);
+                if (deliveryDeadline > deadline) {
+                    deliveryDeadline = deadline;
+                }
+
+                BOOLEAN delivered = FALSE;
+                while (KeQueryInterruptTime() < deliveryDeadline) {
+                    const LONGLONG deliveredNow = InterlockedCompareExchange64(&adapter->PerfIrqVblankDelivered, 0, 0);
+                    if (deliveredNow != delivered0) {
+                        delivered = TRUE;
+                        break;
+                    }
+                    LARGE_INTEGER interval;
+                    interval.QuadPart = -10000; /* 1ms */
+                    KeDelayExecutionThread(KernelMode, FALSE, &interval);
+                }
+
+                {
+                    KIRQL oldIrql;
+                    KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                    ULONG enable = adapter->IrqEnableMask;
+                    if (origVblankEnabled) {
+                        enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
+                    } else {
+                        enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                    }
+                    adapter->IrqEnableMask = enable;
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                    KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                }
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+
+                if (!delivered) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED;
+                    return STATUS_SUCCESS;
+                }
             }
         }
 

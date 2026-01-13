@@ -66,6 +66,8 @@ enum aerogpu_dbgctl_selftest_error {
   /* Cursor sanity (optional, gated by AEROGPU_FEATURE_CURSOR). */
   AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE = 11,
   AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH = 12,
+  /* IRQ delivery sanity (optional, gated by AEROGPU_FEATURE_VBLANK + scanout enabled). */
+  AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED = 13,
 };
 
 #pragma pack(push, 1)
