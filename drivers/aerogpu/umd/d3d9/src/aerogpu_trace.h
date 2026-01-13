@@ -32,7 +32,10 @@ inline uint64_t d3d9_trace_arg_ptr(const void* ptr) {
   return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(ptr));
 }
 
-// Function identifiers for the D3D9UMDDI entrypoints implemented by this UMD.
+// Function identifiers for traced D3D9 UMD calls.
+//
+// Most values correspond to D3D9UMDDI entrypoints implemented by this UMD, but
+// a small number are trace-only IDs used by host tests.
 enum class D3d9TraceFunc : uint16_t {
   OpenAdapter = 0,
   OpenAdapter2,
