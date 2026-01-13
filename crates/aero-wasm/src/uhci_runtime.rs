@@ -18,6 +18,8 @@ use aero_usb::passthrough::{
 };
 use aero_usb::uhci::UhciController;
 
+use crate::guest_memory_bus::wasm_memory_byte_len;
+
 const DEFAULT_IO_BASE: u16 = 0x5000;
 const DEFAULT_IRQ_LINE: u8 = 11;
 const PORT_COUNT: usize = 2;
@@ -39,8 +41,7 @@ fn new_guest_memory_bus(
     guest_base: u32,
     guest_size: u32,
 ) -> Result<crate::guest_memory_bus::GuestMemoryBus, JsValue> {
-    let pages = core::arch::wasm32::memory_size(0) as u64;
-    let mem_bytes = pages.saturating_mul(64 * 1024);
+    let mem_bytes = wasm_memory_byte_len();
 
     // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
     //

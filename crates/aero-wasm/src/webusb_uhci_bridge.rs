@@ -8,7 +8,9 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, S
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::UhciController;
-use aero_usb::{MemoryBus, UsbWebUsbPassthroughDevice};
+use aero_usb::UsbWebUsbPassthroughDevice;
+
+use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len};
 
 const WEBUSB_UHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"WUHB";
 const WEBUSB_UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -20,16 +22,6 @@ const ROOT_PORT_EXTERNAL_HUB: usize = 0;
 const ROOT_PORT_WEBUSB: usize = 1;
 // Must match `web/src/usb/uhci_external_hub.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
 const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
-
-struct NoDmaMemory;
-
-impl MemoryBus for NoDmaMemory {
-    fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
-        buf.fill(0xFF);
-    }
-
-    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
-}
 
 #[wasm_bindgen]
 pub struct WebUsbUhciBridge {
@@ -106,12 +98,11 @@ impl WebUsbUhciBridge {
         // internal frame counter and root hub state (port reset timing, remote wake, etc).
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
-            let pages = core::arch::wasm32::memory_size(0) as u64;
-            let mem_bytes = pages.saturating_mul(64 * 1024);
+            let mem_bytes = wasm_memory_byte_len();
             let guest_size = mem_bytes
                 .saturating_sub(self.guest_base as u64)
                 .min(crate::guest_layout::PCI_MMIO_BASE);
-            let mut mem = crate::guest_memory_bus::GuestMemoryBus::new(self.guest_base, guest_size);
+            let mut mem = GuestMemoryBus::new(self.guest_base, guest_size);
             for _ in 0..frames {
                 self.controller.tick_1ms(&mut mem);
             }

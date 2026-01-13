@@ -1,85 +1,62 @@
 //! Shared guest-memory `MemoryBus` implementation for wasm-side device bridges.
 //!
-//! Multiple wasm device bridges (UHCI/WebUSB/etc.) need to DMA into guest RAM stored inside the
-//! module's linear memory. Guest physical address translation must account for the Q35 RAM layout
-//! hole between the PCIe ECAM base and 4GiB (see [`crate::guest_phys`]).
+//! UHCI (and other DMA-capable devices) need to read and write guest physical memory. In the web
+//! runtime, guest RAM is stored as a contiguous byte buffer inside the module's WebAssembly linear
+//! memory, with guest physical address 0 mapping to `guest_base` within the linear memory.
 //!
 //! This module centralizes the translation + copy semantics to avoid drift across bridges.
 //!
 //! Semantics preserved from the historical per-bridge implementations:
-//! - Reads from the PCI/MMIO hole return `0xFF` bytes (open bus).
+//! - Reads from the PCI/ECAM hole return `0xFF` bytes (open bus).
 //! - Reads out of bounds return `0x00` bytes.
 //! - Writes to the hole or out of bounds are ignored.
-//! - All arithmetic is overflow-checked; callers will never observe panics from malformed inputs.
+//! - Overflow handling uses `checked_add` and matches historical behavior.
 
 use aero_usb::MemoryBus;
 
-/// Guest RAM accessor backed by a contiguous region of linear memory.
+/// Abstract access to the underlying linear-memory backing store.
 ///
-/// In the browser runtime, `guest_base` is the byte offset inside wasm linear memory where guest
-/// physical address 0 begins (see the `guest_ram_layout` contract). In host-side unit tests it may
-/// be an actual host pointer value; the implementation treats it purely as an address.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct GuestMemoryBus {
-    guest_base: u64,
+/// In wasm32 builds this is implemented by directly copying from/to the module's linear memory via
+/// raw pointers. In unit tests we can provide an in-memory implementation.
+pub(crate) trait LinearMemory {
+    fn read(&self, linear: u32, dst: &mut [u8]);
+    fn write(&mut self, linear: u32, src: &[u8]);
+}
+
+/// Generic guest-RAM-backed memory bus.
+///
+/// `guest_base` is a byte offset inside the linear memory where guest physical address 0 begins.
+/// `ram_bytes` is the total guest RAM size in bytes (after any clamping in the caller).
+#[derive(Debug, Clone)]
+pub(crate) struct GuestMemoryBusImpl<M> {
+    mem: M,
+    guest_base: u32,
     ram_bytes: u64,
 }
 
-impl GuestMemoryBus {
-    /// Create a new guest-memory bus with the given base offset/pointer and RAM size.
-    pub(crate) fn new(guest_base: u32, ram_bytes: u64) -> Self {
-        Self {
-            guest_base: u64::from(guest_base),
-            ram_bytes,
-        }
-    }
+impl<M: Copy> Copy for GuestMemoryBusImpl<M> {}
 
-    /// Create a new guest-memory bus using a raw address for `guest_base`.
-    ///
-    /// This is intended for non-wasm tests/harnesses where guest RAM is backed by a native
-    /// allocation (e.g. `Vec<u8>`). The address is still range-checked and never dereferenced if
-    /// it cannot be represented safely.
-    #[cfg(test)]
-    pub(crate) fn new_raw(guest_base: usize, ram_bytes: u64) -> Self {
+impl<M> GuestMemoryBusImpl<M> {
+    pub(crate) fn new_with_memory(mem: M, guest_base: u32, ram_bytes: u64) -> Self {
         Self {
-            guest_base: guest_base as u64,
+            mem,
+            guest_base,
             ram_bytes,
         }
     }
 
     #[inline]
-    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
-        // Ensure the translated RAM range is within the configured guest RAM size.
+    fn linear_u32(&self, ram_offset: u64, len: usize) -> Option<u32> {
         let end = ram_offset.checked_add(len as u64)?;
         if end > self.ram_bytes {
             return None;
         }
-
-        // Translate RAM offset to a linear memory address.
-        let linear = self.guest_base.checked_add(ram_offset)?;
-        let linear_usize = usize::try_from(linear).ok()?;
-        // Ensure `linear + len` does not overflow `usize` so pointer range math cannot wrap.
-        let _ = linear_usize.checked_add(len)?;
-        Some(linear_usize as *const u8)
-    }
-
-    #[inline]
-    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
-        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
-    }
-
-    #[inline]
-    fn fill_slice(buf: &mut [u8], start: usize, len: usize, value: u8) -> Result<(), ()> {
-        let end = start.checked_add(len).ok_or(())?;
-        if end > buf.len() {
-            return Err(());
-        }
-        buf[start..end].fill(value);
-        Ok(())
+        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
+        u32::try_from(linear).ok()
     }
 }
 
-impl MemoryBus for GuestMemoryBus {
+impl<M: LinearMemory> MemoryBus for GuestMemoryBusImpl<M> {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         if buf.is_empty() {
             return;
@@ -89,51 +66,27 @@ impl MemoryBus for GuestMemoryBus {
         let mut off = 0usize;
 
         while off < buf.len() {
-            let remaining = buf.len().saturating_sub(off);
-            if remaining == 0 {
-                break;
-            }
-
+            let remaining = buf.len() - off;
             let chunk = crate::guest_phys::translate_guest_paddr_chunk(
                 self.ram_bytes,
                 cur_paddr,
                 remaining,
             );
-
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
+                    let Some(linear) = self.linear_u32(ram_offset, len) else {
                         buf[off..].fill(0);
                         return;
                     };
-
-                    let end = match off.checked_add(len) {
-                        Some(v) if v <= buf.len() => v,
-                        _ => {
-                            buf[off..].fill(0);
-                            return;
-                        }
-                    };
-
-                    // Safety: `linear_ptr` ensures the range fits within the configured guest RAM
-                    // and that the computed linear address range cannot wrap `usize`.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(ptr, buf[off..end].as_mut_ptr(), len);
-                    }
+                    self.mem.read(linear, &mut buf[off..off + len]);
                     len
                 }
                 crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    if Self::fill_slice(buf, off, len, 0xFF).is_err() {
-                        buf[off..].fill(0);
-                        return;
-                    }
+                    buf[off..off + len].fill(0xFF);
                     len
                 }
                 crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    if Self::fill_slice(buf, off, len, 0).is_err() {
-                        buf[off..].fill(0);
-                        return;
-                    }
+                    buf[off..off + len].fill(0);
                     len
                 }
             };
@@ -141,21 +94,10 @@ impl MemoryBus for GuestMemoryBus {
             if chunk_len == 0 {
                 break;
             }
-
-            off = match off.checked_add(chunk_len) {
-                Some(v) if v <= buf.len() => v,
-                _ => {
-                    // Internal arithmetic overflow; treat the rest as out-of-bounds.
-                    buf.fill(0);
-                    return;
-                }
-            };
-
+            off += chunk_len;
             cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
                 Some(v) => v,
                 None => {
-                    // Preserve legacy semantics: overflow while advancing the address terminates the
-                    // transfer and zero-fills any remaining bytes.
                     buf[off..].fill(0);
                     return;
                 }
@@ -172,33 +114,18 @@ impl MemoryBus for GuestMemoryBus {
         let mut off = 0usize;
 
         while off < buf.len() {
-            let remaining = buf.len().saturating_sub(off);
-            if remaining == 0 {
-                break;
-            }
-
+            let remaining = buf.len() - off;
             let chunk = crate::guest_phys::translate_guest_paddr_chunk(
                 self.ram_bytes,
                 cur_paddr,
                 remaining,
             );
-
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
+                    let Some(linear) = self.linear_u32(ram_offset, len) else {
                         return;
                     };
-
-                    let end = match off.checked_add(len) {
-                        Some(v) if v <= buf.len() => v,
-                        _ => return,
-                    };
-
-                    // Safety: `linear_ptr_mut` ensures the range fits within the configured guest
-                    // RAM and that the computed linear address range cannot wrap `usize`.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(buf[off..end].as_ptr(), ptr, len);
-                    }
+                    self.mem.write(linear, &buf[off..off + len]);
                     len
                 }
                 crate::guest_phys::GuestRamChunk::Hole { len } => {
@@ -206,7 +133,7 @@ impl MemoryBus for GuestMemoryBus {
                     len
                 }
                 crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    // Preserve historical semantics: ignore out-of-range writes.
+                    // Preserve existing semantics: out-of-range writes are ignored.
                     len
                 }
             };
@@ -214,12 +141,7 @@ impl MemoryBus for GuestMemoryBus {
             if chunk_len == 0 {
                 break;
             }
-
-            off = match off.checked_add(chunk_len) {
-                Some(v) if v <= buf.len() => v,
-                _ => return,
-            };
-
+            off += chunk_len;
             cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
                 Some(v) => v,
                 None => return,
@@ -228,57 +150,230 @@ impl MemoryBus for GuestMemoryBus {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::GuestMemoryBus;
+/// Memory bus used when PCI bus mastering (DMA) is disabled.
+///
+/// Reads return open bus (`0xFF`) and writes are ignored.
+pub(crate) struct NoDmaMemory;
 
-    use aero_usb::MemoryBus;
-
-    #[test]
-    fn guest_memory_bus_new_is_safe_without_valid_backing_memory() {
-        // `GuestMemoryBus::new` is the constructor used by wasm-side callers where `guest_base` is a
-        // linear-memory offset. In host tests we can still exercise it by using a zero-length RAM
-        // region so the bus never dereferences the base address.
-        let mut bus = GuestMemoryBus::new(0, 0);
-        let mut buf = [0xAAu8; 4];
-        bus.read_physical(0, &mut buf);
-        assert_eq!(buf, [0u8; 4]);
+impl MemoryBus for NoDmaMemory {
+    fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+        buf.fill(0xFF);
     }
 
-    #[test]
-    fn guest_memory_bus_read_write_and_fill_semantics() {
-        let mut backing = vec![0u8; 0x100];
-        let base = backing.as_mut_ptr() as usize;
+    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+}
 
-        let mut bus = GuestMemoryBus::new_raw(base, backing.len() as u64);
+// -------------------------------------------------------------------------------------------------
+// wasm32 backing implementation
+// -------------------------------------------------------------------------------------------------
 
-        // In-bounds write + read.
-        bus.write_physical(0x10, &[1, 2, 3, 4]);
-        assert_eq!(&backing[0x10..0x14], &[1, 2, 3, 4]);
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WasmLinearMemory;
 
-        let mut tmp = [0u8; 4];
-        bus.read_physical(0x10, &mut tmp);
-        assert_eq!(tmp, [1, 2, 3, 4]);
-
-        // Hole reads are open bus (0xFF).
-        let mut hole = [0u8; 8];
-        bus.read_physical(crate::guest_phys::PCIE_ECAM_BASE, &mut hole);
-        assert_eq!(hole, [0xFF; 8]);
-
-        // Out-of-bounds reads return 0.
-        let mut oob = [0xAAu8; 8];
-        bus.read_physical(backing.len() as u64 + 1, &mut oob);
-        assert_eq!(oob, [0u8; 8]);
+#[cfg(target_arch = "wasm32")]
+impl LinearMemory for WasmLinearMemory {
+    #[inline]
+    fn read(&self, linear: u32, dst: &mut [u8]) {
+        // Safety: Callers validate `linear` is within the module's linear memory and that the
+        // requested range lies within the configured guest RAM size.
+        unsafe {
+            core::ptr::copy_nonoverlapping(linear as *const u8, dst.as_mut_ptr(), dst.len());
+        }
     }
 
-    #[test]
-    fn guest_memory_bus_does_not_panic_on_overflowing_address() {
-        let mut backing = vec![0u8; 0x10];
-        let base = backing.as_mut_ptr() as usize;
-        let mut bus = GuestMemoryBus::new_raw(base, backing.len() as u64);
-
-        let mut buf = [0xAAu8; 4];
-        bus.read_physical(u64::MAX - 1, &mut buf);
-        assert_eq!(buf, [0u8; 4]);
+    #[inline]
+    fn write(&mut self, linear: u32, src: &[u8]) {
+        // Safety: Callers validate `linear` is within the module's linear memory and that the
+        // requested range lies within the configured guest RAM size.
+        unsafe {
+            core::ptr::copy_nonoverlapping(src.as_ptr(), linear as *mut u8, src.len());
+        }
     }
 }
+
+/// Canonical guest-RAM memory bus backed by the module's wasm linear memory.
+#[cfg(target_arch = "wasm32")]
+pub(crate) type GuestMemoryBus = GuestMemoryBusImpl<WasmLinearMemory>;
+
+#[cfg(target_arch = "wasm32")]
+impl GuestMemoryBus {
+    pub(crate) fn new(guest_base: u32, ram_bytes: u64) -> Self {
+        Self::new_with_memory(WasmLinearMemory, guest_base, ram_bytes)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn wasm_memory_byte_len() -> u64 {
+    let pages = core::arch::wasm32::memory_size(0) as u64;
+    pages.saturating_mul(64 * 1024)
+}
+
+// -------------------------------------------------------------------------------------------------
+// Tests
+// -------------------------------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::guest_phys::{HIGH_RAM_BASE, PCIE_ECAM_BASE};
+
+    #[derive(Clone, Debug)]
+    struct VecLinearMemory {
+        buf: Vec<u8>,
+        read_calls: std::cell::Cell<usize>,
+        write_calls: std::cell::Cell<usize>,
+    }
+
+    impl VecLinearMemory {
+        fn new(len: usize) -> Self {
+            Self {
+                buf: vec![0u8; len],
+                read_calls: std::cell::Cell::new(0),
+                write_calls: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl LinearMemory for VecLinearMemory {
+        fn read(&self, linear: u32, dst: &mut [u8]) {
+            self.read_calls.set(self.read_calls.get() + 1);
+            let start = linear as usize;
+            let end = start + dst.len();
+            dst.copy_from_slice(&self.buf[start..end]);
+        }
+
+        fn write(&mut self, linear: u32, src: &[u8]) {
+            self.write_calls.set(self.write_calls.get() + 1);
+            let start = linear as usize;
+            let end = start + src.len();
+            self.buf[start..end].copy_from_slice(src);
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct SparseLinearMemory {
+        bytes: std::collections::HashMap<u32, u8>,
+        write_calls: usize,
+    }
+
+    impl SparseLinearMemory {
+        fn new() -> Self {
+            Self {
+                bytes: std::collections::HashMap::new(),
+                write_calls: 0,
+            }
+        }
+
+        fn set_range(&mut self, linear: u32, data: &[u8]) {
+            for (i, b) in data.iter().enumerate() {
+                self.bytes.insert(linear + i as u32, *b);
+            }
+        }
+
+        fn get_range(&self, linear: u32, len: usize) -> Vec<u8> {
+            (0..len)
+                .map(|i| *self.bytes.get(&(linear + i as u32)).unwrap_or(&0))
+                .collect()
+        }
+    }
+
+    impl LinearMemory for SparseLinearMemory {
+        fn read(&self, linear: u32, dst: &mut [u8]) {
+            for (i, b) in dst.iter_mut().enumerate() {
+                *b = *self.bytes.get(&(linear + i as u32)).unwrap_or(&0);
+            }
+        }
+
+        fn write(&mut self, linear: u32, src: &[u8]) {
+            self.write_calls += 1;
+            for (i, b) in src.iter().enumerate() {
+                self.bytes.insert(linear + i as u32, *b);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_buffers_are_no_ops() {
+        let mem = VecLinearMemory::new(0x100);
+        let mut bus = GuestMemoryBusImpl::new_with_memory(mem, 0, 0x100);
+
+        bus.read_physical(0, &mut []);
+        bus.write_physical(0, &[]);
+
+        assert_eq!(bus.mem.read_calls.get(), 0);
+        assert_eq!(bus.mem.write_calls.get(), 0);
+    }
+
+    #[test]
+    fn no_dma_memory_reads_as_open_bus() {
+        let mut mem = NoDmaMemory;
+        let mut buf = [0u8; 4];
+        mem.read_physical(0, &mut buf);
+        assert_eq!(buf, [0xFF; 4]);
+        mem.write_physical(0, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn ram_to_out_of_bounds_read_fills_with_zero() {
+        let mut mem = VecLinearMemory::new(0x2000);
+        mem.buf[0x1FFE] = 0xAA;
+        mem.buf[0x1FFF] = 0xBB;
+
+        let mut bus = GuestMemoryBusImpl::new_with_memory(mem, 0, 0x2000);
+
+        let mut buf = [0u8; 4];
+        bus.read_physical(0x1FFE, &mut buf);
+        assert_eq!(buf, [0xAA, 0xBB, 0x00, 0x00]);
+
+        bus.write_physical(0x1FFE, &[1, 2, 3, 4]);
+        assert_eq!(bus.mem.buf[0x1FFE], 1);
+        assert_eq!(bus.mem.buf[0x1FFF], 2);
+    }
+
+    #[test]
+    fn ram_to_hole_read_fills_with_ff_and_ignores_writes() {
+        let mut mem = SparseLinearMemory::new();
+        mem.set_range(PCIE_ECAM_BASE as u32 - 4, &[0x11, 0x22, 0x33, 0x44]);
+
+        let ram_bytes = PCIE_ECAM_BASE + 0x1000;
+        let mut bus = GuestMemoryBusImpl::new_with_memory(mem, 0, ram_bytes);
+
+        let mut buf = [0u8; 8];
+        bus.read_physical(PCIE_ECAM_BASE - 4, &mut buf);
+        assert_eq!(buf, [0x11, 0x22, 0x33, 0x44, 0xFF, 0xFF, 0xFF, 0xFF]);
+
+        bus.write_physical(
+            PCIE_ECAM_BASE - 4,
+            &[0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7],
+        );
+        assert_eq!(
+            bus.mem.get_range(PCIE_ECAM_BASE as u32 - 4, 4),
+            vec![0xA0, 0xA1, 0xA2, 0xA3]
+        );
+        // Ensure the hole write did not create entries for the hole region.
+        assert!(bus.mem.bytes.get(&(PCIE_ECAM_BASE as u32)).is_none());
+    }
+
+    #[test]
+    fn hole_to_high_ram_crosses_and_writes_only_to_ram() {
+        let mut mem = SparseLinearMemory::new();
+        // High RAM physical 4GiB maps to RAM offset PCIE_ECAM_BASE.
+        mem.set_range(PCIE_ECAM_BASE as u32, &[0x55, 0x66, 0x77, 0x88]);
+
+        let ram_bytes = PCIE_ECAM_BASE + 0x1000;
+        let mut bus = GuestMemoryBusImpl::new_with_memory(mem, 0, ram_bytes);
+
+        let mut buf = [0u8; 4];
+        bus.read_physical(HIGH_RAM_BASE - 2, &mut buf);
+        assert_eq!(buf, [0xFF, 0xFF, 0x55, 0x66]);
+
+        bus.write_physical(HIGH_RAM_BASE - 2, &[0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(
+            bus.mem.get_range(PCIE_ECAM_BASE as u32, 4),
+            vec![0x03, 0x04, 0x77, 0x88]
+        );
+    }
+}
+
