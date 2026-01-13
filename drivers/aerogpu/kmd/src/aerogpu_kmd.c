@@ -3165,14 +3165,64 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
     _In_ const PVOID MiniportDeviceContext,
     _Inout_ DXGKARG_STOPDEVICEANDRELEASEPOSTDISPLAYOWNERSHIP* pStopDeviceAndReleasePostDisplayOwnership)
 {
-    UNREFERENCED_PARAMETER(pStopDeviceAndReleasePostDisplayOwnership);
-
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)MiniportDeviceContext;
     if (!adapter) {
         return STATUS_INVALID_PARAMETER;
     }
 
     AEROGPU_LOG0("StopDeviceAndReleasePostDisplayOwnership");
+
+    /*
+     * Report the current scanout mode + framebuffer so dxgkrnl can transition
+     * cleanly to the next owner (boot/basic/VGA).
+     *
+     * Best-effort: if the device isn't mapped (early init/teardown), report no
+     * framebuffer.
+     */
+    if (pStopDeviceAndReleasePostDisplayOwnership) {
+        if (adapter->Bar0) {
+            AEROGPU_SCANOUT_MMIO_SNAPSHOT mmio;
+            if (AeroGpuGetScanoutMmioSnapshot(adapter, &mmio) && AeroGpuIsPlausibleScanoutSnapshot(&mmio)) {
+                adapter->CurrentWidth = mmio.Width;
+                adapter->CurrentHeight = mmio.Height;
+                adapter->CurrentPitch = mmio.PitchBytes;
+                adapter->CurrentFormat = mmio.Format;
+                adapter->CurrentScanoutFbPa = mmio.FbPa;
+            }
+        } else {
+            PHYSICAL_ADDRESS zero;
+            zero.QuadPart = 0;
+            adapter->CurrentScanoutFbPa = zero;
+        }
+
+        DXGK_DISPLAY_INFORMATION* displayInfo = pStopDeviceAndReleasePostDisplayOwnership->pDisplayInfo;
+        if (displayInfo) {
+            RtlZeroMemory(displayInfo, sizeof(*displayInfo));
+            displayInfo->Width = adapter->CurrentWidth;
+            displayInfo->Height = adapter->CurrentHeight;
+            displayInfo->Pitch = adapter->CurrentPitch;
+            displayInfo->ColorFormat = AeroGpuDdiColorFormatFromScanoutFormat(adapter->CurrentFormat);
+            displayInfo->PhysicalAddress = adapter->CurrentScanoutFbPa;
+            displayInfo->TargetId = AEROGPU_VIDPN_TARGET_ID;
+        }
+
+        DXGK_FRAMEBUFFER_INFORMATION* fbInfo = pStopDeviceAndReleasePostDisplayOwnership->pFrameBufferInfo;
+        if (fbInfo) {
+            RtlZeroMemory(fbInfo, sizeof(*fbInfo));
+            fbInfo->FrameBufferBase = adapter->CurrentScanoutFbPa;
+
+            ULONGLONG len = 0;
+            if (adapter->CurrentPitch != 0 && adapter->CurrentHeight != 0) {
+                len = (ULONGLONG)adapter->CurrentPitch * (ULONGLONG)adapter->CurrentHeight;
+            }
+            if (len > 0xFFFFFFFFull) {
+                len = 0xFFFFFFFFull;
+            }
+            fbInfo->FrameBufferLength = (ULONG)len;
+
+            fbInfo->FrameBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
+        }
+    }
 
     /*
      * dxgkrnl can request post-display ownership release during shutdown /
@@ -3312,7 +3362,6 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
             fbInfo->FrameBufferLength = (ULONG)len;
 
             fbInfo->FrameBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
-            fbInfo->FrameBufferSegmentOffset = 0;
         }
     }
 
