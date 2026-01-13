@@ -33,7 +33,9 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 256 });
+    // Keep the guest RAM allocation modest to avoid unnecessary memory pressure when Playwright
+    // runs tests fully-parallel across multiple browsers.
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
     const guestBase = views.guestLayout.guest_base >>> 0;
