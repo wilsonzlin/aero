@@ -478,7 +478,7 @@ enum aerogpu_shader_stage_ex {
 // Example: SET_TEXTURE
 struct aerogpu_cmd_set_texture {
    struct aerogpu_cmd_hdr hdr;       // opcode = AEROGPU_CMD_SET_TEXTURE
-   uint32_t shader_stage;            // enum aerogpu_shader_stage (0=VS,1=PS,2=CS)
+   uint32_t shader_stage;            // enum aerogpu_shader_stage (0=VS,1=PS,2=CS,3=GS legacy)
    uint32_t slot;
    aerogpu_handle_t texture;         // 0 = unbind
    uint32_t stage_ex;                // enum aerogpu_shader_stage_ex (was reserved0)
@@ -487,6 +487,8 @@ struct aerogpu_cmd_set_texture {
 
 **Encoding rules:**
 
+- The `stage_ex` overload is only active when `shader_stage == COMPUTE` (2). For other
+  `shader_stage` values, `stage_ex` must be 0.
 - Legacy VS/PS bindings: use the existing `shader_stage` field and write `stage_ex = 0`:
   - VS: `shader_stage = VERTEX`, `stage_ex = 0`
   - PS: `shader_stage = PIXEL`,  `stage_ex = 0`
@@ -497,6 +499,8 @@ struct aerogpu_cmd_set_texture {
   - GS resources: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (2)
   - HS resources: `shader_stage = COMPUTE`, `stage_ex = HULL`     (3)
   - DS resources: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`   (4)
+  - Other values (`stage_ex = VERTEX/PIXEL/COMPUTE`) are reserved and should not be used in binding
+    commands.
 
 The host maintains separate binding tables for CS vs GS/HS/DS so that compute dispatch and
 graphics-tess/GS pipelines do not trample each other’s bindings. At the WGSL interface level this
@@ -696,11 +700,12 @@ GS/HS/DS are compiled as compute entry points but keep the normal D3D binding mo
 
 - D3D resources live in `@group(3)` (the reserved internal group) and use the same binding number
   scheme as other stages:
-   - `b#` (cbuffers) → `@binding(BINDING_BASE_CBUFFER + slot)`
-   - `t#` (SRVs)     → `@binding(BINDING_BASE_TEXTURE + slot)`
-   - `s#` (samplers) → `@binding(BINDING_BASE_SAMPLER + slot)`
+  - `b#` (cbuffers) → `@binding(BINDING_BASE_CBUFFER + slot)`
+  - `t#` (SRVs)     → `@binding(BINDING_BASE_TEXTURE + slot)`
+  - `s#` (samplers) → `@binding(BINDING_BASE_SAMPLER + slot)`
+  - `u#` (UAVs, SM5) → `@binding(BINDING_BASE_UAV + slot)` (where supported)
 - Resource-binding opcodes specify the logical stage via `stage_ex` so the runtime can maintain
-   separate tables for CS vs GS/HS/DS (and so the WGSL interface uses distinct groups 2 vs 3).
+  separate tables for CS vs GS/HS/DS (and so the WGSL interface uses distinct groups 2 vs 3).
 
 #### 3.2) Internal bind groups and reserved bindings
 
@@ -759,6 +764,7 @@ Add DXBC fixtures alongside existing ones in `crates/aero-d3d11/tests/fixtures/`
 Add new `aero-d3d11` executor tests that render to an offscreen RT and compare readback pixels:
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_*.rs`
+  - Example: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*.rs`
 
 Each test should:
