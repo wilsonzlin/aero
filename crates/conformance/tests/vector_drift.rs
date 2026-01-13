@@ -179,6 +179,11 @@ struct ProtocolJwtTokenVector {
 #[derive(Debug, Deserialize)]
 struct ConformanceVectorsFileV2 {
     version: u32,
+    #[serde(rename = "aero-l2-tunnel-v1")]
+    aero_l2_tunnel_v1: ConformanceL2TunnelVectors,
+    aero_session: ConformanceSessionVectors,
+    #[serde(rename = "aero-udp-relay-jwt-hs256")]
+    aero_udp_relay_jwt_hs256: ConformanceJwtVectors,
     #[serde(rename = "aero-tcp-mux-v1")]
     aero_tcp_mux_v1: ConformanceTcpMuxVectors,
     #[serde(rename = "aero-udp-relay-v1v2")]
@@ -597,36 +602,28 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
     serde_json::from_str(&raw).unwrap_or_else(|err| panic!("parse {path:?}: {err}"))
 }
 
-/// Prevent accidental protocol drift between the older `protocol-vectors/` set (base64) and the
-/// canonical `crates/conformance/test-vectors/` set (hex).
-#[test]
-fn l2_tunnel_vectors_do_not_drift() {
-    let legacy_path = legacy_vectors_path();
-    let conf_path = conformance_vectors_path();
-
-    let legacy: LegacyVectorsFile = read_json(&legacy_path);
-    assert_eq!(legacy.schema, 1, "unexpected legacy vector schema version");
-    assert_eq!(legacy.magic, 0xA2, "unexpected legacy l2 tunnel magic");
-    assert_eq!(legacy.version, 0x03, "unexpected legacy l2 tunnel version");
-    assert_eq!(legacy.flags, 0, "unexpected legacy l2 tunnel flags");
-
-    let conf: ConformanceVectorsFile = read_json(&conf_path);
-    assert_eq!(conf.version, 1, "unexpected conformance vector schema version");
-
-    let mut legacy_by_name: BTreeMap<String, LegacyVector> = BTreeMap::new();
-    for v in legacy.vectors {
-        let name = v.name.clone();
-        if legacy_by_name.insert(name.clone(), v).is_some() {
-            panic!("duplicate legacy vector name: {name}");
+fn assert_l2_tunnel_vectors_match(
+    legacy_path: &Path,
+    legacy: &LegacyVectorsFile,
+    conf: &ConformanceL2TunnelVectors,
+    conf_label: &str,
+) {
+    let mut legacy_by_name: BTreeMap<&str, &LegacyVector> = BTreeMap::new();
+    for v in &legacy.vectors {
+        if legacy_by_name.insert(v.name.as_str(), v).is_some() {
+            panic!("duplicate legacy vector name: {}", v.name);
         }
     }
 
     // Compare all canonical conformance vectors to their legacy counterparts.
     // We intentionally only require the canonical ones to exist in the legacy file; the legacy
     // file may carry extra vectors for older consumers / additional coverage.
-    for v in &conf.aero_l2_tunnel_v1.valid {
-        let ctx = format!("l2-tunnel valid vector {:?} (protocol-vectors vs aero-vectors)", v.name);
-        let legacy = legacy_by_name.get(&v.name).unwrap_or_else(|| {
+    for v in &conf.valid {
+        let ctx = format!(
+            "l2-tunnel valid vector {:?} (protocol-vectors vs {conf_label})",
+            v.name
+        );
+        let legacy = legacy_by_name.get(v.name.as_str()).copied().unwrap_or_else(|| {
             panic!(
                 "{ctx}: missing legacy vector. Expected to find a matching entry in {legacy_path:?}"
             )
@@ -672,10 +669,12 @@ fn l2_tunnel_vectors_do_not_drift() {
         assert_bytes_eq(&format!("{ctx}: wire bytes"), &conf_wire, &legacy_wire);
     }
 
-    for v in &conf.aero_l2_tunnel_v1.invalid {
-        let ctx =
-            format!("l2-tunnel invalid vector {:?} (protocol-vectors vs aero-vectors)", v.name);
-        let legacy = legacy_by_name.get(&v.name).unwrap_or_else(|| {
+    for v in &conf.invalid {
+        let ctx = format!(
+            "l2-tunnel invalid vector {:?} (protocol-vectors vs {conf_label})",
+            v.name
+        );
+        let legacy = legacy_by_name.get(v.name.as_str()).copied().unwrap_or_else(|| {
             panic!(
                 "{ctx}: missing legacy vector. Expected to find a matching entry in {legacy_path:?}"
             )
@@ -696,21 +695,18 @@ fn l2_tunnel_vectors_do_not_drift() {
     }
 }
 
-#[test]
-fn auth_token_vectors_do_not_drift() {
-    let proto_path = protocol_auth_tokens_path();
-    let conf_path = conformance_vectors_path();
-
-    let proto: ProtocolAuthTokensFile = read_json(&proto_path);
-    assert_eq!(proto.schema, 1, "unexpected protocol auth token vector schema");
-
-    let conf: ConformanceVectorsFile = read_json(&conf_path);
-    assert_eq!(conf.version, 1, "unexpected conformance vector schema version");
-
+fn assert_auth_token_vectors_match(
+    proto_path: &Path,
+    proto: &ProtocolAuthTokensFile,
+    conf_session: &ConformanceSessionVectors,
+    conf_jwt: &ConformanceJwtVectors,
+    conf_label: &str,
+) {
     // Session cookie (`aero_session`) vectors.
     assert_eq!(
-        proto.session_tokens.test_secret, conf.aero_session.secret,
-        "session token secret drift (protocol-vectors vs conformance)"
+        proto.session_tokens.test_secret, conf_session.secret,
+        "session token secret drift (protocol-vectors vs {})",
+        conf_label
     );
 
     let mut proto_session_by_name: BTreeMap<&str, &ProtocolSessionTokenVector> = BTreeMap::new();
@@ -719,22 +715,22 @@ fn auth_token_vectors_do_not_drift() {
     }
 
     let session_cases = [
-        ("valid", &conf.aero_session.tokens.valid),
-        ("expired", &conf.aero_session.tokens.expired),
-        ("badSignature", &conf.aero_session.tokens.bad_signature),
+        ("valid", &conf_session.tokens.valid),
+        ("expired", &conf_session.tokens.expired),
+        ("badSignature", &conf_session.tokens.bad_signature),
     ];
 
     for (name, conf_token) in session_cases {
-        let ctx = format!("session token vector {name:?} (protocol-vectors vs conformance)");
+        let ctx = format!("session token vector {name:?} (protocol-vectors vs {conf_label})");
         let proto_v = proto_session_by_name.get(name).copied().unwrap_or_else(|| {
             panic!("{ctx}: missing entry in {proto_path:?} (sessionTokens.vectors)")
         });
 
         if let Some(secret) = &proto_v.secret {
-            assert_eq!(secret, &conf.aero_session.secret, "{ctx}: secret drift");
+            assert_eq!(secret, &conf_session.secret, "{ctx}: secret drift");
         }
         if let Some(now_ms) = proto_v.now_ms {
-            assert_eq!(now_ms, conf.aero_session.now_ms, "{ctx}: nowMs drift");
+            assert_eq!(now_ms, conf_session.now_ms, "{ctx}: nowMs drift");
         }
 
         assert_ascii_eq(&format!("{ctx}: token drift"), &conf_token.token, &proto_v.token);
@@ -760,8 +756,9 @@ fn auth_token_vectors_do_not_drift() {
 
     // UDP relay JWT vectors.
     assert_eq!(
-        proto.jwt_tokens.test_secret, conf.aero_udp_relay_jwt_hs256.secret,
-        "jwt secret drift (protocol-vectors vs conformance)"
+        proto.jwt_tokens.test_secret, conf_jwt.secret,
+        "jwt secret drift (protocol-vectors vs {})",
+        conf_label
     );
 
     let mut proto_jwt_by_name: BTreeMap<&str, &ProtocolJwtTokenVector> = BTreeMap::new();
@@ -770,22 +767,22 @@ fn auth_token_vectors_do_not_drift() {
     }
 
     let jwt_cases = [
-        ("valid", &conf.aero_udp_relay_jwt_hs256.tokens.valid),
-        ("expired", &conf.aero_udp_relay_jwt_hs256.tokens.expired),
-        ("badSignature", &conf.aero_udp_relay_jwt_hs256.tokens.bad_signature),
+        ("valid", &conf_jwt.tokens.valid),
+        ("expired", &conf_jwt.tokens.expired),
+        ("badSignature", &conf_jwt.tokens.bad_signature),
     ];
 
     for (name, conf_token) in jwt_cases {
-        let ctx = format!("jwt vector {name:?} (protocol-vectors vs conformance)");
+        let ctx = format!("jwt vector {name:?} (protocol-vectors vs {conf_label})");
         let proto_v = proto_jwt_by_name.get(name).copied().unwrap_or_else(|| {
             panic!("{ctx}: missing entry in {proto_path:?} (jwtTokens.vectors)")
         });
 
         if let Some(secret) = &proto_v.secret {
-            assert_eq!(secret, &conf.aero_udp_relay_jwt_hs256.secret, "{ctx}: secret drift");
+            assert_eq!(secret, &conf_jwt.secret, "{ctx}: secret drift");
         }
         if let Some(now_sec) = proto_v.now_sec {
-            assert_eq!(now_sec, conf.aero_udp_relay_jwt_hs256.now_unix, "{ctx}: nowUnix drift");
+            assert_eq!(now_sec, conf_jwt.now_unix, "{ctx}: nowUnix drift");
         }
 
         assert_ascii_eq(&format!("{ctx}: token drift"), &conf_token.token, &proto_v.token);
@@ -821,6 +818,88 @@ fn auth_token_vectors_do_not_drift() {
             );
         }
     }
+}
+
+/// Prevent accidental protocol drift between the older `protocol-vectors/` set (base64) and the
+/// canonical `crates/conformance/test-vectors/` set (hex).
+#[test]
+fn l2_tunnel_vectors_do_not_drift() {
+    let legacy_path = legacy_vectors_path();
+    let conf_path = conformance_vectors_path();
+
+    let legacy: LegacyVectorsFile = read_json(&legacy_path);
+    assert_eq!(legacy.schema, 1, "unexpected legacy vector schema version");
+    assert_eq!(legacy.magic, 0xA2, "unexpected legacy l2 tunnel magic");
+    assert_eq!(legacy.version, 0x03, "unexpected legacy l2 tunnel version");
+    assert_eq!(legacy.flags, 0, "unexpected legacy l2 tunnel flags");
+
+    let conf: ConformanceVectorsFile = read_json(&conf_path);
+    assert_eq!(conf.version, 1, "unexpected conformance vector schema version");
+    assert_l2_tunnel_vectors_match(
+        &legacy_path,
+        &legacy,
+        &conf.aero_l2_tunnel_v1,
+        "aero-vectors-v1.json",
+    );
+}
+
+#[test]
+fn auth_token_vectors_do_not_drift() {
+    let proto_path = protocol_auth_tokens_path();
+    let conf_path = conformance_vectors_path();
+
+    let proto: ProtocolAuthTokensFile = read_json(&proto_path);
+    assert_eq!(proto.schema, 1, "unexpected protocol auth token vector schema");
+
+    let conf: ConformanceVectorsFile = read_json(&conf_path);
+    assert_eq!(conf.version, 1, "unexpected conformance vector schema version");
+    assert_auth_token_vectors_match(
+        &proto_path,
+        &proto,
+        &conf.aero_session,
+        &conf.aero_udp_relay_jwt_hs256,
+        "aero-vectors-v1.json",
+    );
+}
+
+#[test]
+fn l2_tunnel_vectors_do_not_drift_v2() {
+    let legacy_path = legacy_vectors_path();
+    let conf_path = conformance_vectors_v2_path();
+
+    let legacy: LegacyVectorsFile = read_json(&legacy_path);
+    assert_eq!(legacy.schema, 1, "unexpected legacy vector schema version");
+    assert_eq!(legacy.magic, 0xA2, "unexpected legacy l2 tunnel magic");
+    assert_eq!(legacy.version, 0x03, "unexpected legacy l2 tunnel version");
+    assert_eq!(legacy.flags, 0, "unexpected legacy l2 tunnel flags");
+
+    let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
+    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
+    assert_l2_tunnel_vectors_match(
+        &legacy_path,
+        &legacy,
+        &conf.aero_l2_tunnel_v1,
+        "aero-vectors-v2.json",
+    );
+}
+
+#[test]
+fn auth_token_vectors_do_not_drift_v2() {
+    let proto_path = protocol_auth_tokens_path();
+    let conf_path = conformance_vectors_v2_path();
+
+    let proto: ProtocolAuthTokensFile = read_json(&proto_path);
+    assert_eq!(proto.schema, 1, "unexpected protocol auth token vector schema");
+
+    let conf: ConformanceVectorsFileV2 = read_json(&conf_path);
+    assert_eq!(conf.version, 2, "unexpected conformance vector schema version");
+    assert_auth_token_vectors_match(
+        &proto_path,
+        &proto,
+        &conf.aero_session,
+        &conf.aero_udp_relay_jwt_hs256,
+        "aero-vectors-v2.json",
+    );
 }
 
 #[test]
