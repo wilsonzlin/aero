@@ -1285,6 +1285,27 @@ impl PcPlatform {
         )
     }
 
+    pub fn new_with_xhci(ram_size: usize) -> Self {
+        Self::new_with_config(
+            ram_size,
+            PcPlatformConfig {
+                enable_xhci: true,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn new_with_xhci_dirty_tracking(ram_size: usize) -> Self {
+        Self::new_with_config_dirty_tracking(
+            ram_size,
+            PcPlatformConfig {
+                enable_xhci: true,
+                ..Default::default()
+            },
+            DEFAULT_DIRTY_PAGE_SIZE,
+        )
+    }
+
     pub fn new_with_virtio_blk(ram_size: usize) -> Self {
         Self::new_with_config(
             ram_size,
