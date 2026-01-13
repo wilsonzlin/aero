@@ -38,6 +38,7 @@ Input is essential for usability. Without keyboard/mouse, the emulator is unusab
 
 - [`docs/08-input-devices.md`](../docs/08-input-devices.md) — Input architecture
 - [`docs/usb-hid.md`](../docs/usb-hid.md) — USB HID usages and reports
+- [`docs/usb-ehci.md`](../docs/usb-ehci.md) — EHCI (USB 2.0) emulation contracts (regs, root hub, IRQ, snapshot plan)
 - [`docs/adr/0015-canonical-usb-stack.md`](../docs/adr/0015-canonical-usb-stack.md) — USB stack design
 
 **Reference:**
