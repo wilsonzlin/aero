@@ -29,6 +29,7 @@ fn bind_shaders_decodes_base_packet() {
     let packet = build_packet(AerogpuCmdOpcode::BindShaders as u32, payload);
 
     let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
+    // Avoid creating references to packed fields in `assert_eq!`.
     let opcode = cmd.hdr.opcode;
     let size_bytes = cmd.hdr.size_bytes;
     let vs = cmd.vs;
@@ -95,4 +96,26 @@ fn bind_shaders_extended_packet_allows_trailing_bytes() {
             ds: 6
         })
     );
+}
+
+#[test]
+fn bind_shaders_base_packet_allows_trailing_bytes() {
+    // Forward-compat: if the packet grows by appending new fields, older decoders should accept
+    // the packet as long as the base payload is present. In this case we do not have enough bytes
+    // to decode the `{gs, hs, ds}` extension (12 bytes), so `ex` remains `None`.
+    let mut payload = Vec::new();
+    push_u32(&mut payload, 1); // vs
+    push_u32(&mut payload, 2); // ps
+    push_u32(&mut payload, 3); // cs
+    push_u32(&mut payload, 0xAABB_CCDD); // reserved0
+    push_u32(&mut payload, 0xDEAD_BEEF); // trailing extension (ignored)
+
+    let packet = build_packet(AerogpuCmdOpcode::BindShaders as u32, payload);
+
+    let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
+    let size_bytes = cmd.hdr.size_bytes;
+    let reserved0 = cmd.reserved0;
+    assert_eq!(size_bytes, 28);
+    assert_eq!(reserved0, 0xAABB_CCDD);
+    assert_eq!(ex, None);
 }

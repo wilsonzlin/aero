@@ -1744,9 +1744,8 @@ impl<'a> AerogpuCmdPacket<'a> {
         let cs = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
         let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
 
-        let ex = if self.payload.len() > 16 {
+        let ex = if self.payload.len() >= 28 {
             // Extended BIND_SHADERS appends `{gs, hs, ds}`.
-            validate_expected_payload_size(28, self.payload)?;
             Some(BindShadersEx {
                 gs: u32::from_le_bytes(self.payload[16..20].try_into().unwrap()),
                 hs: u32::from_le_bytes(self.payload[20..24].try_into().unwrap()),

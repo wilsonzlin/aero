@@ -797,7 +797,6 @@ export interface BindShadersEx {
   hs: AerogpuHandle;
   ds: AerogpuHandle;
 }
-
 export interface AerogpuCmdBindShadersPayload {
   vs: AerogpuHandle;
   ps: AerogpuHandle;
@@ -828,24 +827,22 @@ export function decodeCmdBindShadersPayloadFromPacket(packet: AerogpuCmdPacket):
   const cs = view.getUint32(8, true);
   const reserved0 = view.getUint32(12, true);
 
-  if (packet.payload.byteLength <= 16) {
-    return { vs, ps, cs, reserved0 };
+  // Extended BIND_SHADERS appends `{gs, hs, ds}` after the base 16-byte payload.
+  // Forward-compat: ignore extra bytes beyond the known extension fields.
+  if (packet.payload.byteLength >= 28) {
+    return {
+      vs,
+      ps,
+      cs,
+      reserved0,
+      ex: {
+        gs: view.getUint32(16, true),
+        hs: view.getUint32(20, true),
+        ds: view.getUint32(24, true),
+      },
+    };
   }
-  if (packet.payload.byteLength < 28) {
-    throw new Error(`BIND_SHADERS packet too small for extended payload (size_bytes=${packet.sizeBytes})`);
-  }
-
-  return {
-    vs,
-    ps,
-    cs,
-    reserved0,
-    ex: {
-      gs: view.getUint32(16, true),
-      hs: view.getUint32(20, true),
-      ds: view.getUint32(24, true),
-    },
-  };
+  return { vs, ps, cs, reserved0 };
 }
 
 export interface AerogpuCmdCreateInputLayoutBlobPayload {
