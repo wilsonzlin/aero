@@ -630,6 +630,8 @@ struct AeroGpuResource {
   bool is_shared_alias = false;
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
+  uint32_t usage = 0;
+  uint32_t cpu_access_flags = 0;
 
   // WDDM identity (kernel-mode handles / allocation identities). DXGI swapchains
   // on Win7 rotate backbuffers by calling pfnRotateResourceIdentities; when
@@ -2684,6 +2686,15 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   res->handle = AllocateGlobalHandle(dev->adapter);
   res->bind_flags = pDesc->BindFlags;
   res->misc_flags = pDesc->MiscFlags;
+  __if_exists(D3D10DDIARG_CREATERESOURCE::Usage) {
+    res->usage = static_cast<uint32_t>(pDesc->Usage);
+  }
+  __if_exists(D3D10DDIARG_CREATERESOURCE::CPUAccessFlags) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pDesc->CPUAccessFlags);
+  }
+  __if_exists(D3D10DDIARG_CREATERESOURCE::CpuAccessFlags) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pDesc->CpuAccessFlags);
+  }
 
   bool is_primary = false;
   __if_exists(D3D10DDIARG_CREATERESOURCE::pPrimaryDesc) {
@@ -3466,6 +3477,15 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   __if_exists(D3D10DDIARG_OPENRESOURCE::MiscFlags) {
     res->misc_flags = pOpenResource->MiscFlags;
   }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::Usage) {
+    res->usage = static_cast<uint32_t>(pOpenResource->Usage);
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::CPUAccessFlags) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pOpenResource->CPUAccessFlags);
+  }
+  __if_exists(D3D10DDIARG_OPENRESOURCE::CpuAccessFlags) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pOpenResource->CpuAccessFlags);
+  }
 
   __if_exists(D3D10DDIARG_OPENRESOURCE::hKMResource) {
     res->wddm.km_resource_handle = static_cast<uint64_t>(pOpenResource->hKMResource);
@@ -3823,8 +3843,8 @@ HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uin
     return S_OK;
   }
 
-  // Only apply implicit readback synchronization for staging-style resources.
-  if (res->bind_flags != 0) {
+  // Only apply implicit readback synchronization for staging resources.
+  if (res->usage != static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
     return S_OK;
   }
 
@@ -3985,7 +4005,8 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     }
   }
 
-  const bool allow_storage_map = (res->backing_alloc_id == 0) && !(want_read && res->bind_flags == 0);
+  const bool allow_storage_map =
+      (res->backing_alloc_id == 0) && !(want_read && res->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING));
   const auto map_storage = [&]() -> HRESULT {
     res->mapped_wddm_ptr = nullptr;
     res->mapped_wddm_allocation = 0;
@@ -4194,6 +4215,12 @@ HRESULT map_dynamic_buffer_locked(AeroGpuDevice* dev, AeroGpuResource* res, bool
   if (res->mapped) {
     return E_FAIL;
   }
+  if (res->usage != static_cast<uint32_t>(D3D10_USAGE_DYNAMIC)) {
+    return E_INVALIDARG;
+  }
+  if ((res->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_WRITE)) == 0) {
+    return E_INVALIDARG;
+  }
 
   const uint64_t total = res->size_bytes;
   const uint64_t storage_bytes = AlignUpU64(total ? total : 1, 4);
@@ -4343,7 +4370,55 @@ HRESULT AEROGPU_APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
   if (res->kind != ResourceKind::Texture2D) {
     return E_INVALIDARG;
   }
+  if ((map_flags & ~kD3DMapFlagDoNotWait) != 0) {
+    return E_INVALIDARG;
+  }
+
   const uint32_t map_type_u = static_cast<uint32_t>(map_type);
+  bool want_write = false;
+  switch (map_type_u) {
+    case kD3DMapRead:
+      break;
+    case kD3DMapWrite:
+    case kD3DMapReadWrite:
+    case kD3DMapWriteDiscard:
+    case kD3DMapWriteNoOverwrite:
+      want_write = true;
+      break;
+    default:
+      return E_INVALIDARG;
+  }
+  const bool want_read = (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite);
+
+  if (res->usage != static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
+    return E_INVALIDARG;
+  }
+  const uint32_t cpu_read = static_cast<uint32_t>(D3D10_CPU_ACCESS_READ);
+  const uint32_t cpu_write = static_cast<uint32_t>(D3D10_CPU_ACCESS_WRITE);
+  const uint32_t access_mask = cpu_read | cpu_write;
+  const uint32_t access = res->cpu_access_flags & access_mask;
+  if (access == cpu_read) {
+    if (map_type_u != kD3DMapRead) {
+      return E_INVALIDARG;
+    }
+  } else if (access == cpu_write) {
+    if (map_type_u != kD3DMapWrite) {
+      return E_INVALIDARG;
+    }
+  } else if (access == access_mask) {
+    if (map_type_u != kD3DMapRead && map_type_u != kD3DMapWrite && map_type_u != kD3DMapReadWrite) {
+      return E_INVALIDARG;
+    }
+  } else {
+    return E_INVALIDARG;
+  }
+  if (want_read && !(res->cpu_access_flags & cpu_read)) {
+    return E_INVALIDARG;
+  }
+  if (want_write && !(res->cpu_access_flags & cpu_write)) {
+    return E_INVALIDARG;
+  }
+
   HRESULT sync_hr = sync_read_map_locked(dev, res, map_type_u, map_flags);
   if (FAILED(sync_hr)) {
     return sync_hr;
@@ -4361,10 +4436,17 @@ void AEROGPU_APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   if (!dev || !res) {
+    if (dev) {
+      set_error(dev, E_INVALIDARG);
+    }
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!res->mapped || subresource != res->mapped_subresource) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
   unmap_resource_locked(dev, res, subresource);
 }
 
@@ -4420,10 +4502,17 @@ void AEROGPU_APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   if (!dev || !res) {
+    if (dev) {
+      set_error(dev, E_INVALIDARG);
+    }
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!res->mapped || res->mapped_subresource != 0) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
   unmap_resource_locked(dev, res, /*subresource=*/0);
 }
 
@@ -4459,10 +4548,17 @@ void AEROGPU_APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   if (!dev || !res) {
+    if (dev) {
+      set_error(dev, E_INVALIDARG);
+    }
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!res->mapped || res->mapped_subresource != 0) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
   unmap_resource_locked(dev, res, /*subresource=*/0);
 }
 
@@ -4495,6 +4591,64 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   const uint32_t map_type_u = static_cast<uint32_t>(map_type);
+  if ((static_cast<uint32_t>(map_flags) & ~kD3DMapFlagDoNotWait) != 0) {
+    return E_INVALIDARG;
+  }
+
+  bool want_write = false;
+  switch (map_type_u) {
+    case kD3DMapRead:
+      break;
+    case kD3DMapWrite:
+    case kD3DMapReadWrite:
+    case kD3DMapWriteDiscard:
+    case kD3DMapWriteNoOverwrite:
+      want_write = true;
+      break;
+    default:
+      return E_INVALIDARG;
+  }
+  const bool want_read = (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite);
+
+  const uint32_t cpu_read = static_cast<uint32_t>(D3D10_CPU_ACCESS_READ);
+  const uint32_t cpu_write = static_cast<uint32_t>(D3D10_CPU_ACCESS_WRITE);
+  switch (res->usage) {
+    case static_cast<uint32_t>(D3D10_USAGE_DYNAMIC):
+      if (map_type_u != kD3DMapWriteDiscard && map_type_u != kD3DMapWriteNoOverwrite) {
+        return E_INVALIDARG;
+      }
+      break;
+    case static_cast<uint32_t>(D3D10_USAGE_STAGING): {
+      const uint32_t access_mask = cpu_read | cpu_write;
+      const uint32_t access = res->cpu_access_flags & access_mask;
+      if (access == cpu_read) {
+        if (map_type_u != kD3DMapRead) {
+          return E_INVALIDARG;
+        }
+      } else if (access == cpu_write) {
+        if (map_type_u != kD3DMapWrite) {
+          return E_INVALIDARG;
+        }
+      } else if (access == access_mask) {
+        if (map_type_u != kD3DMapRead && map_type_u != kD3DMapWrite && map_type_u != kD3DMapReadWrite) {
+          return E_INVALIDARG;
+        }
+      } else {
+        return E_INVALIDARG;
+      }
+      break;
+    }
+    default:
+      return E_INVALIDARG;
+  }
+
+  if (want_read && !(res->cpu_access_flags & cpu_read)) {
+    return E_INVALIDARG;
+  }
+  if (want_write && !(res->cpu_access_flags & cpu_write)) {
+    return E_INVALIDARG;
+  }
+
   if (map_type_u == kD3DMapWriteDiscard) {
     if (subresource != 0) {
       return E_INVALIDARG;
@@ -5919,8 +6073,81 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     }
   }
 
+  // The Win7 D3D10.1 runtime validates MapFlags and rejects unknown bits.
+  // Mirror this behavior to keep invalid usage deterministic and to avoid
+  // passing unexpected flags into the WDDM callbacks.
+  if ((map_flags_u & ~kD3DMapFlagDoNotWait) != 0) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+
   if (pMap->Subresource != 0) {
     set_error(dev, E_NOTIMPL);
+    return;
+  }
+
+  bool want_write = false;
+  switch (map_type_u) {
+    case kD3DMapRead:
+      break;
+    case kD3DMapWrite:
+    case kD3DMapReadWrite:
+    case kD3DMapWriteDiscard:
+    case kD3DMapWriteNoOverwrite:
+      want_write = true;
+      break;
+    default:
+      set_error(dev, E_INVALIDARG);
+      return;
+  }
+  const bool want_read = (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite);
+
+  // Enforce D3D10 usage/CPU-access rules (matches Win7 runtime expectations).
+  const uint32_t cpu_read = static_cast<uint32_t>(D3D10_CPU_ACCESS_READ);
+  const uint32_t cpu_write = static_cast<uint32_t>(D3D10_CPU_ACCESS_WRITE);
+  switch (res->usage) {
+    case static_cast<uint32_t>(D3D10_USAGE_DYNAMIC):
+      if (map_type_u != kD3DMapWriteDiscard && map_type_u != kD3DMapWriteNoOverwrite) {
+        set_error(dev, E_INVALIDARG);
+        return;
+      }
+      break;
+    case static_cast<uint32_t>(D3D10_USAGE_STAGING): {
+      const uint32_t access_mask = cpu_read | cpu_write;
+      const uint32_t access = res->cpu_access_flags & access_mask;
+      if (access == cpu_read) {
+        if (map_type_u != kD3DMapRead) {
+          set_error(dev, E_INVALIDARG);
+          return;
+        }
+      } else if (access == cpu_write) {
+        if (map_type_u != kD3DMapWrite) {
+          set_error(dev, E_INVALIDARG);
+          return;
+        }
+      } else if (access == access_mask) {
+        if (map_type_u != kD3DMapRead && map_type_u != kD3DMapWrite && map_type_u != kD3DMapReadWrite) {
+          set_error(dev, E_INVALIDARG);
+          return;
+        }
+      } else {
+        set_error(dev, E_INVALIDARG);
+        return;
+      }
+      break;
+    }
+    default:
+      // DEFAULT/IMMUTABLE resources are not mappable via D3D10 Map.
+      set_error(dev, E_INVALIDARG);
+      return;
+  }
+
+  if (want_read && !(res->cpu_access_flags & cpu_read)) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+  if (want_write && !(res->cpu_access_flags & cpu_write)) {
+    set_error(dev, E_INVALIDARG);
     return;
   }
 
@@ -5986,7 +6213,7 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResour
     return;
   }
   if (!res->mapped) {
-    set_error(dev, E_FAIL);
+    set_error(dev, E_INVALIDARG);
     return;
   }
   if (subresource != res->mapped_subresource) {
