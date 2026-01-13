@@ -157,6 +157,11 @@ pub struct VgaDevice {
     /// The attribute controller index is masked to 0x1F, so 0x20 entries is sufficient.
     attribute_ext: [u8; 0x20],
     input_status1_vretrace: bool,
+    /// Deterministic vblank clock used to model the VGA Input Status 1 vertical retrace bit.
+    ///
+    /// This advances via [`VgaDevice::tick`], which is wired to the machine's deterministic
+    /// `tick_platform` path.
+    vblank_time_ns: u64,
 
     // DAC / palette.
     pel_mask: u8,
@@ -192,6 +197,16 @@ impl Default for VgaDevice {
 }
 
 impl VgaDevice {
+    /// Default vblank period used for legacy software that polls the VGA status register.
+    ///
+    /// This is intentionally a fixed 60Hz model today (rounded up to integer nanoseconds), and is
+    /// only used for the Input Status 1 retrace bit; it does not affect rendering.
+    const VBLANK_PERIOD_NS: u64 = 16_666_667;
+    /// Width of the vblank pulse within the period.
+    ///
+    /// A short pulse is sufficient for retrace polling loops. Use ~5% of the frame period.
+    const VBLANK_PULSE_NS: u64 = Self::VBLANK_PERIOD_NS / 20;
+
     pub fn new() -> Self {
         let mut device = Self {
             misc_output: 0,
@@ -209,6 +224,7 @@ impl VgaDevice {
             attribute: [0; 21],
             attribute_ext: [0; 0x20],
             input_status1_vretrace: false,
+            vblank_time_ns: 0,
             pel_mask: 0xFF,
             dac_write_index: 0,
             dac_write_subindex: 0,
@@ -231,6 +247,22 @@ impl VgaDevice {
         device.set_text_mode_80x25();
         device.present();
         device
+    }
+
+    /// Advance the deterministic vblank clock.
+    ///
+    /// This does not affect rendering (Aero's VGA model is not scanline-accurate), but it allows
+    /// legacy guests to poll the VGA status register (`0x3DA`) for vertical retrace pacing.
+    pub fn tick(&mut self, delta_ns: u64) {
+        self.vblank_time_ns = self.vblank_time_ns.wrapping_add(delta_ns);
+    }
+
+    fn in_vblank(&self) -> bool {
+        if Self::VBLANK_PERIOD_NS == 0 {
+            return false;
+        }
+        let pos = self.vblank_time_ns % Self::VBLANK_PERIOD_NS;
+        pos < Self::VBLANK_PULSE_NS
     }
 
     /// Resets the DAC to a sensible default VGA palette (EGA 16-color + 256-color cube).
@@ -1194,8 +1226,9 @@ impl VgaDevice {
             // Input status 1. Reading resets the attribute flip-flop.
             0x3DA | 0x3BA => {
                 self.attribute_flip_flop_data = false;
-                self.input_status1_vretrace = !self.input_status1_vretrace;
-                let v = if self.input_status1_vretrace { 0x08 } else { 0x00 };
+                let in_vblank = self.in_vblank();
+                self.input_status1_vretrace = in_vblank;
+                let v = if in_vblank { 0x08 } else { 0x00 };
                 // Bit 3: vertical retrace. Bit 0: display enable (rough approximation).
                 v | (v >> 3)
             }
@@ -1368,6 +1401,7 @@ impl IoSnapshot for VgaDevice {
         const TAG_VRAM: u16 = 20;
         const TAG_LATCHES: u16 = 21;
         const TAG_DAC_WRITE_LATCH: u16 = 22;
+        const TAG_VBLANK_TIME_NS: u16 = 23;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -1422,6 +1456,8 @@ impl IoSnapshot for VgaDevice {
         // VRAM is the main framebuffer backing store; include it verbatim for deterministic output.
         w.field_bytes(TAG_VRAM, self.vram.clone());
         w.field_bytes(TAG_LATCHES, self.latches.to_vec());
+        // Deterministic vblank clock used by the legacy Input Status 1 register.
+        w.field_u64(TAG_VBLANK_TIME_NS, self.vblank_time_ns);
 
         w.finish()
     }
@@ -1449,6 +1485,7 @@ impl IoSnapshot for VgaDevice {
         const TAG_VRAM: u16 = 20;
         const TAG_LATCHES: u16 = 21;
         const TAG_DAC_WRITE_LATCH: u16 = 22;
+        const TAG_VBLANK_TIME_NS: u16 = 23;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -1593,6 +1630,9 @@ impl IoSnapshot for VgaDevice {
                 return Err(SnapshotError::InvalidFieldEncoding("latches"));
             }
             self.latches.copy_from_slice(buf);
+        }
+        if let Some(v) = r.u64(TAG_VBLANK_TIME_NS)? {
+            self.vblank_time_ns = v;
         }
 
         // Output buffers are derived; force a re-render on the next `present()`.

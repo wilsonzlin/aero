@@ -3618,6 +3618,10 @@ impl Machine {
         self.bios
             .advance_time(&mut self.mem, Duration::from_nanos(delta_ns));
 
+        if let Some(vga) = &self.vga {
+            vga.borrow_mut().tick(delta_ns);
+        }
+
         if let Some(clock) = &self.platform_clock {
             clock.advance_ns(delta_ns);
         }
