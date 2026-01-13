@@ -967,7 +967,16 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         invalidWS.send(JSON.stringify({ type: "auth", token: invalidToken }));
         const invalid = await invalidPromise;
 
-        return { unauth, invalid };
+        const queryWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal?token=${encodeURIComponent(token)}`);
+        const queryPromise = waitForErrorAndClose(queryWS);
+        await waitForOpen(queryWS);
+        // No auth message needed when query-string credentials are provided; send
+        // an intentionally invalid offer and assert the server rejects it as a
+        // bad message rather than "unauthorized".
+        queryWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
+        const query = await queryPromise;
+
+        return { unauth, invalid, query };
       },
       { relayPort: relay.port, token, invalidToken },
     );
@@ -977,6 +986,9 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
 
     expect(res.invalid.errMsg?.code).toBe("unauthorized");
     expect(res.invalid.closeCode).toBe(1008);
+
+    expect(res.query.errMsg?.code).toBe("bad_message");
+    expect(res.query.closeCode).toBe(1008);
   } finally {
     await Promise.all([web.close(), relay.kill()]);
   }
