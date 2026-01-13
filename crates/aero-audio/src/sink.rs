@@ -12,12 +12,14 @@ pub trait AudioSink {
 }
 
 impl AudioSink for crate::ring::AudioRingBuffer {
+    #[inline]
     fn push_interleaved_f32(&mut self, samples: &[f32]) {
         self.push_interleaved_stereo(samples);
     }
 }
 
 impl AudioSink for aero_platform::audio::worklet_bridge::InterleavedRingBuffer {
+    #[inline]
     fn push_interleaved_f32(&mut self, samples: &[f32]) {
         let _ = self.write_interleaved(samples);
     }
@@ -25,6 +27,7 @@ impl AudioSink for aero_platform::audio::worklet_bridge::InterleavedRingBuffer {
 
 #[cfg(target_arch = "wasm32")]
 impl AudioSink for aero_platform::audio::worklet_bridge::WorkletBridge {
+    #[inline]
     fn push_interleaved_f32(&mut self, samples: &[f32]) {
         let _ = self.write_f32_interleaved(samples);
     }
