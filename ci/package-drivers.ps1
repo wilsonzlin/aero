@@ -8,6 +8,9 @@ param(
     [switch] $MakeFatImage,
     [switch] $FatImageStrict,
     [int] $FatImageSizeMB = 64,
+    # Disable integrity manifest generation for the produced artifacts.
+    # By default, manifests are written alongside each ZIP/ISO (if produced).
+    [switch] $NoManifest,
     [switch] $DeterminismSelfTest
 )
 
@@ -684,6 +687,117 @@ function New-IsoFromFolder {
     }
 }
 
+function Get-BuildIdString {
+    $candidates = @(
+        $env:GITHUB_RUN_ID,
+        $env:GITHUB_RUN_NUMBER,
+        $env:BUILD_BUILDID,
+        $env:CI_PIPELINE_ID
+    )
+    foreach ($c in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($c)) {
+            return ([string]$c).Trim()
+        }
+    }
+    return $null
+}
+
+function Get-DefaultSourceDateEpoch {
+    param([Parameter(Mandatory = $true)][string] $RepoRoot)
+
+    if (-not [string]::IsNullOrWhiteSpace($env:SOURCE_DATE_EPOCH)) {
+        $epoch = 0
+        if ([Int64]::TryParse($env:SOURCE_DATE_EPOCH.Trim(), [ref]$epoch)) {
+            return [long] $epoch
+        }
+    }
+
+    try {
+        $ct = (& git -C $RepoRoot show -s --format=%ct HEAD 2>$null).Trim()
+        $epoch = 0
+        if (-not [string]::IsNullOrWhiteSpace($ct) -and [Int64]::TryParse($ct, [ref]$epoch)) {
+            return [long] $epoch
+        }
+    } catch {
+        # fall through
+    }
+
+    return 0
+}
+
+function Get-ManifestFileEntries {
+    param([Parameter(Mandatory = $true)][string] $Root)
+
+    $entries = Get-DeterministicZipEntriesFromFolder -Folder $Root
+    $files = New-Object "System.Collections.Generic.List[object]"
+
+    foreach ($e in $entries) {
+        if ($e.IsDirectory) { continue }
+
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $e.FullPath).Hash.ToLowerInvariant()
+        $size = [long] (Get-Item -LiteralPath $e.FullPath).Length
+
+        $files.Add([pscustomobject]([ordered]@{
+            path   = $e.EntryName
+            sha256 = $hash
+            size   = $size
+        })) | Out-Null
+    }
+
+    return $files.ToArray()
+}
+
+function Write-JsonUtf8NoBom {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $JsonText
+    )
+
+    $dir = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, ($JsonText + "`n"), $utf8NoBom)
+}
+
+function Write-IntegrityManifest {
+    param(
+        [Parameter(Mandatory = $true)][string] $ManifestPath,
+        [Parameter(Mandatory = $true)][string] $PackageName,
+        [Parameter(Mandatory = $true)][string] $Version,
+        [Parameter(Mandatory = $true)][long] $SourceDateEpoch,
+        [string] $BuildId,
+        [Parameter(Mandatory = $true)] $Files
+    )
+
+    $pkg = [ordered]@{
+        name    = $PackageName
+        version = $Version
+    }
+    if (-not [string]::IsNullOrWhiteSpace($BuildId)) {
+        $pkg.build_id = $BuildId
+    }
+    $pkg.source_date_epoch = [long] $SourceDateEpoch
+
+    $manifest = [ordered]@{
+        schema_version = 1
+        package        = $pkg
+        files          = $Files
+    }
+
+    $json = $manifest | ConvertTo-Json -Depth 10 -Compress
+    Write-JsonUtf8NoBom -Path $ManifestPath -JsonText $json
+
+    # Basic sanity check: ensure the written manifest parses as JSON.
+    try {
+        $null = (Get-Content -LiteralPath $ManifestPath -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Generated manifest did not parse as JSON: '$ManifestPath'. $($_.Exception.Message)"
+    }
+}
+
 function Invoke-PackageDrivers {
     param(
         [Parameter(Mandatory = $true)][string] $InputRoot,
@@ -694,7 +808,8 @@ function Invoke-PackageDrivers {
         [switch] $NoIso,
         [switch] $MakeFatImage,
         [switch] $FatImageStrict,
-        [int] $FatImageSizeMB = 64
+        [int] $FatImageSizeMB = 64,
+        [switch] $NoManifest
     )
 
     $inputRootResolved = Resolve-RepoPath -Path $InputRoot
@@ -751,6 +866,33 @@ function Invoke-PackageDrivers {
     Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x64") -DestRoot $stageX64
     Copy-DriversForArch -InputRoot $inputRootResolved -Arches @("x86", "x64") -DestRoot $stageBundle
 
+    $shouldWriteManifests = -not $NoManifest
+    $buildId = $null
+    $epoch = 0
+    $manifestFilesX86 = $null
+    $manifestFilesX64 = $null
+    $manifestFilesBundle = $null
+
+    $manifestX86 = $null
+    $manifestX64 = $null
+    $manifestBundle = $null
+    $manifestIso = $null
+
+    if ($shouldWriteManifests) {
+        $manifestX86 = [System.IO.Path]::ChangeExtension($zipX86, "manifest.json")
+        $manifestX64 = [System.IO.Path]::ChangeExtension($zipX64, "manifest.json")
+        $manifestBundle = [System.IO.Path]::ChangeExtension($zipBundle, "manifest.json")
+        $manifestIso = [System.IO.Path]::ChangeExtension($isoBundle, "manifest.json")
+
+        $buildId = Get-BuildIdString
+        $epoch = Get-DefaultSourceDateEpoch -RepoRoot $repoRootResolved
+
+        # Enumerate and hash staged files BEFORE archiving; these entries must match the staged bytes.
+        $manifestFilesX86 = Get-ManifestFileEntries -Root $stageX86
+        $manifestFilesX64 = Get-ManifestFileEntries -Root $stageX64
+        $manifestFilesBundle = Get-ManifestFileEntries -Root $stageBundle
+    }
+
     $success = $false
     try {
         New-ZipFromFolder -Folder $stageX86 -ZipPath $zipX86 -DeterministicTimestamp $zipTimestamp
@@ -775,6 +917,16 @@ function Invoke-PackageDrivers {
 
             & $helper -SourceDir $stageFat -OutFile $fatVhd -SizeMB $FatImageSizeMB -Strict:$FatImageStrict
         }
+
+        if ($shouldWriteManifests) {
+            Write-IntegrityManifest -ManifestPath $manifestX86 -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($zipX86)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX86
+            Write-IntegrityManifest -ManifestPath $manifestX64 -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($zipX64)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesX64
+            Write-IntegrityManifest -ManifestPath $manifestBundle -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($zipBundle)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
+
+            if (-not $NoIso) {
+                Write-IntegrityManifest -ManifestPath $manifestIso -PackageName ([System.IO.Path]::GetFileNameWithoutExtension($isoBundle)) -Version $Version -SourceDateEpoch $epoch -BuildId $buildId -Files $manifestFilesBundle
+            }
+        }
         $success = $true
     } finally {
         if ($success -and (Test-Path $stagingBase)) {
@@ -788,6 +940,14 @@ function Invoke-PackageDrivers {
     Write-Host "  $zipBundle"
     if (-not $NoIso) {
         Write-Host "  $isoBundle"
+    }
+    if ($shouldWriteManifests) {
+        Write-Host "  $manifestX86"
+        Write-Host "  $manifestX64"
+        Write-Host "  $manifestBundle"
+        if (-not $NoIso) {
+            Write-Host "  $manifestIso"
+        }
     }
 
     if ($shouldMakeFatImage) {
@@ -804,6 +964,10 @@ function Invoke-PackageDrivers {
         ZipX64 = $zipX64
         ZipBundle = $zipBundle
         IsoBundle = $isoBundle
+        ManifestX86 = $manifestX86
+        ManifestX64 = $manifestX64
+        ManifestBundle = $manifestBundle
+        ManifestIso = $manifestIso
         FatVhd = $fatVhd
         OutDir = $outDirResolved
     }
@@ -844,8 +1008,8 @@ function Invoke-DeterminismSelfTest {
         # external FAT image tooling.
         $env:AERO_MAKE_FAT_IMAGE = "0"
 
-        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false
-        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false
+        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest
+        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest
 
         $h1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r1.ZipBundle).Hash
         $h2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r2.ZipBundle).Hash
@@ -870,4 +1034,4 @@ if ($DeterminismSelfTest) {
     exit 0
 }
 
-$null = Invoke-PackageDrivers -InputRoot $InputRoot -CertPath $CertPath -OutDir $OutDir -RepoRoot "." -Version $Version -NoIso:$NoIso -MakeFatImage:$MakeFatImage -FatImageStrict:$FatImageStrict -FatImageSizeMB $FatImageSizeMB
+$null = Invoke-PackageDrivers -InputRoot $InputRoot -CertPath $CertPath -OutDir $OutDir -RepoRoot "." -Version $Version -NoIso:$NoIso -MakeFatImage:$MakeFatImage -FatImageStrict:$FatImageStrict -FatImageSizeMB $FatImageSizeMB -NoManifest:$NoManifest
