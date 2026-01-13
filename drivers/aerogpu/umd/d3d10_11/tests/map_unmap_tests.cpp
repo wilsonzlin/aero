@@ -7999,7 +7999,7 @@ bool TestSetBlendStateEncodesCmd() {
     return false;
   }
 
-  dev.device_funcs.pfnSetBlendState(dev.hDevice, hState);
+  dev.device_funcs.pfnSetBlendState(dev.hDevice, hState, /*blend_factor=*/nullptr, /*sample_mask=*/0xFFFFFFFFu);
   hr = dev.device_funcs.pfnFlush(dev.hDevice);
   if (!Check(hr == S_OK, "Flush after SetBlendState")) {
     return false;

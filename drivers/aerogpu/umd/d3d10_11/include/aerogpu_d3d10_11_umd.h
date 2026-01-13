@@ -373,6 +373,25 @@ typedef struct AEROGPU_DDIARG_CREATESAMPLER {
   uint32_t AddressW;
 } AEROGPU_DDIARG_CREATESAMPLER;
 
+typedef struct AEROGPU_DDI_RENDER_TARGET_BLEND_DESC {
+  uint32_t BlendEnable; // 0/1
+  uint32_t SrcBlend; // D3D10_BLEND/D3D11_BLEND numeric value
+  uint32_t DestBlend; // D3D10_BLEND/D3D11_BLEND numeric value
+  uint32_t BlendOp; // D3D10_BLEND_OP/D3D11_BLEND_OP numeric value
+  uint32_t SrcBlendAlpha; // D3D10_BLEND/D3D11_BLEND numeric value
+  uint32_t DestBlendAlpha; // D3D10_BLEND/D3D11_BLEND numeric value
+  uint32_t BlendOpAlpha; // D3D10_BLEND_OP/D3D11_BLEND_OP numeric value
+  uint8_t RenderTargetWriteMask; // bit0=R bit1=G bit2=B bit3=A
+  uint8_t reserved0[3];
+} AEROGPU_DDI_RENDER_TARGET_BLEND_DESC;
+
+typedef struct AEROGPU_DDI_BLEND_DESC {
+  // The D3D10/11 runtime supports up to 8 render targets; the minimal ABI subset
+  // models only slot 0 since the AeroGPU protocol currently encodes a single
+  // blend state.
+  AEROGPU_DDI_RENDER_TARGET_BLEND_DESC RenderTarget[1];
+} AEROGPU_DDI_BLEND_DESC;
+
 typedef struct AEROGPU_DDIARG_CREATEBLENDSTATE {
   // Mirrors the D3D10_BLEND_DESC shape (global blend factors/ops + per-RT enable
   // + write mask arrays). Numeric enum values match the Windows SDK.
@@ -405,7 +424,13 @@ typedef struct AEROGPU_DDIARG_CREATERASTERIZERSTATE {
 } AEROGPU_DDIARG_CREATERASTERIZERSTATE;
 
 typedef struct AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE {
-  uint32_t dummy;
+  uint32_t DepthEnable; // 0/1
+  uint32_t DepthWriteMask; // D3D10_DEPTH_WRITE_MASK/D3D11_DEPTH_WRITE_MASK numeric value
+  uint32_t DepthFunc; // D3D10_COMPARISON_FUNC/D3D11_COMPARISON_FUNC numeric value
+  uint32_t StencilEnable; // 0/1
+  uint8_t StencilReadMask;
+  uint8_t StencilWriteMask;
+  uint8_t reserved0[2];
 } AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE;
 
 typedef struct AEROGPU_DDI_VIEWPORT {
@@ -662,9 +687,9 @@ typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETSCISSORRECTS)(D3D10DDI_HDEVICE,
                                                                uint32_t num_rects,
                                                                const AEROGPU_DDI_RECT *pRects);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETDRAWSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HSHADER vs, D3D10DDI_HSHADER ps);
-typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETBLENDSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETBLENDSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE, const float[4], UINT);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRASTERIZERSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE);
-typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETDEPTHSTENCILSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE);
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETDEPTHSTENCILSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE, UINT);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETPRIMITIVETOPOLOGY)(D3D10DDI_HDEVICE, uint32_t topology);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETCONSTANTBUFFERS)(D3D10DDI_HDEVICE,
                                                                  uint32_t start_slot,

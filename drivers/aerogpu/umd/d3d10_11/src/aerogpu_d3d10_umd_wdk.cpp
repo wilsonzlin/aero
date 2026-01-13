@@ -1015,11 +1015,22 @@ struct AeroGpuBlendState {
 };
 
 struct AeroGpuRasterizerState {
-  uint32_t dummy = 0;
+  uint32_t fill_mode = static_cast<uint32_t>(D3D10_FILL_SOLID);
+  uint32_t cull_mode = static_cast<uint32_t>(D3D10_CULL_BACK);
+  uint32_t front_ccw = 0u;
+  uint32_t scissor_enable = 0u;
+  int32_t depth_bias = 0;
+  uint32_t depth_clip_enable = 1u;
 };
 
 struct AeroGpuDepthStencilState {
-  uint32_t dummy = 0;
+  uint32_t depth_enable = 1u;
+  uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
+  uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
+  uint32_t stencil_enable = 0u;
+  uint8_t stencil_read_mask = 0xFF;
+  uint8_t stencil_write_mask = 0xFF;
+  uint8_t reserved0[2] = {0, 0};
 };
 
 template <typename T, typename = void>
@@ -1051,6 +1062,143 @@ template <typename T, typename = void>
 struct has_member_AddressW : std::false_type {};
 template <typename T>
 struct has_member_AddressW<T, std::void_t<decltype(std::declval<T>().AddressW)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AlphaToCoverageEnable : std::false_type {};
+template <typename T>
+struct has_member_AlphaToCoverageEnable<T, std::void_t<decltype(std::declval<T>().AlphaToCoverageEnable)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_BlendEnable : std::false_type {};
+template <typename T>
+struct has_member_BlendEnable<T, std::void_t<decltype(std::declval<T>().BlendEnable)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_RenderTargetWriteMask : std::false_type {};
+template <typename T>
+struct has_member_RenderTargetWriteMask<T, std::void_t<decltype(std::declval<T>().RenderTargetWriteMask)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SrcBlend : std::false_type {};
+template <typename T>
+struct has_member_SrcBlend<T, std::void_t<decltype(std::declval<T>().SrcBlend)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DestBlend : std::false_type {};
+template <typename T>
+struct has_member_DestBlend<T, std::void_t<decltype(std::declval<T>().DestBlend)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_BlendOp : std::false_type {};
+template <typename T>
+struct has_member_BlendOp<T, std::void_t<decltype(std::declval<T>().BlendOp)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SrcBlendAlpha : std::false_type {};
+template <typename T>
+struct has_member_SrcBlendAlpha<T, std::void_t<decltype(std::declval<T>().SrcBlendAlpha)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DestBlendAlpha : std::false_type {};
+template <typename T>
+struct has_member_DestBlendAlpha<T, std::void_t<decltype(std::declval<T>().DestBlendAlpha)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_BlendOpAlpha : std::false_type {};
+template <typename T>
+struct has_member_BlendOpAlpha<T, std::void_t<decltype(std::declval<T>().BlendOpAlpha)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_RenderTarget : std::false_type {};
+template <typename T>
+struct has_member_RenderTarget<T, std::void_t<decltype(std::declval<T>().RenderTarget)>> : std::true_type {};
+
+template <typename DescT>
+static bool FillBlendRtDescsFromDesc(const DescT& desc,
+                                    aerogpu::d3d10_11::D3dRtBlendDesc* rts,
+                                    uint32_t rt_count,
+                                    bool* out_alpha_to_coverage_enable) {
+  if (!rts || rt_count == 0) {
+    return false;
+  }
+
+  bool alpha_to_coverage = false;
+  if constexpr (has_member_AlphaToCoverageEnable<DescT>::value) {
+    alpha_to_coverage = desc.AlphaToCoverageEnable ? true : false;
+  }
+  if (out_alpha_to_coverage_enable) {
+    *out_alpha_to_coverage_enable = alpha_to_coverage;
+  }
+
+  // D3D10_BLEND_DESC-style: global blend factors/ops + per-RT enable/write-mask arrays.
+  if constexpr (has_member_BlendEnable<DescT>::value) {
+    uint32_t src_blend = aerogpu::d3d10_11::kD3dBlendOne;
+    uint32_t dest_blend = aerogpu::d3d10_11::kD3dBlendZero;
+    uint32_t blend_op = aerogpu::d3d10_11::kD3dBlendOpAdd;
+    uint32_t src_blend_alpha = aerogpu::d3d10_11::kD3dBlendOne;
+    uint32_t dest_blend_alpha = aerogpu::d3d10_11::kD3dBlendZero;
+    uint32_t blend_op_alpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+    if constexpr (has_member_SrcBlend<DescT>::value) {
+      src_blend = static_cast<uint32_t>(desc.SrcBlend);
+    }
+    if constexpr (has_member_DestBlend<DescT>::value) {
+      dest_blend = static_cast<uint32_t>(desc.DestBlend);
+    }
+    if constexpr (has_member_BlendOp<DescT>::value) {
+      blend_op = static_cast<uint32_t>(desc.BlendOp);
+    }
+    if constexpr (has_member_SrcBlendAlpha<DescT>::value) {
+      src_blend_alpha = static_cast<uint32_t>(desc.SrcBlendAlpha);
+    }
+    if constexpr (has_member_DestBlendAlpha<DescT>::value) {
+      dest_blend_alpha = static_cast<uint32_t>(desc.DestBlendAlpha);
+    }
+    if constexpr (has_member_BlendOpAlpha<DescT>::value) {
+      blend_op_alpha = static_cast<uint32_t>(desc.BlendOpAlpha);
+    }
+
+    for (uint32_t i = 0; i < rt_count; ++i) {
+      rts[i].blend_enable = desc.BlendEnable[i] ? true : false;
+      if constexpr (has_member_RenderTargetWriteMask<DescT>::value) {
+        rts[i].write_mask = static_cast<uint8_t>(desc.RenderTargetWriteMask[i]);
+      }
+      rts[i].src_blend = src_blend;
+      rts[i].dest_blend = dest_blend;
+      rts[i].blend_op = blend_op;
+      rts[i].src_blend_alpha = src_blend_alpha;
+      rts[i].dest_blend_alpha = dest_blend_alpha;
+      rts[i].blend_op_alpha = blend_op_alpha;
+    }
+    return true;
+  }
+
+  // D3D10.1-style: per-RT blend desc array (including factors/ops).
+  if constexpr (has_member_RenderTarget<DescT>::value) {
+    using RtT = std::remove_reference_t<decltype(desc.RenderTarget[0])>;
+    if constexpr (!has_member_BlendEnable<RtT>::value || !has_member_RenderTargetWriteMask<RtT>::value ||
+                  !has_member_SrcBlend<RtT>::value || !has_member_DestBlend<RtT>::value || !has_member_BlendOp<RtT>::value ||
+                  !has_member_SrcBlendAlpha<RtT>::value || !has_member_DestBlendAlpha<RtT>::value ||
+                  !has_member_BlendOpAlpha<RtT>::value) {
+      return false;
+    } else {
+      for (uint32_t i = 0; i < rt_count; ++i) {
+        const auto& rt = desc.RenderTarget[i];
+        rts[i].blend_enable = rt.BlendEnable ? true : false;
+        rts[i].write_mask = static_cast<uint8_t>(rt.RenderTargetWriteMask);
+        rts[i].src_blend = static_cast<uint32_t>(rt.SrcBlend);
+        rts[i].dest_blend = static_cast<uint32_t>(rt.DestBlend);
+        rts[i].blend_op = static_cast<uint32_t>(rt.BlendOp);
+        rts[i].src_blend_alpha = static_cast<uint32_t>(rt.SrcBlendAlpha);
+        rts[i].dest_blend_alpha = static_cast<uint32_t>(rt.DestBlendAlpha);
+        rts[i].blend_op_alpha = static_cast<uint32_t>(rt.BlendOpAlpha);
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
 
 static uint32_t aerogpu_sampler_filter_from_d3d_filter(uint32_t filter) {
   // D3D10 point filtering is encoded as 0 for MIN_MAG_MIP_POINT; treat all other
@@ -1133,6 +1281,12 @@ struct AeroGpuDevice {
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_input_layout = 0;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+  AeroGpuDepthStencilState* current_dss = nullptr;
+  uint32_t current_stencil_ref = 0;
+  AeroGpuRasterizerState* current_rs = nullptr;
+  AeroGpuBlendState* current_bs = nullptr;
+  float current_blend_factor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  uint32_t current_sample_mask = 0xFFFFFFFFu;
 
   aerogpu_constant_buffer_binding vs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_constant_buffer_binding ps_constant_buffers[kMaxConstantBufferSlots] = {};
@@ -5229,32 +5383,37 @@ HRESULT APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
 
-  // Default to the D3D10 default blend state (blending disabled, write RGBA).
   aerogpu::d3d10_11::AerogpuBlendStateBase base{};
-  base.enable = 0;
-  base.src_factor = AEROGPU_BLEND_ONE;
-  base.dst_factor = AEROGPU_BLEND_ZERO;
-  base.blend_op = AEROGPU_BLEND_OP_ADD;
-  base.src_factor_alpha = AEROGPU_BLEND_ONE;
-  base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
-  base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
-  base.color_write_mask = 0xFu;
 
   if (pDesc) {
     aerogpu::d3d10_11::D3dRtBlendDesc rts[AEROGPU_MAX_RENDER_TARGETS]{};
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      rts[i].blend_enable = pDesc->BlendEnable[i] ? true : false;
-      rts[i].write_mask = static_cast<uint8_t>(pDesc->RenderTargetWriteMask[i]);
-      rts[i].src_blend = static_cast<uint32_t>(pDesc->SrcBlend);
-      rts[i].dest_blend = static_cast<uint32_t>(pDesc->DestBlend);
-      rts[i].blend_op = static_cast<uint32_t>(pDesc->BlendOp);
-      rts[i].src_blend_alpha = static_cast<uint32_t>(pDesc->SrcBlendAlpha);
-      rts[i].dest_blend_alpha = static_cast<uint32_t>(pDesc->DestBlendAlpha);
-      rts[i].blend_op_alpha = static_cast<uint32_t>(pDesc->BlendOpAlpha);
+    bool alpha_to_coverage = false;
+
+    bool filled = FillBlendRtDescsFromDesc(*pDesc, rts, AEROGPU_MAX_RENDER_TARGETS, &alpha_to_coverage);
+    if (!filled) {
+      __if_exists(D3D10DDIARG_CREATEBLENDSTATE::BlendDesc) {
+        filled = FillBlendRtDescsFromDesc(pDesc->BlendDesc, rts, AEROGPU_MAX_RENDER_TARGETS, &alpha_to_coverage);
+      }
+    }
+    if (!filled) {
+      __if_exists(D3D10DDIARG_CREATEBLENDSTATE::Desc) {
+        filled = FillBlendRtDescsFromDesc(pDesc->Desc, rts, AEROGPU_MAX_RENDER_TARGETS, &alpha_to_coverage);
+      }
+    }
+    if (!filled) {
+      __if_exists(D3D10DDIARG_CREATEBLENDSTATE::pBlendDesc) {
+        if (pDesc->pBlendDesc) {
+          filled = FillBlendRtDescsFromDesc(*pDesc->pBlendDesc, rts, AEROGPU_MAX_RENDER_TARGETS, &alpha_to_coverage);
+        }
+      }
     }
 
-    const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(
-        rts, AEROGPU_MAX_RENDER_TARGETS, pDesc->AlphaToCoverageEnable ? true : false, &base);
+    if (!filled) {
+      return E_INVALIDARG;
+    }
+
+    const HRESULT hr =
+        aerogpu::d3d10_11::ValidateAndConvertBlendDesc(rts, AEROGPU_MAX_RENDER_TARGETS, alpha_to_coverage, &base);
     if (FAILED(hr)) {
       return hr;
     }
@@ -5276,13 +5435,66 @@ SIZE_T APIENTRY CalcPrivateRasterizerStateSize(D3D10DDI_HDEVICE, const D3D10DDIA
   return sizeof(AeroGpuRasterizerState);
 }
 HRESULT APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
-                                       const D3D10DDIARG_CREATERASTERIZERSTATE*,
+                                       const D3D10DDIARG_CREATERASTERIZERSTATE* pDesc,
                                        D3D10DDI_HRASTERIZERSTATE hState,
                                        D3D10DDI_HRTRASTERIZERSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) AeroGpuRasterizerState();
+
+  auto* state = new (hState.pDrvPrivate) AeroGpuRasterizerState();
+  if (!pDesc) {
+    return S_OK;
+  }
+
+  bool filled = false;
+  __if_exists(D3D10DDIARG_CREATERASTERIZERSTATE::CullMode) {
+    state->fill_mode = static_cast<uint32_t>(pDesc->FillMode);
+    state->cull_mode = static_cast<uint32_t>(pDesc->CullMode);
+    state->front_ccw = pDesc->FrontCounterClockwise ? 1u : 0u;
+    state->scissor_enable = pDesc->ScissorEnable ? 1u : 0u;
+    state->depth_bias = static_cast<int32_t>(pDesc->DepthBias);
+    state->depth_clip_enable = pDesc->DepthClipEnable ? 1u : 0u;
+    filled = true;
+  }
+  if (!filled) {
+    __if_exists(D3D10DDIARG_CREATERASTERIZERSTATE::RasterizerDesc) {
+      const auto& desc = pDesc->RasterizerDesc;
+      state->fill_mode = static_cast<uint32_t>(desc.FillMode);
+      state->cull_mode = static_cast<uint32_t>(desc.CullMode);
+      state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
+      state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+      state->depth_bias = static_cast<int32_t>(desc.DepthBias);
+      state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D10DDIARG_CREATERASTERIZERSTATE::Desc) {
+      const auto& desc = pDesc->Desc;
+      state->fill_mode = static_cast<uint32_t>(desc.FillMode);
+      state->cull_mode = static_cast<uint32_t>(desc.CullMode);
+      state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
+      state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+      state->depth_bias = static_cast<int32_t>(desc.DepthBias);
+      state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D10DDIARG_CREATERASTERIZERSTATE::pRasterizerDesc) {
+      if (pDesc->pRasterizerDesc) {
+        const auto& desc = *pDesc->pRasterizerDesc;
+        state->fill_mode = static_cast<uint32_t>(desc.FillMode);
+        state->cull_mode = static_cast<uint32_t>(desc.CullMode);
+        state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
+        state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+        state->depth_bias = static_cast<int32_t>(desc.DepthBias);
+        state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
+        filled = true;
+      }
+    }
+  }
   return S_OK;
 }
 void APIENTRY DestroyRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE hState) {
@@ -5297,13 +5509,66 @@ SIZE_T APIENTRY CalcPrivateDepthStencilStateSize(D3D10DDI_HDEVICE, const D3D10DD
   return sizeof(AeroGpuDepthStencilState);
 }
 HRESULT APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
-                                         const D3D10DDIARG_CREATEDEPTHSTENCILSTATE*,
+                                         const D3D10DDIARG_CREATEDEPTHSTENCILSTATE* pDesc,
                                          D3D10DDI_HDEPTHSTENCILSTATE hState,
                                          D3D10DDI_HRTDEPTHSTENCILSTATE) {
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
-  new (hState.pDrvPrivate) AeroGpuDepthStencilState();
+
+  auto* state = new (hState.pDrvPrivate) AeroGpuDepthStencilState();
+  if (!pDesc) {
+    return S_OK;
+  }
+
+  bool filled = false;
+  __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILSTATE::DepthEnable) {
+    state->depth_enable = pDesc->DepthEnable ? 1u : 0u;
+    state->depth_write_mask = static_cast<uint32_t>(pDesc->DepthWriteMask);
+    state->depth_func = static_cast<uint32_t>(pDesc->DepthFunc);
+    state->stencil_enable = pDesc->StencilEnable ? 1u : 0u;
+    state->stencil_read_mask = static_cast<uint8_t>(pDesc->StencilReadMask);
+    state->stencil_write_mask = static_cast<uint8_t>(pDesc->StencilWriteMask);
+    filled = true;
+  }
+  if (!filled) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILSTATE::DepthStencilDesc) {
+      const auto& desc = pDesc->DepthStencilDesc;
+      state->depth_enable = desc.DepthEnable ? 1u : 0u;
+      state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
+      state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
+      state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+      state->stencil_read_mask = static_cast<uint8_t>(desc.StencilReadMask);
+      state->stencil_write_mask = static_cast<uint8_t>(desc.StencilWriteMask);
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILSTATE::Desc) {
+      const auto& desc = pDesc->Desc;
+      state->depth_enable = desc.DepthEnable ? 1u : 0u;
+      state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
+      state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
+      state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+      state->stencil_read_mask = static_cast<uint8_t>(desc.StencilReadMask);
+      state->stencil_write_mask = static_cast<uint8_t>(desc.StencilWriteMask);
+      filled = true;
+    }
+  }
+  if (!filled) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILSTATE::pDepthStencilDesc) {
+      if (pDesc->pDepthStencilDesc) {
+        const auto& desc = *pDesc->pDepthStencilDesc;
+        state->depth_enable = desc.DepthEnable ? 1u : 0u;
+        state->depth_write_mask = static_cast<uint32_t>(desc.DepthWriteMask);
+        state->depth_func = static_cast<uint32_t>(desc.DepthFunc);
+        state->stencil_enable = desc.StencilEnable ? 1u : 0u;
+        state->stencil_read_mask = static_cast<uint8_t>(desc.StencilReadMask);
+        state->stencil_write_mask = static_cast<uint8_t>(desc.StencilWriteMask);
+        filled = true;
+      }
+    }
+  }
   return S_OK;
 }
 void APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE hState) {
@@ -6048,8 +6313,170 @@ void APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT numRects, const D3D
   }
 }
 
-void APIENTRY SetRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE) {
-  // Stub.
+static uint32_t D3D10FillModeToAerogpu(uint32_t fill_mode) {
+  switch (static_cast<D3D10_FILL_MODE>(fill_mode)) {
+    case D3D10_FILL_WIREFRAME:
+      return AEROGPU_FILL_WIREFRAME;
+    case D3D10_FILL_SOLID:
+    default:
+      return AEROGPU_FILL_SOLID;
+  }
+}
+
+static uint32_t D3D10CullModeToAerogpu(uint32_t cull_mode) {
+  switch (static_cast<D3D10_CULL_MODE>(cull_mode)) {
+    case D3D10_CULL_NONE:
+      return AEROGPU_CULL_NONE;
+    case D3D10_CULL_FRONT:
+      return AEROGPU_CULL_FRONT;
+    case D3D10_CULL_BACK:
+    default:
+      return AEROGPU_CULL_BACK;
+  }
+}
+
+static uint32_t D3D10CompareFuncToAerogpu(uint32_t func) {
+  switch (static_cast<D3D10_COMPARISON_FUNC>(func)) {
+    case D3D10_COMPARISON_NEVER:
+      return AEROGPU_COMPARE_NEVER;
+    case D3D10_COMPARISON_LESS:
+      return AEROGPU_COMPARE_LESS;
+    case D3D10_COMPARISON_EQUAL:
+      return AEROGPU_COMPARE_EQUAL;
+    case D3D10_COMPARISON_LESS_EQUAL:
+      return AEROGPU_COMPARE_LESS_EQUAL;
+    case D3D10_COMPARISON_GREATER:
+      return AEROGPU_COMPARE_GREATER;
+    case D3D10_COMPARISON_NOT_EQUAL:
+      return AEROGPU_COMPARE_NOT_EQUAL;
+    case D3D10_COMPARISON_GREATER_EQUAL:
+      return AEROGPU_COMPARE_GREATER_EQUAL;
+    case D3D10_COMPARISON_ALWAYS:
+    default:
+      return AEROGPU_COMPARE_ALWAYS;
+  }
+}
+
+static void EmitRasterizerStateLocked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, const AeroGpuRasterizerState* rs) {
+  if (!dev) {
+    return;
+  }
+
+  uint32_t fill_mode = static_cast<uint32_t>(D3D10_FILL_SOLID);
+  uint32_t cull_mode = static_cast<uint32_t>(D3D10_CULL_BACK);
+  uint32_t front_ccw = 0u;
+  uint32_t scissor_enable = 0u;
+  int32_t depth_bias = 0;
+  uint32_t depth_clip_enable = 1u;
+  if (rs) {
+    fill_mode = rs->fill_mode;
+    cull_mode = rs->cull_mode;
+    front_ccw = rs->front_ccw;
+    scissor_enable = rs->scissor_enable;
+    depth_bias = rs->depth_bias;
+    depth_clip_enable = rs->depth_clip_enable;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.fill_mode = D3D10FillModeToAerogpu(fill_mode);
+  cmd->state.cull_mode = D3D10CullModeToAerogpu(cull_mode);
+  cmd->state.front_ccw = front_ccw ? 1u : 0u;
+  cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
+  cmd->state.depth_bias = depth_bias;
+  cmd->state.flags = depth_clip_enable ? AEROGPU_RASTERIZER_FLAG_NONE
+                                       : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
+}
+
+static void EmitBlendStateLocked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, const AeroGpuBlendState* bs) {
+  if (!dev) {
+    return;
+  }
+
+  aerogpu::d3d10_11::AerogpuBlendStateBase base{};
+  if (bs) {
+    base = bs->state;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.enable = base.enable ? 1u : 0u;
+  cmd->state.src_factor = base.src_factor;
+  cmd->state.dst_factor = base.dst_factor;
+  cmd->state.blend_op = base.blend_op;
+  cmd->state.color_write_mask = base.color_write_mask;
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+  cmd->state.reserved0[2] = 0;
+
+  cmd->state.src_factor_alpha = base.src_factor_alpha;
+  cmd->state.dst_factor_alpha = base.dst_factor_alpha;
+  cmd->state.blend_op_alpha = base.blend_op_alpha;
+
+  cmd->state.blend_constant_rgba_f32[0] = f32_bits(dev->current_blend_factor[0]);
+  cmd->state.blend_constant_rgba_f32[1] = f32_bits(dev->current_blend_factor[1]);
+  cmd->state.blend_constant_rgba_f32[2] = f32_bits(dev->current_blend_factor[2]);
+  cmd->state.blend_constant_rgba_f32[3] = f32_bits(dev->current_blend_factor[3]);
+  cmd->state.sample_mask = dev->current_sample_mask;
+}
+
+static void EmitDepthStencilStateLocked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, const AeroGpuDepthStencilState* dss) {
+  if (!dev) {
+    return;
+  }
+
+  uint32_t depth_enable = 1u;
+  uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
+  uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
+  uint32_t stencil_enable = 0u;
+  uint8_t stencil_read_mask = 0xFF;
+  uint8_t stencil_write_mask = 0xFF;
+  if (dss) {
+    depth_enable = dss->depth_enable;
+    depth_write_mask = dss->depth_write_mask;
+    depth_func = dss->depth_func;
+    stencil_enable = dss->stencil_enable;
+    stencil_read_mask = dss->stencil_read_mask;
+    stencil_write_mask = dss->stencil_write_mask;
+  }
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
+
+  cmd->state.depth_enable = depth_enable ? 1u : 0u;
+  cmd->state.depth_write_enable = depth_write_mask ? 1u : 0u;
+  cmd->state.depth_func = D3D10CompareFuncToAerogpu(depth_func);
+  cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
+  cmd->state.stencil_read_mask = stencil_read_mask;
+  cmd->state.stencil_write_mask = stencil_write_mask;
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+}
+
+void APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRASTERIZERSTATE hState) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_rs = hState.pDrvPrivate ? FromHandle<D3D10DDI_HRASTERIZERSTATE, AeroGpuRasterizerState>(hState) : nullptr;
+  EmitRasterizerStateLocked(hDevice, dev, dev->current_rs);
 }
 
 void APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
@@ -6065,53 +6492,35 @@ void APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
     SetError(hDevice, E_INVALIDARG);
     return;
   }
-
   std::lock_guard<std::mutex> lock(dev->mutex);
-
-  // Default to the D3D10 default blend state (blending disabled, write RGBA).
-  aerogpu::d3d10_11::AerogpuBlendStateBase base{};
-  base.enable = 0;
-  base.src_factor = AEROGPU_BLEND_ONE;
-  base.dst_factor = AEROGPU_BLEND_ZERO;
-  base.blend_op = AEROGPU_BLEND_OP_ADD;
-  base.src_factor_alpha = AEROGPU_BLEND_ONE;
-  base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
-  base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
-  base.color_write_mask = 0xFu;
-
-  if (hState.pDrvPrivate) {
-    auto* bs = FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState);
-    if (bs) {
-      base = bs->state;
-    }
+  dev->current_bs = hState.pDrvPrivate ? FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState) : nullptr;
+  if (blend_factor) {
+    std::memcpy(dev->current_blend_factor, blend_factor, sizeof(dev->current_blend_factor));
+  } else {
+    dev->current_blend_factor[0] = 1.0f;
+    dev->current_blend_factor[1] = 1.0f;
+    dev->current_blend_factor[2] = 1.0f;
+    dev->current_blend_factor[3] = 1.0f;
   }
-
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
-  if (!cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
-    return;
-  }
-
-  cmd->state.enable = base.enable ? 1u : 0u;
-  cmd->state.src_factor = base.src_factor;
-  cmd->state.dst_factor = base.dst_factor;
-  cmd->state.blend_op = base.blend_op;
-  cmd->state.color_write_mask = static_cast<uint8_t>(base.color_write_mask & 0xFu);
-  cmd->state.reserved0[0] = 0;
-  cmd->state.reserved0[1] = 0;
-  cmd->state.reserved0[2] = 0;
-  cmd->state.src_factor_alpha = base.src_factor_alpha;
-  cmd->state.dst_factor_alpha = base.dst_factor_alpha;
-  cmd->state.blend_op_alpha = base.blend_op_alpha;
-  cmd->state.blend_constant_rgba_f32[0] = f32_bits(blend_factor ? blend_factor[0] : 1.0f);
-  cmd->state.blend_constant_rgba_f32[1] = f32_bits(blend_factor ? blend_factor[1] : 1.0f);
-  cmd->state.blend_constant_rgba_f32[2] = f32_bits(blend_factor ? blend_factor[2] : 1.0f);
-  cmd->state.blend_constant_rgba_f32[3] = f32_bits(blend_factor ? blend_factor[3] : 1.0f);
-  cmd->state.sample_mask = sample_mask;
+  dev->current_sample_mask = sample_mask;
+  EmitBlendStateLocked(hDevice, dev, dev->current_bs);
 }
 
-void APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE, UINT) {
-  // Stub.
+void APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HDEPTHSTENCILSTATE hState, UINT stencil_ref) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_dss =
+      hState.pDrvPrivate ? FromHandle<D3D10DDI_HDEPTHSTENCILSTATE, AeroGpuDepthStencilState>(hState) : nullptr;
+  dev->current_stencil_ref = stencil_ref;
+  EmitDepthStencilStateLocked(hDevice, dev, dev->current_dss);
 }
 
 void APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,

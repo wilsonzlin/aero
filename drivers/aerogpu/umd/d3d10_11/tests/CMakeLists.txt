@@ -111,3 +111,21 @@ set_target_properties(aerogpu_d3d10_11_blend_state_validation_tests PROPERTIES
 )
 
 add_test(NAME aerogpu_d3d10_11_blend_state_validation_tests COMMAND aerogpu_d3d10_11_blend_state_validation_tests)
+
+add_executable(aerogpu_d3d10_11_state_packets_tests
+    state_packets_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d10_11_umd.cpp
+)
+
+target_include_directories(aerogpu_d3d10_11_state_packets_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../../../protocol
+)
+
+set_target_properties(aerogpu_d3d10_11_state_packets_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d10_11_state_packets_tests COMMAND aerogpu_d3d10_11_state_packets_tests)
