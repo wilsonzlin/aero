@@ -37,6 +37,16 @@ pub struct Tier1WasmOptions {
     /// invalidation via `jit.on_guest_write(..)`, etc).
     pub inline_tlb_stores: bool,
 
+    /// When [`Self::inline_tlb`] is enabled, control how same-page non-RAM translations are
+    /// handled.
+    ///
+    /// - When `true` (default), Tier-1 treats these accesses as MMIO and calls the imported
+    ///   `env.jit_exit_mmio` helper, causing the backend to roll back guest state and resume via
+    ///   the interpreter.
+    /// - When `false`, Tier-1 falls back to the imported slow mem helpers (`env.mem_read_*` /
+    ///   `env.mem_write_*`) and continues executing the block.
+    pub inline_tlb_mmio_exit: bool,
+
     /// Whether the imported `env.memory` is expected to be a shared memory (i.e. created with
     /// `WebAssembly.Memory({ shared: true, ... })`).
     ///
@@ -60,6 +70,8 @@ impl Default for Tier1WasmOptions {
             // Preserve historical behaviour: when callers enable `inline_tlb`, stores take the
             // fast-path by default unless explicitly disabled.
             inline_tlb_stores: true,
+            // Preserve existing behaviour by default: MMIO/non-RAM access forces a runtime exit.
+            inline_tlb_mmio_exit: true,
             // Preserve existing behaviour by default: import an unshared memory with min=1 and no
             // maximum.
             memory_shared: false,
@@ -708,22 +720,80 @@ impl Emitter<'_> {
                     // Fast path: inline TLB probe + direct RAM load.
                     self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
 
-                    self.emit_mmio_exit(size_bytes, 0, None);
+                    if self.options.inline_tlb_mmio_exit {
+                        self.emit_mmio_exit(size_bytes, 0, None);
 
-                    self.emit_compute_ram_addr();
-                    match *width {
-                        Width::W8 => self.func.instruction(&Instruction::I64Load8U(memarg(0, 0))),
-                        Width::W16 => self
-                            .func
-                            .instruction(&Instruction::I64Load16U(memarg(0, 1))),
-                        Width::W32 => self
-                            .func
-                            .instruction(&Instruction::I64Load32U(memarg(0, 2))),
-                        Width::W64 => self.func.instruction(&Instruction::I64Load(memarg(0, 3))),
-                    };
-                    self.emit_trunc(*width);
-                    self.func
-                        .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                        self.emit_compute_ram_addr();
+                        match *width {
+                            Width::W8 => {
+                                self.func.instruction(&Instruction::I64Load8U(memarg(0, 0)))
+                            }
+                            Width::W16 => self
+                                .func
+                                .instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                            Width::W32 => self
+                                .func
+                                .instruction(&Instruction::I64Load32U(memarg(0, 2))),
+                            Width::W64 => {
+                                self.func.instruction(&Instruction::I64Load(memarg(0, 3)))
+                            }
+                        };
+                        self.emit_trunc(*width);
+                        self.func
+                            .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                    } else {
+                        // If the translation isn't backed by RAM (MMIO/ROM/unmapped), fall back to
+                        // the slow helper and keep executing this block.
+                        self.func.instruction(&Instruction::LocalGet(
+                            self.layout.scratch_tlb_data_local(),
+                        ));
+                        self.func
+                            .instruction(&Instruction::I64Const(crate::TLB_FLAG_IS_RAM as i64));
+                        self.func.instruction(&Instruction::I64And);
+                        self.func.instruction(&Instruction::I64Eqz);
+
+                        self.func.instruction(&Instruction::If(BlockType::Empty));
+                        self.depth += 1;
+                        {
+                            // Slow path.
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                            self.func.instruction(&Instruction::LocalGet(
+                                self.layout.scratch_vaddr_local(),
+                            ));
+                            self.func.instruction(&Instruction::Call(slow_read));
+                            if !matches!(*width, Width::W64) {
+                                self.func.instruction(&Instruction::I64ExtendI32U);
+                            }
+                            self.emit_trunc(*width);
+                            self.func
+                                .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                        }
+                        self.func.instruction(&Instruction::Else);
+                        {
+                            // RAM fast-path.
+                            self.emit_compute_ram_addr();
+                            match *width {
+                                Width::W8 => {
+                                    self.func.instruction(&Instruction::I64Load8U(memarg(0, 0)))
+                                }
+                                Width::W16 => self
+                                    .func
+                                    .instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                                Width::W32 => self
+                                    .func
+                                    .instruction(&Instruction::I64Load32U(memarg(0, 2))),
+                                Width::W64 => {
+                                    self.func.instruction(&Instruction::I64Load(memarg(0, 3)))
+                                }
+                            };
+                            self.emit_trunc(*width);
+                            self.func
+                                .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                        }
+                        self.func.instruction(&Instruction::End);
+                        self.depth -= 1;
+                    }
                 }
                 self.func.instruction(&Instruction::End);
                 self.depth -= 1;
@@ -808,25 +878,86 @@ impl Emitter<'_> {
                     // Fast path: inline TLB probe + direct RAM store.
                     self.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
 
-                    self.emit_mmio_exit(size_bytes, 1, Some(*src));
+                    if self.options.inline_tlb_mmio_exit {
+                        self.emit_mmio_exit(size_bytes, 1, Some(*src));
 
-                    self.emit_compute_ram_addr();
-                    self.func
-                        .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
-                    match *width {
-                        Width::W8 => self.func.instruction(&Instruction::I64Store8(memarg(0, 0))),
-                        Width::W16 => self
-                            .func
-                            .instruction(&Instruction::I64Store16(memarg(0, 1))),
-                        Width::W32 => self
-                            .func
-                            .instruction(&Instruction::I64Store32(memarg(0, 2))),
-                        Width::W64 => self.func.instruction(&Instruction::I64Store(memarg(0, 3))),
-                    };
+                        self.emit_compute_ram_addr();
+                        self.func
+                            .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
+                        match *width {
+                            Width::W8 => {
+                                self.func.instruction(&Instruction::I64Store8(memarg(0, 0)))
+                            }
+                            Width::W16 => self
+                                .func
+                                .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                            Width::W32 => self
+                                .func
+                                .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                            Width::W64 => {
+                                self.func.instruction(&Instruction::I64Store(memarg(0, 3)))
+                            }
+                        };
 
-                    // Self-modifying code invalidation: bump the version entry for the written
-                    // physical page. We conservatively bump for all RAM writes.
-                    self.emit_bump_code_version_fastpath();
+                        // Self-modifying code invalidation: bump the version entry for the written
+                        // physical page. We conservatively bump for all RAM writes.
+                        self.emit_bump_code_version_fastpath();
+                    } else {
+                        // If the translation isn't backed by RAM (MMIO/ROM/unmapped), fall back to
+                        // the slow helper and keep executing this block.
+                        self.func.instruction(&Instruction::LocalGet(
+                            self.layout.scratch_tlb_data_local(),
+                        ));
+                        self.func
+                            .instruction(&Instruction::I64Const(crate::TLB_FLAG_IS_RAM as i64));
+                        self.func.instruction(&Instruction::I64And);
+                        self.func.instruction(&Instruction::I64Eqz);
+
+                        self.func.instruction(&Instruction::If(BlockType::Empty));
+                        self.depth += 1;
+                        {
+                            // Slow path.
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                            self.func.instruction(&Instruction::LocalGet(
+                                self.layout.scratch_vaddr_local(),
+                            ));
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
+                            if !matches!(*width, Width::W64) {
+                                self.emit_trunc(*width);
+                                self.func.instruction(&Instruction::I32WrapI64);
+                            }
+                            self.func.instruction(&Instruction::Call(slow_write));
+                        }
+                        self.func.instruction(&Instruction::Else);
+                        {
+                            // RAM fast-path.
+                            self.emit_compute_ram_addr();
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
+                            match *width {
+                                Width::W8 => {
+                                    self.func.instruction(&Instruction::I64Store8(memarg(0, 0)))
+                                }
+                                Width::W16 => self
+                                    .func
+                                    .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                                Width::W32 => self
+                                    .func
+                                    .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                                Width::W64 => {
+                                    self.func.instruction(&Instruction::I64Store(memarg(0, 3)))
+                                }
+                            };
+
+                            // Self-modifying code invalidation: bump the version entry for the
+                            // written physical page. We conservatively bump for all RAM writes.
+                            self.emit_bump_code_version_fastpath();
+                        }
+                        self.func.instruction(&Instruction::End);
+                        self.depth -= 1;
+                    }
                 }
                 self.func.instruction(&Instruction::End);
                 self.depth -= 1;

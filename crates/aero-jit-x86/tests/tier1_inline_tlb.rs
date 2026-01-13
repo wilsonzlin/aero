@@ -829,6 +829,92 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
 }
 
 #[test]
+fn tier1_inline_tlb_mmio_load_uses_slow_helper_when_configured() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0xF000);
+    let loaded = b.load(Width::W32, addr);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W32,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x10000];
+    ram[0xF000..0xF004].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x8000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234_5678);
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_mmio_store_uses_slow_helper_when_configured() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0xF000);
+    let value = b.const_int(Width::W32, 0xDEAD_BEEF);
+    b.store(Width::W32, addr, value);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x10000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x8000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(&got_ram[0xF000..0xF004], &0xDEAD_BEEFu32.to_le_bytes());
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+}
+
+#[test]
 fn tier1_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset() {
     // Q35 layout:
     // - low RAM:  [0x0000_0000 .. 0xB000_0000)
