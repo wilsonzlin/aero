@@ -418,6 +418,8 @@ static int RunCursorStateSanity(int argc, char** argv) {
   }
 
   int result = 1;
+  LONG_PTR prev_class_cursor = 0;
+  bool have_prev_class_cursor = false;
 
   // ----- Move cursor to a deterministic location -----
   const int screen_w = GetSystemMetrics(SM_CXSCREEN);
@@ -542,7 +544,14 @@ static int RunCursorStateSanity(int argc, char** argv) {
   //
   // This avoids relying on external windows' WM_SETCURSOR behavior (Explorer/desktop), and avoids
   // needing a message pump.
-  (void)SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)custom_cursor);
+  SetLastError(0);
+  prev_class_cursor = SetClassLongPtr(hwnd, GCLP_HCURSOR, (LONG_PTR)custom_cursor);
+  const DWORD setclass_err = GetLastError();
+  have_prev_class_cursor = (prev_class_cursor != 0 || setclass_err == 0);
+  if (!have_prev_class_cursor) {
+    reporter.Fail("SetClassLongPtr(GCLP_HCURSOR) failed: %s", aerogpu_test::Win32ErrorToString(setclass_err).c_str());
+    goto cleanup;
+  }
   (void)SetWindowPos(hwnd,
                      HWND_TOPMOST,
                      target_x - 80,
@@ -717,11 +726,16 @@ cleanup:
   aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
   aerogpu_test::kmt::UnloadD3DKMT(&kmt);
 
-  if (custom_cursor) {
-    DestroyIcon(custom_cursor);
+  if (have_prev_class_cursor && hwnd) {
+    (void)SetClassLongPtr(hwnd, GCLP_HCURSOR, prev_class_cursor);
   }
   if (hwnd) {
     DestroyWindow(hwnd);
+    hwnd = NULL;
+  }
+  if (custom_cursor) {
+    DestroyIcon(custom_cursor);
+    custom_cursor = NULL;
   }
 
   // Restore the cursor display counter if we changed it at the start.
