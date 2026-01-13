@@ -3,6 +3,8 @@ use std::hash::Hash;
 use std::num::NonZeroUsize;
 
 use lru::LruCache;
+#[cfg(not(target_arch = "wasm32"))]
+use tracing::warn;
 
 use crate::error::GpuError;
 use crate::pipeline_key::{
@@ -11,11 +13,104 @@ use crate::pipeline_key::{
 use crate::stats::PipelineCacheStats;
 use crate::GpuCapabilities;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PipelineCacheConfig {
     pub max_shader_modules: Option<NonZeroUsize>,
     pub max_render_pipelines: Option<NonZeroUsize>,
     pub max_compute_pipelines: Option<NonZeroUsize>,
+}
+
+impl PipelineCacheConfig {
+    const DEFAULT_MAX_SHADER_MODULES: usize = 2048;
+    const DEFAULT_MAX_RENDER_PIPELINES: usize = 1024;
+    const DEFAULT_MAX_COMPUTE_PIPELINES: usize = 256;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn parse_env_nonzero_usize(var: &'static str) -> Option<NonZeroUsize> {
+        let raw = match std::env::var(var) {
+            Ok(v) => v,
+            Err(std::env::VarError::NotPresent) => return None,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                warn!(
+                    env_var = var,
+                    "Ignoring {var} because it is not valid unicode"
+                );
+                return None;
+            }
+        };
+
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            warn!(env_var = var, value = %raw, "Ignoring empty {var}");
+            return None;
+        }
+
+        match trimmed.parse::<usize>() {
+            Ok(value) => match NonZeroUsize::new(value) {
+                Some(v) => Some(v),
+                None => {
+                    warn!(
+                        env_var = var,
+                        value = %raw,
+                        "Ignoring {var} because 0 is not a valid cache size"
+                    );
+                    None
+                }
+            },
+            Err(err) => {
+                warn!(
+                    env_var = var,
+                    value = %raw,
+                    error = %err,
+                    "Ignoring {var} because it is not a valid integer"
+                );
+                None
+            }
+        }
+    }
+}
+
+impl Default for PipelineCacheConfig {
+    fn default() -> Self {
+        let mut config = Self {
+            max_shader_modules: Some(
+                NonZeroUsize::new(Self::DEFAULT_MAX_SHADER_MODULES)
+                    .expect("DEFAULT_MAX_SHADER_MODULES must be non-zero"),
+            ),
+            max_render_pipelines: Some(
+                NonZeroUsize::new(Self::DEFAULT_MAX_RENDER_PIPELINES)
+                    .expect("DEFAULT_MAX_RENDER_PIPELINES must be non-zero"),
+            ),
+            max_compute_pipelines: Some(
+                NonZeroUsize::new(Self::DEFAULT_MAX_COMPUTE_PIPELINES)
+                    .expect("DEFAULT_MAX_COMPUTE_PIPELINES must be non-zero"),
+            ),
+        };
+
+        // Allow cache sizes to be tuned in production without code changes.
+        //
+        // Note: Environment variables are not supported on `wasm32-unknown-unknown`,
+        // so we only apply overrides on native targets.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(v) = Self::parse_env_nonzero_usize("AERO_PIPELINE_CACHE_MAX_SHADER_MODULES")
+            {
+                config.max_shader_modules = Some(v);
+            }
+            if let Some(v) =
+                Self::parse_env_nonzero_usize("AERO_PIPELINE_CACHE_MAX_RENDER_PIPELINES")
+            {
+                config.max_render_pipelines = Some(v);
+            }
+            if let Some(v) =
+                Self::parse_env_nonzero_usize("AERO_PIPELINE_CACHE_MAX_COMPUTE_PIPELINES")
+            {
+                config.max_compute_pipelines = Some(v);
+            }
+        }
+
+        config
+    }
 }
 
 #[derive(Debug)]
@@ -309,6 +404,7 @@ impl PipelineCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn lru_eviction_is_least_recently_used() {
@@ -325,5 +421,81 @@ mod tests {
         assert!(cache.peek(&2).is_none());
         assert_eq!(cache.peek(&1), Some(&"a"));
         assert_eq!(cache.peek(&3), Some(&"c"));
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvVarGuard {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvVarGuard {
+        fn new(vars: &[&'static str]) -> Self {
+            let saved = vars
+                .iter()
+                .map(|&key| (key, std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+            for &key in vars {
+                std::env::remove_var(key);
+            }
+            Self { saved }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            for &(key, ref value) in &self.saved {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pipeline_cache_config_default_is_bounded() {
+        let _lock = env_lock().lock().unwrap();
+        let _guard = EnvVarGuard::new(&[
+            "AERO_PIPELINE_CACHE_MAX_SHADER_MODULES",
+            "AERO_PIPELINE_CACHE_MAX_RENDER_PIPELINES",
+            "AERO_PIPELINE_CACHE_MAX_COMPUTE_PIPELINES",
+        ]);
+
+        let config = PipelineCacheConfig::default();
+        assert_eq!(
+            config.max_shader_modules.unwrap().get(),
+            PipelineCacheConfig::DEFAULT_MAX_SHADER_MODULES
+        );
+        assert_eq!(
+            config.max_render_pipelines.unwrap().get(),
+            PipelineCacheConfig::DEFAULT_MAX_RENDER_PIPELINES
+        );
+        assert_eq!(
+            config.max_compute_pipelines.unwrap().get(),
+            PipelineCacheConfig::DEFAULT_MAX_COMPUTE_PIPELINES
+        );
+    }
+
+    #[test]
+    fn pipeline_cache_config_env_overrides_are_applied() {
+        let _lock = env_lock().lock().unwrap();
+        let _guard = EnvVarGuard::new(&[
+            "AERO_PIPELINE_CACHE_MAX_SHADER_MODULES",
+            "AERO_PIPELINE_CACHE_MAX_RENDER_PIPELINES",
+            "AERO_PIPELINE_CACHE_MAX_COMPUTE_PIPELINES",
+        ]);
+
+        std::env::set_var("AERO_PIPELINE_CACHE_MAX_SHADER_MODULES", "123");
+        std::env::set_var("AERO_PIPELINE_CACHE_MAX_RENDER_PIPELINES", "456");
+        std::env::set_var("AERO_PIPELINE_CACHE_MAX_COMPUTE_PIPELINES", "789");
+
+        let config = PipelineCacheConfig::default();
+        assert_eq!(config.max_shader_modules.unwrap().get(), 123);
+        assert_eq!(config.max_render_pipelines.unwrap().get(), 456);
+        assert_eq!(config.max_compute_pipelines.unwrap().get(), 789);
     }
 }
