@@ -2597,8 +2597,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--require-virtio-net-msix",
+        dest="require_virtio_net_msix",
         action="store_true",
-        help="After drivers load, require that the virtio-net PCI function has MSI-X enabled (checked via QMP/QEMU introspection).",
+        help=(
+            "Require virtio-net to run with MSI-X enabled. This performs a host-side MSI-X enable check via QMP "
+            "and also requires the guest marker: "
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|... "
+            "This requires a guest image with an updated aero-virtio-selftest.exe; "
+            "to make the guest fail-fast, provision it with --require-net-msix "
+            "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1)."
+        ),
     )
     parser.add_argument(
         "--require-virtio-blk-msix",
@@ -2799,6 +2807,7 @@ def main() -> int:
     need_msix_check = bool(
         args.require_virtio_net_msix or args.require_virtio_blk_msix or args.require_virtio_snd_msix
     )
+    need_virtio_net_msix = bool(getattr(args, "require_virtio_net_msix", False))
 
     input_events_req_flags: list[str] = []
     if bool(args.with_input_events):
@@ -4502,6 +4511,28 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+
+                            if need_virtio_net_msix:
+                                parsed = _parse_virtio_net_msix_marker(tail)
+                                if parsed is None:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while --require-virtio-net-msix was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                                msix_status, msix_fields = parsed
+                                msix_mode = msix_fields.get("mode", "")
+                                if msix_status != "PASS" or msix_mode != "msix":
+                                    print(
+                                        f"FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net-msix marker did not report PASS|mode=msix (status={msix_status} mode={msix_mode or 'unknown'})",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                         elif args.enable_virtio_snd:
                             # Transitional mode: don't require virtio-input markers, but if the caller
                             # explicitly attached virtio-snd, require the virtio-snd marker to avoid
@@ -5595,6 +5626,28 @@ def main() -> int:
                                                 "FAIL: MISSING_VIRTIO_NET_UDP: selftest RESULT=PASS but did not emit virtio-net-udp test marker",
                                                 file=sys.stderr,
                                             )
+                                            _print_tail(serial_log)
+                                            result_code = 1
+                                            break
+
+                                if need_virtio_net_msix:
+                                    parsed = _parse_virtio_net_msix_marker(tail)
+                                    if parsed is None:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_NET_MSIX: did not observe virtio-net-msix marker while --require-virtio-net-msix was enabled",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+
+                                    msix_status, msix_fields = parsed
+                                    msix_mode = msix_fields.get("mode", "")
+                                    if msix_status != "PASS" or msix_mode != "msix":
+                                        print(
+                                            f"FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net-msix marker did not report PASS|mode=msix (status={msix_status} mode={msix_mode or 'unknown'})",
+                                            file=sys.stderr,
+                                        )
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
@@ -6878,6 +6931,27 @@ def _emit_virtio_irq_host_markers(
                 continue
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
         print("|".join(parts))
+def _parse_virtio_net_msix_marker(tail: bytes) -> Optional[tuple[str, dict[str, str]]]:
+    """
+    Parse the guest virtio-net MSI-X diagnostic marker emitted by aero-virtio-selftest.exe.
+
+    Example:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|messages=3|...
+
+    Returns:
+      (status_token, kv_fields) for the *last* matching line, or None if not found/invalid.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|")
+    if marker_line is None:
+        return None
+
+    parts = marker_line.split("|")
+    if len(parts) < 4:
+        return None
+
+    status = parts[3].strip()
+    fields = _parse_marker_kv_fields(marker_line)
+    return status, fields
 
 
 def _try_extract_marker_status(marker_line: str) -> Optional[str]:

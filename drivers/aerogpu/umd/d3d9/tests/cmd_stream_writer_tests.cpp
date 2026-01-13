@@ -26401,7 +26401,7 @@ bool TestProcessVerticesCopiesBytesAndUploadsHostBuffer() {
   constexpr uint32_t kBufSize = 64;
 
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = 0;
   create_src.width = 0;
   create_src.height = 0;
@@ -27013,7 +27013,7 @@ bool TestProcessVerticesEmitsDirtyRangeForGuestBackedDest() {
 
   // Source buffer is host-backed.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = 0;
   create_src.width = 0;
   create_src.height = 0;

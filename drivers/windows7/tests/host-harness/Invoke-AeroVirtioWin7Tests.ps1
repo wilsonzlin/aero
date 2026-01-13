@@ -198,6 +198,9 @@ param(
   # If set, require that the corresponding virtio PCI function has MSI-X enabled.
   # Verification is performed via QMP/QEMU introspection (query-pci or HMP `info pci` fallback).
   #
+  # For virtio-net, this also requires the guest to report running in MSI-X mode via:
+  #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|...
+  #
   # For virtio-blk, this also requires the guest to report running in MSI-X mode via:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...
   #
@@ -216,7 +219,6 @@ param(
   # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
-
   # If set, stream newly captured COM1 serial output to stdout while waiting.
   [Parameter(Mandatory = $false)]
   [switch]$FollowSerial,
@@ -825,6 +827,10 @@ function Wait-AeroSelftestResult {
     [Alias("EnableVirtioInputEventsExtended")]
     [bool]$RequireVirtioInputEventsExtendedPass = $false,
 
+    # If true, require virtio-net-msix marker to report PASS|mode=msix.
+    [Parameter(Mandatory = $false)]
+    [bool]$RequireVirtioNetMsix = $false,
+
     # If true, require the virtio-input-msix marker to report mode=msix.
     [Parameter(Mandatory = $false)]
     [bool]$RequireVirtioInputMsixPass = $false,
@@ -908,6 +914,7 @@ function Wait-AeroSelftestResult {
   $sawVirtioNetUdpPass = $false
   $sawVirtioNetUdpFail = $false
   $sawVirtioNetUdpSkip = $false
+  $sawVirtioNetMsixModeMsix = $false
 
   function Test-VirtioInputMsixRequirement {
     param(
@@ -1192,6 +1199,10 @@ function Wait-AeroSelftestResult {
         $sawVirtioNetUdpSkip = $true
       }
 
+      if (-not $sawVirtioNetMsixModeMsix -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-msix\|PASS\|mode=msix") {
+        $sawVirtioNetMsixModeMsix = $true
+      }
+
       if ($RequireVirtioSndBufferLimitsPass) {
         if ($sawVirtioSndBufferLimitsSkip) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_SKIPPED"; Tail = $tail } }
         if ($sawVirtioSndBufferLimitsFail) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_FAILED"; Tail = $tail } }
@@ -1287,6 +1298,10 @@ function Wait-AeroSelftestResult {
               if ($sawVirtioNetUdpSkip) { return @{ Result = "VIRTIO_NET_UDP_SKIPPED"; Tail = $tail } }
               return @{ Result = "MISSING_VIRTIO_NET_UDP"; Tail = $tail }
             }
+          }
+
+          if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
+            return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
           }
 
           if ($RequireVirtioInputEventsPass) {
@@ -1416,6 +1431,9 @@ function Wait-AeroSelftestResult {
                     return @{ Result = "MISSING_VIRTIO_BLK_RESET"; Tail = $tail }
                   }
                 }
+                if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
+                  return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
+                }
                 $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
                 if ($null -ne $msixCheck) { return $msixCheck }
                 return @{ Result = "PASS"; Tail = $tail }
@@ -1490,6 +1508,9 @@ function Wait-AeroSelftestResult {
             if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $tail } }
             return @{ Result = "MISSING_VIRTIO_BLK_RESET"; Tail = $tail }
           }
+        }
+        if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
+          return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
         }
 
         $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
@@ -5396,6 +5417,7 @@ try {
         -FollowSerial ([bool]$FollowSerial) `
         -RequirePerTestMarkers (-not $VirtioTransitional) `
         -RequireVirtioNetUdpPass (-not $DisableUdp) `
+        -RequireVirtioNetMsix ([bool]$RequireVirtioNetMsix) `
         -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
         -RequireVirtioBlkResetPass ([bool]$WithBlkReset) `
         -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
@@ -5959,6 +5981,14 @@ try {
     }
     "VIRTIO_NET_UDP_SKIPPED" {
       Write-Host "FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped but UDP testing is enabled (update/provision the guest selftest)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_MSIX_REQUIRED" {
+      Write-Host "FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net did not report MSI-X mode while -RequireVirtioNetMsix was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

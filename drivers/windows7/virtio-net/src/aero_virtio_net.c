@@ -1615,7 +1615,17 @@ static NDIS_STATUS AerovNetProgramInterruptVectors(_Inout_ AEROVNET_ADAPTER* Ada
                TxVector,
                Adapter->MsixMessageCount,
                NtStatus);
-    return NDIS_STATUS_FAILURE;
+    // Contract v1 fallback: keep the adapter functional by reverting to legacy INTx.
+    Adapter->MsixVectorProgrammingFailed = TRUE;
+    Adapter->UseMsix = FALSE;
+    Adapter->MsixAllOnVector0 = FALSE;
+    Adapter->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+    Adapter->MsixRxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+    Adapter->MsixTxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+    (VOID)VirtioPciSetConfigMsixVector(&Adapter->Vdev, VIRTIO_PCI_MSI_NO_VECTOR);
+    (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 0, VIRTIO_PCI_MSI_NO_VECTOR);
+    (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 1, VIRTIO_PCI_MSI_NO_VECTOR);
+    return NDIS_STATUS_SUCCESS;
   }
 
   DbgPrintEx(DPFLTR_IHVDRIVER_ID,
@@ -1643,7 +1653,17 @@ static NDIS_STATUS AerovNetProgramInterruptVectors(_Inout_ AEROVNET_ADAPTER* Ada
              "aero_virtio_net: MSI-X vector0 fallback failed (messages=%hu status=%!STATUS!)\n",
              Adapter->MsixMessageCount,
              NtStatus);
-  return NDIS_STATUS_FAILURE;
+  // Contract v1 fallback: keep the adapter functional by reverting to legacy INTx.
+  Adapter->MsixVectorProgrammingFailed = TRUE;
+  Adapter->UseMsix = FALSE;
+  Adapter->MsixAllOnVector0 = FALSE;
+  Adapter->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  Adapter->MsixRxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  Adapter->MsixTxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  (VOID)VirtioPciSetConfigMsixVector(&Adapter->Vdev, VIRTIO_PCI_MSI_NO_VECTOR);
+  (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 0, VIRTIO_PCI_MSI_NO_VECTOR);
+  (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, 1, VIRTIO_PCI_MSI_NO_VECTOR);
+  return NDIS_STATUS_SUCCESS;
 }
 
 static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_VQ* Vq, _In_ USHORT QueueIndex,
@@ -2837,6 +2857,7 @@ static BOOLEAN AerovNetInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _
   }
 
   InterlockedOr(&Adapter->IsrStatus, (LONG)Isr);
+  InterlockedIncrement(&Adapter->InterruptCountByVector[0]);
 
   *QueueDefaultInterruptDpc = TRUE;
   return TRUE;
@@ -2851,6 +2872,8 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
   ULONG IndicateCount;
   BOOLEAN LinkChanged;
   BOOLEAN NewLinkUp;
+  LONG TxDrained;
+  LONG RxDrained;
 
   if (!Adapter) {
     return;
@@ -2864,6 +2887,8 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
   IndicateCount = 0;
   LinkChanged = FALSE;
   NewLinkUp = Adapter->LinkUp;
+  TxDrained = 0;
+  RxDrained = 0;
 
   NdisAcquireSpinLock(&Adapter->Lock);
 
@@ -2908,6 +2933,8 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
           if (virtqueue_split_pop_used(&Adapter->TxVq.Vq, &Cookie, NULL) == VIRTIO_FALSE) {
             break;
           }
+
+          TxDrained++;
 
           TxReq = (AEROVNET_TX_REQUEST*)Cookie;
 
@@ -2961,6 +2988,8 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
             break;
           }
 
+          RxDrained++;
+
           RxHead = (AEROVNET_RX_BUFFER*)Cookie;
           if (!RxHead) {
             continue;
@@ -3011,6 +3040,8 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
               AbortRxDrain = TRUE;
               break;
             }
+
+            RxDrained++;
 
             Rx2 = (AEROVNET_RX_BUFFER*)Cookie2;
             if (!Rx2) {
@@ -3172,6 +3203,13 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
 
   NdisReleaseSpinLock(&Adapter->Lock);
 
+  if (TxDrained != 0) {
+    InterlockedExchangeAdd(&Adapter->TxBuffersDrained, TxDrained);
+  }
+  if (RxDrained != 0) {
+    InterlockedExchangeAdd(&Adapter->RxBuffersDrained, RxDrained);
+  }
+
   // Free SG lists and return TX requests to free list.
   while (!IsListEmpty(&CompleteTxReqs)) {
     PLIST_ENTRY Entry = RemoveHeadList(&CompleteTxReqs);
@@ -3223,6 +3261,8 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
     return;
   }
 
+  InterlockedIncrement(&Adapter->DpcCountByVector[0]);
+
   Isr = InterlockedExchange(&Adapter->IsrStatus, 0);
   DoConfig = ((Isr & 0x2) != 0) ? TRUE : FALSE;
 
@@ -3249,6 +3289,10 @@ static BOOLEAN AerovNetMessageInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptCon
 
   if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
     return FALSE;
+  }
+
+  if (MessageId < AEROVNET_MSIX_MAX_MESSAGES) {
+    InterlockedIncrement(&Adapter->InterruptCountByVector[MessageId]);
   }
 
   // MSI/MSI-X: do not touch the virtio ISR status register (INTx only). The
@@ -3297,6 +3341,10 @@ static VOID AerovNetMessageInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContex
 
   if (!Adapter) {
     return;
+  }
+
+  if (MessageId < AEROVNET_MSIX_MAX_MESSAGES) {
+    InterlockedIncrement(&Adapter->DpcCountByVector[MessageId]);
   }
 
   DoTx = FALSE;
@@ -4680,6 +4728,7 @@ static VOID AerovNetMiniportHaltEx(_In_ NDIS_HANDLE MiniportAdapterContext, _In_
   }
   AerovNetDiagDetachAdapter(Adapter);
   AerovNetVirtioStop(Adapter);
+
   AerovNetCleanupAdapter(Adapter);
 }
 
@@ -5235,6 +5284,10 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 
     NdisFreeSpinLock(&g_DiagLock);
     g_DiagLockInitialized = FALSE;
+  }
+  if (g_NdisDeviceObject) {
+    g_NdisDeviceObject->Flags |= DO_BUFFERED_IO;
+    g_NdisDeviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
   }
 
   return STATUS_SUCCESS;

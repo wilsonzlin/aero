@@ -16,6 +16,11 @@
 
 #define AEROVNET_BAR0_MIN_LEN 0x4000u
 
+// Maximum number of MSI/MSI-X messages we track for per-vector diagnostics.
+#ifndef AEROVNET_MSIX_MAX_MESSAGES
+#define AEROVNET_MSIX_MAX_MESSAGES 8u
+#endif
+
 // Virtio feature bits (as masks).
 #define AEROVNET_FEATURE_RING_INDIRECT_DESC ((UINT64)VIRTIO_RING_F_INDIRECT_DESC)
 #define AEROVNET_FEATURE_RING_EVENT_IDX ((UINT64)VIRTIO_RING_F_EVENT_IDX)
@@ -193,6 +198,7 @@ typedef struct _AEROVNET_ADAPTER {
   USHORT MsixConfigVector;
   USHORT MsixRxVector;
   USHORT MsixTxVector;
+  BOOLEAN MsixVectorProgrammingFailed;
 
   NDIS_SPIN_LOCK Lock;
   // Serialize synchronous ctrl_vq commands. AerovNetCtrlSendCommand polls for
@@ -209,6 +215,11 @@ typedef struct _AEROVNET_ADAPTER {
   KEVENT OutstandingSgEvent;
   volatile LONG DiagRefCount;
   KEVENT DiagRefEvent;
+
+  volatile LONG InterruptCountByVector[AEROVNET_MSIX_MAX_MESSAGES];
+  volatile LONG DpcCountByVector[AEROVNET_MSIX_MAX_MESSAGES];
+  volatile LONG RxBuffersDrained;
+  volatile LONG TxBuffersDrained;
 
   UCHAR PciCfgSpace[256];
 

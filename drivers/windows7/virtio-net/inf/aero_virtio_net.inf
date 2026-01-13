@@ -40,7 +40,7 @@ aero_virtio_net.sys = 1
 Characteristics = 0x84 ; NCF_PHYSICAL | NCF_HAS_UI
 BusType         = 5    ; PCI
 CopyFiles       = AeroVirtioNet.CopyFiles
-AddReg          = AeroVirtioNet.AddReg
+AddReg          = AeroVirtioNet.AddReg, AeroVirtioNet_InterruptManagement_AddReg
 
 [AeroVirtioNet_Install.NT.HW]
 AddReg = AeroVirtioNet_InterruptManagement_AddReg
