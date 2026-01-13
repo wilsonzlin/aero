@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import * as crypto from "node:crypto";
 import dgram from "node:dgram";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -10,6 +11,27 @@ import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function base64urlEncode(data) {
+  const buf = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
+  return buf
+    .toString("base64")
+    .replaceAll("=", "")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_");
+}
+
+function mintHS256JWT({ sid, iat, exp, secret, extraClaims = {} }) {
+  if (!sid) throw new Error("sid is required");
+  if (!Number.isFinite(iat) || !Number.isFinite(exp)) throw new Error("iat/exp must be numbers (unix seconds)");
+  if (!secret) throw new Error("secret is required");
+
+  const header = { alg: "HS256", typ: "JWT" };
+  const payload = { sid, iat, exp, ...extraClaims };
+  const signingInput = `${base64urlEncode(JSON.stringify(header))}.${base64urlEncode(JSON.stringify(payload))}`;
+  const sig = crypto.createHmac("sha256", secret).update(signingInput).digest();
+  return `${signingInput}.${base64urlEncode(sig)}`;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -490,6 +512,366 @@ test("relays a UDP datagram via a Chromium WebRTC DataChannel", async ({ page })
   }
 });
 
+test("relays a UDP datagram via a Chromium WebRTC DataChannel using negotiated v2 IPv4 framing", async ({ page }) => {
+  const echo = await startUdpEchoServer("udp4", "127.0.0.1");
+  const relay = await spawnRelayServer();
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const echoed = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+        if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
+          throw new Error("invalid ice server response");
+        }
+        const iceServers = iceResp.iceServers;
+
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const pc = new RTCPeerConnection({ iceServers });
+        const pendingCandidates = [];
+        let remoteDescriptionSet = false;
+        const dc = pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
+        dc.binaryType = "arraybuffer";
+
+        const answerPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+          let answered = false;
+          const onMessage = (event) => {
+            let msg;
+            try {
+              msg = JSON.parse(event.data);
+            } catch {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error("invalid signaling message (not JSON)"));
+              return;
+            }
+
+            if (msg?.type === "error") {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+              return;
+            }
+
+            if (msg?.type === "candidate") {
+              if (!msg.candidate?.candidate) return;
+              if (remoteDescriptionSet) {
+                pc.addIceCandidate(msg.candidate).catch(() => {});
+              } else {
+                pendingCandidates.push(msg.candidate);
+              }
+              return;
+            }
+
+            if (msg?.type !== "answer") return;
+            if (answered) return;
+            answered = true;
+            clearTimeout(timeout);
+            resolve(msg);
+          };
+          ws.addEventListener("message", onMessage);
+        });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === "complete") return resolve();
+          const onState = () => {
+            if (pc.iceGatheringState !== "complete") return;
+            pc.removeEventListener("icegatheringstatechange", onState);
+            resolve();
+          };
+          pc.addEventListener("icegatheringstatechange", onState);
+        });
+
+        if (!pc.localDescription?.sdp) {
+          throw new Error("missing local description");
+        }
+
+        ws.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+
+        const answerMsg = await answerPromise;
+        if (answerMsg?.type !== "answer" || !answerMsg.sdp?.sdp) {
+          throw new Error("invalid answer message shape");
+        }
+
+        await pc.setRemoteDescription(answerMsg.sdp);
+        remoteDescriptionSet = true;
+        for (const candidate of pendingCandidates) {
+          await pc.addIceCandidate(candidate);
+        }
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+          dc.addEventListener(
+            "open",
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            },
+            { once: true },
+          );
+          dc.addEventListener(
+            "error",
+            () => {
+              clearTimeout(timeout);
+              reject(new Error("datachannel error"));
+            },
+            { once: true },
+          );
+        });
+
+        const payload = new TextEncoder().encode("hello from chromium v2 ipv4");
+        const guestPort = 10_000;
+
+        // v2 frame: magic (0xA2) + version (0x02) + af (0x04) + type (0x00)
+        // + guest_port (u16) + remote_ip (4B) + remote_port (u16) + payload.
+        const frame = new Uint8Array(12 + payload.length);
+        frame[0] = 0xa2;
+        frame[1] = 0x02;
+        frame[2] = 0x04;
+        frame[3] = 0x00;
+        frame[4] = (guestPort >> 8) & 0xff;
+        frame[5] = guestPort & 0xff;
+        frame.set([127, 0, 0, 1], 6);
+        frame[10] = (echoPort >> 8) & 0xff;
+        frame[11] = echoPort & 0xff;
+        frame.set(payload, 12);
+        dc.send(frame);
+
+        const echoedFrame = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for echoed datagram")), 10_000);
+          dc.addEventListener(
+            "message",
+            (event) => {
+              clearTimeout(timeout);
+              resolve(new Uint8Array(event.data));
+            },
+            { once: true },
+          );
+        });
+
+        if (echoedFrame.length < 12) throw new Error("echoed v2 frame too short");
+        if (echoedFrame[0] !== 0xa2 || echoedFrame[1] !== 0x02 || echoedFrame[2] !== 0x04 || echoedFrame[3] !== 0x00) {
+          throw new Error("echoed v2 header mismatch");
+        }
+
+        const echoedGuestPort = (echoedFrame[4] << 8) | echoedFrame[5];
+        if (echoedGuestPort !== guestPort) throw new Error("guest port mismatch");
+        const echoedIP = `${echoedFrame[6]}.${echoedFrame[7]}.${echoedFrame[8]}.${echoedFrame[9]}`;
+        if (echoedIP !== "127.0.0.1") throw new Error("remote ip mismatch");
+        const echoedRemotePort = (echoedFrame[10] << 8) | echoedFrame[11];
+        if (echoedRemotePort !== echoPort) throw new Error("remote port mismatch");
+
+        const echoedPayload = echoedFrame.slice(12);
+        const echoedText = new TextDecoder().decode(echoedPayload);
+        ws.close();
+        pc.close();
+        return echoedText;
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(echoed).toBe("hello from chromium v2 ipv4");
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo.close()]);
+  }
+});
+
+test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", async ({ page }) => {
+  const jwtSecret = "e2e-jwt-secret";
+  const now = Math.floor(Date.now() / 1000);
+  const token = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+
+  const echo = await startUdpEchoServer("udp4", "127.0.0.1");
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "jwt",
+    JWT_SECRET: jwtSecret,
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPort, token }) => {
+        const unauth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`);
+        const unauthStatus = unauth.status;
+
+        const authIceRes = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const authStatus = authIceRes.status;
+        const iceResp = await authIceRes.json();
+        if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
+          throw new Error("invalid ice server response");
+        }
+        const iceServers = iceResp.iceServers;
+
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        // WebSocket upgrade requests cannot include arbitrary headers, so we
+        // authenticate using the first control-plane message.
+        ws.send(JSON.stringify({ type: "auth", token }));
+
+        const pc = new RTCPeerConnection({ iceServers });
+        const pendingCandidates = [];
+        let remoteDescriptionSet = false;
+        const dc = pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
+        dc.binaryType = "arraybuffer";
+
+        const answerPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+          let answered = false;
+          const onMessage = (event) => {
+            let msg;
+            try {
+              msg = JSON.parse(event.data);
+            } catch {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error("invalid signaling message (not JSON)"));
+              return;
+            }
+
+            if (msg?.type === "error") {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+              return;
+            }
+
+            if (msg?.type === "candidate") {
+              if (!msg.candidate?.candidate) return;
+              if (remoteDescriptionSet) {
+                pc.addIceCandidate(msg.candidate).catch(() => {});
+              } else {
+                pendingCandidates.push(msg.candidate);
+              }
+              return;
+            }
+
+            if (msg?.type !== "answer") return;
+            if (answered) return;
+            answered = true;
+            clearTimeout(timeout);
+            resolve(msg);
+          };
+          ws.addEventListener("message", onMessage);
+        });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === "complete") return resolve();
+          const onState = () => {
+            if (pc.iceGatheringState !== "complete") return;
+            pc.removeEventListener("icegatheringstatechange", onState);
+            resolve();
+          };
+          pc.addEventListener("icegatheringstatechange", onState);
+        });
+
+        if (!pc.localDescription?.sdp) {
+          throw new Error("missing local description");
+        }
+
+        ws.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+
+        const answerMsg = await answerPromise;
+        if (answerMsg?.type !== "answer" || !answerMsg.sdp?.sdp) {
+          throw new Error("invalid answer message shape");
+        }
+
+        await pc.setRemoteDescription(answerMsg.sdp);
+        remoteDescriptionSet = true;
+        for (const candidate of pendingCandidates) {
+          await pc.addIceCandidate(candidate);
+        }
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+          dc.addEventListener(
+            "open",
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            },
+            { once: true },
+          );
+          dc.addEventListener(
+            "error",
+            () => {
+              clearTimeout(timeout);
+              reject(new Error("datachannel error"));
+            },
+            { once: true },
+          );
+        });
+
+        const payload = new TextEncoder().encode("hello from chromium jwt");
+        const guestPort = 10_000;
+        const frame = new Uint8Array(8 + payload.length);
+        frame[0] = (guestPort >> 8) & 0xff;
+        frame[1] = guestPort & 0xff;
+        frame.set([127, 0, 0, 1], 2);
+        frame[6] = (echoPort >> 8) & 0xff;
+        frame[7] = echoPort & 0xff;
+        frame.set(payload, 8);
+        dc.send(frame);
+
+        const echoedFrame = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for echoed datagram")), 10_000);
+          dc.addEventListener(
+            "message",
+            (event) => {
+              clearTimeout(timeout);
+              resolve(new Uint8Array(event.data));
+            },
+            { once: true },
+          );
+        });
+
+        if (echoedFrame.length < 8) throw new Error("echoed frame too short");
+        const echoedPayload = echoedFrame.slice(8);
+        const echoedText = new TextDecoder().decode(echoedPayload);
+
+        ws.close();
+        pc.close();
+        return { unauthStatus, authStatus, echoedText };
+      },
+      { relayPort: relay.port, echoPort: echo.port, token },
+    );
+
+    expect(res.unauthStatus).toBe(401);
+    expect(res.authStatus).toBe(200);
+    expect(res.echoedText).toBe("hello from chromium jwt");
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo.close()]);
+  }
+});
+
 test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ page }) => {
   const echo = await startUdpEchoServer("udp6", "::1");
   test.skip(!echo, "ipv6 not supported in test environment");
@@ -895,6 +1277,221 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
     expect(echoed).toBe("hello from websocket ipv6");
   } finally {
     await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});
+
+test("authenticates /udp via JWT (query-string + first message handshake)", async ({ page }) => {
+  const jwtSecret = "e2e-jwt-secret";
+  const now = Math.floor(Date.now() / 1000);
+  const token = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+
+  const echo = await startUdpEchoServer("udp4", "127.0.0.1");
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "jwt",
+    JWT_SECRET: jwtSecret,
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPort, token }) => {
+        const waitForOpen = (ws) =>
+          new Promise((resolve, reject) => {
+            ws.addEventListener("open", () => resolve(), { once: true });
+            ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+          });
+
+        const waitForReady = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for ready")), 10_000);
+            const onMessage = (event) => {
+              if (typeof event.data !== "string") return;
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`unexpected websocket text message: ${event.data}`));
+                return;
+              }
+              if (msg?.type === "ready") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                resolve(msg);
+                return;
+              }
+              if (msg?.type === "error") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+                return;
+              }
+            };
+            ws.addEventListener("message", onMessage);
+          });
+
+        const sendAndRecv = async (ws, frame) =>
+          await new Promise((resolve, reject) => {
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              (async () => {
+                let data = event.data;
+                if (typeof data === "string") {
+                  let msg;
+                  try {
+                    msg = JSON.parse(data);
+                  } catch {
+                    throw new Error(`unexpected websocket text message: ${data}`);
+                  }
+                  if (msg?.type === "ready") {
+                    return;
+                  }
+                  if (msg?.type === "error") {
+                    throw new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`);
+                  }
+                  throw new Error(`unexpected websocket text message: ${data}`);
+                }
+                if (data instanceof Blob) {
+                  data = await data.arrayBuffer();
+                }
+                if (!(data instanceof ArrayBuffer)) {
+                  throw new Error(`unexpected websocket message type: ${typeof data}`);
+                }
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(data));
+              })().catch((err) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                reject(err);
+              });
+            };
+            const cleanup = () => {
+              ws.removeEventListener("message", onMessage);
+              clearTimeout(timeout);
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              reject(new Error("timed out waiting for echoed datagram"));
+            }, 10_000);
+            ws.addEventListener("message", onMessage);
+            ws.send(frame);
+          });
+
+        const waitForErrorAndClose = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for unauthorized close")), 10_000);
+            let errMsg;
+            let closed;
+            const maybeDone = () => {
+              if (!errMsg || !closed) return;
+              cleanup();
+              resolve({ errMsg, closeCode: closed.code, closeReason: closed.reason });
+            };
+            const onMessage = (event) => {
+              if (typeof event.data !== "string") return;
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                return;
+              }
+              if (msg?.type === "error") {
+                errMsg = msg;
+                maybeDone();
+              }
+            };
+            const onClose = (event) => {
+              closed = event;
+              maybeDone();
+            };
+            const cleanup = () => {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              ws.removeEventListener("close", onClose);
+            };
+            ws.addEventListener("message", onMessage);
+            ws.addEventListener("close", onClose);
+          });
+
+        const guestPort = 10_000;
+        const buildV1Frame = (text) => {
+          const payload = new TextEncoder().encode(text);
+          const frame = new Uint8Array(8 + payload.length);
+          frame[0] = (guestPort >> 8) & 0xff;
+          frame[1] = guestPort & 0xff;
+          frame.set([127, 0, 0, 1], 2);
+          frame[6] = (echoPort >> 8) & 0xff;
+          frame[7] = echoPort & 0xff;
+          frame.set(payload, 8);
+          return frame;
+        };
+
+        const queryText = "hello from websocket jwt query";
+        const wsQuery = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(token)}`);
+        wsQuery.binaryType = "arraybuffer";
+        await waitForOpen(wsQuery);
+        await waitForReady(wsQuery);
+        const echoedQueryFrame = await sendAndRecv(wsQuery, buildV1Frame(queryText));
+        wsQuery.close();
+        const echoedQueryText = new TextDecoder().decode(echoedQueryFrame.slice(8));
+
+        const firstMsgText = "hello from websocket jwt first message";
+        const wsAuthMsg = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        wsAuthMsg.binaryType = "arraybuffer";
+        await waitForOpen(wsAuthMsg);
+        wsAuthMsg.send(JSON.stringify({ type: "auth", token }));
+        await waitForReady(wsAuthMsg);
+        const echoedFirstMsgFrame = await sendAndRecv(wsAuthMsg, buildV1Frame(firstMsgText));
+        wsAuthMsg.close();
+        const echoedFirstMsgText = new TextDecoder().decode(echoedFirstMsgFrame.slice(8));
+
+        // Sending datagrams before completing auth (and before receiving ready) should be rejected.
+        const wsMissing = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        wsMissing.binaryType = "arraybuffer";
+        await waitForOpen(wsMissing);
+        wsMissing.send(buildV1Frame("should be rejected"));
+        const missingRes = await waitForErrorAndClose(wsMissing);
+
+        const wsInvalid = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        wsInvalid.binaryType = "arraybuffer";
+        await waitForOpen(wsInvalid);
+        wsInvalid.send(JSON.stringify({ type: "auth", token: `${token}-invalid` }));
+        const invalidRes = await waitForErrorAndClose(wsInvalid);
+
+        return {
+          echoedQueryText,
+          echoedFirstMsgText,
+          missingRes,
+          invalidRes,
+        };
+      },
+      { relayPort: relay.port, echoPort: echo.port, token },
+    );
+
+    expect(res.echoedQueryText).toBe("hello from websocket jwt query");
+    expect(res.echoedFirstMsgText).toBe("hello from websocket jwt first message");
+
+    expect(res.missingRes.errMsg?.code).toBe("unauthorized");
+    expect(res.missingRes.closeCode).toBe(1008);
+
+    expect(res.invalidRes.errMsg?.code).toBe("unauthorized");
+    expect(res.invalidRes.closeCode).toBe(1008);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo.close()]);
   }
 });
 
