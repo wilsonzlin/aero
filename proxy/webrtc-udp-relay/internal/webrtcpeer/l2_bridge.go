@@ -140,6 +140,7 @@ func (b *l2Bridge) dialBackend() (*websocket.Conn, error) {
 	dialCtx, cancel := context.WithTimeout(b.ctx, l2DialTimeout)
 	defer cancel()
 
+	start := time.Now()
 	ws, err := dialL2Backend(dialCtx, b.dialCfg)
 	if err != nil {
 		if m := b.metrics(); m != nil {
@@ -148,6 +149,7 @@ func (b *l2Bridge) dialBackend() (*websocket.Conn, error) {
 		slog.Warn("l2_bridge_backend_dial_failed",
 			"session_id", b.sessionID(),
 			"backend_ws_url", sanitizeWSURLForLog(b.dialCfg.BackendWSURL),
+			"dial_duration_ms", time.Since(start).Milliseconds(),
 			"err", b.sanitizeErrorForLog(err),
 		)
 		return nil, err
@@ -156,6 +158,7 @@ func (b *l2Bridge) dialBackend() (*websocket.Conn, error) {
 	slog.Info("l2_bridge_backend_dial_succeeded",
 		"session_id", b.sessionID(),
 		"backend_ws_url", sanitizeWSURLForLog(b.dialCfg.BackendWSURL),
+		"dial_duration_ms", time.Since(start).Milliseconds(),
 	)
 	return ws, nil
 }
