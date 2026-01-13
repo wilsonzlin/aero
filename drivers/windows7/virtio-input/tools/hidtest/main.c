@@ -265,9 +265,39 @@ static void print_win32_error_w(const wchar_t *prefix, DWORD err)
     LocalFree(msg);
 }
 
+static void print_win32_error_file_w(FILE *f, const wchar_t *prefix, DWORD err)
+{
+    wchar_t *msg = NULL;
+    DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                  FORMAT_MESSAGE_IGNORE_INSERTS;
+    DWORD len;
+
+    if (f == NULL) {
+        f = stderr;
+    }
+
+    len = FormatMessageW(flags, NULL, err, 0, (LPWSTR)&msg, 0, NULL);
+    if (len == 0 || msg == NULL) {
+        fwprintf(f, L"%ls: error %lu\n", prefix, err);
+        return;
+    }
+
+    while (len > 0 && (msg[len - 1] == L'\r' || msg[len - 1] == L'\n')) {
+        msg[len - 1] = L'\0';
+        len--;
+    }
+    fwprintf(f, L"%ls: %ls (error %lu)\n", prefix, msg, err);
+    LocalFree(msg);
+}
+
 static void print_last_error_w(const wchar_t *prefix)
 {
     print_win32_error_w(prefix, GetLastError());
+}
+
+static void print_last_error_file_w(FILE *f, const wchar_t *prefix)
+{
+    print_win32_error_file_w(f, prefix, GetLastError());
 }
 
 static int parse_u16_hex(const wchar_t *s, USHORT *out)
@@ -634,7 +664,7 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     ZeroMemory(buf, sizeof(buf));
     ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_COUNTERS, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
     if (!ok) {
-        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)");
+        print_last_error_file_w(stderr, L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)");
         return 1;
     }
     if (bytes == 0) {
@@ -2474,7 +2504,11 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
-        wprintf(L"No matching HID devices found.\n");
+        if (opt.query_counters_json) {
+            fwprintf(stderr, L"No matching HID devices found.\n");
+        } else {
+            wprintf(L"No matching HID devices found.\n");
+        }
         return 1;
     }
 
