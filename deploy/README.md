@@ -213,8 +213,8 @@ cp deploy/.env.example deploy/.env
 - `AERO_L2_CAPTURE_MAX_BYTES` (default in compose: `67108864` / 64 MiB)
   - Max bytes per capture file (`0` disables the cap).
 - `AERO_L2_CAPTURE_FLUSH_INTERVAL_MS` (default in compose: `1000`)
-  - Flush interval for capture writers (`0` disables periodic flushing and flushes only on close). Larger
-    values reduce disk I/O but may lose the last buffered packets if the process crashes.
+  - Flush interval for capture writers (`0` disables periodic flushing; capture is flushed on close). Larger values
+    reduce disk I/O but may lose the last buffered packets if the process crashes.
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)

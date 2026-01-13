@@ -173,7 +173,7 @@ l2Proxy:
     dir: ""
     # Max bytes per capture file (`0` disables the cap).
     maxBytes: 67108864 # 64 MiB
-    # Flush interval for capture writers (`0` flushes every packet).
+    # Flush interval for capture writers (`0` disables periodic flushing; capture is flushed on close).
     flushIntervalMs: 1000
 
   # Extra environment variables to set directly on the container.
