@@ -608,6 +608,18 @@ mod tests {
     }
 
     #[test]
+    fn resolve_empty_specs_is_unsatisfiable() {
+        assert!(matches!(
+            resolve_ranges(&[], 10, false),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+        assert!(matches!(
+            resolve_ranges(&[], 10, true),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+    }
+
+    #[test]
     fn resolve_drops_out_of_bounds_and_errors_when_none_remain() {
         let specs = parse_range_header("bytes=0-0,20-30").unwrap();
         let resolved = resolve_ranges(&specs, 10, false).unwrap();

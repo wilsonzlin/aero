@@ -96,6 +96,40 @@ proptest! {
             }
         }
     }
+
+    // Coalescing should not change the *set* of bytes covered by the resolved
+    // ranges; it should only merge/sort them.
+    #[test]
+    fn coalescing_preserves_union(header in valid_header(), len in 0u64..2_000u64) {
+        let specs = parse_range_header(&header).expect("valid header must parse");
+
+        let a = resolve_ranges(&specs, len, false);
+        let b = resolve_ranges(&specs, len, true);
+
+        match (a, b) {
+            (Err(RangeResolveError::Unsatisfiable), Err(RangeResolveError::Unsatisfiable)) => {}
+            (Ok(a), Ok(b)) => {
+                prop_assert!(len > 0);
+                let len_usize = len as usize;
+                let mut cover_a = vec![false; len_usize];
+                let mut cover_b = vec![false; len_usize];
+
+                for r in &a {
+                    for i in (r.start as usize)..=(r.end as usize) {
+                        cover_a[i] = true;
+                    }
+                }
+                for r in &b {
+                    for i in (r.start as usize)..=(r.end as usize) {
+                        cover_b[i] = true;
+                    }
+                }
+
+                prop_assert_eq!(cover_a, cover_b);
+            }
+            other => prop_assert!(false, "coalesce changed satisfiable-ness: {other:?}"),
+        }
+    }
 }
 
 #[test]
