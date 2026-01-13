@@ -552,13 +552,24 @@ static int RunCursorStateSanity(int argc, char** argv) {
     reporter.Fail("SetClassLongPtr(GCLP_HCURSOR) failed: %s", aerogpu_test::Win32ErrorToString(setclass_err).c_str());
     goto cleanup;
   }
-  (void)SetWindowPos(hwnd,
-                     HWND_TOPMOST,
-                     target_x - 80,
-                     target_y - 60,
-                     160,
-                     120,
-                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+  // Place the window fully on the virtual desktop so subsequent ClientToScreen/SetCursorPos calls
+  // cannot produce off-desktop coordinates on multi-monitor setups.
+  const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  const int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+  const int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+  int win_x = target_x - 80;
+  int win_y = target_y - 60;
+  if (vw > 0) {
+    if (win_x < vx) win_x = vx;
+    if (win_x > vx + vw - 1) win_x = vx + vw - 1;
+  }
+  if (vh > 0) {
+    if (win_y < vy) win_y = vy;
+    if (win_y > vy + vh - 1) win_y = vy + vh - 1;
+  }
+  (void)SetWindowPos(hwnd, HWND_TOPMOST, win_x, win_y, 160, 120, SWP_NOACTIVATE | SWP_SHOWWINDOW);
   ShowWindow(hwnd, SW_SHOWNOACTIVATE);
   UpdateWindow(hwnd);
 
@@ -574,6 +585,15 @@ static int RunCursorStateSanity(int argc, char** argv) {
   if (!ClientToScreen(hwnd, &inside)) {
     reporter.Fail("ClientToScreen failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
     goto cleanup;
+  }
+  // Clamp the target cursor position to the virtual desktop bounds for safety.
+  if (vw > 0) {
+    if (inside.x < vx) inside.x = vx;
+    if (inside.x > vx + vw - 1) inside.x = vx + vw - 1;
+  }
+  if (vh > 0) {
+    if (inside.y < vy) inside.y = vy;
+    if (inside.y > vy + vh - 1) inside.y = vy + vh - 1;
   }
   if (!SetCursorPos(inside.x, inside.y)) {
     reporter.Fail("SetCursorPos(to window) failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
