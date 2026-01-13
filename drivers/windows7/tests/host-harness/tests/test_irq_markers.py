@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -53,7 +55,33 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(out["virtio-net"]["mode"], "msix")
         self.assertEqual(out["virtio-net"]["vectors"], "8")
 
+    def test_emits_host_markers(self) -> None:
+        tail = (
+            b"virtio-net-irq|INFO|mode=msix|vectors=4|msix_enabled=1\n"
+            b"virtio-blk-irq|WARN|mode=intx|reason=msi_disabled\n"
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.harness._emit_virtio_irq_host_markers(tail)
+        lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+        self.assertEqual(
+            lines,
+            [
+                "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ_DIAG|WARN|mode=intx|reason=msi_disabled",
+                "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|INFO|mode=msix|msix_enabled=1|vectors=4",
+            ],
+        )
+
+    def test_emits_msg_field_for_non_kv_tokens(self) -> None:
+        tail = b"virtio-net-irq|WARN|msix disabled by policy\n"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.harness._emit_virtio_irq_host_markers(tail)
+        self.assertEqual(
+            buf.getvalue().strip(),
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|WARN|msg=msix disabled by policy",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
