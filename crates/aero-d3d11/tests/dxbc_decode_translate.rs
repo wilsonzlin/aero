@@ -759,3 +759,37 @@ fn ret_inside_if_does_not_break_brace_balancing() {
         translated.wgsl
     );
 }
+
+#[test]
+fn translates_compute_thread_group_size_decl_to_workgroup_size() {
+    // Minimal compute shader with an explicit thread-group size declaration.
+    //
+    // dcl_thread_group 8, 8, 1
+    // ret
+    let body = vec![
+        opcode_token(OPCODE_DCL_THREAD_GROUP, 4),
+        8,
+        8,
+        1,
+        opcode_token(OPCODE_RET, 1),
+    ];
+
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert_eq!(module.stage, ShaderStage::Compute);
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(
+        translated.wgsl.contains("@workgroup_size(8, 8, 1)"),
+        "expected dcl_thread_group(8,8,1) to map to WGSL workgroup_size:\n{}",
+        translated.wgsl
+    );
+    assert_wgsl_validates(&translated.wgsl);
+}

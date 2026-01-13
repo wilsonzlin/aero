@@ -1,7 +1,7 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_d3d11::sm4::opcode::{OPCODE_LEN_SHIFT, OPCODE_RET};
+use aero_d3d11::sm4::opcode::{OPCODE_DCL_THREAD_GROUP, OPCODE_LEN_SHIFT, OPCODE_RET};
 use aero_d3d11::FourCC;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
@@ -71,8 +71,22 @@ fn create_shader_dxbc_compute_uses_cs_main_entry_point() {
             }
         };
 
-        // Minimal SM5 compute shader: `ret`.
-        let sm5_tokens = make_sm5_program_tokens(5, &[opcode_token(OPCODE_RET, 1)]);
+        // Minimal SM5 compute shader:
+        //
+        // dcl_thread_group 1, 1, 1
+        // ret
+        //
+        // `dcl_thread_group` is required to produce a valid WGSL `@workgroup_size`.
+        let sm5_tokens = make_sm5_program_tokens(
+            5,
+            &[
+                opcode_token(OPCODE_DCL_THREAD_GROUP, 4),
+                1,
+                1,
+                1,
+                opcode_token(OPCODE_RET, 1),
+            ],
+        );
         let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&sm5_tokens))]);
 
         let mut writer = AerogpuCmdWriter::new();
@@ -90,4 +104,3 @@ fn create_shader_dxbc_compute_uses_cs_main_entry_point() {
         );
     });
 }
-

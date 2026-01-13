@@ -771,6 +771,7 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
     let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
 
     if opcode == OPCODE_DCL_THREAD_GROUP {
+        // dcl_thread_group x, y, z
         let x = r.read_u32()?;
         let y = r.read_u32()?;
         let z = r.read_u32()?;
