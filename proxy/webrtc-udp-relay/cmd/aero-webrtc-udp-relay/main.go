@@ -65,6 +65,8 @@ func main() {
 		os.Exit(2)
 	}
 
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		logger.Error("failed to listen", "err", err)

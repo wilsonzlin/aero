@@ -20,6 +20,14 @@ import (
 //
 // Deny rules always override allow rules.
 type DestinationPolicy struct {
+	// Preset is the canonical name of the preset used to initialize this policy.
+	// It is intended for logging/observability only.
+	//
+	// Possible values:
+	//   - "prod"
+	//   - "dev"
+	Preset string
+
 	// DefaultAllow controls the implicit decision when no allowlist is configured.
 	//
 	// - production preset: false (deny by default)
@@ -45,6 +53,7 @@ type PortRange struct {
 
 func NewProductionDestinationPolicy() *DestinationPolicy {
 	return &DestinationPolicy{
+		Preset:               "prod",
 		DefaultAllow:         false,
 		AllowPrivateNetworks: false,
 	}
@@ -52,6 +61,7 @@ func NewProductionDestinationPolicy() *DestinationPolicy {
 
 func NewDevDestinationPolicy() *DestinationPolicy {
 	return &DestinationPolicy{
+		Preset:               "dev",
 		DefaultAllow:         true,
 		AllowPrivateNetworks: true,
 	}
