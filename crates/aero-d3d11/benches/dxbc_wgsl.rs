@@ -3,7 +3,7 @@
 //! These benchmarks exercise the most performance-sensitive parts of the D3D11
 //! shader pipeline:
 //! - `aero_dxbc::DxbcFile::parse`
-//! - SM4 token parsing + IR decode (`Sm4Program::parse_from_dxbc` + `decode()`)
+//! - SM4 token parsing + IR decode (`Sm4Program::parse_from_dxbc` + `sm4::decode_program`)
 //! - WGSL translation (signature-driven and the legacy bootstrap path)
 //!
 //! ## Running
