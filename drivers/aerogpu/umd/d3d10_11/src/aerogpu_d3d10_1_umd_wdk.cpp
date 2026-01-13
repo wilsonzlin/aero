@@ -4936,6 +4936,11 @@ SIZE_T AEROGPU_APIENTRY CalcPrivatePixelShaderSize(D3D10DDI_HDEVICE, const D3D10
   return sizeof(AeroGpuShader);
 }
 
+SIZE_T AEROGPU_APIENTRY CalcPrivateGeometryShaderSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATEGEOMETRYSHADER*) {
+  AEROGPU_D3D10_TRACEF("CalcPrivateGeometryShaderSize");
+  return sizeof(AeroGpuShader);
+}
+
 template <typename TShaderHandle>
 static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
                                   const void* pCode,
@@ -4997,6 +5002,37 @@ HRESULT AEROGPU_APIENTRY CreatePixelShader(D3D10DDI_HDEVICE hDevice,
   AEROGPU_D3D10_RET_HR(hr);
 }
 
+HRESULT AEROGPU_APIENTRY CreateGeometryShader(D3D10DDI_HDEVICE hDevice,
+                                              const D3D10DDIARG_CREATEGEOMETRYSHADER* pDesc,
+                                              D3D10DDI_HGEOMETRYSHADER hShader,
+                                              D3D10DDI_HRTGEOMETRYSHADER) {
+  AEROGPU_D3D10_TRACEF("CreateGeometryShader codeSize=%u", pDesc ? static_cast<unsigned>(pDesc->CodeSize) : 0u);
+  if (!hDevice.pDrvPrivate || !pDesc || !hShader.pDrvPrivate) {
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev || !dev->adapter) {
+    AEROGPU_D3D10_RET_HR(E_FAIL);
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  (void)new (hShader.pDrvPrivate) AeroGpuShader();
+
+  // Geometry shaders are accepted by the Win7 D3D10.1 runtime at FL10_0, but
+  // the AeroGPU command stream / WebGPU backend currently has no GS stage.
+  // Treat GS as a no-op and do not forward DXBC to the host.
+  //
+  // NOTE: The created AeroGpuShader's `handle` intentionally stays 0 so
+  // DestroyShaderCommon does not emit a host-side DESTROY_SHADER for a shader
+  // that was never created.
+  static std::once_flag log_once;
+  std::call_once(log_once, [] {
+    AEROGPU_D3D10_11_LOG("CreateGeometryShader: ignoring geometry shader (no GS stage in AeroGPU/WebGPU yet)");
+  });
+
+  AEROGPU_D3D10_RET_HR(S_OK);
+}
+
 template <typename TShaderHandle>
 void DestroyShaderCommon(D3D10DDI_HDEVICE hDevice, TShaderHandle hShader) {
   AEROGPU_D3D10_TRACEF("DestroyShader hDevice=%p hShader=%p", hDevice.pDrvPrivate, hShader.pDrvPrivate);
@@ -5025,6 +5061,10 @@ void AEROGPU_APIENTRY DestroyVertexShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HVE
 }
 
 void AEROGPU_APIENTRY DestroyPixelShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HPIXELSHADER hShader) {
+  DestroyShaderCommon(hDevice, hShader);
+}
+
+void AEROGPU_APIENTRY DestroyGeometryShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HGEOMETRYSHADER hShader) {
   DestroyShaderCommon(hDevice, hShader);
 }
 
@@ -8130,14 +8170,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
   __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
-    // Not implemented yet, but keep the entrypoints non-null so runtimes don't
-    // crash on unexpected geometry shader probes.
-    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize =
-        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize)>::Call;
-    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader =
-        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader)>::Call;
-    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader =
-        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader)>::Call;
+    // Geometry shaders are accepted by the Win7 D3D10.1 runtime, but are ignored
+    // by AeroGPU for now (no GS stage in the command stream / WebGPU backend).
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
+    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
   }
   __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
@@ -8347,6 +8384,13 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCreatePixelShader = &CreatePixelShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader;
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
+    // Geometry shaders are accepted by the Win7 D3D10 runtime, but are ignored
+    // by AeroGPU for now (no GS stage in the command stream / WebGPU backend).
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
+    pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
   pCreateDevice->pDeviceFuncs->pfnCreateElementLayout = &CreateElementLayout;

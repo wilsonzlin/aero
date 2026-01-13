@@ -5316,11 +5316,33 @@ HRESULT APIENTRY CreatePixelShader(D3D10DDI_HDEVICE hDevice,
 }
 
 HRESULT APIENTRY CreateGeometryShader(D3D10DDI_HDEVICE hDevice,
-                                      const D3D10DDIARG_CREATEGEOMETRYSHADER*,
-                                      D3D10DDI_HSHADER,
+                                      const D3D10DDIARG_CREATEGEOMETRYSHADER* pDesc,
+                                      D3D10DDI_HSHADER hShader,
                                       D3D10DDI_HRTSHADER) {
-  SetError(hDevice, E_NOTIMPL);
-  return E_NOTIMPL;
+  if (!hDevice.pDrvPrivate || !pDesc || !hShader.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  (void)new (hShader.pDrvPrivate) AeroGpuShader();
+
+  // Geometry shaders are accepted by the Win7 D3D10 runtime at FL10_0, but the
+  // AeroGPU command stream / WebGPU backend currently has no GS stage. Treat GS
+  // as a no-op and do not forward DXBC to the host.
+  //
+  // NOTE: The created AeroGpuShader's `handle` intentionally stays 0 so
+  // DestroyShaderCommon does not emit a host-side DESTROY_SHADER for a shader
+  // that was never created.
+  static std::once_flag log_once;
+  std::call_once(log_once, [] {
+    AEROGPU_D3D10_11_LOG("CreateGeometryShader: ignoring geometry shader (no GS stage in AeroGPU/WebGPU yet)");
+  });
+
+  return S_OK;
 }
 
 void DestroyShaderCommon(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
