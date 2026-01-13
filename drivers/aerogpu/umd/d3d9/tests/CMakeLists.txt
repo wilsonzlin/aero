@@ -504,3 +504,18 @@ set_target_properties(aerogpu_d3d9_trace_max_zero_defaults_tests PROPERTIES
 )
 
 add_test(NAME aerogpu_d3d9_trace_max_zero_defaults_tests COMMAND aerogpu_d3d9_trace_max_zero_defaults_tests)
+
+add_executable(aerogpu_feature_decode_tests
+    feature_decode_tests.cpp
+)
+
+target_include_directories(aerogpu_feature_decode_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../../../protocol
+)
+
+set_target_properties(aerogpu_feature_decode_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_feature_decode_tests COMMAND aerogpu_feature_decode_tests)

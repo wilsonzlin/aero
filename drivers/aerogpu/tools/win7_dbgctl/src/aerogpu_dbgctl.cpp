@@ -18,6 +18,7 @@
 
 #include "aerogpu_pci.h"
 #include "aerogpu_dbgctl_escape.h"
+#include "aerogpu_feature_decode.h"
 #include "aerogpu_umd_private.h"
 #include "aerogpu_fence_watch_math.h"
 
@@ -916,36 +917,12 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
   if (q.features_lo != 0 || q.features_hi != 0) {
     wprintf(L"AeroGPU features:\n");
-    wprintf(L"  lo=0x%I64x hi=0x%I64x\n", (unsigned long long)q.features_lo, (unsigned long long)q.features_hi);
+    wprintf(L"  raw: lo=0x%I64x hi=0x%I64x\n", (unsigned long long)q.features_lo, (unsigned long long)q.features_hi);
     if (q.detected_mmio_magic == kLegacyMmioMagic) {
       wprintf(L"  (note: legacy device; feature bits are best-effort)\n");
     }
-    wprintf(L"  decoded:");
-    bool any = false;
-    if (q.features_lo & AEROGPU_FEATURE_FENCE_PAGE) {
-      wprintf(L"%sFENCE_PAGE", any ? L", " : L" ");
-      any = true;
-    }
-    if (q.features_lo & AEROGPU_FEATURE_CURSOR) {
-      wprintf(L"%sCURSOR", any ? L", " : L" ");
-      any = true;
-    }
-    if (q.features_lo & AEROGPU_FEATURE_SCANOUT) {
-      wprintf(L"%sSCANOUT", any ? L", " : L" ");
-      any = true;
-    }
-    if (q.features_lo & AEROGPU_FEATURE_VBLANK) {
-      wprintf(L"%sVBLANK", any ? L", " : L" ");
-      any = true;
-    }
-    if (q.features_lo & AEROGPU_FEATURE_TRANSFER) {
-      wprintf(L"%sTRANSFER", any ? L", " : L" ");
-      any = true;
-    }
-    if (!any) {
-      wprintf(L" (none)");
-    }
-    wprintf(L"\n");
+    const std::wstring decoded = aerogpu::FormatDeviceFeatureBits(q.features_lo, q.features_hi);
+    wprintf(L"  decoded: %s\n", decoded.c_str());
   }
 
   DumpFenceSnapshot();
@@ -1388,34 +1365,8 @@ static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long)abiMinor);
 
   wprintf(L"  device_features: 0x%I64x\n", (unsigned long long)blob.device_features);
-  if (blob.device_features != 0) {
-    wprintf(L"  decoded_features:");
-    bool any = false;
-    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) {
-      wprintf(L"%sFENCE_PAGE", any ? L", " : L" ");
-      any = true;
-    }
-    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_CURSOR) {
-      wprintf(L"%sCURSOR", any ? L", " : L" ");
-      any = true;
-    }
-    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_SCANOUT) {
-      wprintf(L"%sSCANOUT", any ? L", " : L" ");
-      any = true;
-    }
-    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_VBLANK) {
-      wprintf(L"%sVBLANK", any ? L", " : L" ");
-      any = true;
-    }
-    if (blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) {
-      wprintf(L"%sTRANSFER", any ? L", " : L" ");
-      any = true;
-    }
-    if (!any) {
-      wprintf(L" (none)");
-    }
-    wprintf(L"\n");
-  }
+  const std::wstring decoded_features = aerogpu::FormatDeviceFeatureBits(blob.device_features, 0);
+  wprintf(L"  decoded_features: %s\n", decoded_features.c_str());
   wprintf(L"  flags: 0x%08lx\n", (unsigned long)blob.flags);
   wprintf(L"    is_legacy: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_IS_LEGACY) != 0));
   wprintf(L"    has_vblank: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0));

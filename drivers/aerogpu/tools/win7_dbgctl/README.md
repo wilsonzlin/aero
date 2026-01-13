@@ -143,7 +143,16 @@ aerogpu_dbgctl --map-shared-handle 0x1234
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
 
+Example output excerpt (`--status`):
+
+```
+AeroGPU features:
+  raw: lo=0x1f hi=0x0
+  decoded: fence_page, cursor, scanout, vblank, transfer
+```
+
 Notes:
+- Unknown feature bits are reported as `unknown_bit_<n>` (bit index in the 128-bit `FEATURES_LO/HI` set).
 - `IRQ_ACTIVE` is `IRQ_STATUS & IRQ_ENABLE` (i.e. causes that can currently assert the interrupt line).
 - Some environments may return a non-zero `VidPnSourceId` from `D3DKMTOpenAdapterFromHdc`; dbgctl retries `--dump-vblank`, `--wait-vblank`, and `--query-scanline` with source 0 if needed (AeroGPU currently implements a single source).
 - If `vblank_interrupt_type` prints `(not enabled or not reported)`, either dxgkrnl has not enabled vblank interrupt delivery for the adapter yet *or* the installed KMD predates `vblank_interrupt_type` reporting.
