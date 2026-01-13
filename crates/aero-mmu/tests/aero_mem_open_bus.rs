@@ -29,3 +29,24 @@ fn aero_mem_bus_unmapped_reads_are_open_bus() {
     // Past the end of RAM with no overlays mapped.
     assert_open_bus_reads(&mut bus, 0x2000);
 }
+
+#[test]
+fn aero_mem_bus_typed_reads_past_end_of_ram_preserve_partial_bytes() {
+    // 0x1001 bytes of RAM: last valid address is 0x1000.
+    let ram = Arc::new(aero_mem::PhysicalMemory::new(0x1001).unwrap());
+    let mut bus = aero_mem::MemoryBus::new(ram);
+
+    // Write a byte at the last RAM address.
+    bus.write_u8(0x1000, 0x12);
+
+    // Typed reads that cross beyond RAM must keep the in-RAM bytes and fill the rest with 0xFF.
+    assert_eq!(aero_mmu::MemoryBus::read_u16(&mut bus, 0x1000), 0xFF12);
+
+    // Also exercise a wider read spanning the boundary.
+    bus.write_u8(0x0FFE, 0x34);
+    bus.write_u8(0x0FFF, 0x56);
+    assert_eq!(
+        aero_mmu::MemoryBus::read_u32(&mut bus, 0x0FFE),
+        0xFF12_5634
+    );
+}
