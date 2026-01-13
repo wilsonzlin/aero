@@ -10,7 +10,9 @@ use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::bindings::CacheStats;
 use aero_gpu::guest_memory::{GuestMemory, GuestMemoryError};
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
-use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
+use aero_gpu::pipeline_key::{
+    ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
+};
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
 use aero_gpu::GpuCapabilities;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -113,6 +115,83 @@ const OPCODE_RELEASE_SHARED_SURFACE: u32 = AerogpuCmdOpcode::ReleaseSharedSurfac
 const OPCODE_FLUSH: u32 = AerogpuCmdOpcode::Flush as u32;
 
 const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
+
+// Placeholder geometry/tessellation emulation path:
+// - Compute prepass expands a fixed triangle into an "expanded vertex" buffer + indirect args.
+// - Render pass consumes those buffers via `draw_indirect`/`draw_indexed_indirect`.
+const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 = 32;
+const GEOMETRY_PREPASS_VERTEX_COUNT: u64 = 3;
+const GEOMETRY_PREPASS_INDEX_COUNT: u64 = 3;
+const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 = 20; // 5x u32
+const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 16; // vec4<f32>
+
+const GEOMETRY_PREPASS_CS_WGSL: &str = r#"
+struct ExpandedVertex {
+    pos: vec4<f32>,
+    o1: vec4<f32>,
+};
+
+struct Params {
+    color: vec4<f32>,
+};
+
+@group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
+@group(0) @binding(1) var<storage, read_write> out_indices: array<u32>;
+@group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
+@group(0) @binding(3) var<uniform> params: Params;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x != 0u) {
+        return;
+    }
+
+    let c = params.color;
+
+    // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
+    out_vertices[0].pos = vec4<f32>(-1.0, -1.0, 0.0, 1.0);
+    out_vertices[1].pos = vec4<f32>(-1.0, 3.0, 0.0, 1.0);
+    out_vertices[2].pos = vec4<f32>(3.0, -1.0, 0.0, 1.0);
+
+    out_vertices[0].o1 = c;
+    out_vertices[1].o1 = c;
+    out_vertices[2].o1 = c;
+
+    // Indices for indexed draws.
+    out_indices[0] = 0u;
+    out_indices[1] = 1u;
+    out_indices[2] = 2u;
+
+    // Write 5 u32s so the same buffer works for both:
+    // - draw_indirect:           vertex_count, instance_count, first_vertex, first_instance
+    // - draw_indexed_indirect:   index_count, instance_count, first_index, base_vertex, first_instance
+    out_indirect[0] = 3u;
+    out_indirect[1] = 1u;
+    out_indirect[2] = 0u;
+    out_indirect[3] = 0u;
+    out_indirect[4] = 0u;
+}
+"#;
+
+const EXPANDED_DRAW_PASSTHROUGH_VS_WGSL: &str = r#"
+struct VsIn {
+    @location(0) v0: vec4<f32>,
+    @location(1) v1: vec4<f32>,
+};
+
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(1) o1: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+    var out: VsOut;
+    out.pos = input.v0;
+    out.o1 = input.v1;
+    return out;
+}
+"#;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AerogpuCmdCacheStats {
@@ -516,6 +595,9 @@ struct AerogpuD3d11State {
     vs: Option<u32>,
     ps: Option<u32>,
     cs: Option<u32>,
+    gs: Option<u32>,
+    hs: Option<u32>,
+    ds: Option<u32>,
     input_layout: Option<u32>,
     // A small subset of pipeline state. Unsupported values are tolerated and
     // mapped onto sensible defaults.
@@ -549,6 +631,9 @@ impl Default for AerogpuD3d11State {
             vs: None,
             ps: None,
             cs: None,
+            gs: None,
+            hs: None,
+            ds: None,
             input_layout: None,
             blend: None,
             color_write_mask: wgpu::ColorWrites::ALL,
@@ -1492,13 +1577,26 @@ impl AerogpuD3d11Executor {
                             bytes: stream_bytes,
                             size: stream_size,
                         };
-                        self.exec_render_pass_load(
-                            &mut encoder,
-                            &mut stream,
-                            &alloc_map,
-                            guest_mem,
-                            &mut report,
-                        )?;
+                        if self.state.gs.is_some()
+                            || self.state.hs.is_some()
+                            || self.state.ds.is_some()
+                        {
+                            self.exec_draw_with_compute_prepass(
+                                &mut encoder,
+                                &mut stream,
+                                &alloc_map,
+                                guest_mem,
+                                &mut report,
+                            )?;
+                        } else {
+                            self.exec_render_pass_load(
+                                &mut encoder,
+                                &mut stream,
+                                &alloc_map,
+                                guest_mem,
+                                &mut report,
+                            )?;
+                        }
                         continue;
                     }
                     _ => {}
@@ -1872,6 +1970,569 @@ impl AerogpuD3d11Executor {
                 Ok(())
             }
         }
+    }
+
+    /// Execute a single draw that requires a compute prepass (GS/HS/DS emulation).
+    ///
+    /// This records:
+    /// 1) a compute pass that writes expanded vertex/index buffers + indirect args, then
+    /// 2) a render pass that consumes those buffers via `draw_indirect`/`draw_indexed_indirect`.
+    #[allow(clippy::too_many_arguments)]
+    fn exec_draw_with_compute_prepass<'a>(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        stream: &mut CmdStreamCtx<'a, '_>,
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+        report: &mut ExecuteReport,
+    ) -> Result<()> {
+        if self.state.render_targets.is_empty() {
+            bail!("aerogpu_cmd: draw without bound render target");
+        }
+
+        let Some(next) = stream.iter.peek() else {
+            return Ok(());
+        };
+        let (cmd_size, opcode) = match next {
+            Ok(packet) => (packet.hdr.size_bytes as usize, packet.hdr.opcode),
+            Err(err) => {
+                return Err(anyhow!(
+                    "aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}",
+                    *stream.cursor
+                ));
+            }
+        };
+
+        if opcode != OPCODE_DRAW && opcode != OPCODE_DRAW_INDEXED {
+            bail!("exec_draw_with_compute_prepass called on non-draw opcode {opcode:#x}");
+        }
+
+        let cmd_end = (*stream.cursor)
+            .checked_add(cmd_size)
+            .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
+        let _cmd_bytes = stream
+            .bytes
+            .get(*stream.cursor..cmd_end)
+            .ok_or_else(|| {
+                anyhow!(
+                    "aerogpu_cmd: cmd overruns stream: cursor=0x{:x} cmd_size=0x{:x} stream_size=0x{:x}",
+                    *stream.cursor,
+                    cmd_size,
+                    stream.size
+                )
+            })?;
+
+        // Consume the draw packet now so errors include consistent cursor information.
+        stream.iter.next().expect("peeked Some").map_err(|err| {
+            anyhow!(
+                "aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}",
+                *stream.cursor
+            )
+        })?;
+
+        if opcode == OPCODE_DRAW_INDEXED && self.state.index_buffer.is_none() {
+            bail!("DRAW_INDEXED without index buffer");
+        }
+
+        // Upload any dirty render targets/depth-stencil attachments before starting the passes.
+        let render_targets = self.state.render_targets.clone();
+        let depth_stencil = self.state.depth_stencil;
+        for &handle in &render_targets {
+            self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
+        }
+        if let Some(handle) = depth_stencil {
+            self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
+        }
+
+        // Upload any dirty resources used by the current input assembler bindings. The
+        // placeholder compute shader does not currently read them, but the eventual GS/HS/DS
+        // emulation path will.
+        let mut ia_buffers: Vec<u32> = self
+            .state
+            .vertex_buffers
+            .iter()
+            .flatten()
+            .map(|b| b.buffer)
+            .collect();
+        if let Some(ib) = self.state.index_buffer {
+            ia_buffers.push(ib.buffer);
+        }
+        for handle in ia_buffers {
+            self.ensure_buffer_uploaded(encoder, handle, allocs, guest_mem)?;
+        }
+
+        // The upcoming render pass will write to bound targets. Invalidate any CPU shadow copies
+        // so that later partial `UPLOAD_RESOURCE` operations don't accidentally overwrite
+        // GPU-produced contents.
+        for &handle in &render_targets {
+            if let Some(tex) = self.resources.textures.get_mut(&handle) {
+                tex.host_shadow = None;
+                tex.guest_backing_is_current = false;
+            }
+        }
+        if let Some(handle) = depth_stencil {
+            if let Some(tex) = self.resources.textures.get_mut(&handle) {
+                tex.host_shadow = None;
+                tex.guest_backing_is_current = false;
+            }
+        }
+
+        // Require VS/PS bindings to match the normal draw path (the VS will be consumed by the
+        // eventual emulation compute shader, even though the placeholder prepass does not).
+        let _vs_handle = self
+            .state
+            .vs
+            .ok_or_else(|| anyhow!("render draw without bound VS"))?;
+        let ps_handle = self
+            .state
+            .ps
+            .ok_or_else(|| anyhow!("render draw without bound PS"))?;
+
+        let ps = self
+            .resources
+            .shaders
+            .get(&ps_handle)
+            .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?
+            .clone();
+        if ps.stage != ShaderStage::Pixel {
+            bail!("shader {ps_handle} is not a pixel shader");
+        }
+
+        // Build render-pipeline bindings using the pixel shader only (the expanded-vertex
+        // passthrough VS has no resource bindings).
+        let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            [ps.reflection.bindings.as_slice()],
+        )?;
+        let layout_key = std::mem::replace(
+            &mut pipeline_bindings.layout_key,
+            PipelineLayoutKey::empty(),
+        );
+
+        let pipeline_layout = {
+            let device = &self.device;
+            let cache = &mut self.pipeline_layout_cache;
+            cache.get_or_create_with(&layout_key, || {
+                let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
+                    .group_layouts
+                    .iter()
+                    .map(|l| l.layout.as_ref())
+                    .collect();
+                Arc::new(
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aerogpu_cmd expanded draw pipeline layout"),
+                        bind_group_layouts: &layout_refs,
+                        push_constant_ranges: &[],
+                    }),
+                )
+            })
+        };
+
+        // Ensure any guest-backed resources referenced by the current binding state are uploaded
+        // before entering the render pass.
+        self.ensure_bound_resources_uploaded(encoder, &pipeline_bindings, allocs, guest_mem)?;
+
+        // If sample_mask disables all samples, treat the draw as a no-op (mirrors the normal draw
+        // path behavior).
+        if (self.state.sample_mask & 1) == 0 {
+            report.commands = report.commands.saturating_add(1);
+            *stream.cursor = cmd_end;
+            return Ok(());
+        }
+
+        // Prepare compute prepass output buffers.
+        let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
+            .checked_mul(GEOMETRY_PREPASS_VERTEX_COUNT)
+            .ok_or_else(|| anyhow!("geometry prepass expanded vertex buffer size overflow"))?;
+        let expanded_index_size = GEOMETRY_PREPASS_INDEX_COUNT
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("geometry prepass expanded index buffer size overflow"))?;
+
+        let expanded_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd expanded vertex buffer"),
+            size: expanded_vertex_size,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let expanded_index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd expanded index buffer"),
+            size: expanded_index_size,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let indirect_args_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd indirect args buffer"),
+            size: GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd geometry prepass params"),
+            size: GEOMETRY_PREPASS_PARAMS_SIZE_BYTES,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            // Default placeholder color: solid red.
+            let bytes = [
+                1.0f32.to_le_bytes(),
+                0.0f32.to_le_bytes(),
+                0.0f32.to_le_bytes(),
+                1.0f32.to_le_bytes(),
+            ]
+            .concat();
+            let mut mapped = params_buffer.slice(..).get_mapped_range_mut();
+            mapped.copy_from_slice(&bytes);
+        }
+        params_buffer.unmap();
+
+        // Build compute prepass pipeline + bind group.
+        let compute_bgl_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(expanded_vertex_size),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(expanded_index_size),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PARAMS_SIZE_BYTES),
+                },
+                count: None,
+            },
+        ];
+
+        let compute_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &compute_bgl_entries);
+        let compute_layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: vec![compute_bgl.hash],
+        };
+        let compute_pipeline_layout = self.pipeline_layout_cache.get_or_create(
+            &self.device,
+            &compute_layout_key,
+            &[compute_bgl.layout.as_ref()],
+            Some("aerogpu_cmd geometry prepass pipeline layout"),
+        );
+
+        let compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd geometry prepass bind group"),
+            layout: compute_bgl.layout.as_ref(),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &expanded_vertex_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(expanded_vertex_size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &expanded_index_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(expanded_index_size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &indirect_args_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &params_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PARAMS_SIZE_BYTES),
+                    }),
+                },
+            ],
+        });
+
+        let compute_pipeline_ptr = {
+            let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                &self.device,
+                aero_gpu::pipeline_key::ShaderStage::Compute,
+                GEOMETRY_PREPASS_CS_WGSL,
+                Some("aerogpu_cmd geometry prepass CS"),
+            );
+            let key = ComputePipelineKey {
+                shader: cs_hash,
+                layout: compute_layout_key.clone(),
+            };
+            let pipeline = self
+                .pipeline_cache
+                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aerogpu_cmd geometry prepass compute pipeline"),
+                        layout: Some(compute_pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: "cs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            pipeline as *const wgpu::ComputePipeline
+        };
+        let compute_pipeline = unsafe { &*compute_pipeline_ptr };
+
+        self.encoder_has_commands = true;
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aerogpu_cmd geometry prepass compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(compute_pipeline);
+            pass.set_bind_group(0, &compute_bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+
+        // Build bind groups for the render pass (before starting the pass so we can freely mutate
+        // executor caches).
+        let mut render_bind_groups: Vec<Arc<wgpu::BindGroup>> =
+            Vec::with_capacity(pipeline_bindings.group_layouts.len());
+        for group_index in 0..pipeline_bindings.group_layouts.len() {
+            if pipeline_bindings.group_bindings[group_index].is_empty() {
+                let entries: [BindGroupCacheEntry<'_>; 0] = [];
+                let bg = self.bind_group_cache.get_or_create(
+                    &self.device,
+                    &pipeline_bindings.group_layouts[group_index],
+                    &entries,
+                );
+                render_bind_groups.push(bg);
+            } else {
+                let stage = group_index_to_stage(group_index as u32)?;
+                let stage_bindings = self.bindings.stage_mut(stage);
+                if stage_bindings.is_dirty() {
+                    let provider = CmdExecutorBindGroupProvider {
+                        resources: &self.resources,
+                        legacy_constants: &self.legacy_constants,
+                        cbuffer_scratch: &self.cbuffer_scratch,
+                        dummy_uniform: &self.dummy_uniform,
+                        dummy_texture_view: &self.dummy_texture_view,
+                        default_sampler: &self.default_sampler,
+                        stage,
+                        stage_state: stage_bindings,
+                    };
+                    let bg = reflection_bindings::build_bind_group(
+                        &self.device,
+                        &mut self.bind_group_cache,
+                        &pipeline_bindings.group_layouts[group_index],
+                        &pipeline_bindings.group_bindings[group_index],
+                        &provider,
+                    )?;
+                    stage_bindings.clear_dirty();
+                    render_bind_groups.push(bg);
+                } else {
+                    // Stage not dirty; reuse cached bind group if possible by rebuilding with the
+                    // current state. This is still cheap due to BindGroupCache.
+                    let provider = CmdExecutorBindGroupProvider {
+                        resources: &self.resources,
+                        legacy_constants: &self.legacy_constants,
+                        cbuffer_scratch: &self.cbuffer_scratch,
+                        dummy_uniform: &self.dummy_uniform,
+                        dummy_texture_view: &self.dummy_texture_view,
+                        default_sampler: &self.default_sampler,
+                        stage,
+                        stage_state: stage_bindings,
+                    };
+                    let bg = reflection_bindings::build_bind_group(
+                        &self.device,
+                        &mut self.bind_group_cache,
+                        &pipeline_bindings.group_layouts[group_index],
+                        &pipeline_bindings.group_bindings[group_index],
+                        &provider,
+                    )?;
+                    render_bind_groups.push(bg);
+                }
+            }
+        }
+
+        // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
+        // pointer so we can keep using executor state while the render pass is alive.
+        let render_pipeline_ptr = {
+            let (_key, pipeline) = get_or_create_render_pipeline_for_expanded_draw(
+                &self.device,
+                &mut self.pipeline_cache,
+                pipeline_layout.as_ref(),
+                &self.resources,
+                &self.state,
+                layout_key,
+            )?;
+            pipeline as *const wgpu::RenderPipeline
+        };
+        let render_pipeline = unsafe { &*render_pipeline_ptr };
+
+        let rt_dims = self
+            .state
+            .render_targets
+            .first()
+            .and_then(|rt| self.resources.textures.get(rt))
+            .map(|tex| (tex.desc.width, tex.desc.height));
+
+        let (color_attachments, depth_stencil_attachment) =
+            build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?;
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("aerogpu_cmd expanded draw render pass"),
+                color_attachments: &color_attachments,
+                depth_stencil_attachment,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            if let Some(vp) = self.state.viewport {
+                if vp.x.is_finite()
+                    && vp.y.is_finite()
+                    && vp.width.is_finite()
+                    && vp.height.is_finite()
+                    && vp.min_depth.is_finite()
+                    && vp.max_depth.is_finite()
+                {
+                    if let Some((rt_w, rt_h)) = rt_dims {
+                        let max_w = rt_w as f32;
+                        let max_h = rt_h as f32;
+
+                        let left = vp.x.max(0.0);
+                        let top = vp.y.max(0.0);
+                        let right = (vp.x + vp.width).max(0.0).min(max_w);
+                        let bottom = (vp.y + vp.height).max(0.0).min(max_h);
+                        let width = (right - left).max(0.0);
+                        let height = (bottom - top).max(0.0);
+
+                        if width > 0.0 && height > 0.0 {
+                            let mut min_depth = vp.min_depth.clamp(0.0, 1.0);
+                            let mut max_depth = vp.max_depth.clamp(0.0, 1.0);
+                            if min_depth > max_depth {
+                                std::mem::swap(&mut min_depth, &mut max_depth);
+                            }
+                            pass.set_viewport(left, top, width, height, min_depth, max_depth);
+                        }
+                    } else {
+                        pass.set_viewport(
+                            vp.x,
+                            vp.y,
+                            vp.width,
+                            vp.height,
+                            vp.min_depth,
+                            vp.max_depth,
+                        );
+                    }
+                }
+            }
+
+            if self.state.scissor_enable {
+                if let Some(sc) = self.state.scissor {
+                    if let Some((rt_w, rt_h)) = rt_dims {
+                        let x = sc.x.min(rt_w);
+                        let y = sc.y.min(rt_h);
+                        let width = sc.width.min(rt_w.saturating_sub(x));
+                        let height = sc.height.min(rt_h.saturating_sub(y));
+                        if width > 0 && height > 0 {
+                            pass.set_scissor_rect(x, y, width, height);
+                        }
+                    }
+                }
+            }
+
+            pass.set_blend_constant(wgpu::Color {
+                r: self.state.blend_constant[0] as f64,
+                g: self.state.blend_constant[1] as f64,
+                b: self.state.blend_constant[2] as f64,
+                a: self.state.blend_constant[3] as f64,
+            });
+
+            pass.set_pipeline(render_pipeline);
+            pass.set_vertex_buffer(0, expanded_vertex_buffer.slice(..));
+
+            for (group_index, bg) in render_bind_groups.iter().enumerate() {
+                pass.set_bind_group(group_index as u32, bg.as_ref(), &[]);
+            }
+
+            if opcode == OPCODE_DRAW_INDEXED {
+                pass.set_index_buffer(expanded_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed_indirect(&indirect_args_buffer, 0);
+            } else {
+                pass.draw_indirect(&indirect_args_buffer, 0);
+            }
+        }
+
+        for &handle in &render_targets {
+            self.encoder_used_textures.insert(handle);
+        }
+        if let Some(handle) = depth_stencil {
+            self.encoder_used_textures.insert(handle);
+        }
+
+        // Conservatively mark IA buffers and shader-bound resources as used to preserve
+        // queue.write_* ordering heuristics.
+        for vb in self.state.vertex_buffers.iter().flatten() {
+            self.encoder_used_buffers.insert(vb.buffer);
+        }
+        if let Some(ib) = self.state.index_buffer {
+            self.encoder_used_buffers.insert(ib.buffer);
+        }
+        for (group_index, group_bindings) in pipeline_bindings.group_bindings.iter().enumerate() {
+            let stage = group_index_to_stage(group_index as u32)?;
+            let stage_bindings = self.bindings.stage(stage);
+            for binding in group_bindings {
+                match &binding.kind {
+                    crate::BindingKind::Texture2D { slot } => {
+                        if let Some(tex) = stage_bindings.texture(*slot) {
+                            self.encoder_used_textures.insert(tex.texture);
+                        }
+                    }
+                    crate::BindingKind::ConstantBuffer { slot, .. } => {
+                        if let Some(cb) = stage_bindings.constant_buffer(*slot) {
+                            self.encoder_used_buffers.insert(cb.buffer);
+                        }
+                    }
+                    crate::BindingKind::Sampler { .. } => {}
+                }
+            }
+        }
+
+        report.commands = report.commands.saturating_add(1);
+        *stream.cursor = cmd_end;
+        Ok(())
     }
 
     /// Execute a batch of draw/state commands inside a single render pass.
@@ -2357,6 +3018,14 @@ impl AerogpuD3d11Executor {
                 | OPCODE_NOP
                 | OPCODE_DEBUG_MARKER => {}
                 _ => break, // leave the opcode for the outer loop
+            }
+
+            // Geometry/tessellation emulation requires a compute prepass, which cannot run inside
+            // an active render pass. End the current pass and leave the draw for the outer loop.
+            if (opcode == OPCODE_DRAW || opcode == OPCODE_DRAW_INDEXED)
+                && (self.state.gs.is_some() || self.state.hs.is_some() || self.state.ds.is_some())
+            {
+                break;
             }
 
             let cmd_end = (*stream.cursor)
@@ -5758,7 +6427,7 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_bind_shaders(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_bind_shaders (24 bytes)
+        // struct aerogpu_cmd_bind_shaders (24 bytes) + optional GS/HS/DS extension fields.
         if cmd_bytes.len() < 24 {
             bail!(
                 "BIND_SHADERS: expected at least 24 bytes, got {}",
@@ -5768,10 +6437,25 @@ impl AerogpuD3d11Executor {
         let vs = read_u32_le(cmd_bytes, 8)?;
         let ps = read_u32_le(cmd_bytes, 12)?;
         let cs = read_u32_le(cmd_bytes, 16)?;
+        // Forward-compat: treat the legacy `reserved0` field as `gs`, and allow HS/DS to follow.
+        let gs = read_u32_le(cmd_bytes, 20)?;
+        let hs = if cmd_bytes.len() >= 28 {
+            read_u32_le(cmd_bytes, 24)?
+        } else {
+            0
+        };
+        let ds = if cmd_bytes.len() >= 32 {
+            read_u32_le(cmd_bytes, 28)?
+        } else {
+            0
+        };
 
         self.state.vs = if vs == 0 { None } else { Some(vs) };
         self.state.ps = if ps == 0 { None } else { Some(ps) };
         self.state.cs = if cs == 0 { None } else { Some(cs) };
+        self.state.gs = if gs == 0 { None } else { Some(gs) };
+        self.state.hs = if hs == 0 { None } else { Some(hs) };
+        self.state.ds = if ds == 0 { None } else { Some(ds) };
         self.bindings.mark_all_dirty();
         Ok(())
     }
@@ -8064,6 +8748,252 @@ fn get_or_create_render_pipeline_for_state<'a>(
         .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
 
     Ok((key, pipeline, wgpu_slot_to_d3d_slot))
+}
+
+fn get_or_create_render_pipeline_for_expanded_draw<'a>(
+    device: &wgpu::Device,
+    pipeline_cache: &'a mut PipelineCache,
+    pipeline_layout: &wgpu::PipelineLayout,
+    resources: &AerogpuD3d11Resources,
+    state: &AerogpuD3d11State,
+    layout_key: PipelineLayoutKey,
+) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline)> {
+    let ps_handle = state
+        .ps
+        .ok_or_else(|| anyhow!("render draw without bound PS"))?;
+    let ps = resources
+        .shaders
+        .get(&ps_handle)
+        .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?;
+    if ps.stage != ShaderStage::Pixel {
+        bail!("shader {ps_handle} is not a pixel shader");
+    }
+
+    // Compile (and cache) the expanded-vertex passthrough VS.
+    let (vs_base_hash, _module) = pipeline_cache.get_or_create_shader_module(
+        device,
+        map_pipeline_cache_stage(ShaderStage::Vertex),
+        EXPANDED_DRAW_PASSTHROUGH_VS_WGSL,
+        Some("aerogpu_cmd expanded passthrough VS"),
+    );
+
+    let vs_depth_clamp_hash = if !state.depth_clip_enabled {
+        let clamped = wgsl_depth_clamp_variant(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL);
+        let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+            device,
+            map_pipeline_cache_stage(ShaderStage::Vertex),
+            &clamped,
+            Some("aerogpu_cmd expanded passthrough VS (depth clamp)"),
+        );
+        Some(hash)
+    } else {
+        None
+    };
+
+    // Link VS/PS interfaces by trimming unused varyings (mirrors the normal pipeline path).
+    let ps_declared_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl_source, "PsIn")?;
+    let vs_outputs =
+        super::wgsl_link::locations_in_struct(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL, "VsOut")?;
+
+    let mut ps_link_locations = ps_declared_inputs.clone();
+    let mut fragment_shader = ps.wgsl_hash;
+
+    let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
+        .difference(&vs_outputs)
+        .copied()
+        .collect();
+    if !ps_missing_locations.is_empty() {
+        let ps_used_locations = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl_source);
+        let used_missing: Vec<u32> = ps_missing_locations
+            .intersection(&ps_used_locations)
+            .copied()
+            .collect();
+        if let Some(&loc) = used_missing.first() {
+            bail!("pixel shader reads @location({loc}), but expanded VS does not output it");
+        }
+        ps_link_locations = ps_declared_inputs
+            .intersection(&vs_outputs)
+            .copied()
+            .collect();
+        if ps_link_locations != ps_declared_inputs {
+            let trimmed_ps_wgsl =
+                super::wgsl_link::trim_ps_inputs_to_locations(&ps.wgsl_source, &ps_link_locations);
+            let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+                device,
+                map_pipeline_cache_stage(ShaderStage::Pixel),
+                &trimmed_ps_wgsl,
+                Some("aerogpu_cmd expanded linked pixel shader"),
+            );
+            fragment_shader = hash;
+        }
+    }
+
+    let needs_trim = vs_outputs != ps_link_locations;
+    let selected_vs_hash = if state.depth_clip_enabled {
+        vs_base_hash
+    } else {
+        vs_depth_clamp_hash.unwrap_or(vs_base_hash)
+    };
+    let vertex_shader = if !needs_trim {
+        selected_vs_hash
+    } else {
+        let base_vs_wgsl = if state.depth_clip_enabled {
+            std::borrow::Cow::Borrowed(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL)
+        } else {
+            std::borrow::Cow::Owned(wgsl_depth_clamp_variant(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL))
+        };
+        let trimmed_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
+            base_vs_wgsl.as_ref(),
+            &ps_link_locations,
+        );
+        let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+            device,
+            map_pipeline_cache_stage(ShaderStage::Vertex),
+            &trimmed_vs_wgsl,
+            Some("aerogpu_cmd expanded linked vertex shader"),
+        );
+        hash
+    };
+
+    // Expanded vertex buffer layout: (pos: vec4) + (o1: vec4).
+    let vertex_buffer = VertexBufferLayoutOwned {
+        array_stride: GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: vec![
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 16,
+                shader_location: 1,
+            },
+        ],
+    };
+    let vb_layout = vertex_buffer.as_wgpu();
+    let vb_key: aero_gpu::pipeline_key::VertexBufferLayoutKey = (&vb_layout).into();
+
+    let mut color_targets = Vec::with_capacity(state.render_targets.len());
+    let mut color_target_states = Vec::with_capacity(state.render_targets.len());
+    for &rt in &state.render_targets {
+        let tex = resources
+            .textures
+            .get(&rt)
+            .ok_or_else(|| anyhow!("unknown render target texture {rt}"))?;
+        let mut write_mask = state.color_write_mask;
+        if aerogpu_format_is_x8(tex.format_u32) {
+            write_mask &= !wgpu::ColorWrites::ALPHA;
+        }
+        let ct = wgpu::ColorTargetState {
+            format: tex.desc.format,
+            blend: state.blend,
+            write_mask,
+        };
+        color_targets.push(ColorTargetKey {
+            format: ct.format,
+            blend: ct.blend.map(Into::into),
+            write_mask: ct.write_mask,
+        });
+        color_target_states.push(Some(ct));
+    }
+
+    let depth_stencil_state = if let Some(ds_id) = state.depth_stencil {
+        let tex = resources
+            .textures
+            .get(&ds_id)
+            .ok_or_else(|| anyhow!("unknown depth-stencil texture {ds_id}"))?;
+
+        let depth_compare = if state.depth_enable {
+            state.depth_compare
+        } else {
+            wgpu::CompareFunction::Always
+        };
+        let depth_write_enabled = state.depth_enable && state.depth_write_enable;
+
+        let (read_mask, write_mask) = if state.stencil_enable {
+            (
+                state.stencil_read_mask as u32,
+                state.stencil_write_mask as u32,
+            )
+        } else {
+            (0, 0)
+        };
+
+        Some(wgpu::DepthStencilState {
+            format: tex.desc.format,
+            depth_write_enabled,
+            depth_compare,
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState::IGNORE,
+                back: wgpu::StencilFaceState::IGNORE,
+                read_mask,
+                write_mask,
+            },
+            bias: wgpu::DepthBiasState {
+                constant: state.depth_bias,
+                slope_scale: 0.0,
+                clamp: 0.0,
+            },
+        })
+    } else {
+        None
+    };
+    let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
+
+    let key = RenderPipelineKey {
+        vertex_shader,
+        fragment_shader,
+        color_targets,
+        depth_stencil: depth_stencil_key,
+        primitive_topology: state.primitive_topology,
+        cull_mode: state.cull_mode,
+        front_face: state.front_face,
+        vertex_buffers: vec![vb_key],
+        sample_count: 1,
+        layout: layout_key,
+    };
+
+    let topology = state.primitive_topology;
+    let cull_mode = state.cull_mode;
+    let front_face = state.front_face;
+    let depth_stencil_state_for_pipeline = depth_stencil_state.clone();
+
+    let pipeline = pipeline_cache
+        .get_or_create_render_pipeline(device, key.clone(), move |device, vs, fs| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("aerogpu_cmd expanded draw render pipeline"),
+                layout: Some(pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: vs,
+                    entry_point: "vs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[vb_layout],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: fs,
+                    entry_point: ps.entry_point,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &color_target_states,
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology,
+                    strip_index_format: None,
+                    front_face,
+                    cull_mode,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: depth_stencil_state_for_pipeline,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            })
+        })
+        .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+
+    Ok((key, pipeline))
 }
 
 fn build_vertex_buffers_for_pipeline(
