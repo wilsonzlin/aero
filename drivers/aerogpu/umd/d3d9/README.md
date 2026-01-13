@@ -298,6 +298,7 @@ Limitations (bring-up):
 - Only the `XYZRHW` (pre-transformed) + `DIFFUSE` (+ optional `TEX1`) subset is supported by the fixed-function fallback path. Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping but are not guaranteed to render correctly.
 - Untransformed `D3DFVF_XYZ*` fixed-function rendering (world/view/projection transforms) is not implemented yet.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
+- The `TEX1` fixed-function path uses a fixed shader: sample `Texture(0)` and multiply by the per-vertex diffuse color (classic “modulate”). `D3DTSS_*` texture stage state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
 
 ### Validation
