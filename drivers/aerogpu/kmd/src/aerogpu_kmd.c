@@ -2691,6 +2691,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         return STATUS_SUCCESS;
     }
 
+    /* Stop scanout DMA while powered down; restore via AeroGpuProgramScanout on resume. */
+    AeroGpuSetScanoutEnable(adapter, 0);
+
     if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0 &&
         adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
         /*
@@ -2714,11 +2717,42 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
     }
-    if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
-        /* Legacy fence interrupts are acknowledged via INT_ACK. */
-        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
-    } else {
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
+
+    /*
+     * Stop ring execution while powered down.
+     *
+     * Take PendingLock -> RingLock to serialize against SubmitCommand paths
+     * that hold PendingLock while pushing to the ring.
+     */
+    {
+        KIRQL pendingIrql;
+        KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+
+        KIRQL ringIrql;
+        KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_HI, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
+        } else {
+            /* Legacy ABI has no ring control bit; clear the ring programming instead. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
+            adapter->RingTail = 0;
+
+            /* Legacy fence interrupts are acknowledged via INT_ACK. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+        }
+
+        KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+        KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
     }
 
     return STATUS_SUCCESS;
