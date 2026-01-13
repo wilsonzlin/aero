@@ -589,8 +589,15 @@ static int RunCursorStateSanity(int argc, char** argv) {
     POINT pos;
     ZeroMemory(&pos, sizeof(pos));
     (void)GetCursorPos(&pos);
-    const bool pos_match =
-        (AbsI32((int)ToS32((uint32_t)q1.x) - (int)pos.x) <= tol) && (AbsI32((int)ToS32((uint32_t)q1.y) - (int)pos.y) <= tol);
+    const int32_t mmio_x = ToS32((uint32_t)q1.x);
+    const int32_t mmio_y = ToS32((uint32_t)q1.y);
+    const int32_t hot_x = (int32_t)q1.hot_x;
+    const int32_t hot_y = (int32_t)q1.hot_y;
+    const bool pos_match0 =
+        (AbsI32((int)mmio_x - (int)pos.x) <= tol) && (AbsI32((int)mmio_y - (int)pos.y) <= tol);
+    const bool pos_match1 = (AbsI32((int)(mmio_x + hot_x) - (int)pos.x) <= tol) &&
+                            (AbsI32((int)(mmio_y + hot_y) - (int)pos.y) <= tol);
+    const bool pos_match = pos_match0 || pos_match1;
 
     const bool shape_sane = (q1.width != 0 && q1.height != 0 && q1.pitch_bytes != 0 && q1.format != 0 && q1.fb_gpa != 0);
     const bool hot_ok = ((int)q1.hot_x == cursor_spec.hot_x && (int)q1.hot_y == cursor_spec.hot_y);
