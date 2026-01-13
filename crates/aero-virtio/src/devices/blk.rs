@@ -124,7 +124,8 @@ impl VirtioBlkConfig {
 ///
 /// The repo-wide canonical synchronous disk trait is [`aero_storage::VirtualDisk`]. This crate
 /// keeps a separate `BlockBackend` trait primarily for virtio-blk device ergonomics, but most
-/// call sites should pass a boxed `aero-storage` disk type; an adapter is provided:
+/// call sites should pass a boxed `aero-storage` disk type and use [`VirtioBlkDisk`]. An adapter
+/// is provided:
 ///
 /// - `impl<T: aero_storage::VirtualDisk> BlockBackend for Box<T>`
 ///
@@ -152,6 +153,16 @@ pub trait BlockBackend {
         [0; 20]
     }
 }
+
+/// Canonical disk-backed virtio-blk device type.
+///
+/// Most users should not implement [`BlockBackend`] directly. Instead, prefer passing an
+/// [`aero_storage::VirtualDisk`] (e.g. [`aero_storage::RawDisk`]) through wiring layers and
+/// constructing a [`VirtioBlkDisk`] at the edge.
+#[cfg(target_arch = "wasm32")]
+pub type VirtioBlkDisk = VirtioBlk<Box<dyn aero_storage::VirtualDisk>>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type VirtioBlkDisk = VirtioBlk<Box<dyn aero_storage::VirtualDisk + Send>>;
 
 fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
     match err {
@@ -272,10 +283,10 @@ fn map_device_io_error(err: io::Error) -> BlockBackendError {
 ///
 /// ```rust,ignore
 /// use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
-/// use aero_virtio::devices::blk::VirtioBlk;
+/// use aero_virtio::devices::blk::VirtioBlkDisk;
 ///
 /// let disk = RawDisk::create(MemBackend::new(), (1024 * SECTOR_SIZE) as u64).unwrap();
-/// let blk = VirtioBlk::new(Box::new(disk));
+/// let blk = VirtioBlkDisk::new_from_virtual_disk(Box::new(disk));
 /// ```
 ///
 /// The virtio-blk device logic itself still enforces sector-based requests; this adapter is
@@ -437,6 +448,9 @@ impl BlockBackend for MemDisk {
     }
 }
 
+/// Virtio block device model.
+///
+/// For the most common disk-backed configuration, see [`VirtioBlkDisk`].
 pub struct VirtioBlk<B: BlockBackend> {
     backend: B,
     features: u64,
@@ -539,6 +553,28 @@ impl<B: BlockBackend> VirtioBlk<B> {
 
     pub fn backend_mut(&mut self) -> &mut B {
         &mut self.backend
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl VirtioBlk<Box<dyn aero_storage::VirtualDisk>> {
+    /// Construct a virtio-blk device from a boxed [`aero_storage::VirtualDisk`].
+    ///
+    /// This is identical to [`VirtioBlk::new`] but makes the "disk-first" path explicit and
+    /// discoverable.
+    pub fn new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> Self {
+        Self::new(disk)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl VirtioBlk<Box<dyn aero_storage::VirtualDisk + Send>> {
+    /// Construct a virtio-blk device from a boxed [`aero_storage::VirtualDisk`].
+    ///
+    /// This is identical to [`VirtioBlk::new`] but makes the "disk-first" path explicit and
+    /// discoverable.
+    pub fn new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Self {
+        Self::new(disk)
     }
 }
 
@@ -987,6 +1023,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 mod tests {
     use super::{
         BlockBackend, BlockBackendAsAeroVirtualDisk, BlockBackendError, MemDisk, VirtioBlk,
+        VirtioBlkDisk,
         VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT,
     };
     use crate::devices::VirtioDevice;
@@ -1012,9 +1049,9 @@ mod tests {
     }
 
     #[test]
-    fn doc_example_open_raw_disk_as_virtio_blk_backend() {
+    fn virtio_blk_disk_alias_accepts_raw_disk() {
         let disk = RawDisk::create(MemBackend::new(), (1024 * SECTOR_SIZE) as u64).unwrap();
-        let mut blk = VirtioBlk::new(Box::new(disk));
+        let mut blk = VirtioBlkDisk::new_from_virtual_disk(Box::new(disk));
 
         // Sanity-check that the adapter exposes the underlying disk capacity.
         assert_eq!(blk.backend_mut().len(), (1024 * SECTOR_SIZE) as u64);
