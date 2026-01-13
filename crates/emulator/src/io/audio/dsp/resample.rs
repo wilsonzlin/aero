@@ -188,6 +188,37 @@ impl LinearResampler {
 mod tests {
     use super::*;
 
+    #[test]
+    fn linear_resampler_new_rejects_invalid_params() {
+        assert!(matches!(
+            LinearResampler::new(48_000, 48_000, 0),
+            Err(ResampleError::InvalidChannels)
+        ));
+        assert!(matches!(
+            LinearResampler::new(0, 48_000, 1),
+            Err(ResampleError::InvalidRates)
+        ));
+        assert!(matches!(
+            LinearResampler::new(48_000, 0, 1),
+            Err(ResampleError::InvalidRates)
+        ));
+    }
+
+    #[test]
+    fn linear_resampler_rejects_misaligned_input() {
+        let mut r = LinearResampler::new(48_000, 48_000, 2).unwrap();
+        let mut out = vec![1.0f32, 2.0, 3.0];
+        let err = r.process_interleaved(&[0.0f32; 3], &mut out).unwrap_err();
+        assert_eq!(
+            err,
+            ResampleError::InputLengthNotAligned {
+                expected_multiple: 2
+            }
+        );
+        // `process_interleaved` clears the output buffer before validating the input.
+        assert!(out.is_empty());
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     mod proptests {
         use super::*;
