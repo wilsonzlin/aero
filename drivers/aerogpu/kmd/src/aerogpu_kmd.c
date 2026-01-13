@@ -2902,7 +2902,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryChildStatus(_In_ const HANDLE hAdapter,
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiQueryDeviceDescriptor(_In_ const HANDLE hAdapter,
-                                                        _Inout_ DXGKARG_QUERYDEVICE_DESCRIPTOR* pDescriptor)
+                                                         _Inout_ DXGKARG_QUERYDEVICE_DESCRIPTOR* pDescriptor)
 {
     UNREFERENCED_PARAMETER(hAdapter);
     if (!pDescriptor || !pDescriptor->pDescriptorBuffer) {
@@ -2927,8 +2927,288 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryDeviceDescriptor(_In_ const HANDLE hAdap
     return STATUS_SUCCESS;
 }
 
+static BOOLEAN AeroGpuIsSupportedVidPnModeDimensions(_In_ ULONG Width, _In_ ULONG Height)
+{
+    if (Width == 0 || Height == 0) {
+        return FALSE;
+    }
+
+    /*
+     * Conservative mode whitelist:
+     * - Prefer deriving supported modes from the EDID blob we expose.
+     * - Allow minor horizontal rounding differences (for example 1366 vs 1368)
+     *   that can arise from EDID standard timing quantisation.
+     */
+    ULONG preferredW = 0;
+    ULONG preferredH = 0;
+    if (AeroGpuTryParseEdidPreferredMode(g_AeroGpuEdid, &preferredW, &preferredH)) {
+        if (Width == preferredW && Height == preferredH) {
+            return TRUE;
+        }
+    }
+
+    /* Established timings (EDID bytes 35..37). */
+    const UCHAR est1 = g_AeroGpuEdid[35];
+    const UCHAR est2 = g_AeroGpuEdid[36];
+    const UCHAR man = g_AeroGpuEdid[37];
+
+    /* Established timing bits we care about (enough for Win7 mode selection). */
+    if ((est1 & 0x20u) && Width == 640u && Height == 480u) { /* 640x480@60 */
+        return TRUE;
+    }
+    if ((est1 & 0x01u) && Width == 800u && Height == 600u) { /* 800x600@60 */
+        return TRUE;
+    }
+    if ((est2 & 0x08u) && Width == 1024u && Height == 768u) { /* 1024x768@60 */
+        return TRUE;
+    }
+    if ((man & 0x80u) && Width == 1152u && Height == 870u) { /* 1152x870@75 */
+        return TRUE;
+    }
+
+    /* Standard timing identifiers (EDID bytes 38..53, 8 entries). */
+    for (ULONG i = 0; i < 8; ++i) {
+        const UCHAR b1 = g_AeroGpuEdid[38 + i * 2];
+        const UCHAR b2 = g_AeroGpuEdid[38 + i * 2 + 1];
+        if (b1 == 0x01u && b2 == 0x01u) {
+            continue; /* unused */
+        }
+
+        const ULONG h = ((ULONG)b1 + 31u) * 8u;
+        ULONG v = 0;
+        switch ((b2 >> 6) & 0x3u) {
+        case 0: /* 16:10 */
+            v = (h * 10u) / 16u;
+            break;
+        case 1: /* 4:3 */
+            v = (h * 3u) / 4u;
+            break;
+        case 2: /* 5:4 */
+            v = (h * 4u) / 5u;
+            break;
+        case 3: /* 16:9 */
+        default:
+            v = (h * 9u) / 16u;
+            break;
+        }
+
+        /*
+         * Some standard timing derived vertical values can land on non-standard
+         * boundaries (e.g. 1368*9/16=769). Round down to a multiple-of-8 line
+         * count, matching common Windows mode enumeration behavior.
+         */
+        v &= ~7u;
+
+        if (v == 0) {
+            continue;
+        }
+
+        if (Height != v) {
+            continue;
+        }
+
+        ULONG diff = (Width > h) ? (Width - h) : (h - Width);
+        if (diff <= 2u) {
+            return TRUE;
+        }
+    }
+
+    /*
+     * Explicitly accept 1366x768 (common panel mode) even though the standard
+     * timing quantisation produces 1368x768.
+     */
+    if (Width == 1366u && Height == 768u) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static BOOLEAN AeroGpuIsSupportedVidPnPixelFormat(_In_ D3DDDIFORMAT Format)
+{
+    /*
+     * MVP scanout formats:
+     * - D3DDDIFMT_X8R8G8B8 (default desktop format on Win7)
+     * - D3DDDIFMT_A8R8G8B8 (same memory layout; alpha ignored for scanout)
+     */
+    switch (Format) {
+    case D3DDDIFMT_X8R8G8B8:
+    case D3DDDIFMT_A8R8G8B8:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_ISSUPPORTEDVIDPN* pIsSupportedVidPn)
+{
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!pIsSupportedVidPn) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Default to conservative rejection. */
+    pIsSupportedVidPn->IsVidPnSupported = FALSE;
+
+    if (!adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!pIsSupportedVidPn->hDesiredVidPn) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!adapter->DxgkInterface.DxgkCbQueryVidPnInterface) {
+        /* Keep legacy behavior if we can't introspect the VidPN. */
+        pIsSupportedVidPn->IsVidPnSupported = TRUE;
+        return STATUS_SUCCESS;
+    }
+
+    DXGK_VIDPN_INTERFACE vidpn;
+    RtlZeroMemory(&vidpn, sizeof(vidpn));
+    NTSTATUS status = adapter->DxgkInterface.DxgkCbQueryVidPnInterface(adapter->StartInfo.hDxgkHandle, pIsSupportedVidPn->hDesiredVidPn, &vidpn);
+    if (!NT_SUCCESS(status)) {
+        /* Keep legacy behavior on interface query failure. */
+        pIsSupportedVidPn->IsVidPnSupported = TRUE;
+        return STATUS_SUCCESS;
+    }
+
+    if (!vidpn.pfnGetTopology || !vidpn.pfnGetTopologyInterface || !vidpn.pfnReleaseTopology || !vidpn.pfnGetSourceModeSet ||
+        !vidpn.pfnGetSourceModeSetInterface || !vidpn.pfnReleaseSourceModeSet) {
+        /* Can't validate; accept to avoid blocking mode set. */
+        pIsSupportedVidPn->IsVidPnSupported = TRUE;
+        return STATUS_SUCCESS;
+    }
+
+    BOOLEAN supported = FALSE;
+    D3DKMDT_HVIDPNTOPOLOGY hTopology = 0;
+
+    status = vidpn.pfnGetTopology(pIsSupportedVidPn->hDesiredVidPn, &hTopology);
+    if (!NT_SUCCESS(status) || !hTopology) {
+        /* If we cannot introspect the topology, keep legacy behavior and accept. */
+        supported = TRUE;
+        goto Cleanup;
+    }
+
+    DXGK_VIDPNTOPOLOGY_INTERFACE topo;
+    RtlZeroMemory(&topo, sizeof(topo));
+    status = vidpn.pfnGetTopologyInterface(pIsSupportedVidPn->hDesiredVidPn, hTopology, &topo);
+    if (!NT_SUCCESS(status) || !topo.pfnGetNumPaths || !topo.pfnAcquireFirstPathInfo || !topo.pfnReleasePathInfo) {
+        supported = TRUE;
+        goto Cleanup;
+    }
+
+    UINT numPaths = 0;
+    status = topo.pfnGetNumPaths(hTopology, &numPaths);
+    if (!NT_SUCCESS(status)) {
+        supported = TRUE;
+        goto Cleanup;
+    }
+    if (numPaths != 1) {
+        goto Cleanup;
+    }
+
+    const D3DKMDT_VIDPN_PRESENT_PATH* pathInfo = NULL;
+    status = topo.pfnAcquireFirstPathInfo(hTopology, &pathInfo);
+    if (!NT_SUCCESS(status) || !pathInfo) {
+        supported = TRUE;
+        goto Cleanup;
+    }
+
+    supported = TRUE;
+
+    /* Strict 1 source -> 1 target topology. */
+    if (pathInfo->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID || pathInfo->VidPnTargetId != AEROGPU_VIDPN_TARGET_ID) {
+        supported = FALSE;
+    }
+
+    /* No rotation/scaling support (identity-only). */
+    if (supported) {
+        const D3DKMDT_VIDPN_PRESENT_PATH_ROTATION rot = pathInfo->ContentTransformation.Rotation;
+        if (rot != D3DKMDT_VPPR_IDENTITY && rot != D3DKMDT_VPPR_UNINITIALIZED) {
+            supported = FALSE;
+        }
+        const D3DKMDT_VIDPN_PRESENT_PATH_SCALING sc = pathInfo->ContentTransformation.Scaling;
+        if (sc != D3DKMDT_VPPS_IDENTITY && sc != D3DKMDT_VPPS_UNINITIALIZED) {
+            supported = FALSE;
+        }
+    }
+
+    topo.pfnReleasePathInfo(hTopology, pathInfo);
+    pathInfo = NULL;
+
+    if (!supported) {
+        goto Cleanup;
+    }
+
+    /* Validate the pinned source mode (format + dimensions). */
+    D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
+    status = vidpn.pfnGetSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, AEROGPU_VIDPN_SOURCE_ID, &hSourceModeSet);
+    if (!NT_SUCCESS(status) || !hSourceModeSet) {
+        /* If we cannot inspect the mode set, keep legacy behavior and accept. */
+        supported = TRUE;
+        goto Cleanup;
+    }
+
+    DXGK_VIDPNSOURCEMODESET_INTERFACE sms;
+    RtlZeroMemory(&sms, sizeof(sms));
+    status = vidpn.pfnGetSourceModeSetInterface(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet, &sms);
+    if (!NT_SUCCESS(status) || !sms.pfnAcquirePinnedModeInfo || !sms.pfnReleaseModeInfo) {
+        vidpn.pfnReleaseSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet);
+        supported = TRUE;
+        goto Cleanup;
+    }
+
+    const D3DKMDT_VIDPN_SOURCE_MODE* pinned = NULL;
+    status = sms.pfnAcquirePinnedModeInfo(hSourceModeSet, &pinned);
+    if (!NT_SUCCESS(status) || !pinned) {
+        vidpn.pfnReleaseSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet);
+        /* If no pinned mode is present yet, treat the topology as supported. */
+        supported = TRUE;
+        goto Cleanup;
+    }
+
+    const ULONG width = pinned->Format.Graphics.PrimSurfSize.cx;
+    const ULONG height = pinned->Format.Graphics.PrimSurfSize.cy;
+    const D3DDDIFORMAT fmt = pinned->Format.Graphics.PixelFormat;
+
+    if (pinned->Type != D3DKMDT_RMT_GRAPHICS || !AeroGpuIsSupportedVidPnPixelFormat(fmt) ||
+        !AeroGpuIsSupportedVidPnModeDimensions(width, height)) {
+        supported = FALSE;
+    }
+
+    sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
+    vidpn.pfnReleaseSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet);
+
+Cleanup:
+    if (hTopology) {
+        vidpn.pfnReleaseTopology(pIsSupportedVidPn->hDesiredVidPn, hTopology);
+    }
+
+    pIsSupportedVidPn->IsVidPnSupported = supported ? TRUE : FALSE;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS APIENTRY AeroGpuDdiQueryVidPnHardwareCapability(_In_ const HANDLE hAdapter,
+                                                                _Inout_ DXGKARG_QUERYVIDPNHARDWARECAPABILITY* pCapability)
+{
+    UNREFERENCED_PARAMETER(hAdapter);
+    if (!pCapability) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /*
+     * MVP: report minimal capabilities consistent with our current modesetting
+     * path (no scaling, no rotation, no overlays).
+     *
+     * dxgkrnl treats a zeroed capability struct as "no optional features".
+     */
+    RtlZeroMemory(&pCapability->VidPnHardwareCapability, sizeof(pCapability->VidPnHardwareCapability));
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hAdapter,
-                                                           _Inout_ DXGKARG_RECOMMENDFUNCTIONALVIDPN* pRecommend)
+                                                            _Inout_ DXGKARG_RECOMMENDFUNCTIONALVIDPN* pRecommend)
 {
     UNREFERENCED_PARAMETER(hAdapter);
     UNREFERENCED_PARAMETER(pRecommend);
@@ -6700,10 +6980,12 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
     init.DxgkDdiQueryChildStatus = AeroGpuDdiQueryChildStatus;
     init.DxgkDdiQueryDeviceDescriptor = AeroGpuDdiQueryDeviceDescriptor;
 
+    init.DxgkDdiIsSupportedVidPn = AeroGpuDdiIsSupportedVidPn;
     init.DxgkDdiRecommendFunctionalVidPn = AeroGpuDdiRecommendFunctionalVidPn;
     init.DxgkDdiEnumVidPnCofuncModality = AeroGpuDdiEnumVidPnCofuncModality;
     init.DxgkDdiCommitVidPn = AeroGpuDdiCommitVidPn;
     init.DxgkDdiUpdateActiveVidPnPresentPath = AeroGpuDdiUpdateActiveVidPnPresentPath;
+    init.DxgkDdiQueryVidPnHardwareCapability = AeroGpuDdiQueryVidPnHardwareCapability;
     init.DxgkDdiRecommendMonitorModes = AeroGpuDdiRecommendMonitorModes;
 
     init.DxgkDdiSetVidPnSourceAddress = AeroGpuDdiSetVidPnSourceAddress;

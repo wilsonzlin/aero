@@ -122,6 +122,30 @@ static int RunScanoutStateSanity(int argc, char** argv) {
                          row_bytes);
   }
 
+  // Modeset validation sanity: attempt to test an obviously unsupported mode and ensure
+  // Windows rejects it cleanly (should not be reported as supported by the driver).
+  {
+    DEVMODEW dm;
+    ZeroMemory(&dm, sizeof(dm));
+    dm.dmSize = sizeof(dm);
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    dm.dmPelsWidth = 1234;
+    dm.dmPelsHeight = 777;
+
+    const LONG r = ChangeDisplaySettingsExW(NULL, &dm, NULL, CDS_TEST, NULL);
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: ChangeDisplaySettingsExW(CDS_TEST) %lux%lu -> %ld",
+        kTestName,
+        (unsigned long)dm.dmPelsWidth,
+        (unsigned long)dm.dmPelsHeight,
+        (long)r);
+    if (r == DISP_CHANGE_SUCCESSFUL) {
+      return reporter.Fail("unsupported mode %lux%lu unexpectedly reported as supported",
+                           (unsigned long)dm.dmPelsWidth,
+                           (unsigned long)dm.dmPelsHeight);
+    }
+  }
+
   return reporter.Pass();
 }
 
