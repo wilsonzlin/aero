@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -86,6 +88,42 @@ describe("packGamepadReport", () => {
     expect(bytes[2]).toBe(GAMEPAD_HAT_NEUTRAL);
     expect(bytes[3]).toBe(0x7f);
     expect(bytes[4]).toBe(0x81);
+  });
+});
+
+describe("hid_gamepad_report_vectors fixture", () => {
+  it("matches cross-language report byte packing", async () => {
+    type FixtureVector = {
+      name?: string;
+      buttons: number;
+      hat: number;
+      x: number;
+      y: number;
+      rx: number;
+      ry: number;
+      bytes: number[];
+    };
+
+    const raw = await readFile(new URL("../../../docs/fixtures/hid_gamepad_report_vectors.json", import.meta.url), "utf8");
+    const vectors = JSON.parse(raw) as FixtureVector[];
+
+    expect(vectors.length).toBeGreaterThan(0);
+
+    for (const [idx, v] of vectors.entries()) {
+      expect(v.bytes, v.name ?? `vector ${idx}`).toHaveLength(8);
+
+      const { packedLo, packedHi } = packGamepadReport({
+        buttons: v.buttons,
+        hat: v.hat,
+        x: v.x,
+        y: v.y,
+        rx: v.rx,
+        ry: v.ry,
+      });
+
+      const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
+      expect(bytes, v.name ?? `vector ${idx}`).toEqual(v.bytes);
+    }
   });
 });
 

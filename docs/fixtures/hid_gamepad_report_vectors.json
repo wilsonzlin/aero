@@ -1,0 +1,42 @@
+[
+  {
+    "name": "neutral",
+    "buttons": 0,
+    "hat": 8,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 8, 0, 0, 0, 0, 0]
+  },
+  {
+    "name": "mixed_signs_and_endianness",
+    "buttons": 4660,
+    "hat": 2,
+    "x": 1,
+    "y": -1,
+    "rx": 127,
+    "ry": -127,
+    "bytes": [52, 18, 2, 1, 255, 127, 129, 0]
+  },
+  {
+    "name": "high_button_bit_and_axis_extremes",
+    "buttons": 32769,
+    "hat": 7,
+    "x": -127,
+    "y": 127,
+    "rx": -1,
+    "ry": 1,
+    "bytes": [1, 128, 7, 129, 127, 255, 1, 0]
+  },
+  {
+    "name": "all_buttons_hat_up",
+    "buttons": 65535,
+    "hat": 0,
+    "x": 42,
+    "y": -42,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [255, 255, 0, 42, 214, 0, 0, 0]
+  }
+]
