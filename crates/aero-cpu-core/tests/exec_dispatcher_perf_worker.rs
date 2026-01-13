@@ -165,3 +165,75 @@ fn jit_rollback_does_not_advance_perf_counters() {
 
     assert_eq!(perf.lifetime_snapshot().instructions_executed, 0);
 }
+
+#[derive(Debug, Default)]
+struct InterruptCpu {
+    rip: u64,
+    pending: bool,
+}
+
+impl ExecCpu for InterruptCpu {
+    fn rip(&self) -> u64 {
+        self.rip
+    }
+
+    fn set_rip(&mut self, rip: u64) {
+        self.rip = rip;
+    }
+
+    fn maybe_deliver_interrupt(&mut self) -> bool {
+        if self.pending {
+            self.pending = false;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Default)]
+struct PanicBackend;
+
+impl JitBackend for PanicBackend {
+    type Cpu = InterruptCpu;
+
+    fn execute(&mut self, _table_index: u32, _cpu: &mut InterruptCpu) -> JitBlockExit {
+        panic!("backend should not be invoked when interrupt is delivered");
+    }
+}
+
+#[derive(Default)]
+struct PanicInterp;
+
+impl Interpreter<InterruptCpu> for PanicInterp {
+    fn exec_block(&mut self, _cpu: &mut InterruptCpu) -> InterpreterBlockExit {
+        panic!("interpreter should not be invoked when interrupt is delivered");
+    }
+}
+
+#[test]
+fn interrupt_delivery_does_not_advance_perf_counters() {
+    let config = JitConfig {
+        enabled: false,
+        hot_threshold: 1,
+        cache_max_blocks: 1,
+        cache_max_bytes: 0,
+    };
+    let jit = JitRuntime::new(config, PanicBackend::default(), NoCompileSink::default());
+    let mut dispatcher = ExecDispatcher::new(PanicInterp::default(), jit);
+
+    let shared = Arc::new(PerfCounters::new());
+    let mut perf = PerfWorker::new(shared);
+
+    let mut cpu = InterruptCpu {
+        rip: 0,
+        pending: true,
+    };
+    let outcome = dispatcher.step_with_perf(&mut cpu, &mut perf);
+
+    assert_eq!(
+        outcome,
+        aero_cpu_core::exec::StepOutcome::InterruptDelivered
+    );
+    assert_eq!(perf.lifetime_snapshot().instructions_executed, 0);
+}
