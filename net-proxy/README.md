@@ -102,7 +102,8 @@ console.log(result);
 
 `net-proxy` is a **local-dev** relay and is intentionally lightweight:
 
-- `/dns-query` and `/dns-json` do **not** currently apply the `AERO_PROXY_OPEN` / `AERO_PROXY_ALLOW` target policy.
+- `/dns-query` and `/dns-json` are **unauthenticated** (no session cookie) and do **not** currently apply the
+  `AERO_PROXY_OPEN` / `AERO_PROXY_ALLOW` target policy.
   - They resolve using the host’s DNS resolver and may return private/localhost answers (e.g. `localhost → 127.0.0.1`)
     even when `AERO_PROXY_OPEN=0`.
 - The **connection** endpoints (`/tcp`, `/tcp-mux`, `/udp`) *do* enforce the policy:
@@ -126,6 +127,17 @@ curl -sS 'http://127.0.0.1:8081/dns-json?name=localhost&type=A' \
 ```bash
 curl -sS 'http://127.0.0.1:8081/dns-query?dns=AAABAAABAAAAAAAACWxvY2FsaG9zdAAAAQAB' \
   -H 'accept: application/dns-message' \
+  | hexdump -C | head
+```
+
+`POST /dns-query` (same query, sent as an `application/dns-message` request body):
+
+```bash
+node -e 'process.stdout.write(Buffer.from("AAABAAABAAAAAAAACWxvY2FsaG9zdAAAAQAB", "base64url"))' \
+  | curl -sS -X POST 'http://127.0.0.1:8081/dns-query' \
+    -H 'content-type: application/dns-message' \
+    -H 'accept: application/dns-message' \
+    --data-binary @- \
   | hexdump -C | head
 ```
 
