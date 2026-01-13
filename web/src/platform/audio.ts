@@ -581,7 +581,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   );
   const discardOnResume = typeof options.discardOnResume === "boolean" ? options.discardOnResume : true;
   const sendUnderrunMessages = options.sendUnderrunMessages === true;
-  const underrunMessageIntervalMs = finiteNonNegative(options.underrunMessageIntervalMs);
+  const underrunMessageIntervalMsRaw = finiteNonNegative(options.underrunMessageIntervalMs);
+  const underrunMessageIntervalMs =
+    underrunMessageIntervalMsRaw !== undefined && underrunMessageIntervalMsRaw > 0 ? underrunMessageIntervalMsRaw : undefined;
 
   type AudioContextCtorArgs = [] | [AudioContextOptions];
   const contextAttempts: ReadonlyArray<Readonly<{ label: string; args: AudioContextCtorArgs }>> = [

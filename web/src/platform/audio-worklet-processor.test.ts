@@ -178,6 +178,33 @@ describe("audio-worklet-processor underrun counter", () => {
     }
   });
 
+  it("suppresses underrun messages by default (but still increments the shared counter)", () => {
+    const capacityFrames = 4;
+    const channelCount = 1;
+    const { sab, views } = makeRingBuffer(capacityFrames, channelCount);
+
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 0);
+    Atomics.store(views.underrunCount, 0, 0);
+
+    const proc = new AeroAudioProcessor({
+      // `sendUnderrunMessages` defaults to false.
+      processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
+    });
+
+    const postMessage = vi.fn();
+    proc.port.postMessage = postMessage;
+
+    const framesNeeded = 4;
+    const outputs: Float32Array[][] = [[new Float32Array(framesNeeded)]];
+
+    proc.process([], outputs);
+    proc.process([], outputs);
+
+    expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(8);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
   it("wraps the underrun counter as u32", () => {
     const { views } = makeRingBuffer(1, 1);
     Atomics.store(views.underrunCount, 0, 0xffff_fffe);

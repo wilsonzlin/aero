@@ -38,10 +38,12 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     // rate (~375 msg/sec at 48kHz), which can add overhead and worsen glitches. Default to *not*
     // posting per-underrun messages; the shared-memory counter is always updated.
     this._sendUnderrunMessages = sendUnderrunMessages === true;
-    // Rate-limit underrun messages when enabled (default: 250ms). Treat invalid/negative values
-    // defensively to avoid accidental MessagePort spam.
+    // Rate-limit underrun messages when enabled (default: 250ms). Treat invalid/zero/negative
+    // values defensively to avoid accidental MessagePort spam.
     this._underrunMessageIntervalMs =
-      typeof underrunMessageIntervalMs === "number" && Number.isFinite(underrunMessageIntervalMs) && underrunMessageIntervalMs >= 0
+      typeof underrunMessageIntervalMs === "number" &&
+      Number.isFinite(underrunMessageIntervalMs) &&
+      underrunMessageIntervalMs > 0
         ? underrunMessageIntervalMs
         : 250;
     this._lastUnderrunMessageTimeMs = null;
