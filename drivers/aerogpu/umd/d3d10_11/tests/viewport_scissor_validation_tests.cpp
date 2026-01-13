@@ -521,6 +521,63 @@ bool TestPortableUmdMultiViewportReportsNotImplAndEmitsFirst() {
   return true;
 }
 
+bool TestPortableUmdMultiViewportIdenticalDoesNotReportNotImplAndEmitsFirst() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(portable multi-viewport identical)")) {
+    return false;
+  }
+
+  const AEROGPU_DDI_VIEWPORT viewports[2] = {
+      AEROGPU_DDI_VIEWPORT{/*TopLeftX=*/1.0f, /*TopLeftY=*/2.0f, /*Width=*/3.0f, /*Height=*/4.0f, /*MinDepth=*/0.0f, /*MaxDepth=*/1.0f},
+      AEROGPU_DDI_VIEWPORT{/*TopLeftX=*/1.0f, /*TopLeftY=*/2.0f, /*Width=*/3.0f, /*Height=*/4.0f, /*MinDepth=*/0.0f, /*MaxDepth=*/1.0f},
+  };
+
+  dev.device_funcs.pfnSetViewports(dev.hDevice, /*num_viewports=*/2, viewports);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetViewports(identical)")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  if (!Check(dev.harness.errors.empty(), "Portable SetViewports(2 identical) should not report errors")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_VIEWPORT);
+  if (!Check(hdr != nullptr, "expected SET_VIEWPORT to be emitted")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_viewport*>(hdr);
+  const auto& vp0 = viewports[0];
+  if (!Check(cmd->x_f32 == f32_bits(vp0.TopLeftX), "SET_VIEWPORT x matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->y_f32 == f32_bits(vp0.TopLeftY), "SET_VIEWPORT y matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->width_f32 == f32_bits(vp0.Width), "SET_VIEWPORT width matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->height_f32 == f32_bits(vp0.Height), "SET_VIEWPORT height matches first viewport")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  DestroyTestDevice(&dev);
+  return true;
+}
+
 bool TestPortableUmdMultiScissorReportsNotImplAndEmitsFirst() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(portable multi-scissor)")) {
@@ -544,6 +601,63 @@ bool TestPortableUmdMultiScissorReportsNotImplAndEmitsFirst() {
     return false;
   }
   if (!Check(dev.harness.errors[0] == E_NOTIMPL, "Portable SetScissorRects(2 distinct) should report E_NOTIMPL")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+  if (!Check(ValidateStream(stream, stream_len), "ValidateStream")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* hdr = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_SCISSOR);
+  if (!Check(hdr != nullptr, "expected SET_SCISSOR to be emitted")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+  const auto& r0 = rects[0];
+  if (!Check(cmd->x == r0.left, "SET_SCISSOR x matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->y == r0.top, "SET_SCISSOR y matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->width == (r0.right - r0.left), "SET_SCISSOR width matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+  if (!Check(cmd->height == (r0.bottom - r0.top), "SET_SCISSOR height matches first rect")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  DestroyTestDevice(&dev);
+  return true;
+}
+
+bool TestPortableUmdMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(portable multi-scissor identical)")) {
+    return false;
+  }
+
+  const AEROGPU_DDI_RECT rects[2] = {
+      AEROGPU_DDI_RECT{/*left=*/1, /*top=*/2, /*right=*/3, /*bottom=*/4},
+      AEROGPU_DDI_RECT{/*left=*/1, /*top=*/2, /*right=*/3, /*bottom=*/4},
+  };
+
+  dev.device_funcs.pfnSetScissorRects(dev.hDevice, /*num_rects=*/2, rects);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetScissorRects(identical)")) {
+    DestroyTestDevice(&dev);
+    return false;
+  }
+
+  if (!Check(dev.harness.errors.empty(), "Portable SetScissorRects(2 identical) should not report errors")) {
     DestroyTestDevice(&dev);
     return false;
   }
@@ -646,7 +760,9 @@ int main() {
   ok &= TestMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestViewportAndScissorDisableEncodesDefaults();
   ok &= TestPortableUmdMultiViewportReportsNotImplAndEmitsFirst();
+  ok &= TestPortableUmdMultiViewportIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdMultiScissorReportsNotImplAndEmitsFirst();
+  ok &= TestPortableUmdMultiScissorIdenticalDoesNotReportNotImplAndEmitsFirst();
   ok &= TestPortableUmdDisableEncodesDefaultsAndDoesNotReportErrors();
   if (!ok) {
     return 1;
