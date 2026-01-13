@@ -135,4 +135,103 @@ describe("HidReportRing", () => {
     expect(Array.from(rec!.payload)).toEqual([9, 8, 7, 6]);
     expect(ring.pop()).toBeNull();
   });
+
+  it("popOrThrow throws on used>cap corruption", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, 0);
+    Atomics.store(ctrl, 1, (cap + 4) | 0);
+
+    expect(() => ring.popOrThrow()).toThrow(/tail\/head out of range/);
+  });
+
+  it("popOrThrow throws on straddling wrap boundary corruption", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const view = new DataView(sab, HID_REPORT_RING_CTRL_BYTES, cap);
+    const headIndex = cap - 8;
+    view.setUint32(headIndex + 0, 0xdeadbeef, true);
+    view.setUint8(headIndex + 4, HidReportType.Input);
+    view.setUint8(headIndex + 5, 1);
+    view.setUint16(headIndex + 6, 4, true); // payloadLen=4 => total=12 > remaining(8)
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, headIndex | 0);
+    Atomics.store(ctrl, 1, (headIndex + 8) | 0);
+
+    expect(() => ring.popOrThrow()).toThrow(/straddles wrap boundary/);
+  });
+
+  it("popOrThrow throws when a record exceeds the available used bytes", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    // Craft a header that claims a 4-byte payload (total=12), but only expose 8 bytes of used data.
+    const view = new DataView(sab, HID_REPORT_RING_CTRL_BYTES, cap);
+    view.setUint32(0, 0xdeadbeef, true);
+    view.setUint8(4, HidReportType.Input);
+    view.setUint8(5, 1);
+    view.setUint16(6, 4, true);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, 0);
+    Atomics.store(ctrl, 1, 8);
+
+    expect(() => ring.popOrThrow()).toThrow(/exceeds available bytes/);
+  });
+
+  it("consumeNextOrThrow throws on used>cap corruption", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, 0);
+    Atomics.store(ctrl, 1, (cap + 4) | 0);
+
+    expect(() => ring.consumeNextOrThrow(() => undefined)).toThrow(/tail\/head out of range/);
+  });
+
+  it("consumeNextOrThrow throws on straddling wrap boundary corruption", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const view = new DataView(sab, HID_REPORT_RING_CTRL_BYTES, cap);
+    const headIndex = cap - 8;
+    view.setUint32(headIndex + 0, 0xdeadbeef, true);
+    view.setUint8(headIndex + 4, HidReportType.Input);
+    view.setUint8(headIndex + 5, 1);
+    view.setUint16(headIndex + 6, 4, true); // payloadLen=4 => total=12 > remaining(8)
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, headIndex | 0);
+    Atomics.store(ctrl, 1, (headIndex + 8) | 0);
+
+    expect(() => ring.consumeNextOrThrow(() => undefined)).toThrow(/straddles wrap boundary/);
+  });
+
+  it("consumeNextOrThrow throws when a record exceeds the available used bytes", () => {
+    const cap = 32;
+    const sab = createHidReportRingBuffer(cap);
+    const ring = new HidReportRing(sab);
+
+    const view = new DataView(sab, HID_REPORT_RING_CTRL_BYTES, cap);
+    view.setUint32(0, 0xdeadbeef, true);
+    view.setUint8(4, HidReportType.Input);
+    view.setUint8(5, 1);
+    view.setUint16(6, 4, true);
+
+    const ctrl = new Int32Array(sab, 0, HID_REPORT_RING_CTRL_WORDS);
+    Atomics.store(ctrl, 0, 0);
+    Atomics.store(ctrl, 1, 8);
+
+    expect(() => ring.consumeNextOrThrow(() => undefined)).toThrow(/exceeds available bytes/);
+  });
 });
