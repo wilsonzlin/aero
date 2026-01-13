@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   L2_TUNNEL_DATA_CHANNEL_LABEL,
@@ -349,15 +349,16 @@ describe("net/l2Tunnel", () => {
     });
 
     try {
+      // Make the keepalive timer deterministic and avoid flakiness under heavy CPU load when Vitest
+      // runs many test files in parallel.
+      vi.useFakeTimers();
       client.connect();
       FakeWebSocket.last?.open();
       await microtask();
       expect(events[0]?.type).toBe("open");
 
-      const deadline = Date.now() + 200;
-      while ((FakeWebSocket.last?.sent.length ?? 0) === 0 && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
+      await vi.advanceTimersByTimeAsync(20);
+      await microtask();
 
       expect(FakeWebSocket.last?.sent.length).toBeGreaterThan(0);
       const ping = decodeL2Message(FakeWebSocket.last!.sent[0]!, { maxControlPayload: 0 });
@@ -365,6 +366,7 @@ describe("net/l2Tunnel", () => {
       expect(ping.payload.length).toBe(0);
     } finally {
       client.close();
+      vi.useRealTimers();
       if (original === undefined) {
         delete (g as { WebSocket?: unknown }).WebSocket;
       } else {
