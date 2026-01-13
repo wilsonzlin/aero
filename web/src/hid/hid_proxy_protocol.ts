@@ -53,6 +53,17 @@ export type HidRingInitMessage = {
   offsetBytes: number;
 };
 
+/**
+ * Disable the SharedArrayBuffer WebHID proxy rings for this port.
+ *
+ * The SAB fast path is an optimization; both ends must be able to fall back to
+ * `postMessage`-based proxying at any time (e.g. if a ring becomes corrupted).
+ */
+export type HidRingDetachMessage = {
+  type: "hid.ringDetach";
+  reason?: string;
+};
+
 export type HidInputReportMessage = {
   type: "hid.inputReport";
   deviceId: number;
@@ -94,6 +105,7 @@ export type HidProxyMessage =
   | HidDetachMessage
   | HidRingAttachMessage
   | HidRingInitMessage
+  | HidRingDetachMessage
   | HidInputReportMessage
   | HidSendReportMessage
   | HidLogMessage
@@ -235,6 +247,11 @@ export function isHidRingInitMessage(value: unknown): value is HidRingInitMessag
   return value.sab instanceof SharedArrayBuffer;
 }
 
+export function isHidRingDetachMessage(value: unknown): value is HidRingDetachMessage {
+  if (!isRecord(value) || value.type !== "hid.ringDetach") return false;
+  return isOptionalString(value.reason);
+}
+
 export function isHidInputReportMessage(value: unknown): value is HidInputReportMessage {
   if (!isRecord(value) || value.type !== "hid.inputReport") return false;
   if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
@@ -271,6 +288,7 @@ export function isHidProxyMessage(value: unknown): value is HidProxyMessage {
     isHidDetachMessage(value) ||
     isHidRingAttachMessage(value) ||
     isHidRingInitMessage(value) ||
+    isHidRingDetachMessage(value) ||
     isHidInputReportMessage(value) ||
     isHidSendReportMessage(value) ||
     isHidLogMessage(value) ||

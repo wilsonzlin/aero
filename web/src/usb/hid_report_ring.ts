@@ -68,6 +68,10 @@ function alignUp(value: number, align: number): number {
   return rem === 0 ? value : value + (align - rem);
 }
 
+function hidReportRingCorruption(message: string): Error {
+  return new Error(`HID report ring corrupted (${message}).`);
+}
+
 export function createHidReportRingBuffer(dataCapacityBytes: number): SharedArrayBuffer {
   const cap = dataCapacityBytes >>> 0;
   if (cap === 0) throw new Error("dataCapacityBytes must be > 0");
@@ -300,6 +304,54 @@ export class HidReportRing {
   }
 
   /**
+   * Pop the next record, throwing when corruption is detected.
+   *
+   * This is useful for background ring drain loops: a corrupted record can wedge
+   * the consumer (because `head` is not advanced). Throwing allows callers to
+   * disable the SAB fast path and fall back to `postMessage`.
+   */
+  popOrThrow(): HidReportRingRecord | null {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
+      const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+      if (head === tail) return null;
+      const used = u32(tail - head);
+      if (used > this.#cap) throw hidReportRingCorruption("tail/head out of range");
+
+      const headIndex = head % this.#cap;
+      const remaining = this.#cap - headIndex;
+
+      // Not enough contiguous bytes for a header; skip to the wrap boundary.
+      if (remaining < HID_REPORT_RECORD_HEADER_BYTES) {
+        Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
+        continue;
+      }
+
+      const reportType = this.#view.getUint8(headIndex + 4) as HidReportType;
+      const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
+      const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
+
+      if (reportType === HidReportType.WrapMarker) {
+        Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
+        continue;
+      }
+
+      const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
+      if (total > remaining) throw hidReportRingCorruption("record straddles wrap boundary");
+      if (total > used) throw hidReportRingCorruption("record exceeds available bytes");
+
+      const deviceId = this.#view.getUint32(headIndex + 0, true) >>> 0;
+      const payloadStart = headIndex + HID_REPORT_RECORD_HEADER_BYTES;
+      const payloadEnd = payloadStart + payloadLen;
+      const payload = this.#data.slice(payloadStart, payloadEnd);
+
+      Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
+      return { deviceId, reportType, reportId, payload };
+    }
+  }
+
+  /**
    * Consume (and commit) the next record without allocating a new payload buffer.
    *
    * Returns `false` when the ring is empty. The `payload` passed to `consumer` is
@@ -334,6 +386,50 @@ export class HidReportRing {
 
       const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
       if (total > remaining) return false;
+
+      const deviceId = this.#view.getUint32(headIndex + 0, true) >>> 0;
+      const payloadStart = headIndex + HID_REPORT_RECORD_HEADER_BYTES;
+      const payloadEnd = payloadStart + payloadLen;
+      const payload = this.#data.subarray(payloadStart, payloadEnd);
+
+      consumer({ deviceId, reportType, reportId, payload });
+      Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
+      return true;
+    }
+  }
+
+  /**
+   * Like {@link HidReportRing.consumeNext}, but throws on corruption.
+   */
+  consumeNextOrThrow(consumer: (record: HidReportRingRecord) => void): boolean {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
+      const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+      if (head === tail) return false;
+      const used = u32(tail - head);
+      if (used > this.#cap) throw hidReportRingCorruption("tail/head out of range");
+
+      const headIndex = head % this.#cap;
+      const remaining = this.#cap - headIndex;
+
+      if (remaining < HID_REPORT_RECORD_HEADER_BYTES) {
+        Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
+        continue;
+      }
+
+      const reportType = this.#view.getUint8(headIndex + 4) as HidReportType;
+      const reportId = this.#view.getUint8(headIndex + 5) >>> 0;
+      const payloadLen = this.#view.getUint16(headIndex + 6, true) >>> 0;
+
+      if (reportType === HidReportType.WrapMarker) {
+        Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + remaining) | 0);
+        continue;
+      }
+
+      const total = alignUp(HID_REPORT_RECORD_HEADER_BYTES + payloadLen, HID_REPORT_RECORD_ALIGN);
+      if (total > remaining) throw hidReportRingCorruption("record straddles wrap boundary");
+      if (total > used) throw hidReportRingCorruption("record exceeds available bytes");
 
       const deviceId = this.#view.getUint32(headIndex + 0, true) >>> 0;
       const payloadStart = headIndex + HID_REPORT_RECORD_HEADER_BYTES;

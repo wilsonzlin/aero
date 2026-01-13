@@ -4,7 +4,7 @@ import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
 import { StatusIndex } from "../runtime/shared_layout";
-import { HidReportRing, HidReportType } from "../usb/hid_report_ring";
+import { HID_REPORT_RING_CTRL_BYTES, HidReportRing, HidReportType } from "../usb/hid_report_ring";
 import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import { decodeHidInputReportRingRecord } from "./hid_input_report_ring";
 import { WebHidBroker } from "./webhid_broker";
@@ -314,6 +314,43 @@ describe("hid/WebHidBroker", () => {
 
     const outputRing = new HidReportRing(ringAttach!.outputRing);
     expect(outputRing.dataCapacityBytes()).toBe(128 * 1024);
+
+    broker.destroy();
+  });
+
+  it("detaches rings and posts hid.ringDetach when the output ring is corrupted", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+
+    const outputRingSab = ringAttach!.outputRing;
+    const outputRing = new HidReportRing(outputRingSab);
+
+    const device = new FakeHidDevice();
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    // Push a valid-looking record, then corrupt the payload length so the consumer-side
+    // decoder detects an invalid record that straddles the wrap boundary.
+    outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1, 2, 3));
+    const view = new DataView(outputRingSab, HID_REPORT_RING_CTRL_BYTES);
+    view.setUint16(6, 0xffff, true);
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.ringDetach")).toBe(true);
+
+    // After detach, the broker should stop draining the output ring fast path.
+    outputRing.push(id, HidReportType.Output, 2, Uint8Array.of(4));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(device.sendReport).not.toHaveBeenCalled();
 
     broker.destroy();
   });

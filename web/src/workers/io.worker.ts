@@ -107,6 +107,7 @@ import {
   isHidInputReportMessage,
   isHidProxyMessage,
   isHidRingAttachMessage,
+  isHidRingDetachMessage,
   isHidRingInitMessage,
   type HidAttachMessage,
   type HidDetachMessage,
@@ -115,6 +116,7 @@ import {
   type HidLogMessage,
   type HidProxyMessage,
   type HidRingAttachMessage,
+  type HidRingDetachMessage,
   type HidRingInitMessage,
 } from "../hid/hid_proxy_protocol";
 import { InMemoryHidGuestBridge } from "../hid/in_memory_hid_guest_bridge";
@@ -2431,31 +2433,59 @@ function handleUsbDemoFailure(context: string, err: unknown): void {
 let hidInputRing: HidReportRing | null = null;
 let hidOutputRing: HidReportRing | null = null;
 let hidOutputRingFallback = 0;
+let hidRingDetachSent = false;
 
 function attachHidRings(msg: HidRingAttachMessage): void {
   // `isHidRingAttachMessage` validates SAB existence + instance checks.
   hidInputRing = new HidReportRing(msg.inputRing);
   hidOutputRing = new HidReportRing(msg.outputRing);
+  hidRingDetachSent = false;
+}
+
+function detachHidRings(reason: string, options: { notifyBroker?: boolean } = {}): void {
+  const hadRings = hidInputRing !== null || hidOutputRing !== null;
+  hidInputRing = null;
+  hidOutputRing = null;
+  if (!hadRings) return;
+
+  const shouldNotify = options.notifyBroker !== false;
+  if (!shouldNotify) return;
+  if (hidRingDetachSent) return;
+  hidRingDetachSent = true;
+  try {
+    ctx.postMessage({ type: "hid.ringDetach", reason } satisfies HidRingDetachMessage);
+  } catch {
+    // ignore
+  }
 }
 
 function drainHidInputRing(): void {
   const ring = hidInputRing;
   if (!ring) return;
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const consumed = ring.consumeNext((rec) => {
-      if (rec.reportType !== HidRingReportType.Input) return;
-      if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
-      hidGuest.inputReport({
-        type: "hid.inputReport",
-        deviceId: rec.deviceId,
-        reportId: rec.reportId,
-        // Ring buffers are backed by SharedArrayBuffer; the WASM bridge accepts Uint8Array views regardless of buffer type.
-        data: rec.payload as unknown as Uint8Array<ArrayBuffer>,
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const consumed = ring.consumeNextOrThrow((rec) => {
+        if (rec.reportType !== HidRingReportType.Input) return;
+        if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
+        try {
+          hidGuest.inputReport({
+            type: "hid.inputReport",
+            deviceId: rec.deviceId,
+            reportId: rec.reportId,
+            // Ring buffers are backed by SharedArrayBuffer; the WASM bridge accepts Uint8Array views regardless of buffer type.
+            data: rec.payload as unknown as Uint8Array<ArrayBuffer>,
+          });
+        } catch {
+          // ignore consumer errors; ring records are best-effort
+        }
       });
-    });
-    if (!consumed) break;
+      if (!consumed) break;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    detachHidRings(`HID proxy rings disabled: ${message}`);
   }
 }
 
@@ -4335,6 +4365,12 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         };
         ctx.postMessage({ type: "usb.harness.status", snapshot } satisfies UsbUhciHarnessStatusMessage);
       }
+      return;
+    }
+
+    if (isHidRingDetachMessage(data)) {
+      const reason = data.reason ?? "HID proxy rings disabled.";
+      detachHidRings(reason, { notifyBroker: false });
       return;
     }
 

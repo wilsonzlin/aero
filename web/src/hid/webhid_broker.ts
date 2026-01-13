@@ -7,12 +7,14 @@ import { computeInputReportPayloadByteLengths } from "./hid_report_sizes";
 import {
   isHidErrorMessage,
   isHidLogMessage,
+  isHidRingDetachMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
   type HidDetachMessage,
   type HidInputReportMessage,
   type HidProxyMessage,
   type HidRingAttachMessage,
+  type HidRingDetachMessage,
   type HidRingInitMessage,
   type HidSendReportMessage,
 } from "./hid_proxy_protocol";
@@ -157,6 +159,7 @@ export class WebHidBroker {
   #outputRing: HidReportRing | null = null;
   #outputRingDrainTimer: ReturnType<typeof setInterval> | null = null;
   readonly #outputRingCapacityBytes: number;
+  #ringDetachSent = false;
 
   #managerUnsubscribe: (() => void) | null = null;
   #prevManagerAttached = new Set<HIDDevice>();
@@ -264,6 +267,12 @@ export class WebHidBroker {
         return;
       }
 
+      if (isHidRingDetachMessage(data)) {
+        const reason = data.reason ?? "HID proxy rings disabled.";
+        this.#handleRingFailure(reason, { notifyWorker: false });
+        return;
+      }
+
       if (isHidLogMessage(data)) {
         console.log(`[webhid] ${data.message}`);
         return;
@@ -336,6 +345,7 @@ export class WebHidBroker {
     const outputSab = createHidReportRingBuffer(this.#outputRingCapacityBytes);
     this.#inputRing = new HidReportRing(inputSab);
     this.#outputRing = new HidReportRing(outputSab);
+    this.#ringDetachSent = false;
 
     const msg: HidRingAttachMessage = { type: "hid.ringAttach", inputRing: inputSab, outputRing: outputSab };
     this.#postToWorker(worker, msg);
@@ -421,35 +431,55 @@ export class WebHidBroker {
     }
   }
 
+  #handleRingFailure(reason: string, options: { notifyWorker?: boolean } = {}): void {
+    // Avoid spamming `hid.ringDetach` if multiple callbacks notice the failure.
+    if (!this.#inputRing && !this.#outputRing && !this.#outputRingDrainTimer) return;
+
+    this.#detachRings();
+
+    const shouldNotify = options.notifyWorker !== false;
+    const worker = this.#workerPort;
+    if (!shouldNotify || !worker) return;
+    if (this.#ringDetachSent) return;
+    this.#ringDetachSent = true;
+    const msg: HidRingDetachMessage = { type: "hid.ringDetach", reason };
+    this.#postToWorker(worker, msg);
+  }
+
   #drainOutputRing(): void {
     const ring = this.#outputRing;
     if (!ring) return;
 
-    while (true) {
-      const rec = ring.pop();
-      if (!rec) break;
-      if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) continue;
+    try {
+      while (true) {
+        const rec = ring.popOrThrow();
+        if (!rec) break;
+        if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) continue;
 
-      const deviceId = rec.deviceId >>> 0;
-      if (!this.#attachedToWorker.has(deviceId)) continue;
+        const deviceId = rec.deviceId >>> 0;
+        if (!this.#attachedToWorker.has(deviceId)) continue;
 
-      const data = ensureArrayBufferBacked(rec.payload);
-      const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
-      const reportId = rec.reportId >>> 0;
-      this.#enqueueDeviceSend(deviceId, async () => {
-        const device = this.#deviceById.get(deviceId);
-        if (!device) return;
-        try {
-          if (reportType === "output") {
-            await device.sendReport(reportId, data);
-          } else {
-            await device.sendFeatureReport(reportId, data);
+        const data = ensureArrayBufferBacked(rec.payload);
+        const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
+        const reportId = rec.reportId >>> 0;
+        this.#enqueueDeviceSend(deviceId, async () => {
+          const device = this.#deviceById.get(deviceId);
+          if (!device) return;
+          try {
+            if (reportType === "output") {
+              await device.sendReport(reportId, data);
+            } else {
+              await device.sendFeatureReport(reportId, data);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
           }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
-        }
-      });
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.#handleRingFailure(`HID proxy rings disabled: ${message}`);
     }
   }
 

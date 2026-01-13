@@ -7,12 +7,14 @@ import {
   isHidInputReportMessage,
   isHidLogMessage,
   isHidRingAttachMessage,
+  isHidRingDetachMessage,
   isHidRingInitMessage,
   isHidProxyMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
   type HidInputReportMessage,
   type HidRingAttachMessage,
+  type HidRingDetachMessage,
   type HidRingInitMessage,
   type HidSendReportMessage,
 } from "./hid_proxy_protocol";
@@ -172,6 +174,15 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidRingInitMessage({ type: "hid.ring.init", sab: new SharedArrayBuffer(64), offsetBytes: -1 })).toBe(false);
   });
 
+  it("validates hid.ringDetach", () => {
+    const msg: HidRingDetachMessage = { type: "hid.ringDetach", reason: "corrupt ring" };
+    expect(isHidRingDetachMessage(msg)).toBe(true);
+    expect(isHidProxyMessage(msg)).toBe(true);
+
+    expect(isHidProxyMessage({ type: "hid.ringDetach" })).toBe(true);
+    expect(isHidRingDetachMessage({ type: "hid.ringDetach", reason: 123 })).toBe(false);
+  });
+
   it("validates optional hid.log/hid.error", () => {
     expect(isHidLogMessage({ type: "hid.log", message: "hello" })).toBe(true);
     expect(isHidErrorMessage({ type: "hid.error", message: "nope", deviceId: 1 })).toBe(true);
@@ -222,5 +233,11 @@ describe("hid/hid_proxy_protocol", () => {
       offsetBytes: 0,
     };
     expect(isHidProxyMessage(structuredClone(ringInit) as unknown)).toBe(true);
+
+    const ringDetach: HidRingDetachMessage = {
+      type: "hid.ringDetach",
+      reason: "disabled",
+    };
+    expect(isHidProxyMessage(structuredClone(ringDetach) as unknown)).toBe(true);
   });
 });
