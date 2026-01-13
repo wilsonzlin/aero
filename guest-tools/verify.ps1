@@ -1278,6 +1278,8 @@ try {
         signing_policy = $null
         certs_required = $null
         files_listed = 0
+        manifest_includes_tools = $false
+        tools_files_listed = 0
         files_checked = 0
         missing_files = @()
         size_mismatch_files = @()
@@ -1444,6 +1446,16 @@ try {
                     if ($f -and $f.ContainsKey("size")) { $expectedSize = $f["size"] }
 
                     if (-not $rel -or $rel.Length -eq 0) { continue }
+
+                    # Track whether the manifest explicitly lists tools\ payload files.
+                    # (Some packaging modes may omit tools\ from the signed manifest.)
+                    $relNorm = $rel.Replace("\", "/")
+                    $relLower = $relNorm.ToLower()
+                    if ($relLower.StartsWith("tools/")) {
+                        $mediaIntegrity.tools_files_listed++
+                        $mediaIntegrity.manifest_includes_tools = $true
+                    }
+
                     $relFs = $rel.Replace("/", "\")
                     $full = Join-Path $scriptDir $relFs
                     $exists = Test-Path $full
@@ -1514,6 +1526,9 @@ try {
                 if ($gtSigningPolicy) {
                     $mSummary += "; signing_policy=" + $gtSigningPolicy
                     if ($gtCertsRequired -ne $null) { $mSummary += ", certs_required=" + $gtCertsRequired }
+                }
+                if ($mediaIntegrity.tools_files_listed -gt 0) {
+                    $mSummary += "; tools_files_listed=" + $mediaIntegrity.tools_files_listed
                 }
 
                 if ($missingCount -gt 0) {
@@ -3342,8 +3357,23 @@ try {
             $files = @($files | Sort-Object { $_.relative_path })
             $exeFiles = @($exeFiles | Sort-Object { $_.relative_path })
 
+            $totalBytes = 0
+            $totalExeBytes = 0
+            foreach ($e in $files) {
+                try {
+                    if ($e -and ($e.size_bytes -ne $null)) { $totalBytes += [int64]$e.size_bytes }
+                } catch { }
+            }
+            foreach ($e in $exeFiles) {
+                try {
+                    if ($e -and ($e.size_bytes -ne $null)) { $totalExeBytes += [int64]$e.size_bytes }
+                } catch { }
+            }
+
             $toolsData.files = $files
             $toolsData.exe_files = $exeFiles
+            $toolsData.total_size_bytes = $totalBytes
+            $toolsData.total_exe_size_bytes = $totalExeBytes
             $toolsData.inventory_errors = $invErrors
             $toolsData.tools_dir_readable = ($toolsStatus -eq "PASS")
 
@@ -3351,6 +3381,7 @@ try {
             if ($toolsStatus -eq "WARN") {
                 $toolsSummary += " (inventory incomplete)."
             }
+            $toolsSummary += "; total_bytes=" + $totalBytes
 
             foreach ($e in $exeFiles) {
                 $line = "" + $e.relative_path
