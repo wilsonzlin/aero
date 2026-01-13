@@ -534,6 +534,24 @@ VirtIoSndWaveRtResetStopState(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
     if (oldEvent != NULL) {
         ObDereferenceObject(oldEvent);
     }
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    /*
+     * Ensure virtio-snd eventq period notifications don't retain a stale kernel
+     * event pointer after the stream is stopped.
+     */
+    {
+        VIRTIOSND_PORTCLS_DX dx;
+        ULONG streamId;
+
+        dx = (Stream->Miniport != NULL) ? Stream->Miniport->Dx : NULL;
+        streamId = Stream->Capture ? VIRTIO_SND_CAPTURE_STREAM_ID : VIRTIO_SND_PLAYBACK_STREAM_ID;
+
+        if (dx != NULL) {
+            VirtIoSndEventqSetStreamNotificationEvent(dx, streamId, NULL);
+        }
+    }
+#endif
 }
 
 static VOID
@@ -2612,6 +2630,13 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
 
         dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        if (dx != NULL) {
+            const ULONG streamId = stream->Capture ? VIRTIO_SND_CAPTURE_STREAM_ID : VIRTIO_SND_PLAYBACK_STREAM_ID;
+            VirtIoSndEventqSetStreamNotificationEvent(dx, streamId, NULL);
+        }
+#endif
+
         if (stream->Capture) {
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
             UNREFERENCED_PARAMETER(dx);
@@ -3625,6 +3650,20 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetNotificationEvent(_In
     if (oldEvent != NULL) {
         ObDereferenceObject(oldEvent);
     }
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    {
+        VIRTIOSND_PORTCLS_DX dx;
+        ULONG streamId;
+
+        dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
+        streamId = stream->Capture ? VIRTIO_SND_CAPTURE_STREAM_ID : VIRTIO_SND_PLAYBACK_STREAM_ID;
+
+        if (dx != NULL) {
+            VirtIoSndEventqSetStreamNotificationEvent(dx, streamId, NotificationEvent);
+        }
+    }
+#endif
     return STATUS_SUCCESS;
 }
 

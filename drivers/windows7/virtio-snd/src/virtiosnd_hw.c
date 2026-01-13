@@ -512,6 +512,37 @@ static VOID VirtIoSndEventqUninit(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
     Dx->EventqBufferCount = 0;
 }
 
+static VOID VirtIoSndEventqClearStreamNotificationEvents(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    PKEVENT oldEvents[VIRTIOSND_EVENTQ_MAX_NOTIFY_STREAMS];
+    KIRQL oldIrql;
+    ULONG i;
+
+    if (Dx == NULL) {
+        return;
+    }
+
+    RtlZeroMemory(oldEvents, sizeof(oldEvents));
+
+    /*
+     * eventq notifications may be signaled from the interrupt/DPC path while WaveRT
+     * threads concurrently register/unregister the notification event. Hold the
+     * same lock used by VirtIoSndEventqSignalStreamNotificationEvent.
+     */
+    KeAcquireSpinLock(&Dx->EventqLock, &oldIrql);
+    for (i = 0; i < RTL_NUMBER_OF(Dx->EventqStreamNotify); ++i) {
+        oldEvents[i] = Dx->EventqStreamNotify[i];
+        Dx->EventqStreamNotify[i] = NULL;
+    }
+    KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
+
+    for (i = 0; i < RTL_NUMBER_OF(oldEvents); ++i) {
+        if (oldEvents[i] != NULL) {
+            ObDereferenceObject(oldEvents[i]);
+        }
+    }
+}
+
 /*
  * Best-effort: virtio-snd contract v1 does not define event messages, so failure
  * to allocate/post eventq buffers must not prevent audio streaming.
@@ -718,6 +749,13 @@ VirtIoSndHwDrainEventqUsed(
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
                 InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
+                /*
+                 * Optional pacing signal (polling-only mode):
+                 * If WaveRT registered a notification event object for this stream,
+                 * signal it best-effort. The WaveRT miniport still uses timer-based
+                 * pacing for contract v1 compatibility.
+                 */
+                (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
                 InterlockedIncrement(&dx->EventqStats.PcmXrun);
@@ -980,6 +1018,7 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     Dx->EventqCallback = NULL;
     Dx->EventqCallbackContext = NULL;
     KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
+    VirtIoSndEventqClearStreamNotificationEvents(Dx);
 
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
 
@@ -1026,6 +1065,27 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     (VOID)InterlockedExchange(&Dx->RxEngineInitialized, 0);
     VirtIoSndRxUninit(&Dx->Rx);
+
+    /*
+     * Structured diagnostic marker for eventq activity.
+     *
+     * Contract v1 devices do not emit events, but future device models might.
+     * Logging a single summary line at teardown makes it easy to correlate audio
+     * behavior with eventq delivery without requiring a kernel debugger.
+     */
+    if (Dx->EventqStats.Completions != 0 || Dx->EventqStats.Parsed != 0 || Dx->EventqStats.PcmXrun != 0) {
+        VIRTIOSND_TRACE_ERROR(
+            "AERO_VIRTIO_SND_EVENTQ|completions=%ld|parsed=%ld|short=%ld|unknown=%ld|jack_connected=%ld|jack_disconnected=%ld|pcm_period=%ld|xrun=%ld|ctl_notify=%ld\n",
+            Dx->EventqStats.Completions,
+            Dx->EventqStats.Parsed,
+            Dx->EventqStats.ShortBuffers,
+            Dx->EventqStats.UnknownType,
+            Dx->EventqStats.JackConnected,
+            Dx->EventqStats.JackDisconnected,
+            Dx->EventqStats.PcmPeriodElapsed,
+            Dx->EventqStats.PcmXrun,
+            Dx->EventqStats.CtlNotify);
+    }
 
     VirtIoSndEventqUninit(Dx);
 
@@ -1121,6 +1181,7 @@ NTSTATUS VirtIoSndStartHardware(
     Dx->EventqCallback = NULL;
     Dx->EventqCallbackContext = NULL;
     Dx->EventqCallbackInFlight = 0;
+    RtlZeroMemory(Dx->EventqStreamNotify, sizeof(Dx->EventqStreamNotify));
     Dx->PcmXrunWorkQueued = 0;
     Dx->PcmXrunPendingMask = 0;
 
@@ -1826,4 +1887,66 @@ VirtIoSndHwSetEventCallback(
     Dx->EventqCallback = Callback;
     Dx->EventqCallbackContext = Context;
     KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
+}
+
+_Use_decl_annotations_
+VOID VirtIoSndEventqSetStreamNotificationEvent(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG StreamId, PKEVENT NotificationEvent)
+{
+    PKEVENT oldEvent;
+    KIRQL oldIrql;
+
+    if (Dx == NULL) {
+        return;
+    }
+
+    if (StreamId >= RTL_NUMBER_OF(Dx->EventqStreamNotify)) {
+        return;
+    }
+
+    oldEvent = NULL;
+
+    if (NotificationEvent != NULL) {
+        ObReferenceObject(NotificationEvent);
+    }
+
+    KeAcquireSpinLock(&Dx->EventqLock, &oldIrql);
+    oldEvent = Dx->EventqStreamNotify[StreamId];
+    Dx->EventqStreamNotify[StreamId] = NotificationEvent;
+    KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
+
+    if (oldEvent != NULL) {
+        ObDereferenceObject(oldEvent);
+    }
+}
+
+_Use_decl_annotations_
+BOOLEAN VirtIoSndEventqSignalStreamNotificationEvent(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG StreamId)
+{
+    PKEVENT evt;
+    KIRQL oldIrql;
+
+    if (Dx == NULL) {
+        return FALSE;
+    }
+
+    if (StreamId >= RTL_NUMBER_OF(Dx->EventqStreamNotify)) {
+        return FALSE;
+    }
+
+    evt = NULL;
+
+    KeAcquireSpinLock(&Dx->EventqLock, &oldIrql);
+    evt = Dx->EventqStreamNotify[StreamId];
+    if (evt != NULL) {
+        ObReferenceObject(evt);
+    }
+    KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
+
+    if (evt != NULL) {
+        KeSetEvent(evt, IO_NO_INCREMENT, FALSE);
+        ObDereferenceObject(evt);
+        return TRUE;
+    }
+
+    return FALSE;
 }

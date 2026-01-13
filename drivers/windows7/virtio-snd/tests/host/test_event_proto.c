@@ -43,6 +43,7 @@ static void test_parse_known_event_types(void)
         TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_JACK_CONNECTED);
         TEST_ASSERT_EQ_U32(out.Type, VIRTIO_SND_EVT_JACK_CONNECTED);
         TEST_ASSERT_EQ_U32(out.Data, 5u);
+        TEST_ASSERT_EQ_U32(out.u.JackId, 5u);
     }
 
     /* JACK_DISCONNECTED */
@@ -56,6 +57,7 @@ static void test_parse_known_event_types(void)
         TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED);
         TEST_ASSERT_EQ_U32(out.Type, VIRTIO_SND_EVT_JACK_DISCONNECTED);
         TEST_ASSERT_EQ_U32(out.Data, 7u);
+        TEST_ASSERT_EQ_U32(out.u.JackId, 7u);
     }
 
     /* PCM_PERIOD_ELAPSED */
@@ -69,6 +71,7 @@ static void test_parse_known_event_types(void)
         TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED);
         TEST_ASSERT_EQ_U32(out.Type, VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED);
         TEST_ASSERT_EQ_U32(out.Data, 0u);
+        TEST_ASSERT_EQ_U32(out.u.StreamId, 0u);
     }
 
     /* PCM_XRUN */
@@ -82,6 +85,7 @@ static void test_parse_known_event_types(void)
         TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_PCM_XRUN);
         TEST_ASSERT_EQ_U32(out.Type, VIRTIO_SND_EVT_PCM_XRUN);
         TEST_ASSERT_EQ_U32(out.Data, 1u);
+        TEST_ASSERT_EQ_U32(out.u.StreamId, 1u);
     }
 
     /* CTL_NOTIFY */
@@ -95,6 +99,7 @@ static void test_parse_known_event_types(void)
         TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_CTL_NOTIFY);
         TEST_ASSERT_EQ_U32(out.Type, VIRTIO_SND_EVT_CTL_NOTIFY);
         TEST_ASSERT_EQ_U32(out.Data, 42u);
+        TEST_ASSERT_EQ_U32(out.u.CtlId, 42u);
     }
 }
 
@@ -179,6 +184,7 @@ static void test_parse_unaligned_buffer(void)
     TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED);
     TEST_ASSERT_EQ_U32(out.Type, VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED);
     TEST_ASSERT_EQ_U32(out.Data, 1u);
+    TEST_ASSERT_EQ_U32(out.u.StreamId, 1u);
 }
 
 int main(void)

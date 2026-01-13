@@ -97,6 +97,16 @@
 #define VIRTIOSND_EVENTQ_BUFFER_SIZE 64u
 #define VIRTIOSND_EVENTQ_BUFFER_COUNT 8u
 
+/*
+ * Maximum number of stream IDs for which we keep a referenced WaveRT notification
+ * event pointer.
+ *
+ * The contract v1 device exposes two streams:
+ *  - stream 0: playback
+ *  - stream 1: capture
+ */
+#define VIRTIOSND_EVENTQ_MAX_NOTIFY_STREAMS 2u
+
 /* Ensure the fixed pool buffers can hold at least a single virtio-snd event. */
 C_ASSERT(VIRTIOSND_EVENTQ_BUFFER_SIZE >= sizeof(VIRTIO_SND_EVENT));
 
@@ -237,6 +247,16 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     EVT_VIRTIOSND_EVENTQ_EVENT* EventqCallback;
     void* EventqCallbackContext;
     volatile LONG EventqCallbackInFlight;
+
+    /*
+     * Optional WaveRT notification events keyed by virtio-snd stream_id.
+     *
+     * The driver keeps timer-based pacing for contract v1 compatibility. If a
+     * future device model emits PCM_PERIOD_ELAPSED events, the INTx DPC can use
+     * them as an additional (best-effort) notification source by signaling the
+     * corresponding event object.
+     */
+    PKEVENT EventqStreamNotify[VIRTIOSND_EVENTQ_MAX_NOTIFY_STREAMS];
 
     /*
      * Best-effort WaveRT XRUN recovery work item (coalesced).
@@ -449,6 +469,27 @@ VOID VirtIoSndHwSetEventCallback(
     _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
     _In_opt_ EVT_VIRTIOSND_EVENTQ_EVENT* Callback,
     _In_opt_ void* Context);
+
+/*
+ * Associate a WaveRT notification event object with a virtio-snd stream ID.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+VOID VirtIoSndEventqSetStreamNotificationEvent(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_ ULONG StreamId,
+    _In_opt_ PKEVENT NotificationEvent);
+
+/*
+ * Best-effort signal of the registered WaveRT notification event for a stream.
+ *
+ * Returns TRUE if an event was present and signaled.
+ *
+ * IRQL: <= DISPATCH_LEVEL.
+ */
+_IRQL_requires_max_(DISPATCH_LEVEL)
+BOOLEAN VirtIoSndEventqSignalStreamNotificationEvent(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG StreamId);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -243,6 +243,13 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
                 eventCount = InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
+                /*
+                 * Optional pacing signal:
+                 * If WaveRT has registered a notification event object for this
+                 * stream, signal it best-effort. The WaveRT miniport still uses
+                 * timer-based pacing for contract v1 compatibility.
+                 */
+                (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
                 /* PCM period notifications may be high rate; log at a low rate. */
                 logEvent = VirtIoSndShouldLogRareCounter(eventCount);
                 break;

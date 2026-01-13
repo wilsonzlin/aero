@@ -93,6 +93,32 @@ NTSTATUS VirtioSndParseEvent(const void* Buffer, ULONG BufferLen, VIRTIO_SND_EVE
     OutEvent->Type = evt.type;
     OutEvent->Data = evt.data;
     OutEvent->Kind = VirtioSndEventKindFromType(OutEvent->Type);
+
+    /*
+     * Decode the `data` field for the known event types.
+     *
+     * virtio-snd eventq messages are fixed-size (type + data). The meaning of the
+     * data field depends on the event type:
+     *  - JACK_{CONNECTED,DISCONNECTED}: jack_id
+     *  - PCM_{PERIOD_ELAPSED,XRUN}:      stream_id
+     *  - CTL_NOTIFY:                    control_id
+     */
+    switch (OutEvent->Kind) {
+    case VIRTIO_SND_EVENT_KIND_JACK_CONNECTED:
+    case VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED:
+        OutEvent->u.JackId = OutEvent->Data;
+        break;
+    case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
+    case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
+        OutEvent->u.StreamId = OutEvent->Data;
+        break;
+    case VIRTIO_SND_EVENT_KIND_CTL_NOTIFY:
+        OutEvent->u.CtlId = OutEvent->Data;
+        break;
+    default:
+        break;
+    }
+
     return STATUS_SUCCESS;
 }
 

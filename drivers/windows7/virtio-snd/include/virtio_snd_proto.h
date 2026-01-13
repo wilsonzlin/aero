@@ -215,6 +215,19 @@ typedef struct _VIRTIO_SND_EVENT_PARSED {
     ULONG Type;
     ULONG Data;
     VIRTIO_SND_EVENT_KIND Kind;
+    /*
+     * Event-specific interpretation of `Data` per virtio-snd specification.
+     *
+     * The union member is only valid for the corresponding Kind:
+     *  - JACK_*: u.JackId
+     *  - PCM_*:  u.StreamId
+     *  - CTL_*:  u.CtlId
+     */
+    union {
+        ULONG JackId;
+        ULONG StreamId;
+        ULONG CtlId;
+    } u;
 } VIRTIO_SND_EVENT_PARSED, *PVIRTIO_SND_EVENT_PARSED;
 
 #ifdef __cplusplus
