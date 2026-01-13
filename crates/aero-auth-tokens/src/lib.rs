@@ -121,6 +121,9 @@ pub fn verify_gateway_session_token(
     if !is_base64url(payload_b64, MAX_SESSION_TOKEN_PAYLOAD_B64_LEN) {
         return None;
     }
+    if sig_b64.len() != HMAC_SHA256_SIG_B64_LEN {
+        return None;
+    }
 
     let provided_sig = decode_base64url(sig_b64, MAX_SESSION_TOKEN_SIG_B64_LEN)?;
     // HMAC-SHA256 output is always 32 bytes; reject signatures of other lengths without doing any
@@ -200,27 +203,12 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
         return None;
     }
 
-    if header_b64.len() > MAX_JWT_HEADER_B64_LEN
-        || payload_b64.len() > MAX_JWT_PAYLOAD_B64_LEN
-        || sig_b64.len() > MAX_JWT_SIG_B64_LEN
+    // Avoid doing any HMAC work for obviously-malformed tokens.
+    if !is_base64url(header_b64, MAX_JWT_HEADER_B64_LEN)
+        || !is_base64url(payload_b64, MAX_JWT_PAYLOAD_B64_LEN)
+        || sig_b64.len() != HMAC_SHA256_SIG_B64_LEN
     {
         return None;
-    }
-    if !is_base64url(payload_b64, MAX_JWT_PAYLOAD_B64_LEN) {
-        return None;
-    }
-
-    let header_raw = decode_base64url(header_b64, MAX_JWT_HEADER_B64_LEN)?;
-    let header: serde_json::Value = serde_json::from_slice(&header_raw).ok()?;
-    let header_obj = header.as_object()?;
-    let alg = header_obj.get("alg")?.as_str()?;
-    if alg != "HS256" {
-        return None;
-    }
-    if let Some(typ_val) = header_obj.get("typ") {
-        if !typ_val.is_string() {
-            return None;
-        }
     }
 
     let provided_sig = decode_base64url(sig_b64, MAX_JWT_SIG_B64_LEN)?;
@@ -233,6 +221,20 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
     );
     if !constant_time_equal(&provided_sig, &expected_sig) {
         return None;
+    }
+
+    // Signature is valid; now parse the JWT contents.
+    let header_raw = decode_base64url(header_b64, MAX_JWT_HEADER_B64_LEN)?;
+    let header: serde_json::Value = serde_json::from_slice(&header_raw).ok()?;
+    let header_obj = header.as_object()?;
+    let alg = header_obj.get("alg")?.as_str()?;
+    if alg != "HS256" {
+        return None;
+    }
+    if let Some(typ_val) = header_obj.get("typ") {
+        if !typ_val.is_string() {
+            return None;
+        }
     }
 
     let payload_raw = decode_base64url(payload_b64, MAX_JWT_PAYLOAD_B64_LEN)?;
