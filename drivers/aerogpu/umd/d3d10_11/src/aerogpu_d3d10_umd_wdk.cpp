@@ -3951,11 +3951,6 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pUpdate->pSysMemUP, static_cast<size_t>(bytes));
     }
   } else if (res->kind == ResourceKind::Texture2D) {
-    if (pUpdate->pDstBox) {
-      SetError(hDevice, E_NOTIMPL);
-      return;
-    }
-
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       SetError(hDevice, E_NOTIMPL);
@@ -3963,6 +3958,12 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
     }
     if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
       SetError(hDevice, E_NOTIMPL);
+      return;
+    }
+
+    const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aer_fmt);
+    if (!fmt_layout.valid || fmt_layout.block_width == 0 || fmt_layout.block_height == 0 || fmt_layout.bytes_per_block == 0) {
+      SetError(hDevice, E_INVALIDARG);
       return;
     }
 
@@ -4018,17 +4019,80 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       }
     }
 
-    const uint32_t src_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, dst_layout.width);
-    const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, dst_layout.height);
-    if (src_row_bytes == 0 || rows == 0 || dst_layout.row_pitch_bytes < src_row_bytes) {
+    const uint32_t mip_w = dst_layout.width;
+    const uint32_t mip_h = dst_layout.height;
+    const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, mip_w);
+    if (min_row_bytes == 0 || dst_layout.row_pitch_bytes < min_row_bytes) {
       SetError(hDevice, E_INVALIDARG);
       return;
     }
 
-    const uint8_t* src = static_cast<const uint8_t*>(pUpdate->pSysMemUP);
-    const size_t src_pitch =
-        pUpdate->RowPitch ? static_cast<size_t>(pUpdate->RowPitch) : static_cast<size_t>(src_row_bytes);
-    if (src_pitch < src_row_bytes) {
+    uint32_t left = 0;
+    uint32_t top = 0;
+    uint32_t right = mip_w;
+    uint32_t bottom = mip_h;
+    if (pUpdate->pDstBox) {
+      const auto* box = pUpdate->pDstBox;
+      if (box->right < box->left || box->bottom < box->top || box->front != 0 || box->back != 1) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      left = box->left;
+      top = box->top;
+      right = box->right;
+      bottom = box->bottom;
+    }
+    if (right > mip_w || bottom > mip_h) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+
+    if (fmt_layout.block_width > 1 || fmt_layout.block_height > 1) {
+      const auto aligned_or_edge = [](uint32_t v, uint32_t align, uint32_t extent) {
+        return (v % align) == 0 || v == extent;
+      };
+      if ((left % fmt_layout.block_width) != 0 ||
+          (top % fmt_layout.block_height) != 0 ||
+          !aligned_or_edge(right, fmt_layout.block_width, mip_w) ||
+          !aligned_or_edge(bottom, fmt_layout.block_height, mip_h)) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+    }
+
+    const uint32_t block_left = left / fmt_layout.block_width;
+    const uint32_t block_top = top / fmt_layout.block_height;
+    const uint32_t block_right = aerogpu_div_round_up_u32(right, fmt_layout.block_width);
+    const uint32_t block_bottom = aerogpu_div_round_up_u32(bottom, fmt_layout.block_height);
+    if (block_right < block_left || block_bottom < block_top) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+
+    const uint32_t copy_width_blocks = block_right - block_left;
+    const uint32_t copy_height_blocks = block_bottom - block_top;
+    const uint64_t row_bytes_u64 =
+        static_cast<uint64_t>(copy_width_blocks) * static_cast<uint64_t>(fmt_layout.bytes_per_block);
+    if (row_bytes_u64 == 0 || row_bytes_u64 > UINT32_MAX || copy_height_blocks == 0) {
+      // Treat empty boxes as a no-op.
+      return;
+    }
+    const uint32_t row_bytes = static_cast<uint32_t>(row_bytes_u64);
+
+    const uint32_t pitch = pUpdate->RowPitch ? static_cast<uint32_t>(pUpdate->RowPitch) : row_bytes;
+    if (pitch < row_bytes) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+
+    const bool full_row_update = (left == 0) && (right == mip_w);
+    const uint64_t row_needed =
+        static_cast<uint64_t>(block_left) * static_cast<uint64_t>(fmt_layout.bytes_per_block) + static_cast<uint64_t>(row_bytes);
+    if (row_needed > dst_layout.row_pitch_bytes) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+    if (block_top + copy_height_blocks > dst_layout.rows_in_layout) {
       SetError(hDevice, E_INVALIDARG);
       return;
     }
@@ -4038,19 +4102,102 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       return;
     }
     const size_t dst_base = static_cast<size_t>(dst_layout.offset_bytes);
-    for (uint32_t y = 0; y < rows; y++) {
-      const size_t dst_off = dst_base + static_cast<size_t>(y) * dst_layout.row_pitch_bytes;
-      const size_t src_off = static_cast<size_t>(y) * src_pitch;
-      if (dst_off + src_row_bytes > res->storage.size()) {
+    if (dst_layout.size_bytes > res->storage.size() - dst_base) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+    }
+
+    const uint8_t* src_bytes = static_cast<const uint8_t*>(pUpdate->pSysMemUP);
+    for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+      const size_t dst_off =
+          dst_base +
+          static_cast<size_t>(block_top + y) * dst_layout.row_pitch_bytes +
+          static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
+      const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
+      if (dst_off + row_bytes > res->storage.size()) {
         SetError(hDevice, E_INVALIDARG);
         return;
       }
-      std::memcpy(res->storage.data() + dst_off, src + src_off, src_row_bytes);
-      if (dst_layout.row_pitch_bytes > src_row_bytes) {
-        std::memset(res->storage.data() + dst_off + src_row_bytes,
-                    0,
-                    dst_layout.row_pitch_bytes - src_row_bytes);
+      std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
+      if (full_row_update && dst_layout.row_pitch_bytes > row_bytes) {
+        const size_t dst_row_start = dst_base + static_cast<size_t>(block_top + y) * dst_layout.row_pitch_bytes;
+        std::memset(res->storage.data() + dst_row_start + row_bytes, 0, dst_layout.row_pitch_bytes - row_bytes);
       }
+    }
+
+    if (res->backing_alloc_id != 0 && pUpdate->pDstBox) {
+      const D3DDDI_DEVICECALLBACKS* ddi = dev->um_callbacks;
+      if (!ddi || !ddi->pfnLockCb || !ddi->pfnUnlockCb || res->wddm_allocation_handle == 0) {
+        SetError(hDevice, E_FAIL);
+        return;
+      }
+
+      D3DDDICB_LOCK lock_args = {};
+      lock_args.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation_handle);
+      __if_exists(D3DDDICB_LOCK::SubresourceIndex) { lock_args.SubresourceIndex = 0; }
+      __if_exists(D3DDDICB_LOCK::SubResourceIndex) { lock_args.SubResourceIndex = 0; }
+      InitLockForWrite(&lock_args);
+
+      HRESULT hr = CallCbMaybeHandle(ddi->pfnLockCb, dev->hrt_device, &lock_args);
+      if (FAILED(hr) || !lock_args.pData) {
+        SetError(hDevice, FAILED(hr) ? hr : E_FAIL);
+        return;
+      }
+
+      HRESULT copy_hr = S_OK;
+      uint32_t dst_pitch = dst_layout.row_pitch_bytes;
+      __if_exists(D3DDDICB_LOCK::Pitch) {
+        if (lock_args.Pitch &&
+            dst_subresource_u64 == 0 &&
+            res->mip_levels == 1 &&
+            res->array_size == 1) {
+          dst_pitch = lock_args.Pitch;
+        }
+      }
+      if (dst_pitch < row_bytes) {
+        copy_hr = E_INVALIDARG;
+        goto UnlockBox;
+      }
+
+      uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
+      for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+        const size_t dst_off =
+            static_cast<size_t>(block_top + y) * dst_pitch +
+            static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
+        const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
+        std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
+        if (full_row_update && dst_pitch > row_bytes) {
+          const size_t dst_row_start = static_cast<size_t>(block_top + y) * dst_pitch;
+          std::memset(dst_alloc_base + dst_row_start + row_bytes, 0, dst_pitch - row_bytes);
+        }
+      }
+
+    UnlockBox:
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+      hr = CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+      if (FAILED(hr)) {
+        SetError(hDevice, hr);
+        return;
+      }
+      if (FAILED(copy_hr)) {
+        SetError(hDevice, copy_hr);
+        return;
+      }
+
+      TrackWddmAllocForSubmitLocked(dev, res);
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!dirty) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = dst_layout.offset_bytes;
+      dirty->size_bytes = dst_layout.size_bytes;
+      return;
     }
 
     do_tex_upload = true;
