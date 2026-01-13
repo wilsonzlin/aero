@@ -64,6 +64,14 @@ export interface InputCaptureOptions {
    */
   enableGamepad?: boolean;
   /**
+   * If enabled and supported by the browser, attempts to use the Keyboard Lock API
+   * (`navigator.keyboard.lock()`) while capture is active.
+   *
+   * This is best-effort: failures (e.g. API unavailable, permission denied, or
+   * user-gesture requirements not met) are ignored after logging.
+   */
+  enableKeyboardLock?: boolean;
+  /**
    * Optional hook invoked immediately before each input batch is posted to the
    * I/O worker.
    *
@@ -102,6 +110,10 @@ export class InputCapture {
   private readonly onBeforeSendBatch?: InputBatchFlushHook;
   private readonly flushOpts: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook };
   private readonly flushOptsNoRecycle: { recycle?: boolean; onBeforeSend?: InputBatchFlushHook };
+  private readonly enableKeyboardLock: boolean;
+  private keyboardLockRequested = false;
+  private keyboardLockActive = false;
+  private keyboardLockSeq = 0;
 
   private readonly recycledBuffersBySize = new Map<number, ArrayBuffer[]>();
   private readonly handleWorkerMessage = (event: MessageEvent<unknown>): void => {
@@ -149,6 +161,8 @@ export class InputCapture {
   private latencyLogMaxUs = 0;
 
   private readonly handlePointerLockChange = (locked: boolean): void => {
+    this.updateKeyboardLock();
+
     // If pointer lock exits while the canvas is not focused, we will stop
     // capturing keyboard/mouse events, which can leave the guest with latched
     // input state. Emit a best-effort "all released" snapshot immediately.
@@ -180,14 +194,20 @@ export class InputCapture {
     event.stopPropagation();
     this.canvas.focus();
     this.pointerLock.request();
+    // Best-effort: request Keyboard Lock on the upcoming capture session. The API requires a user
+    // gesture; we record that the user explicitly initiated capture via click and attempt the lock
+    // once capture is actually active (pointer lock + focus).
+    this.keyboardLockRequested = true;
   };
 
   private readonly handleFocus = (): void => {
     this.hasFocus = true;
+    this.updateKeyboardLock();
   };
 
   private readonly handleBlur = (): void => {
     this.hasFocus = false;
+    this.releaseKeyboardLock();
     this.pointerLock.exit();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
@@ -202,6 +222,7 @@ export class InputCapture {
 
   private readonly handleWindowBlur = (): void => {
     this.windowFocused = false;
+    this.releaseKeyboardLock();
     this.pointerLock.exit();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
@@ -222,6 +243,7 @@ export class InputCapture {
       return;
     }
 
+    this.releaseKeyboardLock();
     this.pointerLock.exit();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
@@ -593,6 +615,7 @@ export class InputCapture {
       logCaptureLatency = false,
       recycleBuffers = true,
       enableGamepad = true,
+      enableKeyboardLock = true,
       onBeforeSendBatch,
       gamepadDeadzone = 0.12,
       gamepadPollHz,
@@ -604,6 +627,7 @@ export class InputCapture {
     this.releaseChord = releasePointerLockChord;
     this.logCaptureLatency = logCaptureLatency;
     this.recycleBuffers = recycleBuffers;
+    this.enableKeyboardLock = enableKeyboardLock;
     this.onBeforeSendBatch = onBeforeSendBatch;
     this.flushOpts = { recycle: this.recycleBuffers, onBeforeSend: this.onBeforeSendBatch };
     this.flushOptsNoRecycle = { recycle: false, onBeforeSend: this.onBeforeSendBatch };
@@ -677,6 +701,7 @@ export class InputCapture {
     }
 
     this.hasFocus = false;
+    this.releaseKeyboardLock();
     this.suppressedKeyUps.clear();
     this.resetAccumulatedMotion();
     this.cancelTouchCapture();
@@ -910,12 +935,157 @@ export class InputCapture {
 
     this.gamepad.poll(this.queue, toTimestampUs(nowMs), { active: true });
   }
+
+  private shouldLockKeyboard(): boolean {
+    // Only attempt keyboard lock while capture is active (pointer lock + focus). This improves
+    // delivery of browser-reserved keys (e.g. Escape, function keys) to the guest.
+    return (
+      this.enableKeyboardLock &&
+      this.windowFocused &&
+      this.pageVisible &&
+      this.hasFocus &&
+      this.pointerLock.isLocked
+    );
+  }
+
+  private updateKeyboardLock(): void {
+    if (!this.enableKeyboardLock) {
+      return;
+    }
+
+    const keyboard = getNavigatorKeyboard();
+    if (!keyboard) {
+      return;
+    }
+
+    if (!this.shouldLockKeyboard()) {
+      if (this.keyboardLockActive) {
+        this.releaseKeyboardLock();
+      }
+      return;
+    }
+
+    if (this.keyboardLockActive) {
+      return;
+    }
+
+    if (!this.keyboardLockRequested) {
+      return;
+    }
+
+    this.keyboardLockRequested = false;
+    this.keyboardLockActive = true;
+    const seq = ++this.keyboardLockSeq;
+
+    lockNavigatorKeyboard(keyboard, DEFAULT_KEYBOARD_LOCK_CODES)
+      .then(() => {
+        // If capture ended while the lock request was in-flight, ensure the keyboard is unlocked.
+        if (this.keyboardLockSeq !== seq || !this.shouldLockKeyboard()) {
+          safeUnlockNavigatorKeyboard(keyboard);
+          this.keyboardLockActive = false;
+        }
+      })
+      .catch((err) => {
+        // Ignore failures: capture should continue even if the browser rejects the request.
+        if (this.keyboardLockSeq !== seq) {
+          return;
+        }
+        this.keyboardLockActive = false;
+        console.debug(`[aero-input] navigator.keyboard.lock() failed: ${formatError(err)}`);
+      });
+  }
+
+  private releaseKeyboardLock(): void {
+    this.keyboardLockRequested = false;
+
+    const keyboard = getNavigatorKeyboard();
+    if (!keyboard) {
+      this.keyboardLockActive = false;
+      return;
+    }
+
+    if (!this.keyboardLockActive) {
+      return;
+    }
+
+    // Invalidate any in-flight lock promise handlers.
+    this.keyboardLockSeq += 1;
+    this.keyboardLockActive = false;
+    safeUnlockNavigatorKeyboard(keyboard);
+  }
 }
 
 type MessageEventTarget = {
   addEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
   removeEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
 };
+
+type NavigatorKeyboardLockApi = {
+  lock: (keyCodes?: readonly string[]) => Promise<void>;
+  unlock?: () => void;
+};
+
+const DEFAULT_KEYBOARD_LOCK_CODES: readonly string[] = [
+  "Escape",
+  "F1",
+  "F2",
+  "F3",
+  "F4",
+  "F5",
+  "F6",
+  "F7",
+  "F8",
+  "F9",
+  "F10",
+  "F11",
+  "F12",
+];
+
+function getNavigatorKeyboard(): NavigatorKeyboardLockApi | null {
+  if (typeof navigator === "undefined") {
+    return null;
+  }
+  const keyboard = (navigator as unknown as { keyboard?: unknown }).keyboard as Partial<NavigatorKeyboardLockApi> | undefined;
+  if (!keyboard || typeof keyboard.lock !== "function") {
+    return null;
+  }
+  return keyboard as NavigatorKeyboardLockApi;
+}
+
+function lockNavigatorKeyboard(
+  keyboard: NavigatorKeyboardLockApi,
+  keyCodes: readonly string[]
+): Promise<void> {
+  // Some implementations (or older typings) may be picky about the argument. Prefer an explicit
+  // list of the keys we care about, but fall back to calling with no arguments if needed.
+  try {
+    return keyboard.lock(keyCodes);
+  } catch (err) {
+    if (err instanceof TypeError) {
+      try {
+        return keyboard.lock();
+      } catch (err2) {
+        return Promise.reject(err2);
+      }
+    }
+    return Promise.reject(err);
+  }
+}
+
+function safeUnlockNavigatorKeyboard(keyboard: NavigatorKeyboardLockApi): void {
+  if (typeof keyboard.unlock !== "function") {
+    return;
+  }
+  try {
+    keyboard.unlock();
+  } catch (err) {
+    console.debug(`[aero-input] navigator.keyboard.unlock() failed: ${formatError(err)}`);
+  }
+}
+
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 function chordMatches(event: KeyboardEvent, chord: PointerLockReleaseChord): boolean {
   if (event.code !== chord.code) {
