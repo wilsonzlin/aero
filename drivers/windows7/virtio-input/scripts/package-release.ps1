@@ -26,7 +26,12 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$OutDir
+    [string]$OutDir,
+
+    # When enabled, attempts to include the public test-signing certificate (.cer)
+    # alongside the driver package to simplify manual installation on test machines.
+    # The private key material (.pfx) is never included.
+    [switch]$IncludeTestCert
 )
 
 Set-StrictMode -Version 2.0
@@ -41,6 +46,7 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:FallbackSysName = (($script:DriverId -replace '-', '_') + '.sys')
 $script:InstallInstructionsName = 'INSTALL.txt'
 $script:InstallInstructionsTemplateName = 'INSTALL.txt.in'
+$script:TestCertFileName = 'aero-virtio-input-test.cer'
 
 function Normalize-Arch([string]$ArchValue) {
     if ($ArchValue -eq 'x64') { return 'amd64' }
@@ -181,6 +187,33 @@ function Find-OptionalFileByName(
 
     $candidatePaths = $matches | ForEach-Object { $_.FullName }
     throw ("Found multiple copies of '$FileName'. Please remove duplicates or point -InputDir at a single build output.`r`n{0}" -f (Format-PathList $candidatePaths))
+}
+
+function Find-TestCertPath(
+    [string]$InputDirResolved,
+    [string]$VirtioInputRootPath
+) {
+    $repoCertPath = Join-Path (Join-Path $VirtioInputRootPath 'cert') $script:TestCertFileName
+    if (Test-Path -LiteralPath $repoCertPath -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $repoCertPath).Path
+    }
+
+    $matches = @(
+        Get-ChildItem -LiteralPath $InputDirResolved -Recurse -File -Filter '*.cer' -ErrorAction SilentlyContinue
+    )
+    if ($matches.Count -eq 0) { return $null }
+
+    $exact = @($matches | Where-Object { $_.Name -ieq $script:TestCertFileName })
+    if ($exact.Count -eq 1) { return $exact[0].FullName }
+    if ($exact.Count -gt 1) {
+        $candidatePaths = $exact | ForEach-Object { $_.FullName }
+        throw ("Found multiple copies of '{0}' under -InputDir '{1}'. Please remove duplicates or point -InputDir at a single build output.`r`n{2}" -f $script:TestCertFileName, $InputDirResolved, (Format-PathList $candidatePaths))
+    }
+
+    if ($matches.Count -eq 1) { return $matches[0].FullName }
+
+    $candidatePaths = $matches | ForEach-Object { $_.FullName }
+    throw ("Found multiple .cer files under -InputDir '{0}'. Refusing to guess which one to include. Candidates:`r`n{1}" -f $InputDirResolved, (Format-PathList $candidatePaths))
 }
 
 function Get-InfPathForArch([string]$InfDir, [ValidateSet('x86', 'amd64')] [string]$ArchValue) {
@@ -396,6 +429,7 @@ function Package-OneArch(
     [string]$InputDirResolved,
     [string]$InfDirResolved,
     [string]$OutDirResolved,
+    [string]$TestCertPath,
     [ref]$SharedVersion
 ) {
     $infPath = Get-InfPathForArch -InfDir $InfDirResolved -ArchValue $ArchValue
@@ -451,6 +485,9 @@ function Package-OneArch(
         }
         if ($null -ne $coInstallerPath) {
             Copy-Item -LiteralPath $coInstallerPath -Destination (Join-Path $stageDir (Split-Path -Leaf $coInstallerPath)) -Force
+        }
+        if ($null -ne $TestCertPath) {
+            Copy-Item -LiteralPath $TestCertPath -Destination (Join-Path $stageDir $script:TestCertFileName) -Force
         }
 
         $installPath = Join-Path $stageDir $script:InstallInstructionsName
@@ -528,7 +565,16 @@ if (-not (Test-Path -LiteralPath $script:InstallInstructionsTemplatePath -PathTy
 
 $archList = if ($Arch -eq 'both') { @('x86', 'amd64') } else { @(Normalize-Arch $Arch) }
 $sharedVersion = $null
+$testCertPath = $null
+
+if ($IncludeTestCert) {
+    $testCertPath = Find-TestCertPath -InputDirResolved $inputDirResolved -VirtioInputRootPath $virtioInputRoot.Path
+    if ($null -eq $testCertPath) {
+        $expectedRepoPath = Join-Path (Join-Path $virtioInputRoot.Path 'cert') $script:TestCertFileName
+        throw ("-IncludeTestCert was specified, but no test certificate was found. Expected either:`r`n  - {0}`r`n  - any *.cer under -InputDir '{1}'" -f $expectedRepoPath, $inputDirResolved)
+    }
+}
 
 foreach ($a in $archList) {
-    Package-OneArch -ArchValue $a -InputDirResolved $inputDirResolved -InfDirResolved $infDirResolved -OutDirResolved $outDirResolved -SharedVersion ([ref]$sharedVersion)
+    Package-OneArch -ArchValue $a -InputDirResolved $inputDirResolved -InfDirResolved $infDirResolved -OutDirResolved $outDirResolved -TestCertPath $testCertPath -SharedVersion ([ref]$sharedVersion)
 }

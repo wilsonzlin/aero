@@ -11,6 +11,7 @@ This folder documents how to produce a redistributable driver bundle once you ha
 - The matching `*.cat` if present (either next to the INF, or under `-InputDir`)
 - A KMDF coinstaller `WdfCoInstaller*.dll` **if present** (either referenced by the INF, or discovered under `-InputDir`)
 - An `INSTALL.txt` with minimal Windows 7 test-signing + “Have Disk…” install steps
+- (Optional) the public **test-signing certificate** `aero-virtio-input-test.cer` when `-IncludeTestCert` is specified
 - A `manifest.json` describing file hashes + metadata (driver id, arch, version, etc.)
 - A `SHA256SUMS` file containing SHA-256 for every file in the zip (including `manifest.json`) for easy integrity checks
 
@@ -36,6 +37,13 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/p
   -Arch both `
   -InputDir <path-to-built-binaries> `
   -OutDir drivers/windows7/virtio-input/release/out
+
+# Package and include the test certificate (for manual Win7 test installs)
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/package-release.ps1 `
+  -Arch amd64 `
+  -InputDir <path-to-built-binaries> `
+  -OutDir drivers/windows7/virtio-input/release/out `
+  -IncludeTestCert
 
 # Package a single architecture
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/package-release.ps1 `
@@ -84,8 +92,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both 
 - The driver SYS file named by the INF (`ServiceBinary=...\.sys`) (fallback: `aero_virtio_input.sys`)
 - The catalog file named by the INF (`CatalogFile=...\.cat`) (optional)
 - A KMDF coinstaller DLL (`WdfCoInstaller*.dll`) (optional)
+- When `-IncludeTestCert` is specified: a `*.cer` file (preferably `aero-virtio-input-test.cer`)
 
 If multiple matching files exist (e.g. because multiple build outputs are present), the script will fail with a list of candidates to keep packaging deterministic.
+
+### Test certificate inclusion
+
+If you pass `-IncludeTestCert`, `package-release.ps1` will copy a public certificate into the zip as:
+
+`aero-virtio-input-test.cer`
+
+It searches in this order:
+
+1. `drivers/windows7/virtio-input/cert/aero-virtio-input-test.cer` (created by `scripts/make-cert.ps1`), otherwise
+2. any `*.cer` found under `-InputDir`
+
+The private key (`*.pfx`) is **never** included.
 
 ### INF naming
 
