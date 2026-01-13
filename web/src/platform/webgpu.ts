@@ -54,7 +54,7 @@ export async function requestWebGpuDevice(
   const customUncapturedHandler = options.onUncapturedError;
   const hasCustomUncapturedHandler = typeof customUncapturedHandler === "function";
   const onUncapturedError = hasCustomUncapturedHandler
-    ? customUncapturedHandler
+    ? customUncapturedHandler!
     : (error: unknown) => console.error("[webgpu] uncapturederror", error);
   const seenErrorKeys = new Set<string>();
   const uncapturedHandler = (ev: any) => {

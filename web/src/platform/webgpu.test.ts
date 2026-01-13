@@ -46,7 +46,7 @@ describe("requestWebGpuDevice()", () => {
     expect(info.preferredFormat).toBe("bgra8unorm");
 
     expect(device.addEventListener).toHaveBeenCalled();
-    expect(uncapturedHandler).toBeTypeOf("function");
+    expect(typeof uncapturedHandler).toBe("function");
 
     const preventDefault = vi.fn();
     // TypeScript control-flow analysis doesn't model the callback write into `uncapturedHandler`

@@ -593,6 +593,11 @@ function downloadFile(file: Blob, filename: string): void {
   (timer as unknown as { unref?: () => void }).unref?.();
 }
 
+function downloadJson(value: unknown, filename: string): void {
+  const text = JSON.stringify(value, null, 2);
+  downloadFile(new Blob([text], { type: "application/json" }), filename);
+}
+
 async function rgba8ToPngBlob(width: number, height: number, rgba8: Uint8Array): Promise<Blob> {
   const expectedBytes = width * height * 4;
   if (rgba8.byteLength !== expectedBytes) {
@@ -3978,11 +3983,147 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  function getBuildInfoForExport(): { version: string; gitSha: string; builtAt: string } {
+    // eslint-disable-next-line no-undef
+    return typeof __AERO_BUILD_INFO__ !== "undefined"
+      ? // eslint-disable-next-line no-undef
+        __AERO_BUILD_INFO__
+      : { version: "dev", gitSha: "unknown", builtAt: "unknown" };
+  }
+
+  function snapshotAudioOutput(out: unknown): unknown {
+    if (!out || (typeof out !== "object" && typeof out !== "function")) return null;
+    const o = out as any;
+    const metrics = typeof o.getMetrics === "function" ? o.getMetrics() : null;
+    const ring = o.ringBuffer as any;
+    let ringCounters: unknown = null;
+    if (ring?.readIndex && ring?.writeIndex && ring?.underrunCount && ring?.overrunCount) {
+      try {
+        ringCounters = {
+          readFrameIndex: Atomics.load(ring.readIndex as Uint32Array, 0) >>> 0,
+          writeFrameIndex: Atomics.load(ring.writeIndex as Uint32Array, 0) >>> 0,
+          underrunCount: Atomics.load(ring.underrunCount as Uint32Array, 0) >>> 0,
+          overrunCount: Atomics.load(ring.overrunCount as Uint32Array, 0) >>> 0,
+        };
+      } catch {
+        // ignore; best-effort only.
+      }
+    }
+    return {
+      enabled: typeof o.enabled === "boolean" ? o.enabled : null,
+      metrics,
+      ring: ring
+        ? {
+            channelCount: typeof ring.channelCount === "number" ? ring.channelCount : null,
+            capacityFrames: typeof ring.capacityFrames === "number" ? ring.capacityFrames : null,
+            counters: ringCounters,
+          }
+        : null,
+    };
+  }
+
+  const exportMetricsButton = el("button", {
+    text: "Export audio metrics (json)",
+    onclick: () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const g = globalThis as any;
+
+        const timeIso = new Date().toISOString();
+        const ts = timeIso.replaceAll(":", "-").replaceAll(".", "-");
+
+        const report = {
+          timeIso,
+          build: getBuildInfoForExport(),
+          userAgent: navigator.userAgent,
+          crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
+          // Include all known audio outputs so QA can tell which ring was actually active.
+          audioOutputs: {
+            __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
+            __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
+            __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
+            __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
+          },
+          workerProducer: {
+            bufferLevelFrames: workerCoordinator.getAudioProducerBufferLevelFrames(),
+            underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
+            overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
+          },
+        };
+
+        downloadJson(report, `aero-audio-metrics-${ts}.json`);
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
+  type HdaCodecDebugStateResultMessage = {
+    type: "hda.codecDebugStateResult";
+    requestId: number;
+    ok: boolean;
+    state?: unknown;
+    error?: string;
+  };
+
+  let hdaCodecDebugRequestId = 1;
+  const exportHdaCodecStateButton = el("button", {
+    text: "Export HDA codec state (json)",
+    onclick: async () => {
+      status.textContent = "";
+      try {
+        const ioWorker = workerCoordinator.getIoWorker();
+        if (!ioWorker) {
+          throw new Error("I/O worker is not running. Start workers before exporting HDA codec state.");
+        }
+
+        const requestId = hdaCodecDebugRequestId++;
+        const response = await new Promise<HdaCodecDebugStateResultMessage>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            cleanup();
+            reject(new Error("Timed out waiting for IO worker HDA codec debug state response."));
+          }, 3000);
+          (timeout as unknown as { unref?: () => void }).unref?.();
+
+          const onMessage = (ev: MessageEvent<unknown>) => {
+            const msg = ev.data as Partial<HdaCodecDebugStateResultMessage> | null;
+            if (!msg || msg.type !== "hda.codecDebugStateResult") return;
+            if (msg.requestId !== requestId) return;
+            cleanup();
+            resolve(msg as HdaCodecDebugStateResultMessage);
+          };
+
+          const cleanup = () => {
+            window.clearTimeout(timeout);
+            ioWorker.removeEventListener("message", onMessage);
+          };
+
+          ioWorker.addEventListener("message", onMessage);
+          ioWorker.postMessage({ type: "hda.codecDebugState", requestId });
+        });
+
+        if (!response.ok) {
+          throw new Error(response.error || "Failed to fetch HDA codec debug state.");
+        }
+
+        const timeIso = new Date().toISOString();
+        const ts = timeIso.replaceAll(":", "-").replaceAll(".", "-");
+        downloadJson(
+          { timeIso, build: getBuildInfoForExport(), state: response.state ?? null },
+          `aero-hda-codec-state-${ts}.json`,
+        );
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
     el("div", { class: "row" }, button, workerButton, hdaDemoButton, virtioSndDemoButton, loopbackButton),
+    el("div", { class: "row" }, exportMetricsButton, exportHdaCodecStateButton),
     status,
   );
 }

@@ -2796,6 +2796,25 @@ type HdaMicCaptureTestMessage = {
   requestId: number;
 };
 
+type HdaCodecDebugStateRequestMessage = {
+  type: "hda.codecDebugState";
+  requestId: number;
+};
+
+type HdaCodecDebugStateResultMessage =
+  | {
+      type: "hda.codecDebugStateResult";
+      requestId: number;
+      ok: true;
+      state: unknown;
+    }
+  | {
+      type: "hda.codecDebugStateResult";
+      requestId: number;
+      ok: false;
+      error: string;
+    };
+
 type AerogpuCursorTestProgramMessage = {
   type: "aerogpu.cursorTest.program";
   enabled: boolean;
@@ -2809,7 +2828,6 @@ type AerogpuCursorTestProgramMessage = {
   fbGpa: number;
   pitchBytes: number;
 };
-
 type ActiveDisk = { handle: number; sectorSize: number; capacityBytes: number; readOnly: boolean };
 let diskClient: RuntimeDiskClient | null = null;
 let activeDisk: ActiveDisk | null = null;
@@ -4043,6 +4061,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<SetAudioRingBufferMessage>
       | Partial<HdaMicCaptureTestMessage>
+      | Partial<HdaCodecDebugStateRequestMessage>
       | Partial<AerogpuCursorTestProgramMessage>
       | Partial<HidProxyMessage>
       | Partial<UsbRingDetachMessage>
@@ -4225,6 +4244,40 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const msg = data as Partial<HdaMicCaptureTestMessage>;
       if (typeof msg.requestId !== "number") return;
       runHdaMicCaptureTest(msg.requestId);
+      return;
+    }
+
+    if ((data as Partial<HdaCodecDebugStateRequestMessage>).type === "hda.codecDebugState") {
+      const msg = data as Partial<HdaCodecDebugStateRequestMessage>;
+      const requestId = msg.requestId;
+      if (typeof requestId !== "number") return;
+
+      const anyGlobal = globalThis as unknown as Record<string, unknown>;
+      // Prefer the explicit global hook exposed by the audio integration (see `web/src/workers/io.worker.ts` init
+      // path). Fall back to the live HDA controller bridge if present.
+      const bridge = (anyGlobal["__aeroAudioHdaBridge"] as unknown) ?? hdaControllerBridge;
+      const fn = (bridge as unknown as { codec_debug_state?: unknown } | null)?.codec_debug_state;
+      if (typeof fn !== "function") {
+        const res: HdaCodecDebugStateResultMessage = {
+          type: "hda.codecDebugStateResult",
+          requestId,
+          ok: false,
+          error: "HDA codec debug state is unavailable (no bridge or missing codec_debug_state export).",
+        };
+        ctx.postMessage(res);
+        return;
+      }
+
+      try {
+        // codec_debug_state returns a structured-cloneable JS object (plain numbers/bools/strings).
+        const state = (fn as () => unknown).call(bridge);
+        const res: HdaCodecDebugStateResultMessage = { type: "hda.codecDebugStateResult", requestId, ok: true, state };
+        ctx.postMessage(res);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const res: HdaCodecDebugStateResultMessage = { type: "hda.codecDebugStateResult", requestId, ok: false, error: message };
+        ctx.postMessage(res);
+      }
       return;
     }
 

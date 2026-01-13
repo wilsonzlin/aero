@@ -268,6 +268,10 @@ out?.ringBuffer && {
 };
 ```
 
+Alternative (if the web UI exposes it):
+
+- Use **Audio → “Export audio metrics (json)”** to download a JSON blob containing `getMetrics()` + ring indices + IO-worker producer counters.
+
 Quick interpretation tips:
 
 - If `writeFrameIndex` is **not** increasing: the emulator side is not producing audio (guest DMA not progressing, HDA stream not running, etc).
@@ -383,6 +387,7 @@ Collect:
 
 - Browser permission status + any `getUserMedia` error shown in the console.
 - Mic ring stats (buffered/dropped) if available in UI.
+- Optional: if the web UI exposes it, use **Audio → “Export HDA codec state (json)”** (downloads the same gating state without opening the I/O worker console).
 - **HDA codec gating state** (pin/power/amp) from the I/O worker DevTools console:
   ```js
   __aeroAudioHdaBridge?.codec_debug_state?.()
