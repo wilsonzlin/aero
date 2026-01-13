@@ -80,6 +80,55 @@ Virtqueues (indices and sizes):
 | 2 | `txq` | 256 |
 | 3 | `rxq` | 64 |
 
+### Interrupts (INTx + optional MSI/MSI-X)
+
+`AERO-W7-VIRTIO` v1 requires the device/driver pair to work correctly with **PCI INTx** + the virtio ISR status register (read-to-ack).
+The contract also permits **MSI-X** as an optional enhancement; Windows reports both MSI and MSI-X as “message-signaled interrupts”.
+
+#### INF registry keys (Windows 7 MSI opt-in)
+
+On Windows 7, MSI/MSI-X is typically enabled via INF `HKR` settings under:
+
+`Interrupt Management\\MessageSignaledInterruptProperties`
+
+Example (add to the relevant virtio-snd INF, e.g. `inf/aero_virtio_snd.inf`):
+
+```inf
+[AeroVirtioSnd_Install.NT.HW]
+AddReg = AeroVirtioSnd_InterruptManagement_AddReg
+
+[AeroVirtioSnd_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+; virtio-snd needs config + 4 queues = 5 vectors; request a little extra for future growth:
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+```
+
+Notes:
+
+- `0x00010001` = `REG_DWORD`
+- `MessageNumberLimit` is a request; Windows may grant fewer messages.
+
+#### Expected vector mapping
+
+When MSI-X is active and Windows grants enough messages, the expected mapping is:
+
+- **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
+- **Vector/message 1..4:** queues 0..3 (`controlq`, `eventq`, `txq`, `rxq`)
+
+If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
+
+- **All sources on vector/message 0** (config + all queues)
+
+#### Troubleshooting / verifying MSI is active
+
+In **Device Manager** (`devmgmt.msc`) → the virtio-snd PCI device → **Properties** → **Resources**:
+
+- **INTx** typically shows a single small IRQ number (often shared).
+- **MSI/MSI-X** typically shows one or more interrupt entries with larger values (often shown in hex) and they are usually not shared.
+
+See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
+
 ### Render vs capture status
 
 The contract defines **two** fixed-format PCM streams:
@@ -173,7 +222,7 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/backend_virtio.c` — virtio-snd backend implementation (PortCls ↔ virtio glue)
 * `src/backend_null.c` — silent backend implementation (fallback / debugging)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
-  - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, INTx wiring, and reset/teardown
+  - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, INTx interrupt wiring, and reset/teardown
 * Canonical virtio-pci modern transport (BAR0 MMIO + PCI vendor capability parsing):
   - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
@@ -195,7 +244,7 @@ Notes:
 
 * **Queues:** `controlq`/`eventq`/`txq`/`rxq` are initialized per contract v1; render uses `controlq` (0) + `txq` (2), capture uses `controlq` (0) + `rxq` (3).
   - `eventq` is initialized for contract conformance but is not currently used by the PortCls endpoints.
-* **Interrupts:** **INTx** only (MSI/MSI-X not currently used by this driver package).
+* **Interrupts:** **INTx** is required by contract v1. MSI/MSI-X is an optional enhancement that requires Windows 7 INF opt-in and driver-side virtio MSI-X vector programming.
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
 ## Legacy / transitional virtio-pci paths (opt-in bring-up)
@@ -690,6 +739,6 @@ For additional safety in environments that expose multiple virtio-snd devices, y
 Notes:
 
 - The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
-- This WDM driver currently uses **INTx only**. The INF does **not** include the registry settings required to request MSI/MSI-X from Windows.
+- This driver package uses **INTx** by default. MSI/MSI-X is an optional enhancement that requires Windows 7 INF opt-in (the `Interrupt Management\\MessageSignaledInterruptProperties` keys described above) and a driver build that programs virtio MSI-X vectors.
 
 If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.

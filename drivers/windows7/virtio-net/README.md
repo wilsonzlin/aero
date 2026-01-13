@@ -2,8 +2,8 @@
 
 This directory contains a clean-room, spec-based **virtio-net** driver for **Windows 7 SP1** implemented as an **NDIS 6.20** miniport.
 
-> **AERO-W7-VIRTIO contract v1:** this driver supports **virtio-pci modern** (virtio 1.0+) using a fixed **BAR0 MMIO** layout and **INTx**
-> interrupts (with optional **MSI/MSI-X** when enabled via INF) and binds to `PCI\VEN_1AF4&DEV_1041&REV_01`.
+> **AERO-W7-VIRTIO contract v1:** this driver supports **virtio-pci modern** (virtio 1.0+) using a fixed **BAR0 MMIO** layout and PCI interrupts:
+> **INTx required**, with optional **MSI/MSI-X** (message-signaled) when enabled via INF. It binds to `PCI\VEN_1AF4&DEV_1041&REV_01`.
 >
 > When using QEMU, pass:
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1041`)
@@ -29,6 +29,55 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
   - INTx (via virtio ISR status register; read-to-ack, spurious-safe)
   - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX and falls back to sharing vector 0 if Windows grants fewer messages.
 - No checksum offloads / TSO / LRO
+
+## MSI / MSI-X interrupts (optional)
+
+On Windows 7, message-signaled interrupts (MSI/MSI-X) are typically **opt-in via INF**. MSI/MSI-X is an optional enhancement over the contract-required
+INTx path: it reduces shared line interrupt overhead and can enable per-queue vectoring.
+
+### INF registry keys
+
+On Windows 7, MSI/MSI-X is typically opt-in via `HKR` settings under:
+
+`Interrupt Management\\MessageSignaledInterruptProperties`
+
+Example (add to `inf/aero_virtio_net.inf`):
+
+```inf
+[AeroVirtioNet_Install.NT.HW]
+AddReg = AeroVirtioNet_InterruptManagement_AddReg
+
+[AeroVirtioNet_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 3
+```
+
+Notes:
+
+- `0x00010001` = `REG_DWORD`
+- `MessageNumberLimit` is a **request**, not a guarantee. The driver remains functional with fewer messages and will fall back as described below.
+
+### Expected vector mapping
+
+When MSI-X is available and Windows grants enough messages, the driver uses:
+
+- **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
+- **Vector/message 1:** queue 0 (`rxq`)
+- **Vector/message 2:** queue 1 (`txq`)
+
+If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
+
+- **All sources on vector/message 0** (config + all queues)
+
+### Troubleshooting / verifying MSI is active
+
+In **Device Manager** (`devmgmt.msc`) → device **Properties** → **Resources**:
+
+- **INTx** typically shows a single small IRQ number (e.g. `IRQ 17`) and may be **shared**.
+- **MSI/MSI-X** typically shows one or more interrupt entries with larger values (often shown in hex) and they are usually **not shared**.
+
+See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
 ## Files
 

@@ -165,7 +165,7 @@ Current behavior:
 Baseline requirements:
 
 - Work correctly with **PCI INTx** + the virtio ISR status register (contract v1).
-- The current driver package uses **INTx only** (it does not opt into MSI/MSI-X).
+- MSI/MSI-X is an optional enhancement over INTx; enabling it on Windows 7 requires INF opt-in and driver-side virtio MSI-X vector programming.
 
 Behavior:
 

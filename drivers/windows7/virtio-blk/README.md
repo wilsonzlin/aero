@@ -23,7 +23,50 @@ The miniport supports both:
 - **INTx (line-based)** — legacy virtio-pci interrupt semantics using the ISR status byte (read-to-ack).
 - **MSI/MSI-X (message-signaled)** — when Windows assigns message interrupts, the driver programs the virtio MSI-X routing registers (`msix_config` / `queue_msix_vector`) and services completions without relying on ISR status.
 
-On Windows 7, message-signaled interrupts are opt-in via INF; `inf/aero_virtio_blk.inf` requests MSI/MSI-X and falls back to INTx automatically when MSI isn't available.
+On Windows 7, message-signaled interrupts are opt-in via INF. The shipped `inf/aero_virtio_blk.inf` requests MSI/MSI-X and Windows will fall back to INTx when MSI isn't available.
+
+### INF registry keys
+
+The MSI opt-in keys live under:
+
+`Interrupt Management\\MessageSignaledInterruptProperties`
+
+As shipped in `inf/aero_virtio_blk.inf`:
+
+```inf
+[AeroVirtioBlk_Inst.HW]
+AddReg = AeroVirtioBlk_Inst_HW_AddReg
+
+[AeroVirtioBlk_Inst_HW_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", "MSISupported", 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", "MessageNumberLimit", 0x00010001, 4
+```
+
+Notes:
+
+- `0x00010001` = `REG_DWORD`
+- `MessageNumberLimit` is a request; Windows may grant fewer messages than requested.
+
+### Expected vector mapping
+
+When MSI-X is active and Windows grants enough messages, the driver uses:
+
+- **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
+- **Vector/message 1:** queue 0 (`requestq`)
+
+Fallback when messages are insufficient:
+
+- **All sources on vector/message 0** (config + all queues)
+
+### Troubleshooting / verifying MSI is active
+
+In **Device Manager** → device **Properties** → **Resources**:
+
+- **INTx** typically shows a single small IRQ number (and may be shared).
+- **MSI/MSI-X** typically shows one or more interrupt entries with larger values (often shown in hex) and they are usually not shared.
+
+See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
 ## Files
 
