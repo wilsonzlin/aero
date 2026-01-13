@@ -39,6 +39,9 @@ path = "../crates/aero-gpu"
 [dependencies.aero-dxbc]
 path = "../crates/aero-dxbc"
 
+[dependencies.aero-d3d11]
+path = "../crates/aero-d3d11"
+
 [dependencies.aero-d3d9]
 path = "../crates/aero-d3d9"
 
