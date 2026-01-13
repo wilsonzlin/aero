@@ -3242,9 +3242,54 @@ impl Machine {
         &self.cpu.state
     }
 
+    /// Debug/testing helper: returns the CPU state for vCPU `idx`.
+    ///
+    /// This exists to make SMP bring-up tests deterministic: the canonical `Machine` exposes
+    /// multiple CPUs that share guest-physical address space, so tests need a stable way to inspect
+    /// per-vCPU state without relying on guest execution.
+    ///
+    /// Note: `Machine` currently only executes vCPU0. The canonical PC platform interrupt complex
+    /// does model multiple LAPICs (see [`Machine::read_lapic_u32`] / [`Machine::write_lapic_u32`]),
+    /// but additional CPU cores are not scheduled/executed yet, so only vCPU0 has a meaningful
+    /// architectural [`CpuState`] here.
+    ///
+    /// # Panics
+    /// Panics if `idx` is out of range, or if `idx != 0` (since only vCPU0 CPU state exists today).
+    pub fn cpu_by_index(&self, idx: usize) -> &CpuState {
+        let cpu_count = self.cfg.cpu_count as usize;
+        if idx >= cpu_count {
+            panic!("cpu index {idx} out of range (cpu_count={})", self.cfg.cpu_count);
+        }
+        if idx != 0 {
+            panic!(
+                "cpu index {idx} is configured (cpu_count={}), but Machine currently only models vCPU0 CPU state",
+                self.cfg.cpu_count
+            );
+        }
+        &self.cpu.state
+    }
+
     /// Mutable access to the current CPU state (debug/testing only).
     pub fn cpu_mut(&mut self) -> &mut CpuState {
         &mut self.cpu.state
+    }
+
+    /// Debug/testing helper: returns mutable access to the CPU core for vCPU `idx`.
+    ///
+    /// # Panics
+    /// Panics if `idx` is out of range, or if `idx != 0` (since only vCPU0 CPU state exists today).
+    pub fn cpu_core_mut_by_index(&mut self, idx: usize) -> &mut CpuCore {
+        let cpu_count = self.cfg.cpu_count as usize;
+        if idx >= cpu_count {
+            panic!("cpu index {idx} out of range (cpu_count={})", self.cfg.cpu_count);
+        }
+        if idx != 0 {
+            panic!(
+                "cpu index {idx} is configured (cpu_count={}), but Machine currently only models vCPU0 CPU state",
+                self.cfg.cpu_count
+            );
+        }
+        &mut self.cpu
     }
 
     /// Guest physical address of the ACPI Root System Description Pointer (RSDP), if published.
