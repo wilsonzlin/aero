@@ -78,8 +78,9 @@ The AeroGPU Windows driver communicates with the emulator via a shared protocol.
 - `emulator/protocol/aerogpu/` — Emulator-side mirrors (Rust + TypeScript)
 
 Reference: `docs/abi/aerogpu-pci-identity.md` (canonical AeroGPU VID/DID contract; note that the canonical
-`aero_machine::Machine` can expose the AeroGPU PCI identity via `MachineConfig::enable_aerogpu`, and uses
-the standalone `aero_gpu_vga` + `00:0c.0` PCI stub when `enable_vga=true`).
+`aero_machine::Machine` can expose the AeroGPU PCI identity and BAR1-backed VRAM via
+`MachineConfig::enable_aerogpu` (mutually exclusive with `enable_vga`), and uses the standalone
+`aero_gpu_vga` + `00:0c.0` PCI stub when `enable_vga=true`).
 
 ---
 

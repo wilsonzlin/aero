@@ -100,10 +100,11 @@ Current status: the canonical `aero_machine::Machine` boot display is still prov
 standalone `aero_gpu_vga` VGA/VBE implementation (with a minimal “Standard VGA”-like PCI stub at
 `00:0c.0` for VBE LFB routing) when `MachineConfig::enable_vga=true`.
 
-The canonical AeroGPU PCI identity (`A3A0:0001` at `00:07.0`) can be exposed via
-`MachineConfig::enable_aerogpu=true` for stable Windows driver binding and BAR enumeration;
-integrating the full AeroGPU device model (including VGA/VBE compatibility + scanout handoff) is
-tracked separately.
+The canonical AeroGPU PCI identity (`A3A0:0001` at `00:07.0`) can be enabled via
+`MachineConfig::enable_aerogpu=true`. In `aero_machine` today this wires BAR1-backed VRAM and
+aliases the legacy VGA window (`0xA0000..0xBFFFF`) into that VRAM (minimal legacy VGA decode), but
+the full AeroGPU device model (VBE mode set + scanout handoff + BAR0 WDDM/MMIO/ring protocol) is
+integrated separately.
 
 See: [AeroGPU Legacy VGA/VBE Compatibility](./16-aerogpu-vga-vesa-compat.md)
 
