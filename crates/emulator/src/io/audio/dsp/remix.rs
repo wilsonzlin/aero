@@ -292,4 +292,39 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn errors_do_not_modify_output_buffer() {
+        let input = [0.0f32, 1.0, 2.0, 3.0];
+        let mut out = vec![9.0f32, 8.0, 7.0];
+
+        let err = remix_interleaved(&input, 0, 2, &mut out).unwrap_err();
+        assert_eq!(err, RemixError::InvalidChannels);
+        assert_eq!(out, vec![9.0, 8.0, 7.0]);
+
+        let err = remix_interleaved(&input, 3, 2, &mut out).unwrap_err();
+        assert_eq!(
+            err,
+            RemixError::InputLengthNotAligned {
+                expected_multiple: 3
+            }
+        );
+        assert_eq!(out, vec![9.0, 8.0, 7.0]);
+    }
+
+    #[test]
+    fn empty_input_produces_empty_output() {
+        let input = [];
+        let mut out = vec![1.0f32, 2.0, 3.0];
+        remix_interleaved(&input, 2, 4, &mut out).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn remix_overwrites_existing_output() {
+        let input = [0.25f32, -0.5];
+        let mut out = vec![9.0f32, 8.0, 7.0, 6.0];
+        remix_interleaved(&input, 1, 2, &mut out).unwrap();
+        assert_eq!(out, vec![0.25, 0.25, -0.5, -0.5]);
+    }
 }
