@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bitset>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstddef>
 #include <cstring>
@@ -1209,10 +1210,8 @@ AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorProperties, D3d9TraceFunc::DeviceSetCur
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetCursorPosition, D3d9TraceFunc::DeviceSetCursorPosition, S_OK);
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnShowCursor, D3d9TraceFunc::DeviceShowCursor, S_OK);
 
-// Patch rendering (N-Patch/patches) and ProcessVertices are not supported yet.
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawRectPatch, D3d9TraceFunc::DeviceDrawRectPatch, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawTriPatch, D3d9TraceFunc::DeviceDrawTriPatch, D3DERR_NOTAVAILABLE);
-AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeletePatch, D3d9TraceFunc::DeviceDeletePatch, D3DERR_NOTAVAILABLE);
+// Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch).
+// ProcessVertices is still not supported yet.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnProcessVertices, D3d9TraceFunc::DeviceProcessVertices, D3DERR_NOTAVAILABLE);
 
 // Dialog-box mode impacts present/occlusion semantics; treat as a no-op for bring-up.
@@ -2538,6 +2537,9 @@ constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
+bool fixedfunc_fvf_supported(uint32_t fvf) {
+  return fvf == kSupportedFvfXyzrhwDiffuse || fvf == kSupportedFvfXyzrhwDiffuseTex1;
+}
 
 #pragma pack(push, 1)
 struct D3DVERTEXELEMENT9_COMPAT {
@@ -2552,8 +2554,8 @@ struct D3DVERTEXELEMENT9_COMPAT {
 
 static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9 must be 8 bytes");
 
-constexpr uint8_t kD3dDeclTypeFloat4 = 3;
 constexpr uint8_t kD3dDeclTypeFloat2 = 1;
+constexpr uint8_t kD3dDeclTypeFloat4 = 3;
 constexpr uint8_t kD3dDeclTypeD3dColor = 4;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
 
@@ -4097,6 +4099,16 @@ float read_f32_unaligned(const uint8_t* p) {
 
 void write_f32_unaligned(uint8_t* p, float v) {
   std::memcpy(p, &v, sizeof(v));
+}
+
+uint64_t fnv1a64_hash(const uint8_t* data, size_t len) {
+  // 64-bit FNV-1a (deterministic across platforms).
+  uint64_t h = 14695981039346656037ull;
+  for (size_t i = 0; i < len; ++i) {
+    h ^= static_cast<uint64_t>(data[i]);
+    h *= 1099511628211ull;
+  }
+  return h;
 }
 
 void get_viewport_dims_locked(Device* dev, float* out_x, float* out_y, float* out_w, float* out_h) {
@@ -9502,7 +9514,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     }
   }
   dev->fvf = matches_fvf_xyzrhw_diffuse_tex1 ? kSupportedFvfXyzrhwDiffuseTex1
-                                            : (matches_fvf_xyzrhw_diffuse ? kSupportedFvfXyzrhwDiffuse : 0);
+                                             : (matches_fvf_xyzrhw_diffuse ? kSupportedFvfXyzrhwDiffuse : 0);
   stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
   return trace.ret(S_OK);
 }
@@ -9566,21 +9578,21 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   // `drivers/aerogpu/umd/d3d9/README.md`). Other FVFs may be accepted and cached
   // so GetFVF + state blocks behave deterministically, but rendering is not
   // guaranteed for unsupported formats.
-  if (fvf == kSupportedFvfXyzrhwDiffuse || fvf == kSupportedFvfXyzrhwDiffuseTex1) {
-    VertexDecl** fvf_decl_slot =
+  if (fixedfunc_fvf_supported(fvf)) {
+    VertexDecl** decl_slot =
         (fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fvf_vertex_decl : &dev->fvf_vertex_decl_tex1;
-    if (!*fvf_decl_slot) {
+
+    if (!*decl_slot) {
+      // Build the declaration for this FVF. The fixed-function fallback path
+      // uses an internal declaration so it can bind a known input layout.
       if (fvf == kSupportedFvfXyzrhwDiffuse) {
-        // Build the declaration for this FVF. The fixed-function fallback path
-        // uses an internal declaration so it can bind a known input layout.
         const D3DVERTEXELEMENT9_COMPAT elems[] = {
             // stream, offset, type, method, usage, usage_index
             {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
             {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
             {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
         };
-
-        *fvf_decl_slot = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        *decl_slot = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
       } else {
         const D3DVERTEXELEMENT9_COMPAT elems[] = {
             // stream, offset, type, method, usage, usage_index
@@ -9589,20 +9601,18 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
             {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
             {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
         };
-
-        *fvf_decl_slot = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+        *decl_slot = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
       }
-
-      if (!*fvf_decl_slot) {
+      if (!*decl_slot) {
         return trace.ret(E_OUTOFMEMORY);
       }
     }
 
-    if (!emit_set_input_layout_locked(dev, *fvf_decl_slot)) {
+    if (!emit_set_input_layout_locked(dev, *decl_slot)) {
       return trace.ret(E_OUTOFMEMORY);
     }
     dev->fvf = fvf;
-    stateblock_record_vertex_decl_locked(dev, *fvf_decl_slot, dev->fvf);
+    stateblock_record_vertex_decl_locked(dev, *decl_slot, dev->fvf);
     return trace.ret(S_OK);
   }
 
@@ -13748,6 +13758,890 @@ HRESULT AEROGPU_D3D9_CALL device_clear(
   return trace.ret(S_OK);
 }
 
+namespace {
+
+bool patch_sig_equal(const PatchCacheSignature& a, const PatchCacheSignature& b) {
+  if (a.kind != b.kind) return false;
+  if (a.fvf != b.fvf) return false;
+  if (a.stride_bytes != b.stride_bytes) return false;
+  if (a.start_vertex_offset != b.start_vertex_offset) return false;
+  if (a.num_vertices != b.num_vertices) return false;
+  if (a.basis != b.basis) return false;
+  if (a.degree != b.degree) return false;
+  for (size_t i = 0; i < 4; ++i) {
+    if (a.seg_bits[i] != b.seg_bits[i]) return false;
+  }
+  if (a.control_point_hash != b.control_point_hash) return false;
+  return true;
+}
+
+uint32_t clamp_patch_segs(float v) {
+  if (!std::isfinite(v) || v <= 0.0f) {
+    return 1u;
+  }
+  if (v >= 64.0f) {
+    return 64u;
+  }
+  long r = std::lround(static_cast<double>(v));
+  if (r < 1) {
+    return 1u;
+  }
+  if (r > 64) {
+    return 64u;
+  }
+  return static_cast<uint32_t>(r);
+}
+
+struct PatchEvalPoint {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float rhw = 1.0f;
+  float a = 255.0f;
+  float r = 255.0f;
+  float g = 255.0f;
+  float b = 255.0f;
+  float u = 0.0f;
+  float v = 0.0f;
+};
+
+void unpack_color_u32(uint32_t c, PatchEvalPoint* out) {
+  if (!out) {
+    return;
+  }
+  out->a = static_cast<float>((c >> 24) & 0xFF);
+  out->r = static_cast<float>((c >> 16) & 0xFF);
+  out->g = static_cast<float>((c >> 8) & 0xFF);
+  out->b = static_cast<float>((c >> 0) & 0xFF);
+}
+
+uint32_t pack_color_u32(const PatchEvalPoint& p) {
+  auto clamp_u8 = [](float v) -> uint32_t {
+    if (!std::isfinite(v)) {
+      return 0u;
+    }
+    v = std::clamp(v, 0.0f, 255.0f);
+    return static_cast<uint32_t>(std::lround(static_cast<double>(v)));
+  };
+  const uint32_t a = clamp_u8(p.a);
+  const uint32_t r = clamp_u8(p.r);
+  const uint32_t g = clamp_u8(p.g);
+  const uint32_t b = clamp_u8(p.b);
+  return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+void bezier_cubic_weights(float t, float out_w[4]) {
+  const float s = 1.0f - t;
+  const float s2 = s * s;
+  const float t2 = t * t;
+  out_w[0] = s2 * s;
+  out_w[1] = 3.0f * t * s2;
+  out_w[2] = 3.0f * t2 * s;
+  out_w[3] = t2 * t;
+}
+
+HRESULT tessellate_rect_patch_cubic(
+    const uint8_t* control_points,
+    uint32_t stride_bytes,
+    bool has_tex0,
+    uint32_t seg_u,
+    uint32_t seg_v,
+    PatchCacheEntry* out) {
+  if (!control_points || stride_bytes < 20 || seg_u == 0 || seg_v == 0 || !out) {
+    return E_INVALIDARG;
+  }
+  // Only cubic Bezier rect patches are supported: 4x4 control points.
+  PatchEvalPoint cp[16]{};
+  for (uint32_t i = 0; i < 16; ++i) {
+    const uint8_t* src = control_points + static_cast<size_t>(i) * stride_bytes;
+    cp[i].x = read_f32_unaligned(src + 0);
+    cp[i].y = read_f32_unaligned(src + 4);
+    cp[i].z = read_f32_unaligned(src + 8);
+    cp[i].rhw = read_f32_unaligned(src + 12);
+    uint32_t c = 0;
+    std::memcpy(&c, src + 16, sizeof(c));
+    unpack_color_u32(c, &cp[i]);
+    if (has_tex0 && stride_bytes >= 28) {
+      cp[i].u = read_f32_unaligned(src + 20);
+      cp[i].v = read_f32_unaligned(src + 24);
+    }
+  }
+
+  const uint32_t vert_w = seg_u + 1;
+  const uint32_t vert_h = seg_v + 1;
+  const uint64_t vert_count_u64 = static_cast<uint64_t>(vert_w) * static_cast<uint64_t>(vert_h);
+  if (vert_count_u64 == 0 || vert_count_u64 > 0x7FFFFFFFull) {
+    return E_INVALIDARG;
+  }
+  const uint32_t vert_count = static_cast<uint32_t>(vert_count_u64);
+
+  const uint64_t vb_bytes_u64 = vert_count_u64 * stride_bytes;
+  if (vb_bytes_u64 == 0 || vb_bytes_u64 > 0x7FFFFFFFull) {
+    return E_INVALIDARG;
+  }
+
+  try {
+    out->vertices.resize(static_cast<size_t>(vb_bytes_u64));
+    out->indices_u16.clear();
+    out->indices_u16.reserve(static_cast<size_t>(seg_u) * static_cast<size_t>(seg_v) * 6);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  const uint8_t* template_vertex = control_points;
+
+  for (uint32_t y = 0; y < vert_h; ++y) {
+    const float v = static_cast<float>(y) / static_cast<float>(seg_v);
+    float wv[4];
+    bezier_cubic_weights(v, wv);
+    for (uint32_t x = 0; x < vert_w; ++x) {
+      const float u = static_cast<float>(x) / static_cast<float>(seg_u);
+      float wu[4];
+      bezier_cubic_weights(u, wu);
+
+      PatchEvalPoint p{};
+      p.x = p.y = p.z = p.rhw = 0.0f;
+      p.a = p.r = p.g = p.b = 0.0f;
+      p.u = p.v = 0.0f;
+
+      for (uint32_t j = 0; j < 4; ++j) {
+        for (uint32_t i = 0; i < 4; ++i) {
+          const float w = wu[i] * wv[j];
+          const PatchEvalPoint& c = cp[j * 4 + i];
+          p.x += c.x * w;
+          p.y += c.y * w;
+          p.z += c.z * w;
+          p.rhw += c.rhw * w;
+          p.a += c.a * w;
+          p.r += c.r * w;
+          p.g += c.g * w;
+          p.b += c.b * w;
+          if (has_tex0) {
+            p.u += c.u * w;
+            p.v += c.v * w;
+          }
+        }
+      }
+
+      const uint32_t color = pack_color_u32(p);
+      uint8_t* dst = out->vertices.data() + (static_cast<size_t>(y) * vert_w + x) * stride_bytes;
+      std::memcpy(dst, template_vertex, stride_bytes);
+      write_f32_unaligned(dst + 0, p.x);
+      write_f32_unaligned(dst + 4, p.y);
+      write_f32_unaligned(dst + 8, p.z);
+      write_f32_unaligned(dst + 12, p.rhw);
+      std::memcpy(dst + 16, &color, sizeof(color));
+      if (has_tex0 && stride_bytes >= 28) {
+        write_f32_unaligned(dst + 20, p.u);
+        write_f32_unaligned(dst + 24, p.v);
+      }
+    }
+  }
+
+  for (uint32_t y = 0; y < seg_v; ++y) {
+    for (uint32_t x = 0; x < seg_u; ++x) {
+      const uint16_t v0 = static_cast<uint16_t>(y * vert_w + x);
+      const uint16_t v1 = static_cast<uint16_t>(v0 + 1);
+      const uint16_t v2 = static_cast<uint16_t>(v0 + vert_w);
+      const uint16_t v3 = static_cast<uint16_t>(v2 + 1);
+      out->indices_u16.push_back(v0);
+      out->indices_u16.push_back(v1);
+      out->indices_u16.push_back(v2);
+      out->indices_u16.push_back(v1);
+      out->indices_u16.push_back(v3);
+      out->indices_u16.push_back(v2);
+    }
+  }
+
+  return S_OK;
+}
+
+HRESULT tessellate_tri_patch_cubic(
+    const uint8_t* control_points,
+    uint32_t stride_bytes,
+    bool has_tex0,
+    uint32_t segs,
+    PatchCacheEntry* out) {
+  if (!control_points || stride_bytes < 20 || segs == 0 || !out) {
+    return E_INVALIDARG;
+  }
+
+  // Only cubic Bezier tri patches are supported: 10 control points.
+  PatchEvalPoint cp[10]{};
+  for (uint32_t i = 0; i < 10; ++i) {
+    const uint8_t* src = control_points + static_cast<size_t>(i) * stride_bytes;
+    cp[i].x = read_f32_unaligned(src + 0);
+    cp[i].y = read_f32_unaligned(src + 4);
+    cp[i].z = read_f32_unaligned(src + 8);
+    cp[i].rhw = read_f32_unaligned(src + 12);
+    uint32_t c = 0;
+    std::memcpy(&c, src + 16, sizeof(c));
+    unpack_color_u32(c, &cp[i]);
+    if (has_tex0 && stride_bytes >= 28) {
+      cp[i].u = read_f32_unaligned(src + 20);
+      cp[i].v = read_f32_unaligned(src + 24);
+    }
+  }
+
+  const uint64_t vert_count_u64 =
+      static_cast<uint64_t>(segs + 1) * static_cast<uint64_t>(segs + 2) / 2ull;
+  if (vert_count_u64 == 0 || vert_count_u64 > 0x7FFFFFFFull) {
+    return E_INVALIDARG;
+  }
+  const uint64_t vb_bytes_u64 = vert_count_u64 * stride_bytes;
+  if (vb_bytes_u64 == 0 || vb_bytes_u64 > 0x7FFFFFFFull) {
+    return E_INVALIDARG;
+  }
+
+  try {
+    out->vertices.resize(static_cast<size_t>(vb_bytes_u64));
+    out->indices_u16.clear();
+    out->indices_u16.reserve(static_cast<size_t>(segs) * static_cast<size_t>(segs) * 3);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  const uint8_t* template_vertex = control_points;
+  const auto index_of = [segs](uint32_t i, uint32_t j) -> uint32_t {
+    // Row i has (segs+1-i) vertices.
+    return i * (segs + 1) - (i * (i - 1)) / 2 + j;
+  };
+
+  uint32_t out_idx = 0;
+  for (uint32_t i = 0; i <= segs; ++i) {
+    for (uint32_t j = 0; j <= (segs - i); ++j) {
+      const float u = static_cast<float>(i) / static_cast<float>(segs);
+      const float v = static_cast<float>(j) / static_cast<float>(segs);
+      const float w = 1.0f - u - v;
+
+      const float u2 = u * u;
+      const float v2 = v * v;
+      const float w2 = w * w;
+
+      const float u3 = u2 * u;
+      const float v3 = v2 * v;
+      const float w3 = w2 * w;
+
+      // Assumed control point order:
+      // [0]=u^3, [1]=3u^2v, [2]=3uv^2, [3]=v^3,
+      // [4]=3u^2w, [5]=6uvw, [6]=3v^2w,
+      // [7]=3uw^2, [8]=3vw^2, [9]=w^3.
+      const float terms[10] = {
+          u3,
+          3.0f * u2 * v,
+          3.0f * u * v2,
+          v3,
+          3.0f * u2 * w,
+          6.0f * u * v * w,
+          3.0f * v2 * w,
+          3.0f * u * w2,
+          3.0f * v * w2,
+          w3,
+      };
+
+      PatchEvalPoint p{};
+      p.x = p.y = p.z = p.rhw = 0.0f;
+      p.a = p.r = p.g = p.b = 0.0f;
+      p.u = p.v = 0.0f;
+      for (uint32_t k = 0; k < 10; ++k) {
+        const float t = terms[k];
+        const PatchEvalPoint& c = cp[k];
+        p.x += c.x * t;
+        p.y += c.y * t;
+        p.z += c.z * t;
+        p.rhw += c.rhw * t;
+        p.a += c.a * t;
+        p.r += c.r * t;
+        p.g += c.g * t;
+        p.b += c.b * t;
+        if (has_tex0) {
+          p.u += c.u * t;
+          p.v += c.v * t;
+        }
+      }
+
+      const uint32_t color = pack_color_u32(p);
+      uint8_t* dst = out->vertices.data() + static_cast<size_t>(out_idx) * stride_bytes;
+      out_idx++;
+      std::memcpy(dst, template_vertex, stride_bytes);
+      write_f32_unaligned(dst + 0, p.x);
+      write_f32_unaligned(dst + 4, p.y);
+      write_f32_unaligned(dst + 8, p.z);
+      write_f32_unaligned(dst + 12, p.rhw);
+      std::memcpy(dst + 16, &color, sizeof(color));
+      if (has_tex0 && stride_bytes >= 28) {
+        write_f32_unaligned(dst + 20, p.u);
+        write_f32_unaligned(dst + 24, p.v);
+      }
+    }
+  }
+
+  for (uint32_t i = 0; i < segs; ++i) {
+    for (uint32_t j = 0; j < (segs - i); ++j) {
+      const uint32_t i0 = index_of(i, j);
+      const uint32_t i1 = index_of(i + 1, j);
+      const uint32_t i2 = index_of(i, j + 1);
+      out->indices_u16.push_back(static_cast<uint16_t>(i0));
+      out->indices_u16.push_back(static_cast<uint16_t>(i1));
+      out->indices_u16.push_back(static_cast<uint16_t>(i2));
+
+      if (j + 1 < (segs - i)) {
+        const uint32_t i3 = index_of(i + 1, j + 1);
+        out->indices_u16.push_back(static_cast<uint16_t>(i1));
+        out->indices_u16.push_back(static_cast<uint16_t>(i3));
+        out->indices_u16.push_back(static_cast<uint16_t>(i2));
+      }
+    }
+  }
+
+  return S_OK;
+}
+
+} // namespace
+
+HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_DRAWRECTPATCH* pDrawRectPatch) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceDrawRectPatch,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      pDrawRectPatch ? static_cast<uint64_t>(pDrawRectPatch->Handle) : 0,
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pDrawRectPatch || !pDrawRectPatch->pNumSegs || !pDrawRectPatch->pRectPatchInfo) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return trace.ret(E_INVALIDARG);
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (!fixedfunc_fvf_supported(dev->fvf) || dev->user_vs || dev->user_ps) {
+    return trace.ret(D3DERR_INVALIDCALL);
+  }
+
+  DeviceStateStream& ss = dev->streams[0];
+  if (!ss.vb || ss.stride_bytes < 20) {
+    return trace.ret(E_FAIL);
+  }
+
+  const D3DRECTPATCH_INFO* info = pDrawRectPatch->pRectPatchInfo;
+  if (!info || info->Basis != D3DBASIS_BEZIER || info->Degree != D3DDEGREE_CUBIC || info->NumVertices != 16) {
+    return trace.ret(D3DERR_NOTAVAILABLE);
+  }
+
+  const uint32_t seg_bits[4] = {
+      f32_bits(pDrawRectPatch->pNumSegs[0]),
+      f32_bits(pDrawRectPatch->pNumSegs[1]),
+      f32_bits(pDrawRectPatch->pNumSegs[2]),
+      f32_bits(pDrawRectPatch->pNumSegs[3]),
+  };
+
+  const float seg_f0 = pDrawRectPatch->pNumSegs[0];
+  const float seg_f1 = pDrawRectPatch->pNumSegs[1];
+  const float seg_f2 = pDrawRectPatch->pNumSegs[2];
+  const float seg_f3 = pDrawRectPatch->pNumSegs[3];
+
+  const uint32_t seg_u = clamp_patch_segs(std::max(seg_f0, seg_f2));
+  const uint32_t seg_v = clamp_patch_segs(std::max(seg_f1, seg_f3));
+
+  const uint32_t handle = static_cast<uint32_t>(pDrawRectPatch->Handle);
+  const uint32_t start_vertex = static_cast<uint32_t>(info->StartVertexOffset);
+  const uint32_t cp_count = static_cast<uint32_t>(info->NumVertices);
+  const uint64_t src_offset_u64 = static_cast<uint64_t>(ss.offset_bytes) +
+                                  static_cast<uint64_t>(start_vertex) * static_cast<uint64_t>(ss.stride_bytes);
+  const uint64_t size_u64 = static_cast<uint64_t>(cp_count) * static_cast<uint64_t>(ss.stride_bytes);
+  const uint64_t vb_size_u64 = ss.vb->size_bytes;
+  if (src_offset_u64 > vb_size_u64 || size_u64 > vb_size_u64 - src_offset_u64) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const uint8_t* control_bytes = nullptr;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  void* vb_ptr = nullptr;
+  bool vb_locked = false;
+#endif
+
+  bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(src_offset_u64 + size_u64);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (ss.vb->backing_alloc_id != 0) {
+    use_vb_storage = false;
+  }
+#endif
+
+  if (use_vb_storage) {
+    control_bytes = ss.vb->storage.data() + static_cast<size_t>(src_offset_u64);
+  } else {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+      const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                   dev->wddm_device,
+                                                   ss.vb->wddm_hAllocation,
+                                                   src_offset_u64,
+                                                   size_u64,
+                                                   kD3DLOCK_READONLY,
+                                                   &vb_ptr,
+                                                   dev->wddm_context.hContext);
+      if (FAILED(lock_hr) || !vb_ptr) {
+        return trace.ret(FAILED(lock_hr) ? lock_hr : E_FAIL);
+      }
+      vb_locked = true;
+      control_bytes = static_cast<const uint8_t*>(vb_ptr);
+    } else
+#endif
+    {
+      return trace.ret(E_INVALIDARG);
+    }
+  }
+
+  const uint64_t control_hash = fnv1a64_hash(control_bytes, static_cast<size_t>(size_u64));
+
+  PatchCacheSignature sig{};
+  sig.kind = PatchKind::Rect;
+  sig.fvf = dev->fvf;
+  sig.stride_bytes = ss.stride_bytes;
+  sig.start_vertex_offset = start_vertex;
+  sig.num_vertices = cp_count;
+  sig.basis = static_cast<uint32_t>(info->Basis);
+  sig.degree = static_cast<uint32_t>(info->Degree);
+  sig.seg_bits[0] = seg_bits[0];
+  sig.seg_bits[1] = seg_bits[1];
+  sig.seg_bits[2] = seg_bits[2];
+  sig.seg_bits[3] = seg_bits[3];
+  sig.control_point_hash = control_hash;
+
+  PatchCacheEntry temp{};
+  PatchCacheEntry* entry = &temp;
+  if (handle != 0) {
+    entry = &dev->patch_cache[handle];
+  }
+
+  HRESULT hr = S_OK;
+  const bool has_tex0 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
+  bool hit = (handle != 0) && patch_sig_equal(entry->sig, sig) && !entry->vertices.empty() && !entry->indices_u16.empty();
+  if (hit) {
+    dev->patch_cache_hit_count++;
+  } else {
+    dev->patch_tessellate_count++;
+    entry->sig = sig;
+    hr = tessellate_rect_patch_cubic(control_bytes, ss.stride_bytes, has_tex0, seg_u, seg_v, entry);
+    if (FAILED(hr)) {
+      if (handle != 0) {
+        dev->patch_cache.erase(handle);
+      }
+    }
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (vb_locked) {
+    const HRESULT unlock_hr =
+        wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, ss.vb->wddm_hAllocation, dev->wddm_context.hContext);
+    if (FAILED(unlock_hr)) {
+      logf("aerogpu-d3d9: DrawRectPatch: UnlockCb failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+           static_cast<unsigned long>(unlock_hr),
+           static_cast<unsigned>(ss.vb->backing_alloc_id),
+           static_cast<unsigned long long>(ss.vb->wddm_hAllocation));
+      return trace.ret(unlock_hr);
+    }
+  }
+#endif
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  if (entry->vertices.empty() || entry->indices_u16.empty()) {
+    return trace.ret(E_FAIL);
+  }
+
+  // Upload + draw using the scratch UP buffers.
+  const uint32_t index_count = static_cast<uint32_t>(entry->indices_u16.size());
+  const uint64_t vertex_count_u64 = static_cast<uint64_t>(entry->vertices.size()) / ss.stride_bytes;
+  if (vertex_count_u64 == 0 || vertex_count_u64 > 0x7FFFFFFFull) {
+    return trace.ret(E_FAIL);
+  }
+  const uint32_t vertex_count = static_cast<uint32_t>(vertex_count_u64);
+
+  DeviceStateStream saved_stream = dev->streams[0];
+  Resource* saved_ib = dev->index_buffer;
+  const D3DDDIFORMAT saved_fmt = dev->index_format;
+  const uint32_t saved_offset = dev->index_offset_bytes;
+
+  std::vector<uint8_t> converted;
+  const void* vb_upload_data = entry->vertices.data();
+  uint32_t vb_upload_size = static_cast<uint32_t>(entry->vertices.size());
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    hr = convert_xyzrhw_to_clipspace_locked(dev, vb_upload_data, ss.stride_bytes, vertex_count, &converted);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+    vb_upload_data = converted.data();
+    vb_upload_size = static_cast<uint32_t>(converted.size());
+  }
+
+  hr = ensure_up_vertex_buffer_locked(dev, vb_upload_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+  hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, vb_upload_data, vb_upload_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  const uint32_t ib_size = index_count * 2;
+  hr = ensure_up_index_buffer_locked(dev, ib_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+  hr = emit_upload_buffer_locked(dev, dev->up_index_buffer, entry->indices_u16.data(), ib_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, ss.stride_bytes)) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+
+  dev->index_buffer = dev->up_index_buffer;
+  dev->index_format = kD3dFmtIndex16;
+  dev->index_offset_bytes = 0;
+
+  auto* ib_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!ib_cmd) {
+    (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+    dev->index_buffer = saved_ib;
+    dev->index_format = saved_fmt;
+    dev->index_offset_bytes = saved_offset;
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  ib_cmd->buffer = dev->up_index_buffer ? dev->up_index_buffer->handle : 0;
+  ib_cmd->format = d3d9_index_format_to_aerogpu(kD3dFmtIndex16);
+  ib_cmd->offset_bytes = 0;
+  ib_cmd->reserved0 = 0;
+
+  hr = ensure_fixedfunc_pipeline_locked(dev);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  const uint32_t topology = d3d9_prim_to_topology(D3DDDIPT_TRIANGLELIST);
+  if (!emit_set_topology_locked(dev, topology)) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  hr = track_draw_state_locked(dev);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  cmd->index_count = index_count;
+  cmd->instance_count = 1;
+  cmd->first_index = 0;
+  cmd->base_vertex = 0;
+  cmd->first_instance = 0;
+
+  // Restore stream source 0 and index buffer.
+  (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+  dev->index_buffer = saved_ib;
+  dev->index_format = saved_fmt;
+  dev->index_offset_bytes = saved_offset;
+  auto* restore_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (restore_cmd) {
+    restore_cmd->buffer = saved_ib ? saved_ib->handle : 0;
+    restore_cmd->format = d3d9_index_format_to_aerogpu(saved_fmt);
+    restore_cmd->offset_bytes = saved_offset;
+    restore_cmd->reserved0 = 0;
+  }
+
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_DRAWTRIPATCH* pDrawTriPatch) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceDrawTriPatch,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      pDrawTriPatch ? static_cast<uint64_t>(pDrawTriPatch->Handle) : 0,
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate || !pDrawTriPatch || !pDrawTriPatch->pNumSegs || !pDrawTriPatch->pTriPatchInfo) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return trace.ret(E_INVALIDARG);
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (!fixedfunc_fvf_supported(dev->fvf) || dev->user_vs || dev->user_ps) {
+    return trace.ret(D3DERR_INVALIDCALL);
+  }
+
+  DeviceStateStream& ss = dev->streams[0];
+  if (!ss.vb || ss.stride_bytes < 20) {
+    return trace.ret(E_FAIL);
+  }
+
+  const D3DTRIPATCH_INFO* info = pDrawTriPatch->pTriPatchInfo;
+  if (!info || info->Basis != D3DBASIS_BEZIER || info->Degree != D3DDEGREE_CUBIC || info->NumVertices != 10) {
+    return trace.ret(D3DERR_NOTAVAILABLE);
+  }
+
+  const uint32_t seg_bits[3] = {
+      f32_bits(pDrawTriPatch->pNumSegs[0]),
+      f32_bits(pDrawTriPatch->pNumSegs[1]),
+      f32_bits(pDrawTriPatch->pNumSegs[2]),
+  };
+
+  const float seg_f0 = pDrawTriPatch->pNumSegs[0];
+  const float seg_f1 = pDrawTriPatch->pNumSegs[1];
+  const float seg_f2 = pDrawTriPatch->pNumSegs[2];
+  const uint32_t segs = clamp_patch_segs(std::max(seg_f0, std::max(seg_f1, seg_f2)));
+
+  const uint32_t handle = static_cast<uint32_t>(pDrawTriPatch->Handle);
+  const uint32_t start_vertex = static_cast<uint32_t>(info->StartVertexOffset);
+  const uint32_t cp_count = static_cast<uint32_t>(info->NumVertices);
+  const uint64_t src_offset_u64 = static_cast<uint64_t>(ss.offset_bytes) +
+                                  static_cast<uint64_t>(start_vertex) * static_cast<uint64_t>(ss.stride_bytes);
+  const uint64_t size_u64 = static_cast<uint64_t>(cp_count) * static_cast<uint64_t>(ss.stride_bytes);
+  const uint64_t vb_size_u64 = ss.vb->size_bytes;
+  if (src_offset_u64 > vb_size_u64 || size_u64 > vb_size_u64 - src_offset_u64) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const uint8_t* control_bytes = nullptr;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  void* vb_ptr = nullptr;
+  bool vb_locked = false;
+#endif
+
+  bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(src_offset_u64 + size_u64);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (ss.vb->backing_alloc_id != 0) {
+    use_vb_storage = false;
+  }
+#endif
+
+  if (use_vb_storage) {
+    control_bytes = ss.vb->storage.data() + static_cast<size_t>(src_offset_u64);
+  } else {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+      const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                   dev->wddm_device,
+                                                   ss.vb->wddm_hAllocation,
+                                                   src_offset_u64,
+                                                   size_u64,
+                                                   kD3DLOCK_READONLY,
+                                                   &vb_ptr,
+                                                   dev->wddm_context.hContext);
+      if (FAILED(lock_hr) || !vb_ptr) {
+        return trace.ret(FAILED(lock_hr) ? lock_hr : E_FAIL);
+      }
+      vb_locked = true;
+      control_bytes = static_cast<const uint8_t*>(vb_ptr);
+    } else
+#endif
+    {
+      return trace.ret(E_INVALIDARG);
+    }
+  }
+
+  const uint64_t control_hash = fnv1a64_hash(control_bytes, static_cast<size_t>(size_u64));
+
+  PatchCacheSignature sig{};
+  sig.kind = PatchKind::Tri;
+  sig.fvf = dev->fvf;
+  sig.stride_bytes = ss.stride_bytes;
+  sig.start_vertex_offset = start_vertex;
+  sig.num_vertices = cp_count;
+  sig.basis = static_cast<uint32_t>(info->Basis);
+  sig.degree = static_cast<uint32_t>(info->Degree);
+  sig.seg_bits[0] = seg_bits[0];
+  sig.seg_bits[1] = seg_bits[1];
+  sig.seg_bits[2] = seg_bits[2];
+  sig.seg_bits[3] = 0;
+  sig.control_point_hash = control_hash;
+
+  PatchCacheEntry temp{};
+  PatchCacheEntry* entry = &temp;
+  if (handle != 0) {
+    entry = &dev->patch_cache[handle];
+  }
+
+  HRESULT hr = S_OK;
+  const bool has_tex0 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
+  const bool hit = (handle != 0) && patch_sig_equal(entry->sig, sig) && !entry->vertices.empty() && !entry->indices_u16.empty();
+  if (hit) {
+    dev->patch_cache_hit_count++;
+  } else {
+    dev->patch_tessellate_count++;
+    entry->sig = sig;
+    hr = tessellate_tri_patch_cubic(control_bytes, ss.stride_bytes, has_tex0, segs, entry);
+    if (FAILED(hr)) {
+      if (handle != 0) {
+        dev->patch_cache.erase(handle);
+      }
+    }
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (vb_locked) {
+    const HRESULT unlock_hr =
+        wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, ss.vb->wddm_hAllocation, dev->wddm_context.hContext);
+    if (FAILED(unlock_hr)) {
+      logf("aerogpu-d3d9: DrawTriPatch: UnlockCb failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+           static_cast<unsigned long>(unlock_hr),
+           static_cast<unsigned>(ss.vb->backing_alloc_id),
+           static_cast<unsigned long long>(ss.vb->wddm_hAllocation));
+      return trace.ret(unlock_hr);
+    }
+  }
+#endif
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  if (entry->vertices.empty() || entry->indices_u16.empty()) {
+    return trace.ret(E_FAIL);
+  }
+
+  // Upload + draw using the scratch UP buffers.
+  const uint32_t index_count = static_cast<uint32_t>(entry->indices_u16.size());
+  const uint64_t vertex_count_u64 = static_cast<uint64_t>(entry->vertices.size()) / ss.stride_bytes;
+  if (vertex_count_u64 == 0 || vertex_count_u64 > 0x7FFFFFFFull) {
+    return trace.ret(E_FAIL);
+  }
+  const uint32_t vertex_count = static_cast<uint32_t>(vertex_count_u64);
+
+  DeviceStateStream saved_stream = dev->streams[0];
+  Resource* saved_ib = dev->index_buffer;
+  const D3DDDIFORMAT saved_fmt = dev->index_format;
+  const uint32_t saved_offset = dev->index_offset_bytes;
+
+  std::vector<uint8_t> converted;
+  const void* vb_upload_data = entry->vertices.data();
+  uint32_t vb_upload_size = static_cast<uint32_t>(entry->vertices.size());
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    hr = convert_xyzrhw_to_clipspace_locked(dev, vb_upload_data, ss.stride_bytes, vertex_count, &converted);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+    vb_upload_data = converted.data();
+    vb_upload_size = static_cast<uint32_t>(converted.size());
+  }
+
+  hr = ensure_up_vertex_buffer_locked(dev, vb_upload_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+  hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, vb_upload_data, vb_upload_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  const uint32_t ib_size = index_count * 2;
+  hr = ensure_up_index_buffer_locked(dev, ib_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+  hr = emit_upload_buffer_locked(dev, dev->up_index_buffer, entry->indices_u16.data(), ib_size);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, ss.stride_bytes)) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+
+  dev->index_buffer = dev->up_index_buffer;
+  dev->index_format = kD3dFmtIndex16;
+  dev->index_offset_bytes = 0;
+
+  auto* ib_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!ib_cmd) {
+    (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+    dev->index_buffer = saved_ib;
+    dev->index_format = saved_fmt;
+    dev->index_offset_bytes = saved_offset;
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  ib_cmd->buffer = dev->up_index_buffer ? dev->up_index_buffer->handle : 0;
+  ib_cmd->format = d3d9_index_format_to_aerogpu(kD3dFmtIndex16);
+  ib_cmd->offset_bytes = 0;
+  ib_cmd->reserved0 = 0;
+
+  hr = ensure_fixedfunc_pipeline_locked(dev);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  const uint32_t topology = d3d9_prim_to_topology(D3DDDIPT_TRIANGLELIST);
+  if (!emit_set_topology_locked(dev, topology)) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  hr = track_draw_state_locked(dev);
+  if (FAILED(hr)) {
+    return trace.ret(hr);
+  }
+
+  auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  cmd->index_count = index_count;
+  cmd->instance_count = 1;
+  cmd->first_index = 0;
+  cmd->base_vertex = 0;
+  cmd->first_instance = 0;
+
+  // Restore stream source 0 and index buffer.
+  (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+  dev->index_buffer = saved_ib;
+  dev->index_format = saved_fmt;
+  dev->index_offset_bytes = saved_offset;
+  auto* restore_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (restore_cmd) {
+    restore_cmd->buffer = saved_ib ? saved_ib->handle : 0;
+    restore_cmd->format = d3d9_index_format_to_aerogpu(saved_fmt);
+    restore_cmd->offset_bytes = saved_offset;
+    restore_cmd->reserved0 = 0;
+  }
+
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_delete_patch(D3DDDI_HDEVICE hDevice, UINT Handle) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceDeletePatch,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(Handle),
+                      0,
+                      0);
+  if (!hDevice.pDrvPrivate) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return trace.ret(E_INVALIDARG);
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->patch_cache.erase(static_cast<uint32_t>(Handle));
+  return trace.ret(S_OK);
+}
+
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,
@@ -13771,8 +14665,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   // Fixed-function emulation path: for supported FVFs we upload a transformed
   // (clip-space) copy of the referenced vertices into a scratch VB and draw
   // using a built-in shader pair.
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     DeviceStateStream saved = dev->streams[0];
     DeviceStateStream& ss = dev->streams[0];
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
@@ -13982,8 +14875,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   const void* upload_data = pVertexData;
   uint32_t upload_size = static_cast<uint32_t>(size_u64);
 
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
     if (stride_bytes < min_stride) {
       return trace.ret(E_INVALIDARG);
@@ -14009,8 +14901,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(E_OUTOFMEMORY);
   }
 
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     hr = ensure_fixedfunc_pipeline_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -14131,8 +15022,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   const void* upload_data = pDraw->pVertexStreamZeroData;
   uint32_t upload_size = static_cast<uint32_t>(size_u64);
 
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
     if (pDraw->VertexStreamZeroStride < min_stride) {
       return E_INVALIDARG;
@@ -14159,8 +15049,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return E_OUTOFMEMORY;
   }
 
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     hr = ensure_fixedfunc_pipeline_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -14246,8 +15135,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   const void* vb_upload_data = pDraw->pVertexStreamZeroData;
   uint32_t vb_upload_size = static_cast<uint32_t>(vb_size_u64);
 
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
     if (pDraw->VertexStreamZeroStride < min_stride) {
       return E_INVALIDARG;
@@ -14300,8 +15188,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
 
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     hr = ensure_fixedfunc_pipeline_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
@@ -14442,8 +15329,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   // Fixed-function emulation for indexed draws: expand indices into a temporary
   // vertex stream and issue a non-indexed draw. This is intentionally
   // conservative but is sufficient for bring-up.
-  if ((dev->fvf == kSupportedFvfXyzrhwDiffuse || dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) &&
-      !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
     DeviceStateStream saved_stream = dev->streams[0];
     DeviceStateStream& ss = dev->streams[0];
 
@@ -16674,19 +17560,13 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
         aerogpu_d3d9_impl_pfnGetGammaRamp<decltype(pDeviceFuncs->pfnGetGammaRamp)>::pfnGetGammaRamp);
   }
   if constexpr (aerogpu_has_member_pfnDrawRectPatch<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(
-        pfnDrawRectPatch,
-        aerogpu_d3d9_stub_pfnDrawRectPatch<decltype(pDeviceFuncs->pfnDrawRectPatch)>::pfnDrawRectPatch);
+    AEROGPU_SET_D3D9DDI_FN(pfnDrawRectPatch, device_draw_rect_patch);
   }
   if constexpr (aerogpu_has_member_pfnDrawTriPatch<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(
-        pfnDrawTriPatch,
-        aerogpu_d3d9_stub_pfnDrawTriPatch<decltype(pDeviceFuncs->pfnDrawTriPatch)>::pfnDrawTriPatch);
+    AEROGPU_SET_D3D9DDI_FN(pfnDrawTriPatch, device_draw_tri_patch);
   }
   if constexpr (aerogpu_has_member_pfnDeletePatch<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(
-        pfnDeletePatch,
-        aerogpu_d3d9_stub_pfnDeletePatch<decltype(pDeviceFuncs->pfnDeletePatch)>::pfnDeletePatch);
+    AEROGPU_SET_D3D9DDI_FN(pfnDeletePatch, device_delete_patch);
   }
   if constexpr (aerogpu_has_member_pfnProcessVertices<D3D9DDI_DEVICEFUNCS>::value) {
     AEROGPU_SET_D3D9DDI_FN(
@@ -17214,6 +18094,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnDrawIndexedPrimitive = device_draw_indexed_primitive;
   pDeviceFuncs->pfnDrawPrimitive2 = device_draw_primitive2;
   pDeviceFuncs->pfnDrawIndexedPrimitive2 = device_draw_indexed_primitive2;
+  pDeviceFuncs->pfnDrawRectPatch = device_draw_rect_patch;
+  pDeviceFuncs->pfnDrawTriPatch = device_draw_tri_patch;
+  pDeviceFuncs->pfnDeletePatch = device_delete_patch;
   pDeviceFuncs->pfnCreateSwapChain = device_create_swap_chain;
   pDeviceFuncs->pfnDestroySwapChain = device_destroy_swap_chain;
   pDeviceFuncs->pfnGetSwapChain = device_get_swap_chain;

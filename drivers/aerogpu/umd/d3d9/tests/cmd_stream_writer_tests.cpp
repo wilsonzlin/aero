@@ -5065,6 +5065,236 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   return Check(c0 == kGreen, "DrawPrimitive: diffuse color preserved");
 }
 
+bool TestDrawRectPatchReusesTessellationCache() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vb = false;
+
+    ~Cleanup() {
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeletePatch != nullptr, "DeletePatch must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+
+  Vertex cps[16]{};
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  for (uint32_t y = 0; y < 4; ++y) {
+    for (uint32_t x = 0; x < 4; ++x) {
+      const uint32_t idx = y * 4 + x;
+      cps[idx].x = 64.0f + 32.0f * static_cast<float>(x);
+      cps[idx].y = 64.0f + 32.0f * static_cast<float>(y);
+      cps[idx].z = 0.5f;
+      cps[idx].rhw = 1.0f;
+      cps[idx].color = kGreen;
+    }
+  }
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 0;
+  create_res.width = 0;
+  create_res.height = 0;
+  create_res.depth = 0;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = sizeof(cps);
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pKmdAllocPrivateData = nullptr;
+  create_res.KmdAllocPrivateDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(control point VB)")) {
+    return false;
+  }
+  cleanup.hVb = create_res.hResource;
+  cleanup.has_vb = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(control point VB)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, cps, sizeof(cps));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(control point VB)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_res.hResource, 0, sizeof(Vertex));
+  if (!Check(hr == S_OK, "SetStreamSource(control point VB)")) {
+    return false;
+  }
+
+  float segs[4] = {2.0f, 2.0f, 2.0f, 2.0f};
+  D3DRECTPATCH_INFO info{};
+  info.StartVertexOffset = 0;
+  info.NumVertices = 16;
+  info.Basis = D3DBASIS_BEZIER;
+  info.Degree = D3DDEGREE_CUBIC;
+
+  D3DDDIARG_DRAWRECTPATCH draw{};
+  draw.Handle = 1;
+  draw.pNumSegs = segs;
+  draw.pRectPatchInfo = &info;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->patch_tessellate_count = 0;
+  dev->patch_cache_hit_count = 0;
+  dev->patch_cache.clear();
+
+  hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw);
+  if (!Check(hr == S_OK, "DrawRectPatch(first)")) {
+    return false;
+  }
+  if (!Check(dev->patch_tessellate_count == 1, "DrawRectPatch(first) tessellates once")) {
+    return false;
+  }
+  if (!Check(dev->patch_cache.size() == 1, "DrawRectPatch inserts cache entry")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw);
+  if (!Check(hr == S_OK, "DrawRectPatch(second)")) {
+    return false;
+  }
+  if (!Check(dev->patch_tessellate_count == 1, "DrawRectPatch(second) reuses tessellation")) {
+    return false;
+  }
+  if (!Check(dev->patch_cache_hit_count >= 1, "DrawRectPatch(second) increments cache hit count")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDeletePatch(create_dev.hDevice, 1);
+  if (!Check(hr == S_OK, "DeletePatch")) {
+    return false;
+  }
+  if (!Check(dev->patch_cache.empty(), "DeletePatch evicts cache entry")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw);
+  if (!Check(hr == S_OK, "DrawRectPatch(after DeletePatch)")) {
+    return false;
+  }
+  if (!Check(dev->patch_tessellate_count == 2, "DrawRectPatch(after DeletePatch) re-tessellates")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) >= 3,
+             "DrawRectPatch emits indexed draws")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
+}
+
 bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -8041,6 +8271,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices();
+  failures += !aerogpu::TestDrawRectPatchReusesTessellationCache();
   failures += !aerogpu::TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();

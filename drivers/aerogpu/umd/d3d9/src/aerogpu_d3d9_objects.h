@@ -8,6 +8,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "../include/aerogpu_d3d9_umd.h"
@@ -414,6 +415,38 @@ struct DeviceStateStream {
   uint32_t stride_bytes = 0;
 };
 
+// Per-device patch handle cache for DrawRectPatch/DrawTriPatch.
+//
+// D3D9 patch handles are app-supplied integers that the driver can use as an
+// optional cache key to avoid re-tessellating patches when the handle is reused
+// with identical parameters.
+enum class PatchKind : uint8_t {
+  Rect = 0,
+  Tri = 1,
+};
+
+struct PatchCacheSignature {
+  PatchKind kind = PatchKind::Rect;
+  uint32_t fvf = 0;
+  uint32_t stride_bytes = 0;
+
+  uint32_t start_vertex_offset = 0;
+  uint32_t num_vertices = 0;
+  uint32_t basis = 0;
+  uint32_t degree = 0;
+
+  // Bitwise float encodings of the segment-count array (rect: 4, tri: 3).
+  uint32_t seg_bits[4] = {};
+
+  uint64_t control_point_hash = 0;
+};
+
+struct PatchCacheEntry {
+  PatchCacheSignature sig{};
+  std::vector<uint8_t> vertices;     // tessellated vertices in the source vertex format
+  std::vector<uint16_t> indices_u16; // triangle-list indices
+};
+
 struct Device {
   explicit Device(Adapter* adapter) : adapter(adapter) {
     // In WDK builds the runtime provides the DMA command buffer later during
@@ -622,6 +655,14 @@ struct Device {
 
   // Scratch index buffer used to emulate DrawIndexedPrimitiveUP-style paths.
   Resource* up_index_buffer = nullptr;
+
+  // Patch tessellation cache (keyed by D3D9 patch handle).
+  //
+  // This cache is optional (handle==0 disables caching) but storing it per-device
+  // matches D3D9 handle semantics: patch handles are scoped to an IDirect3DDevice9.
+  std::unordered_map<uint32_t, PatchCacheEntry> patch_cache;
+  uint64_t patch_tessellate_count = 0;
+  uint64_t patch_cache_hit_count = 0;
 
   // Scene bracketing (BeginScene/EndScene). Depth allows the runtime to nest
   // scenes in some edge cases; we treat BeginScene/EndScene as a no-op beyond

@@ -414,6 +414,38 @@ typedef enum _D3DDDIPRIMITIVETYPE {
   D3DDDIPT_TRIANGLEFAN = 6,
 } D3DDDIPRIMITIVETYPE;
 
+// ---- Patch rendering (DrawRectPatch/DrawTriPatch) -----------------------------
+// Minimal public D3D9 patch types used by D3D9 patch DDIs.
+//
+// These mirror the public D3D9 API structs from d3d9types.h so host-side tests
+// can compile without the Windows SDK/WDK.
+typedef enum _D3DBASISTYPE {
+  D3DBASIS_BEZIER = 0,
+  D3DBASIS_BSPLINE = 1,
+  D3DBASIS_CATMULL_ROM = 2,
+} D3DBASISTYPE;
+
+typedef enum _D3DDEGREETYPE {
+  D3DDEGREE_LINEAR = 1,
+  D3DDEGREE_QUADRATIC = 2,
+  D3DDEGREE_CUBIC = 3,
+  D3DDEGREE_QUINTIC = 5,
+} D3DDEGREETYPE;
+
+typedef struct _D3DRECTPATCH_INFO {
+  UINT StartVertexOffset;
+  UINT NumVertices;
+  D3DBASISTYPE Basis;
+  D3DDEGREETYPE Degree;
+} D3DRECTPATCH_INFO;
+
+typedef struct _D3DTRIPATCH_INFO {
+  UINT StartVertexOffset;
+  UINT NumVertices;
+  D3DBASISTYPE Basis;
+  D3DDEGREETYPE Degree;
+} D3DTRIPATCH_INFO;
+
 typedef struct _D3DDDIVIEWPORTINFO {
   float X;
   float Y;
@@ -1129,6 +1161,22 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_COLORFILL)(D3DDDI_HDEVICE hDevice,
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_UPDATESURFACE)(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_UPDATESURFACE* pUpdateSurface);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_UPDATETEXTURE)(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_UPDATETEXTURE* pUpdateTexture);
 
+typedef struct _D3DDDIARG_DRAWRECTPATCH {
+  UINT Handle;
+  const float* pNumSegs; // float[4]
+  const D3DRECTPATCH_INFO* pRectPatchInfo;
+} D3DDDIARG_DRAWRECTPATCH;
+
+typedef struct _D3DDDIARG_DRAWTRIPATCH {
+  UINT Handle;
+  const float* pNumSegs; // float[3]
+  const D3DTRIPATCH_INFO* pTriPatchInfo;
+} D3DDDIARG_DRAWTRIPATCH;
+
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWRECTPATCH)(D3DDDI_HDEVICE hDevice, const D3DDDIARG_DRAWRECTPATCH* pDrawRectPatch);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWTRIPATCH)(D3DDDI_HDEVICE hDevice, const D3DDDIARG_DRAWTRIPATCH* pDrawTriPatch);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DELETEPATCH)(D3DDDI_HDEVICE hDevice, UINT Handle);
+
 struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_DESTROYDEVICE pfnDestroyDevice;
   PFND3D9DDI_CREATERESOURCE pfnCreateResource;
@@ -1200,6 +1248,10 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_DRAWINDEXEDPRIMITIVE pfnDrawIndexedPrimitive;
   PFND3D9DDI_DRAWPRIMITIVE2 pfnDrawPrimitive2;
   PFND3D9DDI_DRAWINDEXEDPRIMITIVE2 pfnDrawIndexedPrimitive2;
+
+  PFND3D9DDI_DRAWRECTPATCH pfnDrawRectPatch;
+  PFND3D9DDI_DRAWTRIPATCH pfnDrawTriPatch;
+  PFND3D9DDI_DELETEPATCH pfnDeletePatch;
 };
 
 // -----------------------------------------------------------------------------
