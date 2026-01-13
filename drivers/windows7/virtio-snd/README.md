@@ -346,6 +346,12 @@ Example (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
 reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
 ```
 
+To enable polling-only mode (modern virtio-pci transport packages only):
+
+```cmd
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
+```
+
 ## Offline / slipstream installation (optional)
 
 If you want virtio-snd to bind automatically on first boot (for example when building unattended Win7 images), see:
