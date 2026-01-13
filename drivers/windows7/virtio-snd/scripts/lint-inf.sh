@@ -16,6 +16,7 @@ SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 BASE_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
 
 INF_CONTRACT="$BASE_DIR/inf/aero_virtio_snd.inf"
+INF_TRANSITIONAL="$BASE_DIR/inf/aero-virtio-snd-legacy.inf"
 INF_DISABLED="$BASE_DIR/inf/virtio-snd.inf.disabled"
 
 tmp1=''
@@ -194,6 +195,34 @@ section_contains_norm \
   'AeroVirtioSnd.AddReg' \
   'ntmpdriver,,aero_virtio_snd.sys' \
   "inf/aero_virtio_snd.inf must reference aero_virtio_snd.sys via NTMPDriver"
+
+note "checking bring-up toggle defaults..."
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'hkr,parameters,forcenullbackend,0x00010001,0' \
+  "inf/aero_virtio_snd.inf must set HKR\\Parameters\\ForceNullBackend default to 0"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'hkr,parameters,allowpollingonly,0x00010001,0' \
+  "inf/aero_virtio_snd.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
+
+if [ -f "$INF_TRANSITIONAL" ]; then
+  note "checking transitional INF bring-up toggle defaults..."
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy.AddReg' \
+    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    "inf/aero-virtio-snd-legacy.inf must set HKR\\Parameters\\ForceNullBackend default to 0"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy.AddReg' \
+    'hkr,parameters,allowpollingonly,0x00010001,0' \
+    "inf/aero-virtio-snd-legacy.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
+fi
 
 section_contains_norm \
   "$INF_CONTRACT" \
