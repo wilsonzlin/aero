@@ -82,7 +82,21 @@ List all HID interfaces:
 hidtest.exe --list
 ```
 
-Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch).
+List all HID interfaces as JSON (for harnesses/parsing):
+
+```bat
+hidtest.exe --list --json
+```
+
+The JSON output is a single array on stdout. Each entry has:
+
+- `index`, `path`, `vid`, `pid`, `usagePage`, `usage`, `inputLen`, `outputLen`, `reportDescLen`
+
+Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch):
+
+```bat
+hidtest.exe --selftest
+```
 
 Selftest output is pipe-delimited for easy serial log scraping:
 
@@ -92,16 +106,20 @@ HIDTEST|SELFTEST|mouse|...|PASS|...
 HIDTEST|SELFTEST|SUMMARY|RESULT|PASS
 ```
 
-```bat
-hidtest.exe --selftest
-```
-
 To selftest just one collection:
 
 ```bat
 hidtest.exe --selftest --keyboard
 hidtest.exe --selftest --mouse
 ```
+
+Machine-readable selftest output:
+
+```bat
+hidtest.exe --selftest --json
+```
+
+`--selftest` exits `0` on pass and `1` on fail.
 
 `--selftest` is intentionally standalone and cannot be combined with `--vid`, `--pid`, `--index`, `--counters`, LED writes, or negative-test options.
 

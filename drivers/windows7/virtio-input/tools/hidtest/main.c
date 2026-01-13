@@ -231,6 +231,7 @@ typedef struct HID_DESCRIPTOR_MIN {
 typedef struct OPTIONS {
     int list_only;
     int selftest;
+    int json;
     int query_state;
     int query_counters;
     int reset_counters;
@@ -290,6 +291,8 @@ typedef struct SELECTED_DEVICE {
 // Forward decls (used by --selftest helpers).
 static void free_selected_device(SELECTED_DEVICE *dev);
 static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out);
+static int run_selftest_json(const OPTIONS *opt);
+
 static volatile LONG g_stop_requested = 0;
 static HANDLE g_stop_event = NULL;
 
@@ -457,6 +460,78 @@ static int reset_vioinput_counters(const SELECTED_DEVICE *dev)
 
     wprintf(L"\nvirtio-input counters reset.\n");
     return 0;
+}
+
+static void fprint_win32_error_w(FILE *f, const wchar_t *prefix, DWORD err)
+{
+    wchar_t *msg = NULL;
+    DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                  FORMAT_MESSAGE_IGNORE_INSERTS;
+    DWORD len = FormatMessageW(flags, NULL, err, 0, (LPWSTR)&msg, 0, NULL);
+    if (len == 0 || msg == NULL) {
+        fwprintf(f, L"%ls: error %lu\n", prefix, err);
+        return;
+    }
+
+    while (len > 0 && (msg[len - 1] == L'\r' || msg[len - 1] == L'\n')) {
+        msg[len - 1] = L'\0';
+        len--;
+    }
+    fwprintf(f, L"%ls: %ls (error %lu)\n", prefix, msg, err);
+    LocalFree(msg);
+}
+
+static void fprint_last_error_w(FILE *f, const wchar_t *prefix)
+{
+    fprint_win32_error_w(f, prefix, GetLastError());
+}
+
+static void json_print_string_w(const WCHAR *s)
+{
+    const WCHAR *p;
+
+    if (s == NULL) {
+        wprintf(L"null");
+        return;
+    }
+
+    wprintf(L"\"");
+    for (p = s; *p; p++) {
+        WCHAR ch = *p;
+        switch (ch) {
+        case L'"':
+            wprintf(L"\\\"");
+            break;
+        case L'\\':
+            wprintf(L"\\\\");
+            break;
+        case L'\b':
+            wprintf(L"\\b");
+            break;
+        case L'\f':
+            wprintf(L"\\f");
+            break;
+        case L'\n':
+            wprintf(L"\\n");
+            break;
+        case L'\r':
+            wprintf(L"\\r");
+            break;
+        case L'\t':
+            wprintf(L"\\t");
+            break;
+        default:
+            if (ch < 0x20) {
+                wprintf(L"\\u%04X", (unsigned)ch);
+            } else if (ch <= 0x7E) {
+                wprintf(L"%lc", ch);
+            } else {
+                wprintf(L"\\u%04X", (unsigned)ch);
+            }
+            break;
+        }
+    }
+    wprintf(L"\"");
 }
 
 static void dump_report_descriptor(HANDLE handle)
@@ -943,8 +1018,8 @@ static void print_usage(void)
     wprintf(L"hidtest: minimal HID report/IOCTL probe tool (Win7)\n");
     wprintf(L"\n");
     wprintf(L"Usage:\n");
-    wprintf(L"  hidtest.exe [--list]\n");
-    wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse]\n");
+    wprintf(L"  hidtest.exe [--list [--json]]\n");
+    wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse] [--json]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
     wprintf(L"             [--duration SECS] [--count N]\n");
@@ -964,7 +1039,8 @@ static void print_usage(void)
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
-    wprintf(L"  --selftest      Validate virtio-input keyboard/mouse HID descriptor contract and exit\n");
+    wprintf(L"  --selftest      Validate virtio-input keyboard/mouse HID descriptor contract and exit (0=pass, 1=fail)\n");
+    wprintf(L"  --json          With --list or --selftest, emit machine-readable JSON on stdout\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
     wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
@@ -1154,6 +1230,10 @@ static int run_selftest(const OPTIONS *opt)
     int ok = 1;
     int test_keyboard = 0;
     int test_mouse = 0;
+
+    if (opt != NULL && opt->json) {
+        return run_selftest_json(opt);
+    }
 
     if (opt != NULL && (opt->want_keyboard || opt->want_mouse)) {
         test_keyboard = opt->want_keyboard;
@@ -1351,6 +1431,610 @@ static HANDLE open_hid_path(const WCHAR *path, DWORD *desired_access_out)
         *desired_access_out = (h == INVALID_HANDLE_VALUE) ? 0 : access;
     }
     return h;
+}
+
+static int list_hid_devices_json(void)
+{
+    GUID hid_guid;
+    HDEVINFO devinfo;
+    SP_DEVICE_INTERFACE_DATA iface;
+    DWORD iface_index;
+    int first;
+    int ok;
+
+    HidD_GetHidGuid(&hid_guid);
+
+    devinfo = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devinfo == INVALID_HANDLE_VALUE) {
+        fprint_last_error_w(stderr, L"SetupDiGetClassDevs");
+        wprintf(L"[]\n");
+        return 0;
+    }
+
+    iface_index = 0;
+    first = 1;
+    ok = 1;
+    wprintf(L"[");
+    for (;;) {
+        DWORD required = 0;
+        PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        HIDD_ATTRIBUTES attr;
+        HIDP_CAPS caps;
+        int attr_valid = 0;
+        int caps_valid = 0;
+        DWORD report_desc_len = 0;
+        int report_desc_valid = 0;
+
+        ZeroMemory(&iface, sizeof(iface));
+        iface.cbSize = sizeof(iface);
+        if (!SetupDiEnumDeviceInterfaces(devinfo, NULL, &hid_guid, iface_index, &iface)) {
+            DWORD err = GetLastError();
+            if (err != ERROR_NO_MORE_ITEMS) {
+                fprint_win32_error_w(stderr, L"SetupDiEnumDeviceInterfaces", err);
+                ok = 0;
+            }
+            break;
+        }
+
+        SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, NULL, 0, &required, NULL);
+        if (required == 0) {
+            fprint_last_error_w(stderr, L"SetupDiGetDeviceInterfaceDetail (size query)");
+            ok = 0;
+            iface_index++;
+            continue;
+        }
+
+        detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)malloc(required);
+        if (detail == NULL) {
+            fwprintf(stderr, L"Out of memory\n");
+            ok = 0;
+            break;
+        }
+
+        detail->cbSize = sizeof(*detail);
+        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, NULL)) {
+            fprint_last_error_w(stderr, L"SetupDiGetDeviceInterfaceDetail");
+            free(detail);
+            ok = 0;
+            iface_index++;
+            continue;
+        }
+
+        handle = open_hid_path(detail->DevicePath, NULL);
+        if (handle != INVALID_HANDLE_VALUE) {
+            ZeroMemory(&attr, sizeof(attr));
+            attr.Size = sizeof(attr);
+            if (HidD_GetAttributes(handle, &attr)) {
+                attr_valid = 1;
+            }
+
+            ZeroMemory(&caps, sizeof(caps));
+            caps_valid = query_hid_caps(handle, &caps);
+
+            report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
+
+            CloseHandle(handle);
+        } else {
+            // Still emit the device entry but without VID/PID/caps info.
+            fprint_last_error_w(stderr, L"CreateFile");
+        }
+
+        if (!first) {
+            wprintf(L",");
+        }
+        first = 0;
+
+        wprintf(L"{");
+        wprintf(L"\"index\":%lu,", iface_index);
+        wprintf(L"\"path\":");
+        json_print_string_w(detail->DevicePath);
+        wprintf(L",\"vid\":");
+        if (attr_valid) {
+            wprintf(L"%u", (unsigned)attr.VendorID);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"pid\":");
+        if (attr_valid) {
+            wprintf(L"%u", (unsigned)attr.ProductID);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"usagePage\":");
+        if (caps_valid) {
+            wprintf(L"%u", (unsigned)caps.UsagePage);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"usage\":");
+        if (caps_valid) {
+            wprintf(L"%u", (unsigned)caps.Usage);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"inputLen\":");
+        if (caps_valid) {
+            wprintf(L"%u", (unsigned)caps.InputReportByteLength);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"outputLen\":");
+        if (caps_valid) {
+            wprintf(L"%u", (unsigned)caps.OutputReportByteLength);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"reportDescLen\":");
+        if (report_desc_valid) {
+            wprintf(L"%lu", report_desc_len);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L"}");
+
+        free(detail);
+        iface_index++;
+    }
+
+    wprintf(L"]\n");
+    SetupDiDestroyDeviceInfoList(devinfo);
+    return ok;
+}
+
+typedef struct SELFTEST_DEVICE_INFO {
+    int found;
+    DWORD index;
+    WCHAR *path;
+    HIDD_ATTRIBUTES attr;
+    int attr_valid;
+    HIDP_CAPS caps;
+    int caps_valid;
+    DWORD report_desc_len;
+    int report_desc_valid;
+    DWORD hid_report_desc_len;
+    int hid_report_desc_valid;
+} SELFTEST_DEVICE_INFO;
+
+typedef struct SELFTEST_FAILURE {
+    const WCHAR *device;
+    const WCHAR *field;
+    const WCHAR *message;
+    int have_expected;
+    DWORD expected;
+    int have_actual;
+    DWORD actual;
+} SELFTEST_FAILURE;
+
+#define SELFTEST_MAX_FAILURES 64
+
+static void free_selftest_device_info(SELFTEST_DEVICE_INFO *info)
+{
+    if (info == NULL) {
+        return;
+    }
+    free(info->path);
+    ZeroMemory(info, sizeof(*info));
+}
+
+static void selftest_add_failure(SELFTEST_FAILURE failures[SELFTEST_MAX_FAILURES], size_t *count, const WCHAR *device,
+                                 const WCHAR *field, const WCHAR *message, int have_expected, DWORD expected,
+                                 int have_actual, DWORD actual)
+{
+    SELFTEST_FAILURE *f;
+    if (count == NULL || *count >= SELFTEST_MAX_FAILURES) {
+        return;
+    }
+    f = &failures[*count];
+    f->device = device;
+    f->field = field;
+    f->message = message;
+    f->have_expected = have_expected;
+    f->expected = expected;
+    f->have_actual = have_actual;
+    f->actual = actual;
+    (*count)++;
+}
+
+static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info)
+{
+    if (info == NULL || !info->found) {
+        wprintf(L"null");
+        return;
+    }
+
+    wprintf(L"{\"index\":%lu,", info->index);
+    wprintf(L"\"path\":");
+    json_print_string_w(info->path);
+    wprintf(L",\"vid\":");
+    if (info->attr_valid) {
+        wprintf(L"%u", (unsigned)info->attr.VendorID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"pid\":");
+    if (info->attr_valid) {
+        wprintf(L"%u", (unsigned)info->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"usagePage\":");
+    if (info->caps_valid) {
+        wprintf(L"%u", (unsigned)info->caps.UsagePage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"usage\":");
+    if (info->caps_valid) {
+        wprintf(L"%u", (unsigned)info->caps.Usage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"inputLen\":");
+    if (info->caps_valid) {
+        wprintf(L"%u", (unsigned)info->caps.InputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"outputLen\":");
+    if (info->caps_valid) {
+        wprintf(L"%u", (unsigned)info->caps.OutputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"reportDescLen\":");
+    if (info->report_desc_valid) {
+        wprintf(L"%lu", info->report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"hidReportDescLen\":");
+    if (info->hid_report_desc_valid) {
+        wprintf(L"%lu", info->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L"}");
+}
+
+static int run_selftest_json(const OPTIONS *opt)
+{
+    GUID hid_guid;
+    HDEVINFO devinfo;
+    SP_DEVICE_INTERFACE_DATA iface;
+    DWORD iface_index;
+    int need_keyboard;
+    int need_mouse;
+    SELFTEST_DEVICE_INFO kbd;
+    SELFTEST_DEVICE_INFO mouse;
+    SELFTEST_FAILURE failures[SELFTEST_MAX_FAILURES];
+    size_t failure_count;
+    int pass;
+
+    ZeroMemory(&kbd, sizeof(kbd));
+    ZeroMemory(&mouse, sizeof(mouse));
+    ZeroMemory(failures, sizeof(failures));
+    failure_count = 0;
+    pass = 1;
+
+    need_keyboard = !opt->want_mouse;
+    need_mouse = !opt->want_keyboard;
+
+    HidD_GetHidGuid(&hid_guid);
+    devinfo = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devinfo == INVALID_HANDLE_VALUE) {
+        if (opt->json) {
+            wprintf(L"{\"pass\":false,\"keyboard\":null,\"mouse\":null,\"failures\":[");
+            wprintf(L"{\"device\":\"global\",\"field\":\"enumeration\",\"message\":\"SetupDiGetClassDevs failed\"}");
+            wprintf(L"]}\n");
+        } else {
+            wprintf(L"Selftest: SetupDiGetClassDevs failed\n");
+            print_last_error_w(L"SetupDiGetClassDevs");
+        }
+        return 1;
+    }
+
+    iface_index = 0;
+    for (;;) {
+        DWORD required = 0;
+        PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        HIDD_ATTRIBUTES attr;
+        HIDP_CAPS caps;
+        int attr_valid = 0;
+        int caps_valid = 0;
+        DWORD report_desc_len = 0;
+        int report_desc_valid = 0;
+        DWORD hid_report_desc_len = 0;
+        int hid_report_desc_valid = 0;
+        int is_virtio = 0;
+        int is_keyboard = 0;
+        int is_mouse = 0;
+
+        ZeroMemory(&iface, sizeof(iface));
+        iface.cbSize = sizeof(iface);
+        if (!SetupDiEnumDeviceInterfaces(devinfo, NULL, &hid_guid, iface_index, &iface)) {
+            break;
+        }
+
+        SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, NULL, 0, &required, NULL);
+        if (required == 0) {
+            iface_index++;
+            continue;
+        }
+
+        detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)malloc(required);
+        if (detail == NULL) {
+            selftest_add_failure(failures, &failure_count, L"global", L"memory", L"out of memory", 0, 0, 0, 0);
+            pass = 0;
+            break;
+        }
+        detail->cbSize = sizeof(*detail);
+        if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, NULL)) {
+            free(detail);
+            iface_index++;
+            continue;
+        }
+
+        handle = open_hid_path(detail->DevicePath, NULL);
+        if (handle == INVALID_HANDLE_VALUE) {
+            // We cannot determine whether this is a virtio-input device without HidD_GetAttributes.
+            free(detail);
+            iface_index++;
+            continue;
+        }
+
+        ZeroMemory(&attr, sizeof(attr));
+        attr.Size = sizeof(attr);
+        if (HidD_GetAttributes(handle, &attr)) {
+            attr_valid = 1;
+            is_virtio = is_virtio_input_device(&attr);
+        }
+
+        ZeroMemory(&caps, sizeof(caps));
+        caps_valid = query_hid_caps(handle, &caps);
+
+        report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
+        hid_report_desc_valid = query_hid_descriptor_report_length(handle, &hid_report_desc_len);
+
+        CloseHandle(handle);
+
+        if (caps_valid) {
+            is_keyboard = (caps.UsagePage == 0x01 && caps.Usage == 0x06);
+            is_mouse = (caps.UsagePage == 0x01 && caps.Usage == 0x02);
+        } else if (attr_valid) {
+            // Fallback to PID-based identity if caps are not available.
+            if (attr.ProductID == VIRTIO_INPUT_PID_KEYBOARD) {
+                is_keyboard = 1;
+            } else if (attr.ProductID == VIRTIO_INPUT_PID_MOUSE) {
+                is_mouse = 1;
+            }
+        }
+
+        if (is_virtio && is_keyboard && need_keyboard && !kbd.found) {
+            kbd.found = 1;
+            kbd.index = iface_index;
+            kbd.path = wcsdup_heap(detail->DevicePath);
+            kbd.attr = attr;
+            kbd.attr_valid = attr_valid;
+            kbd.caps = caps;
+            kbd.caps_valid = caps_valid;
+            kbd.report_desc_len = report_desc_len;
+            kbd.report_desc_valid = report_desc_valid;
+            kbd.hid_report_desc_len = hid_report_desc_len;
+            kbd.hid_report_desc_valid = hid_report_desc_valid;
+        } else if (is_virtio && is_mouse && need_mouse && !mouse.found) {
+            mouse.found = 1;
+            mouse.index = iface_index;
+            mouse.path = wcsdup_heap(detail->DevicePath);
+            mouse.attr = attr;
+            mouse.attr_valid = attr_valid;
+            mouse.caps = caps;
+            mouse.caps_valid = caps_valid;
+            mouse.report_desc_len = report_desc_len;
+            mouse.report_desc_valid = report_desc_valid;
+            mouse.hid_report_desc_len = hid_report_desc_len;
+            mouse.hid_report_desc_valid = hid_report_desc_valid;
+        }
+
+        free(detail);
+
+        if ((!need_keyboard || kbd.found) && (!need_mouse || mouse.found)) {
+            break;
+        }
+
+        iface_index++;
+    }
+
+    SetupDiDestroyDeviceInfoList(devinfo);
+
+    if (need_keyboard && !kbd.found) {
+        selftest_add_failure(failures, &failure_count, L"keyboard", L"present", L"not found", 0, 0, 0, 0);
+        pass = 0;
+    }
+    if (need_mouse && !mouse.found) {
+        selftest_add_failure(failures, &failure_count, L"mouse", L"present", L"not found", 0, 0, 0, 0);
+        pass = 0;
+    }
+
+    if (need_keyboard && kbd.found) {
+        if (!kbd.caps_valid) {
+            selftest_add_failure(failures, &failure_count, L"keyboard", L"caps",
+                                 L"HidD_GetPreparsedData/HidP_GetCaps failed", 0, 0, 0, 0);
+            pass = 0;
+        } else {
+            if (kbd.caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN) {
+                selftest_add_failure(failures, &failure_count, L"keyboard", L"inputLen", NULL, 1,
+                                     VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN, 1, kbd.caps.InputReportByteLength);
+                pass = 0;
+            }
+        }
+
+        if (!kbd.report_desc_valid) {
+            selftest_add_failure(failures, &failure_count, L"keyboard", L"reportDescLen",
+                                 L"IOCTL_HID_GET_REPORT_DESCRIPTOR failed", 0, 0, 0, 0);
+            pass = 0;
+        } else if (kbd.report_desc_len != VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN) {
+            selftest_add_failure(failures, &failure_count, L"keyboard", L"reportDescLen", NULL, 1,
+                                 VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN, 1, kbd.report_desc_len);
+            pass = 0;
+        }
+
+        if (!kbd.hid_report_desc_valid) {
+            selftest_add_failure(failures, &failure_count, L"keyboard", L"hidReportDescLen",
+                                 L"IOCTL_HID_GET_DEVICE_DESCRIPTOR failed", 0, 0, 0, 0);
+            pass = 0;
+        } else if (kbd.hid_report_desc_len != VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN) {
+            selftest_add_failure(failures, &failure_count, L"keyboard", L"hidReportDescLen", NULL, 1,
+                                 VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN, 1, kbd.hid_report_desc_len);
+            pass = 0;
+        }
+
+        if (kbd.report_desc_valid && kbd.hid_report_desc_valid && kbd.report_desc_len != kbd.hid_report_desc_len) {
+            selftest_add_failure(failures, &failure_count, L"keyboard", L"reportDescLenConsistency",
+                                 L"IOCTL vs HID descriptor report length mismatch", 1, kbd.report_desc_len, 1,
+                                 kbd.hid_report_desc_len);
+            pass = 0;
+        }
+    }
+
+    if (need_mouse && mouse.found) {
+        if (!mouse.caps_valid) {
+            selftest_add_failure(failures, &failure_count, L"mouse", L"caps",
+                                 L"HidD_GetPreparsedData/HidP_GetCaps failed", 0, 0, 0, 0);
+            pass = 0;
+        } else {
+            if (mouse.caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN) {
+                selftest_add_failure(failures, &failure_count, L"mouse", L"inputLen", NULL, 1,
+                                     VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN, 1, mouse.caps.InputReportByteLength);
+                pass = 0;
+            }
+        }
+
+        if (!mouse.report_desc_valid) {
+            selftest_add_failure(failures, &failure_count, L"mouse", L"reportDescLen",
+                                 L"IOCTL_HID_GET_REPORT_DESCRIPTOR failed", 0, 0, 0, 0);
+            pass = 0;
+        } else if (mouse.report_desc_len != VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN) {
+            selftest_add_failure(failures, &failure_count, L"mouse", L"reportDescLen", NULL, 1,
+                                 VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN, 1, mouse.report_desc_len);
+            pass = 0;
+        }
+
+        if (!mouse.hid_report_desc_valid) {
+            selftest_add_failure(failures, &failure_count, L"mouse", L"hidReportDescLen",
+                                 L"IOCTL_HID_GET_DEVICE_DESCRIPTOR failed", 0, 0, 0, 0);
+            pass = 0;
+        } else if (mouse.hid_report_desc_len != VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN) {
+            selftest_add_failure(failures, &failure_count, L"mouse", L"hidReportDescLen", NULL, 1,
+                                 VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN, 1, mouse.hid_report_desc_len);
+            pass = 0;
+        }
+
+        if (mouse.report_desc_valid && mouse.hid_report_desc_valid && mouse.report_desc_len != mouse.hid_report_desc_len) {
+            selftest_add_failure(failures, &failure_count, L"mouse", L"reportDescLenConsistency",
+                                 L"IOCTL vs HID descriptor report length mismatch", 1, mouse.report_desc_len, 1,
+                                 mouse.hid_report_desc_len);
+            pass = 0;
+        }
+    }
+
+    if (opt->json) {
+        size_t i;
+        wprintf(L"{\"pass\":%ls,\"keyboard\":", pass ? L"true" : L"false");
+        json_print_selftest_device_info(&kbd);
+        wprintf(L",\"mouse\":");
+        json_print_selftest_device_info(&mouse);
+        wprintf(L",\"failures\":[");
+        for (i = 0; i < failure_count; i++) {
+            const SELFTEST_FAILURE *f = &failures[i];
+            if (i != 0) {
+                wprintf(L",");
+            }
+            wprintf(L"{\"device\":");
+            json_print_string_w(f->device);
+            wprintf(L",\"field\":");
+            json_print_string_w(f->field);
+            if (f->message != NULL) {
+                wprintf(L",\"message\":");
+                json_print_string_w(f->message);
+            }
+            if (f->have_expected) {
+                wprintf(L",\"expected\":%lu", f->expected);
+            }
+            if (f->have_actual) {
+                wprintf(L",\"actual\":%lu", f->actual);
+            }
+            wprintf(L"}");
+        }
+        wprintf(L"]}\n");
+    } else {
+        size_t i;
+        wprintf(L"hidtest selftest: %ls\n", pass ? L"PASS" : L"FAIL");
+        if (need_keyboard) {
+            if (kbd.found) {
+                wprintf(L"  keyboard: index=%lu path=%ls\n", kbd.index, kbd.path ? kbd.path : L"<null>");
+                if (kbd.caps_valid) {
+                    wprintf(L"    inputLen=%u outputLen=%u usagePage=%04X usage=%04X\n",
+                            (unsigned)kbd.caps.InputReportByteLength, (unsigned)kbd.caps.OutputReportByteLength,
+                            (unsigned)kbd.caps.UsagePage, (unsigned)kbd.caps.Usage);
+                }
+                if (kbd.report_desc_valid) {
+                    wprintf(L"    reportDescLen=%lu\n", kbd.report_desc_len);
+                }
+                if (kbd.hid_report_desc_valid) {
+                    wprintf(L"    hidReportDescLen=%lu\n", kbd.hid_report_desc_len);
+                }
+            } else {
+                wprintf(L"  keyboard: not found\n");
+            }
+        }
+        if (need_mouse) {
+            if (mouse.found) {
+                wprintf(L"  mouse: index=%lu path=%ls\n", mouse.index, mouse.path ? mouse.path : L"<null>");
+                if (mouse.caps_valid) {
+                    wprintf(L"    inputLen=%u outputLen=%u usagePage=%04X usage=%04X\n",
+                            (unsigned)mouse.caps.InputReportByteLength, (unsigned)mouse.caps.OutputReportByteLength,
+                            (unsigned)mouse.caps.UsagePage, (unsigned)mouse.caps.Usage);
+                }
+                if (mouse.report_desc_valid) {
+                    wprintf(L"    reportDescLen=%lu\n", mouse.report_desc_len);
+                }
+                if (mouse.hid_report_desc_valid) {
+                    wprintf(L"    hidReportDescLen=%lu\n", mouse.hid_report_desc_len);
+                }
+            } else {
+                wprintf(L"  mouse: not found\n");
+            }
+        }
+
+        for (i = 0; i < failure_count; i++) {
+            const SELFTEST_FAILURE *f = &failures[i];
+            wprintf(L"  FAIL %ls.%ls", f->device, f->field);
+            if (f->message != NULL) {
+                wprintf(L": %ls", f->message);
+            }
+            if (f->have_expected || f->have_actual) {
+                wprintf(L" (");
+                if (f->have_expected) {
+                    wprintf(L"expected=%lu", f->expected);
+                }
+                if (f->have_actual) {
+                    if (f->have_expected) {
+                        wprintf(L", ");
+                    }
+                    wprintf(L"actual=%lu", f->actual);
+                }
+                wprintf(L")");
+            }
+            wprintf(L"\n");
+        }
+    }
+
+    free_selftest_device_info(&kbd);
+    free_selftest_device_info(&mouse);
+
+    return pass ? 0 : 1;
 }
 
 static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
@@ -2760,6 +3444,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--json") == 0) {
+            opt.json = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--keyboard") == 0) {
             opt.want_keyboard = 1;
             continue;
@@ -3000,6 +3689,10 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--list is mutually exclusive with --counters/--counters-json/--reset-counters.\n");
         return 2;
     }
+    if (opt.json && !(opt.list_only || opt.selftest)) {
+        wprintf(L"--json is only supported with --list or --selftest.\n");
+        return 2;
+    }
     if (opt.selftest &&
         (opt.query_state || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
          opt.have_index || opt.have_led_mask || opt.led_cycle || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
@@ -3176,6 +3869,10 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output)) {
         wprintf(L"--counters/--reset-counters are mutually exclusive with --state, --ioctl-get-input-report, IOCTL counters selftests, LED actions, descriptor dumps, and negative tests.\n");
         return 2;
+    }
+
+    if (opt.list_only && opt.json) {
+        return list_hid_devices_json() ? 0 : 1;
     }
 
     if (opt.selftest) {
