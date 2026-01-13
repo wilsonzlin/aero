@@ -85,7 +85,8 @@ In **Device Manager** (`devmgmt.msc`) → device **Properties** → **Resources*
 You can also use `aero-virtio-selftest.exe`:
 
 - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net|...` markers on stdout/COM1.
-- Once the MSI diagnostics update lands, the `virtio-net` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+- The selftest also emits a `virtio-net-irq|INFO|mode=<intx|msi>|messages=<n>` line indicating whether Windows assigned
+  line-based INTx or message-signaled interrupts (MSI/MSI-X) and, for message interrupts, how many were allocated.
 - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).

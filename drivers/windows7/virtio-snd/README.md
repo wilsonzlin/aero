@@ -45,7 +45,8 @@ For background, see [`docs/windows/virtio-pci-modern-interrupts.md`](../../../do
   - MSI/MSI-X often shows a very large IRQ number (e.g. `42949672xx`) and may show multiple IRQ entries.
 - **`aero-virtio-selftest.exe` markers**:
   - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` markers on stdout/COM1.
-  - Once the MSI diagnostics update lands, the `virtio-snd` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+  - The selftest also emits a `virtio-snd-irq|INFO|mode=<intx|msi>|messages=<n>` line indicating whether Windows assigned
+    line-based INTx or message-signaled interrupts (MSI/MSI-X) and, for message interrupts, how many were allocated.
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 ## Directory layout
