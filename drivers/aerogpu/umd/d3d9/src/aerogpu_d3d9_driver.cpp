@@ -3898,6 +3898,44 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   return S_OK;
 }
 
+// Validates that a draw call would execute with a usable shader pipeline and, if
+// the app is using the fixed-function path (no user shaders bound), ensures the
+// supported fixed-function fallback shaders are bound.
+//
+// This is primarily a robustness guard: when an app uses an unsupported
+// fixed-function/FVF configuration, the UMD previously could emit draw packets
+// with vs=0/ps=0, producing an invalid command stream. Instead, fail the draw
+// deterministically at the D3D9 API boundary.
+//
+// Callers must hold `Device::mutex` and must invoke this *before* emitting any
+// draw packets (AEROGPU_CMD_DRAW / AEROGPU_CMD_DRAW_INDEXED).
+HRESULT ensure_draw_pipeline_locked(Device* dev) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  // If the runtime did not bind any shaders, it is asking for the fixed-function
+  // pipeline. We only support a narrow set of fixed-function fallbacks; validate
+  // and bind them lazily at draw time.
+  if (!dev->user_vs && !dev->user_ps) {
+    const HRESULT hr = ensure_fixedfunc_pipeline_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
+    }
+    // Defensive: the host command stream executor rejects null shader binds.
+    if (!dev->vs || !dev->ps) {
+      return kD3DErrInvalidCall;
+    }
+    return S_OK;
+  }
+
+  // Non-fixed-function path: require explicit shaders.
+  if (!dev->vs || !dev->ps) {
+    return kD3DErrInvalidCall;
+  }
+  return S_OK;
+}
+
 HRESULT ensure_up_vertex_buffer_locked(Device* dev, uint32_t required_size) {
   if (!dev || !dev->adapter) {
     return E_FAIL;
@@ -14662,6 +14700,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return trace.ret(S_OK);
   }
 
+  // Reject draws that would execute with no bound shaders (unsupported
+  // fixed-function path or missing user shaders).
+  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(pipeline_hr)) {
+    return trace.ret(pipeline_hr);
+  }
+
   // Fixed-function emulation path: for supported FVFs we upload a transformed
   // (clip-space) copy of the referenced vertices into a scratch VB and draw
   // using a built-in shader pair.
@@ -14869,6 +14914,14 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(E_INVALIDARG);
   }
 
+  // Validate the effective shader pipeline before performing any UP uploads or
+  // state mutations. Unsupported fixed-function draws must fail without
+  // emitting any draw packets.
+  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(pipeline_hr)) {
+    return trace.ret(pipeline_hr);
+  }
+
   DeviceStateStream saved = dev->streams[0];
 
   std::vector<uint8_t> converted;
@@ -15016,6 +15069,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return E_INVALIDARG;
   }
 
+  // Validate the effective shader pipeline before performing any UP uploads or
+  // emitting draw packets.
+  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(pipeline_hr)) {
+    return pipeline_hr;
+  }
+
   DeviceStateStream saved = dev->streams[0];
 
   std::vector<uint8_t> converted;
@@ -15124,6 +15184,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   const uint64_t vb_size_u64 = vertex_count_u64 * static_cast<uint64_t>(pDraw->VertexStreamZeroStride);
   if (vertex_count_u64 == 0 || vb_size_u64 == 0 || vb_size_u64 > 0x7FFFFFFFu) {
     return E_INVALIDARG;
+  }
+
+  // Validate the effective shader pipeline before performing any UP uploads or
+  // mutating the index buffer binding.
+  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(pipeline_hr)) {
+    return pipeline_hr;
   }
 
   DeviceStateStream saved_stream = dev->streams[0];
@@ -15324,6 +15391,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (primitive_count == 0) {
     return trace.ret(S_OK);
+  }
+
+  // Reject draws that would execute with no bound shaders (unsupported
+  // fixed-function path or missing user shaders).
+  HRESULT pipeline_hr = ensure_draw_pipeline_locked(dev);
+  if (FAILED(pipeline_hr)) {
+    return trace.ret(pipeline_hr);
   }
 
   // Fixed-function emulation for indexed draws: expand indices into a temporary
@@ -18302,6 +18376,95 @@ aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
   }
   return handle;
 #endif
+}
+
+// -----------------------------------------------------------------------------
+// Host-side test entrypoints
+// -----------------------------------------------------------------------------
+//
+// Most D3D9 DDI entrypoints are kept in an anonymous namespace (internal
+// linkage) since they are only referenced via function tables populated by
+// OpenAdapter/CreateDevice on Windows. Host-side portable unit tests, however,
+// instantiate `Device` directly (no runtime) and need to call a small subset of
+// those DDIs directly.
+//
+// Provide thin wrappers with external linkage so tests can invoke the draw
+// entrypoints and validate command stream emission behavior.
+namespace {
+
+auto* const kDeviceSetFvfImpl = device_set_fvf;
+auto* const kDeviceDrawPrimitiveImpl = device_draw_primitive;
+auto* const kDeviceDrawIndexedPrimitiveImpl = device_draw_indexed_primitive;
+auto* const kDeviceDrawPrimitiveUpImpl = device_draw_primitive_up;
+auto* const kDeviceDrawIndexedPrimitiveUpImpl = device_draw_indexed_primitive_up;
+auto* const kDeviceDrawPrimitive2Impl = device_draw_primitive2;
+auto* const kDeviceDrawIndexedPrimitive2Impl = device_draw_indexed_primitive2;
+
+} // namespace
+
+HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
+  return kDeviceSetFvfImpl(hDevice, fvf);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
+    uint32_t start_vertex,
+    uint32_t primitive_count) {
+  return kDeviceDrawPrimitiveImpl(hDevice, type, start_vertex, primitive_count);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
+    int32_t base_vertex,
+    uint32_t min_index,
+    uint32_t num_vertices,
+    uint32_t start_index,
+    uint32_t primitive_count) {
+  return kDeviceDrawIndexedPrimitiveImpl(hDevice, type, base_vertex, min_index, num_vertices, start_index, primitive_count);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
+    uint32_t primitive_count,
+    const void* pVertexData,
+    uint32_t stride_bytes) {
+  return kDeviceDrawPrimitiveUpImpl(hDevice, type, primitive_count, pVertexData, stride_bytes);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive_up(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
+    uint32_t min_vertex_index,
+    uint32_t num_vertices,
+    uint32_t primitive_count,
+    const void* pIndexData,
+    D3DDDIFORMAT index_data_format,
+    const void* pVertexData,
+    uint32_t stride_bytes) {
+  return kDeviceDrawIndexedPrimitiveUpImpl(hDevice,
+                                          type,
+                                          min_vertex_index,
+                                          num_vertices,
+                                          primitive_count,
+                                          pIndexData,
+                                          index_data_format,
+                                          pVertexData,
+                                          stride_bytes);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_DRAWPRIMITIVE2* pDraw) {
+  return kDeviceDrawPrimitive2Impl(hDevice, pDraw);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw) {
+  return kDeviceDrawIndexedPrimitive2Impl(hDevice, pDraw);
 }
 } // namespace aerogpu
 
