@@ -152,6 +152,7 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
     LONG readDepth;
     LONG ringDepth;
     LONG virtioDepth;
+    LONG pendingDepth;
 
     if (Counters == NULL) {
         return;
@@ -160,7 +161,8 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
     /*
      * Reset the monotonic counters, but preserve the "current depth" fields.
      *
-     * ReadReportQueueDepth / ReportRingDepth / VirtioQueueDepth are intended to
+     * ReadReportQueueDepth / ReportRingDepth / PendingRingDepth / VirtioQueueDepth
+     * are intended to
      * reflect instantaneous state. Zeroing them while there are pending IRPs or
      * buffered reports can cause confusing negative values after subsequent
      * decrements. Instead, keep the current depths and reset the corresponding
@@ -170,6 +172,7 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
      */
     readDepth = Counters->ReadReportQueueDepth;
     ringDepth = Counters->ReportRingDepth;
+    pendingDepth = Counters->PendingRingDepth;
     virtioDepth = Counters->VirtioQueueDepth;
 
     InterlockedExchange(&Counters->IoctlTotal, 0);
@@ -209,6 +212,9 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
 
     InterlockedExchange(&Counters->VirtioQueueMaxDepth, virtioDepth);
     InterlockedExchange(&Counters->VirtioStatusDrops, 0);
+
+    InterlockedExchange(&Counters->PendingRingMaxDepth, pendingDepth);
+    InterlockedExchange(&Counters->PendingRingDrops, 0);
 }
 
 PCSTR VioInputHidIoctlToString(_In_ ULONG IoControlCode)
