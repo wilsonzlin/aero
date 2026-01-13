@@ -3147,9 +3147,9 @@ try {
             Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
         } else {
             $gciErrors = @()
-            $exeItems = @()
+            $items = @()
             try {
-                $exeItems = Get-ChildItem -Path $toolsDir -Recurse -Filter *.exe -ErrorAction SilentlyContinue -ErrorVariable gciErrors
+                $items = Get-ChildItem -Path $toolsDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErrors
             } catch {
                 # Get-ChildItem can still throw in some cases; treat as unreadable.
                 $gciErrors += $_
@@ -3174,9 +3174,17 @@ try {
             $rootLower = $null
             try { $rootLower = $rootFull.ToLower() } catch { $rootLower = "" }
 
+            $fileItems = @()
+            foreach ($it in @($items)) {
+                try {
+                    if ($it -and (-not $it.PSIsContainer)) { $fileItems += $it }
+                } catch { }
+            }
+
+            $files = @()
             $exeFiles = @()
-            $exeItemsSorted = @($exeItems | Sort-Object FullName)
-            foreach ($f in @($exeItemsSorted)) {
+            $fileItemsSorted = @($fileItems | Sort-Object FullName)
+            foreach ($f in @($fileItemsSorted)) {
                 if (-not $f -or -not $f.FullName) { continue }
                 $full = "" + $f.FullName
                 $rel = $full
@@ -3211,7 +3219,13 @@ try {
                     try { if ($vi.OriginalFilename) { $originalFilename = "" + $vi.OriginalFilename } } catch { }
                 }
 
-                $exeFiles += @{
+                $isExe = $false
+                try {
+                    $ext = [System.IO.Path]::GetExtension($full)
+                    if ($ext -and ($ext.ToLower() -eq ".exe")) { $isExe = $true }
+                } catch { $isExe = $false }
+
+                $entry = @{
                     relative_path = $rel
                     sha256 = $sha
                     size_bytes = $f.Length
@@ -3220,14 +3234,18 @@ try {
                     file_description = $fileDescription
                     original_filename = $originalFilename
                 }
+                $files += $entry
+                if ($isExe) { $exeFiles += $entry }
             }
+            $files = @($files | Sort-Object { $_.relative_path })
             $exeFiles = @($exeFiles | Sort-Object { $_.relative_path })
 
+            $toolsData.files = $files
             $toolsData.exe_files = $exeFiles
             $toolsData.inventory_errors = $invErrors
             $toolsData.tools_dir_readable = ($toolsStatus -eq "PASS")
 
-            $toolsSummary = "tools\\ directory present. EXE file(s): " + $exeFiles.Count
+            $toolsSummary = "tools\\ directory present. File(s): " + $files.Count + "; EXE file(s): " + $exeFiles.Count
             if ($toolsStatus -eq "WARN") {
                 $toolsSummary += " (inventory incomplete)."
             }
@@ -3237,6 +3255,10 @@ try {
                 if ($e.sha256) { $line += " sha256=" + $e.sha256 } else { $line += " sha256=<error>" }
                 if ($e.file_version) { $line += " filever=" + $e.file_version }
                 $toolsDetails += $line
+            }
+            $otherCount = $files.Count - $exeFiles.Count
+            if ($otherCount -gt 0) {
+                $toolsDetails += ("Other (non-EXE) file(s): " + $otherCount + " (see report.json)")
             }
             foreach ($m in $invErrors) {
                 if ($m) { $toolsDetails += ("Inventory error: " + $m) }
