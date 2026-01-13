@@ -911,6 +911,13 @@ function Get-ManifestFileEntries {
         })) | Out-Null
     }
 
+    # Stable ordering: sort by path (ordinal, case-sensitive).
+    $comparer = [System.Collections.Generic.Comparer[object]]::Create([System.Comparison[object]]{
+        param($a, $b)
+        return [System.StringComparer]::Ordinal.Compare($a.path, $b.path)
+    })
+    $files.Sort($comparer)
+
     return $files.ToArray()
 }
 
