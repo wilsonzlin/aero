@@ -10251,6 +10251,27 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
     return trace.ret(E_INVALIDARG);
   }
 
+  uint32_t row_pitch = res->row_pitch;
+  uint32_t slice_pitch = res->slice_pitch;
+  if ((res->kind == ResourceKind::Surface || res->kind == ResourceKind::Texture2D) && res->mip_levels > 1) {
+    // Win7 D3D9 DDI Lock arguments do not explicitly name a mip level. Instead,
+    // the runtime locks subresources by passing an offset into a packed mip
+    // chain. Infer the mip level from the offset so we return the correct
+    // per-level pitches.
+    Texture2dSubresourceLayout sub{};
+    if (!calc_texture2d_subresource_layout_for_offset(res->format,
+                                                      res->width,
+                                                      res->height,
+                                                      res->mip_levels,
+                                                      res->depth,
+                                                      static_cast<uint64_t>(offset),
+                                                      &sub)) {
+      return trace.ret(E_INVALIDARG);
+    }
+    row_pitch = sub.row_pitch_bytes;
+    slice_pitch = sub.slice_pitch_bytes;
+  }
+
   res->locked = true;
   res->locked_offset = offset;
   res->locked_size = size;
@@ -10285,22 +10306,6 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
     }
     res->locked_ptr = res->storage.data() + offset;
     d3d9_locked_box_set_ptr(pLockedBox, res->locked_ptr);
-  }
-
-  uint32_t row_pitch = res->row_pitch;
-  uint32_t slice_pitch = res->slice_pitch;
-  if (res->kind != ResourceKind::Buffer && (res->mip_levels > 1 || res->depth > 1)) {
-    Texture2dSubresourceLayout sub{};
-    if (calc_texture2d_subresource_layout_for_offset(res->format,
-                                                     res->width,
-                                                     res->height,
-                                                     res->mip_levels,
-                                                     res->depth,
-                                                     offset,
-                                                     &sub)) {
-      row_pitch = sub.row_pitch_bytes;
-      slice_pitch = sub.slice_pitch_bytes;
-    }
   }
 
   d3d9_locked_box_set_row_pitch(pLockedBox, row_pitch);

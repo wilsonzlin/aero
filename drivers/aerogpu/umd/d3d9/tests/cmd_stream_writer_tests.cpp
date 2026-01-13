@@ -2200,6 +2200,173 @@ bool TestCreateResourceArrayTextureEmitsArrayLayers() {
   return true;
 }
 
+bool TestLockInfersMipLevelPitchFromOffsetBytes() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto it = resources.rbegin(); it != resources.rend(); ++it) {
+          device_funcs.pfnDestroyResource(hDevice, *it);
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+
+  auto lock_check = [&](D3DDDI_HRESOURCE hResource,
+                        uint32_t offset_bytes,
+                        uint32_t expected_row_pitch,
+                        uint32_t expected_slice_pitch,
+                        const char* label) -> bool {
+    D3D9DDIARG_LOCK lock{};
+    lock.hResource = hResource;
+    lock.offset_bytes = offset_bytes;
+    lock.size_bytes = 0;
+    lock.flags = 0;
+    D3DDDI_LOCKEDBOX box{};
+    HRESULT hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+    if (!Check(hr == S_OK, label)) {
+      return false;
+    }
+    if (!Check(box.pData != nullptr, "Lock returns pData")) {
+      return false;
+    }
+    if (!Check(box.RowPitch == expected_row_pitch, "Lock RowPitch")) {
+      return false;
+    }
+    if (!Check(box.SlicePitch == expected_slice_pitch, "Lock SlicePitch")) {
+      return false;
+    }
+    D3D9DDIARG_UNLOCK unlock{};
+    unlock.hResource = hResource;
+    unlock.offset_bytes = 0;
+    unlock.size_bytes = 0;
+    hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+    return Check(hr == S_OK, "Unlock");
+  };
+
+  // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
+  constexpr uint32_t kD3dRTypeTexture = 3u;
+
+  // Uncompressed BGRA32 (D3DFMT_X8R8G8B8): 4x4, mip_levels=3.
+  // - level0: 4x4 => row_pitch=16, slice_pitch=64, offset=0
+  // - level1: 2x2 => row_pitch=8,  slice_pitch=16, offset=64
+  // - level2: 1x1 => row_pitch=4,  slice_pitch=4,  offset=80
+  D3D9DDIARG_CREATERESOURCE create_rgba{};
+  create_rgba.type = kD3dRTypeTexture;
+  create_rgba.format = 22u; // D3DFMT_X8R8G8B8
+  create_rgba.width = 4;
+  create_rgba.height = 4;
+  create_rgba.depth = 1;
+  create_rgba.mip_levels = 3;
+  create_rgba.usage = 0;
+  create_rgba.pool = 2u; // D3DPOOL_SYSTEMMEM
+  create_rgba.size = 0;
+  create_rgba.hResource.pDrvPrivate = nullptr;
+  create_rgba.pSharedHandle = nullptr;
+  create_rgba.pPrivateDriverData = nullptr;
+  create_rgba.PrivateDriverDataSize = 0;
+  create_rgba.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_rgba);
+  if (!Check(hr == S_OK, "CreateResource(BGRA mip chain)")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_rgba.hResource);
+
+  if (!lock_check(create_rgba.hResource, /*offset_bytes=*/0, /*row=*/16, /*slice=*/64, "Lock(BGRA level0)")) {
+    return false;
+  }
+  if (!lock_check(create_rgba.hResource, /*offset_bytes=*/64, /*row=*/8, /*slice=*/16, "Lock(BGRA level1)")) {
+    return false;
+  }
+  if (!lock_check(create_rgba.hResource, /*offset_bytes=*/80, /*row=*/4, /*slice=*/4, "Lock(BGRA level2)")) {
+    return false;
+  }
+
+  // Block-compressed DXT1 (BC1): 7x5, mip_levels=3.
+  // - level0: blocks_w=2, blocks_h=2 => row_pitch=16, slice_pitch=32, offset=0
+  // - level1: 3x2 => blocks_w=1, blocks_h=1 => row_pitch=8,  slice_pitch=8,  offset=32
+  // - level2: 1x1 => blocks_w=1, blocks_h=1 => row_pitch=8,  slice_pitch=8,  offset=40
+  D3D9DDIARG_CREATERESOURCE create_dxt1{};
+  create_dxt1.type = kD3dRTypeTexture;
+  create_dxt1.format = static_cast<uint32_t>(kD3dFmtDxt1); // D3DFMT_DXT1
+  create_dxt1.width = 7;
+  create_dxt1.height = 5;
+  create_dxt1.depth = 1;
+  create_dxt1.mip_levels = 3;
+  create_dxt1.usage = 0;
+  create_dxt1.pool = 2u; // D3DPOOL_SYSTEMMEM
+  create_dxt1.size = 0;
+  create_dxt1.hResource.pDrvPrivate = nullptr;
+  create_dxt1.pSharedHandle = nullptr;
+  create_dxt1.pPrivateDriverData = nullptr;
+  create_dxt1.PrivateDriverDataSize = 0;
+  create_dxt1.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_dxt1);
+  if (!Check(hr == S_OK, "CreateResource(DXT1 mip chain)")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_dxt1.hResource);
+
+  if (!lock_check(create_dxt1.hResource, /*offset_bytes=*/0, /*row=*/16, /*slice=*/32, "Lock(DXT1 level0)")) {
+    return false;
+  }
+  if (!lock_check(create_dxt1.hResource, /*offset_bytes=*/32, /*row=*/8, /*slice=*/8, "Lock(DXT1 level1)")) {
+    return false;
+  }
+  return lock_check(create_dxt1.hResource, /*offset_bytes=*/40, /*row=*/8, /*slice=*/8, "Lock(DXT1 level2)");
+}
+
 bool TestRgb16FormatMappingAndLayout() {
   constexpr uint32_t kD3dFmtR5G6B5 = 23u;
   constexpr uint32_t kD3dFmtX1R5G5B5 = 24u;
@@ -15217,6 +15384,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
   failures += !aerogpu::TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared();
   failures += !aerogpu::TestCreateResourceArrayTextureEmitsArrayLayers();
+  failures += !aerogpu::TestLockInfersMipLevelPitchFromOffsetBytes();
   failures += !aerogpu::TestRgb16FormatMappingAndLayout();
   failures += !aerogpu::TestCreateResourceComputes16BitTexturePitchAndFormat();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2d();

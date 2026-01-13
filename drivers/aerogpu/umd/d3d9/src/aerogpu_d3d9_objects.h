@@ -185,7 +185,6 @@ struct Texture2dMipLevelLayout {
   uint32_t slice_pitch_bytes = 0;
   uint64_t offset_bytes = 0;
 };
-
 // Computes the packed linear layout for a 2D texture mip chain (as used by the
 // AeroGPU protocol).
 //
