@@ -119,6 +119,11 @@ pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
 /// `ld` (Resource load; used by `Texture2D.Load`).
 pub const OPCODE_LD: u32 = 0x4c;
+/// `ld_uav_raw` (SM5 UAV raw buffer load; used by `RWByteAddressBuffer.Load*`).
+///
+/// Note: Some toolchains appear to use different opcode IDs for UAV loads; the decoder also has a
+/// structural fallback path (see `sm4::decode`) to avoid relying solely on this constant.
+pub const OPCODE_LD_UAV_RAW: u32 = 0x6f;
 /// `ld_raw` (raw buffer load; `ByteAddressBuffer.Load*`).
 ///
 /// Upstream: `D3D11_SB_OPCODE_LD_RAW`.

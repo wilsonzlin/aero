@@ -440,6 +440,16 @@ pub enum Sm4Inst {
         addr: SrcOperand,
         buffer: BufferRef,
     },
+    /// `ld_uav_raw dest, addr, u#` (SM5 UAV raw buffer load; e.g. `RWByteAddressBuffer.Load*`).
+    ///
+    /// `addr` is a byte address; the instruction returns 1–4 consecutive `u32` words starting at
+    /// `addr / 4` and writes them into the destination register's `.xyzw` lanes.
+    LdUavRaw {
+        dst: DstOperand,
+        /// Byte address.
+        addr: SrcOperand,
+        uav: UavRef,
+    },
     /// `store_raw u#, addr, value` (mask comes from the `u#` operand write mask).
     StoreRaw {
         uav: UavRef,

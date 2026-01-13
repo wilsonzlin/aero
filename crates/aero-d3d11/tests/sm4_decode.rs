@@ -1031,6 +1031,51 @@ fn decodes_ld_texture_load() {
 }
 
 #[test]
+fn decodes_ld_uav_raw() {
+    let mut body = Vec::<u32>::new();
+
+    // ld_uav_raw r0, r1.x, u0
+    let mut ld = vec![opcode_token(OPCODE_LD_UAV_RAW, 1 + 2 + 2 + 2)];
+    ld.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    ));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ld);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::LdUavRaw {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            addr: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            uav: UavRef { slot: 0 },
+        }
+    );
+}
+
+#[test]
 fn decodes_ld_via_structural_fallback() {
     const DCL_DUMMY: u32 = 0x300;
     const OPCODE_UNKNOWN_LD: u32 = 0x4b;

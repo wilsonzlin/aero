@@ -1094,6 +1094,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(lod, &mut scan_reg);
             }
             Sm4Inst::LdRaw { addr, .. } => scan_src_regs(addr, &mut scan_reg),
+            Sm4Inst::LdUavRaw { addr, .. } => scan_src_regs(addr, &mut scan_reg),
             Sm4Inst::StoreRaw { addr, value, .. } => {
                 scan_src_regs(addr, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
@@ -2287,6 +2288,11 @@ fn scan_resources(
                 validate_slot("srv_buffer", buffer.slot, MAX_TEXTURE_SLOTS)?;
                 srv_buffers.insert(buffer.slot);
             }
+            Sm4Inst::LdUavRaw { dst: _, addr, uav } => {
+                scan_src(addr)?;
+                validate_slot("uav", uav.slot, MAX_UAV_SLOTS)?;
+                uav_buffers.insert(uav.slot);
+            }
             Sm4Inst::StoreRaw {
                 uav, addr, value, ..
             } => {
@@ -2656,6 +2662,10 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(lod, &mut scan_reg);
             }
             Sm4Inst::LdRaw { dst, addr, .. } => {
+                scan_reg(dst.reg);
+                scan_src_regs(addr, &mut scan_reg);
+            }
+            Sm4Inst::LdUavRaw { dst, addr, .. } => {
                 scan_reg(dst.reg);
                 scan_src_regs(addr, &mut scan_reg);
             }
@@ -3836,6 +3846,36 @@ fn emit_instructions(
                 // execution barrier: we want all invocations to execute it before synchronizing.
                 w.line("storageBarrier();");
                 w.line("workgroupBarrier();");
+            }
+            Sm4Inst::LdUavRaw { dst, addr, uav } => {
+                // Raw UAV buffer loads operate on byte offsets. Model UAV buffers as a storage
+                // `array<u32>` and derive a word index from the byte address.
+                let addr_u = emit_src_vec4_u32(addr, inst_index, "ld_uav_raw", ctx)?;
+                let base_name = format!("ld_uav_raw_base{inst_index}");
+                w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
+
+                let mask_bits = dst.mask.0 & 0xF;
+                let load_lane = |bit: u8, offset: u32| {
+                    if (mask_bits & bit) != 0 {
+                        format!("u{}.data[{base_name} + {offset}u]", uav.slot)
+                    } else {
+                        "0u".to_owned()
+                    }
+                };
+
+                let u_name = format!("ld_uav_raw_u{inst_index}");
+                w.line(&format!(
+                    "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                    load_lane(1, 0),
+                    load_lane(2, 1),
+                    load_lane(4, 2),
+                    load_lane(8, 3),
+                ));
+                let f_name = format!("ld_uav_raw_f{inst_index}");
+                w.line(&format!("let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"));
+
+                let expr = maybe_saturate(dst, f_name);
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_uav_raw", ctx)?;
             }
             Sm4Inst::Unknown { opcode } => {
                 let opcode = opcode_name(*opcode)

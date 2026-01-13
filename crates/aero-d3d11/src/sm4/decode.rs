@@ -1049,6 +1049,7 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::WorkgroupBarrier)
         }
+        OPCODE_LD_UAV_RAW => decode_ld_uav_raw(saturate, &mut r),
         other => {
             // Structural fallback for sample/sample_l when opcode IDs differ.
             if let Some(sample) = try_decode_sample_like(saturate, inst_toks, at)? {
@@ -1061,6 +1062,10 @@ pub fn decode_instruction(
             // Structural fallback for `bufinfo` when opcode IDs differ.
             if let Some(bufinfo) = try_decode_bufinfo_like(saturate, inst_toks, at)? {
                 return Ok(bufinfo);
+            }
+            // Structural fallback for UAV raw load (ld_uav_raw) when opcode IDs differ.
+            if let Some(ld_uav_raw) = try_decode_ld_uav_raw_like(saturate, inst_toks, at)? {
+                return Ok(ld_uav_raw);
             }
             Ok(Sm4Inst::Unknown { opcode: other })
         }
@@ -1168,6 +1173,19 @@ fn decode_ld_raw(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4
         });
     }
     Ok(Sm4Inst::LdRaw { dst, addr, buffer })
+}
+
+fn decode_ld_uav_raw(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let mut dst = decode_dst(r)?;
+    dst.saturate = saturate;
+    let addr = decode_src(r)?;
+    let (uav, _mask) = decode_uav_ref(r)?;
+    if !r.is_eof() {
+        return Ok(Sm4Inst::Unknown {
+            opcode: OPCODE_LD_UAV_RAW,
+        });
+    }
+    Ok(Sm4Inst::LdUavRaw { dst, addr, uav })
 }
 
 fn decode_store_raw(r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
@@ -1570,6 +1588,40 @@ fn try_decode_bufinfo_like(
         Ok(v) => Ok(Some(v)),
         Err(_) => Ok(None),
     }
+}
+
+fn try_decode_ld_uav_raw_like(
+    saturate: bool,
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    let mut dst = match decode_dst(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    dst.saturate = saturate;
+    let addr = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    // Raw buffer loads take a scalar byte address; typed/structured UAV loads use vector coords.
+    if !addr.swizzle.0.iter().all(|&c| c == addr.swizzle.0[0]) {
+        return Ok(None);
+    }
+    let (uav, _mask) = match decode_uav_ref(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    if r.is_eof() {
+        return Ok(Some(Sm4Inst::LdUavRaw { dst, addr, uav }));
+    }
+
+    Ok(None)
 }
 
 // ---- Operand decoding ----
