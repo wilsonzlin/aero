@@ -83,7 +83,7 @@
     },
     "toolFiles": {
       "type": "array",
-      "description": "Optional list of user-mode helper tool binaries (paths relative to the driver directory) to include in the staged driver package. This is the explicit opt-in mechanism for shipping .exe tools alongside the driver package without relaxing the additionalFiles non-binary policy. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).",
+      "description": "Optional list of user-mode helper tool binaries (paths relative to the driver directory) to include in the staged driver package. This is the explicit opt-in mechanism for shipping .exe tools alongside the driver package without relaxing the additionalFiles non-binary policy. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory.",
       "items": {
         "allOf": [
           { "$ref": "#/$defs/driverRelativePath" },
