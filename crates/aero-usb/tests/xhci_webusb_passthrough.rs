@@ -418,6 +418,18 @@ fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
         "transfer should still be pending without a host completion"
     );
 
+    // Tick again without a completion: the DATA stage should keep NAKing and must not emit a
+    // duplicate host action.
+    xhci.tick_ep0_control_in(&mut mem, &mut ep0_cursor);
+    assert!(
+        dev.drain_actions().is_empty(),
+        "in-flight control transfers must not queue duplicate host actions"
+    );
+    assert!(
+        xhci.pop_completion().is_none(),
+        "transfer should still be pending without a host completion"
+    );
+
     // Inject completion with deterministic payload.
     let payload: Vec<u8> = (0u8..18u8).collect();
     dev.push_completion(UsbHostCompletion::ControlIn {
@@ -506,6 +518,14 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     assert_eq!(out_endpoint, 0x01);
     assert_eq!(out_data, out_payload);
 
+    // Retry without completion should not emit a duplicate host action.
+    xhci.tick_bulk_out(&mut mem, &mut bulk_out_cursor, 1);
+    assert!(
+        dev.drain_actions().is_empty(),
+        "in-flight bulk OUT must not queue duplicate host actions"
+    );
+    assert!(xhci.pop_completion().is_none());
+
     dev.push_completion(UsbHostCompletion::BulkOut {
         id: out_id,
         result: UsbHostCompletionOut::Success {
@@ -545,6 +565,14 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     assert_eq!(in_endpoint, 0x81);
     assert_eq!(in_len as usize, in_payload.len());
 
+    // Retry without completion should not emit a duplicate host action.
+    xhci.tick_bulk_in(&mut mem, &mut bulk_in_cursor, 1);
+    assert!(
+        dev.drain_actions().is_empty(),
+        "in-flight bulk IN must not queue duplicate host actions"
+    );
+    assert!(xhci.pop_completion().is_none());
+
     dev.push_completion(UsbHostCompletion::BulkIn {
         id: in_id,
         result: UsbHostCompletionIn::Success {
@@ -564,4 +592,3 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     mem.read(in_buf as u32, &mut got);
     assert_eq!(got, in_payload);
 }
-
