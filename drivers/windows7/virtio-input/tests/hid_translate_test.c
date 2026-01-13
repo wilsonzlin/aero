@@ -282,7 +282,7 @@ static void test_mapping(void) {
 }
 
 static void test_keyboard_modifier_reports(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -327,7 +327,7 @@ static void test_keyboard_modifier_reports(void) {
 }
 
 static void test_keyboard_all_modifier_bits_report(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -364,7 +364,7 @@ static void test_keyboard_all_modifier_bits_report(void) {
 }
 
 static void test_keyboard_ctrl_alt_delete_report(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -397,7 +397,7 @@ static void test_keyboard_ctrl_alt_delete_report(void) {
 }
 
 static void test_keyboard_unsupported_key_ignored(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -411,7 +411,7 @@ static void test_keyboard_unsupported_key_ignored(void) {
 }
 
 static void test_keyboard_lock_keys_reports(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -453,7 +453,7 @@ static void test_keyboard_lock_keys_reports(void) {
 }
 
 static void test_keyboard_repeat_does_not_emit(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   /* Repeat for a normal key in the 6-key array (F1). */
@@ -480,7 +480,7 @@ static void test_keyboard_repeat_does_not_emit(void) {
 }
 
 static void test_keyboard_reports(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -528,7 +528,7 @@ static void test_keyboard_reports(void) {
 }
 
 static void test_keyboard_function_key_reports(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -563,7 +563,7 @@ static void test_keyboard_function_key_reports(void) {
 }
 
 static void test_keyboard_function_key_reports_le(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -585,7 +585,7 @@ static void test_keyboard_function_key_reports_le(void) {
 }
 
 static void test_keyboard_keypad_and_misc_key_reports(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -671,7 +671,7 @@ static void test_keyboard_keypad_and_misc_key_reports(void) {
 }
 
 static void test_mouse_reports_le(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -882,7 +882,7 @@ static void test_mouse_wheel_and_hwheel_one_syn(void) {
 }
 
 static void test_keyboard_overflow_queue(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -911,7 +911,7 @@ static void test_keyboard_overflow_queue(void) {
 }
 
 static void test_keyboard_overflow_queue_does_not_emit_on_queued_press(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -946,7 +946,7 @@ static void test_keyboard_overflow_queue_does_not_emit_on_queued_press(void) {
 }
 
 static void test_mouse_reports(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -1136,7 +1136,7 @@ static void test_mouse_horizontal_wheel_reports(void) {
 }
 
 static void test_reset_emits_release_reports(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -1161,7 +1161,7 @@ static void test_reset_emits_release_reports(void) {
 }
 
 static void test_keyboard_only_enable(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -1191,7 +1191,7 @@ static void test_keyboard_only_enable(void) {
 }
 
 static void test_mouse_only_enable(void) {
-  struct captured_reports cap;
+  struct captured_reports cap = {0};
   struct hid_translate t;
 
   cap_clear(&cap);
@@ -1423,6 +1423,30 @@ static void test_tablet_scaling_reports(void) {
   expect_report(&cap, 1, expect2, sizeof(expect2));
 }
 
+static void test_tablet_abs_no_change_does_not_emit(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 1000);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 2000);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  /* Sending the same coordinates again should not emit a duplicate report. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 1000);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 2000);
+  send_syn(&t);
+  assert(cap.count == 1);
+
+  /* No events at all should also not emit. */
+  send_syn(&t);
+  assert(cap.count == 1);
+}
+
 int main(void) {
   test_linux_keycode_abi_values();
   test_linux_rel_code_abi_values();
@@ -1457,6 +1481,7 @@ int main(void) {
   test_tablet_button_press_release();
   test_tablet_multiple_abs_updates_before_syn_is_deterministic();
   test_tablet_scaling_reports();
+  test_tablet_abs_no_change_does_not_emit();
   printf("hid_translate_test: ok\n");
   return 0;
 }
