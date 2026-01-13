@@ -2907,10 +2907,11 @@ def _parse_virtio_irq_markers(tail: bytes) -> dict[str, dict[str, str]]:
     """
     out: dict[str, dict[str, str]] = {}
     for raw in tail.splitlines():
-        if not raw.startswith(b"virtio-") or b"-irq|" not in raw:
+        raw2 = raw.lstrip()
+        if not raw2.startswith(b"virtio-") or b"-irq|" not in raw2:
             continue
         try:
-            line = raw.decode("utf-8", errors="replace").strip()
+            line = raw2.decode("utf-8", errors="replace").strip()
         except Exception:
             continue
         parsed = _try_parse_virtio_irq_marker_line(line)
@@ -2938,10 +2939,11 @@ def _update_virtio_irq_markers_from_chunk(
     for raw in parts:
         if raw.endswith(b"\r"):
             raw = raw[:-1]
-        if not raw or not raw.startswith(b"virtio-") or b"-irq|" not in raw:
+        raw2 = raw.lstrip()
+        if not raw2 or not raw2.startswith(b"virtio-") or b"-irq|" not in raw2:
             continue
         try:
-            line = raw.decode("utf-8", errors="replace").strip()
+            line = raw2.decode("utf-8", errors="replace").strip()
         except Exception:
             continue
         parsed = _try_parse_virtio_irq_marker_line(line)

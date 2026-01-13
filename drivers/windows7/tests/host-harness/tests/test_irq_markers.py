@@ -46,6 +46,12 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(out["virtio-blk"]["mode"], "intx")
         self.assertEqual(out["virtio-blk"]["reason"], "msi_disabled")
 
+    def test_parses_with_leading_whitespace(self) -> None:
+        tail = b"  virtio-net-irq|INFO|mode=msix|vectors=4\n"
+        out = self.harness._parse_virtio_irq_markers(tail)
+        self.assertEqual(out["virtio-net"]["mode"], "msix")
+        self.assertEqual(out["virtio-net"]["vectors"], "4")
+
     def test_uses_last_marker_per_device(self) -> None:
         tail = (
             b"virtio-net-irq|INFO|mode=msi|vectors=1\n"
@@ -104,6 +110,15 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(carry, b"")
         self.assertEqual(markers["virtio-net"]["mode"], "msix")
         self.assertEqual(markers["virtio-net"]["vectors"], "4")
+
+    def test_incremental_parser_allows_leading_whitespace(self) -> None:
+        markers: dict[str, dict[str, str]] = {}
+        carry = b""
+        carry = self.harness._update_virtio_irq_markers_from_chunk(
+            markers, b"  virtio-net-irq|INFO|mode=msix|vectors=4\n", carry=carry
+        )
+        self.assertEqual(carry, b"")
+        self.assertEqual(markers["virtio-net"]["mode"], "msix")
 
     def test_emits_msg_field_for_non_kv_tokens(self) -> None:
         tail = b"virtio-net-irq|WARN|msix disabled by policy\n"
