@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, io::Write};
 
 use anyhow::{anyhow, Context, Result};
-use image::{DynamicImage, RgbaImage};
+use image::RgbaImage;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -22,6 +22,27 @@ pub struct ImageMatchConfig {
     pub max_mismatch_ratio: f32,
     /// Optional crop applied to both images before comparison.
     pub crop: Option<ImageCrop>,
+    /// Controls whether `wait_for_screenshot_match` writes comparison artifacts on mismatch.
+    pub artifacts: ImageMatchArtifacts,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImageMatchArtifacts {
+    /// Whether to emit artifacts on a mismatch/timeout.
+    pub enabled: bool,
+    /// Optional label used in artifact filenames (e.g. a test name).
+    ///
+    /// If unset, `wait_for_screenshot_match` falls back to the golden image filename stem.
+    pub name: Option<String>,
+}
+
+impl Default for ImageMatchArtifacts {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            name: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -75,6 +96,35 @@ pub fn compare_images(
         total_pixels: (actual.width() as u64) * (actual.height() as u64),
         max_channel_diff,
     })
+}
+
+/// Render a diff image where pixels matching within `cfg.tolerance` keep the expected pixel, and
+/// mismatched pixels are highlighted in red.
+pub fn render_image_diff(actual: &RgbaImage, expected: &RgbaImage, cfg: &ImageMatchConfig) -> RgbaImage {
+    // We intentionally keep this helper infallible so callers can always get *some* output
+    // even if normalization fails (dimension mismatch/crop bounds/etc.). In that case, return
+    // the expected image as-is.
+    let Ok((actual, expected)) = normalize_images_for_comparison(actual, expected, cfg) else {
+        return expected.clone();
+    };
+    render_image_diff_normalized(&actual, &expected, cfg.tolerance)
+}
+
+fn render_image_diff_normalized(actual: &RgbaImage, expected: &RgbaImage, tolerance: u8) -> RgbaImage {
+    let mut out = expected.clone();
+    for (o, (a, e)) in out
+        .pixels_mut()
+        .zip(actual.pixels().zip(expected.pixels()))
+    {
+        let mut pixel_diff_max: u8 = 0;
+        for ch in 0..4 {
+            pixel_diff_max = pixel_diff_max.max(a.0[ch].abs_diff(e.0[ch]));
+        }
+        if pixel_diff_max > tolerance {
+            *o = image::Rgba([255, 0, 0, 255]);
+        }
+    }
+    out
 }
 
 fn normalize_images_for_comparison(
@@ -224,6 +274,36 @@ pub fn repo_root() -> PathBuf {
         dir = parent.to_path_buf();
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn sanitize_artifact_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "screenshot".to_string()
+    } else {
+        // Avoid pathological filenames in CI logs.
+        trimmed.chars().take(80).collect()
+    }
+}
+
+fn screenshot_artifact_label(golden: &Path, cfg: &ImageMatchConfig) -> String {
+    if let Some(name) = cfg.artifacts.name.as_deref() {
+        return sanitize_artifact_component(name);
+    }
+
+    golden
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(sanitize_artifact_component)
+        .unwrap_or_else(|| "screenshot".to_string())
 }
 
 pub fn ensure_ci_prereq(path: &Path, how_to_fix: &str) -> Result<()> {
@@ -418,31 +498,97 @@ impl QemuVm {
             }
 
             if Instant::now() >= deadline {
-                let dir = artifact_dir();
-                let actual_path = dir.join("last-actual.png");
-                let diff_path = dir.join("diff.png");
-                if let Err(err) = actual.save(&actual_path) {
-                    eprintln!(
-                        "warning: failed to save screenshot artifact {}: {err}",
-                        actual_path.display()
-                    );
-                }
-                if let Ok(img) = render_diff_image(&actual, &expected, cfg) {
-                    if let Err(err) = img.save(&diff_path) {
-                        eprintln!(
-                            "warning: failed to save diff artifact {}: {err}",
-                            diff_path.display()
-                        );
+                let mut artifact_note = String::new();
+
+                let (actual_path, expected_path, diff_path) = if cfg.artifacts.enabled {
+                    let dir = artifact_dir();
+                    let label = screenshot_artifact_label(golden, cfg);
+                    let ts_ms = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis();
+                    let nonce = self.qmp.next_nonce();
+                    let base = format!("{label}-{ts_ms}-{nonce}");
+                    (
+                        dir.join(format!("{base}-actual.png")),
+                        dir.join(format!("{base}-expected.png")),
+                        dir.join(format!("{base}-diff.png")),
+                    )
+                } else {
+                    (PathBuf::new(), PathBuf::new(), PathBuf::new())
+                };
+
+                if cfg.artifacts.enabled {
+                    match normalize_images_for_comparison(&actual, &expected, cfg) {
+                        Ok((actual_norm, expected_norm)) => {
+                            if let Err(err) = actual_norm.save(&actual_path) {
+                                artifact_note.push_str(&format!(
+                                    "\nwarning: failed to save actual screenshot artifact {}: {err}",
+                                    actual_path.display()
+                                ));
+                            }
+                            if let Err(err) = expected_norm.save(&expected_path) {
+                                artifact_note.push_str(&format!(
+                                    "\nwarning: failed to save expected screenshot artifact {}: {err}",
+                                    expected_path.display()
+                                ));
+                            }
+                            let diff_img =
+                                render_image_diff_normalized(&actual_norm, &expected_norm, cfg.tolerance);
+                            if let Err(err) = diff_img.save(&diff_path) {
+                                artifact_note.push_str(&format!(
+                                    "\nwarning: failed to save diff artifact {}: {err}",
+                                    diff_path.display()
+                                ));
+                            }
+                        }
+                        Err(err) => {
+                            // We already have `actual` and `expected` in memory; save them
+                            // best-effort even if normalization fails.
+                            if let Err(save_err) = actual.save(&actual_path) {
+                                artifact_note.push_str(&format!(
+                                    "\nwarning: failed to save actual screenshot artifact {}: {save_err}",
+                                    actual_path.display()
+                                ));
+                            }
+                            if let Err(save_err) = expected.save(&expected_path) {
+                                artifact_note.push_str(&format!(
+                                    "\nwarning: failed to save expected screenshot artifact {}: {save_err}",
+                                    expected_path.display()
+                                ));
+                            }
+                            artifact_note.push_str(&format!(
+                                "\nwarning: failed to normalize images for diff rendering: {err}"
+                            ));
+                        }
                     }
                 }
 
-                return Err(anyhow!(
-                    "screenshot did not match golden within {timeout:?}: mismatch_ratio={:.4}, max_channel_diff={}\nactual saved to {}\ndiff saved to {}",
+                let mut msg = format!(
+                    "screenshot did not match golden {} within {timeout:?}:\n  mismatched_pixels={} / {} ({:.4}), max_channel_diff={} (tolerance={}), allowed_mismatch_ratio={}",
+                    golden.display(),
+                    diff.mismatched_pixels,
+                    diff.total_pixels,
                     diff.mismatch_ratio(),
                     diff.max_channel_diff,
-                    actual_path.display(),
-                    diff_path.display()
-                ));
+                    cfg.tolerance,
+                    cfg.max_mismatch_ratio,
+                );
+
+                if cfg.artifacts.enabled {
+                    msg.push_str(&format!(
+                        "\nartifacts:\n  actual:   {}\n  expected: {}\n  diff:     {}",
+                        actual_path.display(),
+                        expected_path.display(),
+                        diff_path.display(),
+                    ));
+                }
+
+                if !artifact_note.is_empty() {
+                    msg.push_str(&artifact_note);
+                }
+
+                return Err(anyhow!(msg));
             }
 
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -610,26 +756,6 @@ async fn wait_for_file_contains(path: &Path, needle: &[u8], timeout: Duration) -
 
 fn load_image_rgba(path: &Path) -> Result<RgbaImage> {
     Ok(image::ImageReader::open(path)?.decode()?.to_rgba8())
-}
-
-fn render_diff_image(
-    actual: &RgbaImage,
-    expected: &RgbaImage,
-    cfg: &ImageMatchConfig,
-) -> Result<DynamicImage> {
-    let (actual, expected) = normalize_images_for_comparison(actual, expected, cfg)?;
-
-    let mut out = actual.clone();
-    for (o, (a, e)) in out.pixels_mut().zip(actual.pixels().zip(expected.pixels())) {
-        let mut pixel_diff_max: u8 = 0;
-        for ch in 0..4 {
-            pixel_diff_max = pixel_diff_max.max(a.0[ch].abs_diff(e.0[ch]));
-        }
-        if pixel_diff_max > cfg.tolerance {
-            *o = image::Rgba([255, 0, 0, 255]);
-        }
-    }
-    Ok(DynamicImage::ImageRgba8(out))
 }
 
 struct QmpClient {

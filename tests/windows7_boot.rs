@@ -26,6 +26,7 @@ async fn windows7_boot_placeholder() -> Result<()> {
         tolerance: 2,
         max_mismatch_ratio: 0.001,
         crop: None,
+        ..Default::default()
     };
     let shot = vm
         .wait_for_stable_screenshot(

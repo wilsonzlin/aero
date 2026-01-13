@@ -32,6 +32,10 @@ async fn boot_sector_minimal_image() -> Result<()> {
         tolerance: 0,
         max_mismatch_ratio: 0.0,
         crop: None,
+        artifacts: harness::ImageMatchArtifacts {
+            enabled: true,
+            name: Some("boot_sector_minimal_image".to_string()),
+        },
     };
     vm.wait_for_screenshot_match(&golden, Duration::from_secs(5), &cfg)
         .await?;
