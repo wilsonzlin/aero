@@ -2,7 +2,6 @@ package relay
 
 import (
 	"errors"
-	"strings"
 	"sync"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
@@ -97,7 +96,6 @@ func (sm *SessionManager) deleteSession(id string) {
 // The session's public ID (Session.ID) remains a random value; key is used only
 // for quota bookkeeping and uniqueness enforcement.
 func (sm *SessionManager) CreateSessionWithKey(key string) (*Session, error) {
-	key = strings.TrimSpace(key)
 	if key == "" {
 		return sm.CreateSession()
 	}
