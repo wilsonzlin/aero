@@ -308,10 +308,18 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
         KeAcquireSpinLock(&dx->EventqLock, &oldIrql);
         cb = dx->EventqCallback;
         cbCtx = dx->EventqCallbackContext;
+        /*
+         * Bump the in-flight counter while still holding EventqLock so that a
+         * concurrent callback teardown (clearing the callback and waiting for
+         * EventqCallbackInFlight==0) cannot race with us between releasing the
+         * lock and incrementing the counter.
+         */
+        if (cb != NULL) {
+            InterlockedIncrement(&dx->EventqCallbackInFlight);
+        }
         KeReleaseSpinLock(&dx->EventqLock, oldIrql);
 
         if (cb != NULL) {
-            InterlockedIncrement(&dx->EventqCallbackInFlight);
             cb(cbCtx, evtType, evtData);
             InterlockedDecrement(&dx->EventqCallbackInFlight);
         }
