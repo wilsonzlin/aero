@@ -188,8 +188,8 @@ impl Trb {
 
     #[inline]
     pub fn set_slot_id(&mut self, slot_id: u8) {
-        self.control =
-            (self.control & !Self::CONTROL_SLOT_ID_MASK) | ((slot_id as u32) << Self::CONTROL_SLOT_ID_SHIFT);
+        self.control = (self.control & !Self::CONTROL_SLOT_ID_MASK)
+            | ((slot_id as u32) << Self::CONTROL_SLOT_ID_SHIFT);
     }
 
     #[inline]

@@ -342,7 +342,12 @@ impl XhciTransferExecutor {
         }
     }
 
-    fn execute_td<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep: &mut EndpointState, td: TdDescriptor) {
+    fn execute_td<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        ep: &mut EndpointState,
+        td: TdDescriptor,
+    ) {
         let max_len = td.total_len as usize;
 
         let (completion_code, transferred_bytes_opt) = if ep.direction_in() {

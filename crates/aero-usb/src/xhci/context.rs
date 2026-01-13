@@ -387,7 +387,9 @@ impl InputContext32 {
         device_context_index: u8,
     ) -> Result<EndpointContext, ContextError> {
         if !(1..=31).contains(&device_context_index) {
-            return Err(ContextError::InvalidDeviceContextIndex(device_context_index));
+            return Err(ContextError::InvalidDeviceContextIndex(
+                device_context_index,
+            ));
         }
 
         // Input Context layout: [Input Control][Slot][EP0][EP1 OUT][EP1 IN]...
@@ -426,7 +428,9 @@ impl DeviceContext32 {
         device_context_index: u8,
     ) -> Result<EndpointContext, ContextError> {
         if !(1..=31).contains(&device_context_index) {
-            return Err(ContextError::InvalidDeviceContextIndex(device_context_index));
+            return Err(ContextError::InvalidDeviceContextIndex(
+                device_context_index,
+            ));
         }
 
         let addr = self

@@ -3,6 +3,8 @@ use crate::memory::write_u8;
 use crate::memory::GuestMemory;
 use crate::pci::{VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
 use crate::queue::{DescriptorChain, VirtQueue};
+use std::io;
+
 use aero_storage::{DiskError as StorageDiskError, VirtualDisk};
 
 pub const VIRTIO_DEVICE_TYPE_BLK: u16 = 2;
@@ -90,7 +92,7 @@ impl VirtioBlkConfig {
         cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
         cfg[48..52].copy_from_slice(&u32::MAX.to_le_bytes()); // max_write_zeroes_sectors
         cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
-        // write_zeroes_may_unmap: 0 (false); unused1 is zeroed.
+                                                                  // write_zeroes_may_unmap: 0 (false); unused1 is zeroed.
 
         // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a
         // small fixed-size array.
@@ -257,6 +259,13 @@ impl aero_storage::VirtualDisk for BlockBackendAsAeroVirtualDisk {
     }
 }
 
+fn map_device_io_error(err: io::Error) -> BlockBackendError {
+    match err.kind() {
+        io::ErrorKind::UnexpectedEof => BlockBackendError::OutOfBounds,
+        _ => BlockBackendError::IoError,
+    }
+}
+
 /// Allow `aero-storage` virtual disks to be used directly as virtio-blk backends.
 ///
 /// This means platform code can do:
@@ -271,7 +280,7 @@ impl aero_storage::VirtualDisk for BlockBackendAsAeroVirtualDisk {
 ///
 /// The virtio-blk device logic itself still enforces sector-based requests; this adapter is
 /// byte-addressed and forwards directly to the underlying [`VirtualDisk`] `read_at`/`write_at`.
-impl<T: VirtualDisk + ?Sized> BlockBackend for Box<T> {
+impl<T: VirtualDisk> BlockBackend for Box<T> {
     fn len(&self) -> u64 {
         (**self).capacity_bytes()
     }
@@ -290,6 +299,72 @@ impl<T: VirtualDisk + ?Sized> BlockBackend for Box<T> {
 
     fn flush(&mut self) -> Result<(), BlockBackendError> {
         (**self).flush().map_err(map_storage_error)
+    }
+}
+
+impl BlockBackend for Box<dyn VirtualDisk> {
+    fn len(&self) -> u64 {
+        (**self).capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        (**self).read_at(offset, dst).map_err(map_storage_error)
+    }
+
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        (**self).write_at(offset, src).map_err(map_storage_error)
+    }
+
+    fn blk_size(&self) -> u32 {
+        VIRTIO_BLK_SECTOR_SIZE as u32
+    }
+
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
+        (**self).flush().map_err(map_storage_error)
+    }
+}
+
+impl BlockBackend for Box<dyn VirtualDisk + Send> {
+    fn len(&self) -> u64 {
+        (**self).capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        (**self).read_at(offset, dst).map_err(map_storage_error)
+    }
+
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        (**self).write_at(offset, src).map_err(map_storage_error)
+    }
+
+    fn blk_size(&self) -> u32 {
+        VIRTIO_BLK_SECTOR_SIZE as u32
+    }
+
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
+        (**self).flush().map_err(map_storage_error)
+    }
+}
+
+impl BlockBackend for Box<dyn aero_devices::storage::DiskBackend> {
+    fn len(&self) -> u64 {
+        (**self).len()
+    }
+
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        (**self).read_at(offset, dst).map_err(map_device_io_error)
+    }
+
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        (**self).write_at(offset, src).map_err(map_device_io_error)
+    }
+
+    fn blk_size(&self) -> u32 {
+        VIRTIO_BLK_SECTOR_SIZE as u32
+    }
+
+    fn flush(&mut self) -> Result<(), BlockBackendError> {
+        (**self).flush().map_err(map_device_io_error)
     }
 }
 
@@ -911,13 +986,14 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockBackend, BlockBackendAsAeroVirtualDisk, MemDisk, VirtioBlk, VIRTIO_BLK_S_OK,
-        VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT,
+        BlockBackend, BlockBackendAsAeroVirtualDisk, BlockBackendError, MemDisk, VirtioBlk,
+        VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT,
     };
-    use aero_storage::{DiskError, MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
     use crate::devices::VirtioDevice;
     use crate::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
     use crate::queue::{VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+    use aero_storage::{DiskError, MemBackend, RawDisk, SECTOR_SIZE, VirtualDisk};
+    use std::io;
 
     fn write_desc(
         mem: &mut GuestRam,
@@ -970,15 +1046,7 @@ mod tests {
         mem.write(status, &[0xaau8]).unwrap();
 
         // Descriptor chain: header (ro) -> data (wo) -> status (wo).
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            header,
-            16,
-            VIRTQ_DESC_F_NEXT,
-            1,
-        );
+        write_desc(&mut mem, desc_table, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
         write_desc(
             &mut mem,
             desc_table,
@@ -1051,15 +1119,7 @@ mod tests {
         // Status shares the same last descriptor semantics as other request types.
         mem.write(status, &[0xaau8]).unwrap();
 
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            header,
-            16,
-            VIRTQ_DESC_F_NEXT,
-            1,
-        );
+        write_desc(&mut mem, desc_table, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
         // Data descriptor is read-only (no VIRTQ_DESC_F_WRITE).
         write_desc(&mut mem, desc_table, 1, data, 20, VIRTQ_DESC_F_NEXT, 2);
         write_desc(&mut mem, desc_table, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
@@ -1136,5 +1196,71 @@ mod tests {
 
         let err = disk.write_at(u64::MAX, &[0u8; 1]).unwrap_err();
         assert!(matches!(err, DiskError::OffsetOverflow));
+    }
+
+    #[test]
+    fn diskbackend_trait_object_roundtrip_and_error_mapping() {
+        struct VecDisk {
+            data: Vec<u8>,
+        }
+
+        impl VecDisk {
+            fn new(size: usize) -> Self {
+                Self {
+                    data: vec![0; size],
+                }
+            }
+        }
+
+        impl aero_devices::storage::DiskBackend for VecDisk {
+            fn len(&self) -> u64 {
+                self.data.len() as u64
+            }
+
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
+                let offset = usize::try_from(offset)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "offset"))?;
+                let end = offset
+                    .checked_add(buf.len())
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "end"))?;
+
+                let src = self
+                    .data
+                    .get(offset..end)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "oob"))?;
+                buf.copy_from_slice(src);
+                Ok(())
+            }
+
+            fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()> {
+                let offset = usize::try_from(offset)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "offset"))?;
+                let end = offset
+                    .checked_add(buf.len())
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "end"))?;
+
+                let dst = self
+                    .data
+                    .get_mut(offset..end)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "oob"))?;
+                dst.copy_from_slice(buf);
+                Ok(())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut backend: Box<dyn aero_devices::storage::DiskBackend> = Box::new(VecDisk::new(16));
+
+        BlockBackend::write_at(&mut backend, 4, b"abc").unwrap();
+        let mut out = [0u8; 3];
+        BlockBackend::read_at(&mut backend, 4, &mut out).unwrap();
+        assert_eq!(&out, b"abc");
+
+        let mut oob = [0u8; 1];
+        let err = BlockBackend::read_at(&mut backend, 16, &mut oob).unwrap_err();
+        assert_eq!(err, BlockBackendError::OutOfBounds);
     }
 }

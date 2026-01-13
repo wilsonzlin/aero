@@ -23,8 +23,8 @@ pub mod command_ring;
 pub mod context;
 pub mod regs;
 pub mod ring;
-pub mod trb;
 pub mod transfer;
+pub mod trb;
 
 use crate::MemoryBus;
 use aero_io_snapshot::io::state::{
