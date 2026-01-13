@@ -1594,8 +1594,13 @@ const presentOnce = async (): Promise<boolean> => {
     };
 
     if (presentFn) {
-      lastUploadDirtyRects = dirtyRects;
-      const result = await presentFn(dirtyRects);
+      const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter?.backend ?? null);
+      const chosenDirtyRects =
+        frame?.sharedLayout === undefined
+          ? dirtyRects
+          : chooseDirtyRectsForUpload(frame.sharedLayout, dirtyRects, bytesPerRowAlignment);
+      lastUploadDirtyRects = chosenDirtyRects;
+      const result = await presentFn(chosenDirtyRects);
       if (typeof result === "boolean" ? result : true) {
         aerogpuLastOutputSource = "framebuffer";
         clearSharedFramebufferDirty();
