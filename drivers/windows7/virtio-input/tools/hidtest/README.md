@@ -166,5 +166,11 @@ Query virtio-input driver diagnostic counters (IOCTL_VIOINPUT_QUERY_COUNTERS):
 hidtest.exe --counters
 ```
 
+Query virtio-input driver diagnostic counters in JSON form:
+
+```bat
+hidtest.exe --counters-json
+```
+
 You should see non-zero counts after some HID activity (enumeration, input reports, etc). If you run a non-virtio-input HID
 device, the IOCTL will fail with an "invalid function" style error.

@@ -199,6 +199,8 @@ typedef struct OPTIONS {
     int dump_desc;
     int dump_collection_desc;
     int query_counters;
+    int query_counters_json;
+    int quiet;
     int want_keyboard;
     int want_mouse;
     USHORT vid;
@@ -605,6 +607,133 @@ static int dump_vioinput_counters(const SELECTED_DEVICE *dev)
     return 0;
 }
 
+static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
+{
+    BYTE buf[4096];
+    DWORD bytes = 0;
+    BOOL ok;
+
+    ULONG size = 0;
+    ULONG version = 0;
+    DWORD avail = 0;
+
+    int have_size = 0;
+    int have_version = 0;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        fwprintf(stderr, L"Invalid device handle\n");
+        return 1;
+    }
+
+    ZeroMemory(buf, sizeof(buf));
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_COUNTERS, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
+    if (!ok) {
+        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)");
+        return 1;
+    }
+    if (bytes == 0) {
+        fwprintf(stderr, L"IOCTL_VIOINPUT_QUERY_COUNTERS returned 0 bytes\n");
+        return 1;
+    }
+
+    avail = bytes;
+
+    have_size = (avail >= sizeof(ULONG));
+    if (have_size) {
+        memcpy(&size, buf, sizeof(size));
+        if (size != 0 && size < avail) {
+            avail = size;
+        }
+    }
+
+    have_version = (avail >= sizeof(ULONG) * 2);
+    if (have_version) {
+        memcpy(&version, buf + sizeof(ULONG), sizeof(version));
+    }
+
+    if (size != 0 && size < sizeof(VIOINPUT_COUNTERS)) {
+        fwprintf(stderr, L"WARNING: driver returned counters Size=%lu < expected %u; dumping what is present\n", size,
+                 (unsigned)sizeof(VIOINPUT_COUNTERS));
+    }
+    if (have_version && version != VIOINPUT_COUNTERS_VERSION) {
+        fwprintf(stderr, L"WARNING: counters Version=%lu != expected %u; dumping what is present\n", version,
+                 (unsigned)VIOINPUT_COUNTERS_VERSION);
+    }
+
+#define VIOINPUT_WIDEN2(_x) L##_x
+#define VIOINPUT_WIDEN(_x) VIOINPUT_WIDEN2(_x)
+#define JSON_LONG_FIELD(_name, _is_last)                                                         \
+    do {                                                                                         \
+        LONG v;                                                                                  \
+        size_t off = offsetof(VIOINPUT_COUNTERS, _name);                                         \
+        wprintf(L"  \"%ls\": ", VIOINPUT_WIDEN(#_name));                                         \
+        if (avail >= off + sizeof(v)) {                                                          \
+            memcpy(&v, buf + off, sizeof(v));                                                    \
+            wprintf(L"%ld", v);                                                                  \
+        } else {                                                                                 \
+            wprintf(L"null");                                                                    \
+        }                                                                                        \
+        if (!(_is_last)) {                                                                       \
+            wprintf(L",");                                                                       \
+        }                                                                                        \
+        wprintf(L"\n");                                                                          \
+    } while (0)
+
+    wprintf(L"{\n");
+    wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
+    if (have_size && size != 0) {
+        wprintf(L"  \"Size\": %lu,\n", size);
+    } else {
+        wprintf(L"  \"Size\": null,\n");
+    }
+    if (have_version) {
+        wprintf(L"  \"Version\": %lu,\n", version);
+    } else {
+        wprintf(L"  \"Version\": null,\n");
+    }
+
+    JSON_LONG_FIELD(IoctlTotal, 0);
+    JSON_LONG_FIELD(IoctlUnknown, 0);
+    JSON_LONG_FIELD(IoctlHidGetDeviceDescriptor, 0);
+    JSON_LONG_FIELD(IoctlHidGetReportDescriptor, 0);
+    JSON_LONG_FIELD(IoctlHidGetDeviceAttributes, 0);
+    JSON_LONG_FIELD(IoctlHidGetCollectionInformation, 0);
+    JSON_LONG_FIELD(IoctlHidGetCollectionDescriptor, 0);
+    JSON_LONG_FIELD(IoctlHidFlushQueue, 0);
+    JSON_LONG_FIELD(IoctlHidGetString, 0);
+    JSON_LONG_FIELD(IoctlHidGetIndexedString, 0);
+    JSON_LONG_FIELD(IoctlHidGetFeature, 0);
+    JSON_LONG_FIELD(IoctlHidSetFeature, 0);
+    JSON_LONG_FIELD(IoctlHidGetInputReport, 0);
+    JSON_LONG_FIELD(IoctlHidSetOutputReport, 0);
+    JSON_LONG_FIELD(IoctlHidReadReport, 0);
+    JSON_LONG_FIELD(IoctlHidWriteReport, 0);
+    JSON_LONG_FIELD(ReadReportPended, 0);
+    JSON_LONG_FIELD(ReadReportCompleted, 0);
+    JSON_LONG_FIELD(ReadReportCancelled, 0);
+    JSON_LONG_FIELD(ReadReportQueueDepth, 0);
+    JSON_LONG_FIELD(ReadReportQueueMaxDepth, 0);
+    JSON_LONG_FIELD(ReportRingDepth, 0);
+    JSON_LONG_FIELD(ReportRingMaxDepth, 0);
+    JSON_LONG_FIELD(ReportRingDrops, 0);
+    JSON_LONG_FIELD(ReportRingOverruns, 0);
+    JSON_LONG_FIELD(VirtioInterrupts, 0);
+    JSON_LONG_FIELD(VirtioDpcs, 0);
+    JSON_LONG_FIELD(VirtioEvents, 0);
+    JSON_LONG_FIELD(VirtioEventDrops, 0);
+    JSON_LONG_FIELD(VirtioEventOverruns, 0);
+    JSON_LONG_FIELD(VirtioQueueDepth, 0);
+    JSON_LONG_FIELD(VirtioQueueMaxDepth, 1);
+
+    wprintf(L"}\n");
+
+#undef JSON_LONG_FIELD
+#undef VIOINPUT_WIDEN
+#undef VIOINPUT_WIDEN2
+
+    return 0;
+}
+
 static void print_usage(void)
 {
     wprintf(L"hidtest: minimal HID report/IOCTL probe tool (Win7)\n");
@@ -615,6 +744,7 @@ static void print_usage(void)
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
     wprintf(L"             [--dump-collection-desc]\n");
     wprintf(L"             [--counters]\n");
+    wprintf(L"             [--counters-json]\n");
     wprintf(L"             [--led-ioctl-set-output 0x07]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report]\n");
     wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
@@ -640,6 +770,7 @@ static void print_usage(void)
     wprintf(L"  --dump-collection-desc\n");
     wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR\n");
     wprintf(L"  --counters      Query and print virtio-input driver diagnostic counters\n");
+    wprintf(L"  --counters-json Query and print virtio-input driver diagnostic counters as JSON\n");
     wprintf(L"  --ioctl-bad-xfer-packet\n");
     wprintf(L"                 Send IOCTL_HID_WRITE_REPORT with an invalid HID_XFER_PACKET pointer\n");
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
@@ -922,8 +1053,10 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         handle = open_hid_path(detail->DevicePath, &desired_access);
         if (handle == INVALID_HANDLE_VALUE) {
-            wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
-            print_last_error_w(L"      CreateFile");
+            if (!opt->quiet) {
+                wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
+                print_last_error_w(L"      CreateFile");
+            }
             free(detail);
             iface_index++;
             continue;
@@ -941,20 +1074,22 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
         hid_report_desc_valid = query_hid_descriptor_report_length(handle, &hid_report_desc_len);
 
-        wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
-        if (attr_valid) {
-            wprintf(L"      VID:PID %04X:%04X (ver %04X)\n", attr.VendorID, attr.ProductID,
-                    attr.VersionNumber);
-        } else {
-            wprintf(L"      HidD_GetAttributes failed\n");
-        }
+        if (!opt->quiet) {
+            wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
+            if (attr_valid) {
+                wprintf(L"      VID:PID %04X:%04X (ver %04X)\n", attr.VendorID, attr.ProductID,
+                        attr.VersionNumber);
+            } else {
+                wprintf(L"      HidD_GetAttributes failed\n");
+            }
 
-        if (caps_valid) {
-            wprintf(L"      UsagePage:Usage %04X:%04X\n", caps.UsagePage, caps.Usage);
-            wprintf(L"      Report bytes (in/out/feat): %u / %u / %u\n", caps.InputReportByteLength,
-                    caps.OutputReportByteLength, caps.FeatureReportByteLength);
-        } else {
-            wprintf(L"      HidD_GetPreparsedData/HidP_GetCaps failed\n");
+            if (caps_valid) {
+                wprintf(L"      UsagePage:Usage %04X:%04X\n", caps.UsagePage, caps.Usage);
+                wprintf(L"      Report bytes (in/out/feat): %u / %u / %u\n", caps.InputReportByteLength,
+                        caps.OutputReportByteLength, caps.FeatureReportByteLength);
+            } else {
+                wprintf(L"      HidD_GetPreparsedData/HidP_GetCaps failed\n");
+            }
         }
 
         is_keyboard = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x06;
@@ -974,67 +1109,71 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             virtio_expected_desc_valid = 1;
         }
 
-        if (is_virtio) {
-            if (is_keyboard) {
-                wprintf(L"      Detected: virtio-input keyboard\n");
-            } else if (is_mouse) {
-                wprintf(L"      Detected: virtio-input mouse\n");
+        if (!opt->quiet) {
+            if (is_virtio) {
+                if (is_keyboard) {
+                    wprintf(L"      Detected: virtio-input keyboard\n");
+                } else if (is_mouse) {
+                    wprintf(L"      Detected: virtio-input mouse\n");
+                } else {
+                    wprintf(L"      Detected: virtio-input\n");
+                }
+            }
+
+            if (report_desc_valid) {
+                wprintf(L"      Report descriptor length: %lu bytes\n", report_desc_len);
             } else {
-                wprintf(L"      Detected: virtio-input\n");
+                wprintf(L"      IOCTL_HID_GET_REPORT_DESCRIPTOR failed\n");
+            }
+            if (hid_report_desc_valid) {
+                wprintf(L"      HID descriptor report length: %lu bytes\n", hid_report_desc_len);
+            } else {
+                wprintf(L"      IOCTL_HID_GET_DEVICE_DESCRIPTOR failed\n");
+            }
+            if (report_desc_valid && hid_report_desc_valid && report_desc_len != hid_report_desc_len) {
+                wprintf(L"      [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n",
+                        report_desc_len, hid_report_desc_len);
             }
         }
 
-        if (report_desc_valid) {
-            wprintf(L"      Report descriptor length: %lu bytes\n", report_desc_len);
-        } else {
-            wprintf(L"      IOCTL_HID_GET_REPORT_DESCRIPTOR failed\n");
-        }
-        if (hid_report_desc_valid) {
-            wprintf(L"      HID descriptor report length: %lu bytes\n", hid_report_desc_len);
-        } else {
-            wprintf(L"      IOCTL_HID_GET_DEVICE_DESCRIPTOR failed\n");
-        }
-        if (report_desc_valid && hid_report_desc_valid && report_desc_len != hid_report_desc_len) {
-            wprintf(L"      [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n",
-                    report_desc_len, hid_report_desc_len);
-        }
-
-        if (is_virtio) {
-            if (virtio_expected_desc_valid) {
-                if (report_desc_valid && report_desc_len != virtio_expected_desc_len) {
-                    wprintf(L"      [WARN] unexpected virtio-input report descriptor length (expected %u)\n",
-                            (unsigned)virtio_expected_desc_len);
+        if (!opt->quiet) {
+            if (is_virtio) {
+                if (virtio_expected_desc_valid) {
+                    if (report_desc_valid && report_desc_len != virtio_expected_desc_len) {
+                        wprintf(L"      [WARN] unexpected virtio-input report descriptor length (expected %u)\n",
+                                (unsigned)virtio_expected_desc_len);
+                    }
+                    if (hid_report_desc_valid && hid_report_desc_len != virtio_expected_desc_len) {
+                        wprintf(L"      [WARN] unexpected virtio-input HID descriptor report length (expected %u)\n",
+                                (unsigned)virtio_expected_desc_len);
+                    }
                 }
-                if (hid_report_desc_valid && hid_report_desc_len != virtio_expected_desc_len) {
-                    wprintf(L"      [WARN] unexpected virtio-input HID descriptor report length (expected %u)\n",
-                            (unsigned)virtio_expected_desc_len);
+
+                if (caps_valid && is_keyboard) {
+                    if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN) {
+                        wprintf(L"      [WARN] unexpected virtio-input keyboard input report length (expected %u)\n",
+                                (unsigned)VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN);
+                    }
+                    if (caps.OutputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN) {
+                        wprintf(L"      [WARN] unexpected virtio-input keyboard output report length (expected %u)\n",
+                                (unsigned)VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN);
+                    }
+                } else if (caps_valid && is_mouse) {
+                    if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN) {
+                        wprintf(L"      [WARN] unexpected virtio-input mouse input report length (expected %u)\n",
+                                (unsigned)VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN);
+                    }
                 }
             }
 
-            if (caps_valid && is_keyboard) {
-                if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN) {
-                    wprintf(L"      [WARN] unexpected virtio-input keyboard input report length (expected %u)\n",
-                            (unsigned)VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN);
-                }
-                if (caps.OutputReportByteLength != VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN) {
-                    wprintf(L"      [WARN] unexpected virtio-input keyboard output report length (expected %u)\n",
-                            (unsigned)VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN);
-                }
-            } else if (caps_valid && is_mouse) {
-                if (caps.InputReportByteLength != VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN) {
-                    wprintf(L"      [WARN] unexpected virtio-input mouse input report length (expected %u)\n",
-                            (unsigned)VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN);
-                }
+            if (desired_access & GENERIC_WRITE) {
+                wprintf(L"      Access: read/write\n");
+            } else {
+                wprintf(L"      Access: read-only\n");
             }
-        }
 
-        if (desired_access & GENERIC_WRITE) {
-            wprintf(L"      Access: read/write\n");
-        } else {
-            wprintf(L"      Access: read-only\n");
+            print_device_strings(handle);
         }
-
-        print_device_strings(handle);
 
         // Match selection filters. If the user is selecting by index only, we can match even if
         // HidD_GetAttributes failed.
@@ -1848,6 +1987,13 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--counters-json") == 0) {
+            opt.query_counters = 1;
+            opt.query_counters_json = 1;
+            opt.quiet = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--ioctl-bad-xfer-packet") == 0) {
             opt.ioctl_bad_xfer_packet = 1;
             continue;
@@ -2146,28 +2292,30 @@ int wmain(int argc, wchar_t **argv)
         return 0;
     }
 
-    wprintf(L"\nSelected device:\n");
-    wprintf(L"  Path: %ls\n", dev.path ? dev.path : L"<null>");
-    if (dev.attr_valid) {
-        wprintf(L"  VID:PID %04X:%04X (ver %04X)\n", dev.attr.VendorID, dev.attr.ProductID,
-                dev.attr.VersionNumber);
-    } else {
-        wprintf(L"  VID:PID <unavailable>\n");
-    }
-    if (dev.caps_valid) {
-        wprintf(L"  UsagePage:Usage %04X:%04X\n", dev.caps.UsagePage, dev.caps.Usage);
-        wprintf(L"  Report bytes (in/out/feat): %u / %u / %u\n", dev.caps.InputReportByteLength,
-                dev.caps.OutputReportByteLength, dev.caps.FeatureReportByteLength);
-    }
-    if (dev.report_desc_valid) {
-        wprintf(L"  Report descriptor length: %lu bytes\n", dev.report_desc_len);
-    }
-    if (dev.hid_report_desc_valid) {
-        wprintf(L"  HID descriptor report length: %lu bytes\n", dev.hid_report_desc_len);
-    }
-    if (dev.report_desc_valid && dev.hid_report_desc_valid && dev.report_desc_len != dev.hid_report_desc_len) {
-        wprintf(L"  [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n", dev.report_desc_len,
-                dev.hid_report_desc_len);
+    if (!opt.quiet) {
+        wprintf(L"\nSelected device:\n");
+        wprintf(L"  Path: %ls\n", dev.path ? dev.path : L"<null>");
+        if (dev.attr_valid) {
+            wprintf(L"  VID:PID %04X:%04X (ver %04X)\n", dev.attr.VendorID, dev.attr.ProductID,
+                    dev.attr.VersionNumber);
+        } else {
+            wprintf(L"  VID:PID <unavailable>\n");
+        }
+        if (dev.caps_valid) {
+            wprintf(L"  UsagePage:Usage %04X:%04X\n", dev.caps.UsagePage, dev.caps.Usage);
+            wprintf(L"  Report bytes (in/out/feat): %u / %u / %u\n", dev.caps.InputReportByteLength,
+                    dev.caps.OutputReportByteLength, dev.caps.FeatureReportByteLength);
+        }
+        if (dev.report_desc_valid) {
+            wprintf(L"  Report descriptor length: %lu bytes\n", dev.report_desc_len);
+        }
+        if (dev.hid_report_desc_valid) {
+            wprintf(L"  HID descriptor report length: %lu bytes\n", dev.hid_report_desc_len);
+        }
+        if (dev.report_desc_valid && dev.hid_report_desc_valid && dev.report_desc_len != dev.hid_report_desc_len) {
+            wprintf(L"  [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n", dev.report_desc_len,
+                    dev.hid_report_desc_len);
+        }
     }
 
     if (opt.have_led_mask) {
@@ -2190,7 +2338,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.query_counters) {
-        int rc = dump_vioinput_counters(&dev);
+        int rc = opt.query_counters_json ? dump_vioinput_counters_json(&dev) : dump_vioinput_counters(&dev);
         free_selected_device(&dev);
         return rc;
     }
