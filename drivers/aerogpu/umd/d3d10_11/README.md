@@ -18,6 +18,7 @@ This implementation started as “minimum viable triangle”, but it now include
 - Device + immediate context (FL10_0)
 - Buffers + Texture2D resources
   - Texture2D **mip chains + array layers** (`MipLevels = 0` → full chain), including initial-data upload + subresource layout packing for guest-backed allocations
+  - 16-bit packed formats (`B5G6R5_UNORM`, `B5G5R5A1_UNORM`)
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
 - Vertex/pixel shaders (DXBC payload passthrough)
 - Input layout + vertex/index buffers, primitive topology
@@ -31,7 +32,6 @@ This implementation started as “minimum viable triangle”, but it now include
 
 - Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
 - MRT: the protocol supports up to `AEROGPU_MAX_RENDER_TARGETS` (8), but the D3D10/11 UMD currently only forwards RT0.
-- B5 formats: the protocol/host support 16-bit `B5G6R5` / `B5G5R5A1` formats, but most Win7 D3D10/11 bring-up is still exercised with 32-bit formats (and this UMD’s caps/format mapping should be extended if a workload requires DXGI `B5*` formats).
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
 - Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
 
