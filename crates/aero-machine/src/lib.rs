@@ -4087,6 +4087,27 @@ impl Machine {
     /// `disk_id=2`: Optional IDE primary master ATA disk (if exposed as a separately managed disk).
     pub const DISK_ID_IDE_PRIMARY_MASTER: u32 = 2;
 
+    // ---------------------------------------------------------------------
+    // UHCI synthetic HID topology constants (normative)
+    // ---------------------------------------------------------------------
+    //
+    // These constants mirror `web/src/usb/uhci_external_hub.ts` and `docs/08-input-devices.md` so
+    // browser/WASM integrations can share a single guest-visible USB topology contract regardless
+    // of whether the UHCI topology is managed by JS or auto-attached by `aero_machine::Machine`.
+
+    /// UHCI root port index reserved for the external hub (synthetic HID + WebUSB passthrough).
+    pub const UHCI_EXTERNAL_HUB_ROOT_PORT: u8 = 0;
+    /// Default downstream port count for the external hub on [`Self::UHCI_EXTERNAL_HUB_ROOT_PORT`].
+    pub const UHCI_EXTERNAL_HUB_PORT_COUNT: u8 = 16;
+    /// External hub port number for the built-in USB HID keyboard.
+    pub const UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT: u8 = 1;
+    /// External hub port number for the built-in USB HID mouse.
+    pub const UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT: u8 = 2;
+    /// External hub port number for the built-in USB HID gamepad.
+    pub const UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT: u8 = 3;
+    /// External hub port number for the built-in USB HID consumer-control (media keys).
+    pub const UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT: u8 = 4;
+
     fn validate_cfg(cfg: &MachineConfig) -> Result<(), MachineError> {
         if cfg.cpu_count == 0 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));

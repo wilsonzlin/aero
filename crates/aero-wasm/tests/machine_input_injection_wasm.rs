@@ -66,4 +66,13 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_virtio_wheel(1);
     m.inject_virtio_hwheel(-1);
     m.inject_virtio_wheel2(1, -1);
+
+    // Synthetic USB HID injection APIs should remain callable.
+    m.inject_usb_hid_keyboard_usage(0x04, true);
+    m.inject_usb_hid_keyboard_usage(0x04, false);
+    m.inject_usb_hid_mouse_move(10, 5);
+    m.inject_usb_hid_mouse_buttons(aero_wasm::MouseButtons::Left as u32);
+    m.inject_usb_hid_mouse_buttons(0);
+    m.inject_usb_hid_mouse_wheel(1);
+    m.inject_usb_hid_gamepad_report(0, 0);
 }

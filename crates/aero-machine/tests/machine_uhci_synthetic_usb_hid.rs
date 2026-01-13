@@ -1,5 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use std::any::Any;
+
 use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::usb::uhci::regs;
 use aero_machine::{Machine, MachineConfig};
@@ -15,7 +17,19 @@ fn uhci_io_base(m: &Machine) -> u16 {
         .device_config(USB_UHCI_PIIX3.bdf)
         .expect("UHCI PCI function should exist");
     let bar4_base = cfg.bar_range(4).map(|range| range.base).unwrap_or(0);
+    assert_ne!(bar4_base, 0, "UHCI BAR4 base should be assigned by BIOS");
     u16::try_from(bar4_base).expect("UHCI BAR4 base should fit in u16")
+}
+
+fn enable_uhci_io_decode(m: &mut Machine) {
+    let pci_cfg = m
+        .pci_config_ports()
+        .expect("pc platform should expose pci_cfg");
+    let mut pci_cfg = pci_cfg.borrow_mut();
+    let bus = pci_cfg.bus_mut();
+    let cmd = bus.read_config(USB_UHCI_PIIX3.bdf, 0x04, 2) as u16;
+    // PCI COMMAND bit0: I/O space enable.
+    bus.write_config(USB_UHCI_PIIX3.bdf, 0x04, 2, u32::from(cmd | 0x0001));
 }
 
 fn configure_keyboard_for_reports(kbd: &mut aero_usb::hid::UsbHidKeyboardHandle) {
@@ -102,13 +116,13 @@ fn poll_keyboard_interrupt_in(m: &mut Machine) -> UsbInResult {
     let mut uhci = uhci.borrow_mut();
     let root = uhci.controller_mut().hub_mut();
     let mut dev0 = root
-        .port_device_mut(0)
+        .port_device_mut(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
         .expect("UHCI root port 0 should have an external hub attached");
     let hub = dev0
         .as_hub_mut()
         .expect("root port 0 device should be a hub");
     let keyboard = hub
-        .downstream_device_mut(0)
+        .downstream_device_mut((Machine::UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT - 1) as usize)
         .expect("hub port 1 should contain a keyboard device");
     keyboard.model_mut().handle_interrupt_in(0x81)
 }
@@ -150,13 +164,15 @@ fn poll_consumer_interrupt_in(m: &mut Machine) -> UsbInResult {
     let mut uhci = uhci.borrow_mut();
     let root = uhci.controller_mut().hub_mut();
     let mut dev0 = root
-        .port_device_mut(0)
+        .port_device_mut(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
         .expect("UHCI root port 0 should have an external hub attached");
     let hub = dev0
         .as_hub_mut()
         .expect("root port 0 device should be a hub");
     let consumer = hub
-        .downstream_device_mut(3)
+        .downstream_device_mut(
+            (Machine::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT - 1) as usize,
+        )
         .expect("hub port 4 should contain a consumer-control device");
     consumer.model_mut().handle_interrupt_in(0x81)
 }
@@ -242,25 +258,70 @@ fn synthetic_usb_hid_cfg() -> MachineConfig {
 #[test]
 fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     let mut m = Machine::new(synthetic_usb_hid_cfg()).unwrap();
+    enable_uhci_io_decode(&mut m);
 
     let base = uhci_io_base(&m);
     let portsc1 = m.io_read(base + regs::REG_PORTSC1, 2) as u16;
+    assert_ne!(
+        portsc1,
+        0xFFFF,
+        "PORTSC1 should not read as open bus (ensure PCI I/O decode is enabled)"
+    );
     assert_ne!(portsc1 & 0x0001, 0, "PORTSC1.CCS should be set");
     assert_ne!(portsc1 & 0x0002, 0, "PORTSC1.CSC should be set");
 
     // Root port 0 should contain an external hub with the runtime port count.
     {
         let uhci = m.uhci().expect("UHCI device should exist");
-        let uhci = uhci.borrow();
-        let root = uhci.controller().hub();
-        let dev0 = root
-            .port_device(0)
+        let mut uhci = uhci.borrow_mut();
+        let root = uhci.controller_mut().hub_mut();
+        let mut dev0 = root
+            .port_device_mut(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
             .expect("UHCI root port 0 should have an external hub attached");
-        let hub = dev0.as_hub().expect("root port 0 device should be a hub");
+        assert!(
+            (dev0.model() as &dyn Any).is::<aero_usb::hub::UsbHubDevice>(),
+            "root port 0 should host aero_usb::hub::UsbHubDevice"
+        );
+
+        let hub = dev0.as_hub_mut().expect("root port 0 device should be a hub");
         assert_eq!(
             hub.num_ports(),
-            16,
+            usize::from(Machine::UHCI_EXTERNAL_HUB_PORT_COUNT),
             "external hub port count should match web runtime"
+        );
+
+        let kbd = hub
+            .downstream_device_mut((Machine::UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT - 1) as usize)
+            .expect("hub port 1 should contain a keyboard device");
+        assert!(
+            (kbd.model() as &dyn Any).is::<aero_usb::hid::UsbHidKeyboardHandle>(),
+            "hub port 1 should host UsbHidKeyboardHandle"
+        );
+
+        let mouse = hub
+            .downstream_device_mut((Machine::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT - 1) as usize)
+            .expect("hub port 2 should contain a mouse device");
+        assert!(
+            (mouse.model() as &dyn Any).is::<aero_usb::hid::UsbHidMouseHandle>(),
+            "hub port 2 should host UsbHidMouseHandle"
+        );
+
+        let gamepad = hub
+            .downstream_device_mut((Machine::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT - 1) as usize)
+            .expect("hub port 3 should contain a gamepad device");
+        assert!(
+            (gamepad.model() as &dyn Any).is::<aero_usb::hid::UsbHidGamepadHandle>(),
+            "hub port 3 should host UsbHidGamepadHandle"
+        );
+
+        let consumer = hub
+            .downstream_device_mut(
+                (Machine::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT - 1) as usize,
+            )
+            .expect("hub port 4 should contain a consumer-control device");
+        assert!(
+            (consumer.model() as &dyn Any).is::<aero_usb::hid::UsbHidConsumerControlHandle>(),
+            "hub port 4 should host UsbHidConsumerControlHandle"
         );
     }
 
@@ -268,7 +329,13 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     {
         let dummy = aero_usb::hid::UsbHidKeyboardHandle::new();
         let err = m
-            .usb_attach_at_path(&[0, 4], Box::new(dummy))
+            .usb_attach_at_path(
+                &[
+                    Machine::UHCI_EXTERNAL_HUB_ROOT_PORT,
+                    Machine::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
+                ],
+                Box::new(dummy),
+            )
             .expect_err("hub port 4 should be occupied by synthetic consumer-control");
         assert!(matches!(err, UsbHubAttachError::PortOccupied));
     }
@@ -279,9 +346,13 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     // consumer-control). Dynamic passthrough devices start at 5.
     {
         let dummy = aero_usb::hid::UsbHidKeyboardHandle::new();
-        m.usb_attach_at_path(&[0, 5], Box::new(dummy))
-            .expect("attaching behind external hub should succeed");
-        m.usb_detach_at_path(&[0, 5])
+        let passthrough_port = Machine::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT + 1;
+        m.usb_attach_at_path(
+            &[Machine::UHCI_EXTERNAL_HUB_ROOT_PORT, passthrough_port],
+            Box::new(dummy),
+        )
+        .expect("attaching behind external hub should succeed");
+        m.usb_detach_at_path(&[Machine::UHCI_EXTERNAL_HUB_ROOT_PORT, passthrough_port])
             .expect("detaching behind external hub should succeed");
     }
 
@@ -289,6 +360,51 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     assert!(m.usb_hid_mouse_handle().is_some());
     assert!(m.usb_hid_gamepad_handle().is_some());
     assert!(m.usb_hid_consumer_control_handle().is_some());
+}
+
+#[test]
+fn uhci_synthetic_usb_keyboard_pending_report_survives_snapshot_restore() {
+    let cfg = synthetic_usb_hid_cfg();
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    {
+        let mut kbd = src
+            .usb_hid_keyboard_handle()
+            .expect("synthetic keyboard handle should be present");
+        configure_keyboard_for_reports(&mut kbd);
+    }
+
+    // Press "A" (usage 0x04) and snapshot before the guest consumes the interrupt report.
+    src.inject_usb_hid_keyboard_usage(0x04, true);
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    {
+        let mut kbd = restored
+            .usb_hid_keyboard_handle()
+            .expect("synthetic keyboard handle should be present after restore");
+        configure_keyboard_for_reports(&mut kbd);
+    }
+
+    // After restore, the pending report should still be queued.
+    expect_keyboard_report_contains(
+        poll_keyboard_interrupt_in(&mut restored),
+        0x04,
+        "after snapshot restore",
+    );
+
+    // Verify post-restore injection still targets the guest-visible keyboard instance.
+    restored.inject_usb_hid_keyboard_usage(0x04, false);
+    match poll_keyboard_interrupt_in(&mut restored) {
+        UsbInResult::Data(data) => assert_eq!(
+            data,
+            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            "key release after restore should enqueue an updated report"
+        ),
+        other => panic!("expected interrupt report after key release, got {other:?}"),
+    }
 }
 
 #[test]
@@ -461,9 +577,10 @@ fn uhci_synthetic_usb_hid_does_not_overwrite_host_attached_root_port0_device() {
     let mut m = Machine::new(synthetic_usb_hid_cfg()).unwrap();
 
     // Replace the synthetic hub with a host-attached keyboard directly on root port 0.
-    m.usb_detach_root(0).expect("detaching synthetic hub");
+    m.usb_detach_root(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT)
+        .expect("detaching synthetic hub");
     let dummy = aero_usb::hid::UsbHidKeyboardHandle::new();
-    m.usb_attach_root(0, Box::new(dummy))
+    m.usb_attach_root(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT, Box::new(dummy))
         .expect("attaching host device");
 
     // Reset should not overwrite the host-attached device.
@@ -472,7 +589,7 @@ fn uhci_synthetic_usb_hid_does_not_overwrite_host_attached_root_port0_device() {
     let uhci = uhci.borrow();
     let root = uhci.controller().hub();
     let dev0 = root
-        .port_device(0)
+        .port_device(Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize)
         .expect("UHCI root port 0 should remain occupied");
     assert!(
         dev0.as_hub().is_none(),
