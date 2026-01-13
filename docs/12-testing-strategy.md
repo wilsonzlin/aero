@@ -225,12 +225,15 @@ mod device_tests {
 }
 ```
 
-### USB (UHCI + WebHID/WebUSB passthrough) tests
+### USB (UHCI/EHCI + WebHID/WebUSB passthrough) tests
 
 The canonical browser USB/UHCI stack is `crates/aero-usb` (see [ADR 0015](./adr/0015-canonical-usb-stack.md)).
 Keep correctness locked down with:
 
-- Rust unit/integration tests under `crates/aero-usb` (including UHCI schedule + passthrough mapping tests)
+- Rust unit/integration tests under `crates/aero-usb`:
+  - UHCI schedule + passthrough mapping tests
+  - EHCI bring-up tests (regs + root hub timers), and later schedule-walker tests once qTD/QH
+    processing lands (see [`docs/usb-ehci.md`](./usb-ehci.md))
 - TypeScript unit/integration tests under `web/src/usb/*test.ts` (including coverage for the
   SharedArrayBuffer ring fast path negotiated by `usb.ringAttach`/`usb.ringDetach` in
   `web/src/usb/usb_proxy_ring_integration.test.ts`)
