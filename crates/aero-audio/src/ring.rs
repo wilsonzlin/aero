@@ -91,8 +91,7 @@ impl AudioRingBuffer {
     /// Push interleaved stereo samples.
     pub fn push_interleaved_stereo(&mut self, samples: &[f32]) {
         // Treat inputs as untrusted; ignore any trailing partial frame.
-        let sample_len = samples.len() - (samples.len() % self.channels);
-        let frames = sample_len / self.channels;
+        let frames = samples.len() / self.channels;
         if frames == 0 {
             return;
         }
