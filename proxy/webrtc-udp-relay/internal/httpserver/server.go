@@ -81,7 +81,9 @@ func noStoreICEHeadersMiddleware() Middleware {
 			// Only apply to the ICE discovery endpoint. Apply this as middleware (not
 			// inside the handler) so that error responses returned by earlier
 			// middleware (e.g. Origin policy) also inherit the same no-store headers.
-			if r.Method == http.MethodGet && r.URL != nil && r.URL.Path == "/webrtc/ice" {
+			// Treat HEAD like GET here. Go's ServeMux may route HEAD to GET handlers,
+			// and the no-store semantics should apply equally.
+			if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL != nil && r.URL.Path == "/webrtc/ice" {
 				w.Header().Set("Cache-Control", "no-store")
 				w.Header().Set("Pragma", "no-cache")
 				w.Header().Set("Expires", "0")

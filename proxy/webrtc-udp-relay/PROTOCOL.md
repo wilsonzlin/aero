@@ -429,6 +429,8 @@ The relay supports multiple signaling surfaces:
 
 When `AUTH_MODE != none`, `GET /webrtc/ice` and **all** signaling endpoints (`POST /offer`, `POST /webrtc/offer`, `POST /session`, `GET /webrtc/signal`) require credentials.
 
+Responses from `GET /webrtc/ice` are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`) because they may contain sensitive TURN credentials (especially TURN REST ephemeral creds), and caching can also lead to stale credentials / ICE failures.
+
 HTTP endpoints accept credentials via:
 
 - `AUTH_MODE=api_key`:
