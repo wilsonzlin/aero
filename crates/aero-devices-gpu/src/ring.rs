@@ -117,6 +117,33 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct VecMemory {
+        data: Vec<u8>,
+    }
+
+    impl VecMemory {
+        fn new(size: usize) -> Self {
+            Self {
+                data: vec![0; size],
+            }
+        }
+    }
+
+    impl MemoryBus for VecMemory {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            let start = paddr as usize;
+            let end = start + buf.len();
+            buf.copy_from_slice(&self.data[start..end]);
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            let start = paddr as usize;
+            let end = start + buf.len();
+            self.data[start..end].copy_from_slice(buf);
+        }
+    }
+
     #[test]
     fn ring_header_validation_accepts_unknown_minor() {
         let abi_version = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 999);
@@ -147,6 +174,59 @@ mod tests {
         let hdr = make_valid_header_with_abi(abi_version);
 
         assert!(!hdr.is_valid(hdr.size_bytes - 1));
+    }
+
+    #[test]
+    fn ring_header_validation_checks_magic_and_abi_version() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        let mut hdr = make_valid_header_with_abi(abi_version);
+
+        hdr.magic = 0;
+        assert!(!hdr.is_valid(hdr.size_bytes), "wrong magic must be rejected");
+
+        hdr.magic = AEROGPU_RING_MAGIC;
+        hdr.abi_version = 0;
+        assert!(
+            !hdr.is_valid(hdr.size_bytes),
+            "wrong ABI version must be rejected"
+        );
+
+        hdr.abi_version = abi_version;
+        assert!(hdr.is_valid(hdr.size_bytes));
+    }
+
+    #[test]
+    fn slot_index_wraps_by_entry_count() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        let hdr = make_valid_header_with_abi(abi_version);
+
+        assert_eq!(hdr.slot_index(0), 0);
+        assert_eq!(hdr.slot_index(hdr.entry_count - 1), hdr.entry_count - 1);
+        assert_eq!(hdr.slot_index(hdr.entry_count), 0);
+        assert_eq!(hdr.slot_index(hdr.entry_count + 1), 1);
+    }
+
+    #[test]
+    fn write_head_writes_at_ring_head_offset() {
+        let mut mem = VecMemory::new(0x1000);
+        let ring_gpa = 0x100u64;
+        AeroGpuRingHeader::write_head(&mut mem, ring_gpa, 0xDEAD_BEEF);
+        assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn write_fence_page_writes_expected_fields() {
+        let mut mem = VecMemory::new(0x1000);
+        let fence_gpa = 0x200u64;
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        write_fence_page(&mut mem, fence_gpa, abi_version, 123);
+
+        assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
+        assert_eq!(
+            mem.read_u32(fence_gpa + FENCE_PAGE_ABI_VERSION_OFFSET),
+            abi_version
+        );
+        assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 123);
     }
 }
 
@@ -285,4 +365,3 @@ pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, com
     // Keep writes within the defined struct size; do not touch the rest of the page.
     let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
 }
-
