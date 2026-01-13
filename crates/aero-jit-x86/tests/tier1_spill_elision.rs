@@ -2,7 +2,7 @@ mod tier1_common;
 
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
-use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
+use aero_jit_x86::tier1::ir::{GuestReg, IrBlock, IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
 use aero_jit_x86::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -15,6 +15,16 @@ use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, Typ
 
 const CPU_PTR: i32 = 0x1_0000;
 const JIT_CTX_PTR: i32 = CPU_PTR + abi::CPU_STATE_SIZE as i32;
+
+fn cpu_with_sentinel_gprs(entry: u64) -> CpuState {
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+    for (i, slot) in cpu.gpr.iter_mut().enumerate() {
+        // Unique non-zero sentinel per GPR.
+        *slot = 0x1111_1111_1111_1111u64.wrapping_mul((i as u64) + 1);
+    }
+    cpu
+}
 
 fn validate_wasm(bytes: &[u8]) {
     let mut validator = wasmparser::Validator::new();
@@ -167,6 +177,27 @@ fn define_stub_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>) {
         .unwrap();
 }
 
+fn run_ir(ir: &IrBlock, cpu: &CpuState) -> CpuSnapshot {
+    let wasm = Tier1WasmCodegen::new().compile_block(ir);
+    validate_wasm(&wasm);
+
+    let (mut store, memory, func) = instantiate(&wasm);
+
+    // Initialize CpuState.
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(cpu, &mut cpu_bytes);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let _ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+
+    memory
+        .read(&store, CPU_PTR as usize, &mut cpu_bytes)
+        .unwrap();
+    CpuSnapshot::from_wasm_bytes(&cpu_bytes)
+}
+
 #[test]
 fn tier1_spill_elides_unused_gprs() {
     let entry = 0x1000u64;
@@ -186,32 +217,11 @@ fn tier1_spill_elides_unused_gprs() {
     let ir = b.finish(IrTerminator::Jump { target: entry + 4 });
     ir.validate().unwrap();
 
-    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
-    validate_wasm(&wasm);
-
-    let (mut store, memory, func) = instantiate(&wasm);
-
     // Initialize CpuState with sentinel values in all registers.
-    let mut cpu = CpuState::default();
-    cpu.rip = entry;
-    for (i, slot) in cpu.gpr.iter_mut().enumerate() {
-        // Unique non-zero sentinel per GPR.
-        *slot = 0x1111_1111_1111_1111u64.wrapping_mul((i as u64) + 1);
-    }
+    let cpu = cpu_with_sentinel_gprs(entry);
     let before = CpuSnapshot::from_cpu(&cpu);
 
-    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
-    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
-    memory
-        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
-        .unwrap();
-
-    let _ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
-
-    memory
-        .read(&store, CPU_PTR as usize, &mut cpu_bytes)
-        .unwrap();
-    let after = CpuSnapshot::from_wasm_bytes(&cpu_bytes);
+    let after = run_ir(&ir, &cpu);
 
     for reg in [
         Gpr::Rax,
@@ -241,4 +251,159 @@ fn tier1_spill_elides_unused_gprs() {
             );
         }
     }
+}
+
+#[test]
+fn tier1_partial_write_al_preserves_upper_bits() {
+    let entry = 0x2000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W8, 0xaa);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        v,
+    );
+    let ir = b.finish(IrTerminator::Jump { target: entry + 1 });
+    ir.validate().unwrap();
+
+    let mut cpu = cpu_with_sentinel_gprs(entry);
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1122_3344_5566_7788;
+    let before = CpuSnapshot::from_cpu(&cpu);
+
+    let after = run_ir(&ir, &cpu);
+
+    assert_eq!(after.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344_5566_77aa);
+    for gpr in all_gprs_except(Gpr::Rax) {
+        let idx = gpr.as_u8() as usize;
+        assert_eq!(
+            after.gpr[idx], before.gpr[idx],
+            "unexpected clobber of {gpr:?}"
+        );
+    }
+}
+
+#[test]
+fn tier1_partial_write_ax_preserves_upper_bits() {
+    let entry = 0x3000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W16, 0xbbcc);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W16,
+            high8: false,
+        },
+        v,
+    );
+    let ir = b.finish(IrTerminator::Jump { target: entry + 1 });
+    ir.validate().unwrap();
+
+    let mut cpu = cpu_with_sentinel_gprs(entry);
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1122_3344_5566_7788;
+    let before = CpuSnapshot::from_cpu(&cpu);
+
+    let after = run_ir(&ir, &cpu);
+
+    assert_eq!(after.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344_5566_bbcc);
+    for gpr in all_gprs_except(Gpr::Rax) {
+        let idx = gpr.as_u8() as usize;
+        assert_eq!(
+            after.gpr[idx], before.gpr[idx],
+            "unexpected clobber of {gpr:?}"
+        );
+    }
+}
+
+#[test]
+fn tier1_partial_write_ah_preserves_other_bits() {
+    let entry = 0x4000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W8, 0xdd);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: true,
+        },
+        v,
+    );
+    let ir = b.finish(IrTerminator::Jump { target: entry + 1 });
+    ir.validate().unwrap();
+
+    let mut cpu = cpu_with_sentinel_gprs(entry);
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1122_3344_5566_7788;
+    let before = CpuSnapshot::from_cpu(&cpu);
+
+    let after = run_ir(&ir, &cpu);
+
+    assert_eq!(after.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344_5566_dd88);
+    for gpr in all_gprs_except(Gpr::Rax) {
+        let idx = gpr.as_u8() as usize;
+        assert_eq!(
+            after.gpr[idx], before.gpr[idx],
+            "unexpected clobber of {gpr:?}"
+        );
+    }
+}
+
+#[test]
+fn tier1_write_eax_zero_extends() {
+    let entry = 0x5000u64;
+
+    let mut b = IrBuilder::new(entry);
+    let v = b.const_int(Width::W32, 0xdead_beefu64);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W32,
+            high8: false,
+        },
+        v,
+    );
+    let ir = b.finish(IrTerminator::Jump { target: entry + 1 });
+    ir.validate().unwrap();
+
+    let mut cpu = cpu_with_sentinel_gprs(entry);
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0xffff_ffff_aaaa_bbbb;
+    let before = CpuSnapshot::from_cpu(&cpu);
+
+    let after = run_ir(&ir, &cpu);
+
+    assert_eq!(after.gpr[Gpr::Rax.as_u8() as usize], 0x0000_0000_dead_beef);
+    for gpr in all_gprs_except(Gpr::Rax) {
+        let idx = gpr.as_u8() as usize;
+        assert_eq!(
+            after.gpr[idx], before.gpr[idx],
+            "unexpected clobber of {gpr:?}"
+        );
+    }
+}
+
+fn all_gprs_except(except: Gpr) -> impl Iterator<Item = Gpr> {
+    [
+        Gpr::Rax,
+        Gpr::Rcx,
+        Gpr::Rdx,
+        Gpr::Rbx,
+        Gpr::Rsp,
+        Gpr::Rbp,
+        Gpr::Rsi,
+        Gpr::Rdi,
+        Gpr::R8,
+        Gpr::R9,
+        Gpr::R10,
+        Gpr::R11,
+        Gpr::R12,
+        Gpr::R13,
+        Gpr::R14,
+        Gpr::R15,
+    ]
+    .into_iter()
+    .filter(move |&gpr| gpr != except)
 }

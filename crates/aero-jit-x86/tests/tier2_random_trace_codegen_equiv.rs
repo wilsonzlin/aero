@@ -13,9 +13,9 @@ use aero_jit_x86::tier2::ir::{BinOp, FlagValues, Instr, Operand, TraceIr, TraceK
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::wasm_codegen::{Tier2WasmCodegen, EXPORT_TRACE_FN};
 use aero_jit_x86::wasm::{
-    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MODULE,
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE,
 };
 
 use aero_types::{Flag, FlagSet, Gpr, Width};
@@ -269,13 +269,13 @@ fn gen_random_trace(rng: &mut ChaCha8Rng, max_instrs: usize) -> TraceIr {
     };
 
     // Ensure traces exercise regalloc caching reasonably often by forcing at least one reg touch.
-    if !body.iter().any(|i| matches!(i, Instr::LoadReg { .. } | Instr::StoreReg { .. })) {
+    if !body
+        .iter()
+        .any(|i| matches!(i, Instr::LoadReg { .. } | Instr::StoreReg { .. }))
+    {
         let dst = v(next_value);
         next_value += 1;
-        body.push(Instr::LoadReg {
-            dst,
-            reg: Gpr::Rax,
-        });
+        body.push(Instr::LoadReg { dst, reg: Gpr::Rax });
         values.push(dst);
         body.push(Instr::StoreReg {
             reg: Gpr::Rax,
@@ -284,7 +284,9 @@ fn gen_random_trace(rng: &mut ChaCha8Rng, max_instrs: usize) -> TraceIr {
     }
 
     // Occasionally force at least one memory op.
-    if !body.iter().any(|i| matches!(i, Instr::LoadMem { .. } | Instr::StoreMem { .. }))
+    if !body
+        .iter()
+        .any(|i| matches!(i, Instr::LoadMem { .. } | Instr::StoreMem { .. }))
         && rng.gen_bool(0.3)
     {
         let addr_val = v(next_value);
@@ -541,9 +543,7 @@ fn assert_mem_eq(expected: &[u8], got: &[u8], trace_idx: usize, trace: &TraceIr)
             break;
         }
     }
-    panic!(
-        "guest memory mismatch at idx={trace_idx} first_diff={first:?}\ntrace={trace:#?}"
-    );
+    panic!("guest memory mismatch at idx={trace_idx} first_diff={first:?}\ntrace={trace:#?}");
 }
 
 #[test]
