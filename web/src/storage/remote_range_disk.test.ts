@@ -325,6 +325,67 @@ function makeTestData(sizeBytes: number): Uint8Array {
 }
 
 describe("RemoteRangeDisk", () => {
+  it("falls back to an in-memory cache when navigator.storage (OPFS) is unavailable", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(2 * chunkSize);
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    const nav = (globalThis as any).navigator as { storage?: unknown } | undefined;
+    const prevStorage = nav?.storage;
+    if (nav) delete nav.storage;
+
+    try {
+      const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+        cacheKeyParts: { imageId: "no-opfs-fallback", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        readAheadChunks: 0,
+        fetchFn,
+      });
+
+      const buf = new Uint8Array(chunkSize);
+      await disk.readSectors(0, buf);
+      expect(buf).toEqual(data.subarray(0, buf.byteLength));
+      await disk.close();
+    } finally {
+      if (nav) nav.storage = prevStorage;
+    }
+  });
+
   it.each(["omit", "include"] as const)("passes credentials=%s through to fetchFn for HEAD + Range GET", async (credentials) => {
     const chunkSize = 512;
     const data = makeTestData(2 * chunkSize);

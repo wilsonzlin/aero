@@ -2,6 +2,7 @@ import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../p
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
 import { opfsGetRemoteCacheDir } from "./metadata";
+import { MemorySparseDisk } from "./memory_sparse_disk";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
 import {
   DEFAULT_LEASE_REFRESH_MARGIN_MS,
@@ -25,6 +26,58 @@ const MAX_REMOTE_MAX_CONCURRENT_FETCHES = 128;
 const MAX_REMOTE_INFLIGHT_BYTES = 512 * 1024 * 1024; // 512 MiB
 const MAX_REMOTE_SHA256_MANIFEST_ENTRIES = 1_000_000;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Errors from the metadata store / sparse cache backend are wrapped so that callers can fall back
+ * to an ephemeral in-memory cache when OPFS is unavailable (e.g. Node, older browsers, or
+ * environments without SyncAccessHandle support).
+ *
+ * Note: This intentionally does *not* wrap network/probe errors so that callers still see the
+ * underlying fetch failure without an unrelated "cache init" wrapper.
+ */
+class RemoteRangeDiskCacheBackendInitError extends Error {
+  constructor(readonly cause: unknown) {
+    super("RemoteRangeDisk cache backend init failed");
+    this.name = "RemoteRangeDiskCacheBackendInitError";
+  }
+}
+
+// Process-local fallback cache for runtimes without OPFS.
+const memoryFallbackMeta = new Map<string, RemoteRangeDiskCacheMeta>();
+const memoryFallbackCaches = new Map<string, MemorySparseDisk>();
+
+class MemoryRemoteRangeDiskMetadataStore implements RemoteRangeDiskMetadataStore {
+  async read(cacheId: string): Promise<RemoteRangeDiskCacheMeta | null> {
+    return memoryFallbackMeta.get(cacheId) ?? null;
+  }
+
+  async write(cacheId: string, meta: RemoteRangeDiskCacheMeta): Promise<void> {
+    memoryFallbackMeta.set(cacheId, meta);
+  }
+
+  async delete(cacheId: string): Promise<void> {
+    memoryFallbackMeta.delete(cacheId);
+    memoryFallbackCaches.delete(cacheId);
+  }
+}
+
+class MemoryRemoteRangeDiskSparseCacheFactory implements RemoteRangeDiskSparseCacheFactory {
+  async open(cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+    const existing = memoryFallbackCaches.get(cacheId);
+    if (!existing) throw new Error("cache not found");
+    return existing;
+  }
+
+  async create(cacheId: string, opts: { diskSizeBytes: number; blockSizeBytes: number }): Promise<RemoteRangeDiskSparseCache> {
+    const disk = MemorySparseDisk.create({ diskSizeBytes: opts.diskSizeBytes, blockSizeBytes: opts.blockSizeBytes });
+    memoryFallbackCaches.set(cacheId, disk);
+    return disk;
+  }
+
+  async delete(cacheId: string): Promise<void> {
+    memoryFallbackCaches.delete(cacheId);
+  }
+}
 
 export function defaultRemoteRangeUrl(base: RemoteDiskBaseSnapshot): string {
   // NOTE: This is intentionally *not* a signed URL. Auth is expected to be handled
@@ -757,31 +810,61 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
     const cacheId = await RemoteCacheManager.deriveCacheKey(options.cacheKeyParts);
 
-    const metadataStore = options.metadataStore ?? new OpfsRemoteRangeDiskMetadataStore();
-    const sparseCacheFactory = options.sparseCacheFactory ?? new OpfsRemoteRangeDiskSparseCacheFactory();
+    const usedDefaultMetadataStore = options.metadataStore === undefined;
+    const usedDefaultSparseCacheFactory = options.sparseCacheFactory === undefined;
 
-    const disk = new RemoteRangeDisk(
-      params.sourceId,
-      params.lease,
-      resolvedOpts,
-      leaseRefreshMarginMs,
-      options.sha256Manifest,
-      metadataStore,
-      sparseCacheFactory,
-      new Semaphore(maxConcurrentFetches),
-      options.cacheKeyParts,
-    );
-    disk.cacheId = cacheId;
+    const makeDisk = (metadataStore: RemoteRangeDiskMetadataStore, sparseCacheFactory: RemoteRangeDiskSparseCacheFactory) => {
+      const disk = new RemoteRangeDisk(
+        params.sourceId,
+        params.lease,
+        resolvedOpts,
+        leaseRefreshMarginMs,
+        options.sha256Manifest,
+        metadataStore,
+        sparseCacheFactory,
+        new Semaphore(maxConcurrentFetches),
+        options.cacheKeyParts,
+      );
+      disk.cacheId = cacheId;
+      return disk;
+    };
+
+    const openOnce = async (
+      metadataStore: RemoteRangeDiskMetadataStore,
+      sparseCacheFactory: RemoteRangeDiskSparseCacheFactory,
+    ): Promise<RemoteRangeDisk> => {
+      const disk = makeDisk(metadataStore, sparseCacheFactory);
+      try {
+        await disk.init();
+        disk.leaseRefresher.start();
+        return disk;
+      } catch (err) {
+        // `init()` can fail after opening a persistent cache handle. Ensure we close it so we
+        // don't leak SyncAccessHandles / file descriptors.
+        await disk.close().catch(() => {});
+        throw err;
+      }
+    };
+
     try {
-      await disk.init();
-      disk.leaseRefresher.start();
+      return await openOnce(
+        options.metadataStore ?? new OpfsRemoteRangeDiskMetadataStore(),
+        options.sparseCacheFactory ?? new OpfsRemoteRangeDiskSparseCacheFactory(),
+      );
     } catch (err) {
-      // `init()` can fail after opening a persistent cache handle. Ensure we close it so we
-      // don't leak SyncAccessHandles / file descriptors.
-      await disk.close().catch(() => {});
+      // Only fall back when the caller opted into the defaults (OPFS-backed cache) and the
+      // failure came from initializing/using the cache backend.
+      const allowFallback = usedDefaultMetadataStore && usedDefaultSparseCacheFactory;
+      if (allowFallback && err instanceof RemoteRangeDiskCacheBackendInitError) {
+        return await openOnce(new MemoryRemoteRangeDiskMetadataStore(), new MemoryRemoteRangeDiskSparseCacheFactory());
+      }
+      // Preserve previous error behaviour: callers should see the original backend error, not
+      // the wrapper.
+      if (err instanceof RemoteRangeDiskCacheBackendInitError) {
+        throw err.cause instanceof Error ? err.cause : err;
+      }
       throw err;
     }
-    return disk;
   }
 
   private async init(): Promise<void> {
@@ -817,48 +900,54 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       }
     }
 
-    const existingMeta = await this.metadataStore.read(this.cacheId);
-    const compatible = existingMeta ? this.isMetaCompatible(existingMeta, remote) : false;
+    let existingMeta: RemoteRangeDiskCacheMeta | null = null;
+    let compatible = false;
+    try {
+      existingMeta = await this.metadataStore.read(this.cacheId);
+      compatible = existingMeta ? this.isMetaCompatible(existingMeta, remote) : false;
 
-    if (!compatible) {
-      // Best-effort cleanup of old metadata; ignore failures.
-      await this.metadataStore.delete(this.cacheId);
+      if (!compatible) {
+        // Best-effort cleanup of old metadata; ignore failures.
+        await this.metadataStore.delete(this.cacheId);
+      }
+
+      const cache = await this.openOrCreateCache(remote, compatible);
+      this.cache = cache;
+
+      const now = Date.now();
+      const etag = remote.etag ?? existingMeta?.validators.etag;
+      const lastModified = remote.lastModified ?? existingMeta?.validators.lastModified;
+      const metaToPersist: RemoteRangeDiskCacheMeta = {
+        version: 1,
+        imageId: this.cacheKeyParts.imageId,
+        imageVersion: this.cacheKeyParts.version,
+        deliveryType: this.cacheKeyParts.deliveryType,
+        validators: {
+          sizeBytes: remote.sizeBytes,
+          ...(etag ? { etag } : {}),
+          ...(lastModified ? { lastModified } : {}),
+        },
+        chunkSizeBytes: this.opts.chunkSize,
+        createdAtMs: compatible && existingMeta ? existingMeta.createdAtMs : now,
+        lastAccessedAtMs: now,
+        cachedRanges: compatible && existingMeta ? existingMeta.cachedRanges : [],
+      };
+      // Normalize cached ranges so that `getCacheStatus()` reports compacted ranges even if an older
+      // implementation wrote redundant spans.
+      this.rangeSet = new RangeSet();
+      for (const r of metaToPersist.cachedRanges) this.rangeSet.insert(r.start, r.end);
+      metaToPersist.cachedRanges = this.rangeSet.getRanges();
+      this.meta = metaToPersist;
+      this.metaWriteChain = Promise.resolve();
+      await this.metadataStore.write(this.cacheId, metaToPersist);
+
+      // If the remote didn't expose ETag/Last-Modified, reuse whatever we had in metadata
+      // so that we can still use If-Range across sessions.
+      this.remoteEtag = etag;
+      this.remoteLastModified = lastModified;
+    } catch (err) {
+      throw new RemoteRangeDiskCacheBackendInitError(err);
     }
-
-    const cache = await this.openOrCreateCache(remote, compatible);
-    this.cache = cache;
-
-    const now = Date.now();
-    const etag = remote.etag ?? existingMeta?.validators.etag;
-    const lastModified = remote.lastModified ?? existingMeta?.validators.lastModified;
-    const metaToPersist: RemoteRangeDiskCacheMeta = {
-      version: 1,
-      imageId: this.cacheKeyParts.imageId,
-      imageVersion: this.cacheKeyParts.version,
-      deliveryType: this.cacheKeyParts.deliveryType,
-      validators: {
-        sizeBytes: remote.sizeBytes,
-        ...(etag ? { etag } : {}),
-        ...(lastModified ? { lastModified } : {}),
-      },
-      chunkSizeBytes: this.opts.chunkSize,
-      createdAtMs: compatible && existingMeta ? existingMeta.createdAtMs : now,
-      lastAccessedAtMs: now,
-      cachedRanges: compatible && existingMeta ? existingMeta.cachedRanges : [],
-    };
-    // Normalize cached ranges so that `getCacheStatus()` reports compacted ranges even if an older
-    // implementation wrote redundant spans.
-    this.rangeSet = new RangeSet();
-    for (const r of metaToPersist.cachedRanges) this.rangeSet.insert(r.start, r.end);
-    metaToPersist.cachedRanges = this.rangeSet.getRanges();
-    this.meta = metaToPersist;
-    this.metaWriteChain = Promise.resolve();
-    await this.metadataStore.write(this.cacheId, metaToPersist);
-
-    // If the remote didn't expose ETag/Last-Modified, reuse whatever we had in metadata
-    // so that we can still use If-Range across sessions.
-    this.remoteEtag = etag;
-    this.remoteLastModified = lastModified;
   }
 
   private isMetaCompatible(meta: RemoteRangeDiskCacheMeta, remote: RemoteProbe): boolean {
