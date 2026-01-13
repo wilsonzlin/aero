@@ -33,6 +33,7 @@ pub(crate) const FLAG_PF: u64 = 1 << 2;
 pub(crate) const FLAG_AF: u64 = 1 << 4;
 pub(crate) const FLAG_ZF: u64 = 1 << 6;
 pub(crate) const FLAG_SF: u64 = 1 << 7;
+pub(crate) const FLAG_DF: u64 = 1 << 10;
 pub(crate) const FLAG_OF: u64 = 1 << 11;
 pub(crate) const FLAG_FIXED_1: u64 = 1 << 1;
 

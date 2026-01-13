@@ -1,4 +1,8 @@
-use crate::{CpuState, FLAG_AF, FLAG_CF, FLAG_FIXED_1, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
+use crate::{
+    CpuState, FLAG_AF, FLAG_CF, FLAG_DF, FLAG_FIXED_1, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF,
+};
+
+use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
 /// Offset into `TestCase::memory` where the instruction bytes are placed.
 ///
@@ -694,6 +698,7 @@ impl TestCase {
         memory[CODE_OFF..CODE_OFF + template.bytes.len()].copy_from_slice(template.bytes);
 
         template.init.apply(&mut init, mem_base);
+        apply_auto_fixups(case_idx, template, &mut init, &mut memory, mem_base, rng);
 
         Self {
             case_idx,
@@ -705,9 +710,580 @@ impl TestCase {
     }
 }
 
+fn is_fault_template(kind: TemplateKind) -> bool {
+    matches!(kind, TemplateKind::Ud2 | TemplateKind::MovRaxM64Abs0)
+}
+
+fn apply_auto_fixups(
+    case_idx: usize,
+    template: &InstructionTemplate,
+    init: &mut CpuState,
+    memory: &mut [u8],
+    mem_base: u64,
+    rng: &mut XorShift64,
+) {
+    // Fault templates intentionally crash in user-mode; don't "fix" them into non-faulting cases.
+    if is_fault_template(template.kind) {
+        return;
+    }
+
+    let instruction = decode_instruction(template.bytes);
+    if instruction.is_invalid() {
+        return;
+    }
+
+    // Defensive: clamp potentially-unbounded loop counts even if the template forgot to apply a
+    // specific preset.
+    fixup_shift_rotate_using_cl(&instruction, init);
+
+    // Fix memory operands first: DIV/IDIV may use a memory divisor and we want it in-bounds before
+    // we write a non-zero divisor value into memory.
+    fixup_memory_operands(template, &instruction, init, memory.len(), mem_base, rng);
+
+    fixup_rep_string(case_idx, &instruction, init, memory.len(), mem_base, rng);
+    fixup_div_idiv(&instruction, init, memory, mem_base, rng);
+}
+
+fn decode_instruction(bytes: &[u8]) -> Instruction {
+    let mut decoder = Decoder::with_ip(64, bytes, 0, DecoderOptions::NONE);
+    decoder.decode()
+}
+
+fn fixup_shift_rotate_using_cl(instruction: &Instruction, init: &mut CpuState) {
+    let uses_cl = instruction.op_count() >= 2
+        && instruction.op1_kind() == OpKind::Register
+        && instruction.op1_register() == Register::CL;
+    if !uses_cl {
+        return;
+    }
+
+    match instruction.mnemonic() {
+        Mnemonic::Rol
+        | Mnemonic::Ror
+        | Mnemonic::Rcl
+        | Mnemonic::Rcr
+        | Mnemonic::Shl
+        | Mnemonic::Shr
+        | Mnemonic::Sar
+        | Mnemonic::Sal => {
+            // Hardware masks the count, but the Aero interpreter may implement these in a loop.
+            // Clamp to the architecturally-observable range while preserving the upper bits of RCX.
+            let cl = (init.rcx as u8) & 0x3f;
+            init.rcx = (init.rcx & !0xff) | (cl as u64);
+        }
+        _ => {}
+    }
+}
+
+fn string_element_size(instruction: &Instruction) -> Option<usize> {
+    if instruction.op_count() != 0 {
+        return None;
+    }
+
+    match instruction.mnemonic() {
+        Mnemonic::Movsb | Mnemonic::Stosb | Mnemonic::Cmpsb | Mnemonic::Scasb | Mnemonic::Lodsb => {
+            Some(1)
+        }
+        Mnemonic::Movsw | Mnemonic::Stosw | Mnemonic::Cmpsw | Mnemonic::Scasw | Mnemonic::Lodsw => {
+            Some(2)
+        }
+        Mnemonic::Movsd | Mnemonic::Stosd | Mnemonic::Cmpsd | Mnemonic::Scasd | Mnemonic::Lodsd => {
+            Some(4)
+        }
+        Mnemonic::Movsq | Mnemonic::Stosq | Mnemonic::Cmpsq | Mnemonic::Scasq | Mnemonic::Lodsq => {
+            Some(8)
+        }
+        _ => None,
+    }
+}
+
+fn fixup_rep_string(
+    case_idx: usize,
+    instruction: &Instruction,
+    init: &mut CpuState,
+    memory_len: usize,
+    mem_base: u64,
+    rng: &mut XorShift64,
+) {
+    let elem_size = match string_element_size(instruction) {
+        Some(size) => size,
+        None => return,
+    };
+
+    // Toggle DF across cases so we test both directions.
+    let df_set = (case_idx & 1) != 0;
+    if df_set {
+        init.rflags |= FLAG_DF;
+    } else {
+        init.rflags &= !FLAG_DF;
+    }
+
+    // Keep all string operations inside the "data" prefix of the testcase buffer (avoid the code
+    // region at `CODE_OFF..`).
+    let data_len = memory_len.min(CODE_OFF);
+
+    let has_rep = instruction.has_rep_prefix() || instruction.has_repne_prefix();
+    let count = if has_rep {
+        // Keep it bounded to avoid pathological slowdowns in an interpreter loop.
+        let max_count = (data_len / elem_size).min(32);
+        let count = if max_count == 0 {
+            0
+        } else {
+            (rng.next_u64() % ((max_count + 1) as u64)) as usize
+        };
+        init.rcx = count as u64;
+        count
+    } else {
+        // Non-REP string instructions do one iteration.
+        1
+    };
+
+    let count_for_bounds = count.max(1);
+    let total_bytes = count_for_bounds.saturating_mul(elem_size);
+    if total_bytes == 0 || data_len == 0 {
+        init.rsi = mem_base;
+        init.rdi = mem_base;
+        return;
+    }
+
+    let (rsi_off, rdi_off) = if !df_set {
+        let max_start = data_len.saturating_sub(total_bytes);
+        let rsi_off = if max_start == 0 {
+            0
+        } else {
+            (rng.next_u64() % ((max_start + 1) as u64)) as usize
+        };
+        let rdi_off = if max_start == 0 {
+            0
+        } else {
+            (rng.next_u64() % ((max_start + 1) as u64)) as usize
+        };
+        (rsi_off, rdi_off)
+    } else {
+        // DF=1: the first access is at RSI/RDI, then pointers are decremented.
+        let min_start = (count_for_bounds - 1).saturating_mul(elem_size);
+        let max_start = data_len.saturating_sub(elem_size);
+        let span = max_start.saturating_sub(min_start);
+        let rsi_off = min_start
+            + if span == 0 {
+                0
+            } else {
+                (rng.next_u64() % ((span + 1) as u64)) as usize
+            };
+        let rdi_off = min_start
+            + if span == 0 {
+                0
+            } else {
+                (rng.next_u64() % ((span + 1) as u64)) as usize
+            };
+        (rsi_off, rdi_off)
+    };
+
+    init.rsi = mem_base.wrapping_add(rsi_off as u64);
+    init.rdi = mem_base.wrapping_add(rdi_off as u64);
+}
+
+fn fixup_div_idiv(
+    instruction: &Instruction,
+    init: &mut CpuState,
+    memory: &mut [u8],
+    mem_base: u64,
+    rng: &mut XorShift64,
+) {
+    if !matches!(instruction.mnemonic(), Mnemonic::Div | Mnemonic::Idiv) {
+        return;
+    }
+
+    // Pick small, positive operands and clear the high half of the dividend so we don't hit #DE
+    // (div-by-zero or quotient overflow).
+    let dividend = (rng.next_u64() & 0xFFFF) as u64;
+    init.rax = dividend;
+    init.rdx = 0;
+
+    let divisor = (rng.next_u64() & 0xFFFF) as u64 | 1;
+
+    match instruction.op0_kind() {
+        OpKind::Register => {
+            let reg = instruction.op0_register();
+            let _ = write_register_part(init, reg, divisor);
+        }
+        OpKind::Memory => {
+            let addr = match effective_address(instruction, init) {
+                Some(addr) => addr,
+                None => return,
+            };
+            let size = instruction.memory_size().size() as usize;
+            let size = size.max(1).min(8);
+            write_memory_le(memory, mem_base, addr, divisor, size);
+        }
+        _ => {}
+    }
+}
+
+fn fixup_memory_operands(
+    template: &InstructionTemplate,
+    instruction: &Instruction,
+    init: &mut CpuState,
+    memory_len: usize,
+    mem_base: u64,
+    rng: &mut XorShift64,
+) {
+    // LEA uses ModR/M addressing but does not dereference memory.
+    if instruction.mnemonic() == Mnemonic::Lea {
+        return;
+    }
+
+    let mut has_mem = false;
+    for idx in 0..instruction.op_count() {
+        if instruction.op_kind(idx) == OpKind::Memory {
+            has_mem = true;
+            break;
+        }
+    }
+    if !has_mem {
+        return;
+    }
+
+    let access_size = instruction.memory_size().size() as usize;
+    let access_size = access_size.max(1);
+
+    // Keep all regular memory operands inside the data prefix, before the code bytes at CODE_OFF.
+    let mut target_len = memory_len.min(CODE_OFF);
+    if template.mem_compare_len > 0 {
+        target_len = target_len.min(template.mem_compare_len);
+    }
+    target_len = target_len.max(access_size);
+
+    let max_eff_off = target_len.saturating_sub(access_size) as u64;
+
+    // If the current address is already safe, keep it (preserves template-provided presets like
+    // `MemAtRdi`).
+    if let Some(addr) = effective_address(instruction, init) {
+        if let Some(off) = addr.checked_sub(mem_base) {
+            if off <= max_eff_off && addr.checked_add(access_size as u64).is_some() {
+                return;
+            }
+        }
+    }
+
+    let index_reg = instruction.memory_index();
+    if index_reg != Register::None {
+        let _ = write_register_part(init, index_reg, 0);
+    }
+
+    // If neutralizing the index was enough, stop.
+    if let Some(addr) = effective_address(instruction, init) {
+        if let Some(off) = addr.checked_sub(mem_base) {
+            if off <= max_eff_off {
+                return;
+            }
+        }
+    }
+
+    let base_reg = instruction.memory_base();
+    if base_reg == Register::None || base_reg == Register::RIP || base_reg == Register::EIP {
+        return;
+    }
+
+    let disp = instruction.memory_displacement64() as i64;
+    let base = choose_base_for_disp(max_eff_off as i64, disp, mem_base, rng.next_u64());
+    let _ = write_register_part(init, base_reg, base);
+}
+
+fn choose_base_for_disp(max_eff_off: i64, disp: i64, mem_base: u64, randomness: u64) -> u64 {
+    // Solve for an effective offset in [0..=max_eff_off] with index=0.
+    let eff_span = (max_eff_off + 1).max(1) as u64;
+    let eff_off = (randomness % eff_span) as i64;
+    let base_off = eff_off - disp;
+    add_signed(mem_base, base_off)
+}
+
+fn add_signed(base: u64, offset: i64) -> u64 {
+    if offset >= 0 {
+        base.wrapping_add(offset as u64)
+    } else {
+        base.wrapping_sub((-offset) as u64)
+    }
+}
+
+fn effective_address(instruction: &Instruction, state: &CpuState) -> Option<u64> {
+    let base_reg = instruction.memory_base();
+    let base = if base_reg == Register::None {
+        0
+    } else {
+        read_register(state, base_reg)?
+    };
+
+    let index_reg = instruction.memory_index();
+    let index = if index_reg == Register::None {
+        0
+    } else {
+        read_register(state, index_reg)?
+    };
+
+    let scale = instruction.memory_index_scale() as u64;
+    let disp = instruction.memory_displacement64();
+    Some(base.wrapping_add(index.wrapping_mul(scale)).wrapping_add(disp))
+}
+
+fn write_memory_le(memory: &mut [u8], mem_base: u64, addr: u64, value: u64, size: usize) {
+    let Some(offset) = addr.checked_sub(mem_base).and_then(|v| usize::try_from(v).ok()) else {
+        return;
+    };
+    let Some(end) = offset.checked_add(size) else {
+        return;
+    };
+    if end > memory.len() {
+        return;
+    }
+    memory[offset..end].copy_from_slice(&value.to_le_bytes()[..size]);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Gpr {
+    Rax,
+    Rbx,
+    Rcx,
+    Rdx,
+    Rsi,
+    Rdi,
+    R8,
+    R9,
+    R10,
+    R11,
+    R12,
+    R13,
+    R14,
+    R15,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RegPart {
+    Full,
+    Low32,
+    Low16,
+    Low8,
+    High8,
+}
+
+fn read_register(state: &CpuState, reg: Register) -> Option<u64> {
+    let (gpr, part) = gpr_part(reg)?;
+    let full = match gpr {
+        Gpr::Rax => state.rax,
+        Gpr::Rbx => state.rbx,
+        Gpr::Rcx => state.rcx,
+        Gpr::Rdx => state.rdx,
+        Gpr::Rsi => state.rsi,
+        Gpr::Rdi => state.rdi,
+        Gpr::R8 => state.r8,
+        Gpr::R9 => state.r9,
+        Gpr::R10 => state.r10,
+        Gpr::R11 => state.r11,
+        Gpr::R12 => state.r12,
+        Gpr::R13 => state.r13,
+        Gpr::R14 => state.r14,
+        Gpr::R15 => state.r15,
+    };
+
+    Some(match part {
+        RegPart::Full => full,
+        RegPart::Low32 => full & 0xFFFF_FFFF,
+        RegPart::Low16 => full & 0xFFFF,
+        RegPart::Low8 => full & 0xFF,
+        RegPart::High8 => (full >> 8) & 0xFF,
+    })
+}
+
+fn write_register_part(state: &mut CpuState, reg: Register, value: u64) -> Option<()> {
+    let (gpr, part) = gpr_part(reg)?;
+    let slot = match gpr {
+        Gpr::Rax => &mut state.rax,
+        Gpr::Rbx => &mut state.rbx,
+        Gpr::Rcx => &mut state.rcx,
+        Gpr::Rdx => &mut state.rdx,
+        Gpr::Rsi => &mut state.rsi,
+        Gpr::Rdi => &mut state.rdi,
+        Gpr::R8 => &mut state.r8,
+        Gpr::R9 => &mut state.r9,
+        Gpr::R10 => &mut state.r10,
+        Gpr::R11 => &mut state.r11,
+        Gpr::R12 => &mut state.r12,
+        Gpr::R13 => &mut state.r13,
+        Gpr::R14 => &mut state.r14,
+        Gpr::R15 => &mut state.r15,
+    };
+
+    match part {
+        RegPart::Full => {
+            *slot = value;
+        }
+        RegPart::Low32 => {
+            *slot = (*slot & !0xFFFF_FFFF) | (value & 0xFFFF_FFFF);
+        }
+        RegPart::Low16 => {
+            *slot = (*slot & !0xFFFF) | (value & 0xFFFF);
+        }
+        RegPart::Low8 => {
+            *slot = (*slot & !0xFF) | (value & 0xFF);
+        }
+        RegPart::High8 => {
+            *slot = (*slot & !(0xFF << 8)) | ((value & 0xFF) << 8);
+        }
+    }
+
+    Some(())
+}
+
+fn gpr_part(reg: Register) -> Option<(Gpr, RegPart)> {
+    let out = match reg {
+        Register::RAX | Register::EAX | Register::AX | Register::AL => (Gpr::Rax, RegPart::Full),
+        Register::RBX | Register::EBX | Register::BX | Register::BL => (Gpr::Rbx, RegPart::Full),
+        Register::RCX | Register::ECX | Register::CX | Register::CL => (Gpr::Rcx, RegPart::Full),
+        Register::RDX | Register::EDX | Register::DX | Register::DL => (Gpr::Rdx, RegPart::Full),
+        Register::RSI | Register::ESI | Register::SI | Register::SIL => (Gpr::Rsi, RegPart::Full),
+        Register::RDI | Register::EDI | Register::DI | Register::DIL => (Gpr::Rdi, RegPart::Full),
+        Register::R8 | Register::R8D | Register::R8W | Register::R8L => (Gpr::R8, RegPart::Full),
+        Register::R9 | Register::R9D | Register::R9W | Register::R9L => (Gpr::R9, RegPart::Full),
+        Register::R10 | Register::R10D | Register::R10W | Register::R10L => {
+            (Gpr::R10, RegPart::Full)
+        }
+        Register::R11 | Register::R11D | Register::R11W | Register::R11L => {
+            (Gpr::R11, RegPart::Full)
+        }
+        Register::R12 | Register::R12D | Register::R12W | Register::R12L => {
+            (Gpr::R12, RegPart::Full)
+        }
+        Register::R13 | Register::R13D | Register::R13W | Register::R13L => {
+            (Gpr::R13, RegPart::Full)
+        }
+        Register::R14 | Register::R14D | Register::R14W | Register::R14L => {
+            (Gpr::R14, RegPart::Full)
+        }
+        Register::R15 | Register::R15D | Register::R15W | Register::R15L => {
+            (Gpr::R15, RegPart::Full)
+        }
+        // High 8-bit regs are only reachable without a REX prefix; include them for completeness.
+        Register::AH => (Gpr::Rax, RegPart::High8),
+        Register::BH => (Gpr::Rbx, RegPart::High8),
+        Register::CH => (Gpr::Rcx, RegPart::High8),
+        Register::DH => (Gpr::Rdx, RegPart::High8),
+        _ => return None,
+    };
+
+    Some(match reg {
+        Register::EAX
+        | Register::EBX
+        | Register::ECX
+        | Register::EDX
+        | Register::ESI
+        | Register::EDI
+        | Register::R8D
+        | Register::R9D
+        | Register::R10D
+        | Register::R11D
+        | Register::R12D
+        | Register::R13D
+        | Register::R14D
+        | Register::R15D => (out.0, RegPart::Low32),
+        Register::AX
+        | Register::BX
+        | Register::CX
+        | Register::DX
+        | Register::SI
+        | Register::DI
+        | Register::R8W
+        | Register::R9W
+        | Register::R10W
+        | Register::R11W
+        | Register::R12W
+        | Register::R13W
+        | Register::R14W
+        | Register::R15W => (out.0, RegPart::Low16),
+        Register::AL
+        | Register::BL
+        | Register::CL
+        | Register::DL
+        | Register::SIL
+        | Register::DIL
+        | Register::R8L
+        | Register::R9L
+        | Register::R10L
+        | Register::R11L
+        | Register::R12L
+        | Register::R13L
+        | Register::R14L
+        | Register::R15L => (out.0, RegPart::Low8),
+        _ => out,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generation_is_panic_free_and_pointers_are_in_range() {
+        let templates = templates();
+        assert!(!templates.is_empty(), "expected at least one template");
+
+        let mut rng = XorShift64::new(0x1234_5678_9abc_def0);
+        let mem_base = 0x1_0000_0000u64;
+
+        let n = 256usize;
+        for case_idx in 0..n {
+            let template = &templates[case_idx % templates.len()];
+            let case = TestCase::generate(case_idx, template, &mut rng, mem_base);
+
+            if is_fault_template(template.kind) {
+                continue;
+            }
+
+            let instruction = decode_instruction(template.bytes);
+            if instruction.is_invalid() {
+                continue;
+            }
+
+            // Regular memory operands (`[base+index*scale+disp]`).
+            let has_mem = (0..instruction.op_count()).any(|i| instruction.op_kind(i) == OpKind::Memory);
+            if has_mem && instruction.mnemonic() != Mnemonic::Lea {
+                let addr = effective_address(&instruction, &case.init)
+                    .expect("memory operand should have a computable effective address");
+                let size = instruction.memory_size().size().max(1) as u64;
+                let end = addr.checked_add(size).unwrap_or(addr);
+                let mem_end = mem_base + case.memory.len() as u64;
+                assert!(
+                    addr >= mem_base && end <= mem_end,
+                    "template '{}' produced OOB memory address: addr={:#x} end={:#x} mem=[{:#x},{:#x})",
+                    template.name,
+                    addr,
+                    end,
+                    mem_base,
+                    mem_end
+                );
+            }
+
+            // String instructions with implicit RSI/RDI.
+            if string_element_size(&instruction).is_some() {
+                let mem_end = mem_base + case.memory.len() as u64;
+                assert!(
+                    case.init.rsi >= mem_base && case.init.rsi < mem_end,
+                    "template '{}' produced OOB RSI: {:#x} mem=[{:#x},{:#x})",
+                    template.name,
+                    case.init.rsi,
+                    mem_base,
+                    mem_end
+                );
+                assert!(
+                    case.init.rdi >= mem_base && case.init.rdi < mem_end,
+                    "template '{}' produced OOB RDI: {:#x} mem=[{:#x},{:#x})",
+                    template.name,
+                    case.init.rdi,
+                    mem_base,
+                    mem_end
+                );
+            }
+        }
+    }
 
     #[test]
     fn init_preset_shift_count_cl_masks_low_byte() {
