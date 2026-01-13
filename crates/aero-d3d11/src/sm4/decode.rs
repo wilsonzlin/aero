@@ -351,6 +351,58 @@ mod tests {
             "customdata block should be preserved as a declaration for diagnostics"
         );
     }
+
+    #[test]
+    fn customdata_out_of_bounds_length_errors() {
+        // Customdata blocks still participate in the normal instruction-length bounds checks.
+        // If the block overruns the declared token stream, decoding should fail.
+        let version_token = 0x50u32; // ps_5_0
+
+        let bogus_len = 16u32;
+        let tokens = vec![
+            version_token,
+            4, // declared length
+            opcode_token(OPCODE_CUSTOMDATA, bogus_len),
+            1, // class
+        ];
+
+        let program = Sm4Program {
+            stage: ShaderStage::Pixel,
+            model: ShaderModel { major: 5, minor: 0 },
+            tokens,
+        };
+
+        let err = program.decode().expect_err("decode should fail");
+        assert!(
+            matches!(err.kind, Sm4DecodeErrorKind::InstructionOutOfBounds { start: 2, .. }),
+            "expected InstructionOutOfBounds at dword 2, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn customdata_zero_length_errors() {
+        // Zero-length instructions are invalid and should always error, even for customdata.
+        let version_token = 0x50u32; // ps_5_0
+
+        let tokens = vec![
+            version_token,
+            3, // declared length
+            opcode_token(OPCODE_CUSTOMDATA, 0),
+        ];
+
+        let program = Sm4Program {
+            stage: ShaderStage::Pixel,
+            model: ShaderModel { major: 5, minor: 0 },
+            tokens,
+        };
+
+        let err = program.decode().expect_err("decode should fail");
+        assert!(
+            matches!(err.kind, Sm4DecodeErrorKind::InstructionLengthZero),
+            "expected InstructionLengthZero, got {err:?}"
+        );
+        assert_eq!(err.at_dword, 2);
+    }
 }
 fn decode_instruction(
     opcode: u32,
