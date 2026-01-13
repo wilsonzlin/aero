@@ -20,6 +20,11 @@ mod palette;
 mod snapshot;
 mod text_font;
 
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::scanout_state::{
+    ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
+    SCANOUT_SOURCE_LEGACY_VBE_LFB,
+};
 use palette::{rgb_to_rgba_u32, Rgb};
 pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
 use text_font::FONT8X8_CP437;
@@ -31,9 +36,9 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
-/// Physical base address for the Bochs VBE linear framebuffer (LFB).
+/// Default physical base address for the Bochs VBE linear framebuffer (LFB).
 ///
-/// QEMU/Bochs typically map the LFB at 0xE0000000.
+/// QEMU/Bochs typically map the LFB at `0xE000_0000`.
 pub const SVGA_LFB_BASE: u32 = 0xE000_0000;
 
 // -----------------------------------------------------------------------------
@@ -160,6 +165,8 @@ impl VbeRegs {
 
 /// VGA/SVGA device.
 pub struct VgaDevice {
+    svga_lfb_base: u32,
+
     // Core VGA registers.
     misc_output: u8,
 
@@ -253,6 +260,7 @@ impl VgaDevice {
 
     pub fn new() -> Self {
         let mut device = Self {
+            svga_lfb_base: SVGA_LFB_BASE,
             misc_output: 0,
             sequencer_index: 0,
             sequencer: [0; 5],
@@ -308,6 +316,54 @@ impl VgaDevice {
         }
         let pos = self.vblank_time_ns % Self::VBLANK_PERIOD_NS;
         pos < Self::VBLANK_PULSE_NS
+    }
+
+    pub fn svga_lfb_base(&self) -> u32 {
+        self.svga_lfb_base
+    }
+
+    pub fn set_svga_lfb_base(&mut self, base: u32) {
+        self.svga_lfb_base = base;
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    /// Returns a [`ScanoutStateUpdate`] describing the VGA/VBE source that should currently be
+    /// presented.
+    ///
+    /// For VBE linear modes, this describes the active LFB in guest physical address space. For
+    /// legacy VGA modes (including text mode), this reports a `LegacyText` source with zeroed
+    /// geometry; presentation is considered "implicit" and handled by the VGA renderer rather than
+    /// as a B8G8R8X8 scanout in guest memory.
+    pub fn active_scanout_update(&self) -> ScanoutStateUpdate {
+        // VBE scanout is only describable via `ScanoutState` when the guest has enabled the linear
+        // framebuffer and the pixel format matches our single supported scanout format.
+        if self.vbe.enabled() && self.vbe.lfb_enabled() && self.vbe.bpp == 32 {
+            let base = u64::from(self.svga_lfb_base);
+            let stride_pixels = self.vbe.effective_stride_pixels();
+            let pitch_bytes = stride_pixels.saturating_mul(4);
+            return ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                base_paddr_lo: base as u32,
+                base_paddr_hi: (base >> 32) as u32,
+                width: self.vbe.xres as u32,
+                height: self.vbe.yres as u32,
+                pitch_bytes,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            };
+        }
+
+        // Legacy VGA text/planar modes are not a linear pixel framebuffer in guest physical
+        // memory. Consumers should treat this as an "implicit" legacy scanout and use the VGA
+        // renderer output.
+        ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_LEGACY_TEXT,
+            base_paddr_lo: 0xB8000,
+            base_paddr_hi: 0,
+            width: 0,
+            height: 0,
+            pitch_bytes: 0,
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        }
     }
 
     /// Resets the DAC to a sensible default VGA palette (EGA 16-color + 256-color cube).
@@ -483,7 +539,7 @@ impl VgaDevice {
         if !self.vbe.enabled() || !self.vbe.lfb_enabled() {
             return None;
         }
-        let start = u64::from(SVGA_LFB_BASE);
+        let start = u64::from(self.svga_lfb_base);
         let paddr = u64::from(paddr);
         if paddr < start {
             return None;
@@ -1609,7 +1665,9 @@ impl IoSnapshot for VgaDevice {
         let snapshot_minor = r.header().device_version.minor;
 
         // Reset to a deterministic baseline.
+        let svga_lfb_base = self.svga_lfb_base;
         *self = Self::new();
+        self.svga_lfb_base = svga_lfb_base;
 
         if let Some(v) = r.u8(TAG_MISC_OUTPUT)? {
             self.misc_output = v;
@@ -1769,6 +1827,8 @@ impl IoSnapshot for VgaDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    use aero_shared::scanout_state::{SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB};
 
     fn fnv1a64(bytes: &[u8]) -> u64 {
         const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -2224,5 +2284,27 @@ mod tests {
 
         dev.port_write(0x3C4, 2, 0x0F02);
         assert_eq!(dev.port_read(0x3C4, 2), 0x0F02);
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[test]
+    fn scanout_update_reports_legacy_text_in_text_mode() {
+        let dev = VgaDevice::new();
+        let update = dev.active_scanout_update();
+        assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_TEXT);
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[test]
+    fn scanout_update_reports_vbe_lfb_base_and_pitch() {
+        let mut dev = VgaDevice::new();
+        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_mode(64, 32, 32, true);
+
+        let update = dev.active_scanout_update();
+        assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+        assert_eq!(update.base_paddr_lo, 0xE100_0000);
+        assert_eq!(update.base_paddr_hi, 0);
+        assert_eq!(update.pitch_bytes, 64 * 4);
     }
 }
