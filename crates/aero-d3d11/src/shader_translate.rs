@@ -2012,16 +2012,25 @@ fn emit_temp_and_output_decls(
     let mut temps = BTreeSet::<u32>::new();
     let mut outputs = BTreeSet::<u32>::new();
 
-    for inst in &module.instructions {
-        let mut scan_reg = |reg: RegisterRef| match reg.file {
-            RegFile::Temp => {
-                temps.insert(reg.index);
-            }
-            RegFile::Output => {
-                outputs.insert(reg.index);
-            }
-            RegFile::Input => {}
-        };
+        for inst in &module.instructions {
+            let mut scan_reg = |reg: RegisterRef| match reg.file {
+                RegFile::Temp => {
+                    temps.insert(reg.index);
+                }
+                RegFile::Output => {
+                    outputs.insert(reg.index);
+                }
+                RegFile::OutputDepth => {
+                    // Depth output registers are mapped to a concrete `o#` register by the output
+                    // signature. Ensure the mapped register is declared if present.
+                    if let Some(depth_reg) = io.ps_sv_depth_register {
+                        outputs.insert(depth_reg);
+                    } else {
+                        outputs.insert(reg.index);
+                    }
+                }
+                RegFile::Input => {}
+            };
 
         match inst {
             Sm4Inst::If { cond, .. } => {
@@ -2781,6 +2790,12 @@ fn emit_src_vec4(
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("r{}", reg.index),
             RegFile::Output => format!("o{}", reg.index),
+            RegFile::OutputDepth => {
+                let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
+                    ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
+                )?;
+                format!("o{depth_reg}")
+            }
             RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
         },
         SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
@@ -2860,6 +2875,12 @@ fn emit_src_vec4_i32(
             let expr = match reg.file {
                 RegFile::Temp => format!("r{}", reg.index),
                 RegFile::Output => format!("o{}", reg.index),
+                RegFile::OutputDepth => {
+                    let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
+                        ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
+                    )?;
+                    format!("o{depth_reg}")
+                }
                 RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
             };
             format!("bitcast<vec4<i32>>({expr})")
@@ -2897,11 +2918,17 @@ fn emit_write_masked(
     rhs: String,
     inst_index: usize,
     opcode: &'static str,
-    _ctx: &EmitCtx<'_>,
+    ctx: &EmitCtx<'_>,
 ) -> Result<(), ShaderTranslateError> {
     let dst_expr = match dst.file {
         RegFile::Temp => format!("r{}", dst.index),
         RegFile::Output => format!("o{}", dst.index),
+        RegFile::OutputDepth => {
+            let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
+                ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
+            )?;
+            format!("o{depth_reg}")
+        }
         RegFile::Input => {
             return Err(ShaderTranslateError::UnsupportedInstruction {
                 inst_index,

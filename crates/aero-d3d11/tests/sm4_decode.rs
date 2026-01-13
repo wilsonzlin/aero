@@ -662,6 +662,54 @@ fn preserves_non_comment_customdata_and_does_not_end_decl_section() {
 }
 
 #[test]
+fn decodes_output_depth_operand() {
+    // Minimal ps_5_0:
+    //   mov oDepth.x, l(0.25)
+    //   ret
+    let f = |v: f32| v.to_bits();
+
+    let mut body = Vec::<u32>::new();
+
+    // mov oDepth.x, l(0.25, 0.25, 0.25, 0.25)
+    // (The `oDepth` operand has no index; the backend maps it to the signature-declared SV_Depth.)
+    let mut mov = vec![opcode_token(OPCODE_MOV, 1 + 1 + 5)];
+    mov.push(operand_token(
+        OPERAND_TYPE_OUTPUT_DEPTH,
+        2,
+        OPERAND_SEL_MASK,
+        WriteMask::X.0 as u32,
+        0,
+        false,
+    ));
+    mov.extend_from_slice(&imm32_vec4([f(0.25), f(0.25), f(0.25), f(0.25)]));
+    body.extend_from_slice(&mov);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module,
+        Sm4Module {
+            stage: aero_d3d11::ShaderStage::Pixel,
+            model: ShaderModel { major: 5, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: dst(RegFile::OutputDepth, 0, WriteMask::X),
+                    src: src_imm([f(0.25), f(0.25), f(0.25), f(0.25)]),
+                },
+                Sm4Inst::Ret,
+            ],
+        }
+    );
+}
+
+#[test]
 fn decodes_sample_and_sample_l() {
     const DCL_DUMMY: u32 = 0x200;
     let mut body = Vec::<u32>::new();

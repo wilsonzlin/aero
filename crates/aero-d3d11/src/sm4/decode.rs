@@ -1227,6 +1227,27 @@ fn decode_dst(r: &mut InstrReader<'_>) -> Result<DstOperand, Sm4DecodeError> {
     let (file, index) = match op.ty {
         OPERAND_TYPE_TEMP => (RegFile::Temp, one_index(op.ty, &op.indices, r.base_at)?),
         OPERAND_TYPE_OUTPUT => (RegFile::Output, one_index(op.ty, &op.indices, r.base_at)?),
+        OPERAND_TYPE_OUTPUT_DEPTH
+        | OPERAND_TYPE_OUTPUT_DEPTH_GREATER_EQUAL
+        | OPERAND_TYPE_OUTPUT_DEPTH_LESS_EQUAL => {
+            // `oDepth`/`oDepthGE`/`oDepthLE` operands do not necessarily encode an `o#` index; the
+            // signature-driven WGSL backend maps them to the correct output register. Preserve
+            // them as a dedicated register file in the IR.
+            let index = match op.indices.as_slice() {
+                [] => 0,
+                [idx] => *idx,
+                _ => {
+                    return Err(Sm4DecodeError {
+                        at_dword: r.base_at + r.pos.saturating_sub(1),
+                        kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                            ty: op.ty,
+                            indices: op.indices,
+                        },
+                    })
+                }
+            };
+            (RegFile::OutputDepth, index)
+        }
         other => {
             return Err(Sm4DecodeError {
                 at_dword: r.base_at + r.pos.saturating_sub(1),
@@ -1237,6 +1258,7 @@ fn decode_dst(r: &mut InstrReader<'_>) -> Result<DstOperand, Sm4DecodeError> {
 
     let mask = match op.selection_mode {
         OPERAND_SEL_MASK => WriteMask((op.component_sel & 0xF) as u8),
+        OPERAND_SEL_SELECT1 => WriteMask(1u8 << ((op.component_sel & 0x3) as u8)),
         _ => WriteMask::XYZW,
     };
 
@@ -1303,6 +1325,27 @@ fn decode_src(r: &mut InstrReader<'_>) -> Result<SrcOperand, Sm4DecodeError> {
                 file: RegFile::Output,
                 index: one_index(op.ty, &op.indices, r.base_at)?,
             }),
+            OPERAND_TYPE_OUTPUT_DEPTH
+            | OPERAND_TYPE_OUTPUT_DEPTH_GREATER_EQUAL
+            | OPERAND_TYPE_OUTPUT_DEPTH_LESS_EQUAL => {
+                let index = match op.indices.as_slice() {
+                    [] => 0,
+                    [idx] => *idx,
+                    _ => {
+                        return Err(Sm4DecodeError {
+                            at_dword: r.base_at + r.pos.saturating_sub(1),
+                            kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                                ty: op.ty,
+                                indices: op.indices,
+                            },
+                        })
+                    }
+                };
+                SrcKind::Register(RegisterRef {
+                    file: RegFile::OutputDepth,
+                    index,
+                })
+            }
             OPERAND_TYPE_CONSTANT_BUFFER => match op.indices.as_slice() {
                 [slot, reg] => SrcKind::ConstantBuffer {
                     slot: *slot,

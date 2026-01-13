@@ -156,10 +156,22 @@ pub const OPERAND_TYPE_IMMEDIATE32: u32 = 4;
 pub const OPERAND_TYPE_SAMPLER: u32 = 6;
 pub const OPERAND_TYPE_RESOURCE: u32 = 7;
 pub const OPERAND_TYPE_CONSTANT_BUFFER: u32 = 8;
+/// Pixel shader depth output (`oDepth`).
+///
+/// Upstream: `D3D10_SB_OPERAND_TYPE_OUTPUT_DEPTH`.
+pub const OPERAND_TYPE_OUTPUT_DEPTH: u32 = 12;
 /// Unordered access view (u#).
 ///
 /// Upstream: `D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW`.
 pub const OPERAND_TYPE_UNORDERED_ACCESS_VIEW: u32 = 30;
+/// Pixel shader depth output with a conservative depth contract (`oDepthGE`).
+///
+/// Upstream: `D3D11_SB_OPERAND_TYPE_OUTPUT_DEPTH_GREATER_EQUAL`.
+pub const OPERAND_TYPE_OUTPUT_DEPTH_GREATER_EQUAL: u32 = 38;
+/// Pixel shader depth output with a conservative depth contract (`oDepthLE`).
+///
+/// Upstream: `D3D11_SB_OPERAND_TYPE_OUTPUT_DEPTH_LESS_EQUAL`.
+pub const OPERAND_TYPE_OUTPUT_DEPTH_LESS_EQUAL: u32 = 39;
 
 // Index dimensions (subset of `D3D10_SB_OPERAND_INDEX_DIMENSION`).
 pub const OPERAND_INDEX_DIMENSION_0D: u32 = 0;

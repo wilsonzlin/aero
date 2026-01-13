@@ -381,6 +381,13 @@ pub enum RegFile {
     Temp,
     Input,
     Output,
+    /// Pixel shader depth output (`oDepth` / `SV_Depth`).
+    ///
+    /// DXBC uses a distinct operand type (`D3D10_SB_OPERAND_TYPE_OUTPUT_DEPTH`) for depth output
+    /// which does not carry an `o#` index in the instruction stream. We preserve it as a distinct
+    /// register file in the IR so the WGSL backend can map it to the correct `SV_Depth` output
+    /// register declared by the signature.
+    OutputDepth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
