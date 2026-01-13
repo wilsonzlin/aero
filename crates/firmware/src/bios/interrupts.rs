@@ -277,14 +277,12 @@ fn handle_int19(
     match disk.read_sector(0, &mut sector) {
         Ok(()) => {}
         Err(_) => {
-            bios.push_tty_bytes(b"Disk read error\n");
-            cpu.halted = true;
+            bios.bios_panic(cpu, bus, "Disk read error");
             return;
         }
     }
     if sector[510] != 0x55 || sector[511] != 0xAA {
-        bios.push_tty_bytes(b"Invalid boot signature\n");
-        cpu.halted = true;
+        bios.bios_panic(cpu, bus, "Invalid boot signature");
         return;
     }
 

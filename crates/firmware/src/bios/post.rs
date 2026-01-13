@@ -238,8 +238,38 @@ impl Bios {
         }));
     }
 
-    fn bios_panic(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, msg: &'static str) {
-        self.bios_diag(bus, msg);
+    pub(super) fn bios_panic(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, msg: &'static str) {
+        // Record the message in the TTY buffer for programmatic inspection.
+        self.push_tty_bytes(msg.as_bytes());
+        let needs_newline = !msg.as_bytes().last().is_some_and(|b| *b == b'\n');
+        if needs_newline {
+            self.push_tty_byte(b'\n');
+        }
+
+        // Render the panic message to the VGA text buffer (0xB8000) so boot failures are visible
+        // on the guest display.
+        //
+        // This is best-effort: avoid escalating a panic during panic handling.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut mem = BiosMemoryBus::new(bus);
+
+            // Ensure a sane baseline text mode state (mode 03h) and clear the text window so the
+            // message is readable even if a guest previously switched modes.
+            self.video.vbe.current_mode = None;
+            self.video.vga.set_text_mode_03h(&mut mem, true);
+            self.video_mode = 0x03;
+
+            for &ch in b"BIOS panic: " {
+                self.video.vga.teletype_output(&mut mem, 0, ch, 0x07);
+            }
+            for &ch in msg.as_bytes() {
+                self.video.vga.teletype_output(&mut mem, 0, ch, 0x07);
+            }
+            if needs_newline {
+                self.video.vga.teletype_output(&mut mem, 0, b'\n', 0x07);
+            }
+        }));
+
         cpu.halted = true;
     }
 }
