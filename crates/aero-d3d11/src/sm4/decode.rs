@@ -141,11 +141,19 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
 
         let inst_toks = &toks[i..i + len];
 
-        // Comment blocks can be emitted via the `customdata` opcode. They have no impact on shader
-        // semantics and can appear in both the declaration and executable sections.
-        if opcode == OPCODE_CUSTOMDATA
-            && inst_toks.get(1).copied() == Some(CUSTOMDATA_CLASS_COMMENT)
-        {
+        // `customdata` blocks are non-executable and can legally appear both in the declaration
+        // region and interspersed within the executable instruction stream (comments, debug data,
+        // immediate constant buffers, etc.). Treat them as declarations/metadata regardless of
+        // their class so they never poison the instruction stream.
+        if opcode == OPCODE_CUSTOMDATA {
+            let class = inst_toks
+                .get(1)
+                .copied()
+                .unwrap_or(CUSTOMDATA_CLASS_COMMENT);
+            decls.push(Sm4Decl::CustomData {
+                class,
+                len_dwords: len as u32,
+            });
             i += len;
             continue;
         }
@@ -179,6 +187,94 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         decls,
         instructions,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sm4::{ShaderModel, ShaderStage};
+
+    fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
+        opcode | (len_dwords << OPCODE_LEN_SHIFT)
+    }
+
+    #[test]
+    fn customdata_non_comment_is_skipped_from_instructions() {
+        // Build a minimal ps_5_0 token stream:
+        // - a declaration
+        // - a non-comment customdata block (class=1)
+        // - mov r0, l(0,0,0,0)
+        // - ret
+        let version_token = 0x50u32; // ps_5_0
+
+        // dcl (any opcode >= DECLARATION_OPCODE_MIN is treated as a declaration by the decoder)
+        let decl_opcode = DECLARATION_OPCODE_MIN;
+        let decl_len = 3u32;
+        let decl_operand_token = 0x10F012u32; // v0.xyzw
+        let decl_register = 0u32;
+
+        // customdata block: opcode + class + 2 payload dwords
+        let customdata_len = 4u32;
+        let customdata_class = 1u32;
+
+        // mov r0.xyzw, l(0,0,0,0)
+        let mov_len = 8u32;
+        let mov_dst_token = 0x10F002u32; // r0.xyzw
+        let mov_dst_index = 0u32;
+        let mov_src_imm_token = 0x42u32; // immediate32 vec4
+        let imm = 0u32; // 0.0f bits
+
+        // ret
+        let ret_len = 1u32;
+
+        let mut tokens = vec![
+            version_token,
+            0, // declared length patched below
+            opcode_token(decl_opcode, decl_len),
+            decl_operand_token,
+            decl_register,
+            opcode_token(OPCODE_CUSTOMDATA, customdata_len),
+            customdata_class,
+            0x1234_5678,
+            0x9abc_def0,
+            opcode_token(OPCODE_MOV, mov_len),
+            mov_dst_token,
+            mov_dst_index,
+            mov_src_imm_token,
+            imm,
+            imm,
+            imm,
+            imm,
+            opcode_token(OPCODE_RET, ret_len),
+        ];
+        tokens[1] = tokens.len() as u32;
+
+        let program = Sm4Program {
+            stage: ShaderStage::Pixel,
+            model: ShaderModel { major: 5, minor: 0 },
+            tokens,
+        };
+
+        let module = program.decode().expect("decode should succeed");
+        assert_eq!(module.instructions.len(), 2);
+        assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
+        assert!(matches!(module.instructions[1], Sm4Inst::Ret));
+        assert!(
+            !module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Sm4Inst::Unknown { opcode: OPCODE_CUSTOMDATA })),
+            "customdata must not be decoded as an executable instruction"
+        );
+
+        assert!(
+            module
+                .decls
+                .iter()
+                .any(|d| matches!(d, Sm4Decl::CustomData { class: 1, .. })),
+            "customdata block should be preserved as a declaration for diagnostics"
+        );
+    }
 }
 fn decode_instruction(
     opcode: u32,

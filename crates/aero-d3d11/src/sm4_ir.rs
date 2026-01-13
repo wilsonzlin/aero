@@ -13,7 +13,12 @@ pub struct Sm4Module {
     pub stage: ShaderStage,
     /// Shader model declared by the DXBC version token.
     pub model: ShaderModel,
-    /// Declarations that appear before the instruction stream.
+    /// Non-executable declarations and metadata.
+    ///
+    /// This includes traditional SM4/SM5 declarations that typically appear before the
+    /// instruction stream, as well as non-executable `customdata` blocks (comments, debug data,
+    /// immediate constant buffers) which may legally appear both before and within the
+    /// instruction stream.
     pub decls: Vec<Sm4Decl>,
     /// Linear instruction stream in execution order.
     pub instructions: Vec<Sm4Inst>,
@@ -49,6 +54,16 @@ pub enum Sm4Decl {
     },
     ResourceTexture2D {
         slot: u32,
+    },
+    /// Non-executable `customdata` block.
+    ///
+    /// This is emitted by the SM4/SM5 encoder for comments, debug data, immediate constant
+    /// buffers, etc. The decoder currently treats all custom data blocks as non-executable and
+    /// does not attempt to parse the payload.
+    CustomData {
+        class: u32,
+        /// Total block length in DWORDs (including opcode + class DWORDs).
+        len_dwords: u32,
     },
     Unknown {
         opcode: u32,

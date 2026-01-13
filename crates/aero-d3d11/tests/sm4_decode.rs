@@ -586,7 +586,9 @@ fn skips_customdata_comment_without_ending_decl_section() {
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
     let module = program.decode().expect("decode");
 
-    assert_eq!(module.decls.len(), 1);
+    // Custom-data blocks are non-executable and should not end the declaration section; they are
+    // preserved as metadata declarations.
+    assert_eq!(module.decls.len(), 2);
     assert_eq!(module.instructions.len(), 2);
 }
 
