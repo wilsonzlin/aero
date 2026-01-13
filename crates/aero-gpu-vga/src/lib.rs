@@ -1042,11 +1042,14 @@ impl DisplayOutput for VgaDevice {
     }
 }
 
-impl PortIO for VgaDevice {
-    fn port_read(&mut self, port: u16, size: usize) -> u32 {
-        match (port, size) {
+impl VgaDevice {
+    fn port_read_u8(&mut self, port: u16) -> u8 {
+        match port {
             // VGA misc output.
-            (0x3CC, 1) => self.misc_output as u32,
+            //
+            // Real hardware reads Misc Output at 0x3CC (and 0x3C2 is Input Status 0). We accept
+            // reads from either port for maximum guest compatibility.
+            0x3CC | 0x3C2 => self.misc_output,
 
             // VGA register files are exposed as adjacent index/data port pairs. Some software
             // (e.g. BIOS register tables) uses `inw`/`outw` on the index port to access both
@@ -1058,17 +1061,17 @@ impl PortIO for VgaDevice {
             }
 
             // Sequencer.
-            (0x3C4, 1) => self.sequencer_index as u32,
-            (0x3C5, 1) => {
+            0x3C4 => self.sequencer_index,
+            0x3C5 => {
                 let idx = (self.sequencer_index as usize) % self.sequencer.len();
-                self.sequencer[idx] as u32
+                self.sequencer[idx]
             }
 
             // Graphics controller.
-            (0x3CE, 1) => self.graphics_index as u32,
-            (0x3CF, 1) => {
+            0x3CE => self.graphics_index,
+            0x3CF => {
                 let idx = (self.graphics_index as usize) % self.graphics.len();
-                self.graphics[idx] as u32
+                self.graphics[idx]
             }
 
             // CRTC.
@@ -1078,66 +1081,43 @@ impl PortIO for VgaDevice {
             // - 0x3B4/0x3B5 (mono I/O decode).
             //
             // Aero's VGA model keeps a single CRTC register array, so we accept both port bases.
-            (0x3D4, 1) => self.crtc_index as u32,
-            (0x3D5, 1) => {
+            0x3D4 | 0x3B4 => self.crtc_index,
+            0x3D5 | 0x3B5 => {
                 let idx = (self.crtc_index as usize) % self.crtc.len();
-                self.crtc[idx] as u32
-            }
-            (0x3B4, 1) => self.crtc_index as u32,
-            (0x3B5, 1) => {
-                let idx = (self.crtc_index as usize) % self.crtc.len();
-                self.crtc[idx] as u32
+                self.crtc[idx]
             }
 
             // Attribute controller data read (index written via 0x3C0).
-            (0x3C1, 1) => {
+            0x3C1 => {
                 let idx = (self.attribute_index as usize) % self.attribute.len();
-                self.attribute[idx] as u32
+                self.attribute[idx]
             }
 
             // Input status 1. Reading resets the attribute flip-flop.
-            (0x3DA, 1) => {
+            0x3DA | 0x3BA => {
                 self.attribute_flip_flop_data = false;
                 self.input_status1_vretrace = !self.input_status1_vretrace;
-                let v = if self.input_status1_vretrace {
-                    0x08
-                } else {
-                    0x00
-                };
+                let v = if self.input_status1_vretrace { 0x08 } else { 0x00 };
                 // Bit 3: vertical retrace. Bit 0: display enable (rough approximation).
-                (v | (v >> 3)) as u32
-            }
-            // Mono alias for input status 1.
-            (0x3BA, 1) => {
-                self.attribute_flip_flop_data = false;
-                self.input_status1_vretrace = !self.input_status1_vretrace;
-                let v = if self.input_status1_vretrace {
-                    0x08
-                } else {
-                    0x00
-                };
-                (v | (v >> 3)) as u32
+                v | (v >> 3)
             }
 
             // DAC.
-            (0x3C6, 1) => self.pel_mask as u32,
-            (0x3C7, 1) => self.dac_read_index as u32,
-            (0x3C8, 1) => self.dac_write_index as u32,
-            (0x3C9, 1) => self.read_dac_data() as u32,
+            0x3C6 => self.pel_mask,
+            0x3C7 => self.dac_read_index,
+            0x3C8 => self.dac_write_index,
+            0x3C9 => self.read_dac_data(),
 
-            // Bochs VBE.
-            (0x01CE, 2) => self.vbe_index as u32,
-            (0x01CF, 2) => self.vbe_read_reg(self.vbe_index) as u32,
-
-            _ => io_all_ones(size),
+            // Unimplemented ports.
+            _ => 0xFF,
         }
     }
 
-    fn port_write(&mut self, port: u16, size: usize, val: u32) {
-        match (port, size) {
+    fn port_write_u8(&mut self, port: u16, val: u8) {
+        match port {
             // VGA misc output.
-            (0x3C2, 1) => {
-                self.misc_output = val as u8;
+            0x3C2 => {
+                self.misc_output = val;
                 self.dirty = true;
             }
 
@@ -1151,74 +1131,121 @@ impl PortIO for VgaDevice {
             }
 
             // Sequencer.
-            (0x3C4, 1) => self.sequencer_index = val as u8,
-            (0x3C5, 1) => {
+            0x3C4 => self.sequencer_index = val,
+            0x3C5 => {
                 let idx = (self.sequencer_index as usize) % self.sequencer.len();
-                self.sequencer[idx] = val as u8;
+                self.sequencer[idx] = val;
                 self.dirty = true;
             }
 
             // Graphics controller.
-            (0x3CE, 1) => self.graphics_index = val as u8,
-            (0x3CF, 1) => {
+            0x3CE => self.graphics_index = val,
+            0x3CF => {
                 let idx = (self.graphics_index as usize) % self.graphics.len();
-                self.graphics[idx] = val as u8;
+                self.graphics[idx] = val;
                 self.dirty = true;
             }
 
             // CRTC.
-            (0x3D4, 1) => self.crtc_index = val as u8,
-            (0x3D5, 1) => {
+            0x3D4 | 0x3B4 => self.crtc_index = val,
+            0x3D5 | 0x3B5 => {
                 let idx = (self.crtc_index as usize) % self.crtc.len();
                 if idx <= 0x07 && (self.crtc.get(0x11).copied().unwrap_or(0) & 0x80) != 0 {
                     return;
                 }
-                self.crtc[idx] = val as u8;
-                self.dirty = true;
-            }
-            (0x3B4, 1) => self.crtc_index = val as u8,
-            (0x3B5, 1) => {
-                let idx = (self.crtc_index as usize) % self.crtc.len();
-                if idx <= 0x07 && (self.crtc.get(0x11).copied().unwrap_or(0) & 0x80) != 0 {
-                    return;
-                }
-                self.crtc[idx] = val as u8;
+                self.crtc[idx] = val;
                 self.dirty = true;
             }
 
             // Attribute controller (index/data with flip-flop).
-            (0x3C0, 1) => {
-                let v = val as u8;
+            0x3C0 => {
                 if !self.attribute_flip_flop_data {
-                    self.attribute_index = v & 0x1F;
+                    self.attribute_index = val & 0x1F;
                     self.attribute_flip_flop_data = true;
                 } else {
                     let idx = (self.attribute_index as usize) % self.attribute.len();
-                    self.attribute[idx] = v;
+                    self.attribute[idx] = val;
                     self.attribute_flip_flop_data = false;
                     self.dirty = true;
                 }
             }
 
             // DAC.
-            (0x3C6, 1) => {
-                self.pel_mask = val as u8;
+            0x3C6 => {
+                self.pel_mask = val;
                 self.dirty = true;
             }
-            (0x3C7, 1) => {
-                self.dac_read_index = val as u8;
+            0x3C7 => {
+                self.dac_read_index = val;
                 self.dac_read_subindex = 0;
             }
-            (0x3C8, 1) => {
-                self.dac_write_index = val as u8;
+            0x3C8 => {
+                self.dac_write_index = val;
                 self.dac_write_subindex = 0;
             }
-            (0x3C9, 1) => self.write_dac_data(val as u8),
+            0x3C9 => self.write_dac_data(val),
 
-            // Bochs VBE.
-            (0x01CE, 2) => self.vbe_index = (val & 0xFFFF) as u16,
-            (0x01CF, 2) => self.vbe_write_reg(self.vbe_index, (val & 0xFFFF) as u16),
+            // Writes to unimplemented ports are ignored.
+            _ => {}
+        }
+    }
+}
 
+impl PortIO for VgaDevice {
+    fn port_read(&mut self, port: u16, size: usize) -> u32 {
+        match size {
+            0 => 0,
+            1 => u32::from(self.port_read_u8(port)),
+            2 => {
+                // Bochs VBE.
+                if port == 0x01CE {
+                    return u32::from(self.vbe_index);
+                }
+                if port == 0x01CF {
+                    return u32::from(self.vbe_read_reg(self.vbe_index));
+                }
+
+                let lo = self.port_read_u8(port);
+                let hi = self.port_read_u8(port.wrapping_add(1));
+                u32::from(u16::from_le_bytes([lo, hi]))
+            }
+            4 => {
+                let b0 = self.port_read_u8(port);
+                let b1 = self.port_read_u8(port.wrapping_add(1));
+                let b2 = self.port_read_u8(port.wrapping_add(2));
+                let b3 = self.port_read_u8(port.wrapping_add(3));
+                u32::from_le_bytes([b0, b1, b2, b3])
+            }
+            _ => io_all_ones(size),
+        }
+    }
+
+    fn port_write(&mut self, port: u16, size: usize, val: u32) {
+        match size {
+            0 => {}
+            1 => self.port_write_u8(port, val as u8),
+            2 => {
+                // Bochs VBE.
+                if port == 0x01CE {
+                    self.vbe_index = (val & 0xFFFF) as u16;
+                    return;
+                }
+                if port == 0x01CF {
+                    self.vbe_write_reg(self.vbe_index, (val & 0xFFFF) as u16);
+                    return;
+                }
+
+                let [b0, b1] = (val as u16).to_le_bytes();
+                self.port_write_u8(port, b0);
+                self.port_write_u8(port.wrapping_add(1), b1);
+            }
+            4 => {
+                let [b0, b1, b2, b3] = val.to_le_bytes();
+                self.port_write_u8(port, b0);
+                self.port_write_u8(port.wrapping_add(1), b1);
+                self.port_write_u8(port.wrapping_add(2), b2);
+                self.port_write_u8(port.wrapping_add(3), b3);
+            }
             _ => {}
         }
     }
