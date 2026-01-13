@@ -4,7 +4,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use aero_snapshot::{
     limits, Compression, CpuState, DeviceId, DiskOverlayRefs, MmuState, RamMode, SectionId,
-    SnapshotError, SnapshotIndex, SnapshotSectionInfo, SnapshotTarget,
+    SnapshotError, SnapshotIndex, SnapshotSectionInfo, SnapshotTarget, VcpuMmuSnapshot,
 };
 
 use crate::error::{Result, XtaskError};
@@ -20,7 +20,7 @@ Usage:
 
 Subcommands:
   inspect    Print header, META fields, section table, and per-section summaries
-            (CPU/MMU/DEVICES/CPUS/DISKS/RAM when present).
+            (CPU/MMU/DEVICES/CPUS/MMUS/DISKS/RAM when present).
   validate   Structural validation without decompressing RAM.
             Use --deep to fully restore/decompress into a dummy target (small files only).
 "
@@ -116,6 +116,10 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
     if let Some(mmu) = index.sections.iter().find(|s| s.id == SectionId::MMU) {
         println!("MMU:");
         print_mmu_section_summary(&mut file, mmu);
+    }
+    if let Some(mmus) = index.sections.iter().find(|s| s.id == SectionId::MMUS) {
+        println!("MMUS:");
+        print_mmus_section_summary(&mut file, mmus);
     }
     if let Some(devices) = index.sections.iter().find(|s| s.id == SectionId::DEVICES) {
         println!("DEVICES:");
@@ -264,6 +268,202 @@ fn print_mmu_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo)
         "  idtr: base=0x{:x} limit=0x{:x}",
         mmu.idtr_base, mmu.idtr_limit
     );
+}
+
+fn print_mmus_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
+    const MAX_LISTED: usize = 64;
+
+    if section.version == 0 {
+        println!("  <unsupported MMUS section version {}>", section.version);
+        return;
+    }
+
+    let section_end = match section.offset.checked_add(section.len) {
+        Some(v) => v,
+        None => {
+            println!("  <invalid section length>");
+            return;
+        }
+    };
+
+    if section.len < 4 {
+        println!("  <truncated section>");
+        return;
+    }
+
+    if let Err(e) = file.seek(SeekFrom::Start(section.offset)) {
+        println!("  <failed to seek: {e}>");
+        return;
+    }
+
+    let count = match read_u32_le_lossy(file) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("  <failed to read MMU count: {e}>");
+            return;
+        }
+    };
+    if count > limits::MAX_CPU_COUNT {
+        println!("  <too many MMU states: {count}>");
+        return;
+    }
+
+    #[derive(Debug, Clone)]
+    struct MmuSummaryEntry {
+        apic_id: u32,
+        entry_len: u64,
+        cr0: Option<u64>,
+        cr3: Option<u64>,
+        cr4: Option<u64>,
+        efer: Option<u64>,
+        apic_base: Option<u64>,
+        tsc: Option<u64>,
+        decode_error: Option<String>,
+    }
+
+    let mut entries = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let pos = match file.stream_position() {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read MMU entry: {e}>");
+                return;
+            }
+        };
+        if pos >= section_end {
+            println!("  <truncated section>");
+            return;
+        }
+        if section_end - pos < 8 {
+            println!("  <truncated section>");
+            return;
+        }
+
+        let entry_len = match read_u64_le_lossy(file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read MMU entry length: {e}>");
+                return;
+            }
+        };
+
+        let entry_start = match file.stream_position() {
+            Ok(v) => v,
+            Err(e) => {
+                println!("  <failed to read MMU entry: {e}>");
+                return;
+            }
+        };
+        let entry_end = match entry_start.checked_add(entry_len) {
+            Some(v) => v,
+            None => {
+                println!("  <mmu entry length overflow>");
+                return;
+            }
+        };
+        if entry_end > section_end {
+            println!("  <truncated section>");
+            return;
+        }
+        if entry_len < 4 {
+            println!("  <truncated MMU entry>");
+            return;
+        }
+
+        let mut apic_id: u32 = 0;
+        let mut cr0: Option<u64> = None;
+        let mut cr3: Option<u64> = None;
+        let mut cr4: Option<u64> = None;
+        let mut efer: Option<u64> = None;
+        let mut apic_base: Option<u64> = None;
+        let mut tsc: Option<u64> = None;
+        let mut decode_error: Option<String> = None;
+
+        {
+            let mut entry_reader = file.take(entry_len);
+            match read_u32_le_lossy(&mut entry_reader) {
+                Ok(v) => apic_id = v,
+                Err(e) => decode_error = Some(format!("apic_id: {e}")),
+            }
+
+            let mmu = if section.version == 1 {
+                MmuState::decode_v1(&mut entry_reader)
+            } else {
+                MmuState::decode_v2(&mut entry_reader)
+            };
+
+            match mmu {
+                Ok(mmu) => {
+                    cr0 = Some(mmu.cr0);
+                    cr3 = Some(mmu.cr3);
+                    cr4 = Some(mmu.cr4);
+                    efer = Some(mmu.efer);
+                    apic_base = Some(mmu.apic_base);
+                    tsc = Some(mmu.tsc);
+                }
+                Err(e) => decode_error = Some(format!("mmu: {e}")),
+            }
+        }
+
+        entries.push(MmuSummaryEntry {
+            apic_id,
+            entry_len,
+            cr0,
+            cr3,
+            cr4,
+            efer,
+            apic_base,
+            tsc,
+            decode_error,
+        });
+
+        if let Err(e) = file.seek(SeekFrom::Start(entry_end)) {
+            println!("  <failed to skip MMU entry: {e}>");
+            return;
+        }
+    }
+
+    let already_sorted = entries.windows(2).all(|w| w[0].apic_id <= w[1].apic_id);
+    entries.sort_by_key(|e| e.apic_id);
+    if !already_sorted {
+        println!("  note: MMUS entries are not sorted by apic_id; displaying sorted order");
+    }
+    if entries.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+        println!("  warning: duplicate apic_id entries (snapshot restore would reject this file)");
+    }
+
+    println!("  count: {}", entries.len());
+    for (idx, entry) in entries.iter().take(MAX_LISTED).enumerate() {
+        let mut suffix = String::new();
+        if let Some(cr0) = entry.cr0 {
+            suffix.push_str(&format!(" cr0=0x{cr0:x}"));
+        }
+        if let Some(cr3) = entry.cr3 {
+            suffix.push_str(&format!(" cr3=0x{cr3:x}"));
+        }
+        if let Some(cr4) = entry.cr4 {
+            suffix.push_str(&format!(" cr4=0x{cr4:x}"));
+        }
+        if let Some(efer) = entry.efer {
+            suffix.push_str(&format!(" efer=0x{efer:x}"));
+        }
+        if let Some(apic_base) = entry.apic_base {
+            suffix.push_str(&format!(" apic_base=0x{apic_base:x}"));
+        }
+        if let Some(tsc) = entry.tsc {
+            suffix.push_str(&format!(" tsc=0x{tsc:x}"));
+        }
+        if let Some(err) = entry.decode_error.as_deref() {
+            suffix.push_str(&format!(" <{err}>"));
+        }
+        println!(
+            "  - {}: apic_id={} entry_len={}{}",
+            idx, entry.apic_id, entry.entry_len, suffix
+        );
+    }
+    if entries.len() > MAX_LISTED {
+        println!("  ... ({} more)", entries.len() - MAX_LISTED);
+    }
 }
 
 fn print_devices_section_summary(file: &mut fs::File, section: &SnapshotSectionInfo) {
@@ -1745,6 +1945,22 @@ fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
     if index
         .sections
         .iter()
+        .filter(|s| s.id == SectionId::MMUS)
+        .count()
+        > 1
+    {
+        return Err(XtaskError::Message("duplicate MMUS section".to_string()));
+    }
+    let has_mmu = index.sections.iter().any(|s| s.id == SectionId::MMU);
+    let has_mmus = index.sections.iter().any(|s| s.id == SectionId::MMUS);
+    if has_mmu && has_mmus {
+        return Err(XtaskError::Message(
+            "snapshot contains both MMU and MMUS".to_string(),
+        ));
+    }
+    if index
+        .sections
+        .iter()
         .filter(|s| s.id == SectionId::DEVICES)
         .count()
         > 1
@@ -1810,6 +2026,7 @@ fn validate_index(path: &str, index: &SnapshotIndex) -> Result<()> {
             id if id == SectionId::CPU => validate_cpu_section(&mut file, section)?,
             id if id == SectionId::CPUS => validate_cpus_section(&mut file, section)?,
             id if id == SectionId::MMU => validate_mmu_section(&mut file, section)?,
+            id if id == SectionId::MMUS => validate_mmus_section(&mut file, section)?,
             id if id == SectionId::DEVICES => validate_devices_section(&mut file, section)?,
             id if id == SectionId::DISKS => validate_disks_section(&mut file, section)?,
             id if id == SectionId::RAM => validate_ram_section(&mut file, section)?,
@@ -1864,6 +2081,15 @@ impl SnapshotTarget for DeepValidateTarget {
     }
 
     fn restore_mmu_state(&mut self, _state: aero_snapshot::MmuState) {}
+    fn restore_mmu_states(
+        &mut self,
+        states: Vec<VcpuMmuSnapshot>,
+    ) -> aero_snapshot::Result<()> {
+        if states.is_empty() {
+            return Err(SnapshotError::Corrupt("missing MMU entry"));
+        }
+        Ok(())
+    }
 
     fn restore_device_states(&mut self, _states: Vec<aero_snapshot::DeviceState>) {}
 
@@ -2003,6 +2229,57 @@ fn validate_mmu_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> R
     Err(XtaskError::Message(
         "unsupported MMU section version".to_string(),
     ))
+}
+
+fn validate_mmus_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> Result<()> {
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek MMUS: {e}")))?;
+
+    let mut section_reader = file.take(section.len);
+    let count = read_u32_le(&mut section_reader)?;
+    if count == 0 {
+        return Err(XtaskError::Message("missing MMU entry".to_string()));
+    }
+    if count > limits::MAX_CPU_COUNT {
+        return Err(XtaskError::Message("too many MMU states".to_string()));
+    }
+
+    let mut seen_apic_ids = HashSet::new();
+    for _ in 0..count {
+        let entry_len = read_u64_le(&mut section_reader)?;
+        if entry_len > section_reader.limit() {
+            return Err(XtaskError::Message("truncated MMU entry".to_string()));
+        }
+
+        let mut entry_reader = (&mut section_reader).take(entry_len);
+        let apic_id = read_u32_le(&mut entry_reader)?;
+
+        // Decode the per-vCPU MMU state and ignore it. The goal is to ensure the section is well
+        // formed (length prefixes match, no truncation) and matches the restore contract.
+        if section.version == 1 {
+            let _ = MmuState::decode_v1(&mut entry_reader)
+                .map_err(|e| XtaskError::Message(format!("decode MMUS v1 entry: {e}")))?;
+        } else if section.version >= 2 {
+            let _ = MmuState::decode_v2(&mut entry_reader)
+                .map_err(|e| XtaskError::Message(format!("decode MMUS v2 entry: {e}")))?;
+        } else {
+            return Err(XtaskError::Message(
+                "unsupported MMUS section version".to_string(),
+            ));
+        }
+
+        if !seen_apic_ids.insert(apic_id) {
+            return Err(XtaskError::Message(
+                "duplicate APIC ID in MMU list (apic_id must be unique)".to_string(),
+            ));
+        }
+
+        // Skip any forward-compatible additions.
+        std::io::copy(&mut entry_reader, &mut std::io::sink())
+            .map_err(|e| XtaskError::Message(format!("read MMU entry: {e}")))?;
+    }
+
+    Ok(())
 }
 
 fn validate_devices_section(file: &mut fs::File, section: &SnapshotSectionInfo) -> Result<()> {
