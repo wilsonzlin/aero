@@ -96,6 +96,22 @@
 #define VIRTIOSND_EVENTQ_BUFFER_SIZE 64u
 #define VIRTIOSND_EVENTQ_BUFFER_COUNT 8u
 
+/* Ensure the fixed pool buffers can hold at least a single virtio-snd event. */
+C_ASSERT(VIRTIOSND_EVENTQ_BUFFER_SIZE >= sizeof(VIRTIO_SND_EVENT));
+
+typedef struct _VIRTIOSND_EVENTQ_STATS {
+    volatile LONG Completions;
+    volatile LONG Parsed;
+    volatile LONG ShortBuffers;
+    volatile LONG UnknownType;
+
+    volatile LONG JackConnected;
+    volatile LONG JackDisconnected;
+    volatile LONG PcmPeriodElapsed;
+    volatile LONG PcmXrun;
+    volatile LONG CtlNotify;
+} VIRTIOSND_EVENTQ_STATS, *PVIRTIOSND_EVENTQ_STATS;
+
 typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     ULONG Signature;
 
@@ -149,6 +165,7 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     /* Minimal eventq RX buffer pool (see VIRTIOSND_EVENTQ_*). */
     VIRTIOSND_DMA_BUFFER EventqBufferPool;
     ULONG EventqBufferCount;
+    VIRTIOSND_EVENTQ_STATS EventqStats;
 
     BOOLEAN Started;
     BOOLEAN Removed;

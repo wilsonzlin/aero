@@ -18,6 +18,20 @@
 #define VIRTIO_SND_QUEUE_TX      2u
 #define VIRTIO_SND_QUEUE_RX      3u
 
+/*
+ * Event types (virtio-snd specification).
+ *
+ * The Windows 7 Aero contract v1 does not currently define any event messages,
+ * but the spec reserves eventq for asynchronous notifications. Define the
+ * standard event types so the driver can parse/log future device models without
+ * depending on them for correctness.
+ */
+#define VIRTIO_SND_EVT_JACK_CONNECTED     0x1000u
+#define VIRTIO_SND_EVT_JACK_DISCONNECTED  0x1001u
+#define VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED 0x1100u
+#define VIRTIO_SND_EVT_PCM_XRUN           0x1101u
+#define VIRTIO_SND_EVT_CTL_NOTIFY         0x1200u
+
 /* Control queue request codes (subset). */
 #define VIRTIO_SND_R_PCM_INFO       0x0100u
 #define VIRTIO_SND_R_PCM_SET_PARAMS 0x0101u
@@ -136,7 +150,35 @@ C_ASSERT(sizeof(VIRTIO_SND_PCM_STATUS) == 8);
 C_ASSERT(FIELD_OFFSET(VIRTIO_SND_PCM_STATUS, status) == 0);
 C_ASSERT(FIELD_OFFSET(VIRTIO_SND_PCM_STATUS, latency_bytes) == 4);
 
+/* Event queue message header (virtio-snd spec). */
+typedef struct _VIRTIO_SND_EVENT {
+    ULONG type;
+    ULONG data;
+} VIRTIO_SND_EVENT, *PVIRTIO_SND_EVENT;
+C_ASSERT(sizeof(VIRTIO_SND_EVENT) == 8);
+C_ASSERT(FIELD_OFFSET(VIRTIO_SND_EVENT, type) == 0);
+C_ASSERT(FIELD_OFFSET(VIRTIO_SND_EVENT, data) == 4);
+
 #pragma pack(pop)
+
+/*
+ * Parsed event classification used by the driver. Unknown events are tolerated
+ * and surfaced as VIRTIO_SND_EVENT_KIND_UNKNOWN.
+ */
+typedef enum _VIRTIO_SND_EVENT_KIND {
+    VIRTIO_SND_EVENT_KIND_UNKNOWN = 0,
+    VIRTIO_SND_EVENT_KIND_JACK_CONNECTED,
+    VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED,
+    VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED,
+    VIRTIO_SND_EVENT_KIND_PCM_XRUN,
+    VIRTIO_SND_EVENT_KIND_CTL_NOTIFY,
+} VIRTIO_SND_EVENT_KIND;
+
+typedef struct _VIRTIO_SND_EVENT_PARSED {
+    ULONG Type;
+    ULONG Data;
+    VIRTIO_SND_EVENT_KIND Kind;
+} VIRTIO_SND_EVENT_PARSED, *PVIRTIO_SND_EVENT_PARSED;
 
 #ifdef __cplusplus
 extern "C" {
@@ -144,6 +186,20 @@ extern "C" {
 
 NTSTATUS VirtioSndStatusToNtStatus(_In_ ULONG virtio_status);
 PCSTR VirtioSndStatusToString(_In_ ULONG virtio_status);
+
+/*
+ * Parse a single virtio-snd eventq message.
+ *
+ * The device may legally complete the buffer with extra trailing bytes. The
+ * parser only requires BufferLen >= sizeof(VIRTIO_SND_EVENT) and ignores any
+ * additional payload.
+ */
+_Must_inspect_result_ NTSTATUS VirtioSndParseEvent(
+    _In_reads_bytes_(BufferLen) const void* Buffer,
+    _In_ ULONG BufferLen,
+    _Out_ VIRTIO_SND_EVENT_PARSED* OutEvent);
+
+PCSTR VirtioSndEventTypeToString(_In_ ULONG virtio_event_type);
 
 #ifdef __cplusplus
 } // extern "C"

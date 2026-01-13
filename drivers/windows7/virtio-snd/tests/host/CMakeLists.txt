@@ -73,6 +73,14 @@ add_executable(virtiosnd_dma_stub_tests
 target_link_libraries(virtiosnd_dma_stub_tests PRIVATE virtiosnd_host_shim)
 add_test(NAME virtiosnd_dma_stub_tests COMMAND virtiosnd_dma_stub_tests)
 
+add_executable(virtiosnd_event_proto_tests
+    test_event_proto.c
+    ${VIRTIOSND_SRC}/virtio_snd_proto.c
+)
+
+target_link_libraries(virtiosnd_event_proto_tests PRIVATE virtiosnd_host_shim)
+add_test(NAME virtiosnd_event_proto_tests COMMAND virtiosnd_event_proto_tests)
+
 # Existing scatter/gather core tests (host-buildable).
 if (NOT TARGET virtiosnd_sg_tests)
     add_executable(virtiosnd_sg_tests

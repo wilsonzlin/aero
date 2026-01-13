@@ -506,6 +506,7 @@ static VOID VirtIoSndEventqUninit(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
     }
 
     Dx->EventqBufferCount = 0;
+    RtlZeroMemory(&Dx->EventqStats, sizeof(Dx->EventqStats));
     VirtIoSndFreeCommonBuffer(&Dx->DmaCtx, &Dx->EventqBufferPool);
     Dx->EventqBufferCount = 0;
 }

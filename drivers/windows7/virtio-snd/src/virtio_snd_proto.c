@@ -4,6 +4,24 @@
 
 #include "virtio_snd_proto.h"
 
+static __forceinline VIRTIO_SND_EVENT_KIND VirtioSndEventKindFromType(_In_ ULONG type)
+{
+    switch (type) {
+    case VIRTIO_SND_EVT_JACK_CONNECTED:
+        return VIRTIO_SND_EVENT_KIND_JACK_CONNECTED;
+    case VIRTIO_SND_EVT_JACK_DISCONNECTED:
+        return VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED;
+    case VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED:
+        return VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED;
+    case VIRTIO_SND_EVT_PCM_XRUN:
+        return VIRTIO_SND_EVENT_KIND_PCM_XRUN;
+    case VIRTIO_SND_EVT_CTL_NOTIFY:
+        return VIRTIO_SND_EVENT_KIND_CTL_NOTIFY;
+    default:
+        return VIRTIO_SND_EVENT_KIND_UNKNOWN;
+    }
+}
+
 NTSTATUS
 VirtioSndStatusToNtStatus(_In_ ULONG virtio_status)
 {
@@ -45,6 +63,60 @@ VirtioSndStatusToString(_In_ ULONG virtio_status)
     }
 #else
     UNREFERENCED_PARAMETER(virtio_status);
+    return "";
+#endif
+}
+
+_Use_decl_annotations_
+NTSTATUS
+VirtioSndParseEvent(const void* Buffer, ULONG BufferLen, VIRTIO_SND_EVENT_PARSED* OutEvent)
+{
+    VIRTIO_SND_EVENT evt;
+
+    if (OutEvent != NULL) {
+        RtlZeroMemory(OutEvent, sizeof(*OutEvent));
+    }
+
+    if (Buffer == NULL || OutEvent == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (BufferLen < (ULONG)sizeof(VIRTIO_SND_EVENT)) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    /*
+     * Don't assume any alignment of the wire buffer (tests exercise unaligned
+     * access). Copy to a local packed structure.
+     */
+    RtlCopyMemory(&evt, Buffer, sizeof(evt));
+
+    OutEvent->Type = evt.type;
+    OutEvent->Data = evt.data;
+    OutEvent->Kind = VirtioSndEventKindFromType(OutEvent->Type);
+    return STATUS_SUCCESS;
+}
+
+PCSTR
+VirtioSndEventTypeToString(_In_ ULONG virtio_event_type)
+{
+#if DBG
+    switch (virtio_event_type) {
+    case VIRTIO_SND_EVT_JACK_CONNECTED:
+        return "JACK_CONNECTED";
+    case VIRTIO_SND_EVT_JACK_DISCONNECTED:
+        return "JACK_DISCONNECTED";
+    case VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED:
+        return "PCM_PERIOD_ELAPSED";
+    case VIRTIO_SND_EVT_PCM_XRUN:
+        return "PCM_XRUN";
+    case VIRTIO_SND_EVT_CTL_NOTIFY:
+        return "CTL_NOTIFY";
+    default:
+        return "UNKNOWN";
+    }
+#else
+    UNREFERENCED_PARAMETER(virtio_event_type);
     return "";
 #endif
 }

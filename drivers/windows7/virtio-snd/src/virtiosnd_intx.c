@@ -43,10 +43,14 @@ static VOID VirtIoSndIntxDrainEventqUsed(
     }
 
     /*
-     * Contract v1 defines no event messages; ignore contents.
+     * Contract v1 defines no event messages, but the virtio-snd specification
+     * reserves eventq for asynchronous notifications. Drain and (best-effort)
+     * parse events so that:
+     *  - future device models do not break this driver, and
+     *  - buggy devices that complete event buffers do not leak ring space.
      *
-     * Still drain used entries to avoid ring space leaks if a future device model
-     * starts emitting events (or if a buggy device completes event buffers).
+     * Audio streaming MUST remain correct even if eventq is absent, silent, or
+     * emits malformed/unknown events.
      */
     if (Cookie == NULL) {
         VIRTIOSND_TRACE_ERROR("eventq completion with NULL cookie (len=%lu)\n", (ULONG)UsedLen);
@@ -94,6 +98,72 @@ static VOID VirtIoSndIntxDrainEventqUsed(
             (ULONG)UsedLen,
             (UINT)VIRTIOSND_EVENTQ_BUFFER_SIZE,
             Cookie);
+    }
+
+    InterlockedIncrement(&dx->EventqStats.Completions);
+
+    /*
+     * Best-effort parse/log. Never let parsing affect reposting; starving eventq
+     * would make it impossible for a device to deliver future events.
+     */
+    if (UsedLen >= (UINT32)sizeof(VIRTIO_SND_EVENT)) {
+        const UINT32 cappedLen = (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) ? (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE : UsedLen;
+        VIRTIO_SND_EVENT_PARSED evt;
+
+        /* Ensure device DMA writes are visible before inspecting the buffer. */
+        KeMemoryBarrier();
+
+        status = VirtioSndParseEvent(Cookie, cappedLen, &evt);
+        if (NT_SUCCESS(status)) {
+            InterlockedIncrement(&dx->EventqStats.Parsed);
+
+            switch (evt.Kind) {
+            case VIRTIO_SND_EVENT_KIND_JACK_CONNECTED:
+                InterlockedIncrement(&dx->EventqStats.JackConnected);
+                break;
+            case VIRTIO_SND_EVENT_KIND_JACK_DISCONNECTED:
+                InterlockedIncrement(&dx->EventqStats.JackDisconnected);
+                break;
+            case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
+                InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
+                break;
+            case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
+                InterlockedIncrement(&dx->EventqStats.PcmXrun);
+                break;
+            case VIRTIO_SND_EVENT_KIND_CTL_NOTIFY:
+                InterlockedIncrement(&dx->EventqStats.CtlNotify);
+                break;
+            default:
+                InterlockedIncrement(&dx->EventqStats.UnknownType);
+                break;
+            }
+
+            VIRTIOSND_TRACE(
+                "eventq: %s (0x%08lX) data=0x%08lX len=%lu\n",
+                VirtioSndEventTypeToString(evt.Type),
+                evt.Type,
+                evt.Data,
+                (ULONG)UsedLen);
+
+            /*
+             * If the device wrote more than the standard header, treat it as
+             * future extension bytes and ignore them.
+             */
+            if (cappedLen > (UINT32)sizeof(VIRTIO_SND_EVENT)) {
+                VIRTIOSND_TRACE(
+                    "eventq: extra payload bytes (%lu > %Iu) ignored\n",
+                    (ULONG)cappedLen,
+                    sizeof(VIRTIO_SND_EVENT));
+            }
+        } else {
+            VIRTIOSND_TRACE_ERROR("eventq: failed to parse event (len=%lu): 0x%08X\n", (ULONG)cappedLen, (UINT)status);
+        }
+    } else if (UsedLen != 0) {
+        InterlockedIncrement(&dx->EventqStats.ShortBuffers);
+        VIRTIOSND_TRACE_ERROR(
+            "eventq: short completion ignored (%lu < %Iu)\n",
+            (ULONG)UsedLen,
+            sizeof(VIRTIO_SND_EVENT));
     }
 
     sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;
