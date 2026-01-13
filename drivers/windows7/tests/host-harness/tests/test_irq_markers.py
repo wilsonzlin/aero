@@ -121,6 +121,30 @@ class VirtioIrqMarkerTests(unittest.TestCase):
             self.harness._emit_virtio_irq_host_markers(b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n")
         self.assertEqual(buf.getvalue().strip(), "")
 
+    def test_extracts_blk_irq_marker_and_blk_pass_marker(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
+            b"virtio-blk-irq|INFO|mode=msi|message_count=2|msix_config_vector=0x0000|msix_queue0_vector=0x0001\n"
+        )
+
+        blk_marker = self.harness._try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+        self.assertEqual(blk_marker, "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS")
+
+        parsed = self.harness._parse_virtio_irq_markers(tail)
+        self.assertEqual(parsed["virtio-blk"]["level"], "INFO")
+        self.assertEqual(parsed["virtio-blk"]["mode"], "msi")
+        self.assertEqual(parsed["virtio-blk"]["message_count"], "2")
+        self.assertEqual(parsed["virtio-blk"]["msix_config_vector"], "0x0000")
+        self.assertEqual(parsed["virtio-blk"]["msix_queue0_vector"], "0x0001")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.harness._emit_virtio_irq_host_markers(tail)
+        self.assertEqual(
+            buf.getvalue().strip(),
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ_DIAG|INFO|message_count=2|mode=msi|msix_config_vector=0x0000|msix_queue0_vector=0x0001",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
