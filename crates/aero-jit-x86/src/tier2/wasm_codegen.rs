@@ -134,7 +134,8 @@ impl Tier2WasmCodegen {
     /// - optionally import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64` when
     ///   [`Tier2WasmOptions::code_version_guard_import`] is enabled.
     ///
-    /// The trace spills cached registers + `CpuState.rflags` on every side exit.
+    /// The trace spills cached registers (and `CpuState.rflags` when the trace uses flags) on
+    /// every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
         self.compile_trace_with_options(trace, plan, Tier2WasmOptions::default())
     }
@@ -148,11 +149,14 @@ impl Tier2WasmCodegen {
         let mut has_load_mem = false;
         let mut has_store_mem = false;
         let mut has_code_version_guards = false;
+        let mut uses_rflags = false;
         for inst in trace.iter_instrs() {
             match *inst {
                 Instr::LoadMem { .. } => has_load_mem = true,
                 Instr::StoreMem { .. } => has_store_mem = true,
                 Instr::GuardCodeVersion { .. } => has_code_version_guards = true,
+                Instr::LoadFlag { .. } | Instr::SetFlags { .. } => uses_rflags = true,
+                Instr::BinOp { flags, .. } if !flags.is_empty() => uses_rflags = true,
                 _ => {}
             }
         }
@@ -170,7 +174,9 @@ impl Tier2WasmCodegen {
         let value_count = max_value_id(trace).max(1);
         let code_version_locals: u32 = if needs_code_version_table { 2 } else { 0 };
         let tlb_locals: u32 = if options.inline_tlb { 5 } else { 0 };
-        let i64_locals = 2 + code_version_locals + tlb_locals + plan.local_count + value_count; // next_rip + rflags + code version table + tlb locals + cached regs + values
+        let fixed_locals = 1 + u32::from(uses_rflags); // next_rip + optional rflags
+        let i64_locals =
+            fixed_locals + code_version_locals + tlb_locals + plan.local_count + value_count; // next_rip + rflags + code version table + tlb locals + cached regs + values
 
         let mut module = Module::new();
 
@@ -337,6 +343,7 @@ impl Tier2WasmCodegen {
             plan,
             value_count,
             i64_locals,
+            uses_rflags,
             needs_code_version_table,
             options,
         );
@@ -359,10 +366,12 @@ impl Tier2WasmCodegen {
         f.instruction(&Instruction::I64Load(memarg(abi::CPU_RIP_OFF, 3)));
         f.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
-        // Load initial RFLAGS value.
-        f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        f.instruction(&Instruction::I64Load(memarg(abi::CPU_RFLAGS_OFF, 3)));
-        f.instruction(&Instruction::LocalSet(layout.rflags_local()));
+        if uses_rflags {
+            // Load initial RFLAGS value.
+            f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            f.instruction(&Instruction::I64Load(memarg(abi::CPU_RFLAGS_OFF, 3)));
+            f.instruction(&Instruction::LocalSet(layout.rflags_local()));
+        }
 
         if layout.code_version_table_ptr.is_some() {
             // Cache the code-version table pointer and length in locals so both the inline guard
@@ -464,20 +473,22 @@ impl Tier2WasmCodegen {
             }
         }
 
-        // Spill RFLAGS (force reserved bit 1).
-        emitter
-            .f
-            .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        emitter
-            .f
-            .instruction(&Instruction::LocalGet(layout.rflags_local()));
-        emitter
-            .f
-            .instruction(&Instruction::I64Const(abi::RFLAGS_RESERVED1 as i64));
-        emitter.f.instruction(&Instruction::I64Or);
-        emitter
-            .f
-            .instruction(&Instruction::I64Store(memarg(abi::CPU_RFLAGS_OFF, 3)));
+        if uses_rflags {
+            // Spill RFLAGS (force reserved bit 1).
+            emitter
+                .f
+                .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            emitter
+                .f
+                .instruction(&Instruction::LocalGet(layout.rflags_local()));
+            emitter
+                .f
+                .instruction(&Instruction::I64Const(abi::RFLAGS_RESERVED1 as i64));
+            emitter.f.instruction(&Instruction::I64Or);
+            emitter
+                .f
+                .instruction(&Instruction::I64Store(memarg(abi::CPU_RFLAGS_OFF, 3)));
+        }
 
         // Store RIP.
         emitter
@@ -513,6 +524,7 @@ impl Default for Tier2WasmCodegen {
 
 #[derive(Clone, Copy)]
 struct Layout {
+    rflags: Option<u32>,
     code_version_table_ptr: Option<u32>,
     code_version_table_len: Option<u32>,
     ram_base: Option<u32>,
@@ -530,13 +542,21 @@ impl Layout {
         plan: &RegAllocPlan,
         value_count: u32,
         i64_locals: u32,
+        uses_rflags: bool,
         needs_code_version_table: bool,
         options: Tier2WasmOptions,
     ) -> Self {
         // Locals are laid out after the two i32 parameters: `(cpu_ptr, jit_ctx_ptr)`.
         let next_rip_base = 2;
-        let rflags_base = next_rip_base + 1;
-        let mut next = rflags_base + 1;
+        let mut next = next_rip_base + 1;
+
+        let rflags = if uses_rflags {
+            let local = next;
+            next += 1;
+            Some(local)
+        } else {
+            None
+        };
 
         let (code_version_table_ptr, code_version_table_len) = if needs_code_version_table {
             let ptr = next;
@@ -579,6 +599,7 @@ impl Layout {
         assert_eq!(next, 2 + i64_locals, "local layout mismatch");
 
         Self {
+            rflags,
             code_version_table_ptr,
             code_version_table_len,
             ram_base,
@@ -605,7 +626,7 @@ impl Layout {
     }
 
     fn rflags_local(self) -> u32 {
-        3
+        self.rflags.expect("trace does not use rflags")
     }
 
     fn code_version_table_ptr_local(self) -> u32 {

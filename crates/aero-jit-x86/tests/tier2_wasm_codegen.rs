@@ -24,7 +24,7 @@ use aero_jit_x86::wasm::{
 };
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
-use wasmparser::Validator;
+use wasmparser::{Operator, Parser, Payload, Validator};
 
 const CPU_PTR: i32 = 0x1_0000;
 const JIT_CTX_PTR: i32 = CPU_PTR + (abi::CPU_STATE_SIZE as i32);
@@ -33,6 +33,35 @@ const GUEST_MEM_SIZE: usize = 0x1_0000; // 1 page
 fn validate_wasm(bytes: &[u8]) {
     let mut validator = Validator::new();
     validator.validate_all(bytes).unwrap();
+}
+
+fn wasm_accesses_cpu_rflags(wasm: &[u8]) -> (bool, bool) {
+    let mut has_load = false;
+    let mut has_store = false;
+    for payload in Parser::new(0).parse_all(wasm) {
+        match payload.expect("parse wasm") {
+            Payload::CodeSectionEntry(body) => {
+                let mut reader = body.get_operators_reader().expect("operators reader");
+                while !reader.eof() {
+                    match reader.read().expect("read operator") {
+                        Operator::I64Load { memarg } => {
+                            if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
+                                has_load = true;
+                            }
+                        }
+                        Operator::I64Store { memarg } => {
+                            if memarg.offset == u64::from(abi::CPU_RFLAGS_OFF) {
+                                has_store = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (has_load, has_store)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -443,6 +472,46 @@ fn read_cpu_state(bytes: &[u8]) -> ([u64; 16], u64, u64) {
 
 fn v(idx: u32) -> ValueId {
     ValueId(idx)
+}
+
+#[test]
+fn tier2_trace_wasm_without_flag_usage_does_not_touch_rflags() {
+    let mut trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            Instr::Const { dst: v(1), value: 1 },
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Value(v(1)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(2)),
+            },
+            Instr::SideExit { exit_rip: 0x9999 },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    let (has_load, has_store) = wasm_accesses_cpu_rflags(&wasm);
+    assert!(
+        !has_load,
+        "trace without flag usage should not i64.load CpuState.rflags"
+    );
+    assert!(
+        !has_store,
+        "trace without flag usage should not i64.store CpuState.rflags"
+    );
 }
 
 #[test]
