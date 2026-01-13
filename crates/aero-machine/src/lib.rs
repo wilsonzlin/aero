@@ -10934,7 +10934,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            headless.bios.video.vbe.lfb_base,
+            headless.vbe_lfb_base(),
             firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
         );
 
@@ -10950,7 +10950,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(vga.bios.video.vbe.lfb_base, aero_gpu_vga::SVGA_LFB_BASE);
+        assert_eq!(vga.vbe_lfb_base(), aero_gpu_vga::SVGA_LFB_BASE);
     }
 
     #[test]
@@ -10968,23 +10968,15 @@ mod tests {
         })
         .unwrap();
 
-        let bar1_base = {
-            let pci_cfg = m
-                .pci_config_ports()
-                .expect("pc platform should expose pci_cfg");
-            let mut pci_cfg = pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(aero_devices::pci::profile::AEROGPU.bdf)
-                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0)
-        };
+        let bdf = m.aerogpu().expect("AeroGPU should be present");
+        let bar1_base = m
+            .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+            .unwrap_or(0);
         assert_ne!(bar1_base, 0, "AeroGPU BAR1 should be assigned by BIOS POST");
 
         let expected =
             u32::try_from(bar1_base + VBE_LFB_OFFSET as u64).expect("LFB base should fit in u32");
-        assert_eq!(m.bios.video.vbe.lfb_base, expected);
+        assert_eq!(m.vbe_lfb_base(), expected);
     }
 
     #[test]
