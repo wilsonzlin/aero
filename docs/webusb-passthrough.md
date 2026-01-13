@@ -342,8 +342,37 @@ In this repo:
 Recommended behavior on a physical disconnect:
 
 1. Detach the passthrough device model from the associated emulated port (root hub or downstream hub).
-2. Cancel any in-flight host actions (by dropping the device model or calling `reset()` / cancel hooks).
-3. Ignore any completions that arrive after detach (they will be stale by `id` anyway).
+2. Cancel any in-flight host actions (call `reset()` / cancel hooks on the *existing* device model).
+3. Ignore any completions that arrive after detach (they will be stale by `id` **as long as ids are not reused**;
+   see [Action id monotonicity across disconnect/reconnect](#action-id-monotonicity-across-disconnectreconnect)).
+
+#### Action id monotonicity across disconnect/reconnect
+
+`UsbPassthroughDevice` treats completions as *stale* by checking whether the completion `id` is currently
+recorded as “in flight” (`push_completion` drops completions whose id is not in the in-flight maps).
+This relies on action ids being **monotonic / never reused** across the lifetime of the passthrough device
+model.
+
+Because WebUSB transfers are Promise-based, a transfer started *before* a disconnect can still resolve
+later (success/error) even after the browser has fired a `"disconnect"` event. If the host integration
+**drops** the `UsbWebUsbPassthroughDevice` / `UsbPassthroughDevice` instance on disconnect and later creates
+a fresh one, its action ids restart at `1`. Late completions from the previous “session” can then collide
+with newly reused ids and be incorrectly accepted as completions for the new in-flight transfers.
+
+**Requirement / recommendation:**
+
+- Keep a single `UsbWebUsbPassthroughDevice` (or underlying `UsbPassthroughDevice`) instance alive across
+  connect/disconnect/reconnect.
+- On disconnect:
+  - detach it from the emulated hub/port (`set_connected(false)` / `hub.detach(...)`), and
+  - call `reset()` (or equivalent) to clear queued/in-flight host actions/completions,
+  - but **do not reset** the monotonic `next_id` counter (note: `UsbPassthroughDevice::reset()` clears
+    host state but intentionally does *not* reset `next_id`).
+- On reconnect, reattach the same device model instance so ids continue increasing.
+
+This applies equally to WASM UHCI integrations: keep the same `WebUsbUhciBridge` / `UhciControllerBridge`
+handle alive across physical disconnect/reconnect, and use `set_connected(false)` + `reset()` instead of
+destroying and recreating the bridge (which would restart ids).
 
 Data flow (conceptual):
 

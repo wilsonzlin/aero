@@ -97,6 +97,10 @@ reintroduce an independent USB stack.
         - `web/src/usb/usb_broker.ts`
         - `web/src/usb/webusb_passthrough_runtime.ts`
         - `web/src/usb/usb_proxy_ring_dispatcher.ts` (completion-ring fan-out when multiple runtimes subscribe)
+
+Note: WebUSB passthrough relies on **monotonic action ids** to safely ignore stale completions across
+physical disconnect/reconnect. Host integrations should keep the passthrough device/bridge instance
+alive and call `reset()` on disconnect instead of recreating it. See `docs/webusb-passthrough.md`.
 - Long-term, the UHCI controller should be integrated into the canonical VM wiring described by
   [ADR 0014](./0014-canonical-machine-stack.md):
   - `aero_machine::Machine` (in the I/O worker) owns the UHCI controller device model.
