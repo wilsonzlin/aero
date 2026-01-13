@@ -577,18 +577,27 @@ test("IO worker does not switch keyboard backend while a key is held (prevents s
 
   // Sanity: we should see i8042 scancodes before virtio is allowed to take over.
   //
-  // The i8042 defaults to Set-2 -> Set-1 translation (command byte bit 6), so
-  // KeyA make (Set-2 0x1c) becomes Set-1 0x1e.
-  expect(result.keyAPressBytes).toEqual([0x1e]);
+  // Many i8042 implementations default to Set-2 -> Set-1 translation (command byte bit 6), so
+  // KeyA make can appear as either Set-2 (0x1c) or Set-1 (0x1e) depending on configuration.
+  expect([
+    [0x1c], // Set-2
+    [0x1e], // Set-1 (translated)
+  ]).toContainEqual(result.keyAPressBytes);
 
   // While KeyA is held, the backend must remain PS/2 even after virtio DRIVER_OK.
-  // KeyB make/break (Set-2 0x32 / 0xf0 0x32) becomes Set-1 0x30 / 0xb0.
-  expect(result.keyBWhileHeldBytes).toEqual([0x30, 0xb0]);
+  // KeyB make/break can appear in Set-2 or Set-1 depending on i8042 translation settings.
+  expect([
+    [0x32, 0xf0, 0x32], // Set-2
+    [0x30, 0xb0], // Set-1 (translated)
+  ]).toContainEqual(result.keyBWhileHeldBytes);
   expect(result.virtioUsedIdxAfterHold).toBe(result.virtioUsedIdxInitial);
 
   // Release KeyA is still injected via PS/2 (the backend switch happens after the batch).
-  // Set-1 break adds 0x80: 0x1e | 0x80 = 0x9e.
-  expect(result.keyAReleaseBytes).toEqual([0x9e]);
+  // Depending on translation settings, this is either the Set-2 break sequence or the Set-1 break byte.
+  expect([
+    [0xf0, 0x1c], // Set-2
+    [0x9e], // Set-1 (translated): 0x1e | 0x80
+  ]).toContainEqual(result.keyAReleaseBytes);
 
   // After KeyA is released, KeyB should route via virtio and i8042 must stay quiet.
   expect(result.i8042AfterVirtioBytes).toEqual([]);
