@@ -493,6 +493,21 @@ mod tests {
     }
 
     #[test]
+    fn dos_guard_counts_untrimmed_whitespace_in_header_len() {
+        // Even though the parser is whitespace-tolerant, the header-length DoS guard
+        // is applied before trimming; this ensures excessively padded headers are
+        // still rejected.
+        let mut header = "bytes=0-0".to_string();
+        header.extend(std::iter::repeat(' ').take(MAX_RANGE_HEADER_LEN + 1 - header.len()));
+        assert_eq!(header.len(), MAX_RANGE_HEADER_LEN + 1);
+
+        assert!(matches!(
+            parse_range_header(&header).unwrap_err(),
+            RangeParseError::HeaderTooLarge { .. }
+        ));
+    }
+
+    #[test]
     fn dos_guard_rejects_very_long_integers_and_non_zero_prefix_overflow() {
         // parse_u64_decimal should reject numbers longer than its own scan cap.
         let too_long = "9".repeat(65);
@@ -627,6 +642,27 @@ mod tests {
             resolve_ranges(&specs, 10, false),
             Err(RangeResolveError::Unsatisfiable)
         ));
+    }
+
+    #[test]
+    fn resolve_no_coalesce_preserves_order_and_does_not_merge() {
+        // When `coalesce=false`, resolution should preserve input order and should
+        // not merge overlapping/adjacent ranges.
+        let specs = [
+            ByteRangeSpec::FromTo { start: 5, end: 6 },
+            ByteRangeSpec::FromTo { start: 0, end: 1 },
+            ByteRangeSpec::FromTo { start: 1, end: 2 }, // overlaps/adjacent with previous
+        ];
+        let resolved = resolve_ranges(&specs, 10, false).unwrap();
+        assert_eq!(
+            resolved,
+            vec![
+                ResolvedByteRange { start: 5, end: 6 },
+                ResolvedByteRange { start: 0, end: 1 },
+                ResolvedByteRange { start: 1, end: 2 },
+            ]
+        );
+        assert_resolved_invariants(&resolved, 10);
     }
 
     #[test]
