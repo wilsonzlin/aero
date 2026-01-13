@@ -951,7 +951,8 @@ function Write-IntegrityManifest {
     $manifest = [ordered]@{
         schema_version = 1
         package        = $pkg
-        files          = $Files
+        # Force JSON array output even if the file list has only one entry.
+        files          = @($Files)
     }
 
     $json = $manifest | ConvertTo-Json -Depth 10 -Compress
@@ -1058,7 +1059,9 @@ function Invoke-PackageDrivers {
         $manifestX86 = [System.IO.Path]::ChangeExtension($zipX86, "manifest.json")
         $manifestX64 = [System.IO.Path]::ChangeExtension($zipX64, "manifest.json")
         $manifestBundle = [System.IO.Path]::ChangeExtension($zipBundle, "manifest.json")
-        $manifestIso = [System.IO.Path]::ChangeExtension($isoBundle, "manifest.json")
+        if (-not $NoIso) {
+            $manifestIso = [System.IO.Path]::ChangeExtension($isoBundle, "manifest.json")
+        }
 
         $buildId = Get-BuildIdString
         $epoch = Get-DefaultSourceDateEpoch -RepoRoot $repoRootResolved
