@@ -103,16 +103,12 @@ fn place_region(seed: u64, mem_size: usize, align: usize, size: usize) -> u64 {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let mut u = Unstructured::new(data);
-
+    // Seed guest RAM directly from the fuzzer input so ring buffers placed near address 0 can be
+    // attacker-controlled even if the structured decoder consumes many bytes.
     let mut mem = FuzzGuestMemory::new(RAM_SIZE);
-    // Seed some guest RAM bytes up-front (bounded) so CORB/RIRB address arithmetic can read/write
-    // attacker-controlled values even outside of the explicitly written ring slots below.
-    let seed_len: usize = u
-        .int_in_range(0usize..=RAM_SIZE.min(u.len()))
-        .unwrap_or(0);
-    let seed = u.bytes(seed_len).unwrap_or(&[]);
-    mem.seed_from(seed);
+    mem.seed_from(data);
+
+    let mut u = Unstructured::new(data);
 
     let mut hda = HdaController::new();
     // Enable controller so CORB processing is active.

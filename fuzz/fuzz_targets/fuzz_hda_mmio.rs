@@ -71,6 +71,11 @@ fn verb_12(verb_id: u16, payload8: u8) -> u32 {
 }
 
 fuzz_target!(|data: &[u8]| {
+    // Seed guest RAM directly from the fuzzer input so DMA buffers (placed near address 0) are
+    // attacker-controlled even when the input is heavily consumed by the structured op decoder.
+    let mut mem = FuzzGuestMemory::new(RAM_SIZE);
+    mem.seed_from(data);
+
     let mut u = Unstructured::new(data);
 
     #[derive(Clone, Copy)]
@@ -89,8 +94,8 @@ fuzz_target!(|data: &[u8]| {
         },
     }
 
-    // Parse the (bounded) operation sequence first, then use the remaining bytes as guest RAM
-    // backing. This keeps both op selection and RAM contents attacker-controlled.
+    // Parse a (bounded) operation sequence from the same input bytes. Guest RAM was already seeded
+    // from `data` above, so both op selection and DMA buffers remain attacker-controlled.
     let ops_count: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
     let mut ops = Vec::with_capacity(ops_count);
     for _ in 0..ops_count {
@@ -132,15 +137,6 @@ fuzz_target!(|data: &[u8]| {
                 ops.push(Op::Process { frames });
             }
         }
-    }
-
-    let mut mem = FuzzGuestMemory::new(RAM_SIZE);
-    // Seed guest RAM from the remaining bytes so MMIO-programmed pointers can reference
-    // attacker-controlled data without allocating dynamically.
-    {
-        let init_len = u.len();
-        let init = u.bytes(init_len).unwrap_or(&[]);
-        mem.seed_from(init);
     }
 
     let mut hda = HdaController::new();

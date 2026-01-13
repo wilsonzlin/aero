@@ -195,6 +195,15 @@ fn rate_from_choice(choice: u8) -> u32 {
 }
 
 fuzz_target!(|data: &[u8]| {
+    // Seed guest RAM directly from the fuzzer input so low-address buffers (e.g. PCM payloads)
+    // are attacker-controlled even when the input is heavily consumed by the structured decoder.
+    let mut mem = GuestRam::new(MEM_SIZE);
+    {
+        let ram = mem.as_mut_slice();
+        let n = data.len().min(ram.len());
+        ram[..n].copy_from_slice(&data[..n]);
+    }
+
     let mut u = Unstructured::new(data);
 
     let host_rate_choice: u8 = u.arbitrary().unwrap_or(0);
@@ -225,15 +234,7 @@ fuzz_target!(|data: &[u8]| {
         });
     }
 
-    // Guest memory: fixed-size and seeded from remaining bytes.
-    let mut mem = GuestRam::new(MEM_SIZE);
-    {
-        let init_len = u.len();
-        let init = u.bytes(init_len).unwrap_or(&[]);
-        let ram = mem.as_mut_slice();
-        let n = init.len().min(ram.len());
-        ram[..n].copy_from_slice(&init[..n]);
-    }
+    // Guest memory: fixed-size and already seeded from `data` above.
 
     let output = AudioRingBuffer::new_stereo(8);
     let capture = FuzzCapture {
