@@ -6712,10 +6712,12 @@ void AEROGPU_APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT num_rects, 
     set_error(dev, E_INVALIDARG);
     return;
   }
-
+ 
   const auto& r = pRects[0];
-  const int32_t w = r.right - r.left;
-  const int32_t h = r.bottom - r.top;
+  const int32_t w =
+      aerogpu::d3d10_11::clamp_i64_to_i32(static_cast<int64_t>(r.right) - static_cast<int64_t>(r.left));
+  const int32_t h =
+      aerogpu::d3d10_11::clamp_i64_to_i32(static_cast<int64_t>(r.bottom) - static_cast<int64_t>(r.top));
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
   if (!cmd) {
     set_error(dev, E_OUTOFMEMORY);

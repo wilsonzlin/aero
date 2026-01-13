@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <type_traits>
@@ -1094,6 +1095,16 @@ inline bool scissor_equal(const RectT& a, const RectT& b) {
   return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
 }
 
+inline int32_t clamp_i64_to_i32(int64_t v) {
+  if (v > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+    return std::numeric_limits<int32_t>::max();
+  }
+  if (v < static_cast<int64_t>(std::numeric_limits<int32_t>::min())) {
+    return std::numeric_limits<int32_t>::min();
+  }
+  return static_cast<int32_t>(v);
+}
+
 template <typename ViewportT, typename SetErrorFn>
 inline void validate_and_emit_viewports_locked(Device* dev,
                                                uint32_t num_viewports,
@@ -1221,8 +1232,8 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
     set_error(E_NOTIMPL);
   }
 
-  const int32_t w = r0.right - r0.left;
-  const int32_t h = r0.bottom - r0.top;
+  const int32_t w = clamp_i64_to_i32(static_cast<int64_t>(r0.right) - static_cast<int64_t>(r0.left));
+  const int32_t h = clamp_i64_to_i32(static_cast<int64_t>(r0.bottom) - static_cast<int64_t>(r0.top));
   dev->scissor_valid = (w > 0 && h > 0);
   dev->scissor_left = r0.left;
   dev->scissor_top = r0.top;
