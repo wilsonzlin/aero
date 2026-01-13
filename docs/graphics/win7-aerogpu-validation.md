@@ -54,13 +54,13 @@ Results summary:
 Artifacts collected:
 - report.json (path):
 - per-test JSON outputs (dir):
-- per-test stdout/stderr logs (dir):
-- dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
-- failing test --dump outputs (BMP/bin) (dir):
-- dbgctl last-submit dump (cmd stream + alloc table) (cmd.bin + alloc.bin) (if available):
-- Event Viewer: dxgkrnl/display events around failures (exported EVTX):
-- KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
-Notes:
+ - per-test stdout/stderr logs (dir):
+ - dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
+ - failing test --dump outputs (BMP/bin) (dir):
+ - dbgctl last-submission cmd dump (`--dump-last-cmd`) outputs (cmd.bin + cmd.bin.alloc_table.bin + cmd.bin.txt) (when available):
+ - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
+ - KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
+ Notes:
 ```
 
 ---
@@ -435,10 +435,11 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
    aerogpu_dbgctl --query-umd-private
    aerogpu_dbgctl --query-fence
    aerogpu_dbgctl --dump-ring --ring-id 0
+   aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin
    aerogpu_dbgctl --dump-createalloc
    aerogpu_dbgctl --dump-vblank
    aerogpu_dbgctl --query-perf
-   ```
+    ```
 4. **If the desktop is frozen but the VM is alive**, dump again (to see if anything advances).
 
 Optional: if you suspect vblank pacing/jitter, sample a few times:
@@ -481,6 +482,7 @@ For the canonical, up-to-date command list and global options, see:
 | `--watch-fence --samples N --interval-ms M [--timeout-ms T]` | polls `--query-fence` in a loop and prints one line per sample (deltas + estimated rate + stall warnings) | quickly confirm whether fences are progressing |
 | `--query-perf` (alias: `--perf`) | KMD-provided perf/health counter snapshot (fence/ring progress, submit/IRQ/reset counts, vblank counters) | baseline collection and regression triage |
 | `--dump-ring --ring-id N` | ring head/tail + recent submission descriptors (newest-at-tail window on AGPU) | hangs/TDR triage |
+| `--dump-last-cmd [--index-from-tail K] --out <path> [--force]` | dumps the most recent cmd stream submission to a file; on AGPU also dumps `<path>.alloc_table.bin` + `<path>.txt` metadata | capture bytes for offline cmd-stream/alloc-table decode |
 | `--watch-ring --samples N --interval-ms M [--ring-id N]` | polls ring head/tail in a loop and prints one line per sample (pending count + last fence/flags when available) | diagnose “ring not draining” / stuck submit paths |
 | `--query-scanout` | cached scanout mode/visibility vs best-effort MMIO snapshot (`SCANOUT0_*`, including framebuffer GPA) | diagnosing blank output, mode/pitch mismatches, scanline bounds issues |
 | `--query-cursor` (alias: `--dump-cursor`) | cursor MMIO state (`CURSOR_*` registers) | diagnosing cursor bring-up issues |
