@@ -29,12 +29,14 @@ const (
 	EnvICEGatheringTimeout = "AERO_WEBRTC_UDP_RELAY_ICE_GATHERING_TIMEOUT"
 
 	// Relay engine knobs.
-	EnvUDPBindingIdleTimeout     = "UDP_BINDING_IDLE_TIMEOUT"
-	EnvUDPReadBufferBytes        = "UDP_READ_BUFFER_BYTES"
-	EnvDataChannelSendQueueBytes = "DATACHANNEL_SEND_QUEUE_BYTES"
-	EnvMaxDatagramPayloadBytes   = "MAX_DATAGRAM_PAYLOAD_BYTES"
-	EnvMaxAllowedRemotesPerBinding = "MAX_ALLOWED_REMOTES_PER_BINDING"
-	EnvPreferV2                  = "PREFER_V2"
+	EnvUDPBindingIdleTimeout         = "UDP_BINDING_IDLE_TIMEOUT"
+	EnvUDPInboundFilterMode          = "UDP_INBOUND_FILTER_MODE"
+	EnvUDPRemoteAllowlistIdleTimeout = "UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT"
+	EnvUDPReadBufferBytes            = "UDP_READ_BUFFER_BYTES"
+	EnvDataChannelSendQueueBytes     = "DATACHANNEL_SEND_QUEUE_BYTES"
+	EnvMaxDatagramPayloadBytes       = "MAX_DATAGRAM_PAYLOAD_BYTES"
+	EnvMaxAllowedRemotesPerBinding   = "MAX_ALLOWED_REMOTES_PER_BINDING"
+	EnvPreferV2                      = "PREFER_V2"
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
 	EnvL2BackendWSURL = "L2_BACKEND_WS_URL"
@@ -95,6 +97,7 @@ const (
 	DefaultSessionPreallocTTL    = 60 * time.Second
 
 	DefaultUDPBindingIdleTimeout     = 60 * time.Second
+	DefaultUDPInboundFilterMode      = UDPInboundFilterModeAddressAndPort
 	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
 	DefaultMaxUDPBindingsPerSession  = 128
 	DefaultMaxDatagramPayloadBytes   = udpproto.DefaultMaxPayload
@@ -206,6 +209,13 @@ const (
 	NAT1To1CandidateTypeSrflx NAT1To1IPCandidateType = "srflx"
 )
 
+type UDPInboundFilterMode string
+
+const (
+	UDPInboundFilterModeAny            UDPInboundFilterMode = "any"
+	UDPInboundFilterModeAddressAndPort UDPInboundFilterMode = "address_and_port"
+)
+
 type UDPPortRange struct {
 	Min uint16
 	Max uint16
@@ -248,12 +258,14 @@ type Config struct {
 	UDPWSPingInterval time.Duration
 
 	// Relay engine limits.
-	UDPBindingIdleTimeout     time.Duration
-	UDPReadBufferBytes        int
-	DataChannelSendQueueBytes int
-	MaxDatagramPayloadBytes   int
-	MaxAllowedRemotesPerBinding int
-	PreferV2                  bool
+	UDPBindingIdleTimeout         time.Duration
+	UDPInboundFilterMode          UDPInboundFilterMode
+	UDPRemoteAllowlistIdleTimeout time.Duration
+	UDPReadBufferBytes            int
+	DataChannelSendQueueBytes     int
+	MaxDatagramPayloadBytes       int
+	MaxAllowedRemotesPerBinding   int
+	PreferV2                      bool
 
 	// L2 tunnel bridging.
 	L2BackendWSURL              string
@@ -408,6 +420,18 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPBindingIdleTimeout, raw, err)
 		}
 		udpBindingIdleTimeout = d
+	}
+
+	udpInboundFilterModeStr := envOrDefault(lookup, EnvUDPInboundFilterMode, string(DefaultUDPInboundFilterMode))
+	udpRemoteAllowlistIdleTimeout := udpBindingIdleTimeout
+	envAllowlistTTL, envAllowlistTTLOK := lookup(EnvUDPRemoteAllowlistIdleTimeout)
+	envAllowlistTTLSet := envAllowlistTTLOK && strings.TrimSpace(envAllowlistTTL) != ""
+	if envAllowlistTTLSet {
+		d, err := time.ParseDuration(strings.TrimSpace(envAllowlistTTL))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPRemoteAllowlistIdleTimeout, envAllowlistTTL, err)
+		}
+		udpRemoteAllowlistIdleTimeout = d
 	}
 
 	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, EnvMaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
@@ -699,6 +723,8 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	fs.BoolVar(&preferV2, "prefer-v2", preferV2, "Prefer v2 relay->client frames once the client demonstrates v2 support (env "+EnvPreferV2+")")
 	fs.DurationVar(&udpBindingIdleTimeout, "udp-binding-idle-timeout", udpBindingIdleTimeout, "Close idle UDP bindings after this duration (env "+EnvUDPBindingIdleTimeout+")")
+	fs.StringVar(&udpInboundFilterModeStr, "udp-inbound-filter-mode", udpInboundFilterModeStr, "Inbound UDP filtering: any (full-cone) or address_and_port (recommended) (env "+EnvUDPInboundFilterMode+")")
+	fs.DurationVar(&udpRemoteAllowlistIdleTimeout, "udp-remote-allowlist-idle-timeout", udpRemoteAllowlistIdleTimeout, "Expire UDP remote allowlist entries after this duration (default: udp-binding-idle-timeout; env "+EnvUDPRemoteAllowlistIdleTimeout+")")
 	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
 	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
@@ -742,6 +768,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if !envUDPReadBufferBytesSet && !setFlags["udp-read-buffer-bytes"] {
 		udpReadBufferBytes = maxDatagramPayloadBytes + 1
 	}
+	if !envAllowlistTTLSet && !setFlags["udp-remote-allowlist-idle-timeout"] {
+		udpRemoteAllowlistIdleTimeout = udpBindingIdleTimeout
+	}
 
 	if !envMaxUDPDestBucketsSet && !setFlags["max-udp-dest-buckets-per-session"] && maxUniqueDestinationsPerSession > 0 {
 		// If the user configured a unique destination cap but didn't explicitly
@@ -782,6 +811,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 
+	udpInboundFilterMode, err := parseUDPInboundFilterMode(udpInboundFilterModeStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid %s/--udp-inbound-filter-mode %q: %w", EnvUDPInboundFilterMode, udpInboundFilterModeStr, err)
+	}
+
 	if listenAddr == "" {
 		return Config{}, fmt.Errorf("listen address must not be empty")
 	}
@@ -793,6 +827,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if udpBindingIdleTimeout <= 0 {
 		return Config{}, fmt.Errorf("%s/--udp-binding-idle-timeout must be > 0", EnvUDPBindingIdleTimeout)
+	}
+	if udpRemoteAllowlistIdleTimeout <= 0 {
+		return Config{}, fmt.Errorf("%s/--udp-remote-allowlist-idle-timeout must be > 0", EnvUDPRemoteAllowlistIdleTimeout)
 	}
 	if udpReadBufferBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--udp-read-buffer-bytes must be > 0", EnvUDPReadBufferBytes)
@@ -1046,12 +1083,14 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		UDPWSIdleTimeout:              udpWSIdleTimeout,
 		UDPWSPingInterval:             udpWSPingInterval,
 
-		UDPBindingIdleTimeout:     udpBindingIdleTimeout,
-		UDPReadBufferBytes:        udpReadBufferBytes,
-		DataChannelSendQueueBytes: dataChannelSendQueueBytes,
-		MaxDatagramPayloadBytes:   maxDatagramPayloadBytes,
-		MaxAllowedRemotesPerBinding: maxAllowedRemotesPerBinding,
-		PreferV2:                  preferV2,
+		UDPBindingIdleTimeout:         udpBindingIdleTimeout,
+		UDPInboundFilterMode:          udpInboundFilterMode,
+		UDPRemoteAllowlistIdleTimeout: udpRemoteAllowlistIdleTimeout,
+		UDPReadBufferBytes:            udpReadBufferBytes,
+		DataChannelSendQueueBytes:     dataChannelSendQueueBytes,
+		MaxDatagramPayloadBytes:       maxDatagramPayloadBytes,
+		MaxAllowedRemotesPerBinding:   maxAllowedRemotesPerBinding,
+		PreferV2:                      preferV2,
 
 		L2BackendWSURL:              l2BackendWSURL,
 		L2BackendWSOrigin:           l2BackendWSOrigin,
@@ -1369,6 +1408,17 @@ func parseCandidateType(s string) (NAT1To1IPCandidateType, error) {
 		return NAT1To1CandidateTypeSrflx, nil
 	default:
 		return "", fmt.Errorf("unknown candidate type %q", s)
+	}
+}
+
+func parseUDPInboundFilterMode(s string) (UDPInboundFilterMode, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case string(UDPInboundFilterModeAny):
+		return UDPInboundFilterModeAny, nil
+	case string(UDPInboundFilterModeAddressAndPort):
+		return UDPInboundFilterModeAddressAndPort, nil
+	default:
+		return "", fmt.Errorf("expected %s or %s", UDPInboundFilterModeAny, UDPInboundFilterModeAddressAndPort)
 	}
 }
 

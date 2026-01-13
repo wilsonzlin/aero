@@ -50,6 +50,12 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.UDPBindingIdleTimeout != DefaultUDPBindingIdleTimeout {
 		t.Fatalf("UDPBindingIdleTimeout=%v, want %v", cfg.UDPBindingIdleTimeout, DefaultUDPBindingIdleTimeout)
 	}
+	if cfg.UDPInboundFilterMode != DefaultUDPInboundFilterMode {
+		t.Fatalf("UDPInboundFilterMode=%q, want %q", cfg.UDPInboundFilterMode, DefaultUDPInboundFilterMode)
+	}
+	if cfg.UDPRemoteAllowlistIdleTimeout != cfg.UDPBindingIdleTimeout {
+		t.Fatalf("UDPRemoteAllowlistIdleTimeout=%v, want %v", cfg.UDPRemoteAllowlistIdleTimeout, cfg.UDPBindingIdleTimeout)
+	}
 	if cfg.UDPReadBufferBytes != DefaultUDPReadBufferBytes {
 		t.Fatalf("UDPReadBufferBytes=%d, want %d", cfg.UDPReadBufferBytes, DefaultUDPReadBufferBytes)
 	}
@@ -229,7 +235,7 @@ func TestWebSocketTimeouts_EnvOverride(t *testing.T) {
 
 func TestWebRTCDataChannelMaxMessageBytes_AutoDerivesFromRelayLimits(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                "secret",
+		EnvAPIKey:                  "secret",
 		EnvMaxDatagramPayloadBytes: "1400",
 		EnvL2MaxMessageBytes:       "2048",
 	}), nil)
@@ -246,9 +252,70 @@ func TestWebRTCDataChannelMaxMessageBytes_AutoDerivesFromRelayLimits(t *testing.
 
 func TestWebRTCDataChannelMaxMessageBytes_EnvOverride_TooSmall(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                         "secret",
-		EnvL2MaxMessageBytes:              "4096",
+		EnvAPIKey:                           "secret",
+		EnvL2MaxMessageBytes:                "4096",
 		EnvWebRTCDataChannelMaxMessageBytes: "1024",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestUDPInboundFilterMode_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:               "secret",
+		EnvUDPInboundFilterMode: "any",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.UDPInboundFilterMode != UDPInboundFilterModeAny {
+		t.Fatalf("UDPInboundFilterMode=%q, want %q", cfg.UDPInboundFilterMode, UDPInboundFilterModeAny)
+	}
+}
+
+func TestUDPInboundFilterMode_Invalid(t *testing.T) {
+	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:               "secret",
+		EnvUDPInboundFilterMode: "nope",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOverriddenByFlag(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey: "secret",
+	}), []string{"--udp-binding-idle-timeout", "10s"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.UDPBindingIdleTimeout != 10*time.Second {
+		t.Fatalf("UDPBindingIdleTimeout=%v, want %v", cfg.UDPBindingIdleTimeout, 10*time.Second)
+	}
+	if cfg.UDPRemoteAllowlistIdleTimeout != cfg.UDPBindingIdleTimeout {
+		t.Fatalf("UDPRemoteAllowlistIdleTimeout=%v, want %v", cfg.UDPRemoteAllowlistIdleTimeout, cfg.UDPBindingIdleTimeout)
+	}
+}
+
+func TestUDPRemoteAllowlistIdleTimeout_EnvOverride(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                        "secret",
+		EnvUDPRemoteAllowlistIdleTimeout: "30s",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.UDPRemoteAllowlistIdleTimeout != 30*time.Second {
+		t.Fatalf("UDPRemoteAllowlistIdleTimeout=%v, want %v", cfg.UDPRemoteAllowlistIdleTimeout, 30*time.Second)
+	}
+}
+
+func TestUDPRemoteAllowlistIdleTimeout_Invalid(t *testing.T) {
+	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                        "secret",
+		EnvUDPRemoteAllowlistIdleTimeout: "nope",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -257,7 +324,7 @@ func TestWebRTCDataChannelMaxMessageBytes_EnvOverride_TooSmall(t *testing.T) {
 
 func TestWebRTCSCTPMaxReceiveBufferBytes_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                        "secret",
+		EnvAPIKey:                           "secret",
 		EnvWebRTCDataChannelMaxMessageBytes: "4096",
 		EnvWebRTCSCTPMaxReceiveBufferBytes:  "8192",
 	}), nil)

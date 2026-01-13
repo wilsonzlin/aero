@@ -360,6 +360,10 @@ The service supports configuration via environment variables and equivalent flag
 
 - `MAX_UDP_BINDINGS_PER_SESSION` / `--max-udp-bindings-per-session` (default `128`)
 - `UDP_BINDING_IDLE_TIMEOUT` / `--udp-binding-idle-timeout` (default `60s`)
+- `UDP_INBOUND_FILTER_MODE` / `--udp-inbound-filter-mode` (default `address_and_port`)
+  - `address_and_port` (recommended): only allow inbound UDP packets from remote address+port tuples that the guest has previously sent to (like a typical symmetric NAT).
+  - `any`: allow inbound UDP packets from any remote endpoint (full-cone NAT behavior). **Less safe**: attackers can send arbitrary UDP traffic to the relay's UDP sockets and have it forwarded to clients.
+- `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT` / `--udp-remote-allowlist-idle-timeout` (default: `UDP_BINDING_IDLE_TIMEOUT`) — expire inactive remote allowlist entries (used when `UDP_INBOUND_FILTER_MODE=address_and_port`)
 - `UDP_READ_BUFFER_BYTES` / `--udp-read-buffer-bytes` (default: `MAX_DATAGRAM_PAYLOAD_BYTES+1`, e.g. `1201`)
   - Must be `>= MAX_DATAGRAM_PAYLOAD_BYTES+1` so the relay can detect and drop oversized UDP datagrams instead of forwarding a silently truncated payload.
 - `DATACHANNEL_SEND_QUEUE_BYTES` / `--datachannel-send-queue-bytes` (default `1048576`)
