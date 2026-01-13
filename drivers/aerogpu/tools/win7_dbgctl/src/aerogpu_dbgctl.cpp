@@ -9,6 +9,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,11 +141,12 @@ static void PrintUsage() {
            L"  --query-cursor  (alias: --dump-cursor)\n"
            L"  --dump-ring\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
-               L"  --dump-vblank  (alias: --query-vblank)\n"
-               L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
-               L"  --query-scanline  (D3DKMTGetScanLine)\n"
-              L"  --map-shared-handle HANDLE\n"
-             L"  --selftest\n");
+           L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
+           L"  --dump-vblank  (alias: --query-vblank)\n"
+           L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
+           L"  --query-scanline  (D3DKMTGetScanLine)\n"
+           L"  --map-shared-handle HANDLE\n"
+           L"  --selftest\n");
 }
 
 static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS st) {
@@ -787,9 +789,10 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       return;
     }
 
-    wprintf(L"CreateAllocation trace: write_index=%lu entry_count=%lu\n",
+    wprintf(L"CreateAllocation trace: write_index=%lu entry_count=%lu entry_capacity=%lu\n",
             (unsigned long)qa.write_index,
-            (unsigned long)qa.entry_count);
+            (unsigned long)qa.entry_count,
+            (unsigned long)qa.entry_capacity);
   };
 
   aerogpu_escape_query_device_v2_out q;
@@ -1003,7 +1006,48 @@ static int DoQueryCursor(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   return 0;
 }
 
-static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+static bool WriteCreateAllocationCsv(const wchar_t *path, const aerogpu_escape_dump_createallocation_inout &q) {
+  if (!path) {
+    return false;
+  }
+
+  FILE *fp = _wfopen(path, L"w");
+  if (!fp) {
+    fwprintf(stderr, L"Failed to open CSV file for writing: %s (errno=%d)\n", path, errno);
+    return false;
+  }
+
+  // Stable, machine-parseable header row.
+  fprintf(fp,
+          "write_index,entry_count,entry_capacity,seq,call_seq,alloc_index,num_allocations,create_flags,alloc_id,"
+          "priv_flags,pitch_bytes,share_token,size_bytes,flags_in,flags_out\n");
+
+  for (uint32_t i = 0; i < q.entry_count && i < q.entry_capacity && i < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS; ++i) {
+    const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
+    fprintf(fp,
+            "%lu,%lu,%lu,%lu,%lu,%lu,%lu,0x%08lx,%lu,0x%08lx,%lu,0x%016I64x,%I64u,0x%08lx,0x%08lx\n",
+            (unsigned long)q.write_index,
+            (unsigned long)q.entry_count,
+            (unsigned long)q.entry_capacity,
+            (unsigned long)e.seq,
+            (unsigned long)e.call_seq,
+            (unsigned long)e.alloc_index,
+            (unsigned long)e.num_allocations,
+            (unsigned long)e.create_flags,
+            (unsigned long)e.alloc_id,
+            (unsigned long)e.priv_flags,
+            (unsigned long)e.pitch_bytes,
+            (unsigned long long)e.share_token,
+            (unsigned long long)e.size_bytes,
+            (unsigned long)e.flags_in,
+            (unsigned long)e.flags_out);
+  }
+
+  fclose(fp);
+  return true;
+}
+
+static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const wchar_t *csvPath) {
   aerogpu_escape_dump_createallocation_inout q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -1025,8 +1069,21 @@ static int DoDumpCreateAllocation(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter)
     return 2;
   }
 
+  if (csvPath) {
+    if (!WriteCreateAllocationCsv(csvPath, q)) {
+      return 2;
+    }
+    wprintf(L"CreateAllocation trace: write_index=%lu entry_count=%lu entry_capacity=%lu\n",
+            (unsigned long)q.write_index,
+            (unsigned long)q.entry_count,
+            (unsigned long)q.entry_capacity);
+    wprintf(L"Wrote CSV: %s\n", csvPath);
+    return 0;
+  }
+
   wprintf(L"CreateAllocation trace:\n");
-  wprintf(L"  write_index=%lu entry_count=%lu\n", (unsigned long)q.write_index, (unsigned long)q.entry_count);
+  wprintf(L"  write_index=%lu entry_count=%lu entry_capacity=%lu\n", (unsigned long)q.write_index,
+          (unsigned long)q.entry_count, (unsigned long)q.entry_capacity);
   for (uint32_t i = 0; i < q.entry_count && i < q.entry_capacity && i < AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS; ++i) {
     const aerogpu_dbgctl_createallocation_desc &e = q.entries[i];
     wprintf(L"  [%lu] seq=%lu call=%lu create_flags=0x%08lx alloc[%lu/%lu] alloc_id=%lu share_token=0x%I64x size=%I64u priv_flags=0x%08lx pitch=%lu flags=0x%08lx->0x%08lx\n",
@@ -1825,6 +1882,7 @@ int wmain(int argc, wchar_t **argv) {
   uint32_t vblankSamples = 1;
   uint32_t vblankIntervalMs = 250;
   uint64_t mapSharedHandle = 0;
+  const wchar_t *createAllocCsvPath = NULL;
   enum {
     CMD_NONE = 0,
     CMD_LIST_DISPLAYS,
@@ -1928,6 +1986,21 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
 
+    if (wcscmp(a, L"--csv") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--csv requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      if (createAllocCsvPath) {
+        fwprintf(stderr, L"--csv specified multiple times\n");
+        PrintUsage();
+        return 1;
+      }
+      createAllocCsvPath = argv[++i];
+      continue;
+    }
+
     if (wcscmp(a, L"--query-version") == 0 || wcscmp(a, L"--query-device") == 0) {
       if (!SetCommand(CMD_QUERY_VERSION)) {
         return 1;
@@ -2024,6 +2097,12 @@ int wmain(int argc, wchar_t **argv) {
     return 1;
   }
 
+  if (createAllocCsvPath && cmd != CMD_DUMP_CREATEALLOCATION) {
+    fwprintf(stderr, L"--csv is only supported with --dump-createalloc\n");
+    PrintUsage();
+    return 1;
+  }
+
   if (cmd == CMD_LIST_DISPLAYS) {
     return ListDisplays();
   }
@@ -2082,7 +2161,7 @@ int wmain(int argc, wchar_t **argv) {
     rc = DoDumpRing(&f, open.hAdapter, ringId);
     break;
   case CMD_DUMP_CREATEALLOCATION:
-    rc = DoDumpCreateAllocation(&f, open.hAdapter);
+    rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath);
     break;
   case CMD_DUMP_VBLANK:
     rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);

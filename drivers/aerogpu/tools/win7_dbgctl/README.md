@@ -75,6 +75,9 @@ Minimum supported commands:
   - the incoming `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime
   - the final flags after the miniport applies required bits (currently `CpuVisible` + `Aperture`)
 
+  Structured export:
+  - `--csv <path>` writes a stable, machine-parseable CSV file (header row + one row per trace entry), including `write_index` and `entry_capacity` metadata for wrap-around detection.
+
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
   Works on both legacy and new AeroGPU devices as long as the device exposes
@@ -122,6 +125,7 @@ aerogpu_dbgctl --query-scanout
 aerogpu_dbgctl --query-cursor
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --dump-createalloc
+aerogpu_dbgctl --dump-createalloc --csv C:\\createalloc.csv
 aerogpu_dbgctl --dump-vblank
 aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
