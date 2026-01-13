@@ -574,8 +574,11 @@ struct Device {
   // Fixed-function (FVF) fallback state.
   uint32_t fvf = 0;
   VertexDecl* fvf_vertex_decl = nullptr;
+  VertexDecl* fvf_vertex_decl_tex1 = nullptr;
   Shader* fixedfunc_vs = nullptr;
   Shader* fixedfunc_ps = nullptr;
+  Shader* fixedfunc_vs_tex1 = nullptr;
+  Shader* fixedfunc_ps_tex1 = nullptr;
 
   // Scratch vertex buffer used to emulate DrawPrimitiveUP and fixed-function
   // transformed vertex uploads.
