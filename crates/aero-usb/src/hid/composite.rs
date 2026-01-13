@@ -419,6 +419,18 @@ impl UsbCompositeHidInputHandle {
         self.0.borrow().configuration != 0
     }
 
+    /// Returns the current HID boot keyboard LED bitmask as last set by the guest OS.
+    ///
+    /// Bit assignments follow the standard HID LED usages used by the boot keyboard output report:
+    /// - bit 0: Num Lock
+    /// - bit 1: Caps Lock
+    /// - bit 2: Scroll Lock
+    /// - bit 3: Compose
+    /// - bit 4: Kana
+    pub fn keyboard_leds(&self) -> u8 {
+        self.0.borrow().keyboard.leds
+    }
+
     pub fn key_event(&self, usage: u8, pressed: bool) {
         let mut dev = self.0.borrow_mut();
         let configured = dev.configuration != 0;

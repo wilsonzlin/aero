@@ -1,6 +1,6 @@
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::device::AttachedUsbDevice;
-use aero_usb::hid::UsbHidKeyboardHandle;
+use aero_usb::hid::{UsbCompositeHidInputHandle, UsbHidKeyboardHandle};
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
 fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
@@ -91,9 +91,66 @@ fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_
     restored_kb.load_state(&model_snapshot).unwrap();
     assert_eq!(restored_kb.leds(), leds);
 
-    let mut restored_dev = AttachedUsbDevice::new(Box::new(restored_kb.clone()));
+    let kb_from_dev = UsbHidKeyboardHandle::new();
+    let mut restored_dev = AttachedUsbDevice::new(Box::new(kb_from_dev.clone()));
     restored_dev.load_state(&dev_snapshot).unwrap();
-
-    assert_eq!(restored_kb.leds(), leds);
+    assert_eq!(kb_from_dev.leds(), leds);
 }
 
+#[test]
+fn hid_composite_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_them() {
+    let hid = UsbCompositeHidInputHandle::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(hid.clone()));
+
+    assert_eq!(hid.keyboard_leds(), 0);
+
+    // Basic enumeration/configuration so the guest can send HID class requests.
+    control_no_data(
+        &mut dev,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 5,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut dev,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock.
+    let leds = 0x03;
+    control_out_data(
+        &mut dev,
+        SetupPacket {
+            bm_request_type: 0x21,
+            b_request: 0x09,    // SET_REPORT
+            w_value: 2u16 << 8, // Output report, ID 0
+            w_index: 0,         // interface 0 (keyboard)
+            w_length: 1,
+        },
+        &[leds],
+    );
+
+    assert_eq!(hid.keyboard_leds(), leds);
+
+    let dev_snapshot = dev.save_state();
+    let model_snapshot = hid.save_state();
+
+    let mut restored_hid = UsbCompositeHidInputHandle::new();
+    restored_hid.load_state(&model_snapshot).unwrap();
+    assert_eq!(restored_hid.keyboard_leds(), leds);
+
+    let hid_from_dev = UsbCompositeHidInputHandle::new();
+    let mut restored_dev = AttachedUsbDevice::new(Box::new(hid_from_dev.clone()));
+    restored_dev.load_state(&dev_snapshot).unwrap();
+    assert_eq!(hid_from_dev.keyboard_leds(), leds);
+}
