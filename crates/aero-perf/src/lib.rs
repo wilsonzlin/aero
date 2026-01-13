@@ -133,6 +133,11 @@ impl PerfWorker {
     /// In a tiered execution loop, prefer feeding this with the CPU dispatcher's
     /// reported `instructions_retired` count so embedders don't need to special-case
     /// interpreter vs JIT execution.
+    ///
+    /// When driving an `aero_cpu_core::exec::ExecDispatcher`, prefer using
+    /// `ExecDispatcher::step_with_perf()` which performs one tiered step and
+    /// applies these retirement semantics automatically (including skipping
+    /// interrupt-delivery steps and JIT rollback exits).
     #[inline(always)]
     pub fn retire_instructions(&mut self, n: u64) {
         self.local_instructions += n;

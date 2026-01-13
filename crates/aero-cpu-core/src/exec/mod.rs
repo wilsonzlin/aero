@@ -1,6 +1,7 @@
 use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
 use crate::linear_mem::fetch_wrapped;
+use aero_perf::PerfWorker;
 
 mod exception_bridge;
 
@@ -113,6 +114,47 @@ where
         }
     }
 
+    /// Execute a single tiered step while updating a [`PerfWorker`].
+    ///
+    /// This is a convenience wrapper around [`Self::step`] that translates the
+    /// dispatcher's retirement semantics into [`aero_perf`] counters:
+    ///
+    /// - [`StepOutcome::Block`] retires `instructions_retired` guest architectural
+    ///   instructions.
+    /// - JIT rollback exits report `instructions_retired == 0`; those must **not**
+    ///   advance instruction counters.
+    /// - [`StepOutcome::InterruptDelivered`] does not retire an instruction and
+    ///   must **not** advance instruction counters.
+    ///
+    /// # REP iteration counting (optional)
+    ///
+    /// `REP*` string instructions retire as *one* architectural instruction even
+    /// though they may iterate many times. Embeddings that want to track those
+    /// iterations should use [`Tier0RepIterTracker`] around Tier-0 interpreter
+    /// *single-instruction* steps:
+    ///
+    /// 1. Before executing the decoded instruction, call
+    ///    [`Tier0RepIterTracker::begin`].
+    /// 2. After the instruction executes, call [`Tier0RepIterTracker::finish`]
+    ///    to record `rep_iterations`.
+    ///
+    /// The tracker reads the `CX/ECX/RCX` count register before/after execution
+    /// **only** when the decoded instruction has a `REP`/`REPNE` prefix and is a
+    /// string mnemonic, keeping overhead out of the common non-string case.
+    pub fn step_with_perf(&mut self, cpu: &mut B::Cpu, perf: &mut PerfWorker) -> StepOutcome {
+        let outcome = self.step(cpu);
+        if let StepOutcome::Block {
+            instructions_retired,
+            ..
+        } = outcome
+        {
+            if instructions_retired != 0 {
+                perf.retire_instructions(instructions_retired);
+            }
+        }
+        outcome
+    }
+
     pub fn run_blocks(&mut self, cpu: &mut B::Cpu, mut blocks: u64) {
         while blocks > 0 {
             match self.step(cpu) {
@@ -120,6 +162,144 @@ where
                 StepOutcome::Block { .. } => blocks -= 1,
             }
         }
+    }
+}
+
+/// Helper for tracking Tier-0 `REP*` string instruction iterations.
+///
+/// `REP*` string instructions retire as *one* architectural instruction but may
+/// iterate many times internally. Tier-0 executes those iterations inside a
+/// single interpreter step, so the most reliable way to derive the iteration
+/// count is to observe the architectural count register (`CX`/`ECX`/`RCX`)
+/// before/after executing the instruction.
+///
+/// This helper intentionally does **not** fetch/decode instructions on its own.
+/// Callers should pass the already-decoded instruction and the already-parsed
+/// address-size override prefix state from their Tier-0 step loop.
+#[derive(Debug, Clone, Copy)]
+pub struct Tier0RepIterTracker {
+    count_reg: aero_x86::Register,
+    count_mask: u64,
+    count_before: u64,
+}
+
+impl Tier0RepIterTracker {
+    /// Begin tracking `REP*` iterations for a single Tier-0 interpreter step.
+    ///
+    /// Returns `None` for non-`REP*` or non-string instructions (fast path).
+    #[inline]
+    pub fn begin(
+        state: &crate::state::CpuState,
+        decoded: &aero_x86::DecodedInst,
+        addr_size_override: bool,
+    ) -> Option<Self> {
+        let instr = &decoded.instr;
+        let is_rep = instr.has_rep_prefix() || instr.has_repne_prefix();
+        if !is_rep {
+            return None;
+        }
+        if !is_string_mnemonic(instr.mnemonic()) {
+            return None;
+        }
+
+        let addr_bits = effective_addr_size(state.bitness(), addr_size_override);
+        let count_reg = string_count_reg(addr_bits);
+        let count_mask = crate::state::mask_bits(addr_bits);
+        let count_before = state.read_reg(count_reg) & count_mask;
+
+        Some(Self {
+            count_reg,
+            count_mask,
+            count_before,
+        })
+    }
+
+    /// Finish tracking and record the number of iterations into `perf`.
+    #[inline]
+    pub fn finish(self, state: &crate::state::CpuState, perf: &mut PerfWorker) {
+        let iterations = self.iterations(state);
+        if iterations != 0 {
+            perf.add_rep_iterations(iterations);
+        }
+    }
+
+    /// Finish tracking and return the iteration count without updating any counters.
+    #[inline]
+    pub fn iterations(self, state: &crate::state::CpuState) -> u64 {
+        let count_after = state.read_reg(self.count_reg) & self.count_mask;
+        self.count_before.wrapping_sub(count_after) & self.count_mask
+    }
+}
+
+#[inline]
+fn is_string_mnemonic(m: aero_x86::Mnemonic) -> bool {
+    use aero_x86::Mnemonic;
+    matches!(
+        m,
+        Mnemonic::Movsb
+            | Mnemonic::Movsw
+            | Mnemonic::Movsd
+            | Mnemonic::Movsq
+            | Mnemonic::Stosb
+            | Mnemonic::Stosw
+            | Mnemonic::Stosd
+            | Mnemonic::Stosq
+            | Mnemonic::Lodsb
+            | Mnemonic::Lodsw
+            | Mnemonic::Lodsd
+            | Mnemonic::Lodsq
+            | Mnemonic::Cmpsb
+            | Mnemonic::Cmpsw
+            | Mnemonic::Cmpsd
+            | Mnemonic::Cmpsq
+            | Mnemonic::Scasb
+            | Mnemonic::Scasw
+            | Mnemonic::Scasd
+            | Mnemonic::Scasq
+            | Mnemonic::Insb
+            | Mnemonic::Insw
+            | Mnemonic::Insd
+            | Mnemonic::Outsb
+            | Mnemonic::Outsw
+            | Mnemonic::Outsd
+    )
+}
+
+#[inline]
+fn effective_addr_size(bitness: u32, addr_size_override: bool) -> u32 {
+    match bitness {
+        16 => {
+            if addr_size_override {
+                32
+            } else {
+                16
+            }
+        }
+        32 => {
+            if addr_size_override {
+                16
+            } else {
+                32
+            }
+        }
+        64 => {
+            if addr_size_override {
+                32
+            } else {
+                64
+            }
+        }
+        _ => bitness,
+    }
+}
+
+#[inline]
+fn string_count_reg(addr_bits: u32) -> aero_x86::Register {
+    use aero_x86::Register;
+    match addr_bits {
+        16 => Register::CX,
+        32 => Register::ECX,
+        _ => Register::RCX,
     }
 }
 
