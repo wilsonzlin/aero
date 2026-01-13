@@ -1696,25 +1696,13 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
     expect(res.echoedAPIKeyText).toBe("hello from websocket jwt apiKey query");
     expect(res.echoedFirstMsgText).toBe("hello from websocket jwt first message");
 
-    if (res.invalidQueryRes.errMsg) {
-      expect(res.invalidQueryRes.errMsg.code).toBe("unauthorized");
-    } else {
-      expect(["invalid credentials", "unauthorized", ""]).toContain(res.invalidQueryRes.closeReason ?? "");
-    }
+    expect(res.invalidQueryRes.errMsg?.code).toBe("unauthorized");
     expect(res.invalidQueryRes.closeCode).toBe(1008);
 
-    if (res.missingRes.errMsg) {
-      expect(res.missingRes.errMsg.code).toBe("unauthorized");
-    } else {
-      expect(["authentication required", "unauthorized", ""]).toContain(res.missingRes.closeReason ?? "");
-    }
+    expect(res.missingRes.errMsg?.code).toBe("unauthorized");
     expect(res.missingRes.closeCode).toBe(1008);
 
-    if (res.invalidRes.errMsg) {
-      expect(res.invalidRes.errMsg.code).toBe("unauthorized");
-    } else {
-      expect(["invalid credentials", "unauthorized", ""]).toContain(res.invalidRes.closeReason ?? "");
-    }
+    expect(res.invalidRes.errMsg?.code).toBe("unauthorized");
     expect(res.invalidRes.closeCode).toBe(1008);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo.close()]);
