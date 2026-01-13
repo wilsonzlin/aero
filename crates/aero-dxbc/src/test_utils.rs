@@ -1,5 +1,9 @@
 use crate::FourCC;
 
+fn align4(n: usize) -> usize {
+    (n + 3) & !3
+}
+
 /// Builds a minimal `DXBC` container containing the provided chunks.
 ///
 /// The resulting blob has:
@@ -23,7 +27,10 @@ pub fn build_container(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
     //     - size:   4 bytes
     //     - data:   size bytes
     let header_size = 4 + 16 + 4 + 4 + 4 + (4 * chunks.len());
-    let chunk_bytes = chunks.iter().map(|(_, data)| 8 + data.len()).sum::<usize>();
+    let chunk_bytes = chunks
+        .iter()
+        .map(|(_, data)| align4(8 + data.len()))
+        .sum::<usize>();
 
     let mut out = Vec::with_capacity(header_size + chunk_bytes);
 
@@ -48,6 +55,7 @@ pub fn build_container(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
         out.extend_from_slice(&fourcc.0);
         out.extend_from_slice(&chunk_size.to_le_bytes());
         out.extend_from_slice(data);
+        out.resize(align4(out.len()), 0);
     }
 
     // Fill offsets.
@@ -62,6 +70,18 @@ pub fn build_container(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
     out[total_size_pos..total_size_pos + 4].copy_from_slice(&total_size.to_le_bytes());
 
     out
+}
+
+/// Convenience wrapper for [`build_container`] that accepts chunk payloads as owned `Vec<u8>`.
+///
+/// This is handy for tests that build chunk data inline (e.g. `vec![0u8; 32]`)
+/// and want to pass it directly in the chunk list.
+pub fn build_container_owned(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    let refs: Vec<(FourCC, &[u8])> = chunks
+        .iter()
+        .map(|(fourcc, data)| (*fourcc, data.as_slice()))
+        .collect();
+    build_container(&refs)
 }
 
 #[cfg(test)]

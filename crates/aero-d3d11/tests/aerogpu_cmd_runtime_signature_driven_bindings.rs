@@ -3,6 +3,7 @@ mod common;
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_execute::AerogpuCmdRuntime;
 use aero_d3d11::runtime::aerogpu_state::{PrimitiveTopology, RasterizerState, VertexBufferBinding};
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 
 const DXBC_VS_MATRIX: &[u8] = include_bytes!("fixtures/vs_matrix.dxbc");
 const DXBC_VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
@@ -13,43 +14,12 @@ const DXBC_PS_SAMPLE: &[u8] = include_bytes!("fixtures/ps_sample.dxbc");
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 const ILAY_POS3_TEX2: &[u8] = include_bytes!("fixtures/ilay_pos3_tex2.bin");
 
-fn align4(len: usize) -> usize {
-    (len + 3) & !3
-}
-
 fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let chunk_count: u32 = chunks
-        .len()
-        .try_into()
-        .expect("chunk count should fit in u32");
-
-    let header_size = 4 + 16 + 4 + 4 + 4 + 4 * chunks.len();
-    let mut offsets = Vec::with_capacity(chunks.len());
-    let mut cursor = header_size;
-    for (_fourcc, data) in chunks {
-        offsets.push(cursor);
-        cursor += 8 + align4(data.len());
-    }
-
-    let total_size: u32 = cursor.try_into().expect("dxbc size should fit in u32");
-
-    let mut bytes = Vec::with_capacity(cursor);
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum (ignored)
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // "one"
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-    for offset in offsets {
-        bytes.extend_from_slice(&(offset as u32).to_le_bytes());
-    }
-
-    for (fourcc, data) in chunks {
-        bytes.extend_from_slice(fourcc);
-        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(data);
-        bytes.resize(bytes.len() + (align4(data.len()) - data.len()), 0);
-    }
-    bytes
+    let refs: Vec<(FourCC, &[u8])> = chunks
+        .iter()
+        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
+        .collect();
+    dxbc_test_utils::build_container(&refs)
 }
 
 #[derive(Clone, Copy)]

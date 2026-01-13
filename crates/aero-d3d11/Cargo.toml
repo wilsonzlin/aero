@@ -14,6 +14,7 @@ pollster = "0.3"
 wgpu = "0.20"
 
 [dev-dependencies]
+aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
 bytemuck = { version = "1.14", features = ["derive"] }
 naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
 tracing = "0.1"
