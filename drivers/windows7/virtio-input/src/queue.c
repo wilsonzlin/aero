@@ -161,8 +161,8 @@ VOID VirtioInputEvtIoInternalDeviceControl(
     case IOCTL_HID_SET_NUM_DEVICE_INPUT_BUFFERS: {
         ULONG numBuffers;
 
-        if (InputBufferLength >= sizeof(ULONG) && NT_SUCCESS(VioInputReadRequestInputUlong(Request, &numBuffers))) {
-            UNREFERENCED_PARAMETER(numBuffers);
+        if (InputBufferLength >= sizeof(ULONG)) {
+            (VOID)VioInputReadRequestInputUlong(Request, &numBuffers);
         }
 
         VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_SUCCESS);

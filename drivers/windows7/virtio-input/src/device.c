@@ -1384,6 +1384,7 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
         deviceContext->InD0 = FALSE;
         deviceContext->HidActivated = FALSE;
         (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
+        (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, 0);
         VirtioInputUpdateStatusQActiveState(deviceContext);
 
         virtio_input_device_reset_state(&deviceContext->InputDevice, false);
@@ -1441,6 +1442,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
 
     deviceContext->InD0 = FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
+    (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, 0);
 
     if (!deviceContext->HardwareReady) {
         return STATUS_DEVICE_NOT_READY;
@@ -2136,6 +2138,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
 
     emitResetReports = VirtioInputIsHidActive(deviceContext) ? TRUE : FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
+    (VOID)InterlockedExchange64(&deviceContext->NegotiatedFeatures, 0);
     deviceContext->InD0 = FALSE;
 
     /*
