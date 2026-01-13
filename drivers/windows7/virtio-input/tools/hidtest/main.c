@@ -163,6 +163,11 @@ typedef struct VIOINPUT_COUNTERS_V1_MIN {
     ULONG Version;
 } VIOINPUT_COUNTERS_V1_MIN;
 
+typedef struct VIOINPUT_STATE_V1_MIN {
+    ULONG Size;
+    ULONG Version;
+} VIOINPUT_STATE_V1_MIN;
+
 typedef struct _VIOINPUT_COUNTERS {
     ULONG Size;
     ULONG Version;
@@ -286,6 +291,7 @@ typedef struct OPTIONS {
     int ioctl_bad_get_string_out;
     int ioctl_bad_get_indexed_string_out;
     int ioctl_query_counters_short;
+    int ioctl_query_state_short;
     int ioctl_get_input_report;
     int hidd_get_input_report;
     int hidd_bad_set_output_report;
@@ -1391,6 +1397,9 @@ static void print_usage(void)
     wprintf(L"                 (negative test for METHOD_NEITHER hardening; should fail, no crash)\n");
     wprintf(L"  --ioctl-query-counters-short\n");
     wprintf(L"                 Call IOCTL_VIOINPUT_QUERY_COUNTERS with a short output buffer and verify that\n");
+    wprintf(L"                 the driver returns STATUS_BUFFER_TOO_SMALL while still returning Size/Version\n");
+    wprintf(L"  --ioctl-query-state-short\n");
+    wprintf(L"                 Call IOCTL_VIOINPUT_QUERY_STATE with a short output buffer and verify that\n");
     wprintf(L"                 the driver returns STATUS_BUFFER_TOO_SMALL while still returning Size/Version\n");
     wprintf(L"  --ioctl-get-input-report\n");
     wprintf(L"                 Call DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT) and validate behavior\n");
@@ -3405,6 +3414,44 @@ static int ioctl_query_counters_short(const SELECTED_DEVICE *dev)
     return 0;
 }
 
+static int ioctl_query_state_short(const SELECTED_DEVICE *dev)
+{
+    VIOINPUT_STATE_V1_MIN out;
+    DWORD bytes = 0;
+    BOOL ok;
+    DWORD err;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    ZeroMemory(&out, sizeof(out));
+
+    wprintf(L"\nIssuing IOCTL_VIOINPUT_QUERY_STATE with short output buffer (%u bytes)...\n", (unsigned)sizeof(out));
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_STATE, NULL, 0, &out, (DWORD)sizeof(out), &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return 1;
+    }
+
+    err = GetLastError();
+    if (err != ERROR_INSUFFICIENT_BUFFER) {
+        print_win32_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_STATE short buffer)", err);
+        return 1;
+    }
+
+    if (out.Size < sizeof(out) || out.Version == 0) {
+        wprintf(L"Expected Size/Version to be returned even on ERROR_INSUFFICIENT_BUFFER; got Size=%lu Version=%lu\n",
+                out.Size, out.Version);
+        return 1;
+    }
+
+    wprintf(L"Got state header despite short buffer: Size=%lu Version=%lu (bytesReturned=%lu)\n", out.Size, out.Version,
+            bytes);
+    return 0;
+}
+
 static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
 {
     typedef struct HID_XFER_PACKET_MIN {
@@ -4419,6 +4466,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--ioctl-query-state-short") == 0) {
+            opt.ioctl_query_state_short = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--ioctl-get-input-report") == 0) {
             opt.ioctl_get_input_report = 1;
             continue;
@@ -4578,6 +4630,7 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
          opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
+         opt.ioctl_query_state_short ||
          opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
          opt.query_counters || opt.query_counters_json || opt.reset_counters || opt.want_tablet)) {
         wprintf(
@@ -4586,6 +4639,7 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.query_state &&
         (opt.selftest || opt.query_counters || opt.query_counters_json || opt.reset_counters || opt.ioctl_query_counters_short ||
+         opt.ioctl_query_state_short ||
          opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.have_led_mask || opt.led_cycle || opt.led_spam ||
          opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
          opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
@@ -4771,6 +4825,7 @@ int wmain(int argc, wchar_t **argv)
 
     if ((opt.query_counters || opt.reset_counters) &&
         (opt.query_state || opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.ioctl_query_counters_short ||
+         opt.ioctl_query_state_short ||
          opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
          opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
          opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
@@ -4942,6 +4997,12 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.ioctl_query_counters_short) {
         int rc = ioctl_query_counters_short(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
+
+    if (opt.ioctl_query_state_short) {
+        int rc = ioctl_query_state_short(&dev);
         free_selected_device(&dev);
         return rc;
     }

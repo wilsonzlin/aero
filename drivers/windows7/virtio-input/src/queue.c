@@ -237,19 +237,18 @@ VOID VirtioInputEvtIoDeviceControl(
         break;
     }
     case IOCTL_VIOINPUT_QUERY_STATE: {
-        PVIOINPUT_STATE outState;
+        PUCHAR outBuf;
         size_t outBytes;
+        size_t availBytes;
+        size_t copyBytes;
         VIOINPUT_STATE snapshot;
         LONG virtioStarted;
         LONG64 negotiatedFeatures;
 
-        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*outState), (PVOID *)&outState, &outBytes);
+        outBuf = NULL;
+        outBytes = 0;
+        status = WdfRequestRetrieveOutputBuffer(Request, 0, (PVOID *)&outBuf, &outBytes);
         if (!NT_SUCCESS(status)) {
-            break;
-        }
-
-        if (OutputBufferLength < sizeof(*outState) || outBytes < sizeof(*outState)) {
-            status = STATUS_BUFFER_TOO_SMALL;
             break;
         }
 
@@ -269,9 +268,22 @@ VOID VirtioInputEvtIoDeviceControl(
         negotiatedFeatures = InterlockedCompareExchange64(&devCtx->NegotiatedFeatures, 0, 0);
         snapshot.NegotiatedFeatures = (UINT64)negotiatedFeatures;
 
-        RtlCopyMemory(outState, &snapshot, sizeof(snapshot));
-        status = STATUS_SUCCESS;
-        info = sizeof(snapshot);
+        availBytes = outBytes;
+        if (OutputBufferLength < availBytes) {
+            availBytes = OutputBufferLength;
+        }
+
+        copyBytes = availBytes;
+        if (copyBytes > sizeof(snapshot)) {
+            copyBytes = sizeof(snapshot);
+        }
+
+        if (copyBytes != 0) {
+            RtlCopyMemory(outBuf, &snapshot, copyBytes);
+            info = copyBytes;
+        }
+
+        status = (copyBytes < sizeof(snapshot)) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
         break;
     }
     case IOCTL_VIOINPUT_RESET_COUNTERS: {

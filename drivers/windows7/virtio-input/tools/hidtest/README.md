@@ -269,7 +269,15 @@ Probe the driver-private counters IOCTL with a short output buffer (verifies the
 hidtest.exe --ioctl-query-counters-short
 ```
 
-Test the GetInputReport path (should return a single report of the expected size, then return a no-data error when no new input is available):
+Probe the driver-private state IOCTL with a short output buffer (verifies the driver returns
+`STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` so tools can adapt to version bumps):
+
+```bat
+hidtest.exe --ioctl-query-state-short
+```
+
+Test the GetInputReport path (should return a single report of the expected size, then return a no-data error when no new
+input is available):
 
 ```bat
 hidtest.exe --keyboard --ioctl-get-input-report
