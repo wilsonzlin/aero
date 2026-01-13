@@ -2214,7 +2214,8 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     adapter->CurrentWidth = 1024;
     adapter->CurrentHeight = 768;
     adapter->CurrentPitch = 1024 * 4;
-    adapter->CurrentFormat = AEROGPU_FORMAT_B8G8R8X8_UNORM;
+    adapter->CurrentFormat =
+        (fmt == D3DDDIFMT_A8R8G8B8) ? AEROGPU_FORMAT_B8G8R8A8_UNORM : AEROGPU_FORMAT_B8G8R8X8_UNORM;
     adapter->SourceVisible = TRUE;
     adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
 
