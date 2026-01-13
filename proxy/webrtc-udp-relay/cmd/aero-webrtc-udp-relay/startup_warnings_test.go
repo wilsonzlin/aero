@@ -106,6 +106,38 @@ func stringsJoin(parts []string, sep string) string {
 	return out
 }
 
+func TestStartupSecurityWarnings_UDPInboundFilterModeAny(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:                 config.ModeProd,
+		AuthMode:             config.AuthModeAPIKey,
+		APIKey:               "secret",
+		MaxSessions:          1,
+		UDPInboundFilterMode: config.UDPInboundFilterModeAny,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	var found bool
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "udp_inbound_filter_mode_any" {
+			found = true
+			if r.attrs["udp_inbound_filter_mode"] != config.UDPInboundFilterModeAny {
+				t.Fatalf("udp_inbound_filter_mode=%#v, want %q", r.attrs["udp_inbound_filter_mode"], config.UDPInboundFilterModeAny)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning_code=udp_inbound_filter_mode_any, got %#v", records())
+	}
+}
+
 func TestStartupSecurityWarnings_AuthModeNone(t *testing.T) {
 	logger, records := newRecordingLogger()
 

@@ -14,6 +14,14 @@ func logStartupSecurityWarnings(logger *slog.Logger, cfg config.Config, destPoli
 		logger = slog.Default()
 	}
 
+	if cfg.UDPInboundFilterMode == config.UDPInboundFilterModeAny {
+		logger.Warn("startup security warning: UDP_INBOUND_FILTER_MODE=any allows inbound UDP packets from any remote endpoint (full-cone NAT behavior; less safe)",
+			"warning_code", "udp_inbound_filter_mode_any",
+			"udp_inbound_filter_mode", cfg.UDPInboundFilterMode,
+			"mode", cfg.Mode,
+		)
+	}
+
 	if cfg.AuthMode == config.AuthModeNone {
 		logger.Warn("startup security warning: AUTH_MODE=none disables authentication",
 			"warning_code", "auth_mode_none",
