@@ -2604,16 +2604,16 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_completed_fence"),
         24
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 32);
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"),
-        40
+        32
     );
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"),
-        44
+        36
     );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 40);
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 44);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "total_submissions"),
         48
@@ -3115,6 +3115,27 @@ fn rust_layout_matches_c_headers() {
         &mut pci_consts_seen,
         "AEROGPU_IRQ_ERROR",
         pci::AEROGPU_IRQ_ERROR as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_CODE",
+        pci::AEROGPU_MMIO_REG_ERROR_CODE as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_FENCE_LO",
+        pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_FENCE_HI",
+        pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_MMIO_REG_ERROR_COUNT",
+        pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64,
     );
 
     check_const(
