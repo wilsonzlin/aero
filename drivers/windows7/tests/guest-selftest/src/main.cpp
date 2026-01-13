@@ -1017,19 +1017,41 @@ static std::optional<std::wstring> QueryDeviceDriverRegString(HDEVINFO devinfo, 
   return std::wstring(buf.data());
 }
 
-static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev, const wchar_t* value_name) {
-  if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev || !value_name) return std::nullopt;
-
-  HKEY key = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_QUERY_VALUE);
-  if (key == INVALID_HANDLE_VALUE) return std::nullopt;
+static std::optional<DWORD> QueryRegDword(HKEY key, const wchar_t* value_name) {
+  if (!key || key == INVALID_HANDLE_VALUE || !value_name) return std::nullopt;
 
   DWORD type = 0;
   DWORD data = 0;
   DWORD bytes = sizeof(data);
   const LONG rc = RegQueryValueExW(key, value_name, nullptr, &type, reinterpret_cast<LPBYTE>(&data), &bytes);
-  RegCloseKey(key);
   if (rc != ERROR_SUCCESS || type != REG_DWORD || bytes < sizeof(DWORD)) return std::nullopt;
   return data;
+}
+
+static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev, const wchar_t* value_name) {
+  if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev || !value_name) return std::nullopt;
+
+  HKEY root = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_QUERY_VALUE);
+  if (root == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  // Some values are written directly under the device key (historical),
+  // but driver bring-up toggles are typically placed under a Parameters subkey.
+  if (auto value = QueryRegDword(root, value_name)) {
+    RegCloseKey(root);
+    return value;
+  }
+
+  HKEY params = INVALID_HANDLE_VALUE;
+  const LONG rc = RegOpenKeyExW(root, L"Parameters", 0, KEY_QUERY_VALUE, &params);
+  if (rc == ERROR_SUCCESS && params != INVALID_HANDLE_VALUE) {
+    auto value = QueryRegDword(params, value_name);
+    RegCloseKey(params);
+    RegCloseKey(root);
+    return value;
+  }
+
+  RegCloseKey(root);
+  return std::nullopt;
 }
 
 struct VirtioSndPciDevice {
