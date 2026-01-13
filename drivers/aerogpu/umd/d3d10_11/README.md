@@ -47,6 +47,8 @@ Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDA
 Host-side unit tests that exercise Map/Unmap and the newer resource/layout behavior live in:
 
 - `drivers/aerogpu/umd/d3d10_11/tests/map_unmap_tests.cpp` (CMake target: `aerogpu_d3d10_11_map_unmap_tests`) covers Map/Unmap upload + staging readback, including mip/array layout (`TestGuestBackedTexture2DMipArray*`) and BC format paths (`Test*BcTexture*`).
+  - Quick run (from repo root):
+    - `cmake -S drivers/aerogpu/umd/d3d10_11/tests -B out/umd_d3d10_11_tests && cmake --build out/umd_d3d10_11_tests && ctest --test-dir out/umd_d3d10_11_tests -V`
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/` (run via `cargo test -p aero-gpu`)
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
 
