@@ -1043,6 +1043,79 @@ function Assert-ZipContainsFiles {
   }
 }
 
+function Test-SpecIncludesDriverName {
+  param(
+    [Parameter(Mandatory = $true)][string] $SpecPath,
+    [Parameter(Mandatory = $true)][string] $DriverName
+  )
+
+  $raw = Get-Content -LiteralPath $SpecPath -Raw -ErrorAction Stop
+  $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+
+  $needle = $DriverName.Trim().ToLowerInvariant()
+  $entries = @()
+  if ($obj -and $obj.drivers) { $entries += $obj.drivers }
+  if ($obj -and $obj.required_drivers) { $entries += $obj.required_drivers }
+
+  foreach ($e in $entries) {
+    if (-not $e) { continue }
+    $n = ("" + $e.name).Trim()
+    if ($n.Length -eq 0) { continue }
+    if ($n.ToLowerInvariant() -eq $needle) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Assert-GuestToolsZipContainsAeroGpuDbgctl {
+  param(
+    [Parameter(Mandatory = $true)][string] $ZipPath,
+    [Parameter(Mandatory = $true)][string] $SpecPath
+  )
+
+  $requiresAerogpu = $false
+  try {
+    $requiresAerogpu = Test-SpecIncludesDriverName -SpecPath $SpecPath -DriverName "aerogpu"
+  } catch {
+    # If the spec cannot be parsed here but aero_packager succeeded, treat this as an internal
+    # inconsistency and fail loudly.
+    throw ("Failed to parse Guest Tools spec JSON at '{0}' for dbgctl packaging check: {1}" -f $SpecPath, $_.Exception.Message)
+  }
+
+  if (-not $requiresAerogpu) {
+    return
+  }
+
+  $expectedEntries = @(
+    "drivers/amd64/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe",
+    "drivers/x86/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe"
+  )
+
+  foreach ($entry in $expectedEntries) {
+    try {
+      Assert-ZipContainsFile -ZipPath $ZipPath -EntryPath $entry
+    } catch {
+      throw @"
+AeroGPU dbgctl tool is missing from the packaged Guest Tools ZIP.
+
+Expected:
+  - $entry
+
+This usually means dbgctl was built but not staged into the driver package, or the dbgctl build step was skipped.
+
+To fix:
+  - Ensure drivers/aerogpu/ci-package.json includes dbgctl under 'toolFiles'.
+  - Ensure the dbgctl build step runs and stages the binary (see: ci/build-aerogpu-dbgctl.ps1).
+
+Guest Tools ZIP:
+  $ZipPath
+"@
+    }
+  }
+}
+
 function Show-PackagerHwidDiagnostics {
   param(
     [Parameter(Mandatory = $true)][string] $StageDriversRoot,
@@ -1440,6 +1513,7 @@ function Invoke-GuestToolsPackagingRun {
       $certLeaf = Split-Path -Leaf $certPathResolved
       Assert-ZipContainsFile -ZipPath $zipPath -EntryPath ("certs/{0}" -f $certLeaf)
     }
+    Assert-GuestToolsZipContainsAeroGpuDbgctl -ZipPath $zipPath -SpecPath $specPathResolved
     if ($extraToolsZipEntries -and $extraToolsZipEntries.Count -gt 0) {
       Assert-ZipContainsFiles -ZipPath $zipPath -EntryPaths $extraToolsZipEntries
     }
