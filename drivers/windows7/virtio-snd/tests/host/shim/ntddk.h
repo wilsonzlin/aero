@@ -318,3 +318,23 @@ typedef DMA_ADAPTER* PDMA_ADAPTER;
 typedef struct _PHYSICAL_ADDRESS {
     LONGLONG QuadPart;
 } PHYSICAL_ADDRESS;
+
+/* ---- DbgPrintEx stubs (driver trace.h expects these even in free builds) ---- */
+
+#ifndef DPFLTR_IHVDRIVER_ID
+#define DPFLTR_IHVDRIVER_ID 0
+#endif
+#ifndef DPFLTR_INFO_LEVEL
+#define DPFLTR_INFO_LEVEL 0
+#endif
+#ifndef DPFLTR_ERROR_LEVEL
+#define DPFLTR_ERROR_LEVEL 0
+#endif
+
+static __forceinline ULONG DbgPrintEx(ULONG comp_id, ULONG level, PCSTR fmt, ...)
+{
+    UNREFERENCED_PARAMETER(comp_id);
+    UNREFERENCED_PARAMETER(level);
+    UNREFERENCED_PARAMETER(fmt);
+    return 0;
+}
