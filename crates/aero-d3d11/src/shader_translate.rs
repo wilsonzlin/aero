@@ -9,7 +9,7 @@ use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle,
+    BufferKind, OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle,
     WriteMask,
 };
 use crate::DxbcFile;
@@ -2665,8 +2665,8 @@ fn emit_instructions(
     // Structured buffer access (`*_structured`) requires the element stride in bytes, which is
     // provided via `dcl_resource_structured` / `dcl_uav_structured`. Collect those declarations so
     // we can lower address calculations when emitting WGSL.
-    let mut srv_buffer_decls: BTreeMap<u32, (crate::sm4_ir::BufferKind, u32)> = BTreeMap::new();
-    let mut uav_buffer_decls: BTreeMap<u32, (crate::sm4_ir::BufferKind, u32)> = BTreeMap::new();
+    let mut srv_buffer_decls = BTreeMap::<u32, (BufferKind, u32)>::new();
+    let mut uav_buffer_decls = BTreeMap::<u32, (BufferKind, u32)>::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::ResourceBuffer { slot, stride, kind } => {
@@ -3327,6 +3327,7 @@ fn emit_instructions(
                         mask: *mask,
                     });
                 }
+
                 let addr_u = emit_src_vec4_u32(addr, inst_index, "store_raw", ctx)?;
                 let base_name = format!("store_raw_base{inst_index}");
                 w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
@@ -3357,7 +3358,7 @@ fn emit_instructions(
                         opcode: "ld_structured".to_owned(),
                     });
                 };
-                if kind != crate::sm4_ir::BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
                         inst_index,
                         opcode: "ld_structured".to_owned(),
@@ -3423,7 +3424,7 @@ fn emit_instructions(
                         opcode: "store_structured".to_owned(),
                     });
                 };
-                if kind != crate::sm4_ir::BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
                         inst_index,
                         opcode: "store_structured".to_owned(),
