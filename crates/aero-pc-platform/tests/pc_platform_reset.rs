@@ -386,6 +386,58 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
 }
 
 #[test]
+fn pc_platform_reset_pci_restores_pci_intx_interrupt_line_and_pin_registers() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+
+    // Same setup as the full-platform reset test above, but exercise `PcPlatform::reset_pci()`
+    // directly so regressions in that helper are also caught.
+    let expected_pin = PciInterruptPin::IntC;
+
+    let bdf = {
+        let mut pci_cfg = pc.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let device = (0u8..32)
+            .find(|&dev| {
+                (0u8..8).all(|func| bus.device_config(PciBdf::new(0, dev, func)).is_none())
+            })
+            .expect("PCI bus is full; cannot allocate test-only dummy device");
+        let bdf = PciBdf::new(0, device, 0);
+
+        bus.add_device(bdf, Box::new(DummyPciConfigDevice::new(0x1af4, 0x1000)));
+        let cfg = bus
+            .device_config_mut(bdf)
+            .expect("dummy device config should be accessible");
+        pc.pci_intx
+            .configure_device_intx(bdf, Some(expected_pin), cfg);
+        bdf
+    };
+    pc.register_pci_intx_source(bdf, expected_pin, |_pc| false);
+
+    // Smash the guest-visible INTx routing metadata.
+    write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c, 0x5a);
+    write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d, 0x04);
+    assert_eq!(
+        read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c),
+        0x5a
+    );
+    assert_eq!(
+        read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d),
+        0x04
+    );
+
+    pc.reset_pci();
+
+    let pin_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
+    let line_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
+    assert_eq!(pin_after, expected_pin.to_config_u8());
+
+    let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
+    let pirq_index_after = (usize::from(bdf.device) + usize::from(pin_after - 1)) & 3;
+    let expected_line_after = u8::try_from(pirq_to_gsi[pirq_index_after]).unwrap();
+    assert_eq!(line_after, expected_line_after);
+}
+
+#[test]
 fn pc_platform_reset_resets_nvme_controller_state() {
     let mut pc = PcPlatform::new_with_nvme(2 * 1024 * 1024);
     let bdf = NVME_CONTROLLER.bdf;
