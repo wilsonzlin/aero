@@ -66,8 +66,8 @@ use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotError as IoSnapshotError, SnapshotReader as IoSnapshotReader,
-    SnapshotResult as IoSnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotReader as IoSnapshotReader, SnapshotResult as IoSnapshotResult,
+    SnapshotVersion, SnapshotWriter,
 };
 use aero_io_snapshot::io::storage::dskc::DiskControllersSnapshot;
 use aero_net_backend::{FrameRing, L2TunnelRingBackend, L2TunnelRingBackendStats, NetworkBackend};
@@ -5817,25 +5817,35 @@ impl Machine {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-struct MachineUsbUhciSnapshot {
-    uhci: Vec<u8>,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct MachineUsbSnapshot {
+    uhci: Option<Vec<u8>>,
     uhci_ns_remainder: u64,
+    ehci: Option<Vec<u8>>,
+    ehci_ns_remainder: u64,
 }
 
-impl MachineUsbUhciSnapshot {
+impl MachineUsbSnapshot {
     const TAG_UHCI_NS_REMAINDER: u16 = 1;
     const TAG_UHCI_STATE: u16 = 2;
+    const TAG_EHCI_NS_REMAINDER: u16 = 3;
+    const TAG_EHCI_STATE: u16 = 4;
 }
 
-impl IoSnapshot for MachineUsbUhciSnapshot {
+impl IoSnapshot for MachineUsbSnapshot {
     const DEVICE_ID: [u8; 4] = *b"USBC";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
-        w.field_u64(Self::TAG_UHCI_NS_REMAINDER, self.uhci_ns_remainder);
-        w.field_bytes(Self::TAG_UHCI_STATE, self.uhci.clone());
+        if let Some(uhci) = &self.uhci {
+            w.field_u64(Self::TAG_UHCI_NS_REMAINDER, self.uhci_ns_remainder);
+            w.field_bytes(Self::TAG_UHCI_STATE, uhci.clone());
+        }
+        if let Some(ehci) = &self.ehci {
+            w.field_u64(Self::TAG_EHCI_NS_REMAINDER, self.ehci_ns_remainder);
+            w.field_bytes(Self::TAG_EHCI_STATE, ehci.clone());
+        }
         w.finish()
     }
 
@@ -5844,12 +5854,10 @@ impl IoSnapshot for MachineUsbUhciSnapshot {
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
         self.uhci_ns_remainder = r.u64(Self::TAG_UHCI_NS_REMAINDER)?.unwrap_or(0);
-        let Some(buf) = r.bytes(Self::TAG_UHCI_STATE) else {
-            return Err(IoSnapshotError::InvalidFieldEncoding(
-                "missing nested UHCI snapshot",
-            ));
-        };
-        self.uhci = buf.to_vec();
+        self.uhci = r.bytes(Self::TAG_UHCI_STATE).map(|buf| buf.to_vec());
+
+        self.ehci_ns_remainder = r.u64(Self::TAG_EHCI_NS_REMAINDER)?.unwrap_or(0);
+        self.ehci = r.bytes(Self::TAG_EHCI_STATE).map(|buf| buf.to_vec());
         Ok(())
     }
 }
@@ -6026,9 +6034,11 @@ impl snapshot::SnapshotSource for Machine {
                 }
             }
 
-            let wrapper = MachineUsbUhciSnapshot {
-                uhci: uhci.borrow().save_state(),
+            let wrapper = MachineUsbSnapshot {
+                uhci: Some(uhci.borrow().save_state()),
                 uhci_ns_remainder: self.uhci_ns_remainder,
+                ehci: None,
+                ehci_ns_remainder: 0,
             };
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::USB,
@@ -6816,12 +6826,23 @@ impl snapshot::SnapshotTarget for Machine {
 
                 // Canonical encoding: `DeviceId::USB` stores a `USBC` wrapper that includes both
                 // the guest-visible UHCI controller snapshot and the machine's host-side sub-ms
-                // tick remainder (`uhci_ns_remainder`).
+                // tick remainder (`uhci_ns_remainder`). Newer snapshots may also include optional
+                // EHCI state.
                 if matches!(state.data.get(8..12), Some(id) if id == b"USBC") {
-                    let mut wrapper = MachineUsbUhciSnapshot::default();
+                    let mut wrapper = MachineUsbSnapshot::default();
                     if wrapper.load_state(&state.data).is_ok() {
-                        self.uhci_ns_remainder = wrapper.uhci_ns_remainder % NS_PER_MS;
-                        let _ = uhci.borrow_mut().load_state(&wrapper.uhci);
+                        if let Some(uhci_state) = wrapper.uhci.as_deref() {
+                            self.uhci_ns_remainder = wrapper.uhci_ns_remainder % NS_PER_MS;
+                            let _ = uhci.borrow_mut().load_state(uhci_state);
+                        } else {
+                            self.uhci_ns_remainder = 0;
+                        }
+                        // Forward compatibility: snapshots from newer machines may include EHCI
+                        // state in the `USBC` wrapper. Older machines that do not yet model EHCI
+                        // simply ignore that nested state.
+                        if wrapper.ehci.is_some() {
+                            // Intentionally ignored.
+                        }
                     }
                 } else {
                     // Backward compatibility: older snapshots stored the UHCI PCI device snapshot
@@ -7016,6 +7037,47 @@ mod tests {
         sector[510] = 0x55;
         sector[511] = 0xAA;
         sector
+    }
+
+    #[test]
+    fn usb_snapshot_container_decodes_legacy_uhci_only_payload_and_defaults_ehci_fields() {
+        let expected_uhci = vec![0x12, 0x34, 0x56];
+        let expected_remainder = 42u64;
+
+        // `USBC` v1.0 only contained UHCI fields. Ensure the v1.1 decoder continues accepting it
+        // and defaults EHCI to empty/none.
+        let mut w = SnapshotWriter::new(*b"USBC", SnapshotVersion::new(1, 0));
+        w.field_u64(MachineUsbSnapshot::TAG_UHCI_NS_REMAINDER, expected_remainder);
+        w.field_bytes(MachineUsbSnapshot::TAG_UHCI_STATE, expected_uhci.clone());
+        let bytes = w.finish();
+
+        let mut decoded = MachineUsbSnapshot::default();
+        decoded.load_state(&bytes).expect("load legacy USBC v1.0");
+
+        assert_eq!(decoded.uhci.as_deref(), Some(expected_uhci.as_slice()));
+        assert_eq!(decoded.uhci_ns_remainder, expected_remainder);
+        assert_eq!(decoded.ehci, None);
+        assert_eq!(decoded.ehci_ns_remainder, 0);
+    }
+
+    #[test]
+    fn usb_snapshot_container_roundtrips_uhci_and_ehci_state() {
+        let snapshot = MachineUsbSnapshot {
+            uhci: Some(vec![1, 2, 3]),
+            uhci_ns_remainder: 500_123,
+            ehci: Some(vec![4, 5, 6, 7]),
+            ehci_ns_remainder: 250_456,
+        };
+
+        let bytes = snapshot.save_state();
+
+        let mut decoded = MachineUsbSnapshot::default();
+        decoded.load_state(&bytes).expect("load USBC v1.1");
+
+        assert_eq!(decoded, snapshot);
+
+        // Ensure we can re-encode deterministically after restore.
+        assert_eq!(decoded.save_state(), bytes);
     }
 
     #[test]
