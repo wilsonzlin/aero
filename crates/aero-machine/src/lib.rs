@@ -1372,19 +1372,15 @@ impl MmioHandler for VgaLfbMmio {
             _ => size.clamp(1, 8),
         };
 
-        let vga = self.dev.borrow();
-        let vram = vga.vram();
-        let base = offset as usize;
-        if base >= vram.len() {
-            return 0;
+        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
+        let mut out = 0u64;
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let paddr = base.wrapping_add(i as u64);
+            let b = dev.mem_read_u8(u32::try_from(paddr).unwrap_or(0)) as u64;
+            out |= b << (i * 8);
         }
-
-        let end = base.saturating_add(size).min(vram.len());
-        let len = end - base;
-
-        let mut buf = [0u8; 8];
-        buf[..len].copy_from_slice(&vram[base..end]);
-        u64::from_le_bytes(buf)
+        out
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
@@ -1396,17 +1392,13 @@ impl MmioHandler for VgaLfbMmio {
             _ => size.clamp(1, 8),
         };
 
-        let base = offset as usize;
-        let mut vga = self.dev.borrow_mut();
-        let vram = vga.vram_mut();
-        if base >= vram.len() {
-            return;
+        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let paddr = base.wrapping_add(i as u64);
+            let b = ((value >> (i * 8)) & 0xFF) as u8;
+            dev.mem_write_u8(u32::try_from(paddr).unwrap_or(0), b);
         }
-
-        let end = base.saturating_add(size).min(vram.len());
-        let len = end - base;
-        let bytes = value.to_le_bytes();
-        vram[base..end].copy_from_slice(&bytes[..len]);
     }
 }
 
@@ -4899,8 +4891,14 @@ impl Machine {
                             let clear_len = (width as usize)
                                 .saturating_mul(height as usize)
                                 .saturating_mul(bytes_per_pixel.max(1));
-                            let clear_len = clear_len.min(vga.vram().len());
-                            vga.vram_mut()[..clear_len].fill(0);
+                            let fb_base = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
+                            let vram_len = vga.vram().len();
+                            if fb_base < vram_len {
+                                let vbe_len = vram_len - fb_base;
+                                let clear_len = clear_len.min(vbe_len);
+                                let end = fb_base + clear_len;
+                                vga.vram_mut()[fb_base..end].fill(0);
+                            }
                         }
                     }
                 }

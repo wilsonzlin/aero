@@ -42,6 +42,18 @@ pub const VGA_PLANE_SIZE: usize = 64 * 1024;
 /// Total VGA memory for 4 planes (256KiB).
 pub const VGA_VRAM_SIZE: usize = 4 * VGA_PLANE_SIZE;
 
+/// Offset within `vram` where the VBE ("SVGA") packed-pixel framebuffer begins.
+///
+/// The first 256KiB of VRAM is reserved for legacy VGA planar memory (4 × 64KiB planes) used by
+/// text mode, mode 13h (chain-4), and planar graphics modes.
+///
+/// Bochs/QEMU style VBE linear/banked framebuffer accesses are mapped **after** this region so
+/// switching between VBE graphics modes and legacy text/planar modes does not result in VBE writes
+/// clobbering VGA plane 0/1 contents.
+///
+/// We align the start of the VBE framebuffer to the full planar region size (256KiB / 0x40000).
+pub const VBE_FRAMEBUFFER_OFFSET: usize = VGA_VRAM_SIZE;
+
 /// Default total VRAM for the device (16MiB), enough for common VBE modes.
 pub const DEFAULT_VRAM_SIZE: usize = 16 * 1024 * 1024;
 
@@ -145,7 +157,8 @@ pub struct VgaDevice {
     pub vbe: VbeRegs,
 
     // VRAM: the first 256KiB are treated as planar VGA memory (4 planes).
-    // SVGA linear modes use the same underlying VRAM starting at offset 0.
+    // VBE/SVGA packed-pixel modes are backed by the same allocation starting at
+    // `VBE_FRAMEBUFFER_OFFSET`.
     vram: Vec<u8>,
     latches: [u8; 4],
 
@@ -358,13 +371,19 @@ impl VgaDevice {
         if !self.vbe.enabled() || !self.vbe.lfb_enabled() {
             return None;
         }
-        let start = SVGA_LFB_BASE;
-        let end = start.checked_add(self.vram.len() as u32)?;
-        if paddr >= start && paddr < end {
-            Some((paddr - start) as usize)
-        } else {
-            None
+        let start = u64::from(SVGA_LFB_BASE);
+        let paddr = u64::from(paddr);
+        if paddr < start {
+            return None;
         }
+
+        let vbe_len = self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET)? as u64;
+        let off = paddr - start;
+        if off >= vbe_len {
+            return None;
+        }
+
+        VBE_FRAMEBUFFER_OFFSET.checked_add(off as usize)
     }
 
     fn map_svga_bank_window(&self, paddr: u32) -> Option<usize> {
@@ -376,7 +395,14 @@ impl VgaDevice {
         }
         let window_off = (paddr - start) as usize;
         let bank_base = (self.vbe.bank as usize) * 64 * 1024;
-        bank_base.checked_add(window_off)
+
+        let vbe_len = self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET)?;
+        let off = bank_base.checked_add(window_off)?;
+        if off >= vbe_len {
+            return None;
+        }
+
+        VBE_FRAMEBUFFER_OFFSET.checked_add(off)
     }
 
     fn legacy_memory_map(&self) -> u8 {
@@ -844,6 +870,7 @@ impl VgaDevice {
         let stride_pixels = self.vbe.effective_stride_pixels();
         let x_off = self.vbe.x_offset as u32;
         let y_off = self.vbe.y_offset as u32;
+        let fb_base = VBE_FRAMEBUFFER_OFFSET;
 
         let bytes_per_pixel = match bpp {
             32 => 4,
@@ -860,24 +887,26 @@ impl VgaDevice {
             let src_row_base = (src_y as usize).saturating_mul(stride_bytes);
             for x in 0..width {
                 let src_x = x_off + x;
-                let src = src_row_base + (src_x as usize).saturating_mul(bytes_per_pixel as usize);
+                let src = fb_base
+                    .saturating_add(src_row_base)
+                    .saturating_add((src_x as usize).saturating_mul(bytes_per_pixel as usize));
                 let px = match bpp {
                     32 => {
                         // VBE packed pixels: little-endian B,G,R,X
                         let b = *self.vram.get(src).unwrap_or(&0);
-                        let g = *self.vram.get(src + 1).unwrap_or(&0);
-                        let r = *self.vram.get(src + 2).unwrap_or(&0);
+                        let g = *self.vram.get(src.saturating_add(1)).unwrap_or(&0);
+                        let r = *self.vram.get(src.saturating_add(2)).unwrap_or(&0);
                         rgb_to_rgba_u32(Rgb { r, g, b })
                     }
                     24 => {
                         let b = *self.vram.get(src).unwrap_or(&0);
-                        let g = *self.vram.get(src + 1).unwrap_or(&0);
-                        let r = *self.vram.get(src + 2).unwrap_or(&0);
+                        let g = *self.vram.get(src.saturating_add(1)).unwrap_or(&0);
+                        let r = *self.vram.get(src.saturating_add(2)).unwrap_or(&0);
                         rgb_to_rgba_u32(Rgb { r, g, b })
                     }
                     16 => {
                         let lo = *self.vram.get(src).unwrap_or(&0) as u16;
-                        let hi = *self.vram.get(src + 1).unwrap_or(&0) as u16;
+                        let hi = *self.vram.get(src.saturating_add(1)).unwrap_or(&0) as u16;
                         let v = lo | (hi << 8);
                         let r = ((v >> 11) & 0x1F) as u8;
                         let g = ((v >> 5) & 0x3F) as u8;
@@ -890,7 +919,7 @@ impl VgaDevice {
                     }
                     15 => {
                         let lo = *self.vram.get(src).unwrap_or(&0) as u16;
-                        let hi = *self.vram.get(src + 1).unwrap_or(&0) as u16;
+                        let hi = *self.vram.get(src.saturating_add(1)).unwrap_or(&0) as u16;
                         let v = lo | (hi << 8);
                         let r = ((v >> 10) & 0x1F) as u8;
                         let g = ((v >> 5) & 0x1F) as u8;
@@ -957,7 +986,8 @@ impl VgaDevice {
             0x0007 => self.vbe.virt_height,
             0x0008 => self.vbe.x_offset,
             0x0009 => self.vbe.y_offset,
-            0x000A => (self.vram.len() / (64 * 1024)) as u16,
+            0x000A => u16::try_from(self.vram.len().saturating_sub(VBE_FRAMEBUFFER_OFFSET) / (64 * 1024))
+                .unwrap_or(u16::MAX),
             _ => 0,
         }
     }

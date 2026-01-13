@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE, VBE_FRAMEBUFFER_OFFSET};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
@@ -325,7 +325,8 @@ fn bios_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
     let vga = m.vga().expect("pc platform should include VGA");
     {
         let mut vga = vga.borrow_mut();
-        vga.vram_mut()[0..4].copy_from_slice(&0x00FF_0000u32.to_le_bytes());
+        vga.vram_mut()[VBE_FRAMEBUFFER_OFFSET..VBE_FRAMEBUFFER_OFFSET + 4]
+            .copy_from_slice(&0x00FF_0000u32.to_le_bytes());
     }
 
     run_until_halt(&mut m);
