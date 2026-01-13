@@ -590,8 +590,19 @@ impl IoSnapshot for EhciController {
             self.regs.configflag = cf & CONFIGFLAG_CF;
         }
         // We currently model a 32-bit addressing controller; CTRLDSSEGMENT is unused.
-        if r.u32(TAG_CTRLDSSEGMENT)?.is_some() {
-            self.regs.ctrldssegment = 0;
+        if let Some(seg) = r.u32(TAG_CTRLDSSEGMENT)? {
+            self.write_ctrldssegment(seg);
+        }
+
+        if let Some(legsupp) = r.u32(TAG_USBLEGSUP)? {
+            // CAPID/NEXT are read-only; only the semaphore bits are meaningful.
+            self.usblegsup = (legsupp & USBLEGSUP_RW_MASK) | USBLEGSUP_HEADER;
+            if self.usblegsup & USBLEGSUP_OS_SEM != 0 {
+                self.usblegsup &= !USBLEGSUP_BIOS_SEM;
+            }
+        }
+        if let Some(ctlsts) = r.u32(TAG_USBLEGCTLSTS)? {
+            self.usblegctlsts = ctlsts;
         }
         if let Some(v) = r.u32(TAG_USBLEGSUP)? {
             self.usblegsup = (v & USBLEGSUP_RW_MASK) | USBLEGSUP_HEADER;
