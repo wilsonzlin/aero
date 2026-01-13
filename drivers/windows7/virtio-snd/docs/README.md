@@ -243,7 +243,7 @@ Backend layer (WaveRT ↔ virtio-snd):
   - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains interrupt-driven (prefers MSI/MSI-X when available and falls back to INTx).
   - With `AllowPollingOnly=0` (default), `START_DEVICE` normally fails if no usable interrupt resource can be connected.
   - Applies to the modern virtio-pci transport packages (`aero_virtio_snd.sys` and `virtiosnd_legacy.sys`); the legacy I/O-port bring-up package does not use this toggle.
-  - After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
+- After changing any bring-up toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
 Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 
