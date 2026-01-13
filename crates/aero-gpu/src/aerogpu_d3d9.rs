@@ -126,7 +126,7 @@ impl D3d9ShaderCache {
                 );
 
                 let ir = shader::to_ir(&program);
-                let wgsl = shader::generate_wgsl(&ir);
+                let wgsl = shader::generate_wgsl(&ir)?;
 
                 let label = format!(
                     "aerogpu-d3d9-shader-{:?}-{}",

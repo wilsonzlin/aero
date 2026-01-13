@@ -2209,7 +2209,7 @@ impl AerogpuD3d9Executor {
                 .get_or_translate_with_source(dxbc_bytes, flags.clone(), || async {
                     let program = shader::parse(dxbc_bytes).map_err(|e| e.to_string())?;
                     let ir = shader::to_ir(&program);
-                    let wgsl = shader::generate_wgsl(&ir);
+                    let wgsl = shader::generate_wgsl(&ir).map_err(|e| e.to_string())?;
 
                     let mut used_samplers_mask = 0u16;
                     for &s in &ir.used_samplers {
@@ -2624,6 +2624,14 @@ impl AerogpuD3d9Executor {
                     return Err(AerogpuD3d9Error::Validation(
                         "CREATE_TEXTURE2D: mip_levels/array_layers must be >= 1".into(),
                     ));
+                }
+                // The D3D9 executor currently binds all textures as `texture_2d<f32>` in a
+                // fixed-size bind group. Array textures / cube maps require different view
+                // dimensions (`D2Array`/`Cube`) and are not yet supported.
+                if array_layers != 1 {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "CREATE_TEXTURE2D: array_layers != 1 is not supported yet (array_layers={array_layers})"
+                    )));
                 }
                 // WebGPU validation requires `mip_level_count` to be within the possible chain
                 // length for the given dimensions.

@@ -8,6 +8,7 @@ use aero_dxbc::{
 };
 use crate::shader_limits::MAX_D3D9_SHADER_BYTECODE_BYTES;
 use crate::{dxbc, shader, software, state};
+use crate::sm3::decode::TextureType;
 
 fn enc_reg_type(ty: u8) -> u32 {
     let low = (ty & 0x7) as u32;
@@ -283,7 +284,7 @@ fn translates_simple_vs_to_wgsl() {
     let dxbc = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &vs_bytes)]);
     let program = shader::parse(&dxbc).unwrap();
     let ir = shader::to_ir(&program);
-    let wgsl = shader::generate_wgsl(&ir);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
 
     // Validate WGSL via naga to ensure WebGPU compatibility.
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
@@ -328,7 +329,7 @@ fn translates_simple_ps_to_wgsl() {
     let dxbc = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &ps_bytes)]);
     let program = shader::parse(&dxbc).unwrap();
     let ir = shader::to_ir(&program);
-    let wgsl = shader::generate_wgsl(&ir);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -347,7 +348,7 @@ fn translates_additional_ps_ops_to_wgsl() {
     let ps_bytes = to_bytes(&assemble_ps_math_ops());
     let program = shader::parse(&ps_bytes).unwrap();
     let ir = shader::to_ir(&program);
-    let wgsl = shader::generate_wgsl(&ir);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -369,7 +370,7 @@ fn translates_ps3_ifc_def_to_wgsl() {
     let ps_bytes = to_bytes(&assemble_ps3_tex_ifc_def());
     let program = shader::parse(&ps_bytes).unwrap();
     let ir = shader::to_ir(&program);
-    let wgsl = shader::generate_wgsl(&ir);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -389,7 +390,7 @@ fn translates_ps_mrt_outputs_to_wgsl() {
     let ps_bytes = to_bytes(&assemble_ps_mrt_solid_color());
     let program = shader::parse(&ps_bytes).unwrap();
     let ir = shader::to_ir(&program);
-    let wgsl = shader::generate_wgsl(&ir);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -727,7 +728,7 @@ fn translates_src_and_result_modifiers_to_wgsl() {
     let ps_bytes = to_bytes(&assemble_ps_mov_sat_neg_c0());
     let program = shader::parse(&ps_bytes).unwrap();
     let ir = shader::to_ir(&program);
-    let wgsl = shader::generate_wgsl(&ir);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -902,6 +903,28 @@ fn dxbc_container_does_not_panic_on_huge_chunk_offset() {
     assert!(result.is_ok(), "extract_shader_bytecode panicked");
     let err = result.unwrap().unwrap_err();
     assert!(matches!(err, dxbc::DxbcError::Shared(_)), "{err:?}");
+}
+
+#[test]
+fn rejects_cube_sampler_declarations_until_executor_supports_them() {
+    // ps_3_0 with a `dcl_cube s0` declaration.
+    let mut words = vec![0xFFFF_0300];
+    let decl_token = 3u32 << 27; // texture type = cube
+    words.extend(enc_inst(0x001F, &[decl_token, enc_dst(10, 0, 0xF)]));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let err = shader::parse(&bytes).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            shader::ShaderError::UnsupportedSamplerTextureType {
+                sampler: 0,
+                ty: TextureType::TextureCube
+            }
+        ),
+        "unexpected error: {err:?}"
+    );
 }
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {

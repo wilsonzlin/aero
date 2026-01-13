@@ -13,6 +13,7 @@ use crate::shader_limits::{
     MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX,
     MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
+use crate::sm3::decode::TextureType;
 use crate::vertex::{DeclUsage, LocationMapError, StandardLocationMap, VertexLocationMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -191,6 +192,11 @@ pub struct ShaderProgram {
     /// `def c#` constants embedded in the shader bytecode.
     pub const_defs_f32: BTreeMap<u16, [f32; 4]>,
     pub used_samplers: BTreeSet<u16>,
+    /// Texture type declared for each sampler register (`dcl_2d`, `dcl_cube`, etc).
+    ///
+    /// Aero's current D3D9 executor only supports sampling `texture_2d<f32>`; cube/3D/1D
+    /// declarations are rejected during translation.
+    pub sampler_texture_types: HashMap<u16, TextureType>,
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,
     pub used_outputs: BTreeSet<Register>,
@@ -243,6 +249,10 @@ pub enum ShaderError {
         first: u16,
         second: u16,
     },
+    #[error(
+        "unsupported sampler texture type {ty:?} for s{sampler} (aero currently only supports 2D textures)"
+    )]
+    UnsupportedSamplerTextureType { sampler: u32, ty: TextureType },
 }
 
 fn read_u32(words: &[u32], idx: &mut usize) -> Result<u32, ShaderError> {
@@ -476,6 +486,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     let mut temp_max = 0u16;
     let mut if_stack = Vec::<bool>::new(); // tracks whether an `else` has been seen for each active `if`
     let mut input_dcl_map = HashMap::<u16, (DeclUsage, u8)>::new();
+    let mut sampler_texture_types = HashMap::<u16, TextureType>::new();
 
     while idx < words.len() {
         let token = read_u32(&words, &mut idx)?;
@@ -516,6 +527,36 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             }
             let decl_token = params[0];
             let dst_token = params[1];
+
+            // Sampler declaration: `dcl_* s#` (e.g. `dcl_2d s0`, `dcl_cube s1`).
+            //
+            // The D3D9 token stream encodes sampler texture type in decl_token[27..31] (4 bits).
+            // Values match `D3DSAMPLER_TEXTURE_TYPE`:
+            //   1 = 1d, 2 = 2d, 3 = cube, 4 = volume (3d)
+            //
+            // The current AeroGPU D3D9 executor bind group layout is hard-coded to `texture_2d`,
+            // so reject non-2D declarations early with a deterministic error instead of producing
+            // WGSL that will fail `wgpu` validation later.
+            let dst_reg_type = decode_reg_type(dst_token);
+            if dst_reg_type == 10 {
+                let sampler = decode_reg_num(dst_token);
+                let tex_ty_raw = ((decl_token >> 27) & 0xF) as u8;
+                let ty = match tex_ty_raw {
+                    1 => TextureType::Texture1D,
+                    2 => TextureType::Texture2D,
+                    3 => TextureType::TextureCube,
+                    4 => TextureType::Texture3D,
+                    other => TextureType::Unknown(other),
+                };
+                sampler_texture_types.insert(sampler, ty);
+                if ty != TextureType::Texture2D {
+                    return Err(ShaderError::UnsupportedSamplerTextureType {
+                        sampler: sampler as u32,
+                        ty,
+                    });
+                }
+                continue;
+            }
 
             // D3D9 `DCL` encoding:
             // - usage_raw = decl_token & 0x1F
@@ -845,6 +886,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         instructions,
         const_defs_f32,
         used_samplers,
+        sampler_texture_types,
         used_consts,
         used_inputs,
         used_outputs,
@@ -866,6 +908,7 @@ pub struct ShaderIr {
     pub ops: Vec<Instruction>,
     pub const_defs_f32: BTreeMap<u16, [f32; 4]>,
     pub used_samplers: BTreeSet<u16>,
+    pub sampler_texture_types: HashMap<u16, TextureType>,
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,
     pub used_outputs: BTreeSet<Register>,
@@ -879,6 +922,7 @@ pub fn to_ir(program: &ShaderProgram) -> ShaderIr {
         ops: program.instructions.clone(),
         const_defs_f32: program.const_defs_f32.clone(),
         used_samplers: program.used_samplers.clone(),
+        sampler_texture_types: program.sampler_texture_types.clone(),
         used_consts: program.used_consts.clone(),
         used_inputs: program.used_inputs.clone(),
         used_outputs: program.used_outputs.clone(),
@@ -969,7 +1013,7 @@ pub struct BindGroupLayout {
     pub sampler_bindings: HashMap<u16, (u32, u32)>,
 }
 
-pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
+pub fn generate_wgsl(ir: &ShaderIr) -> Result<WgslOutput, ShaderError> {
     let mut wgsl = String::new();
 
     // Constants: D3D9 has separate `c#` register files for each shader stage. The minimal D3D9
@@ -994,6 +1038,17 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
     // Derive binding numbers from the D3D9 sampler register index for stability:
     //   texture binding = 2*s
     //   sampler binding = 2*s + 1
+    // The executor currently only supports 2D texture bindings. If the shader declared a non-2D
+    // sampler, reject before generating WGSL to avoid `wgpu` validation errors from mismatched
+    // `texture_*` types / bind group layouts.
+    for (&sampler, &ty) in &ir.sampler_texture_types {
+        if ty != TextureType::Texture2D {
+            return Err(ShaderError::UnsupportedSamplerTextureType {
+                sampler: sampler as u32,
+                ty,
+            });
+        }
+    }
     for &s in &ir.used_samplers {
         let tex_binding = u32::from(s) * 2;
         let samp_binding = tex_binding + 1;
@@ -1110,14 +1165,14 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             }
             wgsl.push_str("  return out;\n}\n");
 
-            WgslOutput {
+            Ok(WgslOutput {
                 wgsl,
                 entry_point: "vs_main",
                 bind_group_layout: BindGroupLayout {
                     sampler_group,
                     sampler_bindings,
                 },
-            }
+            })
         }
         ShaderStage::Pixel => {
             // Inputs are driven by varying mapping. We just emit for any used input regs.
@@ -1223,14 +1278,14 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             }
             wgsl.push_str("  return out;\n}\n");
 
-            WgslOutput {
+            Ok(WgslOutput {
                 wgsl,
                 entry_point: "fs_main",
                 bind_group_layout: BindGroupLayout {
                     sampler_group,
                     sampler_bindings,
                 },
-            }
+            })
         }
     }
 }
@@ -1610,7 +1665,7 @@ impl ShaderCache {
             Entry::Vacant(e) => {
                 let program = parse(bytes)?;
                 let ir = to_ir(&program);
-                let wgsl = generate_wgsl(&ir);
+                let wgsl = generate_wgsl(&ir)?;
                 let hash = *e.key();
                 Ok(ShaderCacheLookup {
                     source: ShaderCacheLookupSource::Translated,
