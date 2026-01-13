@@ -1,0 +1,112 @@
+use aero_devices::pci::{
+    PciBdf, PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+};
+use aero_devices::usb::xhci::XhciPciDevice;
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
+}
+
+struct GuestCpu {
+    idt_installed: [bool; 256],
+    handled_vectors: Vec<u8>,
+}
+
+impl GuestCpu {
+    fn new() -> Self {
+        Self {
+            idt_installed: [false; 256],
+            handled_vectors: Vec::new(),
+        }
+    }
+
+    fn install_isr(&mut self, vector: u8) {
+        self.idt_installed[vector as usize] = true;
+    }
+
+    fn service_next_interrupt(&mut self, interrupts: &mut PlatformInterrupts) {
+        let Some(vector) = interrupts.get_pending() else {
+            return;
+        };
+
+        interrupts.acknowledge(vector);
+        assert!(self.idt_installed[vector as usize]);
+        self.handled_vectors.push(vector);
+        interrupts.eoi(vector);
+    }
+}
+
+#[test]
+fn xhci_msi_interrupt_reaches_guest_idt_vector() {
+    let mut dev = XhciPciDevice::default();
+
+    // Platform interrupt controller used as an MSI sink.
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    let mut cpu = GuestCpu::new();
+    cpu.install_isr(0x45);
+
+    // Program MSI config space.
+    let cap_offset = dev
+        .config_mut()
+        .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+        .unwrap() as u16;
+    dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
+    dev.config_mut().write(cap_offset + 0x08, 4, 0);
+    dev.config_mut().write(cap_offset + 0x0c, 2, 0x0045);
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, (ctrl | 0x0001) as u32);
+
+    dev.raise_event_interrupt();
+
+    assert!(
+        !dev.irq_level(),
+        "legacy INTx must be suppressed while MSI is active"
+    );
+
+    cpu.service_next_interrupt(&mut interrupts.borrow_mut());
+    assert_eq!(cpu.handled_vectors, vec![0x45]);
+}
+
+#[test]
+fn xhci_intx_fallback_routes_through_pci_intx_router() {
+    let mut dev = XhciPciDevice::default();
+    let bdf = PciBdf::new(0, 0, 0);
+    let pin = PciInterruptPin::IntA;
+
+    let mut interrupts = PlatformInterrupts::new();
+    interrupts.set_mode(PlatformInterruptMode::Apic);
+
+    let mut intx_router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let gsi = intx_router.gsi_for_intx(bdf, pin);
+
+    let vector = 0x46u8;
+    // PCI INTx is active-low + level-triggered.
+    let low = u32::from(vector) | (1 << 13) | (1 << 15);
+    program_ioapic_entry(&mut interrupts, gsi, low, 0);
+
+    dev.raise_event_interrupt();
+    assert!(dev.irq_level(), "device should assert INTx when MSI is disabled");
+    intx_router.assert_intx(bdf, pin, &mut interrupts);
+    assert_eq!(interrupts.get_pending(), Some(vector));
+
+    interrupts.acknowledge(vector);
+    dev.clear_event_interrupt();
+    intx_router.deassert_intx(bdf, pin, &mut interrupts);
+    interrupts.eoi(vector);
+    assert_eq!(interrupts.get_pending(), None);
+}
+
