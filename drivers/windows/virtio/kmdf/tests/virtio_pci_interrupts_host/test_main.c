@@ -378,6 +378,51 @@ static void TestMsixDispatchAndRouting(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestMsixLimitedVectorRouting(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    BOOLEAN handled;
+
+    ResetRegisterReadInstrumentation();
+    PrepareMsix(&interrupts, &dev, &cb, 2, 2 /* only config + 1 queue vector */);
+
+    assert(interrupts.u.Msix.UsedVectorCount == 2);
+    assert(interrupts.u.Msix.ConfigVector == 0);
+    assert(interrupts.u.Msix.QueueVectors != NULL);
+    assert(interrupts.u.Msix.QueueVectors[0] == 1);
+    assert(interrupts.u.Msix.QueueVectors[1] == 1);
+
+    /* MSI-X ISR must not read ISR status. */
+    assert(WdfTestReadRegisterUcharCount == 0);
+
+    /* Vector 0: config only (no queue mask). */
+    ResetCallbacks(&cb);
+    cb.ExpectedDevice = dev;
+    handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
+    assert(handled == TRUE);
+    WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[0]);
+    assert(cb.ConfigCalls == 1);
+    assert(cb.QueueCallsTotal == 0);
+
+    /* Vector 1: all queues (round-robin onto the single queue vector). */
+    ResetCallbacks(&cb);
+    cb.ExpectedDevice = dev;
+    handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
+    assert(handled == TRUE);
+    WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
+    assert(cb.ConfigCalls == 0);
+    assert(cb.QueueCallsTotal == 2);
+    assert(cb.QueueCallsPerIndex[0] == 1);
+    assert(cb.QueueCallsPerIndex[1] == 1);
+
+    /* Still no ISR status reads in MSI-X mode. */
+    assert(WdfTestReadRegisterUcharCount == 0);
+
+    Cleanup(&interrupts, dev);
+}
+
 static void TestResetInProgressGating(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -528,6 +573,7 @@ int main(void)
     TestIntxSpuriousInterrupt();
     TestIntxRealInterruptDispatch();
     TestMsixDispatchAndRouting();
+    TestMsixLimitedVectorRouting();
     TestResetInProgressGating();
     TestMsixQuiesceResumeVectors();
     printf("virtio_pci_interrupts_host_tests: PASS\n");

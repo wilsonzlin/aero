@@ -264,6 +264,7 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
 
     {
         ULONG messageCount;
+        ULONG queueVectorCount;
         USHORT usedVectorCount;
         WDF_OBJECT_ATTRIBUTES memoryAttributes;
         WDF_OBJECT_ATTRIBUTES interruptAttributes;
@@ -277,10 +278,24 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
         }
         Interrupts->u.Msix.MessageCount = messageCount;
 
-        usedVectorCount = 1;
-        if (messageCount >= (1 + QueueCount)) {
-            usedVectorCount = (USHORT)(1 + QueueCount);
+        //
+        // MSI-X vector policy:
+        // - Always reserve message 0 for config change notifications.
+        // - Use as many additional messages as granted by Windows, bounded by the
+        //   number of queues.
+        //
+        // This ensures we don't throw away granted MSI-X messages when Windows
+        // provides fewer than (1 + QueueCount).
+        //
+        queueVectorCount = 0;
+        if (messageCount >= 2 && QueueCount != 0) {
+            queueVectorCount = messageCount - 1;
+            if (queueVectorCount > QueueCount) {
+                queueVectorCount = QueueCount;
+            }
         }
+
+        usedVectorCount = (USHORT)(1 + queueVectorCount);
 
         Interrupts->u.Msix.UsedVectorCount = usedVectorCount;
         Interrupts->u.Msix.ConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
@@ -338,7 +353,22 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
             if (usedVectorCount == 1) {
                 queueMask = VirtioPciQueueMaskAll(QueueCount);
             } else if (vector != 0) {
-                queueMask = (1ULL << (vector - 1));
+                //
+                // Distribute queues across the available queue vectors in a
+                // simple round-robin scheme:
+                //
+                //   assigned_vector(q) = 1 + (q % queueVectorCount)
+                //
+                // Each vector's DPC drains all queues assigned to it.
+                //
+                ULONG q;
+                ULONG queueVectorIndex = vector - 1;
+
+                for (q = 0; q < QueueCount; q++) {
+                    if ((q % queueVectorCount) == queueVectorIndex) {
+                        queueMask |= (1ULL << q);
+                    }
+                }
             }
 
             interruptContext = VirtioPciInterruptGetContext(Interrupts->u.Msix.Interrupts[vector]);
@@ -371,8 +401,10 @@ NTSTATUS VirtioPciInterruptsPrepareHardware(
                     }
                 } else {
                     for (q = 0; q < QueueCount; q++) {
+                        ULONG vectorIndex = 1 + (q % queueVectorCount);
+
                         WDF_INTERRUPT_INFO_INIT(&info);
-                        WdfInterruptGetInfo(Interrupts->u.Msix.Interrupts[1 + q], &info);
+                        WdfInterruptGetInfo(Interrupts->u.Msix.Interrupts[vectorIndex], &info);
                         messageNumber = info.MessageNumber;
                         Interrupts->u.Msix.QueueVectors[q] = (messageNumber >= VIRTIO_PCI_MSI_NO_VECTOR) ?
                             VIRTIO_PCI_MSI_NO_VECTOR :
