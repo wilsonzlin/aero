@@ -11,6 +11,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const REGEN_CMD: &str = "cargo run -p firmware --bin gen_dsdt --locked";
+// When invoking `--check` via `cargo run`, the `--` separator is required so Cargo forwards the
+// flag to the binary rather than trying to parse it itself.
+const CHECK_CMD: &str = "cargo run -p firmware --bin gen_dsdt --locked -- --check";
 
 #[derive(Debug)]
 enum Error {
@@ -87,7 +90,7 @@ fn run() -> Result<(), Error> {
 
 fn print_usage() {
     println!(
-        "Usage: gen_dsdt [--check]\n\nRegenerates the checked-in ACPI DSDT fixture at crates/firmware/acpi/dsdt.aml.\n\nExamples:\n  {REGEN_CMD}\n  {REGEN_CMD} --check"
+        "Usage: gen_dsdt [--check]\n\nRegenerates the checked-in ACPI DSDT fixture at crates/firmware/acpi/dsdt.aml.\n\nExamples:\n  {REGEN_CMD}\n  {CHECK_CMD}"
     );
 }
 
@@ -192,4 +195,3 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
         }
     }
 }
-
