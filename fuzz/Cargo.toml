@@ -59,6 +59,8 @@ path = "../crates/aero-net-stack"
 
 [dependencies.aero-net-e1000]
 path = "../crates/aero-net-e1000"
+[dependencies.aero-cpu-core]
+path = "../crates/aero-cpu-core"
 
 [[bin]]
 name = "fuzz_mmu_translate"
@@ -207,5 +209,11 @@ doc = false
 [[bin]]
 name = "fuzz_virtio_net_queue"
 path = "fuzz_targets/fuzz_virtio_net_queue.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_tier0_step"
+path = "fuzz_targets/fuzz_tier0_step.rs"
 test = false
 doc = false

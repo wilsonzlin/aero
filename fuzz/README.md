@@ -40,6 +40,7 @@ cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run fuzz_tier0_step
 
 # DXBC / shaders
 cargo +"$nightly" fuzz run fuzz_dxbc_sm4_parse
