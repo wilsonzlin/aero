@@ -11,6 +11,42 @@ The intended developer workflow is:
 3. Generate a test certificate, generate a catalog (`.cat`), and sign `SYS + CAT`
 4. Install on Windows 7 with test-signing enabled (Device Manager → “Have Disk…”)
 
+## Interrupts: INTx baseline, optional MSI/MSI-X
+
+Per the [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md) (§1.8), **INTx is required** and MSI/MSI-X is an optional enhancement.
+MSI/MSI-X must not be required for functionality: if Windows does not allocate MSI/MSI-X, the driver is expected to fall back to INTx.
+
+### Enabling MSI/MSI-X (INF)
+
+On Windows 7, message-signaled interrupts are typically enabled through INF registry settings under the device’s hardware key:
+
+```inf
+[AeroVirtioSnd_Install.NT.HW]
+AddReg = AeroVirtioSnd.Interrupts.AddReg
+
+[AeroVirtioSnd.Interrupts.AddReg]
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+; Optional: request up to N messages (Windows may grant fewer).
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+```
+
+Notes:
+- `MessageNumberLimit` is a request; Windows may allocate fewer messages than requested.
+- If MSI/MSI-X allocation fails (or the device has no MSI/MSI-X capability), Windows will provide an **INTx** interrupt resource.
+- If you modify the INF, regenerate the catalog and re-sign the package (required on Win7 x64 unless test-signing is enabled).
+
+For background, see [`docs/windows/virtio-pci-modern-interrupts.md`](../../../docs/windows/virtio-pci-modern-interrupts.md) (§5).
+
+### Troubleshooting / verifying which interrupt mode you got
+
+- **Device Manager → Properties → Resources**:
+  - INTx usually shows a small IRQ number (often shared).
+  - MSI/MSI-X often shows a very large IRQ number (e.g. `42949672xx`) and may show multiple IRQ entries.
+- **`aero-virtio-selftest.exe` markers**:
+  - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` markers on stdout/COM1.
+  - Once the MSI diagnostics update lands, the `virtio-snd` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+  - See `../tests/guest-selftest/README.md` for how to build/run the tool.
+
 ## Directory layout
 
 | Path | Purpose |

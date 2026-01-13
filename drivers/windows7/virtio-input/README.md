@@ -116,6 +116,38 @@ To confirm the IDs on Windows 7:
 1. Device Manager → the device → **Properties**
 2. **Details** tab → **Hardware Ids**
 
+## Interrupts: INTx baseline, optional MSI/MSI-X
+
+Per the [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md) (§1.8), **INTx is required** and MSI/MSI-X is an optional enhancement.
+MSI/MSI-X must not be required for functionality: if Windows does not allocate MSI/MSI-X, the driver is expected to fall back to INTx.
+
+### INF settings (MSI opt-in)
+
+On Windows 7, MSI/MSI-X allocation is typically controlled by INF registry keys under `Interrupt Management\\MessageSignaledInterruptProperties`.
+The in-tree `inf/aero_virtio_input.inf` already opts in:
+
+```inf
+[AeroVirtioInput_InterruptManagement_AddReg]
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+```
+
+Notes:
+- `MessageNumberLimit` is a request; Windows may allocate fewer messages than requested.
+- If MSI/MSI-X allocation fails (or the device has no MSI/MSI-X capability), Windows will provide an **INTx** interrupt resource.
+
+For background, see [`docs/windows/virtio-pci-modern-interrupts.md`](../../../docs/windows/virtio-pci-modern-interrupts.md) (§5).
+
+### Troubleshooting / verifying which interrupt mode you got
+
+- **Device Manager → Properties → Resources**:
+  - INTx usually shows a small IRQ number (often shared).
+  - MSI/MSI-X often shows a very large IRQ number (e.g. `42949672xx`) and may show multiple IRQ entries.
+- **`aero-virtio-selftest.exe` markers**:
+  - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input|...` markers on stdout/COM1.
+  - Once the MSI diagnostics update lands, the `virtio-input` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+  - See `../tests/guest-selftest/README.md` for how to build/run the tool.
+
 ## Build
 
 ### Supported: WDK10 / MSBuild (CI path)

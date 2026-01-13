@@ -81,6 +81,12 @@ In **Device Manager** (`devmgmt.msc`) → device **Properties** → **Resources*
 - **INTx** typically shows a single small IRQ number (e.g. `IRQ 17`) and may be **shared**.
 - **MSI/MSI-X** typically shows one or more interrupt entries with larger values (often shown in hex) and they are usually **not shared**.
 
+You can also use `aero-virtio-selftest.exe`:
+
+- The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net|...` markers on stdout/COM1.
+- Once the MSI diagnostics update lands, the `virtio-net` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+- See `../tests/guest-selftest/README.md` for how to build/run the tool.
+
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
 ## Files

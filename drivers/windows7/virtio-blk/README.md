@@ -18,6 +18,8 @@
 
 ## Interrupts (INTx vs MSI/MSI-X)
 
+Per the [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md) (§1.8), **INTx is required** and MSI/MSI-X is an optional enhancement.
+
 The miniport supports both:
 
 - **INTx (line-based)** — legacy virtio-pci interrupt semantics using the ISR status byte (read-to-ack).
@@ -65,6 +67,12 @@ In **Device Manager** → device **Properties** → **Resources**:
 
 - **INTx** typically shows a single small IRQ number (and may be shared).
 - **MSI/MSI-X** typically shows one or more interrupt entries with larger values (often shown in hex) and they are usually not shared.
+
+You can also use `aero-virtio-selftest.exe`:
+
+- The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...` markers on stdout/COM1.
+- Once the MSI diagnostics update lands, the `virtio-blk` marker will include additional fields indicating whether MSI/MSI-X was used and how many messages were allocated.
+- See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
