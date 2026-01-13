@@ -13,8 +13,8 @@ in:
 This script extracts all accepted `--...` flags from the tool source and fails
 CI if the README references any `--...` flag that isn't actually parsed today.
 
-Additionally, it checks the Win7 AeroGPU validation playbook's dbgctl command
-section so bring-up docs can't accidentally reference non-existent flags.
+Additionally, it checks dbgctl invocations in the Win7 AeroGPU validation
+playbook so bring-up docs can't accidentally reference non-existent flags.
 
 Rationale: several docs/playbooks historically referenced future/aspirational
 debug knobs (perf capture, hang injection, etc.). This guardrail ensures the
@@ -57,6 +57,31 @@ def extract_validation_dbgctl_section(text: str) -> tuple[str, int] | None:
         return None
     start_line = text[: m.start(1)].count("\n") + 1
     return (m.group(1), start_line)
+
+
+def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
+    """
+    Find referenced dbgctl `--...` flags in places that appear to be dbgctl
+    invocations.
+
+    We intentionally do *not* scan the full file for `--...` because many docs
+    include flags for other tools (test runners, scripts, etc.).
+
+    Current heuristic:
+    - only consider lines that mention `aerogpu_dbgctl` (or `aerogpu_dbgctl.exe`)
+    - skip lines that mention `--dbgctl` (test-runner flags that reference the
+      dbgctl binary by path, but are not dbgctl CLI flags)
+    """
+    text = read_text(path)
+    out: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if "aerogpu_dbgctl" not in line:
+            continue
+        if "--dbgctl" in line:
+            continue
+        for flag in MD_FLAG_RE.findall(line):
+            out.append((line_no, flag))
+    return out
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -105,31 +130,44 @@ def main() -> int:
             print(f"  - {f}", file=sys.stderr)
         return 1
 
-    # Also ensure the Win7 validation playbook's dbgctl section only references
-    # real flags (so it can't drift ahead of implementation).
+    # Also ensure the Win7 validation playbook doesn't reference unknown dbgctl
+    # flags in:
+    #  - its dbgctl command table (section 5.2)
+    #  - dbgctl command examples elsewhere in the file (lines containing
+    #    `aerogpu_dbgctl`)
     validation_text = read_text(WIN7_VALIDATION_DOC)
+
     extracted = extract_validation_dbgctl_section(validation_text)
     if not extracted:
+        rel = WIN7_VALIDATION_DOC.relative_to(ROOT)
         print(
-            f"ERROR: failed to locate the dbgctl command section (### 5.2 .. ### 5.3) in {WIN7_VALIDATION_DOC.relative_to(ROOT)}",
+            f"ERROR: failed to locate dbgctl section (### 5.2 .. ### 5.3) in {rel}",
             file=sys.stderr,
         )
         return 1
 
     section_text, section_start_line = extracted
-    validation_flags = set(MD_FLAG_RE.findall(section_text))
-    unknown_validation = sorted(validation_flags - allowed_flags)
+    section_refs: list[tuple[int, str]] = []
+    for idx, line in enumerate(section_text.splitlines(), start=0):
+        for flag in MD_FLAG_RE.findall(line):
+            section_refs.append((section_start_line + idx, flag))
+
+    invocation_refs = iter_dbgctl_flag_refs(WIN7_VALIDATION_DOC)
+
+    unknown_section = sorted({f for _, f in section_refs} - allowed_flags)
+    unknown_invocations = sorted({f for _, f in invocation_refs} - allowed_flags)
+    unknown_validation = sorted(set(unknown_section) | set(unknown_invocations))
+
     if unknown_validation:
         rel = WIN7_VALIDATION_DOC.relative_to(ROOT)
-        print(f"ERROR: {rel} dbgctl section references unknown flags:", file=sys.stderr)
-        for f in unknown_validation:
-            # Emit best-effort line numbers relative to the full file.
-            for idx, line in enumerate(section_text.splitlines(), start=0):
-                if f in line:
-                    print(f"  - {rel}:{section_start_line + idx}: {f}", file=sys.stderr)
-                    break
-            else:
-                print(f"  - {rel}:?: {f}", file=sys.stderr)
+        print(f"ERROR: {rel} references unknown aerogpu_dbgctl flags:", file=sys.stderr)
+        for unknown_flag in unknown_validation:
+            for line_no, f in section_refs:
+                if f == unknown_flag:
+                    print(f"  - {rel}:{line_no}: {unknown_flag}", file=sys.stderr)
+            for line_no, f in invocation_refs:
+                if f == unknown_flag:
+                    print(f"  - {rel}:{line_no}: {unknown_flag}", file=sys.stderr)
 
         print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
         for f in sorted(allowed_flags):
