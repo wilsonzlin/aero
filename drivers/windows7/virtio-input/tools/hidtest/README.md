@@ -16,6 +16,9 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - `IOCTL_HID_GET_REPORT_DESCRIPTOR` (descriptor length sanity check)
   - `IOCTL_HID_GET_DEVICE_DESCRIPTOR` (cross-check reported descriptor length)
   - `IOCTL_HID_GET_COLLECTION_DESCRIPTOR` (when supported by the OS/headers; useful for newer HIDCLASS consumers)
+- Optionally probes the GetInputReport path (`IOCTL_HID_GET_INPUT_REPORT`) via:
+  - `DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT)` (`--ioctl-get-input-report`)
+  - `HidD_GetInputReport` (`--hidd-get-input-report`)
 - Supports `--selftest` mode to validate the virtio-input HID descriptor contract and exit non-zero on mismatch.
 - Reads input reports via `ReadFile` in a loop and prints raw bytes + best-effort decoding for
   (with optional `--duration`/`--count` auto-exit + summary at end):
@@ -235,6 +238,16 @@ Probe the driver-private counters IOCTL with a short output buffer (verifies the
 
 ```bat
 hidtest.exe --ioctl-query-counters-short
+```
+
+Test the GetInputReport path (should return a single report of the expected size, then return a no-data error when no new input is available):
+
+```bat
+hidtest.exe --keyboard --ioctl-get-input-report
+hidtest.exe --mouse --ioctl-get-input-report
+
+hidtest.exe --keyboard --hidd-get-input-report
+hidtest.exe --mouse --hidd-get-input-report
 ```
 
 Negative test (invalid `HidD_SetOutputReport` buffer pointer; should fail cleanly without crashing the guest):
