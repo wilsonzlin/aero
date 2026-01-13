@@ -46,7 +46,7 @@ pub struct SecurityConfig {
     /// This should only be enabled when running behind a trusted reverse proxy that strips or
     /// overwrites these headers from untrusted clients.
     pub trust_proxy_host: bool,
-    /// Authentication mode for `/l2` WebSocket upgrades.
+    /// Authentication mode for `/l2` WebSocket upgrades (and legacy alias `/eth`).
     pub auth_mode: AuthMode,
     /// Static API key value (only used for `auth_mode=api_key`).
     pub api_key: Option<String>,
