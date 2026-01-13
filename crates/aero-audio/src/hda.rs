@@ -940,6 +940,10 @@ pub struct HdaController {
     rirbctl: u8,
     rirbsts: u8,
     rirbsize: u8,
+    /// Number of RIRB responses written since the last time we raised a RIRB response interrupt.
+    ///
+    /// This implements the Intel HDA `RINTCNT` response interrupt threshold semantics.
+    rirb_responses_since_irq: u16,
 
     streams: Vec<StreamDescriptor>,
     stream_rt: Vec<StreamRuntime>,
@@ -1015,6 +1019,7 @@ impl HdaController {
             rirbctl: 0,
             rirbsts: 0,
             rirbsize: RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256 | 0x2, // 256 entries
+            rirb_responses_since_irq: 0,
 
             streams: vec![StreamDescriptor::default(); num_streams],
             stream_rt: (0..num_streams)
@@ -1518,6 +1523,8 @@ impl HdaController {
             let new_cnt = (new >> 16) as u16;
             if (new_wp & 0x8000) != 0 {
                 self.rirbwp = 0;
+                // RIRBWP reset also resets the response interrupt threshold counter in hardware.
+                self.rirb_responses_since_irq = 0;
             } else {
                 self.rirbwp = (new_wp & 0x00ff) & self.rirb_ptr_mask();
             }
@@ -1530,7 +1537,20 @@ impl HdaController {
                 let addr = offset + i as u64;
                 match addr {
                     REG_RIRBCTL => self.rirbctl = byte,
-                    REG_RIRBSTS => self.rirbsts &= !byte,
+                    REG_RIRBSTS => {
+                        let prev = self.rirbsts;
+                        self.rirbsts &= !byte;
+                        // Treat clearing RIRBSTS bit0 (RW1C) as the guest's acknowledgement of
+                        // the response-received condition and reset our `RINTCNT` accumulator so
+                        // subsequent response interrupts are counted from this point.
+                        //
+                        // Note: The Intel HDA spec defines RIRBSTS bit0 as an interrupt/status
+                        // flag. We model it as "response received" and use it as the closest
+                        // available ack point for the simplified controller interrupt path.
+                        if (prev & 1) != 0 && (byte & 1) != 0 {
+                            self.rirb_responses_since_irq = 0;
+                        }
+                    }
                     REG_RIRBSIZE => {
                         // Only the size selection bits (1:0) are writable; capability bits are RO.
                         self.rirbsize = (self.rirbsize & !0x3) | (byte & 0x3);
@@ -1691,6 +1711,7 @@ impl HdaController {
         self.rirbctl = 0;
         self.rirbsts = 0;
         self.rirbsize = RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256 | 0x2;
+        self.rirb_responses_since_irq = 0;
 
         for (sd, rt) in self.streams.iter_mut().zip(self.stream_rt.iter_mut()) {
             *sd = StreamDescriptor::default();
@@ -1814,9 +1835,35 @@ impl HdaController {
         }
 
         self.rirbsts |= 1; // response received
+        self.rirb_responses_since_irq = self.rirb_responses_since_irq.saturating_add(1);
         if (self.rirbctl & RIRBCTL_RINTCTL) != 0 {
-            self.raise_controller_interrupt();
+            let threshold = self.rirb_interrupt_threshold();
+            if self.rirb_responses_since_irq >= threshold {
+                self.rirb_responses_since_irq = 0;
+                self.raise_controller_interrupt();
+            }
         }
+    }
+
+    fn rirb_interrupt_threshold(&self) -> u16 {
+        // Intel HDA exposes `RINTCNT` as a programmable response interrupt threshold: once the
+        // controller has written N responses into the guest's RIRB, it should raise a controller
+        // interrupt (assuming `RIRBCTL.RINTCTL` is set).
+        //
+        // The spec treats a value of 0 specially; empirically Windows is happy when 0 behaves like
+        // "interrupt on every response". Use that mapping so the default reset value keeps working
+        // with existing guests/tests.
+        //
+        // Defensive handling:
+        // - Only bits 7:0 are defined; mask off reserved upper bits.
+        // - Clamp to the currently-selected RIRB ring size so bogus values can't suppress
+        //   interrupts indefinitely.
+        let entries = self.rirb_entries();
+        let mut cnt = self.rintcnt & 0x00ff;
+        if cnt == 0 {
+            cnt = 1;
+        }
+        cnt.min(entries).max(1)
     }
 
     fn raise_controller_interrupt(&mut self) {
@@ -2274,6 +2321,8 @@ impl HdaController {
         self.rirbsts = state.rirbsts;
         self.rirbsize = state.rirbsize;
         self.rirbwp &= self.rirb_ptr_mask();
+        // This is derived/runtime state that is not currently snapshotted; reset it on restore.
+        self.rirb_responses_since_irq = 0;
 
         for (sd, s) in self.streams.iter_mut().zip(&state.streams) {
             sd.ctl = s.ctl;
@@ -2468,6 +2517,49 @@ mod tests {
 
         let resp = mem.read_u32(rirb_base);
         assert_eq!(resp, 0x1af4_1620);
+        assert!(hda.take_irq());
+        assert_ne!(hda.mmio_read(REG_INTSTS, 4) as u32 & INTSTS_CIS, 0);
+    }
+
+    #[test]
+    fn corb_rirb_rintcnt_batches_response_interrupts() {
+        let mut hda = HdaController::new();
+        let mut mem = GuestMemory::new(0x4000);
+
+        // Enable controller.
+        hda.mmio_write(REG_GCTL, 4, GCTL_CRST as u64);
+
+        // Setup CORB/RIRB in guest memory.
+        let corb_base = 0x1000u64;
+        let rirb_base = 0x2000u64;
+        hda.mmio_write(REG_CORBLBASE, 4, corb_base);
+        hda.mmio_write(REG_RIRBLBASE, 4, rirb_base);
+
+        // Set pointers so first command/response lands at entry 0.
+        hda.mmio_write(REG_CORBRP, 2, 0x00ff);
+        hda.mmio_write(REG_RIRBWP, 2, 0x00ff);
+
+        // Enable response interrupts (CIS) and global interrupt.
+        hda.mmio_write(REG_INTCTL, 4, (INTCTL_GIE | (1 << 30)) as u64);
+        hda.mmio_write(REG_RINTCNT, 2, 2);
+        hda.mmio_write(REG_RIRBCTL, 1, (RIRBCTL_RUN | RIRBCTL_RINTCTL) as u64);
+        hda.mmio_write(REG_CORBCTL, 1, CORBCTL_RUN as u64);
+
+        // Queue two verbs: root GET_PARAMETER vendor id + revision id.
+        mem.write_u32(corb_base, cmd(0, 0, verb_12(0xF00, 0x00)));
+        mem.write_u32(corb_base + 4, cmd(0, 0, verb_12(0xF00, 0x02)));
+
+        // Process the first response.
+        hda.mmio_write(REG_CORBWP, 2, 0x0000);
+        hda.process(&mut mem, 0);
+        assert_eq!(mem.read_u32(rirb_base), 0x1af4_1620);
+        assert!(!hda.take_irq());
+        assert_eq!(hda.mmio_read(REG_INTSTS, 4) as u32 & INTSTS_CIS, 0);
+
+        // Process the second response; now the threshold is reached.
+        hda.mmio_write(REG_CORBWP, 2, 0x0001);
+        hda.process(&mut mem, 0);
+        assert_eq!(mem.read_u32(rirb_base + 8), 0x0001_0000);
         assert!(hda.take_irq());
         assert_ne!(hda.mmio_read(REG_INTSTS, 4) as u32 & INTSTS_CIS, 0);
     }
