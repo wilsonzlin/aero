@@ -1329,13 +1329,13 @@ impl UsbHidPassthroughBridge {
         &mut self,
         request_id: u32,
         report_id: u32,
-        _error: Option<String>,
+        error: Option<String>,
     ) -> Result<bool, JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         // `UsbHidPassthroughHandle` no longer carries an error string for feature report failures,
         // but keep this JS-callable API stable.
-        drop(_error);
+        drop(error);
         Ok(self
             .device
             .fail_feature_report_request(request_id, report_id))
@@ -1476,13 +1476,13 @@ impl WebHidPassthroughBridge {
         &mut self,
         request_id: u32,
         report_id: u32,
-        _error: Option<String>,
+        error: Option<String>,
     ) -> Result<bool, JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         // `UsbHidPassthroughHandle` no longer carries an error string for feature report failures,
         // but keep this JS-callable API stable.
-        drop(_error);
+        drop(error);
         Ok(self
             .device
             .fail_feature_report_request(request_id, report_id))

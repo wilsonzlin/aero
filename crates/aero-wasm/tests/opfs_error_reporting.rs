@@ -191,7 +191,6 @@ async fn cow_opfs_open_unavailable_error_includes_operation_and_both_paths_and_h
         "expected storage_capabilities() tip in message, got: {msg}"
     );
 }
-
 #[wasm_bindgen_test(async)]
 async fn install_media_iso_opfs_existing_unavailable_error_includes_operation_and_hint() {
     if aero_opfs::opfs_sync_access_supported() {

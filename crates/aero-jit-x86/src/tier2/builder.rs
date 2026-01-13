@@ -1367,7 +1367,6 @@ pub fn lower_tier1_ir_block_for_test(ir: &IrBlock) -> Block {
         .try_into()
         .expect("Tier-1 IR value count overflows u32");
     let base = 0u32;
-
     let mut lower = BlockLowerer::new(ir.entry_rip, base, &mut next_value);
     lower.lower_block(ir);
 
