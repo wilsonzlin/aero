@@ -10,6 +10,7 @@ pub use local_fs::LocalFsImageStore;
 pub use manifest::{Manifest, ManifestError, ManifestImage};
 
 pub const CONTENT_TYPE_DISK_IMAGE: &str = "application/octet-stream";
+pub const CONTENT_TYPE_JSON: &str = "application/json";
 pub const MAX_IMAGE_ID_LEN: usize = 128;
 /// Maximum length allowed for ETag values supplied by store backends/manifests.
 ///
@@ -36,6 +37,15 @@ pub struct ImageCatalogEntry {
 }
 
 pub type BoxedAsyncRead = Pin<Box<dyn AsyncRead + Send>>;
+
+/// A chunked-image object (manifest or chunk file) returned by [`ImageStore`].
+///
+/// This is a minimal container so store backends can provide a streamable reader plus metadata
+/// needed for HTTP headers (size, validators, etc).
+pub struct ChunkedObject {
+    pub meta: ImageMeta,
+    pub reader: BoxedAsyncRead,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -76,6 +86,26 @@ pub trait ImageStore: Send + Sync {
         start: u64,
         len: u64,
     ) -> Result<BoxedAsyncRead, StoreError>;
+
+    /// Open the chunked-disk-image manifest (`manifest.json`) for an image, if available.
+    ///
+    /// Stores that do not support chunked delivery should return `StoreError::NotFound` (the
+    /// default implementation does this).
+    async fn open_chunked_manifest(&self, _image_id: &str) -> Result<ChunkedObject, StoreError> {
+        Err(StoreError::NotFound)
+    }
+
+    /// Open a single chunk object (`chunks/<name>`) for an image, if available.
+    ///
+    /// Stores that do not support chunked delivery should return `StoreError::NotFound` (the
+    /// default implementation does this).
+    async fn open_chunked_chunk(
+        &self,
+        _image_id: &str,
+        _chunk_name: &str,
+    ) -> Result<ChunkedObject, StoreError> {
+        Err(StoreError::NotFound)
+    }
 
     async fn exists(&self, image_id: &str) -> Result<bool, StoreError> {
         match self.get_meta(image_id).await {

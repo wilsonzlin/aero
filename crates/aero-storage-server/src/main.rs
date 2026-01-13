@@ -78,6 +78,10 @@ async fn async_main() -> anyhow::Result<()> {
         state = state.with_max_range_bytes(max_range_bytes);
     }
 
+    if let Some(max_chunk_bytes) = config.max_chunk_bytes {
+        state = state.with_max_chunk_bytes(max_chunk_bytes);
+    }
+
     if let Some(max_age_secs) = config.public_cache_max_age_secs {
         state = state.with_public_cache_max_age(Duration::from_secs(max_age_secs));
     }
@@ -109,6 +113,7 @@ async fn async_main() -> anyhow::Result<()> {
         cors_origins = ?config.cors_origins,
         cross_origin_resource_policy = %corp_policy,
         max_range_bytes = ?config.max_range_bytes,
+        max_chunk_bytes = ?config.max_chunk_bytes,
         public_cache_max_age_secs = ?config.public_cache_max_age_secs,
         cors_preflight_max_age_secs = ?config.cors_preflight_max_age_secs,
         max_concurrent_bytes_requests = config.max_concurrent_bytes_requests,

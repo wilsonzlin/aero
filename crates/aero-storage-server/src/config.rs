@@ -64,6 +64,15 @@ struct Args {
     #[arg(long, env = "AERO_STORAGE_MAX_RANGE_BYTES")]
     max_range_bytes: Option<u64>,
 
+    /// Maximum number of bytes allowed to be served for a single chunk object in chunked disk
+    /// image delivery (`/v1/images/:image_id/chunked/chunks/...`).
+    ///
+    /// This is a basic DoS hardening knob to prevent pathological chunk reads.
+    ///
+    /// Environment variable: `AERO_STORAGE_MAX_CHUNK_BYTES`.
+    #[arg(long, env = "AERO_STORAGE_MAX_CHUNK_BYTES")]
+    max_chunk_bytes: Option<u64>,
+
     /// Cache max-age (in seconds) used for publicly cacheable disk image bytes responses.
     ///
     /// Environment variable: `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS`.
@@ -120,6 +129,7 @@ pub struct Config {
     pub require_manifest: bool,
     pub log_level: String,
     pub max_range_bytes: Option<u64>,
+    pub max_chunk_bytes: Option<u64>,
     pub public_cache_max_age_secs: Option<u64>,
     pub cors_preflight_max_age_secs: Option<u64>,
     pub max_concurrent_bytes_requests: usize,
@@ -198,6 +208,7 @@ impl Config {
             require_manifest: args.require_manifest,
             log_level,
             max_range_bytes: args.max_range_bytes,
+            max_chunk_bytes: args.max_chunk_bytes,
             public_cache_max_age_secs: args.public_cache_max_age_secs,
             cors_preflight_max_age_secs: args.cors_preflight_max_age_secs,
             max_concurrent_bytes_requests: args.max_concurrent_bytes_requests,

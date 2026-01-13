@@ -36,6 +36,7 @@ use tokio_util::io::ReaderStream;
 use tracing::Instrument;
 
 const DEFAULT_MAX_TOTAL_BYTES: u64 = 8 * 1024 * 1024;
+const DEFAULT_MAX_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 const DEFAULT_PUBLIC_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone)]
@@ -43,6 +44,7 @@ pub struct ImagesState {
     store: Arc<dyn ImageStore>,
     metrics: Arc<Metrics>,
     range_options: RangeOptions,
+    max_chunk_bytes: u64,
     require_range: bool,
     cors: CorsConfig,
     cross_origin_resource_policy: HeaderValue,
@@ -60,6 +62,7 @@ impl ImagesState {
             range_options: RangeOptions {
                 max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             },
+            max_chunk_bytes: DEFAULT_MAX_CHUNK_BYTES,
             require_range: false,
             cors: CorsConfig::default(),
             cross_origin_resource_policy: HeaderValue::from_static("same-site"),
@@ -74,6 +77,13 @@ impl ImagesState {
 
     pub fn with_range_options(mut self, range_options: RangeOptions) -> Self {
         self.range_options = range_options;
+        self
+    }
+
+    /// Configure the maximum number of bytes allowed to be served for a single chunk object in
+    /// chunked disk image delivery (`/v1/images/:image_id/chunked/chunks/...`).
+    pub fn with_max_chunk_bytes(mut self, max_chunk_bytes: u64) -> Self {
+        self.max_chunk_bytes = max_chunk_bytes;
         self
     }
 
@@ -151,6 +161,14 @@ impl ImagesState {
 
     pub(crate) fn metrics(&self) -> &Metrics {
         self.metrics.as_ref()
+    }
+
+    pub(crate) fn store(&self) -> &Arc<dyn ImageStore> {
+        &self.store
+    }
+
+    pub(crate) fn max_chunk_bytes(&self) -> u64 {
+        self.max_chunk_bytes
     }
 
     pub(crate) fn metrics_endpoint_disabled(&self) -> bool {
@@ -491,7 +509,7 @@ async fn serve_image(
     attach_bytes_permit(response, permit)
 }
 
-fn try_acquire_bytes_permit(
+pub(crate) fn try_acquire_bytes_permit(
     state: &ImagesState,
     req_headers: &HeaderMap,
 ) -> Result<Option<OwnedSemaphorePermit>, Box<Response>> {
@@ -509,7 +527,10 @@ fn try_acquire_bytes_permit(
     }
 }
 
-fn attach_bytes_permit(mut response: Response, permit: Option<OwnedSemaphorePermit>) -> Response {
+pub(crate) fn attach_bytes_permit(
+    mut response: Response,
+    permit: Option<OwnedSemaphorePermit>,
+) -> Response {
     let Some(permit) = permit else {
         return response;
     };

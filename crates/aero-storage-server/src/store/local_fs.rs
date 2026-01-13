@@ -8,8 +8,8 @@ use tokio::sync::OnceCell;
 
 use super::manifest::{Manifest, ManifestError, ManifestImage};
 use super::{
-    validate_image_id, BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, StoreError,
-    CONTENT_TYPE_DISK_IMAGE,
+    validate_image_id, BoxedAsyncRead, ChunkedObject, ImageCatalogEntry, ImageMeta, ImageStore,
+    StoreError, CONTENT_TYPE_DISK_IMAGE, CONTENT_TYPE_JSON,
 };
 
 /// Local filesystem-backed [`ImageStore`].
@@ -313,6 +313,79 @@ impl ImageStore for LocalFsImageStore {
         file.seek(SeekFrom::Start(start)).await?;
 
         Ok(Box::pin(file.take(len)))
+    }
+
+    async fn open_chunked_manifest(&self, image_id: &str) -> Result<ChunkedObject, StoreError> {
+        validate_image_id(image_id)?;
+
+        let path = self
+            .root
+            .join("chunked")
+            .join(Path::new(image_id))
+            .join("manifest.json");
+        let canonical = self.ensure_within_root(&path).await?;
+
+        let meta = fs::metadata(&canonical).await.map_err(map_not_found)?;
+        if !meta.is_file() {
+            return Err(StoreError::NotFound);
+        }
+
+        let last_modified = meta
+            .modified()
+            .ok()
+            .filter(|t| t.duration_since(UNIX_EPOCH).is_ok());
+        let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
+
+        let file = fs::File::open(&canonical).await.map_err(map_not_found)?;
+
+        Ok(ChunkedObject {
+            meta: ImageMeta {
+                size: meta.len(),
+                etag,
+                last_modified,
+                content_type: CONTENT_TYPE_JSON,
+            },
+            reader: Box::pin(file),
+        })
+    }
+
+    async fn open_chunked_chunk(
+        &self,
+        image_id: &str,
+        chunk_name: &str,
+    ) -> Result<ChunkedObject, StoreError> {
+        validate_image_id(image_id)?;
+
+        let path = self
+            .root
+            .join("chunked")
+            .join(Path::new(image_id))
+            .join("chunks")
+            .join(Path::new(chunk_name));
+        let canonical = self.ensure_within_root(&path).await?;
+
+        let meta = fs::metadata(&canonical).await.map_err(map_not_found)?;
+        if !meta.is_file() {
+            return Err(StoreError::NotFound);
+        }
+
+        let last_modified = meta
+            .modified()
+            .ok()
+            .filter(|t| t.duration_since(UNIX_EPOCH).is_ok());
+        let etag = Some(etag_from_size_and_mtime(meta.len(), last_modified));
+
+        let file = fs::File::open(&canonical).await.map_err(map_not_found)?;
+
+        Ok(ChunkedObject {
+            meta: ImageMeta {
+                size: meta.len(),
+                etag,
+                last_modified,
+                content_type: CONTENT_TYPE_DISK_IMAGE,
+            },
+            reader: Box::pin(file),
+        })
     }
 }
 

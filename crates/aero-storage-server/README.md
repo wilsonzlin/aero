@@ -17,6 +17,8 @@ metrics and basic health endpoints.
 - `GET /v1/images/:id/meta` – image metadata (size, etag, last_modified, etc)
 - `GET|HEAD /v1/images/:image_id` (or `/v1/images/:image_id/data`) – stream image bytes
   (supports `Range` requests)
+- `GET /v1/images/:image_id/chunked/manifest.json` – fetch a pre-chunked image manifest (no `Range`)
+- `GET /v1/images/:image_id/chunked/chunks/:chunkName` – fetch a single chunk object (no `Range`)
 
 Notes:
 
@@ -41,6 +43,7 @@ Configuration is via **CLI flags with env var fallbacks** (powered by `clap`).
 | `--log-level` | `AERO_STORAGE_LOG_LEVEL` | `info` |
 | `--max-concurrent-bytes-requests` | `AERO_STORAGE_MAX_CONCURRENT_BYTES_REQUESTS` | `64` (0 = unlimited) |
 | `--max-range-bytes` | `AERO_STORAGE_MAX_RANGE_BYTES` | `8388608` (8 MiB) |
+| `--max-chunk-bytes` | `AERO_STORAGE_MAX_CHUNK_BYTES` | `8388608` (8 MiB) |
 | `--public-cache-max-age-secs` | `AERO_STORAGE_PUBLIC_CACHE_MAX_AGE_SECS` | `3600` |
 | `--cors-preflight-max-age-secs` | `AERO_STORAGE_CORS_PREFLIGHT_MAX_AGE_SECS` | `86400` |
 | `--require-range` | `AERO_STORAGE_REQUIRE_RANGE` | `false` |
@@ -89,6 +92,32 @@ curl -sSf http://localhost:8080/metrics
 Put disk images under `./images` (or the configured `--images-root`). If a `manifest.json` exists
 under the images root, it is used as the image catalog; otherwise the server falls back to a
 directory listing (development only).
+
+## Chunked disk images (no-Range delivery)
+
+In addition to HTTP `Range` streaming, `aero-storage-server` can serve **pre-chunked** disk images
+using the chunked format described in [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md).
+
+On-disk layout under `--images-root`:
+
+```text
+chunked/<image_id>/
+  manifest.json
+  chunks/
+    00000000.bin
+    00000001.bin
+    ...
+```
+
+Notes:
+
+- `image_id` uses the same validation rules as the main bytes endpoints:
+  `[A-Za-z0-9._-]{1,128}` (and must not be `.` or `..`).
+- `chunkName` is strictly validated as `^[0-9]{8}\\.bin$` (fixed-width, zero-padded decimal).
+- Chunk responses are capped by `--max-chunk-bytes` (default: 8 MiB) as basic DoS hardening.
+- Public chunked responses use long-lived `Cache-Control` (including `immutable`). Treat the
+  on-disk `chunked/<image_id>/...` contents as immutable, or publish new content under a new
+  `image_id` (or include a version string in the `image_id`).
 
 The manifest supports optional per-image cache validator overrides to enable stable browser (OPFS)
 and CDN caching even if filesystem mtimes change during copy/restore:

@@ -44,6 +44,7 @@ pub struct AppState {
     pub cors: CorsConfig,
     pub cross_origin_resource_policy: HeaderValue,
     range_options: Option<http::range::RangeOptions>,
+    max_chunk_bytes: Option<u64>,
     public_cache_max_age: Option<Duration>,
     max_concurrent_bytes_requests: usize,
     require_range: bool,
@@ -59,6 +60,7 @@ impl AppState {
             cors: CorsConfig::default(),
             cross_origin_resource_policy: HeaderValue::from_static("same-site"),
             range_options: None,
+            max_chunk_bytes: None,
             public_cache_max_age: None,
             max_concurrent_bytes_requests: DEFAULT_MAX_CONCURRENT_BYTES_REQUESTS,
             require_range: false,
@@ -106,6 +108,13 @@ impl AppState {
         self
     }
 
+    /// Configure the maximum number of bytes allowed to be served for a single chunk object in
+    /// chunked disk image delivery (`/v1/images/:image_id/chunked/chunks/...`).
+    pub fn with_max_chunk_bytes(mut self, max_chunk_bytes: u64) -> Self {
+        self.max_chunk_bytes = Some(max_chunk_bytes);
+        self
+    }
+
     pub fn with_public_cache_max_age(mut self, max_age: Duration) -> Self {
         self.public_cache_max_age = Some(max_age);
         self
@@ -142,6 +151,7 @@ pub fn app(state: AppState) -> axum::Router {
     let cors = state.cors.clone();
     let cross_origin_resource_policy = state.cross_origin_resource_policy.clone();
     let range_options = state.range_options;
+    let max_chunk_bytes = state.max_chunk_bytes;
     let public_cache_max_age = state.public_cache_max_age;
     let max_concurrent_bytes_requests = state.max_concurrent_bytes_requests;
     let require_range = state.require_range;
@@ -159,6 +169,9 @@ pub fn app(state: AppState) -> axum::Router {
         .with_metrics_auth_token(metrics_auth_token);
     if let Some(range_options) = range_options {
         images_state = images_state.with_range_options(range_options);
+    }
+    if let Some(max_chunk_bytes) = max_chunk_bytes {
+        images_state = images_state.with_max_chunk_bytes(max_chunk_bytes);
     }
     if let Some(max_age) = public_cache_max_age {
         images_state = images_state.with_public_cache_max_age(max_age);

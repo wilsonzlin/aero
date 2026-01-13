@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod chunked;
 pub mod images;
 pub mod range;
 
@@ -18,12 +19,17 @@ pub fn router(store: Arc<dyn ImageStore>, metrics: Arc<Metrics>) -> Router {
 pub fn router_with_state(state: images::ImagesState) -> Router {
     let router = Router::<images::ImagesState>::new()
         .merge(images::router())
+        .merge(chunked::router())
         // DoS hardening: reject pathological `:image_id` segments before `Path<String>` extraction
         // to avoid allocating attacker-controlled huge IDs.
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             images::image_id_path_len_guard,
         ));
+    let router = router.route_layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        chunked::chunk_name_path_len_guard,
+    ));
     let router = if state.metrics_endpoint_disabled() {
         router
     } else {
