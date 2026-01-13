@@ -11,6 +11,25 @@ import { hex16, hex8 } from "./usb_hex";
 
 export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
 
+export interface WebUsbBackendOptions {
+  /**
+   * When the guest controller is full-speed only (e.g. UHCI), and the physical
+   * device is currently operating at high speed, the guest may request the
+   * CONFIGURATION descriptor (0x02) expecting a full-speed configuration.
+   *
+   * In that case we can satisfy the guest by requesting
+   * OTHER_SPEED_CONFIGURATION (0x07) from the device and rewriting the
+   * top-level descriptor type byte back to CONFIGURATION.
+   *
+   * For high-speed/superspeed guest controllers (EHCI/xHCI), this translation is
+   * incorrect because the guest expects the device's real current-speed
+   * configuration descriptor.
+   *
+   * Defaults to `true` for backwards compatibility (UHCI passthrough).
+   */
+  translateOtherSpeedConfigurationDescriptor?: boolean;
+}
+
 export function isWebUsbSupported(): boolean {
   if (typeof navigator === "undefined") return false;
   return !!(navigator as Navigator & { usb?: USB }).usb;
@@ -157,7 +176,15 @@ const BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_INTERFACE = 0x01;
 const BM_REQUEST_TYPE_HOST_TO_DEVICE_STANDARD_ENDPOINT = 0x02;
 const FEATURE_SELECTOR_ENDPOINT_HALT = 0x00;
 
-function shouldTranslateConfigurationDescriptor(setup: SetupPacket): boolean {
+function resolveWebUsbBackendOptions(options?: WebUsbBackendOptions): Required<WebUsbBackendOptions> {
+  return { translateOtherSpeedConfigurationDescriptor: options?.translateOtherSpeedConfigurationDescriptor ?? true };
+}
+
+function shouldTranslateConfigurationDescriptor(
+  setup: SetupPacket,
+  options: Required<WebUsbBackendOptions>,
+): boolean {
+  if (!options.translateOtherSpeedConfigurationDescriptor) return false;
   return (
     setup.bRequest === GET_DESCRIPTOR &&
     (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_DEVICE_TO_HOST_STANDARD_DEVICE &&
@@ -178,31 +205,16 @@ export type WebUsbControlInResult =
   | { status: "stall" }
   | { status: "babble" };
 
-export type WebUsbControlInOptions = {
-  /**
-   * When true (default), attempt to fetch `OTHER_SPEED_CONFIGURATION` (0x07) and rewrite it into a
-   * `CONFIGURATION` (0x02) descriptor blob when the guest requests
-   * `GET_DESCRIPTOR(CONFIGURATION)`.
-   *
-   * This is a UHCI/full-speed compatibility hack for WebUSB passthrough:
-   * high-speed devices often return a configuration descriptor with high-speed max packet sizes,
-   * which a USB 1.1 guest cannot use.
-   *
-   * When a passthrough device is attached to an EHCI/xHCI controller (high-speed view), this must
-   * be disabled so the guest sees the device's high-speed descriptors unmodified.
-   */
-  translateOtherSpeedConfig?: boolean;
-};
-
 export async function executeWebUsbControlIn(
   device: Pick<USBDevice, "controlTransferIn">,
   setup: SetupPacket,
-  options: WebUsbControlInOptions = {},
+  options?: WebUsbBackendOptions,
 ): Promise<WebUsbControlInResult> {
   const length = setup.wLength & 0xffff;
 
-  const translateOtherSpeedConfig = options.translateOtherSpeedConfig ?? true;
-  if (translateOtherSpeedConfig && shouldTranslateConfigurationDescriptor(setup)) {
+  const resolvedOptions = resolveWebUsbBackendOptions(options);
+
+  if (shouldTranslateConfigurationDescriptor(setup, resolvedOptions)) {
     const descriptorIndex = setup.wValue & 0x00ff;
     const otherSpeedSetup: SetupPacket = {
       ...setup,
@@ -253,14 +265,14 @@ function errorCompletion(kind: UsbHostAction["kind"], id: number, message: strin
 
 export class WebUsbBackend {
   private readonly device: USBDevice;
+  private readonly options: Required<WebUsbBackendOptions>;
   private claimedConfigurationValue: number | null = null;
   private readonly claimedInterfaces = new Set<number>();
-  private readonly translateOtherSpeedConfig: boolean;
 
-  constructor(device: USBDevice, options: { translateOtherSpeedConfig?: boolean } = {}) {
+  constructor(device: USBDevice, options?: WebUsbBackendOptions) {
     assertWebUsbSupported();
     this.device = device;
-    this.translateOtherSpeedConfig = options.translateOtherSpeedConfig ?? true;
+    this.options = resolveWebUsbBackendOptions(options);
   }
 
   async ensureOpenAndClaimed(): Promise<void> {
@@ -465,9 +477,7 @@ export class WebUsbBackend {
             return { kind: "controlIn", id: action.id, status: "error", message: directionCheck.message };
           }
 
-          const result = await executeWebUsbControlIn(this.device, action.setup, {
-            translateOtherSpeedConfig: this.translateOtherSpeedConfig,
-          });
+          const result = await executeWebUsbControlIn(this.device, action.setup, this.options);
           if (result.status === "ok") {
             return { kind: "controlIn", id: action.id, status: "success", data: result.data };
           }

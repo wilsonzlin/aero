@@ -60,7 +60,7 @@ describe("webusb_backend helpers", () => {
   });
 });
 
-describe("executeWebUsbControlIn", () => {
+describe("webusb_backend executeWebUsbControlIn", () => {
   it("translates OTHER_SPEED_CONFIGURATION to CONFIGURATION for full-speed guests", async () => {
     const controlTransferIn = vi.fn<[USBControlTransferParameters, number], Promise<USBInTransferResult>>();
     controlTransferIn.mockResolvedValueOnce({
@@ -77,6 +77,7 @@ describe("executeWebUsbControlIn", () => {
         wIndex: 0x0000,
         wLength: 9,
       },
+      { translateOtherSpeedConfigurationDescriptor: true },
     );
 
     expect(res.status).toBe("ok");
@@ -104,7 +105,7 @@ describe("executeWebUsbControlIn", () => {
         wIndex: 0x0000,
         wLength: 9,
       },
-      { translateOtherSpeedConfig: false },
+      { translateOtherSpeedConfigurationDescriptor: false },
     );
 
     expect(res.status).toBe("ok");
@@ -134,6 +135,7 @@ describe("executeWebUsbControlIn", () => {
         wIndex: 0x0000,
         wLength: 9,
       },
+      { translateOtherSpeedConfigurationDescriptor: true },
     );
 
     expect(res.status).toBe("ok");
@@ -144,9 +146,37 @@ describe("executeWebUsbControlIn", () => {
     expect(controlTransferIn.mock.calls[0]?.[0].value).toBe(0x0700);
     expect(controlTransferIn.mock.calls[1]?.[0].value).toBe(0x0200);
   });
+
+  it("does not translate CONFIGURATION to OTHER_SPEED_CONFIGURATION when disabled", async () => {
+    const controlTransferIn = vi.fn<[USBControlTransferParameters, number], Promise<USBInTransferResult>>();
+    controlTransferIn.mockResolvedValueOnce({
+      status: "ok",
+      data: dataViewFromBytes([0x09, 0x02, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]),
+    });
+
+    const res = await executeWebUsbControlIn(
+      { controlTransferIn },
+      {
+        bmRequestType: 0x80,
+        bRequest: 0x06,
+        wValue: 0x0200,
+        wIndex: 0x0000,
+        wLength: 9,
+      },
+      { translateOtherSpeedConfigurationDescriptor: false },
+    );
+
+    expect(res.status).toBe("ok");
+    if (res.status !== "ok") throw new Error("unreachable");
+    expect(Array.from(res.data)).toEqual([0x09, 0x02, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]);
+
+    expect(controlTransferIn).toHaveBeenCalledTimes(1);
+    expect(controlTransferIn.mock.calls[0]?.[0].value).toBe(0x0200);
+    expect(controlTransferIn.mock.calls[0]?.[1]).toBe(9);
+  });
 });
 
-describe("WebUsbBackend.ensureOpenAndClaimed", () => {
+describe("webusb_backend WebUsbBackend.ensureOpenAndClaimed", () => {
   it("claims available interfaces but tolerates protected/failed claims", async () => {
     await withFakeNavigatorUsb(async () => {
       const iface1 = { interfaceNumber: 1, claimed: false, alternates: [], alternate: {} };
@@ -280,7 +310,7 @@ describe("WebUsbBackend.ensureOpenAndClaimed", () => {
   });
 });
 
-describe("WebUsbBackend.execute controlOut translations", () => {
+describe("webusb_backend WebUsbBackend.execute controlOut translations", () => {
   it("translates SET_CONFIGURATION into device.selectConfiguration", async () => {
     await withFakeNavigatorUsb(async () => {
       const iface1 = { interfaceNumber: 1, claimed: true, alternates: [], alternate: {} };

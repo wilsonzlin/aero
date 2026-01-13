@@ -1,4 +1,4 @@
-import { WebUsbBackend, type UsbHostAction, type UsbHostCompletion } from "./webusb_backend";
+import { WebUsbBackend, type UsbHostAction, type UsbHostCompletion, type WebUsbBackendOptions } from "./webusb_backend";
 
 function formatThrownError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -27,8 +27,8 @@ function errorCompletion(action: UsbHostAction, message: string): UsbHostComplet
 export class WebUsbExecutor {
   readonly #backend: WebUsbBackend;
 
-  constructor(device: USBDevice) {
-    this.#backend = new WebUsbBackend(device);
+  constructor(device: USBDevice, options?: WebUsbBackendOptions) {
+    this.#backend = new WebUsbBackend(device, options);
   }
 
   async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
@@ -43,4 +43,3 @@ export class WebUsbExecutor {
     return await Promise.all(actions.map((action) => this.execute(action)));
   }
 }
-
