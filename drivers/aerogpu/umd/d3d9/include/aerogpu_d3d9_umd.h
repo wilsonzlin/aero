@@ -385,6 +385,11 @@ typedef struct _D3D9DDI_HQUERY {
   void* pDrvPrivate;
 } D3D9DDI_HQUERY;
 
+// Handle for N-Patch/patch rendering APIs (DrawRectPatch/DrawTriPatch/DeletePatch).
+typedef struct _D3D9DDI_HPATCH {
+  void* pDrvPrivate;
+} D3D9DDI_HPATCH;
+
 // ---- Callback-table shims -----------------------------------------------------
 // The real callback tables are large and defined in `d3dumddi.h`. For portable
 // builds we only need opaque placeholders (we store the pointers).
@@ -1269,6 +1274,8 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_DRAWPRIMITIVE2 pfnDrawPrimitive2;
   PFND3D9DDI_DRAWINDEXEDPRIMITIVE2 pfnDrawIndexedPrimitive2;
 
+  // Patch rendering / ProcessVertices (currently stubbed).
+  // Placed at the tail so existing portable ABI anchor offsets remain stable.
   PFND3D9DDI_DRAWRECTPATCH pfnDrawRectPatch;
   PFND3D9DDI_DRAWTRIPATCH pfnDrawTriPatch;
   PFND3D9DDI_DELETEPATCH pfnDeletePatch;
