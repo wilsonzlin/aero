@@ -17,7 +17,10 @@ pub const TOC_ENTRY_SIZE: u32 = 32;
 /// - v1: Initial container format + toy packet stream (see docs/abi/gpu-trace-format.md).
 /// - v2: Adds `RecordType::AerogpuSubmission` for raw `aerogpu_cmd.h` submissions (Win7 guest ABI).
 ///
-/// The reader must remain backwards compatible with older versions.
+/// ## Compatibility policy
+/// - `container_version` is the on-disk **trace-format version**.
+/// - The reader is backwards compatible across all versions `v1..=CONTAINER_VERSION_LATEST`.
+/// - Any newer (unknown) version must be rejected deterministically by the reader.
 pub const CONTAINER_VERSION_V1: u32 = 1;
 pub const CONTAINER_VERSION_V2: u32 = 2;
 pub const CONTAINER_VERSION_LATEST: u32 = CONTAINER_VERSION_V2;
@@ -99,6 +102,14 @@ pub struct AerogpuMemoryRangeRef {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceMeta {
     pub emulator_version: String,
+    /// Version of the recorded command ABI.
+    ///
+    /// For canonical AeroGPU traces this should be `AEROGPU_ABI_VERSION_U32` from
+    /// `drivers/aerogpu/protocol/aerogpu_pci.h` (mirrored in `aero-protocol`).
+    ///
+    /// Note: the trace container is intentionally ABI-agnostic; it stores this value but does
+    /// not interpret or validate it. Replayers/decoders should apply the ABI's own
+    /// forwards/backwards-compatibility rules.
     pub command_abi_version: u32,
     pub notes: Option<String>,
 }
@@ -149,7 +160,9 @@ impl TraceMeta {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TraceHeader {
+    /// Trace-format version (`CONTAINER_VERSION_*`).
     pub container_version: u32,
+    /// Command ABI version (see `TraceMeta::command_abi_version`).
     pub command_abi_version: u32,
     pub flags: u32,
     pub meta_len: u32,

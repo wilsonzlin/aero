@@ -14,6 +14,12 @@ pub enum TraceReadError {
     InvalidMagic,
     UnsupportedHeaderSize(u32),
     UnsupportedFooterSize(u32),
+    /// The trace's `container_version` is outside the range supported by this reader.
+    ///
+    /// Compatibility policy:
+    /// - older versions are accepted (best-effort backwards compatibility)
+    /// - newer/unknown versions are rejected deterministically, before attempting to interpret
+    ///   any version-specific fields
     UnsupportedContainerVersion(u32),
     UnsupportedTocVersion(u32),
     TocOutOfBounds,
@@ -338,6 +344,9 @@ fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, 
 }
 
 fn is_supported_container_version(v: u32) -> bool {
+    // NOTE: `container_version` is a trace-format version. We accept all versions from the
+    // initial version up through the latest known version, and reject anything outside this
+    // range. This is intentionally a simple rule so version mismatches are deterministic.
     (CONTAINER_VERSION_V1..=CONTAINER_VERSION).contains(&v)
 }
 
