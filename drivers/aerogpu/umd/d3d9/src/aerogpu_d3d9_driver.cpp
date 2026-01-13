@@ -8060,6 +8060,15 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       res->kind != ResourceKind::Buffer &&
       (res->mip_levels > 1 || res->depth > 1);
   if (force_host_backing) {
+    // Ensure the allocation private-driver-data blob is not interpreted by the
+    // KMD as an AeroGPU alloc-id contract. The D3D9 runtime owns this buffer and
+    // may reuse it across calls without clearing it; leaving stale bytes here
+    // can cause the KMD to reject the allocation (e.g. shared flag mismatch) or
+    // to reuse a stale alloc_id. For host-backed resources we intentionally do
+    // not participate in the alloc-table protocol, so clear the blob.
+    if (pCreateResource->pPrivateDriverData && pCreateResource->PrivateDriverDataSize) {
+      std::memset(pCreateResource->pPrivateDriverData, 0, pCreateResource->PrivateDriverDataSize);
+    }
     res->backing_alloc_id = 0;
     res->backing_offset_bytes = 0;
     res->share_token = 0;
