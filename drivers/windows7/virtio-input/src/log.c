@@ -182,6 +182,10 @@ PCSTR VioInputHidIoctlToString(_In_ ULONG IoControlCode)
             return "IOCTL_HID_ACTIVATE_DEVICE";
         case IOCTL_HID_DEACTIVATE_DEVICE:
             return "IOCTL_HID_DEACTIVATE_DEVICE";
+#ifdef IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST
+        case IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST:
+            return "IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST";
+#endif
         default:
             return "IOCTL_HID_<unknown>";
     }

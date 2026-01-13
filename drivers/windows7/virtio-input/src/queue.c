@@ -57,6 +57,11 @@ static VOID VioInputCountHidIoctl(_Inout_ PVIOINPUT_COUNTERS Counters, _In_ ULON
         case IOCTL_HID_WRITE_REPORT:
             VioInputCounterInc(&Counters->IoctlHidWriteReport);
             break;
+#ifdef IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST
+        case IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST:
+            // No dedicated counter; keep it out of IoctlUnknown.
+            break;
+#endif
         default:
             VioInputCounterInc(&Counters->IoctlUnknown);
             break;
@@ -131,8 +136,15 @@ VOID VirtioInputEvtIoInternalDeviceControl(
         return;
 #ifdef IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST
     case IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST:
-        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_NOT_SUPPORTED);
-        WdfRequestComplete(Request, STATUS_NOT_SUPPORTED);
+        /*
+         * Win7 HID idle / selective suspend.
+         *
+         * This IOCTL is METHOD_NEITHER and may contain user pointers. We don't
+         * touch any buffers here; completing the request with STATUS_SUCCESS is
+         * sufficient to tell HIDCLASS that the device may idle.
+         */
+        VIOINPUT_LOG(VIOINPUT_LOG_IOCTL, "IOCTL %s -> %!STATUS! bytes=0\n", name, STATUS_SUCCESS);
+        WdfRequestCompleteWithInformation(Request, STATUS_SUCCESS, 0);
         return;
 #endif
 #ifdef IOCTL_HID_FLUSH_QUEUE

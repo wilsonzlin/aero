@@ -326,3 +326,12 @@ Once the driver binary exists, you can produce a deterministic, redistributable 
 - The driver is still under active development; it does not yet provide complete virtio-input functionality.
 - The INF installs the driver as a **KMDF HID minidriver** under `HIDClass`.
 - The hardware ID list may need adjustment if the emulator uses a different virtio PCI ID variant.
+
+## Power management notes (Win7 HID idle)
+
+Windows 7's `HIDCLASS.SYS` may send `IOCTL_HID_SEND_IDLE_NOTIFICATION_REQUEST` (a **METHOD_NEITHER** IOCTL) to enable HID
+idle/selective-suspend behavior. The driver handles this request by **completing it immediately with `STATUS_SUCCESS`**
+and **does not dereference any caller-provided pointers**.
+
+This avoids `STATUS_NOT_SUPPORTED` during enumeration and allows the HID stack to manage device idle/sleep transitions
+using the driver's existing D0Entry/D0Exit reset-report behavior as the baseline.
