@@ -289,7 +289,7 @@ assert_header_exact "Content-Type" "application/json" "$webrtc_headers"
 # We validate the TLS + Upgrade path and cookie/session enforcement without relying on
 # external tools like `wscat`/`websocat`.
 if command -v node >/dev/null 2>&1; then
-  echo "deploy smoke: verifying wss://localhost/tcp and /l2 upgrades (session cookie)" >&2
+  echo "deploy smoke: verifying wss://localhost/tcp and /l2 (/eth legacy) upgrades (session cookie)" >&2
   # The /udp smoke test sends a UDP datagram to the host via the docker network
   # gateway, so we need the gateway IP.
   #
@@ -1353,6 +1353,9 @@ function checkUdpRelayToken(cookiePair) {
     try {
       await checkL2RejectsMissingCookie(session.l2Path);
       await checkL2Upgrade(session.cookiePair, session.l2Path);
+      // Legacy alias (see docs/l2-tunnel-protocol.md).
+      await checkL2RejectsMissingCookie("/eth");
+      await checkL2Upgrade(session.cookiePair, "/eth");
       lastL2Error = undefined;
       break;
     } catch (err) {
@@ -1367,16 +1370,17 @@ function checkUdpRelayToken(cookiePair) {
   }
 
   await checkL2RejectsMissingOrigin(session.cookiePair, session.l2Path);
+  await checkL2RejectsMissingOrigin(session.cookiePair, "/eth");
   const token = await checkUdpRelayToken(session.cookiePair);
   if (token !== session.udpRelayToken) {
     throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
   }
-   await checkRelayWebSocketUpgrade(`/webrtc/signal?token=${encodeURIComponent(token)}`, "/webrtc/signal");
-   await checkUdpWebSocketRoundTrip(token);
- })().catch((err) => {
-   console.error("deploy smoke: node networking checks failed:", err);
-   process.exit(1);
- });
+  await checkRelayWebSocketUpgrade(`/webrtc/signal?token=${encodeURIComponent(token)}`, "/webrtc/signal");
+  await checkUdpWebSocketRoundTrip(token);
+})().catch((err) => {
+  console.error("deploy smoke: node networking checks failed:", err);
+  process.exit(1);
+});
 NODE
 else
   echo "deploy smoke: node not found; skipping WebSocket validation (/tcp, /l2)" >&2

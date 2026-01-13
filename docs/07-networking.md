@@ -178,7 +178,7 @@ talks to a single HTTPS origin:
 
 - `/session`, `/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`, `/udp-relay/token` → **aero-gateway**
 - `/webrtc/*`, `/offer`, `/udp` → **webrtc-udp-relay**
-- `/l2` → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
+- `/l2` (legacy alias: `/eth`) → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
 
 Auth note (Option C): `/l2` should be treated like `/tcp` — for any internet-exposed deployment you
 should enable **Origin allowlisting + authentication**. The Rust L2 proxy (`crates/aero-l2-proxy`)
@@ -267,6 +267,7 @@ debug path.
 Used by the production L2 tunnel:
 
 - **WebSocket:** `GET /l2` (subprotocol `aero-l2-tunnel-v1`)
+- **WebSocket legacy alias:** `GET /eth` (subprotocol `aero-l2-tunnel-v1`)
 - **WebRTC:** DataChannel label `l2` (must be fully reliable and ordered; `ordered = true`)
 
 See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)

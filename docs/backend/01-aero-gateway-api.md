@@ -5,7 +5,7 @@ This document specifies the **public backend contract** for Aero networking feat
 
 - A **TCP proxy** exposed as a WebSocket endpoint (`/tcp`)
 - Optional **TCP multiplexing** over WebSocket (`/tcp-mux`) for scaling high connection counts
-- An **L2 tunnel** exposed as a WebSocket endpoint (`/l2`) for Option C networking (see `docs/l2-tunnel-protocol.md`)
+- An **L2 tunnel** exposed as a WebSocket endpoint (`/l2`; legacy alias: `/eth`) for Option C networking (see `docs/l2-tunnel-protocol.md`)
 - A **DNS-over-HTTPS** endpoint (`/dns-query`) used by the guest network stack
 - Optional **DNS JSON** convenience endpoint (`/dns-json`) for debugging/simple lookups
 - A lightweight **session bootstrap** endpoint (`POST /session`) that issues cookies used for rate-limiting and authorization
@@ -26,11 +26,11 @@ Examples:
 
 - `PUBLIC_BASE_URL=https://gateway.example.com`
   - HTTP: `https://gateway.example.com/session`, `https://gateway.example.com/dns-query`
-  - WebSocket: `wss://gateway.example.com/tcp`, `wss://gateway.example.com/l2`
+  - WebSocket: `wss://gateway.example.com/tcp`, `wss://gateway.example.com/l2` (legacy alias: `/eth`)
 
 - `PUBLIC_BASE_URL=https://gateway.example.com/aero`
   - HTTP: `https://gateway.example.com/aero/session`, `https://gateway.example.com/aero/dns-query`
-  - WebSocket: `wss://gateway.example.com/aero/tcp`, `wss://gateway.example.com/aero/l2`
+  - WebSocket: `wss://gateway.example.com/aero/tcp`, `wss://gateway.example.com/aero/l2` (legacy alias: `/eth`)
 
 ### Same-site vs cross-site deployments (cookies)
 
@@ -47,7 +47,7 @@ Generic form:
 
 - `POST http://localhost:PORT/session`
 - `ws://localhost:PORT/tcp?v=1&host=example.com&port=443`
-- `ws://localhost:PORT/l2` (subprotocol: `aero-l2-tunnel-v1`)
+- `ws://localhost:PORT/l2` (subprotocol: `aero-l2-tunnel-v1`; legacy alias: `/eth`)
 - `ws://localhost:PORT/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
 - `http://localhost:PORT/dns-query?...`
 
@@ -55,7 +55,7 @@ Concrete example (assuming the gateway is running on port `8080`):
 
 - `POST http://localhost:8080/session`
 - `ws://localhost:8080/tcp?v=1&host=example.com&port=443`
-- `ws://localhost:8080/l2` (subprotocol: `aero-l2-tunnel-v1`)
+- `ws://localhost:8080/l2` (subprotocol: `aero-l2-tunnel-v1`; legacy alias: `/eth`)
 - `ws://localhost:8080/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
 - `http://localhost:8080/dns-query?...`
 

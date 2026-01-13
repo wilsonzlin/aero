@@ -8,8 +8,8 @@ info:
     Notes:
     - WebSocket endpoints are intentionally not modeled as OpenAPI operations:
       - `/tcp` and `/tcp-mux` are documented in `docs/backend/01-aero-gateway-api.md`.
-      - `/l2` is served by `aero-l2-proxy` behind the same reverse proxy origin and
-        is documented in `docs/l2-tunnel-protocol.md`.
+      - `/l2` (legacy alias: `/eth`) is served by `aero-l2-proxy` behind the same reverse proxy origin
+        and is documented in `docs/l2-tunnel-protocol.md`.
 servers:
   - url: http://localhost:8080
     description: Local development (example)
