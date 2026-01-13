@@ -169,7 +169,11 @@ impl UsbDeviceModel for UsbWebUsbPassthroughDevice {
     }
 
     fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
-        let resp = self.0.borrow_mut().passthrough.handle_out_transfer(ep, data);
+        let resp = self
+            .0
+            .borrow_mut()
+            .passthrough
+            .handle_out_transfer(ep, data);
         Self::map_out_result(resp)
     }
 }
