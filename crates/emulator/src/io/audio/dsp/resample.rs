@@ -306,6 +306,109 @@ mod tests {
         }
     }
 
+    fn make_deterministic_input(frames: usize, channels: usize) -> Vec<f32> {
+        let mut state = 0x1234_5678u32;
+        let mut out = Vec::with_capacity(frames * channels);
+        for _ in 0..frames * channels {
+            // LCG: deterministic across platforms.
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            // Use dyadic rationals so inputs are exactly representable in `f32`.
+            let s = (state >> 16) as i16;
+            out.push(s as f32 * (1.0 / 32_768.0));
+        }
+        out
+    }
+
+    trait StreamingResampler {
+        fn channels(&self) -> usize;
+        fn process_interleaved(
+            &mut self,
+            input: &[f32],
+            out: &mut Vec<f32>,
+        ) -> Result<(), ResampleError>;
+        fn flush_interleaved(&mut self, out: &mut Vec<f32>);
+    }
+
+    impl StreamingResampler for LinearResampler {
+        fn channels(&self) -> usize {
+            self.channels
+        }
+
+        fn process_interleaved(
+            &mut self,
+            input: &[f32],
+            out: &mut Vec<f32>,
+        ) -> Result<(), ResampleError> {
+            LinearResampler::process_interleaved(self, input, out)
+        }
+
+        fn flush_interleaved(&mut self, out: &mut Vec<f32>) {
+            LinearResampler::flush_interleaved(self, out);
+        }
+    }
+
+    #[cfg(feature = "sinc-resampler")]
+    impl StreamingResampler for SincResampler {
+        fn channels(&self) -> usize {
+            self.channels
+        }
+
+        fn process_interleaved(
+            &mut self,
+            input: &[f32],
+            out: &mut Vec<f32>,
+        ) -> Result<(), ResampleError> {
+            SincResampler::process_interleaved(self, input, out)
+        }
+
+        fn flush_interleaved(&mut self, out: &mut Vec<f32>) {
+            SincResampler::flush_interleaved(self, out);
+        }
+    }
+
+    fn resample_single_shot<R: StreamingResampler>(r: &mut R, input: &[f32]) -> Vec<f32> {
+        let mut out = Vec::new();
+        let mut tail = Vec::new();
+        r.process_interleaved(input, &mut out).unwrap();
+        r.flush_interleaved(&mut tail);
+        out.extend_from_slice(&tail);
+        out
+    }
+
+    fn resample_chunked<R: StreamingResampler>(
+        r: &mut R,
+        input: &[f32],
+        chunk_frames: &[usize],
+    ) -> Vec<f32> {
+        assert!(!chunk_frames.is_empty());
+
+        let channels = r.channels();
+        assert!(
+            input.len().is_multiple_of(channels),
+            "input length must be aligned to channels"
+        );
+        let total_frames = input.len() / channels;
+
+        let mut all = Vec::new();
+        let mut tmp = Vec::new();
+
+        let mut offset_frames = 0usize;
+        let mut chunk_idx = 0usize;
+        while offset_frames < total_frames {
+            let want = chunk_frames[chunk_idx % chunk_frames.len()];
+            let n = want.min(total_frames - offset_frames);
+            let start = offset_frames * channels;
+            let end = (offset_frames + n) * channels;
+            r.process_interleaved(&input[start..end], &mut tmp).unwrap();
+            all.extend_from_slice(&tmp);
+            offset_frames += n;
+            chunk_idx += 1;
+        }
+
+        r.flush_interleaved(&mut tmp);
+        all.extend_from_slice(&tmp);
+        all
+    }
     #[test]
     fn linear_resampler_preserves_dc() {
         let mut r = LinearResampler::new(44_100, 48_000, 2).unwrap();
@@ -378,6 +481,31 @@ mod tests {
         assert!(rmse < 0.02, "rmse too high for linear resampler: {rmse}");
     }
 
+    #[test]
+    fn linear_resampler_chunked_equals_single_shot() {
+        let src_rate = 44_100u32;
+        let dst_rate = 48_000u32;
+        let frames = 1024usize;
+
+        for channels in [1usize, 2] {
+            let input = make_deterministic_input(frames, channels);
+
+            let mut r = LinearResampler::new(src_rate, dst_rate, channels).unwrap();
+
+            let out_single = resample_single_shot(&mut r, &input);
+            assert!(out_single.len().is_multiple_of(channels));
+
+            r.reset();
+            let out_chunked = resample_chunked(&mut r, &input, &[7, 13, 64]);
+            assert!(out_chunked.len().is_multiple_of(channels));
+
+            assert_eq!(
+                out_chunked, out_single,
+                "linear resampler output differs across chunk boundaries (channels={channels})"
+            );
+        }
+    }
+
     #[cfg(feature = "sinc-resampler")]
     #[test]
     fn sinc_resampler_preserves_dc() {
@@ -401,6 +529,50 @@ mod tests {
         assert!(!mid.is_empty());
         for &s in mid {
             assert!((s - 0.25).abs() < 1e-3);
+        }
+    }
+
+    #[cfg(feature = "sinc-resampler")]
+    #[test]
+    fn sinc_resampler_chunked_equals_single_shot() {
+        let src_rate = 44_100u32;
+        let dst_rate = 48_000u32;
+        let frames = 1024usize;
+
+        for channels in [1usize, 2] {
+            let input = make_deterministic_input(frames, channels);
+
+            let mut r = SincResampler::new(src_rate, dst_rate, channels).unwrap();
+
+            let out_single = resample_single_shot(&mut r, &input);
+            assert!(out_single.len().is_multiple_of(channels));
+
+            r.reset();
+            let out_chunked = resample_chunked(&mut r, &input, &[7, 13, 64]);
+            assert!(out_chunked.len().is_multiple_of(channels));
+
+            // The sinc resampler uses floating point arithmetic for convolution. Even with the
+            // same filter taps, the internal `pos` rebasing differs between single-shot and
+            // chunked processing, which can introduce tiny rounding differences. The DSP pipeline
+            // should remain effectively identical across chunk boundaries, so compare with a tight
+            // tolerance.
+            assert_eq!(
+                out_chunked.len(),
+                out_single.len(),
+                "sinc resampler output length differs across chunk boundaries (channels={channels})"
+            );
+            let mut max_abs = 0.0f32;
+            let mut mse = 0.0f64;
+            for (&a, &b) in out_chunked.iter().zip(out_single.iter()) {
+                let d = (a - b) as f64;
+                mse += d * d;
+                max_abs = max_abs.max(d.abs() as f32);
+            }
+            let rmse = (mse / (out_chunked.len().max(1) as f64)).sqrt() as f32;
+            assert!(
+                rmse < 1e-6 && max_abs < 1e-5,
+                "sinc resampler output differs across chunk boundaries (channels={channels}): rmse={rmse} max_abs={max_abs}"
+            );
         }
     }
 
@@ -504,6 +676,28 @@ pub struct SincResampler {
 
 #[cfg(feature = "sinc-resampler")]
 impl SincResampler {
+    #[inline]
+    fn split_pos(pos: f64) -> (isize, f64) {
+        let mut center = pos.floor() as isize;
+        let mut frac = pos - center as f64;
+
+        // `pos` advances by a rational step (src_rate / dst_rate) but is accumulated in `f64`.
+        // Depending on chunking, floating point rounding can put values that are mathematically
+        // integral just below/above the integer boundary, which changes `floor()`/`frac` and can
+        // lead to tiny output differences across chunk boundaries.
+        //
+        // Snap extremely-near-integer positions back onto the integer to keep behavior stable.
+        const EPS: f64 = 1e-9;
+        if frac < EPS {
+            frac = 0.0;
+        } else if frac > 1.0 - EPS {
+            center += 1;
+            frac = 0.0;
+        }
+
+        (center, frac)
+    }
+
     pub fn new(src_rate: u32, dst_rate: u32, channels: usize) -> Result<Self, ResampleError> {
         if channels == 0 {
             return Err(ResampleError::InvalidChannels);
@@ -599,8 +793,7 @@ impl SincResampler {
         out.reserve(est_out_frames * self.channels);
 
         while self.pos < total_frames_f {
-            let center = self.pos.floor() as isize;
-            let frac = self.pos - center as f64;
+            let (center, frac) = Self::split_pos(self.pos);
             let phase = ((frac * self.phases as f64).round() as usize).min(self.phases - 1);
             let coeffs = &self.table[phase * self.taps..(phase + 1) * self.taps];
 
@@ -667,8 +860,7 @@ impl SincResampler {
         // past the last real frame in `history`.
         let history_frames_f = self.history_frames as f64;
         while self.pos < history_frames_f {
-            let center = self.pos.floor() as isize;
-            let frac = self.pos - center as f64;
+            let (center, frac) = Self::split_pos(self.pos);
             let phase = ((frac * self.phases as f64).round() as usize).min(self.phases - 1);
             let coeffs = &self.table[phase * self.taps..(phase + 1) * self.taps];
 

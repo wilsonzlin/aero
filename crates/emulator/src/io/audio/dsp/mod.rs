@@ -256,3 +256,93 @@ impl StreamProcessor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::audio::dsp::pcm::{PcmSampleFormat, PcmSpec};
+
+    fn make_i16_pcm_bytes(frames: usize, channels: usize) -> Vec<u8> {
+        let mut state = 0x1234_5678u32;
+        let mut bytes = Vec::with_capacity(frames * channels * 2);
+        for _ in 0..frames * channels {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let s = (state >> 16) as i16;
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn process_single_shot(sp: &mut StreamProcessor, input_bytes: &[u8]) -> Vec<f32> {
+        let mut out = Vec::new();
+        let mut tail = Vec::new();
+        sp.process(input_bytes, &mut out).unwrap();
+        sp.flush(&mut tail).unwrap();
+        out.extend_from_slice(&tail);
+        out
+    }
+
+    fn process_chunked(
+        sp: &mut StreamProcessor,
+        input_bytes: &[u8],
+        input_channels: usize,
+        chunk_frames: &[usize],
+    ) -> Vec<f32> {
+        assert!(!chunk_frames.is_empty());
+
+        let bytes_per_frame = input_channels * PcmSampleFormat::I16.bytes_per_sample();
+        assert!(input_bytes.len().is_multiple_of(bytes_per_frame));
+
+        let mut out_all = Vec::new();
+        let mut tmp = Vec::new();
+
+        let mut offset = 0usize;
+        let mut chunk_idx = 0usize;
+        while offset < input_bytes.len() {
+            let remaining_frames = (input_bytes.len() - offset) / bytes_per_frame;
+            let want = chunk_frames[chunk_idx % chunk_frames.len()];
+            let n = want.min(remaining_frames);
+            let len = n * bytes_per_frame;
+            sp.process(&input_bytes[offset..offset + len], &mut tmp)
+                .unwrap();
+            out_all.extend_from_slice(&tmp);
+            offset += len;
+            chunk_idx += 1;
+        }
+
+        sp.flush(&mut tmp).unwrap();
+        out_all.extend_from_slice(&tmp);
+        out_all
+    }
+
+    #[test]
+    fn stream_processor_chunked_equals_single_shot() {
+        let frames = 1024usize;
+        let input_channels = 2usize;
+        let bytes = make_i16_pcm_bytes(frames, input_channels);
+
+        let input = PcmSpec {
+            format: PcmSampleFormat::I16,
+            channels: input_channels,
+            sample_rate: 44_100,
+        };
+
+        // Exercise both the "resample only" and "remix then resample" pipeline orders.
+        for output_channels in [2usize, 1usize] {
+            let mut sp = StreamProcessor::new(input, 48_000, output_channels, ResamplerKind::Linear)
+                .unwrap();
+            let out_single = process_single_shot(&mut sp, &bytes);
+            assert!(out_single.len().is_multiple_of(output_channels));
+
+            let mut sp = StreamProcessor::new(input, 48_000, output_channels, ResamplerKind::Linear)
+                .unwrap();
+            let out_chunked = process_chunked(&mut sp, &bytes, input_channels, &[7, 13, 64]);
+            assert!(out_chunked.len().is_multiple_of(output_channels));
+
+            assert_eq!(
+                out_chunked, out_single,
+                "StreamProcessor output differs across chunk boundaries (output_channels={output_channels})"
+            );
+        }
+    }
+}
