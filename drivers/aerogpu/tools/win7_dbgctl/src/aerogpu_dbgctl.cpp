@@ -2543,6 +2543,24 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     }
   }
 
+  bool haveError = false;
+  aerogpu_escape_query_error_out qe;
+  ZeroMemory(&qe, sizeof(qe));
+  qe.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+  qe.hdr.size = sizeof(qe);
+  qe.hdr.reserved0 = 0;
+  NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
+  if (NT_SUCCESS(stErr)) {
+    bool supported = true;
+    if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+      supported = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+    }
+    if (supported) {
+      haveError = true;
+    }
+  }
+
   wprintf(L"Perf counters (snapshot):\n");
   wprintf(L"  fences: submitted=0x%I64x completed=0x%I64x pending=%I64u\n",
           (unsigned long long)submitted,
@@ -2563,6 +2581,13 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.irq_fence_delivered,
           (unsigned long long)q.irq_vblank_delivered,
           (unsigned long long)q.irq_spurious);
+  if (haveError) {
+    wprintf(L"  error: code=%lu (%s) fence=0x%I64x count=%lu\n",
+            (unsigned long)qe.error_code,
+            AerogpuErrorCodeName(qe.error_code),
+            (unsigned long long)qe.error_fence,
+            (unsigned long)qe.error_count);
+  }
   wprintf(L"  resets: ResetFromTimeout=%I64u last_reset_time_100ns=%I64u\n",
           (unsigned long long)q.reset_from_timeout_count,
           (unsigned long long)q.last_reset_time_100ns);
@@ -2590,6 +2615,11 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   wprintf(L"  vblank_seq=%I64u\n", (unsigned long long)q.vblank_seq);
   wprintf(L"  last_vblank_time_ns=%I64u\n", (unsigned long long)q.last_vblank_time_ns);
   wprintf(L"  vblank_period_ns=%lu\n", (unsigned long)q.vblank_period_ns);
+  if (haveError) {
+    wprintf(L"  error_code=%lu\n", (unsigned long)qe.error_code);
+    wprintf(L"  error_fence=%I64u\n", (unsigned long long)qe.error_fence);
+    wprintf(L"  error_count=%lu\n", (unsigned long)qe.error_count);
+  }
 
   return 0;
 }
