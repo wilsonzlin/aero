@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 
+use crate::shader_limits::{MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_REGISTER_INDEX};
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
@@ -225,12 +226,13 @@ struct RegUsage {
     addrs: BTreeSet<u32>,
     loop_regs: BTreeSet<u32>,
     inputs: BTreeSet<(RegFile, u32)>,
-    outputs: BTreeSet<(RegFile, u32)>,
+    outputs_used: BTreeSet<(RegFile, u32)>,
+    outputs_written: BTreeSet<(RegFile, u32)>,
+    samplers: BTreeSet<u32>,
     predicates: BTreeSet<u32>,
     float_consts: BTreeSet<u32>,
     int_consts: BTreeSet<u32>,
     bool_consts: BTreeSet<u32>,
-    samplers: BTreeSet<u32>,
 }
 
 impl RegUsage {
@@ -240,14 +242,21 @@ impl RegUsage {
             addrs: BTreeSet::new(),
             loop_regs: BTreeSet::new(),
             inputs: BTreeSet::new(),
-            outputs: BTreeSet::new(),
+            outputs_used: BTreeSet::new(),
+            outputs_written: BTreeSet::new(),
+            samplers: BTreeSet::new(),
             predicates: BTreeSet::new(),
             float_consts: BTreeSet::new(),
             int_consts: BTreeSet::new(),
             bool_consts: BTreeSet::new(),
-            samplers: BTreeSet::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegAccess {
+    Read,
+    Write,
 }
 
 fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
@@ -266,8 +275,8 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
                 }
             }
             Stmt::Loop { init, body } => {
-                collect_reg_ref_usage(&init.loop_reg, usage);
-                collect_reg_ref_usage(&init.ctrl_reg, usage);
+                collect_reg_ref_usage(&init.loop_reg, usage, RegAccess::Read);
+                collect_reg_ref_usage(&init.ctrl_reg, usage, RegAccess::Read);
                 collect_reg_usage(body, usage);
             }
             Stmt::Break => {}
@@ -280,7 +289,7 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
 fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
     // Predicate modifier usage.
     if let Some(pred) = &op_modifiers(op).predicate {
-        collect_reg_ref_usage(&pred.reg, usage);
+        collect_reg_ref_usage(&pred.reg, usage, RegAccess::Read);
     }
 
     match op {
@@ -472,8 +481,8 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             coord,
             ddx,
             ddy,
-            modifiers,
             sampler,
+            modifiers,
             ..
         } => {
             collect_dst_usage(dst, usage);
@@ -486,15 +495,13 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             }
             collect_mods_usage(modifiers, usage);
             usage.samplers.insert(*sampler);
-            collect_mods_usage(modifiers, usage);
-            usage.samplers.insert(*sampler);
         }
     }
 }
 
 fn collect_mods_usage(mods: &InstModifiers, usage: &mut RegUsage) {
     if let Some(pred) = &mods.predicate {
-        collect_reg_ref_usage(&pred.reg, usage);
+        collect_reg_ref_usage(&pred.reg, usage, RegAccess::Read);
     }
 }
 
@@ -505,19 +512,19 @@ fn collect_cond_usage(cond: &Cond, usage: &mut RegUsage) {
             collect_src_usage(src0, usage);
             collect_src_usage(src1, usage);
         }
-        Cond::Predicate { pred } => collect_reg_ref_usage(&pred.reg, usage),
+        Cond::Predicate { pred } => collect_reg_ref_usage(&pred.reg, usage, RegAccess::Read),
     }
 }
 
 fn collect_dst_usage(dst: &Dst, usage: &mut RegUsage) {
-    collect_reg_ref_usage(&dst.reg, usage);
+    collect_reg_ref_usage(&dst.reg, usage, RegAccess::Write);
 }
 
 fn collect_src_usage(src: &Src, usage: &mut RegUsage) {
-    collect_reg_ref_usage(&src.reg, usage);
+    collect_reg_ref_usage(&src.reg, usage, RegAccess::Read);
 }
 
-fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
+fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage, access: RegAccess) {
     match reg.file {
         RegFile::Temp => {
             usage.temps.insert(reg.index);
@@ -531,6 +538,9 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         RegFile::Input | RegFile::Texture => {
             usage.inputs.insert((reg.file, reg.index));
         }
+        RegFile::Sampler => {
+            usage.samplers.insert(reg.index);
+        }
         RegFile::Predicate => {
             usage.predicates.insert(reg.index);
         }
@@ -540,7 +550,10 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         | RegFile::AttrOut
         | RegFile::TexCoordOut
         | RegFile::Output => {
-            usage.outputs.insert((reg.file, reg.index));
+            usage.outputs_used.insert((reg.file, reg.index));
+            if access == RegAccess::Write {
+                usage.outputs_written.insert((reg.file, reg.index));
+            }
         }
         RegFile::Const => {
             usage.float_consts.insert(reg.index);
@@ -557,7 +570,7 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         }
     }
     if let Some(rel) = &reg.relative {
-        collect_reg_ref_usage(&rel.reg, usage);
+        collect_reg_ref_usage(&rel.reg, usage, RegAccess::Read);
     }
 }
 
@@ -1520,6 +1533,42 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     let mut usage = RegUsage::new();
     collect_reg_usage(&ir.body, &mut usage);
 
+    // Hostile-input hardening: decoding already caps indices using `crate::shader_limits`, but
+    // keep a second line of defense here since WGSL codegen can otherwise balloon into large output
+    // shaders.
+    let max_used_index = usage
+        .temps
+        .iter()
+        .chain(&usage.addrs)
+        .chain(&usage.predicates)
+        .chain(&usage.float_consts)
+        .chain(&usage.int_consts)
+        .chain(&usage.bool_consts)
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .max(usage.inputs.iter().map(|(_, idx)| *idx).max().unwrap_or(0))
+        .max(
+            usage
+                .outputs_used
+                .iter()
+                .map(|(_, idx)| *idx)
+                .max()
+                .unwrap_or(0),
+        );
+    if max_used_index > MAX_D3D9_SHADER_REGISTER_INDEX {
+        return Err(err(format!(
+            "register index {max_used_index} exceeds maximum {MAX_D3D9_SHADER_REGISTER_INDEX}"
+        )));
+    }
+    if let Some(&max_samp) = usage.samplers.iter().max() {
+        if max_samp > MAX_D3D9_SAMPLER_REGISTER_INDEX {
+            return Err(err(format!(
+                "sampler index s{max_samp} exceeds maximum s{MAX_D3D9_SAMPLER_REGISTER_INDEX}"
+            )));
+        }
+    }
+
     let mut f32_defs: BTreeMap<u32, [f32; 4]> = BTreeMap::new();
     for def in &ir.const_defs_f32 {
         f32_defs.insert(def.index, def.value);
@@ -1685,11 +1734,8 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     vs_varyings.insert((decl.reg.file, decl.reg.index));
                 }
             }
-            for (file, index) in &usage.outputs {
-                if matches!(
-                    *file,
-                    RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output
-                ) {
+            for (file, index) in &usage.outputs_written {
+                if matches!(*file, RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output) {
                     vs_varyings.insert((*file, *index));
                 }
             }
@@ -1736,13 +1782,17 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             }
 
             // Local temp registers.
-            for r in &usage.temps {
-                let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
+            if let Some(max_r) = usage.temps.iter().copied().max() {
+                for r in 0..=max_r {
+                    let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
+                }
             }
 
             // Address registers (`a#`) used for relative constant indexing.
-            for a in &usage.addrs {
-                let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+            if let Some(max_a) = usage.addrs.iter().copied().max() {
+                for a in 0..=max_a {
+                    let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+                }
             }
 
             // Loop registers (`aL#`) used for SM2/3 loop constructs and relative constant indexing.
@@ -1757,8 +1807,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             }
 
             // Predicate registers (`p#`).
-            for p in &usage.predicates {
-                let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
+            if let Some(max_p) = usage.predicates.iter().copied().max() {
+                for p in 0..=max_p {
+                    let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
+                }
             }
 
             // Bind vertex inputs to locals that match the D3D register naming (`v#`).
@@ -1770,7 +1822,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
             // Outputs used by the shader. These are mutable locals that get copied into the return
             // value at the end.
-            let mut required_outputs = usage.outputs.clone();
+            let mut required_outputs = usage.outputs_used.clone();
             // Always provide `oPos` so we can emit a stable return struct.
             required_outputs.insert((RegFile::RastOut, 0));
             // Ensure all varyings in the interface are declared, even if never written.
@@ -1836,7 +1888,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             // D3D9 pixel shaders conceptually write at least oC0. Keep the generated WGSL stable by
             // always emitting location(0), even if the shader bytecode never assigns it.
             let mut color_outputs = BTreeSet::<u32>::new();
-            for (file, index) in &usage.outputs {
+            for (file, index) in &usage.outputs_written {
                 if *file == RegFile::ColorOut {
                     color_outputs.insert(*index);
                 }
@@ -1869,13 +1921,17 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             }
 
             // Local temp registers.
-            for r in &usage.temps {
-                let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
+            if let Some(max_r) = usage.temps.iter().copied().max() {
+                for r in 0..=max_r {
+                    let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
+                }
             }
 
             // Address registers (`a#`) used for relative constant indexing.
-            for a in &usage.addrs {
-                let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+            if let Some(max_a) = usage.addrs.iter().copied().max() {
+                for a in 0..=max_a {
+                    let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
+                }
             }
 
             // Loop registers (`aL#`) used for SM2/3 loop constructs and relative constant indexing.
@@ -1890,8 +1946,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             }
 
             // Predicate registers (`p#`).
-            for p in &usage.predicates {
-                let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
+            if let Some(max_p) = usage.predicates.iter().copied().max() {
+                for p in 0..=max_p {
+                    let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
+                }
             }
 
             // Bind pixel inputs to locals that match the D3D register naming (`v#` / `t#`).
@@ -1909,7 +1967,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
             // Outputs used by the shader. These are mutable locals that get copied into the return
             // value at the end.
-            let mut required_outputs = usage.outputs.clone();
+            let mut required_outputs = usage.outputs_used.clone();
             required_outputs.extend(color_outputs.iter().map(|&idx| (RegFile::ColorOut, idx)));
 
             for (file, index) in &required_outputs {

@@ -806,3 +806,36 @@ fn wgsl_vs_outputs_and_ps_inputs_use_consistent_locations() {
     validator.validate(&vs_mod).expect("vs wgsl validate");
     validator.validate(&ps_mod).expect("ps wgsl validate");
 }
+
+#[test]
+fn wgsl_missing_dcl_uses_v0_writes_oc0_compiles() {
+    // ps_2_0:
+    //   mov oC0, v0
+    //   end
+    //
+    // Some real-world SM2 shaders omit `dcl` declarations entirely. The WGSL backend must still
+    // declare input/output interface variables based on register usage.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        // mov oC0, v0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),     // oC0
+        src_token(1, 0, 0xE4, 0), // v0
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
