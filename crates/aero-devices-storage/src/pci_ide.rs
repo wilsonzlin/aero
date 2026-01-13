@@ -340,30 +340,20 @@ impl Channel {
     fn drive_address(&self) -> u8 {
         // ATA Drive Address (DADR) register at Control Block base + 1.
         //
-        // Guests use this for diagnostics and for verifying drive selection. On real hardware (and
-        // in other VMMs like QEMU) this commonly encodes both selection and presence:
-        // - bits 7..5: 1 (baseline 0xE0)
-        // - bit 6: !master_present (active low)
-        // - bit 5: !slave_present (active low)
-        // - bit 4: selected drive (copy of the Device/Head register bit 4)
-        // - bits 3..0: head number (copy of the Device/Head register bits 3..0)
+        // The ATA/ATAPI spec defines DADR as the active-low versions of the drive/head select
+        // lines:
+        //   bits 7..6: 1
+        //   bit 5: nDS1 (active low drive-select 1)
+        //   bit 4: nDS0 (active low drive-select 0)
+        //   bits 3..0: nHS3..nHS0 (active low head-select)
         //
-        // If the channel has no devices at all, we float the bus high (0xFF) to match common PATA
-        // probing logic.
-        if !self.drive_present[0] && !self.drive_present[1] {
-            return 0xFF;
-        }
-
+        // Bus-high behavior (0xFF) for an absent selected device is handled by `read_ctrl_reg`
+        // before this method is reached.
         let head = self.tf.device & 0x0F;
-        let selected = self.tf.device & 0x10;
-        let mut v = 0xE0 | selected | head;
-        if self.drive_present[0] {
-            v &= !(1 << 6);
-        }
-        if self.drive_present[1] {
-            v &= !(1 << 5);
-        }
-        v
+        let dev = self.selected_drive() as u8; // 0=master, 1=slave
+        let n_ds0 = dev;
+        let n_ds1 = dev ^ 1;
+        0xC0 | (n_ds1 << 5) | (n_ds0 << 4) | ((!head) & 0x0F)
     }
 
     fn selected_drive(&self) -> DriveSelect {
@@ -880,23 +870,8 @@ impl IdeController {
     }
 
     fn read_ctrl_reg(chan: &mut Channel, reg: u16, size: u8) -> u32 {
-        // Most control-block reads float high (all ones) if the selected device slot is empty.
-        //
-        // The Drive Address register is special: guests use it for diagnostics and to verify drive
-        // selection, so we allow it to reflect channel-level state even when the currently-selected
-        // device is absent.
-        if reg != ATA_CTRL_DRIVE_ADDRESS {
-            let dev_idx = chan.selected_drive() as usize;
-            if !chan.drive_present[dev_idx] {
-                return match size {
-                    1 => 0xFF,
-                    2 => 0xFFFF,
-                    4 => 0xFFFF_FFFF,
-                    _ => 0xFFFF_FFFF,
-                };
-            }
-        } else if !chan.drive_present[0] && !chan.drive_present[1] {
-            // No devices on this channel at all.
+        let dev_idx = chan.selected_drive() as usize;
+        if !chan.drive_present[dev_idx] {
             return match size {
                 1 => 0xFF,
                 2 => 0xFFFF,
@@ -1779,19 +1754,12 @@ mod tests {
         let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
         let val = ctl.io_read(drive_addr_port, 1) as u8;
 
-        assert_ne!(val, 0, "drive address must not be hardcoded to 0");
-        assert_eq!(val & 0x80, 0x80, "bit 7 should be set");
-        assert_eq!(val & (1 << 6), 0, "master present bit should be cleared (active low)");
-        assert_eq!(
-            val & (1 << 5),
-            1 << 5,
-            "slave absent bit should be set (active low)"
-        );
-        assert_eq!(val & 0x10, 0, "master should be selected by default");
+        // Master selected, head=0.
+        assert_eq!(val, 0xEF);
     }
 
     #[test]
-    fn drive_address_slave_selected_without_device_still_reports_presence_bits() {
+    fn drive_address_slave_selected_without_device_floats_bus_high() {
         let mut ctl = IdeController::new(0xFFF0);
         ctl.primary.drive_present[0] = true;
         ctl.primary.drive_present[1] = false;
@@ -1802,13 +1770,7 @@ mod tests {
 
         let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
         let val = ctl.io_read(drive_addr_port, 1) as u8;
-        assert_eq!(val & 0x10, 0x10, "drive address should reflect slave selection");
-        assert_eq!(val & (1 << 6), 0, "master present bit should remain cleared");
-        assert_eq!(
-            val & (1 << 5),
-            1 << 5,
-            "slave absent bit should remain set"
-        );
+        assert_eq!(val, 0xFF);
 
         // Other control reads should still float high when the selected device is absent.
         let alt_status_port = ctl.primary.ports.ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL;
@@ -1821,11 +1783,14 @@ mod tests {
         ctl.primary.drive_present[0] = true;
         ctl.primary.drive_present[1] = true;
 
+        // Select slave, head=0.
+        let device_port = ctl.primary.ports.cmd_base + ATA_REG_DEVICE;
+        ctl.io_write(device_port, 1, 0xB0);
+
         let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
         let val = ctl.io_read(drive_addr_port, 1) as u8;
 
-        assert_eq!(val & (1 << 6), 0, "master present bit should be cleared (active low)");
-        assert_eq!(val & (1 << 5), 0, "slave present bit should be cleared (active low)");
+        assert_eq!(val, 0xDF);
     }
 
     #[test]
