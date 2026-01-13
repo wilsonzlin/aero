@@ -8,6 +8,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aero-acpi = { path = "../crates/aero-acpi" }
 aero-pc-constants = { path = "../crates/aero-pc-constants" }
+aero-d3d9 = { path = "../crates/aero-d3d9" }
+aero-dxbc = { path = "../crates/aero-dxbc" }
 aero-snapshot = { path = "../crates/aero-snapshot" }
 firmware = { path = "../crates/firmware" }
 lz4_flex = "0.11.5"

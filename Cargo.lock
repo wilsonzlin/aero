@@ -6124,6 +6124,8 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "aero-acpi",
+ "aero-d3d9",
+ "aero-dxbc",
  "aero-pc-constants",
  "aero-snapshot",
  "assert_cmd",

@@ -8,6 +8,7 @@ use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 mod cmd_bios_rom;
 mod cmd_conformance;
 mod cmd_input;
+mod cmd_shader_opcode_report;
 mod cmd_snapshot;
 mod cmd_test_all;
 mod cmd_wasm;
@@ -69,6 +70,7 @@ fn try_main() -> Result<()> {
         "conformance" => cmd_conformance::cmd(args.collect()),
         "input" => cmd_input::cmd(args.collect()),
         "snapshot" => cmd_snapshot::cmd(args.collect()),
+        "shader-opcode-report" => cmd_shader_opcode_report::cmd(args.collect()),
         "test-all" => cmd_test_all::cmd(args.collect()),
         "wasm" => cmd_wasm::cmd(args.collect()),
         "wasm-check" => cmd_wasm_check::cmd(args.collect()),
@@ -101,6 +103,7 @@ Usage:
   cargo xtask snapshot inspect <path>
   cargo xtask snapshot validate [--deep] <path>
   cargo xtask snapshot diff <path_a> <path_b> [--deep]
+  cargo xtask shader-opcode-report [--deny-unsupported] <files...>
   cargo xtask test-all [options] [-- <extra playwright args>]
   cargo xtask wasm [single|threaded|both] [dev|release]
   cargo xtask wasm-check
@@ -112,8 +115,11 @@ Commands:
   conformance Run instruction conformance / differential tests (x86_64 unix only).
   input      Run the USB/input-focused test suite (Rust + web; optional Playwright subset).
   snapshot   Inspect/validate/diff an `aero-snapshot` file without loading multi-GB RAM payloads.
+  shader-opcode-report
+               Report SM2/3 opcode usage and unsupported opcodes for the D3D9 SM2/3 translator.
   test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright). Also validates
              deterministic in-repo fixtures by default (use `cargo xtask test-all --help`).
+              deterministic in-repo fixtures by default (use `cargo xtask test-all --help`).
   wasm       Build the Rust→WASM packages used by the web app.
   wasm-check Compile-check wasm32 compatibility for selected crates (e.g. `aero-devices-gpu`).
   web        Run web (Node/Vite) tasks via npm.

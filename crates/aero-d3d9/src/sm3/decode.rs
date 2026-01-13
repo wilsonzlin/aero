@@ -197,6 +197,72 @@ impl Opcode {
         }
     }
 
+    /// Returns the raw `D3DSHADER_INSTRUCTION_OPCODE_TYPE` value.
+    pub fn raw(&self) -> u16 {
+        match self {
+            Self::Nop => 0,
+            Self::Mov => 1,
+            Self::Mova => 46,
+            Self::Add => 2,
+            Self::Sub => 3,
+            Self::Mad => 4,
+            Self::M4x4 => 20,
+            Self::M4x3 => 21,
+            Self::M3x4 => 22,
+            Self::M3x3 => 23,
+            Self::M3x2 => 24,
+            Self::Lrp => 18,
+            Self::Mul => 5,
+            Self::Rcp => 6,
+            Self::Rsq => 7,
+            Self::Dp2Add => 89,
+            Self::Dp2 => 90,
+            Self::Dp3 => 8,
+            Self::Dp4 => 9,
+            Self::Exp => 14,
+            Self::Log => 15,
+            Self::Lit => 16,
+            Self::Min => 10,
+            Self::Max => 11,
+            Self::Abs => 35,
+            Self::Crs => 33,
+            Self::Sgn => 34,
+            Self::Slt => 12,
+            Self::Sge => 13,
+            Self::Frc => 19,
+            Self::Nrm => 36,
+            Self::SinCos => 37,
+            Self::Call => 25,
+            Self::Loop => 27,
+            Self::Ret => 28,
+            Self::EndLoop => 29,
+            Self::Dcl => 31,
+            Self::Pow => 32,
+            Self::If => 40,
+            Self::Ifc => 41,
+            Self::Else => 42,
+            Self::EndIf => 43,
+            Self::Break => 44,
+            Self::Breakc => 45,
+            Self::TexKill => 65,
+            Self::Tex => 66,
+            Self::TexLdd => 77,
+            Self::Setp => 78,
+            Self::TexLdl => 79,
+            Self::Def => 81,
+            Self::DefI => 82,
+            Self::DefB => 83,
+            Self::Seq => 84,
+            Self::Sne => 85,
+            Self::Dsx => 86,
+            Self::Dsy => 87,
+            Self::Cmp => 88,
+            Self::Comment => 0xFFFE,
+            Self::End => 0xFFFF,
+            Self::Unknown(raw) => *raw,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Self::Nop => "nop",
@@ -679,77 +745,159 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             break;
         }
 
-        // D3D9 SM2/SM3 encodes instruction length as the total number of DWORD tokens in the
-        // instruction, including the opcode token itself, in bits 24..27.
+        // D3D9 shader instruction length is encoded in bits 24..27.
         //
-        // Many instructions that take no operands encode this length as `0`, which is interpreted
-        // as a 1-token instruction.
-        let mut length = ((opcode_token >> 24) & 0x0F) as usize;
-        if length == 0 {
-            length = 1;
-        }
-        if token_index + length > tokens.len() {
-            return Err(DecodeError {
-                token_index,
-                message: format!(
-                    "instruction length {length} exceeds remaining tokens {}",
-                    tokens.len() - token_index
-                ),
-            });
-        }
+        // Different toolchains appear to disagree on whether this value includes the opcode token
+        // itself. In the wild we see both:
+        //   - total instruction length in DWORDs including the opcode token (e.g. DXBC SHDR/SHEX)
+        //   - parameter-token count excluding the opcode token (some legacy token streams)
+        //
+        // For robustness, try both encodings.
+        let length_field = ((opcode_token >> 24) & 0x0F) as usize;
 
         let coissue = (opcode_token & COISSUE) != 0;
         let predicated = (opcode_token & PREDICATED) != 0;
         let result_modifier = decode_result_modifier(opcode_token);
 
-        let mut operand_tokens = &tokens[token_index + 1..token_index + length];
+        let length_including_opcode = if length_field == 0 { 1 } else { length_field };
+        let length_excluding_opcode = 1 + length_field;
+        let mut length_candidates = [length_including_opcode, length_excluding_opcode];
+        // Keep output deterministic and avoid trying the same length twice when length_field==0.
+        if length_candidates[0] == length_candidates[1] {
+            length_candidates[1] = 0;
+        }
 
-        let predicate = if predicated {
-            // In SM3 bytecode, predicated instructions append a predicate register
-            // source parameter token at the end of the instruction.
-            //
-            // Predicate registers do not support relative addressing, so a single
-            // token is expected here.
-            if operand_tokens.is_empty() {
-                return Err(DecodeError {
-                    token_index,
-                    message: "predicated instruction missing predicate token".to_owned(),
-                });
-            }
-            let pred_token = *operand_tokens.last().unwrap();
-            operand_tokens = &operand_tokens[..operand_tokens.len() - 1];
-            let (pred_src, consumed) = decode_src_operand(&[pred_token], 0, stage, major)?;
+        let decode_predicate = |pred_token: u32, abs_token_index: usize| -> Result<Predicate, DecodeError> {
+            let (pred_src, consumed) = decode_src_operand(&[pred_token], 0, stage, major)
+                .map_err(|mut err| {
+                    err.token_index += abs_token_index;
+                    err
+                })?;
             if consumed != 1 {
                 return Err(DecodeError {
-                    token_index,
+                    token_index: abs_token_index,
                     message: "unexpected multi-token predicate operand".to_owned(),
                 });
             }
+            if pred_src.reg.file != RegisterFile::Predicate {
+                return Err(DecodeError {
+                    token_index: abs_token_index,
+                    message: format!(
+                        "expected predicate register, got {:?}",
+                        pred_src.reg.file
+                    ),
+                });
+            }
+
             let (component, negate) = match pred_src.modifier {
                 SrcModifier::None => (pred_src.swizzle.0[0], false),
                 SrcModifier::Negate => (pred_src.swizzle.0[0], true),
                 other => {
                     return Err(DecodeError {
-                        token_index,
+                        token_index: abs_token_index,
                         message: format!("unsupported predicate modifier {other:?}"),
                     });
                 }
             };
-            Some(Predicate {
+            Ok(Predicate {
                 reg: pred_src.reg,
                 component,
                 negate,
             })
-        } else {
-            None
         };
 
-        let (operands, dcl, comment_data) =
-            decode_operands_and_extras(opcode_token, opcode, stage, major, operand_tokens)
-                .map_err(|mut err| {
-                    err.token_index += location.token_index + 1;
-                    err
-                })?;
+        let mut last_err = None;
+        let mut decoded = None;
+
+        for length in length_candidates.into_iter().filter(|&l| l != 0) {
+            if token_index + length > tokens.len() {
+                last_err = Some(DecodeError {
+                    token_index,
+                    message: format!(
+                        "instruction length {length} exceeds remaining tokens {}",
+                        tokens.len() - token_index
+                    ),
+                });
+                break;
+            }
+
+            let operand_tokens_full = &tokens[token_index + 1..token_index + length];
+
+            let pred_positions: &[(bool, usize)] = if predicated {
+                // Some streams encode the predicate token as a prefix, others as a suffix.
+                // Try both; the predicate token must decode to a predicate register for either to
+                // be accepted.
+                &[
+                    // (is_prefix, operand_base_offset)
+                    (true, 1),
+                    (false, 0),
+                ]
+            } else {
+                &[(false, 0)]
+            };
+
+            for &(pred_is_prefix, operand_base_offset) in pred_positions {
+                let (predicate, operand_tokens) = if predicated {
+                    if operand_tokens_full.is_empty() {
+                        last_err = Some(DecodeError {
+                            token_index,
+                            message: "predicated instruction missing predicate token".to_owned(),
+                        });
+                        continue;
+                    }
+                    if pred_is_prefix {
+                        let pred_abs = token_index + 1;
+                        let pred = match decode_predicate(operand_tokens_full[0], pred_abs) {
+                            Ok(p) => p,
+                            Err(err) => {
+                                last_err = Some(err);
+                                continue;
+                            }
+                        };
+                        (Some(pred), &operand_tokens_full[1..])
+                    } else {
+                        let pred_abs = token_index + length - 1;
+                        let pred = match decode_predicate(*operand_tokens_full.last().unwrap(), pred_abs) {
+                            Ok(p) => p,
+                            Err(err) => {
+                                last_err = Some(err);
+                                continue;
+                            }
+                        };
+                        (
+                            Some(pred),
+                            &operand_tokens_full[..operand_tokens_full.len() - 1],
+                        )
+                    }
+                } else {
+                    (None, operand_tokens_full)
+                };
+
+                match decode_operands_and_extras(opcode_token, opcode, stage, major, operand_tokens)
+                {
+                    Ok((operands, dcl, comment_data)) => {
+                        decoded = Some((length, predicate, operands, dcl, comment_data));
+                        break;
+                    }
+                    Err(mut err) => {
+                        // Convert from operand-token-local index to absolute token index.
+                        err.token_index += location.token_index + 1 + operand_base_offset;
+                        last_err = Some(err);
+                    }
+                }
+            }
+
+            if decoded.is_some() {
+                break;
+            }
+        }
+
+        let Some((length, predicate, operands, dcl, comment_data)) = decoded else {
+            return Err(last_err.unwrap_or_else(|| DecodeError {
+                token_index,
+                message: "failed to decode instruction".to_owned(),
+            }));
+        };
 
         instructions.push(DecodedInstruction {
             location,
@@ -1076,23 +1224,98 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::Dcl => {
-            // SM2/3 `dcl` is a single-parameter instruction in the executable stream:
-            //   dcl <dst_register>
+            // D3D9 `dcl` is unfortunately not uniform across profiles/compilers.
             //
-            // The declaration metadata (usage / texture type) is encoded in opcode_token[16..24],
-            // matching `D3DSHADER_DECL_USAGE` / `D3DSHADER_SAMPLER_TEXTURE_TYPE`.
-            parse_fixed_operands(
-                opcode,
-                stage,
-                major,
-                operand_tokens,
-                &[OperandKind::Dst],
-                &mut operands,
-            )?;
-            let usage_raw = ((opcode_token >> 16) & 0xF) as u8;
-            let usage_index = ((opcode_token >> 20) & 0xF) as u8;
-            let usage = decode_dcl_usage(usage_raw, operands.first())?;
-            dcl = Some(DclInfo { usage, usage_index });
+            // Common encodings observed in the wild:
+            // - `dcl <dst>` (1 operand token) for some SM2/SM3 declarations.
+            // - `dcl <decl_token>, <dst>` (2 operand tokens) where `decl_token` encodes usage/index.
+            //
+            // For translation/telemetry, it is more important that decoding does not fail than it
+            // is to recover every semantic detail. We accept both forms.
+            match operand_tokens.len() {
+                1 => {
+                    parse_fixed_operands(
+                        opcode,
+                        stage,
+                        major,
+                        operand_tokens,
+                        &[OperandKind::Dst],
+                        &mut operands,
+                    )?;
+
+                    // Some compilers encode DCL usage/index directly in the opcode token (bits
+                    // 16..24) instead of emitting a separate declaration token.
+                    //
+                    // Note: Pixel shader SM2 `dcl t#` is commonly emitted with these bits all
+                    // zeroed, so do not trust the opcode token's usage fields for texture register
+                    // declarations. However, SM3 pixel shaders use `dcl_* v#` for varyings and do
+                    // encode semantics in the opcode token, so we accept it for `v#` input decls.
+                    let first_operand = operands.first();
+                    let is_sampler_decl = matches!(
+                        first_operand,
+                        Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Sampler
+                    );
+                    let is_input_decl = matches!(
+                        first_operand,
+                        Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Input
+                    );
+
+                    if stage == ShaderStage::Vertex || is_sampler_decl || is_input_decl {
+                        let usage_index = ((opcode_token >> 20) & 0xF) as u8;
+                        // Modern D3D9 DCL encoding packs usage and usage index into the opcode token:
+                        //   - usage_raw   = opcode_token[16..20] (4 bits)
+                        //   - usage_index = opcode_token[20..24] (4 bits)
+                        //
+                        // Note: Sampler texture type declarations reuse `usage_raw` with values from
+                        // `D3DSAMPLER_TEXTURE_TYPE`.
+                        let usage_raw = ((opcode_token >> 16) & 0xF) as u8;
+                        let usage = decode_dcl_usage(usage_raw, first_operand)?;
+                        dcl = Some(DclInfo { usage, usage_index });
+                    } else {
+                        dcl = Some(DclInfo {
+                            usage: DclUsage::Unknown(0xFF),
+                            usage_index: 0,
+                        });
+                    }
+                }
+                _ => {
+                    parse_fixed_operands(
+                        opcode,
+                        stage,
+                        major,
+                        operand_tokens,
+                        &[OperandKind::Imm32, OperandKind::Dst],
+                        &mut operands,
+                    )?;
+
+                    let decl_token = match operands.first() {
+                        Some(Operand::Imm32(v)) => *v,
+                        _ => {
+                            return Err(DecodeError {
+                                token_index: 0,
+                                message: "dcl missing declaration token".to_owned(),
+                            })
+                        }
+                    };
+                    let dst_operand = operands.get(1);
+
+                    // For non-sampler decls, usage is encoded in decl_token[0..5].
+                    // For sampler decls, texture type is encoded in decl_token[27..31].
+                    let usage_index = ((decl_token >> 16) & 0xF) as u8;
+                    let is_sampler_decl = matches!(
+                        dst_operand,
+                        Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Sampler
+                    );
+                    let usage_raw = if is_sampler_decl {
+                        ((decl_token >> 27) & 0xF) as u8
+                    } else {
+                        (decl_token & 0x1F) as u8
+                    };
+
+                    let usage = decode_dcl_usage(usage_raw, dst_operand)?;
+                    dcl = Some(DclInfo { usage, usage_index });
+                }
+            }
         }
         Opcode::Def => {
             parse_fixed_operands(
@@ -1222,11 +1445,13 @@ fn decode_operands_and_extras(
                 &mut operands,
             )?;
         }
-        Opcode::Unknown(op) => {
-            return Err(DecodeError {
-                token_index: 0,
-                message: format!("unsupported opcode 0x{op:04x}"),
-            });
+        Opcode::Unknown(_op) => {
+            // Keep unknown opcodes as-is so tooling can still report coverage over
+            // partially-supported shader corpora.
+            //
+            // We don't know the operand encoding, so preserve the raw tokens as
+            // `imm32` operands.
+            operands.extend(operand_tokens.iter().copied().map(Operand::Imm32));
         }
         Opcode::Comment | Opcode::End => unreachable!("handled in main loop"),
     }
