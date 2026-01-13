@@ -26,6 +26,14 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   const virtioSndModeHelpText =
     "Virtio-snd PCI transport mode. Modern is the default Aero contract; transitional/legacy are for virtio-win compatibility. " +
     "Changing this requires a restart to apply.";
+  const forceKeyboardBackendHelpText =
+    "Override the IO worker keyboard injection backend (auto/ps2/usb/virtio). " +
+    'When forced backend is not available (e.g. virtio before DRIVER_OK), Aero falls back to "auto" and logs a warning. ' +
+    "Aero will not switch while keys are held.";
+  const forceMouseBackendHelpText =
+    "Override the IO worker mouse injection backend (auto/ps2/usb/virtio). " +
+    'When forced backend is not available (e.g. virtio before DRIVER_OK), Aero falls back to "auto" and logs a warning. ' +
+    "Aero will not switch while mouse buttons are held.";
 
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
@@ -114,6 +122,36 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   const virtioSndModeHint = document.createElement("div");
   virtioSndModeHint.className = "hint";
 
+  const forceKeyboardBackendSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["auto", "auto (default)"],
+    ["ps2", "ps2 (i8042)"],
+    ["usb", "usb (synthetic HID)"],
+    ["virtio", "virtio-input"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    forceKeyboardBackendSelect.appendChild(option);
+  }
+  const forceKeyboardBackendHint = document.createElement("div");
+  forceKeyboardBackendHint.className = "hint";
+
+  const forceMouseBackendSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["auto", "auto (default)"],
+    ["ps2", "ps2 (i8042 AUX)"],
+    ["usb", "usb (synthetic HID)"],
+    ["virtio", "virtio-input"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    forceMouseBackendSelect.appendChild(option);
+  }
+  const forceMouseBackendHint = document.createElement("div");
+  forceMouseBackendHint.className = "hint";
+
   const resetButton = document.createElement("button");
   resetButton.type = "button";
   resetButton.textContent = "Reset to defaults";
@@ -124,6 +162,8 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   fieldset.appendChild(makeRow("Virtio-net mode", virtioNetModeSelect, virtioNetModeHint));
   fieldset.appendChild(makeRow("Virtio-input mode", virtioInputModeSelect, virtioInputModeHint));
   fieldset.appendChild(makeRow("Virtio-snd mode", virtioSndModeSelect, virtioSndModeHint));
+  fieldset.appendChild(makeRow("Force keyboard backend", forceKeyboardBackendSelect, forceKeyboardBackendHint));
+  fieldset.appendChild(makeRow("Force mouse backend", forceMouseBackendSelect, forceMouseBackendHint));
   fieldset.appendChild(makeRow("Proxy URL", proxyInput, proxyHint, proxyError));
   fieldset.appendChild(makeRow("Log level", logSelect, logHint));
   fieldset.appendChild(resetButton);
@@ -150,6 +190,16 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   });
   virtioSndModeSelect.addEventListener("change", () => {
     manager.updateStoredConfig({ virtioSndMode: virtioSndModeSelect.value as AeroConfig["virtioSndMode"] });
+  });
+  forceKeyboardBackendSelect.addEventListener("change", () => {
+    manager.updateStoredConfig({
+      forceKeyboardBackend: forceKeyboardBackendSelect.value as AeroConfig["forceKeyboardBackend"],
+    });
+  });
+  forceMouseBackendSelect.addEventListener("change", () => {
+    manager.updateStoredConfig({
+      forceMouseBackend: forceMouseBackendSelect.value as AeroConfig["forceMouseBackend"],
+    });
   });
 
   function commitProxy(): void {
@@ -186,6 +236,8 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     setLocked(virtioNetModeSelect, virtioNetModeHint, state, "virtioNetMode");
     setLocked(virtioInputModeSelect, virtioInputModeHint, state, "virtioInputMode");
     setLocked(virtioSndModeSelect, virtioSndModeHint, state, "virtioSndMode");
+    setLocked(forceKeyboardBackendSelect, forceKeyboardBackendHint, state, "forceKeyboardBackend");
+    setLocked(forceMouseBackendSelect, forceMouseBackendHint, state, "forceMouseBackend");
     setLocked(proxyInput, proxyHint, state, "proxyUrl");
     if (!state.lockedKeys.has("proxyUrl")) {
       proxyHint.textContent = proxyHelpText;
@@ -198,6 +250,12 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     }
     if (!state.lockedKeys.has("virtioSndMode")) {
       virtioSndModeHint.textContent = virtioSndModeHelpText;
+    }
+    if (!state.lockedKeys.has("forceKeyboardBackend")) {
+      forceKeyboardBackendHint.textContent = forceKeyboardBackendHelpText;
+    }
+    if (!state.lockedKeys.has("forceMouseBackend")) {
+      forceMouseBackendHint.textContent = forceMouseBackendHelpText;
     }
 
     const desiredMem = String(state.effective.guestMemoryMiB);
@@ -217,6 +275,8 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     virtioNetModeSelect.value = state.effective.virtioNetMode ?? "modern";
     virtioInputModeSelect.value = state.effective.virtioInputMode ?? "modern";
     virtioSndModeSelect.value = state.effective.virtioSndMode ?? "modern";
+    forceKeyboardBackendSelect.value = state.effective.forceKeyboardBackend ?? "auto";
+    forceMouseBackendSelect.value = state.effective.forceMouseBackend ?? "auto";
 
     if (document.activeElement !== proxyInput) {
       proxyInput.value = state.effective.proxyUrl ?? "";
