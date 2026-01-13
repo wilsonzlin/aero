@@ -1273,7 +1273,6 @@ bool unbind_resource_from_outputs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hD
   if (!changed) {
     return true;
   }
-  normalize_render_targets_no_gaps_locked(dev);
   if (!emit_set_render_targets_locked(dev)) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return false;
@@ -1300,32 +1299,10 @@ bool set_render_targets_locked(AeroGpuDevice* dev,
     new_rtvs[i] = res ? res->handle : 0;
   }
 
-  // Normalize away unsupported "gaps" so hazard resolution and binding state
-  // updates are consistent with what the host executor can accept.
-  uint32_t normalized_count = 0;
-  bool seen_gap = false;
-  for (uint32_t i = 0; i < count; ++i) {
-    const aerogpu_handle_t h = new_rtvs[i];
-    if (h == 0) {
-      seen_gap = true;
-      continue;
-    }
-    if (seen_gap) {
-      new_rtvs[i] = 0;
-      new_rtv_resources[i] = nullptr;
-    } else {
-      normalized_count = i + 1;
-    }
-  }
-  for (uint32_t i = normalized_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    new_rtvs[i] = 0;
-    new_rtv_resources[i] = nullptr;
-  }
-
   const aerogpu_handle_t dsv_handle = dsv_res ? dsv_res->handle : 0;
 
   // D3D10/11 hazard rule: resources bound for output cannot simultaneously be bound as SRVs.
-  for (uint32_t i = 0; i < normalized_count; ++i) {
+  for (uint32_t i = 0; i < count; ++i) {
     const aerogpu_handle_t handle = new_rtvs[i];
     if (!handle) {
       continue;
@@ -1347,7 +1324,7 @@ bool set_render_targets_locked(AeroGpuDevice* dev,
   }
   if (dsv_handle) {
     bool dsv_seen = false;
-    for (uint32_t i = 0; i < normalized_count; ++i) {
+    for (uint32_t i = 0; i < count; ++i) {
       if (new_rtvs[i] == dsv_handle) {
         dsv_seen = true;
         break;
@@ -1368,9 +1345,9 @@ bool set_render_targets_locked(AeroGpuDevice* dev,
   const aerogpu_handle_t prev_dsv = dev->current_dsv;
   AeroGpuResource* prev_dsv_res = dev->current_dsv_res;
 
-  dev->current_rtv_count = normalized_count;
+  dev->current_rtv_count = count;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    if (i < normalized_count) {
+    if (i < count) {
       dev->current_rtvs[i] = new_rtvs[i];
       dev->current_rtv_resources[i] = new_rtv_resources[i];
     } else {
@@ -1530,13 +1507,11 @@ bool emit_set_render_targets_locked(AeroGpuDevice* dev) {
   }
   dev->current_dsv = dev->current_dsv_res ? dev->current_dsv_res->handle : 0;
 
-  normalize_render_targets_no_gaps_locked(dev);
-
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!cmd) {
     return false;
   }
-  cmd->color_count = dev->current_rtv_count;
+  cmd->color_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
   cmd->depth_stencil = dev->current_dsv;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     cmd->colors[i] = 0;

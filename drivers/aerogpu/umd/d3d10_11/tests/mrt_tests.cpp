@@ -367,7 +367,80 @@ bool TestSetRenderTargetsEncodesMrtAndClamps() {
   return true;
 }
 
-bool TestSrvBindingUnbindsRtvsWithoutGaps() {
+bool TestSetRenderTargetsPreservesNullEntries() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  TestResource tex0{};
+  TestResource tex1{};
+  TestRtv rtv0{};
+  TestRtv rtv1{};
+
+  if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex0) ||
+      !CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex1)) {
+    return false;
+  }
+  if (!CreateRTV(&dev, &tex0, &rtv0) || !CreateRTV(&dev, &tex1, &rtv1)) {
+    return false;
+  }
+
+  D3D10DDI_HRENDERTARGETVIEW rtvs[3] = {rtv0.hRtv, D3D10DDI_HRENDERTARGETVIEW{}, rtv1.hRtv};
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/3, rtvs, null_dsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets with null)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets with null)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 2, "captured CREATE_TEXTURE2D handles (2)")) {
+    return false;
+  }
+
+  const CmdLoc loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after SetRenderTargets with null)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 3, "SET_RENDER_TARGETS color_count==3 (null slot preserved)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[0] == created[0], "SET_RENDER_TARGETS colors[0] (null slot preserved)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[1] == 0, "SET_RENDER_TARGETS colors[1]==0 (null slot)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[2] == created[1], "SET_RENDER_TARGETS colors[2] (null slot preserved)")) {
+    return false;
+  }
+  for (uint32_t i = 3; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (trailing)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex1.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSrvBindingUnbindsOnlyAliasedRtv() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
     return false;
@@ -427,9 +500,8 @@ bool TestSrvBindingUnbindsRtvsWithoutGaps() {
     }
   }
 
-  // Binding a SRV that aliases RTV[0] must unbind RTV[0]. The current AeroGPU host
-  // executor does not support gapped RTV bindings (RTV[1] set while RTV[0] is
-  // unbound), so the driver should also clear RTV[1] (color_count becomes 0).
+  // Binding a SRV that aliases RTV[0] must unbind RTV[0], but should preserve
+  // RTV[1] (null entries are encoded in SET_RENDER_TARGETS.colors[]).
   D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv0.hSrv};
   dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
   if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources)")) {
@@ -448,11 +520,17 @@ bool TestSrvBindingUnbindsRtvsWithoutGaps() {
     return false;
   }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
-  if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (no gaps)")) {
+  if (!Check(set_rt->color_count == 2, "SET_RENDER_TARGETS color_count==2 (RTV[1] preserved)")) {
     return false;
   }
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (no gaps)")) {
+  if (!Check(set_rt->colors[0] == 0, "SET_RENDER_TARGETS colors[0]==0 (aliased RTV[0] unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[1] == created[1], "SET_RENDER_TARGETS colors[1]==RTV[1] (preserved)")) {
+    return false;
+  }
+  for (uint32_t i = 2; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (trailing)")) {
       return false;
     }
   }
@@ -472,7 +550,8 @@ bool TestSrvBindingUnbindsRtvsWithoutGaps() {
 int main() {
   bool ok = true;
   ok &= TestSetRenderTargetsEncodesMrtAndClamps();
-  ok &= TestSrvBindingUnbindsRtvsWithoutGaps();
+  ok &= TestSetRenderTargetsPreservesNullEntries();
+  ok &= TestSrvBindingUnbindsOnlyAliasedRtv();
   if (!ok) {
     return 1;
   }
