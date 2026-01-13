@@ -30,8 +30,9 @@ fn vga_dac_ports_program_palette_entry_and_read_back() {
         let base_index: u8 = 0x2A;
         m.io_write(0x3C8, 1, base_index as u32);
 
-        // Entry 0x2A: 8-bit RGB.
-        let (r8, g8, b8) = (0x80u8, 0xC0u8, 0xFFu8);
+        // Entry 0x2A: 8-bit RGB. Intentionally include components <= 63 so we exercise the
+        // downscaling behavior even for "dark" 8-bit values.
+        let (r8, g8, b8) = (0x20u8, 0x10u8, 0xFFu8);
         m.io_write(0x3C9, 1, r8 as u32);
         m.io_write(0x3C9, 1, g8 as u32);
         m.io_write(0x3C9, 1, b8 as u32);
@@ -63,4 +64,3 @@ fn vga_dac_ports_program_palette_entry_and_read_back() {
         assert_eq!(m.io_read(0x3C7, 1) as u8, base_index.wrapping_add(2));
     }
 }
-

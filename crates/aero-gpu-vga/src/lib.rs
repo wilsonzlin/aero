@@ -162,6 +162,7 @@ pub struct VgaDevice {
     pel_mask: u8,
     dac_write_index: u8,
     dac_write_subindex: u8,
+    dac_write_latch: [u8; 3],
     dac_read_index: u8,
     dac_read_subindex: u8,
     dac: [Rgb; 256],
@@ -211,6 +212,7 @@ impl VgaDevice {
             pel_mask: 0xFF,
             dac_write_index: 0,
             dac_write_subindex: 0,
+            dac_write_latch: [0; 3],
             dac_read_index: 0,
             dac_read_subindex: 0,
             dac: [Rgb::BLACK; 256],
@@ -963,26 +965,40 @@ impl VgaDevice {
 
     fn write_dac_data(&mut self, value: u8) {
         let idx = self.dac_write_index as usize;
-        let component = self.dac_write_subindex;
-        // Real VGA hardware exposes a 6-bit DAC, but guests often write 8-bit (0..=255) palette
-        // components directly. Be permissive:
-        // - Values in 0..=63 are treated as native 6-bit DAC writes.
-        // - Values in 64..=255 are treated as 8-bit writes and downscaled to 6-bit via `>> 2`.
+        let component = (self.dac_write_subindex as usize) % 3;
+
+        // Real VGA hardware uses a 6-bit DAC. In practice, a lot of guest software writes
+        // 8-bit (0..=255) component values directly. We support both by detecting 8-bit mode per
+        // palette entry:
         //
-        // The device stores the palette in 8-bit form for rendering; `vga_6bit_to_8bit` expands
-        // the 6-bit component into the nearest 8-bit approximation.
-        let v6 = if value > 0x3F { value >> 2 } else { value };
-        let v = palette::vga_6bit_to_8bit(v6);
-        match component {
-            0 => self.dac[idx].r = v,
-            1 => self.dac[idx].g = v,
-            2 => self.dac[idx].b = v,
-            _ => {}
-        }
+        // - If any component in the 3-byte RGB sequence is > 63, treat the whole entry as 8-bit
+        //   and downscale all components via `>> 2`.
+        // - Otherwise, treat the entry as 6-bit.
+        //
+        // This handles common 8-bit palettes where some components are <= 63 (dark) as long as
+        // at least one of R/G/B exceeds 63 within the same entry.
+        self.dac_write_latch[component] = value;
+
         self.dac_write_subindex = (self.dac_write_subindex + 1) % 3;
-        if self.dac_write_subindex == 0 {
-            self.dac_write_index = self.dac_write_index.wrapping_add(1);
+        if self.dac_write_subindex != 0 {
+            return;
         }
+
+        let is_8bit = self.dac_write_latch.iter().any(|&v| v > 0x3F);
+        let to_vga_6bit = |v: u8| -> u8 {
+            if is_8bit {
+                v >> 2
+            } else {
+                v & 0x3F
+            }
+        };
+
+        let r = palette::vga_6bit_to_8bit(to_vga_6bit(self.dac_write_latch[0]));
+        let g = palette::vga_6bit_to_8bit(to_vga_6bit(self.dac_write_latch[1]));
+        let b = palette::vga_6bit_to_8bit(to_vga_6bit(self.dac_write_latch[2]));
+        self.dac[idx] = Rgb { r, g, b };
+
+        self.dac_write_index = self.dac_write_index.wrapping_add(1);
         self.dirty = true;
     }
 
@@ -1353,6 +1369,7 @@ impl IoSnapshot for VgaDevice {
         const TAG_VBE_REGS: u16 = 19;
         const TAG_VRAM: u16 = 20;
         const TAG_LATCHES: u16 = 21;
+        const TAG_DAC_WRITE_LATCH: u16 = 22;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -1377,6 +1394,7 @@ impl IoSnapshot for VgaDevice {
         w.field_u8(TAG_DAC_WRITE_SUBINDEX, self.dac_write_subindex);
         w.field_u8(TAG_DAC_READ_INDEX, self.dac_read_index);
         w.field_u8(TAG_DAC_READ_SUBINDEX, self.dac_read_subindex);
+        w.field_bytes(TAG_DAC_WRITE_LATCH, self.dac_write_latch.to_vec());
 
         // Palette: pack as tightly as possible (RGB triplets).
         let mut pal = Vec::with_capacity(256 * 3);
@@ -1432,6 +1450,7 @@ impl IoSnapshot for VgaDevice {
         const TAG_VBE_REGS: u16 = 19;
         const TAG_VRAM: u16 = 20;
         const TAG_LATCHES: u16 = 21;
+        const TAG_DAC_WRITE_LATCH: u16 = 22;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -1497,6 +1516,12 @@ impl IoSnapshot for VgaDevice {
         }
         if let Some(v) = r.u8(TAG_DAC_WRITE_SUBINDEX)? {
             self.dac_write_subindex = v;
+        }
+        if let Some(buf) = r.bytes(TAG_DAC_WRITE_LATCH) {
+            if buf.len() != self.dac_write_latch.len() {
+                return Err(SnapshotError::InvalidFieldEncoding("dac_write_latch"));
+            }
+            self.dac_write_latch.copy_from_slice(buf);
         }
         if let Some(v) = r.u8(TAG_DAC_READ_INDEX)? {
             self.dac_read_index = v;
