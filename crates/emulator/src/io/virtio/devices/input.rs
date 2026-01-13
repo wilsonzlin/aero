@@ -28,6 +28,8 @@ pub const REL_WHEEL: u16 = 0x08;
 pub const LED_NUML: u16 = 0x00;
 pub const LED_CAPSL: u16 = 0x01;
 pub const LED_SCROLLL: u16 = 0x02;
+pub const LED_COMPOSE: u16 = 0x03;
+pub const LED_KANA: u16 = 0x04;
 
 pub const BTN_LEFT: u16 = 0x110;
 pub const BTN_RIGHT: u16 = 0x111;
@@ -300,7 +302,7 @@ impl VirtioInputBitmaps {
             KEY_INSERT,
             KEY_DELETE,
         ]);
-        bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL]);
+        bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL, LED_COMPOSE, LED_KANA]);
         bitmaps
     }
 
@@ -531,12 +533,22 @@ impl VirtioInputDevice {
         let mut should_interrupt = false;
 
         while let Some(chain) = self.status_vq.pop_available(mem)? {
-            let mut bytes = [0u8; VirtioInputEvent::BYTE_SIZE];
-            match read_chain_exact(mem, &chain.descriptors, 0, &mut bytes) {
-                Ok(()) => self.handle_status_event(VirtioInputEvent::from_bytes_le(bytes)),
-                Err(VirtQueueError::DescriptorChainTooShort { .. }) => {}
-                Err(VirtQueueError::GuestMemory(_)) => {}
-                Err(other) => return Err(other),
+            /*
+             * The virtio-input status queue may contain multiple packed
+             * virtio_input_event records in a single descriptor chain (e.g.
+             * the Win7 virtio-input driver sends 5x EV_LED + 1x EV_SYN).
+             */
+            let total_len: usize = chain.descriptors.iter().map(|d| d.len as usize).sum();
+            let event_count = total_len / VirtioInputEvent::BYTE_SIZE;
+
+            for i in 0..event_count {
+                let mut bytes = [0u8; VirtioInputEvent::BYTE_SIZE];
+                match read_chain_exact(mem, &chain.descriptors, i * VirtioInputEvent::BYTE_SIZE, &mut bytes) {
+                    Ok(()) => self.handle_status_event(VirtioInputEvent::from_bytes_le(bytes)),
+                    Err(VirtQueueError::DescriptorChainTooShort { .. }) => break,
+                    Err(VirtQueueError::GuestMemory(_)) => break,
+                    Err(other) => return Err(other),
+                }
             }
 
             if self.status_vq.push_used(mem, &chain, 0)? {
@@ -562,6 +574,8 @@ impl VirtioInputDevice {
             LED_NUML => 1u8 << 0,
             LED_CAPSL => 1u8 << 1,
             LED_SCROLLL => 1u8 << 2,
+            LED_COMPOSE => 1u8 << 3,
+            LED_KANA => 1u8 << 4,
             _ => return,
         };
         if event.value != 0 {
@@ -898,6 +912,90 @@ mod tests {
     }
 
     #[test]
+    fn status_queue_multi_event_buffer_is_processed_in_full() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let event_vq = VirtQueue::new(8, 0, 0, 0);
+
+        let status_desc = 0x1000;
+        let status_avail = 0x2000;
+        let status_used = 0x3000;
+        let status_buf = 0x0400;
+
+        /*
+         * The Win7 virtio-input driver emits 6 events in a single statusq buffer:
+         * 5x EV_LED + final EV_SYN. Ensure we process more than just the first
+         * event (NUML) so CapsLock/Compose updates are not dropped.
+         */
+        let events = [
+            VirtioInputEvent {
+                typ: EV_LED,
+                code: LED_NUML,
+                value: 0,
+            },
+            VirtioInputEvent {
+                typ: EV_LED,
+                code: LED_CAPSL,
+                value: 1,
+            },
+            VirtioInputEvent {
+                typ: EV_LED,
+                code: LED_SCROLLL,
+                value: 0,
+            },
+            VirtioInputEvent {
+                typ: EV_LED,
+                code: LED_COMPOSE,
+                value: 1,
+            },
+            VirtioInputEvent {
+                typ: EV_LED,
+                code: LED_KANA,
+                value: 0,
+            },
+            VirtioInputEvent {
+                typ: EV_SYN,
+                code: SYN_REPORT,
+                value: 0,
+            },
+        ];
+
+        for (i, ev) in events.iter().enumerate() {
+            mem.write_from(
+                status_buf + (i as u64) * (VirtioInputEvent::BYTE_SIZE as u64),
+                &ev.to_bytes_le(),
+            )
+            .unwrap();
+        }
+
+        write_desc(
+            &mut mem,
+            status_desc,
+            0,
+            Descriptor {
+                addr: status_buf,
+                len: (VirtioInputEvent::BYTE_SIZE * events.len()) as u32,
+                flags: 0,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, status_avail, 0, &[0]);
+        init_used(&mut mem, status_used);
+
+        let status_vq = VirtQueue::new(8, status_desc, status_avail, status_used);
+
+        let mut dev = VirtioInputDevice::new(VirtioInputDeviceKind::Keyboard, event_vq, status_vq);
+        dev.notify_status(&mut mem).unwrap();
+
+        assert_eq!(dev.led_state() & (1u8 << 0), 0);
+        assert_eq!(dev.led_state() & (1u8 << 1), 1u8 << 1);
+        assert_eq!(dev.led_state() & (1u8 << 2), 0);
+        assert_eq!(dev.led_state() & (1u8 << 3), 1u8 << 3);
+        assert_eq!(dev.led_state() & (1u8 << 4), 0);
+    }
+
+    #[test]
     fn config_queries_expose_name_and_event_bits() {
         let event_vq = VirtQueue::new(8, 0, 0, 0);
         let status_vq = VirtQueue::new(8, 0, 0, 0);
@@ -944,6 +1042,14 @@ mod tests {
         );
         assert_ne!(
             led_bitmap[(LED_SCROLLL / 8) as usize] & (1u8 << (LED_SCROLLL % 8)),
+            0
+        );
+        assert_ne!(
+            led_bitmap[(LED_COMPOSE / 8) as usize] & (1u8 << (LED_COMPOSE % 8)),
+            0
+        );
+        assert_ne!(
+            led_bitmap[(LED_KANA / 8) as usize] & (1u8 << (LED_KANA % 8)),
             0
         );
 

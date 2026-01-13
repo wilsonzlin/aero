@@ -31,6 +31,8 @@ pub const REL_WHEEL: u16 = 0x08;
 pub const LED_NUML: u16 = 0x00;
 pub const LED_CAPSL: u16 = 0x01;
 pub const LED_SCROLLL: u16 = 0x02;
+pub const LED_COMPOSE: u16 = 0x03;
+pub const LED_KANA: u16 = 0x04;
 
 pub const BTN_LEFT: u16 = 0x110;
 pub const BTN_RIGHT: u16 = 0x111;
@@ -349,7 +351,7 @@ impl VirtioInputBitmaps {
             KEY_YEN,
             KEY_MENU,
         ]);
-        bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL]);
+        bitmaps.led = Self::with_bits(&[LED_NUML, LED_CAPSL, LED_SCROLLL, LED_COMPOSE, LED_KANA]);
         bitmaps
     }
 
