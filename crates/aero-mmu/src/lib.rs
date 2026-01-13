@@ -386,49 +386,38 @@ enum PagingMode {
 
 /// Optional MMU/TLB statistics.
 ///
-/// When the `stats` feature is disabled, this type contains no fields and
-/// [`Mmu::stats`] will always return `None`.
+/// This type is always available, but the counters are only collected when the
+/// crate is built with the `stats` feature; otherwise [`Mmu::stats`] will always
+/// return `None`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MmuStats {
     /// Instruction TLB lookups.
-    #[cfg(feature = "stats")]
     pub itlb_lookups: u64,
     /// Instruction TLB hits.
-    #[cfg(feature = "stats")]
     pub itlb_hits: u64,
     /// Instruction TLB misses.
-    #[cfg(feature = "stats")]
     pub itlb_misses: u64,
 
     /// Data TLB lookups.
-    #[cfg(feature = "stats")]
     pub dtlb_lookups: u64,
     /// Data TLB hits.
-    #[cfg(feature = "stats")]
     pub dtlb_hits: u64,
     /// Data TLB misses.
-    #[cfg(feature = "stats")]
     pub dtlb_misses: u64,
 
     /// Page-table walks performed due to TLB misses.
-    #[cfg(feature = "stats")]
     pub page_walks: u64,
 
     /// TLB flushes of all entries (e.g. due to control register changes, INVPCID all-context).
-    #[cfg(feature = "stats")]
     pub tlb_flush_all: u64,
     /// TLB flushes of non-global entries.
-    #[cfg(feature = "stats")]
     pub tlb_flush_non_global: u64,
     /// TLB flushes of entries for a given PCID.
-    #[cfg(feature = "stats")]
     pub tlb_flush_pcid: u64,
 
     /// INVLPG operations performed.
-    #[cfg(feature = "stats")]
     pub tlb_invlpg: u64,
     /// INVPCID operations performed.
-    #[cfg(feature = "stats")]
     pub tlb_invpcid: u64,
 }
 
