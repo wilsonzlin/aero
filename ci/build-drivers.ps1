@@ -60,6 +60,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+Import-Module -Force (Join-Path -Path $PSScriptRoot -ChildPath 'lib/DriverPackageManifest.psm1')
+
 function Get-RepoRoot {
   $ciDir = $PSScriptRoot
   if (-not $ciDir) {
@@ -778,6 +780,41 @@ if (-not $targets -or $targets.Count -eq 0) {
   }
   Write-Host $msg
   exit 0
+}
+
+# Fail fast before expensive builds: validate all discovered driver packaging manifests.
+$manifestErrors = New-Object System.Collections.Generic.List[object]
+$validatedManifests = @{}
+foreach ($t in $targets) {
+  if ($null -eq $t -or [string]::IsNullOrWhiteSpace($t.Directory)) { continue }
+  $manifestPath = Join-Path $t.Directory 'ci-package.json'
+  $manifestKey = $manifestPath.ToLowerInvariant()
+  if ($validatedManifests.ContainsKey($manifestKey)) { continue }
+  $validatedManifests[$manifestKey] = $true
+
+  try {
+    Validate-DriverPackageManifest -ManifestPath $manifestPath -DriverRoot $t.Directory | Out-Null
+  } catch {
+    [void]$manifestErrors.Add([pscustomobject]@{
+      Driver = $t.Name
+      Manifest = $manifestPath
+      Error = $_.Exception.Message
+    })
+  }
+}
+
+if ($manifestErrors.Count -gt 0) {
+  $lines = New-Object System.Collections.Generic.List[string]
+  foreach ($e in ($manifestErrors | Sort-Object -Property Driver)) {
+    [void]$lines.Add(("- {0}: {1}" -f $e.Driver, $e.Manifest))
+    $errText = [string]$e.Error
+    if (-not [string]::IsNullOrWhiteSpace($errText)) {
+      $errText = $errText.Replace("`r`n", "`n").Replace("`n", "`n  ")
+      [void]$lines.Add("  $errText")
+    }
+  }
+
+  throw "One or more ci-package.json manifests are invalid. Fix these before building:`n`n$($lines -join "`n")"
 }
 
 Ensure-Directory -Path $outDriversRoot

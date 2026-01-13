@@ -65,6 +65,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Import-Module -Force (Join-Path -Path $PSScriptRoot -ChildPath 'lib/Catalog.psm1')
+Import-Module -Force (Join-Path -Path $PSScriptRoot -ChildPath 'lib/DriverPackageManifest.psm1')
 
 $repoRoot = Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..') | Select-Object -ExpandProperty Path
 
@@ -221,7 +222,7 @@ function Read-DriverPackageManifest {
     }
   }
 
-  $data = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  $data = Validate-DriverPackageManifest -ManifestPath $manifestPath -DriverRoot $DriverSourceDir
 
   $infFiles = $null
   if ($null -ne $data.infFiles) {
@@ -642,6 +643,9 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       $ext = [IO.Path]::GetExtension($relPath)
       if ($ext -in @('.sys', '.dll', '.exe', '.cat', '.msi', '.cab')) {
         throw "Driver '$driverNameForLog' additionalFiles must be non-binary; refusing to include '$relPath'."
+      }
+      if ($ext -in @('.pfx', '.p12', '.pvk', '.snk', '.key', '.pem', '.p8', '.ppk', '.jks', '.keystore', '.kdbx', '.gpg', '.pgp')) {
+        throw "Driver '$driverNameForLog' additionalFiles must not include sensitive/secret material; refusing to include '$relPath'."
       }
 
       $src = Resolve-ChildPathUnderRoot -Root $driverSourceDir -ChildPath $relPath
