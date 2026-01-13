@@ -53,6 +53,14 @@ fn machine_net_stats_smoke() {
     let stats = m.net_stats();
     assert!(!stats.is_null());
 
+    let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken"))
+        .expect("Reflect::get(rx_broken)");
+    assert_eq!(
+        rx_broken.as_bool(),
+        Some(false),
+        "rx_broken should start false"
+    );
+
     // Stats should start at zero.
     for key in [
         "tx_pushed_frames",
