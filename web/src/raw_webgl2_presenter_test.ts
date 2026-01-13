@@ -30,6 +30,11 @@ declare global {
         scaleMode?: PresenterScaleMode;
       }) => Promise<GpuRuntimeReadyMessage>;
       present: (pixels: Uint8Array, strideBytes: number) => void;
+      /**
+       * Deterministic screenshot of the *source framebuffer* (tight RGBA8, top-left origin).
+       *
+       * Note: this is intentionally not a readback of the presented canvas output.
+       */
       screenshot: () => Promise<{ width: number; height: number; pixels: Uint8Array }>;
     };
   }
