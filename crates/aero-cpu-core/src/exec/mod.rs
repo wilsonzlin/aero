@@ -1,4 +1,4 @@
-use crate::assist::{handle_assist_decoded, AssistContext};
+use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
 use aero_perf::PerfWorker;
 
@@ -146,7 +146,8 @@ where
     /// *single-instruction* steps:
     ///
     /// 1. Before executing the decoded instruction, call
-    ///    [`Tier0RepIterTracker::begin`].
+    ///    [`Tier0RepIterTracker::begin`] (or [`Tier0RepIterTracker::begin_from_bytes`]
+    ///    if you already have the fetched instruction bytes).
     /// 2. After the instruction executes, call [`Tier0RepIterTracker::finish`]
     ///    to record `rep_iterations`.
     ///
@@ -234,6 +235,46 @@ impl Tier0RepIterTracker {
             return None;
         }
 
+        let addr_bits = effective_addr_size(state.bitness(), addr_size_override);
+        let count_reg = string_count_reg(addr_bits);
+        let count_mask = crate::state::mask_bits(addr_bits);
+        let count_before = state.read_reg(count_reg) & count_mask;
+
+        Some(Self {
+            count_reg,
+            count_mask,
+            count_before,
+        })
+    }
+
+    /// Begin tracking `REP*` iterations for a single Tier-0 interpreter step,
+    /// deriving the address-size override prefix state from the fetched
+    /// instruction bytes.
+    ///
+    /// This is a convenience wrapper for Tier-0 step loops that already fetched
+    /// up to 15 bytes (e.g. `CpuBus::fetch` / `fetch_wrapped`) and want to avoid
+    /// re-implementing prefix scanning just to determine whether `67` was
+    /// present.
+    ///
+    /// The prefix scan runs **only** for decoded instructions that have a
+    /// `REP`/`REPNE` prefix and are string mnemonics, so it does not add overhead
+    /// to the common non-string case.
+    #[inline]
+    pub fn begin_from_bytes(
+        state: &crate::state::CpuState,
+        decoded: &aero_x86::DecodedInst,
+        bytes: &[u8; 15],
+    ) -> Option<Self> {
+        let instr = &decoded.instr;
+        let is_rep = instr.has_rep_prefix() || instr.has_repne_prefix();
+        if !is_rep {
+            return None;
+        }
+        if !is_string_mnemonic(instr.mnemonic()) {
+            return None;
+        }
+
+        let addr_size_override = has_addr_size_override(bytes, state.bitness());
         let addr_bits = effective_addr_size(state.bitness(), addr_size_override);
         let count_reg = string_count_reg(addr_bits);
         let count_mask = crate::state::mask_bits(addr_bits);
