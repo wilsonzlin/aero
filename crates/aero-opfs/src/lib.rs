@@ -44,7 +44,7 @@ pub use error::{DiskError, DiskResult};
 
 pub use crate::io::snapshot_file::OpfsSyncFile;
 pub use crate::io::storage::backends::opfs::{
-    OpfsBackend, OpfsBackendMode, OpfsByteStorage, OpfsStorage,
+    OpfsBackend, OpfsBackendMode, OpfsByteStorage, OpfsSendDisk, OpfsStorage,
 };
 
 // wasm-bindgen-test defaults to running under Node. OPFS requires a browser environment,

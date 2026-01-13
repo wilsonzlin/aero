@@ -25,6 +25,12 @@ mod wasm {
         DiskBackend as StIdbDiskBackend, IndexedDbBackend as StIndexedDbBackend,
         IndexedDbBackendOptions, StorageError as StIdbError,
     };
+    #[cfg(not(target_feature = "atomics"))]
+    use std::cell::Cell;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    #[cfg(target_feature = "atomics")]
+    use std::sync::atomic::{AtomicU32, Ordering};
     use wasm_bindgen::JsValue;
 
     const DEFAULT_SECTOR_SIZE: u32 = 512;
@@ -707,6 +713,138 @@ mod wasm {
         }
     }
 
+    thread_local! {
+        /// Thread-local map of OPFS backends keyed by [`OpfsSendDisk`] id.
+        ///
+        /// `FileSystemSyncAccessHandle` and other wasm-bindgen JS handles are thread-affine and are
+        /// not `Send` when wasm atomics/threads are enabled. By keeping the real [`OpfsBackend`]
+        /// instances in TLS, we can provide a small `Send` wrapper (`OpfsSendDisk`) that fails
+        /// deterministically if used from the wrong thread.
+        static OPFS_SEND_DISK_MAP: RefCell<HashMap<u32, OpfsBackend>> = RefCell::new(HashMap::new());
+
+        #[cfg(not(target_feature = "atomics"))]
+        static OPFS_SEND_DISK_NEXT_ID: Cell<u32> = Cell::new(1);
+    }
+
+    #[cfg(target_feature = "atomics")]
+    static OPFS_SEND_DISK_NEXT_ID: AtomicU32 = AtomicU32::new(1);
+
+    fn alloc_send_disk_id() -> u32 {
+        #[cfg(target_feature = "atomics")]
+        {
+            OPFS_SEND_DISK_NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        }
+
+        #[cfg(not(target_feature = "atomics"))]
+        {
+            OPFS_SEND_DISK_NEXT_ID.with(|cell| {
+                let id = cell.get();
+                cell.set(id.wrapping_add(1));
+                id
+            })
+        }
+    }
+
+    fn with_send_disk_backend_mut<R>(
+        id: u32,
+        f: impl FnOnce(&mut OpfsBackend) -> aero_storage::Result<R>,
+    ) -> aero_storage::Result<R> {
+        OPFS_SEND_DISK_MAP.with(|map| {
+            let mut map = map.borrow_mut();
+            let backend = map.get_mut(&id).ok_or_else(|| {
+                DiskError::InvalidState("OPFS handle not available in this thread".to_string())
+            })?;
+            f(backend)
+        })
+    }
+
+    /// `Send`-capable OPFS disk wrapper for threaded wasm builds.
+    ///
+    /// In wasm builds with `target-feature=+atomics`, `wasm-bindgen` JS handles are not `Send`, so
+    /// the underlying [`OpfsBackend`] cannot be moved across threads safely.
+    ///
+    /// This type stores only an integer id and cached capacity, and keeps the real [`OpfsBackend`]
+    /// in a thread-local map. IO methods fail deterministically if the wrapper is used from a
+    /// different thread than the one that opened it.
+    #[derive(Debug)]
+    pub struct OpfsSendDisk {
+        id: u32,
+        capacity_bytes: u64,
+    }
+
+    impl Drop for OpfsSendDisk {
+        fn drop(&mut self) {
+            OPFS_SEND_DISK_MAP.with(|map| {
+                map.borrow_mut().remove(&self.id);
+            });
+        }
+    }
+
+    impl OpfsSendDisk {
+        /// Open an OPFS-backed disk image using `FileSystemSyncAccessHandle` and return a `Send`
+        /// wrapper suitable for `VirtualDisk + Send` consumers.
+        pub async fn open(path: &str, create: bool, size_bytes: u64) -> DiskResult<Self> {
+            let backend = OpfsBackend::open(path, create, size_bytes).await?;
+            let capacity_bytes = backend.size_bytes();
+            let id = alloc_send_disk_id();
+
+            OPFS_SEND_DISK_MAP.with(|map| {
+                let mut map = map.borrow_mut();
+                match map.entry(id) {
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(backend);
+                        Ok(())
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => Err(DiskError::InvalidState(
+                        "internal OPFS send-disk id collision".to_string(),
+                    )),
+                }
+            })?;
+
+            Ok(Self { id, capacity_bytes })
+        }
+
+        /// Open an existing OPFS-backed disk image without resizing it.
+        pub async fn open_existing(path: &str) -> DiskResult<Self> {
+            let backend = OpfsBackend::open_existing(path).await?;
+            let capacity_bytes = backend.size_bytes();
+            let id = alloc_send_disk_id();
+
+            OPFS_SEND_DISK_MAP.with(|map| {
+                let mut map = map.borrow_mut();
+                match map.entry(id) {
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(backend);
+                        Ok(())
+                    }
+                    std::collections::hash_map::Entry::Occupied(_) => Err(DiskError::InvalidState(
+                        "internal OPFS send-disk id collision".to_string(),
+                    )),
+                }
+            })?;
+
+            Ok(Self { id, capacity_bytes })
+        }
+    }
+
+    impl aero_storage::VirtualDisk for OpfsSendDisk {
+        fn capacity_bytes(&self) -> u64 {
+            self.capacity_bytes
+        }
+
+        fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+            with_send_disk_backend_mut(self.id, |backend| backend.read_at(offset, buf))
+        }
+
+        fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+            with_send_disk_backend_mut(self.id, |backend| backend.write_at(offset, buf))
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            with_send_disk_backend_mut(self.id, |backend| backend.flush())
+        }
+    }
+
     /// Async OPFS backend implemented using Promise-based APIs (`getFile` + `createWritable`).
     ///
     /// This backend is useful in environments where `FileSystemSyncAccessHandle` is unavailable
@@ -1145,6 +1283,12 @@ mod wasm {
             }
         }
 
+        #[test]
+        fn opfs_send_disk_is_send() {
+            fn assert_send<T: Send>() {}
+            assert_send::<OpfsSendDisk>();
+        }
+
         async fn write_sectors(storage: &mut OpfsStorage, lba: u64, buf: &[u8]) {
             match storage {
                 OpfsStorage::Sync(backend) => backend.write_sectors(lba, buf).unwrap(),
@@ -1167,6 +1311,31 @@ mod wasm {
                 OpfsStorage::Async(backend) => backend.flush().await.unwrap(),
                 OpfsStorage::IndexedDb(backend) => backend.flush().await.unwrap(),
             }
+        }
+
+        #[wasm_bindgen_test(async)]
+        async fn opfs_send_disk_roundtrip_small() {
+            let path = unique_path("send-disk-roundtrip");
+            let size = 8 * 1024 * 1024u64;
+
+            let mut disk = match OpfsSendDisk::open(&path, true, size).await {
+                Ok(d) => d,
+                Err(DiskError::NotSupported(_)) => return,
+                Err(DiskError::BackendUnavailable) => return,
+                Err(e) => panic!("open failed: {e:?}"),
+            };
+
+            let offset = 7u64 * 512;
+            let mut write_buf = vec![0u8; 4096];
+            fill_deterministic(&mut write_buf, 0xDEAD_BEEF);
+            disk.write_at(offset, &write_buf).unwrap();
+            disk.flush().unwrap();
+            drop(disk);
+
+            let mut disk = OpfsSendDisk::open_existing(&path).await.unwrap();
+            let mut read_buf = vec![0u8; write_buf.len()];
+            disk.read_at(offset, &mut read_buf).unwrap();
+            assert_eq!(read_buf, write_buf);
         }
 
         #[wasm_bindgen_test(async)]
@@ -1259,7 +1428,9 @@ mod wasm {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{OpfsAsyncBackend, OpfsBackend, OpfsByteStorage, OpfsIndexedDbBackend, OpfsStorage};
+pub use wasm::{
+    OpfsAsyncBackend, OpfsBackend, OpfsByteStorage, OpfsIndexedDbBackend, OpfsSendDisk, OpfsStorage,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
@@ -1335,6 +1506,46 @@ mod native {
 
     #[derive(Debug)]
     pub struct OpfsByteStorage;
+
+    /// Stub for [`OpfsSendDisk`] on non-wasm targets.
+    ///
+    /// The real implementation is wasm32-only.
+    #[derive(Debug)]
+    pub struct OpfsSendDisk;
+
+    impl OpfsSendDisk {
+        pub async fn open(_path: &str, _create: bool, _size_bytes: u64) -> DiskResult<Self> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+
+        pub async fn open_existing(_path: &str) -> DiskResult<Self> {
+            Err(DiskError::NotSupported("OPFS is wasm-only".to_string()))
+        }
+    }
+
+    impl aero_storage::VirtualDisk for OpfsSendDisk {
+        fn capacity_bytes(&self) -> u64 {
+            0
+        }
+
+        fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
+        }
+
+        fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> aero_storage::Result<()> {
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
+        }
+
+        fn flush(&mut self) -> aero_storage::Result<()> {
+            Err(aero_storage::DiskError::NotSupported(
+                "OPFS is wasm-only".to_string(),
+            ))
+        }
+    }
 
     impl OpfsByteStorage {
         pub async fn open(_path: &str, _create: bool) -> DiskResult<Self> {
@@ -1477,5 +1688,5 @@ mod native {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-    OpfsAsyncBackend, OpfsBackend, OpfsByteStorage, OpfsIndexedDbBackend, OpfsStorage,
+    OpfsAsyncBackend, OpfsBackend, OpfsByteStorage, OpfsIndexedDbBackend, OpfsSendDisk, OpfsStorage,
 };
