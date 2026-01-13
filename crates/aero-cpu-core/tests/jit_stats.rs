@@ -43,8 +43,8 @@ fn hit_miss_counting() {
 
     assert!(jit.prepare_block(entry_rip).is_none());
     let stats = jit.stats_snapshot();
-    assert_eq!(stats.cache_lookup_hit_total, 0);
-    assert_eq!(stats.cache_lookup_miss_total, 1);
+    assert_eq!(stats.cache_hit, 0);
+    assert_eq!(stats.cache_miss, 1);
 
     // Installing a valid handle should turn the next lookup into a hit.
     let meta = jit.make_meta(0, 0);
@@ -56,8 +56,8 @@ fn hit_miss_counting() {
     assert!(jit.prepare_block(entry_rip).is_some());
 
     let stats = jit.stats_snapshot();
-    assert_eq!(stats.cache_lookup_hit_total, 1);
-    assert_eq!(stats.cache_lookup_miss_total, 1);
+    assert_eq!(stats.cache_hit, 1);
+    assert_eq!(stats.cache_miss, 1);
 }
 
 #[test]
@@ -82,8 +82,8 @@ fn install_and_evict_counting() {
     });
 
     let stats = jit.stats_snapshot();
-    assert_eq!(stats.blocks_installed_total, 2);
-    assert_eq!(stats.blocks_evicted_total, 1);
+    assert_eq!(stats.install_ok, 2);
+    assert_eq!(stats.evictions, 1);
     assert_eq!(jit.cache_len(), 1);
 }
 
@@ -105,9 +105,9 @@ fn stale_install_rejection_increments() {
     });
 
     let stats = jit.stats_snapshot();
-    assert_eq!(stats.stale_install_rejected_total, 1);
-    assert_eq!(stats.blocks_installed_total, 0);
-    assert_eq!(stats.compile_requests_total, 1);
+    assert_eq!(stats.install_rejected_stale, 1);
+    assert_eq!(stats.install_ok, 0);
+    assert_eq!(stats.compile_requests, 1);
 }
 
 #[test]
@@ -138,9 +138,9 @@ fn invalidation_counting() {
     assert!(!jit.invalidate_block(entry_rip));
 
     let stats = jit.stats_snapshot();
-    assert_eq!(stats.blocks_invalidated_total, 2);
+    assert_eq!(stats.invalidations, 2);
     assert_eq!(
-        stats.compile_requests_total, 1,
+        stats.compile_requests, 1,
         "only the stale invalidation should trigger a compilation request"
     );
 }

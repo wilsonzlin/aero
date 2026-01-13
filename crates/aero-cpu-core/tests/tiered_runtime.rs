@@ -147,6 +147,11 @@ fn hotness_threshold_triggers_compile_request_once() {
     }
 
     assert_eq!(compile.snapshot(), vec![0]);
+
+    let stats = jit.stats().snapshot();
+    assert_eq!(stats.cache_hit, 0);
+    assert_eq!(stats.cache_miss, 5);
+    assert_eq!(stats.compile_requests, 1);
 }
 
 #[test]
@@ -326,6 +331,12 @@ fn page_version_invalidation_evicts_and_requests_recompile() {
     assert!(!jit.is_compiled(0));
 
     assert_eq!(compile.snapshot(), vec![0]);
+
+    let stats = jit.stats().snapshot();
+    assert_eq!(stats.install_ok, 1);
+    assert_eq!(stats.cache_hit, 1);
+    assert_eq!(stats.cache_miss, 1);
+    assert_eq!(stats.compile_requests, 1);
 }
 
 #[test]
@@ -352,6 +363,11 @@ fn stale_page_version_snapshot_rejected_on_install() {
 
     assert!(!jit.is_compiled(0));
     assert_eq!(compile.snapshot(), vec![0]);
+
+    let stats = jit.stats().snapshot();
+    assert_eq!(stats.install_ok, 0);
+    assert_eq!(stats.install_rejected_stale, 1);
+    assert_eq!(stats.compile_requests, 1);
 }
 
 #[test]
@@ -386,6 +402,56 @@ fn stale_install_does_not_evict_newer_valid_block() {
 
     assert!(jit.prepare_block(0).is_some());
     assert!(compile.snapshot().is_empty());
+
+    let stats = jit.stats().snapshot();
+    assert_eq!(stats.install_ok, 1);
+    assert_eq!(stats.install_rejected_stale, 1);
+    assert_eq!(stats.cache_hit, 2);
+    assert_eq!(stats.compile_requests, 0);
+}
+
+#[test]
+fn runtime_stats_counts_cache_evictions() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1_000,
+        cache_max_blocks: 1,
+        cache_max_bytes: 0,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile);
+
+    assert!(jit.install_block(0, 0, 0x1000, 4).is_empty());
+    let evicted = jit.install_block(1, 1, 0x2000, 4);
+    assert_eq!(evicted, vec![0]);
+    assert!(!jit.is_compiled(0));
+    assert!(jit.is_compiled(1));
+
+    let stats = jit.stats().snapshot();
+    assert_eq!(stats.install_ok, 2);
+    assert_eq!(stats.evictions, 1);
+}
+
+#[test]
+fn runtime_stats_counts_invalidate_calls() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1_000,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config, TestJitBackend::default(), compile);
+
+    jit.install_block(0, 0, 0x1000, 4);
+    assert!(jit.invalidate_block(0));
+    assert!(!jit.is_compiled(0));
+    assert!(!jit.invalidate_block(0));
+
+    let stats = jit.stats().snapshot();
+    assert_eq!(stats.invalidate_calls, 2);
 }
 
 #[test]

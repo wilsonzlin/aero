@@ -14,23 +14,6 @@ pub struct JitConfig {
     pub cache_max_bytes: usize,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct JitRuntimeStats {
-    pub cache_lookup_hit_total: u64,
-    pub cache_lookup_miss_total: u64,
-    /// Total number of `CompileRequestSink::request_compile` calls issued by the runtime.
-    pub compile_requests_total: u64,
-    pub blocks_installed_total: u64,
-    /// Number of blocks evicted as a result of `CodeCache::insert` capacity pressure.
-    pub blocks_evicted_total: u64,
-    /// Number of blocks invalidated (explicitly via `invalidate_block` or implicitly due to stale
-    /// page-version checks).
-    pub blocks_invalidated_total: u64,
-    /// Number of compilation results rejected because their page-version snapshots were stale at
-    /// install time.
-    pub stale_install_rejected_total: u64,
-}
-
 impl Default for JitConfig {
     fn default() -> Self {
         Self {
@@ -38,6 +21,55 @@ impl Default for JitConfig {
             hot_threshold: 32,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
+        }
+    }
+}
+
+/// JIT runtime counters (non-atomic).
+///
+/// These counters are meant for instrumentation and testing. They intentionally use plain `u64`
+/// fields and require `&mut self` to update; callers that need cross-thread aggregation should do
+/// it at a higher level.
+#[derive(Debug, Default, Clone)]
+#[non_exhaustive]
+pub struct JitRuntimeStats {
+    cache_hit: u64,
+    cache_miss: u64,
+    install_ok: u64,
+    install_rejected_stale: u64,
+    evictions: u64,
+    /// Number of blocks invalidated (explicitly via `invalidate_block` or implicitly due to stale
+    /// page-version checks).
+    invalidations: u64,
+    invalidate_calls: u64,
+    /// Total number of `CompileRequestSink::request_compile` calls issued by the runtime.
+    compile_requests: u64,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct JitRuntimeStatsSnapshot {
+    pub cache_hit: u64,
+    pub cache_miss: u64,
+    pub install_ok: u64,
+    pub install_rejected_stale: u64,
+    pub evictions: u64,
+    pub invalidations: u64,
+    pub invalidate_calls: u64,
+    pub compile_requests: u64,
+}
+
+impl JitRuntimeStats {
+    pub fn snapshot(&self) -> JitRuntimeStatsSnapshot {
+        JitRuntimeStatsSnapshot {
+            cache_hit: self.cache_hit,
+            cache_miss: self.cache_miss,
+            install_ok: self.install_ok,
+            install_rejected_stale: self.install_rejected_stale,
+            evictions: self.evictions,
+            invalidations: self.invalidations,
+            invalidate_calls: self.invalidate_calls,
+            compile_requests: self.compile_requests,
         }
     }
 }
@@ -271,8 +303,13 @@ where
     }
 
     #[inline]
-    pub fn stats_snapshot(&self) -> JitRuntimeStats {
-        self.stats
+    pub fn stats(&self) -> &JitRuntimeStats {
+        &self.stats
+    }
+
+    #[inline]
+    pub fn stats_snapshot(&self) -> JitRuntimeStatsSnapshot {
+        self.stats.snapshot()
     }
 
     pub fn stats_reset(&mut self) {
@@ -362,8 +399,8 @@ where
     pub fn install_handle(&mut self, handle: CompiledBlockHandle) -> Vec<u64> {
         let metrics = self.metrics_sink.as_deref();
         if !self.is_block_valid(&handle) {
-            self.stats.stale_install_rejected_total =
-                self.stats.stale_install_rejected_total.saturating_add(1);
+            self.stats.install_rejected_stale =
+                self.stats.install_rejected_stale.saturating_add(1);
             // A background compilation result can arrive after the guest has modified the code.
             // Installing such a block would be incorrect; reject it and request recompilation.
             if let Some(metrics) = metrics {
@@ -380,8 +417,7 @@ where
                 // Existing block is also stale; drop it so we don't keep probing it on every
                 // execution attempt.
                 if self.cache.remove(entry_rip).is_some() {
-                    self.stats.blocks_invalidated_total =
-                        self.stats.blocks_invalidated_total.saturating_add(1);
+                    self.stats.invalidations = self.stats.invalidations.saturating_add(1);
                     if let Some(metrics) = metrics {
                         metrics.record_invalidate();
                     }
@@ -396,22 +432,14 @@ where
             }
 
             self.profile.mark_requested(entry_rip);
-            self.stats.compile_requests_total =
-                self.stats.compile_requests_total.saturating_add(1);
-            if let Some(metrics) = metrics {
-                metrics.record_compile_request();
-            }
-            self.compile.request_compile(entry_rip);
+            self.request_compile(entry_rip);
             return Vec::new();
         }
 
-        self.stats.blocks_installed_total = self.stats.blocks_installed_total.saturating_add(1);
+        self.stats.install_ok = self.stats.install_ok.saturating_add(1);
         let evicted = self.cache.insert(handle);
         let evicted_count = u64::try_from(evicted.len()).unwrap_or(u64::MAX);
-        self.stats.blocks_evicted_total = self
-            .stats
-            .blocks_evicted_total
-            .saturating_add(evicted_count);
+        self.stats.evictions = self.stats.evictions.saturating_add(evicted_count);
         if let Some(metrics) = metrics {
             metrics.record_install();
             if !evicted.is_empty() {
@@ -443,9 +471,9 @@ where
     }
 
     pub fn invalidate_block(&mut self, entry_rip: u64) -> bool {
+        self.stats.invalidate_calls = self.stats.invalidate_calls.saturating_add(1);
         if self.cache.remove(entry_rip).is_some() {
-            self.stats.blocks_invalidated_total =
-                self.stats.blocks_invalidated_total.saturating_add(1);
+            self.stats.invalidations = self.stats.invalidations.saturating_add(1);
             self.profile.clear_requested(entry_rip);
             if let Some(metrics) = self.metrics_sink.as_deref() {
                 metrics.record_invalidate();
@@ -465,12 +493,12 @@ where
         }
 
         let metrics = self.metrics_sink.as_deref();
+        let mut compile_due_to_stale = false;
         let mut handle = self.cache.get_cloned(entry_rip);
         if let Some(ref h) = handle {
             if !self.is_block_valid(h) {
                 if self.cache.remove(entry_rip).is_some() {
-                    self.stats.blocks_invalidated_total =
-                        self.stats.blocks_invalidated_total.saturating_add(1);
+                    self.stats.invalidations = self.stats.invalidations.saturating_add(1);
                     if let Some(metrics) = metrics {
                         metrics.record_invalidate();
                     }
@@ -483,39 +511,27 @@ where
                     );
                 }
                 self.profile.mark_requested(entry_rip);
-                self.stats.compile_requests_total =
-                    self.stats.compile_requests_total.saturating_add(1);
-                if let Some(metrics) = metrics {
-                    metrics.record_compile_request();
-                }
-                self.compile.request_compile(entry_rip);
+                compile_due_to_stale = true;
                 handle = None;
             }
         }
 
         let has_compiled = handle.is_some();
         if has_compiled {
-            self.stats.cache_lookup_hit_total =
-                self.stats.cache_lookup_hit_total.saturating_add(1);
-        } else {
-            self.stats.cache_lookup_miss_total =
-                self.stats.cache_lookup_miss_total.saturating_add(1);
-        }
-        if let Some(metrics) = metrics {
-            if has_compiled {
+            self.stats.cache_hit = self.stats.cache_hit.saturating_add(1);
+            if let Some(metrics) = metrics {
                 metrics.record_cache_hit();
-            } else {
+            }
+        } else {
+            self.stats.cache_miss = self.stats.cache_miss.saturating_add(1);
+            if let Some(metrics) = metrics {
                 metrics.record_cache_miss();
             }
         }
 
-        if self.profile.record_hit(entry_rip, has_compiled) {
-            self.stats.compile_requests_total =
-                self.stats.compile_requests_total.saturating_add(1);
-            if let Some(metrics) = metrics {
-                metrics.record_compile_request();
-            }
-            self.compile.request_compile(entry_rip);
+        let compile_due_to_hotness = self.profile.record_hit(entry_rip, has_compiled);
+        if compile_due_to_stale || compile_due_to_hotness {
+            self.request_compile(entry_rip);
         }
 
         handle
@@ -562,6 +578,15 @@ where
             }
         }
         true
+    }
+
+    #[inline]
+    fn request_compile(&mut self, entry_rip: u64) {
+        self.stats.compile_requests = self.stats.compile_requests.saturating_add(1);
+        if let Some(metrics) = self.metrics_sink.as_deref() {
+            metrics.record_compile_request();
+        }
+        self.compile.request_compile(entry_rip);
     }
 }
 
@@ -791,14 +816,14 @@ mod tests {
 
         // Reset should behave like a cold start: cache empty, counters zero, and compile requests
         // can be re-issued even if they were previously requested.
-        assert_ne!(jit.stats_snapshot(), JitRuntimeStats::default());
+        assert_ne!(jit.stats_snapshot(), JitRuntimeStatsSnapshot::default());
         jit.reset();
         assert_eq!(jit.cache_len(), 0);
         assert!(!jit.is_compiled(entry_rip));
         assert_eq!(jit.hotness(entry_rip), 0);
         assert!(jit.cache.is_empty());
         assert_eq!(jit.cache.current_bytes(), 0);
-        assert_eq!(jit.stats_snapshot(), JitRuntimeStats::default());
+        assert_eq!(jit.stats_snapshot(), JitRuntimeStatsSnapshot::default());
 
         assert!(jit.prepare_block(entry_rip).is_none());
         assert_eq!(jit.hotness(entry_rip), 1);
