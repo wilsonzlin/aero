@@ -14,6 +14,7 @@ on:
       - "scripts/ci/check-virtqueue-split-driver-builds.py"
       - "scripts/ci/check-win7-virtio-header-collisions.py"
       - "scripts/ci/check-win7-contiguous-free-mismatch.py"
+      - "scripts/ci/check-win7-virtio-input-hid-descriptor-sync.py"
       - "scripts/ci/check-aerogpu-d3d9-def-stdcall.py"
       - "scripts/ci/check-aerogpu-d3d10-def-stdcall.py"
       - ".github/actions/setup-rust/**"
@@ -43,6 +44,7 @@ on:
       - "scripts/ci/check-virtqueue-split-driver-builds.py"
       - "scripts/ci/check-win7-virtio-header-collisions.py"
       - "scripts/ci/check-win7-contiguous-free-mismatch.py"
+      - "scripts/ci/check-win7-virtio-input-hid-descriptor-sync.py"
       - "scripts/ci/check-aerogpu-d3d9-def-stdcall.py"
       - "scripts/ci/check-aerogpu-d3d10-def-stdcall.py"
       - ".github/actions/setup-rust/**"
@@ -103,6 +105,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/check-virtqueue-split-driver-builds.py
+
+      - name: Check Win7 virtio-input HID descriptor length sync
+        run: python3 scripts/ci/check-win7-virtio-input-hid-descriptor-sync.py
 
       - name: Check Win7 virtio header collisions
         shell: bash
