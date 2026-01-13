@@ -462,14 +462,20 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
 
   // Ensure we always attempt to restore the original mode on any early-return failure.
   ScopedModeRestore restore(original);
+  // Arm the restore guard before attempting the mode set: even if the mode change partially
+  // succeeds but our polling times out, we still want a best-effort revert.
+  restore.Arm();
 
   std::string apply_err;
   if (!ApplyDisplayModeAndWait(alternate, 5000, &apply_err)) {
+    // Best-effort restore: the mode change may have partially applied even if we timed out waiting
+    // for GetSystemMetrics() to update.
+    std::string restore_err;
+    (void)restore.RestoreNow(&restore_err);
     aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
     aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     return reporter.Fail("%s", apply_err.c_str());
   }
-  restore.Arm();
 
   // Give the driver a moment to program scanout regs before polling.
   Sleep(100);
