@@ -870,61 +870,6 @@ static void TrackDrawStateLocked(Device* dev) {
   }
 }
 
-static bool SupportsTransfer(const Device* dev) {
-  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
-    return false;
-  }
-  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
-  if ((blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) == 0) {
-    return false;
-  }
-  const uint32_t major = blob.device_abi_version_u32 >> 16;
-  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-  return (major == AEROGPU_ABI_MAJOR) && (minor >= 1);
-}
-
-static bool SupportsSrgbFormats(const Device* dev) {
-  // ABI 1.2 adds explicit sRGB format variants. When running against an older
-  // host/device ABI, map sRGB DXGI formats to UNORM so the command stream stays
-  // backwards compatible.
-  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
-    return false;
-  }
-  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
-  const uint32_t major = blob.device_abi_version_u32 >> 16;
-  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-  return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
-}
-
-static bool SupportsBcFormats(const Device* dev) {
-  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
-    return false;
-  }
-  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
-  const uint32_t major = blob.device_abi_version_u32 >> 16;
-  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-  return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
-}
-
-static uint32_t dxgi_format_to_aerogpu_compat(const Device* dev, uint32_t dxgi_format) {
-  if (!SupportsSrgbFormats(dev)) {
-    switch (dxgi_format) {
-      case kDxgiFormatB8G8R8A8UnormSrgb:
-        dxgi_format = kDxgiFormatB8G8R8A8Unorm;
-        break;
-      case kDxgiFormatB8G8R8X8UnormSrgb:
-        dxgi_format = kDxgiFormatB8G8R8X8Unorm;
-        break;
-      case kDxgiFormatR8G8B8A8UnormSrgb:
-        dxgi_format = kDxgiFormatR8G8B8A8Unorm;
-        break;
-      default:
-        break;
-    }
-  }
-  return dxgi_format_to_aerogpu(dxgi_format);
-}
-
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuDeviceContext>(hCtx);
   return ctx ? ctx->dev : nullptr;
@@ -1904,15 +1849,8 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
   void* data = pGetCaps->pData;
   const UINT size = pGetCaps->DataSize;
   const Adapter* adapter = hAdapter.pDrvPrivate ? FromHandle<D3D10DDI_HADAPTER, Adapter>(hAdapter) : nullptr;
-  bool supports_bc = false;
-  if (adapter && adapter->umd_private_valid) {
-    const aerogpu_umd_private_v1& blob = adapter->umd_private;
-    const uint32_t major = blob.device_abi_version_u32 >> 16;
-    const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-    supports_bc = (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
-  }
-  // ABI 1.2 adds explicit sRGB format variants (same gating as BC formats).
-  const bool supports_srgb = supports_bc;
+  const bool supports_bc = SupportsBcFormats(adapter);
+  const bool supports_srgb = SupportsSrgbFormats(adapter);
 
 #if defined(AEROGPU_D3D10_11_CAPS_LOG)
   // Emit caps queries unconditionally when AEROGPU_D3D10_11_CAPS_LOG is defined;

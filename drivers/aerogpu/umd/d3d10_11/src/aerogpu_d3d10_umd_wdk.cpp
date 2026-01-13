@@ -251,56 +251,6 @@ uint32_t HashSemanticName(const char* s) {
   return hash;
 }
 
-uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
-  switch (dxgi_format) {
-    case kDxgiFormatB5G6R5Unorm:
-      return AEROGPU_FORMAT_B5G6R5_UNORM;
-    case kDxgiFormatB5G5R5A1Unorm:
-      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
-    case kDxgiFormatB8G8R8A8Unorm:
-    case kDxgiFormatB8G8R8A8Typeless:
-      return AEROGPU_FORMAT_B8G8R8A8_UNORM;
-    case kDxgiFormatB8G8R8A8UnormSrgb:
-      return AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB;
-    case kDxgiFormatB8G8R8X8Unorm:
-    case kDxgiFormatB8G8R8X8Typeless:
-      return AEROGPU_FORMAT_B8G8R8X8_UNORM;
-    case kDxgiFormatB8G8R8X8UnormSrgb:
-      return AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB;
-    case kDxgiFormatR8G8B8A8Unorm:
-    case kDxgiFormatR8G8B8A8Typeless:
-      return AEROGPU_FORMAT_R8G8B8A8_UNORM;
-    case kDxgiFormatR8G8B8A8UnormSrgb:
-      return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
-    case kDxgiFormatBc1Typeless:
-    case kDxgiFormatBc1Unorm:
-      return AEROGPU_FORMAT_BC1_RGBA_UNORM;
-    case kDxgiFormatBc1UnormSrgb:
-      return AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc2Typeless:
-    case kDxgiFormatBc2Unorm:
-      return AEROGPU_FORMAT_BC2_RGBA_UNORM;
-    case kDxgiFormatBc2UnormSrgb:
-      return AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc3Typeless:
-    case kDxgiFormatBc3Unorm:
-      return AEROGPU_FORMAT_BC3_RGBA_UNORM;
-    case kDxgiFormatBc3UnormSrgb:
-      return AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc7Typeless:
-    case kDxgiFormatBc7Unorm:
-      return AEROGPU_FORMAT_BC7_RGBA_UNORM;
-    case kDxgiFormatBc7UnormSrgb:
-      return AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB;
-    case kDxgiFormatD24UnormS8Uint:
-      return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
-    case kDxgiFormatD32Float:
-      return AEROGPU_FORMAT_D32_FLOAT;
-    default:
-      return AEROGPU_FORMAT_INVALID;
-  }
-}
-
 static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
   return aerogpu::shared_surface::D3d9FormatToDxgi(d3d9_format, dxgi_format_out, bpp_out);
 }
@@ -1451,61 +1401,6 @@ void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
   }
 }
 
-static bool SupportsTransfer(const AeroGpuDevice* dev) {
-  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
-    return false;
-  }
-  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
-  if ((blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) == 0) {
-    return false;
-  }
-  const uint32_t major = blob.device_abi_version_u32 >> 16;
-  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-  return (major == AEROGPU_ABI_MAJOR) && (minor >= 1);
-}
-
-static bool SupportsSrgbFormats(const AeroGpuDevice* dev) {
-  // ABI 1.2 adds explicit sRGB format variants. When running against an older
-  // host/device ABI, map sRGB DXGI formats to their UNORM equivalents so the
-  // command stream stays compatible.
-  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
-    return false;
-  }
-  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
-  const uint32_t major = blob.device_abi_version_u32 >> 16;
-  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-  return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
-}
-
-static bool SupportsBcFormats(const AeroGpuDevice* dev) {
-  if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
-    return false;
-  }
-  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
-  const uint32_t major = blob.device_abi_version_u32 >> 16;
-  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-  return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
-}
-
-static uint32_t dxgi_format_to_aerogpu_compat(const AeroGpuDevice* dev, uint32_t dxgi_format) {
-  if (!SupportsSrgbFormats(dev)) {
-    switch (dxgi_format) {
-      case kDxgiFormatB8G8R8A8UnormSrgb:
-        dxgi_format = kDxgiFormatB8G8R8A8Unorm;
-        break;
-      case kDxgiFormatB8G8R8X8UnormSrgb:
-        dxgi_format = kDxgiFormatB8G8R8X8Unorm;
-        break;
-      case kDxgiFormatR8G8B8A8UnormSrgb:
-        dxgi_format = kDxgiFormatR8G8B8A8Unorm;
-        break;
-      default:
-        break;
-    }
-  }
-  return dxgi_format_to_aerogpu(dxgi_format);
-}
-
 static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   if (!dev || !dst) {
     return;
@@ -1664,12 +1559,12 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
 
   HRESULT copy_hr = S_OK;
   if (res->kind == ResourceKind::Texture2D) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
     }
-    if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
       copy_hr = E_INVALIDARG;
       goto Unlock;
     }
@@ -2874,12 +2769,13 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   }
 
   if (dim == 3u /* texture2d */) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(pDesc->Format));
+    const uint32_t aer_fmt =
+        aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(pDesc->Format));
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       res->~AeroGpuResource();
       return E_NOTIMPL;
     }
-    if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
       res->~AeroGpuResource();
       return E_NOTIMPL;
     }
@@ -3284,12 +3180,13 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
     res->kind = ResourceKind::Buffer;
     res->size_bytes = static_cast<uint64_t>(priv.size_bytes);
   } else if (priv.kind == AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(priv.format));
+    const uint32_t aer_fmt =
+        aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, static_cast<uint32_t>(priv.format));
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
-    if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
@@ -3555,7 +3452,7 @@ static uint64_t resource_total_bytes(const AeroGpuDevice* dev, const AeroGpuReso
         return end;
       }
 
-      const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
       if (aer_fmt == AEROGPU_FORMAT_INVALID) {
         return 0;
       }
@@ -4327,12 +4224,12 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       std::memcpy(res->storage.data() + static_cast<size_t>(dst_off), pUpdate->pSysMemUP, static_cast<size_t>(bytes));
     }
   } else if (res->kind == ResourceKind::Texture2D) {
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       SetError(hDevice, E_NOTIMPL);
       return;
     }
-    if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
       SetError(hDevice, E_NOTIMPL);
       return;
     }
@@ -4781,7 +4678,7 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
 
     const bool transfer_aligned = (((dst_off | src_left | bytes) & 3ull) == 0);
     const bool same_buffer = (dst->handle == src->handle);
-    if (!SupportsTransfer(dev) || !transfer_aligned || same_buffer) {
+    if (!aerogpu::d3d10_11::SupportsTransfer(dev) || !transfer_aligned || same_buffer) {
       return;
     }
 
@@ -4816,12 +4713,12 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       return;
     }
 
-    const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, dst->dxgi_format);
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, dst->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       SetError(hDevice, E_NOTIMPL);
       return;
     }
-    if (aerogpu_format_is_block_compressed(aer_fmt) && !SupportsBcFormats(dev)) {
+    if (aerogpu_format_is_block_compressed(aer_fmt) && !aerogpu::d3d10_11::SupportsBcFormats(dev)) {
       SetError(hDevice, E_NOTIMPL);
       return;
     }
@@ -5018,7 +4915,7 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       EmitUploadLocked(hDevice, dev, dst, dst_sub.offset_bytes, dst_sub.size_bytes);
     }
 
-    if (!SupportsTransfer(dev)) {
+    if (!aerogpu::d3d10_11::SupportsTransfer(dev)) {
       return;
     }
 
@@ -7446,18 +7343,9 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* 
   if (pCaps->DataSize) {
     std::memset(pCaps->pData, 0, pCaps->DataSize);
   }
-  const bool supports_bc = [&]() -> bool {
-    auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
-    if (!adapter || !adapter->umd_private_valid) {
-      return false;
-    }
-    const aerogpu_umd_private_v1& blob = adapter->umd_private;
-    const uint32_t major = blob.device_abi_version_u32 >> 16;
-    const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-    return (major == AEROGPU_ABI_MAJOR) && (minor >= 2);
-  }();
-  // ABI 1.2 adds explicit sRGB format variants (same gating as BC formats).
-  const bool supports_srgb = supports_bc;
+  auto* caps_adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
+  const bool supports_bc = aerogpu::d3d10_11::SupportsBcFormats(caps_adapter);
+  const bool supports_srgb = aerogpu::d3d10_11::SupportsSrgbFormats(caps_adapter);
 
   switch (pCaps->Type) {
     case D3D10DDICAPS_TYPE_D3D10_FEATURE_LEVEL:

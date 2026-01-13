@@ -17,6 +17,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -174,6 +175,89 @@ inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
     default:
       return AEROGPU_FORMAT_INVALID;
   }
+}
+
+namespace detail {
+
+// Some DDIs ask format/cap questions on an adapter, while others ask through a
+// device/context that holds an `adapter` pointer. Keep the feature-gating helpers
+// generic so D3D10/D3D10.1/D3D11 UMDs can share the same logic without having to
+// keep per-UMD copies in sync.
+template <typename T, typename = void>
+struct HasAdapterMember : std::false_type {};
+
+template <typename T>
+struct HasAdapterMember<T, std::void_t<decltype(&T::adapter)>> : std::true_type {};
+
+template <typename T>
+inline auto GetCapsAdapter(const T* dev_or_adapter) {
+  if constexpr (HasAdapterMember<T>::value) {
+    return dev_or_adapter ? dev_or_adapter->adapter : nullptr;
+  } else {
+    return dev_or_adapter;
+  }
+}
+
+inline bool AbiMajorMinorAtLeast(const aerogpu_umd_private_v1& blob, uint32_t want_major, uint32_t want_minor) {
+  const uint32_t major = blob.device_abi_version_u32 >> 16;
+  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
+  return (major == want_major) && (minor >= want_minor);
+}
+
+} // namespace detail
+
+template <typename T>
+inline bool SupportsTransfer(const T* dev_or_adapter) {
+  const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
+  if (!adapter || !adapter->umd_private_valid) {
+    return false;
+  }
+  const aerogpu_umd_private_v1& blob = adapter->umd_private;
+  if ((blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) == 0) {
+    return false;
+  }
+  return detail::AbiMajorMinorAtLeast(blob, AEROGPU_ABI_MAJOR, /*want_minor=*/1);
+}
+
+template <typename T>
+inline bool SupportsSrgbFormats(const T* dev_or_adapter) {
+  // ABI 1.2 adds explicit sRGB format variants. When running against an older
+  // host/device ABI, map sRGB DXGI formats to UNORM equivalents so the command
+  // stream stays compatible.
+  const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
+  if (!adapter || !adapter->umd_private_valid) {
+    return false;
+  }
+  return detail::AbiMajorMinorAtLeast(adapter->umd_private, AEROGPU_ABI_MAJOR, /*want_minor=*/2);
+}
+
+template <typename T>
+inline bool SupportsBcFormats(const T* dev_or_adapter) {
+  const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
+  if (!adapter || !adapter->umd_private_valid) {
+    return false;
+  }
+  return detail::AbiMajorMinorAtLeast(adapter->umd_private, AEROGPU_ABI_MAJOR, /*want_minor=*/2);
+}
+
+template <typename T>
+inline uint32_t dxgi_format_to_aerogpu_compat(const T* dev_or_adapter, uint32_t dxgi_format) {
+  if (!SupportsSrgbFormats(dev_or_adapter)) {
+    switch (dxgi_format) {
+      case kDxgiFormatB8G8R8A8UnormSrgb:
+        dxgi_format = kDxgiFormatB8G8R8A8Unorm;
+        break;
+      case kDxgiFormatB8G8R8X8UnormSrgb:
+        dxgi_format = kDxgiFormatB8G8R8X8Unorm;
+        break;
+      case kDxgiFormatR8G8B8A8UnormSrgb:
+        dxgi_format = kDxgiFormatR8G8B8A8Unorm;
+        break;
+      default:
+        break;
+    }
+  }
+  return dxgi_format_to_aerogpu(dxgi_format);
 }
 
 struct AerogpuTextureFormatLayout {
