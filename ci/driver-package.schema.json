@@ -11,13 +11,13 @@
         {
           "not": {
             "description": "Disallow absolute paths, drive-letter rooted paths, and UNC roots (paths must be relative to the expected root directory).",
-            "pattern": "^(?:[A-Za-z]:|[\\\\/])"
+            "pattern": "^\\s*(?:[A-Za-z]:|[\\\\/])"
           }
         },
         {
           "not": {
             "description": "Best-effort: disallow '..' segments (even if they would normalize back under the expected root directory).",
-            "pattern": "(^|[\\\\/])\\.\\.([\\\\/]|$)"
+            "pattern": "(^\\s*|[\\\\/])\\.\\.([\\\\/]|\\s*$)"
           }
         }
       ]
@@ -37,7 +37,7 @@
       "items": {
         "allOf": [
           { "$ref": "#/$defs/driverRelativePath" },
-          { "pattern": "^.+\\.[iI][nN][fF]$" }
+          { "pattern": "^\\s*.+\\.[iI][nN][fF]\\s*$" }
         ]
       },
       "uniqueItems": true
@@ -48,7 +48,7 @@
       "items": {
         "type": "string",
         "minLength": 1,
-        "pattern": "^[^\\\\/:]+\\.[dD][lL][lL]$"
+        "pattern": "^\\s*[^\\\\/:]+\\.[dD][lL][lL]\\s*$"
       },
       "uniqueItems": true
     },
@@ -69,13 +69,13 @@
           {
             "not": {
               "description": "Disallow common binary extensions in additionalFiles (CI refuses these at packaging time).",
-              "pattern": "\\.([sS][yY][sS]|[dD][lL][lL]|[eE][xX][eE]|[cC][aA][tT]|[mM][sS][iI]|[cC][aA][bB])$"
+              "pattern": "\\.([sS][yY][sS]|[dD][lL][lL]|[eE][xX][eE]|[cC][aA][tT]|[mM][sS][iI]|[cC][aA][bB])\\s*$"
             }
           },
           {
             "not": {
               "description": "Disallow likely secret/private key material in additionalFiles (CI refuses these at packaging time).",
-              "pattern": "\\.([pP][fF][xX]|[pP]12|[pP][vV][kK]|[sS][nN][kK]|[kK][eE][yY]|[pP][eE][mM]|[pP]8|[pP][kK]8|[dD][eE][rR]|[cC][sS][rR]|[pP][pP][kK]|[jJ][kK][sS]|[kK][eE][yY][sS][tT][oO][rR][eE]|[kK][dD][bB][xX]|[gG][pP][gG]|[pP][gG][pP])$"
+              "pattern": "\\.([pP][fF][xX]|[pP]12|[pP][vV][kK]|[sS][nN][kK]|[kK][eE][yY]|[pP][eE][mM]|[pP]8|[pP][kK]8|[dD][eE][rR]|[cC][sS][rR]|[pP][pP][kK]|[jJ][kK][sS]|[kK][eE][yY][sS][tT][oO][rR][eE]|[kK][dD][bB][xX]|[gG][pP][gG]|[pP][gG][pP])\\s*$"
             }
           }
         ]
@@ -88,7 +88,7 @@
       "items": {
         "allOf": [
           { "$ref": "#/$defs/driverRelativePath" },
-          { "pattern": "^.+\\.[eE][xX][eE]$" }
+          { "pattern": "^\\s*.+\\.[eE][xX][eE]\\s*$" }
         ]
       },
       "uniqueItems": true
@@ -102,12 +102,12 @@
         "kmdfVersion": {
           "type": "string",
           "description": "KMDF version required by this driver (e.g. 1.9, 1.11, 1.15). Used to derive the default DLL name if dllName is omitted.",
-          "pattern": "^\\d+\\.\\d+$"
+          "pattern": "^\\s*\\d+\\.\\d+\\s*$"
         },
         "dllName": {
           "type": "string",
           "description": "Optional explicit DLL filename (e.g. WdfCoInstaller01011.dll). If omitted, CI derives it from kmdfVersion.",
-          "pattern": "^WdfCoInstaller\\d{5}\\.dll$"
+          "pattern": "^\\s*[Ww][Dd][Ff][Cc][Oo][Ii][Nn][Ss][Tt][Aa][Ll][Ll][Ee][Rr]\\d{5}\\.[dD][lL][lL]\\s*$"
         }
       }
     }
