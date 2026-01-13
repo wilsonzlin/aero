@@ -211,7 +211,6 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
     InterlockedExchange(&Counters->VirtioStatusDrops, 0);
 
     InterlockedExchange(&Counters->VirtioQueueMaxDepth, virtioDepth);
-    InterlockedExchange(&Counters->VirtioStatusDrops, 0);
 
     InterlockedExchange(&Counters->PendingRingMaxDepth, pendingDepth);
     InterlockedExchange(&Counters->PendingRingDrops, 0);
