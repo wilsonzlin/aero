@@ -343,21 +343,16 @@ mod wasm {
         closed: bool,
     }
 
-    // `OpfsBackend` contains `wasm-bindgen` JS handles (e.g. `JsValue`), which are not `Send` by
-    // default.
+    // `OpfsBackend` contains `wasm-bindgen` JS handles (e.g. `JsValue` / OPFS file handles), which
+    // are `!Send` by default.
     //
-    // Some consumers require `VirtualDisk + Send` even on wasm (notably the NVMe device model,
-    // which stores its disk backend behind a `Send` trait object for portability, and ATAPI/ISO
-    // adapters). On single-thread wasm builds (`target-feature=atomics` is **disabled**), it is
-    // safe to treat these JS handles as `Send` because they cannot be used from multiple threads.
+    // We intentionally keep this backend `!Send` on wasm32:
+    // - It reflects the underlying JS/threading reality (handles are bound to a JS agent).
+    // - It prevents accidental cross-thread usage in shared-memory/threads-enabled builds.
     //
-    // When wasm threads are enabled (`target-feature=+atomics`), this impl is intentionally
-    // disabled so we can revisit the safety story.
-    //
-    // SAFETY: On wasm32 without atomics, there is no `std::thread::spawn` and no way to move this
-    // value to another thread, so treating it as `Send` is sound in practice.
-    #[cfg(not(target_feature = "atomics"))]
-    unsafe impl Send for OpfsBackend {}
+    // Higher layers in this repo avoid requiring `Send` on wasm32 for disk backends so browser
+    // storage can plug into the synchronous `aero_storage::VirtualDisk` stack without an unsound
+    // `unsafe impl Send` shim. See `docs/20-storage-trait-consolidation.md`.
 
     impl core::fmt::Debug for OpfsBackend {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
