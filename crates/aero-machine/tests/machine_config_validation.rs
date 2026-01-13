@@ -1,6 +1,19 @@
 use aero_machine::{Machine, MachineConfig, MachineError};
 
 #[test]
+fn cpu_count_must_be_non_zero() {
+    let cfg = MachineConfig {
+        cpu_count: 0,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::InvalidCpuCount(0))
+    ));
+}
+
+#[test]
 fn enable_e1000_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
