@@ -7966,6 +7966,40 @@ bool TestCreateBlendStateRejectsUnsupportedBlendOp() {
   return true;
 }
 
+bool TestBlendStateValidationRtCountOneIgnoresRt1Mismatch() {
+  aerogpu::d3d10_11::D3dRtBlendDesc rts[2]{};
+  rts[0].blend_enable = true;
+  rts[0].write_mask = 0xFu;
+  rts[0].src_blend = aerogpu::d3d10_11::kD3dBlendSrcAlpha;
+  rts[0].dest_blend = aerogpu::d3d10_11::kD3dBlendInvSrcAlpha;
+  rts[0].blend_op = aerogpu::d3d10_11::kD3dBlendOpAdd;
+  rts[0].src_blend_alpha = aerogpu::d3d10_11::kD3dBlendOne;
+  rts[0].dest_blend_alpha = aerogpu::d3d10_11::kD3dBlendZero;
+  rts[0].blend_op_alpha = aerogpu::d3d10_11::kD3dBlendOpAdd;
+
+  rts[1] = rts[0];
+  rts[1].blend_enable = false; // mismatch, but should be ignored when rt_count==1.
+
+  aerogpu::d3d10_11::AerogpuBlendStateBase out{};
+  const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(rts,
+                                                                    /*rt_count=*/1,
+                                                                    /*alpha_to_coverage_enable=*/false,
+                                                                    &out);
+  if (!Check(hr == S_OK, "ValidateAndConvertBlendDesc(rt_count=1) ignores RT1 mismatch")) {
+    return false;
+  }
+  if (!Check(out.enable == 1u, "blend enable propagated from RT0")) {
+    return false;
+  }
+  if (!Check(out.src_factor == AEROGPU_BLEND_SRC_ALPHA, "src factor mapped")) {
+    return false;
+  }
+  if (!Check(out.dst_factor == AEROGPU_BLEND_INV_SRC_ALPHA, "dst factor mapped")) {
+    return false;
+  }
+  return true;
+}
+
 bool TestSetBlendStateEncodesCmd() {
   TestDevice dev{};
   if (!InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false)) {
@@ -8133,6 +8167,7 @@ int main() {
   ok &= TestCreateBlendStateRejectsPerRtWriteMaskMismatch();
   ok &= TestCreateBlendStateRejectsAlphaToCoverage();
   ok &= TestCreateBlendStateRejectsUnsupportedBlendOp();
+  ok &= TestBlendStateValidationRtCountOneIgnoresRt1Mismatch();
   ok &= TestSetBlendStateEncodesCmd();
 
   if (!ok) {

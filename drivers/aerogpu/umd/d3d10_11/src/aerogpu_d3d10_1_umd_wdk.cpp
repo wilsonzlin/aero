@@ -5147,8 +5147,20 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
       rts[i].blend_op_alpha = static_cast<uint32_t>(rt.BlendOpAlpha);
     }
 
+    // D3D10.1 supports independent blend state per render target when
+    // IndependentBlendEnable is TRUE. When it's FALSE, only RenderTarget[0]
+    // is used and the remaining entries are ignored by the runtime.
+    //
+    // The AeroGPU protocol only supports a single global blend state, so we
+    // reject mismatched per-RT states only when independent blending is enabled.
+    bool independent_blend = true;
+    __if_exists(D3D10_1_DDI_BLEND_DESC::IndependentBlendEnable) {
+      independent_blend = pDesc->IndependentBlendEnable ? true : false;
+    }
+    const uint32_t rt_count = independent_blend ? AEROGPU_MAX_RENDER_TARGETS : 1u;
+
     const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(
-        rts, AEROGPU_MAX_RENDER_TARGETS, pDesc->AlphaToCoverageEnable ? true : false, &base);
+        rts, rt_count, pDesc->AlphaToCoverageEnable ? true : false, &base);
     if (FAILED(hr)) {
       return hr;
     }
