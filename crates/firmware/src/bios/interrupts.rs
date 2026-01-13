@@ -3062,4 +3062,261 @@ mod tests {
         // Ensure strict non-overlap and sortedness by base.
         assert_e820_sorted_and_non_overlapping(&map);
     }
+
+    #[test]
+    fn e820_map_invariants_hold_across_guest_ram_sizes_and_acpi_variants() {
+        const ONE_MIB: u64 = 0x0010_0000;
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        const PCI_HOLE_START: u64 = 0xC000_0000;
+        const PCI_HOLE_END: u64 = FOUR_GIB;
+
+        #[derive(Clone, Copy)]
+        struct Variant {
+            name: &'static str,
+            acpi: Option<(u64, u64)>,
+            nvs: Option<(u64, u64)>,
+        }
+
+        // These are intentionally fixed placements so a single loop can cover a wide range of
+        // `total_memory` values. Small guests will naturally clamp/ignore the regions.
+        let variants: &[Variant] = &[
+            Variant {
+                name: "none",
+                acpi: None,
+                nvs: None,
+            },
+            Variant {
+                name: "acpi_low",
+                acpi: Some((0x0020_0000, 0x0002_0000)), // 2MiB..2MiB+128KiB
+                nvs: None,
+            },
+            Variant {
+                name: "acpi_nvs_overlap_low",
+                acpi: Some((0x0020_0000, 0x0000_4000)), // 2MiB..2MiB+16KiB
+                nvs: Some((0x0020_2000, 0x0000_4000)),  // overlaps ACPI by 8KiB
+            },
+            Variant {
+                name: "acpi_low_nvs_high",
+                acpi: Some((0x0020_0000, 0x0001_0000)),            // 2MiB..2MiB+64KiB
+                nvs: Some((FOUR_GIB + 0x0020_0000, 0x0001_0000)), // 4GiB+2MiB..+64KiB
+            },
+            Variant {
+                name: "acpi_straddles_ecam_base",
+                acpi: Some((PCIE_ECAM_BASE - 0x3000, 0x4000)), // crosses into the ECAM window
+                nvs: None,
+            },
+        ];
+
+        let ram_sizes: &[u64] = &[
+            0,
+            64 * 1024,
+            640 * 1024,
+            ONE_MIB,
+            16 * ONE_MIB,
+            PCIE_ECAM_BASE - 1,
+            PCIE_ECAM_BASE,
+            PCIE_ECAM_BASE + 1,
+            FOUR_GIB,
+            6 * 1024 * 1024 * 1024,
+        ];
+
+        fn overlaps(a_base: u64, a_len: u64, b_base: u64, b_len: u64) -> bool {
+            let a_end = a_base.saturating_add(a_len);
+            let b_end = b_base.saturating_add(b_len);
+            a_base.max(b_base) < a_end.min(b_end)
+        }
+
+        fn assert_no_ram_overlap(
+            ctx: &str,
+            map: &[E820Entry],
+            window_base: u64,
+            window_len: u64,
+            window_desc: &str,
+        ) {
+            for entry in map {
+                if entry.region_type != E820_RAM {
+                    continue;
+                }
+                assert!(
+                    !overlaps(entry.base, entry.length, window_base, window_len),
+                    "{ctx}: RAM entry overlaps {window_desc} window [0x{window_base:x}, 0x{:x}): entry={entry:?} map={map:?}",
+                    window_base.saturating_add(window_len),
+                );
+            }
+        }
+
+        fn assert_reserved_window_present(
+            ctx: &str,
+            map: &[E820Entry],
+            base: u64,
+            len: u64,
+            expected_type: u32,
+            desc: &str,
+        ) {
+            assert!(
+                map.iter().any(|e| e.base == base && e.length == len && e.region_type == expected_type),
+                "{ctx}: missing {desc} window entry: expected base=0x{base:x} len=0x{len:x} type={expected_type}, map={map:?}",
+            );
+        }
+
+        fn assert_reserved_input_is_reflected(
+            ctx: &str,
+            map: &[E820Entry],
+            input: Option<(u64, u64)>,
+            input_type: u32,
+            range_base: u64,
+            range_end: u64,
+            range_desc: &str,
+        ) {
+            let Some((base, len)) = input else {
+                return;
+            };
+            let end = base.saturating_add(len);
+            let clipped_base = base.max(range_base);
+            let clipped_end = end.min(range_end);
+            if clipped_end <= clipped_base {
+                // No intersection with this RAM range.
+                return;
+            }
+            let clipped_len = clipped_end - clipped_base;
+
+            // We don't require an exact 1:1 entry mapping (overlapping inputs can truncate), but we
+            // do require:
+            // - the reserved input is not reported as RAM
+            // - there exists at least one entry of the reserved type intersecting the clipped
+            //   window
+            assert_no_ram_overlap(ctx, map, clipped_base, clipped_len, range_desc);
+            assert!(
+                map.iter()
+                    .any(|e| e.region_type == input_type && overlaps(e.base, e.length, clipped_base, clipped_len)),
+                "{ctx}: reserved {range_desc} window [0x{clipped_base:x}, 0x{clipped_end:x}) not reflected as type={input_type}; map={map:?}",
+            );
+        }
+
+        for &total_memory in ram_sizes {
+            for &variant in variants {
+                let ctx = format!(
+                    "e820 invariant failure: total_memory=0x{total_memory:x} ({total_memory} bytes), variant={}",
+                    variant.name
+                );
+                let map = build_e820_map(total_memory, variant.acpi, variant.nvs);
+
+                // Basic structural invariants: sorted, non-overlapping, and no zero-length entries.
+                let mut last_end = 0u64;
+                for (idx, entry) in map.iter().enumerate() {
+                    assert!(
+                        entry.length != 0,
+                        "{ctx}: zero-length entry at index {idx}: {entry:?} map={map:?}"
+                    );
+                    assert!(
+                        entry.base >= last_end,
+                        "{ctx}: entries overlap or are out of order at index {idx}: last_end=0x{last_end:x}, entry={entry:?} map={map:?}"
+                    );
+                    assert!(
+                        matches!(
+                            entry.region_type,
+                            E820_RAM | E820_RESERVED | E820_ACPI | E820_NVS
+                        ),
+                        "{ctx}: unexpected region type {} at index {idx}: {entry:?} map={map:?}",
+                        entry.region_type
+                    );
+                    last_end = entry.base.saturating_add(entry.length);
+                }
+
+                if total_memory > PCIE_ECAM_BASE {
+                    // When RAM extends beyond the low window, we must:
+                    // - reserve ECAM + the remaining PCI/MMIO hole below 4GiB
+                    // - remap the remainder of RAM above 4GiB
+                    assert_reserved_window_present(
+                        &ctx,
+                        &map,
+                        PCIE_ECAM_BASE,
+                        PCIE_ECAM_SIZE,
+                        E820_RESERVED,
+                        "PCIe ECAM",
+                    );
+                    assert_reserved_window_present(
+                        &ctx,
+                        &map,
+                        PCI_HOLE_START,
+                        PCI_HOLE_END - PCI_HOLE_START,
+                        E820_RESERVED,
+                        "PCI/MMIO hole",
+                    );
+                    assert!(
+                        map.iter().any(|e| e.base == FOUR_GIB && e.region_type == E820_RAM && e.length != 0),
+                        "{ctx}: expected remapped high RAM entry starting at 4GiB, map={map:?}"
+                    );
+
+                    // RAM entries must never overlap the reserved ECAM / PCI windows.
+                    assert_no_ram_overlap(&ctx, &map, PCIE_ECAM_BASE, PCIE_ECAM_SIZE, "ECAM");
+                    assert_no_ram_overlap(
+                        &ctx,
+                        &map,
+                        PCI_HOLE_START,
+                        PCI_HOLE_END - PCI_HOLE_START,
+                        "PCI/MMIO",
+                    );
+                } else {
+                    assert!(
+                        map.iter().all(|e| e.base < FOUR_GIB),
+                        "{ctx}: did not expect any entries at/above 4GiB when total_memory <= PCIE_ECAM_BASE (0x{PCIE_ECAM_BASE:x}), map={map:?}"
+                    );
+                    assert!(
+                        !map.iter().any(|e| e.region_type == E820_RAM && e.base >= FOUR_GIB),
+                        "{ctx}: did not expect high RAM remap entries when total_memory <= PCIE_ECAM_BASE (0x{PCIE_ECAM_BASE:x}), map={map:?}"
+                    );
+                }
+
+                // Validate that (clipped) ACPI/NVS inputs are not reported as RAM and show up with
+                // the expected region type in whichever RAM window they intersect.
+                //
+                // Low RAM window: [1MiB, min(total_memory, PCIE_ECAM_BASE)).
+                if total_memory > ONE_MIB {
+                    let low_end = total_memory.min(PCIE_ECAM_BASE);
+                    assert_reserved_input_is_reflected(
+                        &ctx,
+                        &map,
+                        variant.acpi,
+                        E820_ACPI,
+                        ONE_MIB,
+                        low_end,
+                        "ACPI (low RAM)",
+                    );
+                    assert_reserved_input_is_reflected(
+                        &ctx,
+                        &map,
+                        variant.nvs,
+                        E820_NVS,
+                        ONE_MIB,
+                        low_end,
+                        "NVS (low RAM)",
+                    );
+                }
+
+                // High remap window: [4GiB, 4GiB + (total_memory - PCIE_ECAM_BASE)) when remapping.
+                if total_memory > PCIE_ECAM_BASE {
+                    let high_end = FOUR_GIB.saturating_add(total_memory - PCIE_ECAM_BASE);
+                    assert_reserved_input_is_reflected(
+                        &ctx,
+                        &map,
+                        variant.acpi,
+                        E820_ACPI,
+                        FOUR_GIB,
+                        high_end,
+                        "ACPI (high RAM)",
+                    );
+                    assert_reserved_input_is_reflected(
+                        &ctx,
+                        &map,
+                        variant.nvs,
+                        E820_NVS,
+                        FOUR_GIB,
+                        high_end,
+                        "NVS (high RAM)",
+                    );
+                }
+            }
+        }
+    }
 }
