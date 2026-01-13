@@ -354,6 +354,27 @@ func TestWebRTCSCTPMaxReceiveBufferBytes_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestWebRTCSCTPMaxReceiveBufferBytes_RejectsBelow1500(t *testing.T) {
+	// pion/sctp rejects values below ~1500 during association setup (INIT/INIT-ACK
+	// validation). Ensure config validation rejects these values early.
+	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                           "secret",
+		EnvMaxDatagramPayloadBytes:          "1",
+		EnvL2MaxMessageBytes:                "1",
+		EnvWebRTCDataChannelMaxMessageBytes: "25",   // MAX_DATAGRAM_PAYLOAD_BYTES+24
+		EnvWebRTCSCTPMaxReceiveBufferBytes:  "1000", // < 1500
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), EnvWebRTCSCTPMaxReceiveBufferBytes) {
+		t.Fatalf("err=%v, expected mention of %s", err, EnvWebRTCSCTPMaxReceiveBufferBytes)
+	}
+	if !strings.Contains(err.Error(), "1500") {
+		t.Fatalf("err=%v, expected mention of minimum 1500", err)
+	}
+}
+
 func TestDefaultsProdWhenModeFlagSet(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey: "secret",
