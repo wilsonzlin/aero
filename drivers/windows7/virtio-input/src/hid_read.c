@@ -493,17 +493,18 @@ NTSTATUS VirtioInputReportArrived(
 
     devCtx = VirtioInputGetDeviceContext(Device);
 
-    if (devCtx->DeviceKind == VioInputDeviceKindKeyboard && ReportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD) {
-        if (ReportId != VIRTIO_INPUT_REPORT_ID_CONSUMER) {
+    if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
+        if (ReportId != VIRTIO_INPUT_REPORT_ID_KEYBOARD && ReportId != VIRTIO_INPUT_REPORT_ID_CONSUMER) {
             return STATUS_NOT_SUPPORTED;
         }
-    }
-    if ((devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) &&
-        ReportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
-        return STATUS_NOT_SUPPORTED;
-    }
-    if (devCtx->DeviceKind == VioInputDeviceKindTablet && ReportId != VIRTIO_INPUT_REPORT_ID_TABLET) {
-        return STATUS_NOT_SUPPORTED;
+    } else if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
+        if (ReportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
+            return STATUS_NOT_SUPPORTED;
+        }
+    } else if (devCtx->DeviceKind == VioInputDeviceKindTablet) {
+        if (ReportId != VIRTIO_INPUT_REPORT_ID_TABLET) {
+            return STATUS_NOT_SUPPORTED;
+        }
     }
 
     WdfSpinLockAcquire(devCtx->ReadReportLock);
