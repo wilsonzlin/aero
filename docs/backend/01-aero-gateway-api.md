@@ -465,6 +465,10 @@ The gateway exposes a DNS-over-HTTPS endpoint compatible with **RFC 8484** at:
 
 This is used by the guest stack to resolve hostnames without direct UDP access from the browser.
 
+> Local development note: the repo also includes [`net-proxy/`](../../net-proxy/) which exposes `/dns-query` and
+> `/dns-json` so you can run local networking without the full gateway. `net-proxy`’s DoH endpoints are intentionally
+> lightweight (and are unauthenticated / not policy-filtered); see [`net-proxy/README.md`](../../net-proxy/README.md).
+
 ### Authentication
 
 `/dns-query` requests must include the `aero_session` cookie.
