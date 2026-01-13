@@ -255,4 +255,14 @@ describe("runtime/shared_layout", () => {
       expect(idx).toBeLessThan(STATUS_INTS);
     }
   });
+
+  it("defines unique StatusIndex values (no ABI collisions)", () => {
+    const values = Object.values(StatusIndex) as number[];
+    expect(values.length).toBeGreaterThan(0);
+    expect(new Set(values).size).toBe(values.length);
+    for (const value of values) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThan(STATUS_INTS);
+    }
+  });
 });
