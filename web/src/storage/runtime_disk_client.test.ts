@@ -67,4 +67,30 @@ describe("RuntimeDiskClient.write", () => {
     await p;
     client.close();
   });
+
+  it("copies ArrayBuffer-backed subrange views before transferring", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const buffer = new ArrayBuffer(8);
+    const full = new Uint8Array(buffer);
+    for (let i = 0; i < full.length; i++) full[i] = i + 1;
+
+    const sub = full.subarray(2, 6);
+    expect(sub.byteOffset).toBe(2);
+    expect(sub.byteLength).toBe(4);
+
+    const p = client.write(1, 0, sub);
+
+    const payloadData = w.lastMessage.payload.data as Uint8Array;
+    expect(payloadData).not.toBe(sub);
+    expect(payloadData.buffer).not.toBe(buffer);
+    expect(Array.from(payloadData)).toEqual(Array.from(sub));
+    expect(w.lastTransfer).toHaveLength(1);
+    expect(w.lastTransfer?.[0]).toBe(payloadData.buffer);
+
+    w.emit({ type: "response", requestId: 1, ok: true, result: { ok: true } });
+    await p;
+    client.close();
+  });
 });
