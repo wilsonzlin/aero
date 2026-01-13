@@ -90,6 +90,7 @@ pub struct AerogpuCmdRuntime {
     pipeline_layout_cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>>,
 
     dummy_uniform: wgpu::Buffer,
+    dummy_storage: wgpu::Buffer,
     dummy_texture_view: wgpu::TextureView,
     sampler_cache: SamplerCache,
     default_sampler: aero_gpu::bindings::samplers::CachedSampler,
@@ -177,6 +178,14 @@ impl AerogpuCmdRuntime {
             &vec![0u8; DUMMY_UNIFORM_SIZE_BYTES as usize],
         );
 
+        let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 aerogpu dummy storage"),
+            size: 4096,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&dummy_storage, 0, &vec![0u8; 4096]);
+
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d11 aerogpu dummy texture"),
             size: wgpu::Extent3d {
@@ -239,6 +248,7 @@ impl AerogpuCmdRuntime {
             pipelines,
             pipeline_layout_cache: PipelineLayoutCache::new(),
             dummy_uniform,
+            dummy_storage,
             dummy_texture_view,
             sampler_cache,
             default_sampler,
@@ -880,6 +890,7 @@ impl AerogpuCmdRuntime {
                 resources: &self.resources,
                 stage_state,
                 dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
                 dummy_texture_view: &self.dummy_texture_view,
                 default_sampler: &self.default_sampler,
             };
@@ -1139,6 +1150,7 @@ struct RuntimeBindGroupProvider<'a> {
     resources: &'a AerogpuResources,
     stage_state: Option<&'a super::aerogpu_state::StageBindings>,
     dummy_uniform: &'a wgpu::Buffer,
+    dummy_storage: &'a wgpu::Buffer,
     dummy_texture_view: &'a wgpu::TextureView,
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
 }
@@ -1180,6 +1192,10 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
 
     fn dummy_uniform(&self) -> &wgpu::Buffer {
         self.dummy_uniform
+    }
+
+    fn dummy_storage(&self) -> &wgpu::Buffer {
+        self.dummy_storage
     }
 
     fn dummy_texture_view(&self) -> &wgpu::TextureView {

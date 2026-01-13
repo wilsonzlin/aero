@@ -587,6 +587,7 @@ pub struct AerogpuD3d11Executor {
     expansion_scratch: ExpansionScratchAllocator,
 
     dummy_uniform: wgpu::Buffer,
+    dummy_storage: wgpu::Buffer,
     dummy_texture_view: wgpu::TextureView,
 
     /// Cache of internal dummy color targets for depth-only render passes.
@@ -673,6 +674,18 @@ impl AerogpuD3d11Executor {
         }
         dummy_uniform.unmap();
 
+        let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd dummy storage buffer"),
+            size: 4096,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut mapped = dummy_storage.slice(..).get_mapped_range_mut();
+            mapped.fill(0);
+        }
+        dummy_storage.unmap();
+
         let caps = GpuCapabilities::from_device(&device);
         let pipeline_cache = PipelineCache::new(PipelineCacheConfig::default(), caps);
 
@@ -741,6 +754,7 @@ impl AerogpuD3d11Executor {
             next_scratch_buffer_id: 1u64 << 32,
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
             dummy_uniform,
+            dummy_storage,
             dummy_texture_view,
             depth_only_dummy_color_targets: HashMap::new(),
             sampler_cache,
@@ -3147,6 +3161,7 @@ impl AerogpuD3d11Executor {
                                         legacy_constants: &self.legacy_constants,
                                         cbuffer_scratch: &self.cbuffer_scratch,
                                         dummy_uniform: &self.dummy_uniform,
+                                        dummy_storage: &self.dummy_storage,
                                         dummy_texture_view: &self.dummy_texture_view,
                                         default_sampler: &self.default_sampler,
                                         stage,
@@ -3266,6 +3281,7 @@ impl AerogpuD3d11Executor {
                                         legacy_constants: &self.legacy_constants,
                                         cbuffer_scratch: &self.cbuffer_scratch,
                                         dummy_uniform: &self.dummy_uniform,
+                                        dummy_storage: &self.dummy_storage,
                                         dummy_texture_view: &self.dummy_texture_view,
                                         default_sampler: &self.default_sampler,
                                         stage,
@@ -7690,6 +7706,7 @@ struct CmdExecutorBindGroupProvider<'a> {
     legacy_constants: &'a HashMap<ShaderStage, wgpu::Buffer>,
     cbuffer_scratch: &'a HashMap<(ShaderStage, u32), ConstantBufferScratch>,
     dummy_uniform: &'a wgpu::Buffer,
+    dummy_storage: &'a wgpu::Buffer,
     dummy_texture_view: &'a wgpu::TextureView,
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
     stage: ShaderStage,
@@ -7743,6 +7760,10 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
 
     fn dummy_uniform(&self) -> &wgpu::Buffer {
         self.dummy_uniform
+    }
+
+    fn dummy_storage(&self) -> &wgpu::Buffer {
+        self.dummy_storage
     }
 
     fn dummy_texture_view(&self) -> &wgpu::TextureView {
