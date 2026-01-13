@@ -1005,14 +1005,9 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
   const DEVINST dn = matches.front().devinst;
   const auto irq = QueryDevInstIrqModeWithParentFallback(dn);
   if (!irq.ok) {
-    if (irq.cr != CR_SUCCESS) {
-      log.Logf("%s-irq|WARN|reason=%s|cr=%lu", dev_name,
-               irq.reason.empty() ? "resource_query_failed" : irq.reason.c_str(),
-               static_cast<unsigned long>(irq.cr));
-    } else {
-      log.Logf("%s-irq|WARN|reason=%s", dev_name,
-               irq.reason.empty() ? "resource_query_failed" : irq.reason.c_str());
-    }
+    // Keep the marker format stable for host-side parsing: always a single `reason=...` payload.
+    log.Logf("%s-irq|WARN|reason=%s", dev_name,
+             irq.reason.empty() ? "resource_query_failed" : irq.reason.c_str());
     return;
   }
 
@@ -1021,7 +1016,7 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
     return;
   }
 
-  log.Logf("%s-irq|INFO|mode=msi|messages=%lu", dev_name, static_cast<unsigned long>(irq.info.messages));
+  log.Logf("%s-irq|INFO|mode=msi messages=%lu", dev_name, static_cast<unsigned long>(irq.info.messages));
 }
 
 struct VirtioSndPciIdInfo {
