@@ -113,7 +113,12 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
     };
 
     let metrics = Metrics::new();
-    let capture = CaptureManager::new(cfg.capture_dir.clone()).await?;
+    let capture = CaptureManager::new(
+        cfg.capture_dir.clone(),
+        cfg.capture_max_bytes,
+        cfg.capture_flush_interval,
+    )
+    .await?;
 
     let connections = (cfg.security.max_connections != 0)
         .then(|| Arc::new(Semaphore::new(cfg.security.max_connections)));

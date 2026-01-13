@@ -41,6 +41,8 @@ impl TestServer {
             dns_default_ttl_secs: 60,
             dns_max_ttl_secs: 300,
             capture_dir,
+            capture_max_bytes: 64 * 1024 * 1024,
+            capture_flush_interval: Duration::from_millis(1000),
             security: SecurityConfig {
                 open: true,
                 ..Default::default()
@@ -315,6 +317,8 @@ async fn upgrade_rejection_metrics_increment_on_missing_origin() {
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
+        capture_max_bytes: 64 * 1024 * 1024,
+        capture_flush_interval: Duration::from_millis(1000),
         security: SecurityConfig {
             open: false,
             allowed_origins: AllowedOrigins::Any,
@@ -380,6 +384,8 @@ async fn upgrade_rejection_metrics_increment_on_origin_not_allowed() {
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
+        capture_max_bytes: 64 * 1024 * 1024,
+        capture_flush_interval: Duration::from_millis(1000),
         security: SecurityConfig {
             open: false,
             allowed_origins: AllowedOrigins::List(vec!["https://allowed.test".to_string()]),
@@ -452,6 +458,8 @@ async fn upgrade_rejection_metrics_increment_on_missing_host() {
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
+        capture_max_bytes: 64 * 1024 * 1024,
+        capture_flush_interval: Duration::from_millis(1000),
         security: SecurityConfig {
             open: true,
             allowed_hosts: vec!["allowed.test".to_string()],

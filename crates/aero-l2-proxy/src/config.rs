@@ -417,6 +417,14 @@ pub struct ProxyConfig {
     pub dns_max_ttl_secs: u32,
 
     pub capture_dir: Option<PathBuf>,
+    /// Hard cap on the number of Ethernet payload bytes written to each per-session capture file.
+    ///
+    /// - `0` disables the cap (unbounded per session).
+    pub capture_max_bytes: u64,
+    /// Maximum time between `flush()` calls on capture writers.
+    ///
+    /// - `0ms` flushes after every captured packet.
+    pub capture_flush_interval: Duration,
 
     pub security: SecurityConfig,
 
@@ -533,6 +541,13 @@ impl ProxyConfig {
             .ok()
             .and_then(|v| (!v.trim().is_empty()).then(|| PathBuf::from(v)));
 
+        let capture_max_bytes =
+            read_env_u64_clamped("AERO_L2_CAPTURE_MAX_BYTES", 64 * 1024 * 1024, 0, u64::MAX);
+
+        let capture_flush_interval_ms =
+            read_env_u64_clamped("AERO_L2_CAPTURE_FLUSH_INTERVAL_MS", 1000, 0, u64::MAX);
+        let capture_flush_interval = Duration::from_millis(capture_flush_interval_ms);
+
         let security = SecurityConfig::from_env().context("parse security config")?;
 
         let policy = EgressPolicy::from_env().context("parse egress policy")?;
@@ -557,6 +572,8 @@ impl ProxyConfig {
             dns_default_ttl_secs,
             dns_max_ttl_secs,
             capture_dir,
+            capture_max_bytes,
+            capture_flush_interval,
             security,
             policy,
             test_overrides,

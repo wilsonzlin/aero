@@ -1322,30 +1322,43 @@ console.log("pcapng bytes:", bytes.byteLength);
 PCAP/PCAPNG captures can be **large** and may contain **sensitive data** (credentials, cookies, DNS
 queries, internal IPs, etc). Treat captures like secrets.
 
-The web tracing buffer is held in-memory and has an explicit size cap to prevent unbounded growth:
+Both the Rust and web tracing implementations buffer captured packets **in-memory** and enforce a
+hard size cap to prevent unbounded growth:
 
-- `web/src/net/net_tracer.ts` defaults to **16 MiB** of captured Ethernet payload bytes (`maxBytes`)
-  per net worker.
-- Once the cap is reached, new frames are **dropped** (so captures may be incomplete for long or
-  high-throughput sessions).
-- If available, use the live stats (`droppedRecords` / `droppedBytes`) to detect when the capture
-  hit its cap and frames were dropped.
-- Exporting via the UI (or `downloadPcapng`) uses the net worker’s `takePcapng()` path, which
-  **clears the buffer after exporting**. Use this (or the clear button / API) to keep captures
-  bounded during long debugging sessions.
-- Snapshot exporting (via `exportPcapng`) does **not** clear the buffer; use this when you want to
-  preview a capture without losing it, but prefer the draining export for long sessions to keep
-  memory bounded.
-- Note: in the current web runtime, exporting clears the buffered frames but does **not** reset the
-  drop counters — use **Clear capture** / `clear()` if you want to reset `droppedRecords` and
-  `droppedBytes`.
+- **Rust (`crates/emulator/src/io/net/trace/NetTracer`):**
+  - `NetTraceConfig.max_bytes` defaults to **16 MiB** of captured payload bytes (not including PCAPNG overhead).
+  - Once the cap is reached, new records are **dropped**; counters are available via `NetTracer.stats()`
+    (`dropped_records` / `dropped_bytes`).
+- **Web (`web/src/net/net_tracer.ts`):**
+  - Defaults to **16 MiB** of captured payload bytes (`maxBytes`) per net worker.
+  - When the cap is reached, new frames are **dropped**; counters are available via `NetTracer.stats()`
+    (`droppedRecords` / `droppedBytes`) when surfaced by the host/backend.
+
+Export/clear semantics (important for interpreting drop counters):
+
+- **Draining export**:
+  - Rust: `NetTracer.take_pcapng()`
+  - Web: `downloadPcapng()` (UI “Download capture”)
+  - Clears the in-memory buffer after exporting, but does **not** reset drop counters.
+- **Snapshot export**:
+  - Rust: `NetTracer.export_pcapng()`
+  - Web: `exportPcapng()` (UI “Download snapshot”, when supported)
+  - Exports without clearing the in-memory buffer.
+- **Clear**:
+  - Rust: `NetTracer.clear()`
+  - Web: `clear()` (UI “Clear capture”, when supported)
+  - Drops buffered records *and* resets drop counters.
+
+Operational note: for long debugging sessions, prefer periodically taking a draining export (or clearing)
+to keep memory bounded and to make drop counters meaningful over a known time window.
 
 Performance note: enabling tracing copies each captured frame into an in-memory buffer (so it has
 CPU + memory overhead). Keep tracing disabled unless actively debugging.
 
 Server-side alternative: the production L2 proxy can optionally write per-session `.pcapng` files via
 `AERO_L2_CAPTURE_DIR` (see **L2 proxy observability** below). Capturing on both ends can help debug
-tunnel framing vs. proxy-side stack issues.
+tunnel framing vs. proxy-side stack issues; note that proxy-side capture is also bounded and may be
+truncated depending on its capture limits.
 
 ### Privacy / Security Warning
 
@@ -1402,4 +1415,13 @@ It also supports optional per-session traffic capture for debugging:
 - `AERO_L2_CAPTURE_DIR=/path/to/dir` – when set, writes one `.pcapng` file per tunnel session containing:
   - guest→proxy Ethernet frames (inbound)
   - proxy→guest Ethernet frames (outbound)
+- `AERO_L2_CAPTURE_MAX_BYTES=67108864` – maximum captured Ethernet payload bytes written per session file (default: **64 MiB**; `0` disables the cap).
+- `AERO_L2_CAPTURE_FLUSH_INTERVAL_MS=1000` – flush interval for capture writers (default: **1000ms**; `0` flushes after every captured packet).
 - `AERO_L2_PING_INTERVAL_MS=1000` – when set, the proxy sends protocol-level PINGs; RTT is recorded as `l2_ping_rtt_ms` histogram in `/metrics`.
+
+Capture is **best-effort**:
+
+- It may be **truncated** when the max-bytes cap is reached, or if file I/O fails.
+- Verify completeness via capture metrics in `/metrics`:
+  - `l2_capture_frames_total` / `l2_capture_bytes_total` (written)
+  - `l2_capture_frames_dropped_total` / `l2_capture_bytes_dropped_total` (not captured; non-zero implies an incomplete capture)

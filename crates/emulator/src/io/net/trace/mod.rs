@@ -58,6 +58,11 @@ pub trait NetTraceRedactor: Send + Sync {
 
 #[derive(Clone)]
 pub struct NetTraceConfig {
+    /// Hard cap on total captured payload bytes (not including PCAPNG overhead).
+    ///
+    /// - When exceeded, new frames/records are dropped.
+    /// - `0` disables capture (all records are dropped).
+    pub max_bytes: usize,
     pub capture_ethernet: bool,
     pub capture_tcp_proxy: bool,
     pub capture_udp_proxy: bool,
@@ -67,6 +72,7 @@ pub struct NetTraceConfig {
 impl Default for NetTraceConfig {
     fn default() -> Self {
         Self {
+            max_bytes: DEFAULT_MAX_BYTES,
             capture_ethernet: true,
             capture_tcp_proxy: false,
             capture_udp_proxy: false,
@@ -74,6 +80,9 @@ impl Default for NetTraceConfig {
         }
     }
 }
+
+const DEFAULT_MAX_BYTES: usize = 16 * 1024 * 1024;
+const PROXY_PSEUDO_HEADER_LEN: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TraceRecord {
@@ -99,10 +108,27 @@ enum TraceRecord {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetTraceStats {
+    pub enabled: bool,
+    pub records: usize,
+    pub bytes: usize,
+    pub dropped_records: u64,
+    pub dropped_bytes: u64,
+}
+
+#[derive(Debug, Default)]
+struct TraceState {
+    records: Vec<TraceRecord>,
+    bytes: usize,
+    dropped_records: u64,
+    dropped_bytes: u64,
+}
+
 pub struct NetTracer {
     enabled: AtomicBool,
     cfg: NetTraceConfig,
-    records: Mutex<Vec<TraceRecord>>,
+    state: Mutex<TraceState>,
 }
 
 impl NetTracer {
@@ -110,7 +136,7 @@ impl NetTracer {
         Self {
             enabled: AtomicBool::new(false),
             cfg,
-            records: Mutex::new(Vec::new()),
+            state: Mutex::new(TraceState::default()),
         }
     }
 
@@ -127,10 +153,22 @@ impl NetTracer {
     }
 
     pub fn clear(&self) {
-        self.records
-            .lock()
-            .expect("net trace lock poisoned")
-            .clear();
+        let mut state = self.state.lock().expect("net trace lock poisoned");
+        state.records.clear();
+        state.bytes = 0;
+        state.dropped_records = 0;
+        state.dropped_bytes = 0;
+    }
+
+    pub fn stats(&self) -> NetTraceStats {
+        let state = self.state.lock().expect("net trace lock poisoned");
+        NetTraceStats {
+            enabled: self.is_enabled(),
+            records: state.records.len(),
+            bytes: state.bytes,
+            dropped_records: state.dropped_records,
+            dropped_bytes: state.dropped_bytes,
+        }
     }
 
     pub fn record_ethernet(&self, direction: FrameDirection, frame: &[u8]) {
@@ -151,14 +189,19 @@ impl NetTracer {
             None => frame.to_vec(),
         };
 
-        self.records
-            .lock()
-            .expect("net trace lock poisoned")
-            .push(TraceRecord::Ethernet {
-                timestamp_ns,
-                direction,
-                frame,
-            });
+        let len = frame.len();
+        let mut state = self.state.lock().expect("net trace lock poisoned");
+        if len > self.cfg.max_bytes || state.bytes.saturating_add(len) > self.cfg.max_bytes {
+            state.dropped_records = state.dropped_records.saturating_add(1);
+            state.dropped_bytes = state.dropped_bytes.saturating_add(len as u64);
+            return;
+        }
+        state.records.push(TraceRecord::Ethernet {
+            timestamp_ns,
+            direction,
+            frame,
+        });
+        state.bytes = state.bytes.saturating_add(len);
     }
 
     pub fn record_tcp_proxy(&self, direction: ProxyDirection, connection_id: u32, data: &[u8]) {
@@ -185,15 +228,20 @@ impl NetTracer {
             None => data.to_vec(),
         };
 
-        self.records
-            .lock()
-            .expect("net trace lock poisoned")
-            .push(TraceRecord::TcpProxy {
-                timestamp_ns,
-                direction,
-                connection_id,
-                data,
-            });
+        let len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
+        let mut state = self.state.lock().expect("net trace lock poisoned");
+        if len > self.cfg.max_bytes || state.bytes.saturating_add(len) > self.cfg.max_bytes {
+            state.dropped_records = state.dropped_records.saturating_add(1);
+            state.dropped_bytes = state.dropped_bytes.saturating_add(len as u64);
+            return;
+        }
+        state.records.push(TraceRecord::TcpProxy {
+            timestamp_ns,
+            direction,
+            connection_id,
+            data,
+        });
+        state.bytes = state.bytes.saturating_add(len);
     }
 
     pub fn record_udp_proxy(
@@ -246,18 +294,23 @@ impl NetTracer {
             None => data.to_vec(),
         };
 
-        self.records
-            .lock()
-            .expect("net trace lock poisoned")
-            .push(TraceRecord::UdpProxy {
-                timestamp_ns,
-                direction,
-                transport,
-                remote_ip,
-                src_port,
-                dst_port,
-                data,
-            });
+        let len = PROXY_PSEUDO_HEADER_LEN.saturating_add(data.len());
+        let mut state = self.state.lock().expect("net trace lock poisoned");
+        if len > self.cfg.max_bytes || state.bytes.saturating_add(len) > self.cfg.max_bytes {
+            state.dropped_records = state.dropped_records.saturating_add(1);
+            state.dropped_bytes = state.dropped_bytes.saturating_add(len as u64);
+            return;
+        }
+        state.records.push(TraceRecord::UdpProxy {
+            timestamp_ns,
+            direction,
+            transport,
+            remote_ip,
+            src_port,
+            dst_port,
+            data,
+        });
+        state.bytes = state.bytes.saturating_add(len);
     }
 
     pub fn export_pcapng(&self) -> Vec<u8> {
@@ -270,11 +323,12 @@ impl NetTracer {
 
     fn export_pcapng_inner(&self, drain: bool) -> Vec<u8> {
         let records = {
-            let mut guard = self.records.lock().expect("net trace lock poisoned");
+            let mut guard = self.state.lock().expect("net trace lock poisoned");
             if drain {
-                std::mem::take(&mut *guard)
+                guard.bytes = 0;
+                std::mem::take(&mut guard.records)
             } else {
-                guard.clone()
+                guard.records.clone()
             }
         };
 
@@ -566,7 +620,7 @@ fn tcp_proxy_pseudo_packet(
         ProxyDirection::RemoteToGuest => 1u8,
     };
 
-    let mut buf = Vec::with_capacity(16 + payload.len());
+    let mut buf = Vec::with_capacity(PROXY_PSEUDO_HEADER_LEN + payload.len());
     buf.extend_from_slice(&MAGIC);
     buf.push(dir);
     buf.extend_from_slice(&[0u8; 3]);
@@ -594,7 +648,7 @@ fn udp_proxy_pseudo_packet(
         UdpTransport::Proxy => 1u8,
     };
 
-    let mut buf = Vec::with_capacity(16 + payload.len());
+    let mut buf = Vec::with_capacity(PROXY_PSEUDO_HEADER_LEN + payload.len());
     buf.extend_from_slice(&MAGIC);
     buf.push(dir);
     buf.push(transport);

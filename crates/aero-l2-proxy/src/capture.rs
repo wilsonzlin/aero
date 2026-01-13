@@ -5,20 +5,31 @@ use tokio::{
     fs,
     io::{AsyncWriteExt, BufWriter},
 };
+use tokio::time::Instant;
 
 use crate::pcapng::{LinkType, PacketDirection, PcapngWriter};
 
 #[derive(Clone)]
 pub struct CaptureManager {
     dir: Option<PathBuf>,
+    max_bytes: u64,
+    flush_interval: std::time::Duration,
 }
 
 impl CaptureManager {
-    pub async fn new(dir: Option<PathBuf>) -> std::io::Result<Self> {
+    pub async fn new(
+        dir: Option<PathBuf>,
+        max_bytes: u64,
+        flush_interval: std::time::Duration,
+    ) -> std::io::Result<Self> {
         if let Some(dir) = dir.as_ref() {
             fs::create_dir_all(dir).await?;
         }
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            max_bytes,
+            flush_interval,
+        })
     }
 
     pub async fn open_session(&self, session_id: u64) -> std::io::Result<Option<SessionCapture>> {
@@ -41,7 +52,15 @@ impl CaptureManager {
         let iface = pcap.add_interface(LinkType::Ethernet, "l2-tunnel").await?;
         pcap.flush().await?;
 
-        Ok(Some(SessionCapture { path, pcap, iface }))
+        Ok(Some(SessionCapture {
+            path,
+            pcap,
+            iface,
+            max_bytes: self.max_bytes,
+            bytes: 0,
+            flush_interval: self.flush_interval,
+            last_flush: Instant::now(),
+        }))
     }
 }
 
@@ -49,6 +68,10 @@ pub struct SessionCapture {
     path: PathBuf,
     pcap: PcapngWriter<BufWriter<fs::File>>,
     iface: u32,
+    max_bytes: u64,
+    bytes: u64,
+    flush_interval: std::time::Duration,
+    last_flush: Instant,
 }
 
 impl SessionCapture {
@@ -60,38 +83,59 @@ impl SessionCapture {
         &mut self,
         timestamp_ns: u64,
         frame: &[u8],
-    ) -> std::io::Result<()> {
-        self.pcap
-            .write_packet(
-                self.iface,
-                timestamp_ns,
-                frame,
-                Some(PacketDirection::Inbound),
-            )
-            .await?;
-        self.pcap.flush().await
+    ) -> std::io::Result<bool> {
+        self.record_packet(timestamp_ns, frame, PacketDirection::Inbound)
+            .await
     }
 
     pub async fn record_proxy_to_guest(
         &mut self,
         timestamp_ns: u64,
         frame: &[u8],
-    ) -> std::io::Result<()> {
-        self.pcap
-            .write_packet(
-                self.iface,
-                timestamp_ns,
-                frame,
-                Some(PacketDirection::Outbound),
-            )
-            .await?;
-        self.pcap.flush().await
+    ) -> std::io::Result<bool> {
+        self.record_packet(timestamp_ns, frame, PacketDirection::Outbound)
+            .await
     }
 
     pub async fn close(mut self) -> std::io::Result<()> {
         self.pcap.flush().await?;
         let mut writer = self.pcap.into_inner();
         writer.flush().await
+    }
+
+    async fn record_packet(
+        &mut self,
+        timestamp_ns: u64,
+        frame: &[u8],
+        direction: PacketDirection,
+    ) -> std::io::Result<bool> {
+        let len = frame.len() as u64;
+        if self.max_bytes != 0
+            && (len > self.max_bytes || self.bytes.saturating_add(len) > self.max_bytes)
+        {
+            return Ok(false);
+        }
+
+        self.pcap
+            .write_packet(self.iface, timestamp_ns, frame, Some(direction))
+            .await?;
+        self.bytes = self.bytes.saturating_add(len);
+
+        self.maybe_flush().await?;
+        Ok(true)
+    }
+
+    async fn maybe_flush(&mut self) -> std::io::Result<()> {
+        if self.flush_interval.is_zero() {
+            return self.pcap.flush().await;
+        }
+
+        let now = Instant::now();
+        if now.duration_since(self.last_flush) >= self.flush_interval {
+            self.last_flush = now;
+            self.pcap.flush().await?;
+        }
+        Ok(())
     }
 }
 
