@@ -1,4 +1,5 @@
 use aero_d3d9_shader::{D3d9Shader, Instruction, Opcode, ShaderParseError, ShaderStage};
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 
 fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(words.len() * 4);
@@ -264,18 +265,7 @@ fn parse_ps_3_0_texkill() {
 #[test]
 fn parse_dxbc_wrapped_sm2() {
     let shader_bytes = words_to_bytes(&VS_2_0_PASSTHROUGH);
-    let chunk_offset = 36u32;
-    let total_size = chunk_offset as usize + 8 + shader_bytes.len();
-    let mut dxbc = Vec::with_capacity(total_size);
-    dxbc.extend_from_slice(b"DXBC");
-    dxbc.extend_from_slice(&[0u8; 16]); // checksum
-    dxbc.extend_from_slice(&1u32.to_le_bytes()); // unknown
-    dxbc.extend_from_slice(&(total_size as u32).to_le_bytes());
-    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk count
-    dxbc.extend_from_slice(&chunk_offset.to_le_bytes());
-    dxbc.extend_from_slice(b"SHDR");
-    dxbc.extend_from_slice(&(shader_bytes.len() as u32).to_le_bytes());
-    dxbc.extend_from_slice(&shader_bytes);
+    let dxbc = dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), shader_bytes.as_slice())]);
 
     let shader = D3d9Shader::parse(&dxbc).unwrap();
     assert_eq!(shader.stage, ShaderStage::Vertex);
