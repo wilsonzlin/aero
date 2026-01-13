@@ -1,13 +1,15 @@
 use aero_cpu_core::exec::{
-    ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit,
+    ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, Tier0RepIterTracker,
 };
+use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
 use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta};
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
 };
 use aero_cpu_core::mem::FlatTestBus;
-use aero_cpu_core::state::CpuMode;
+use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_perf::{PerfCounters, PerfWorker};
+use aero_x86::Register;
 use std::sync::Arc;
 
 #[derive(Default)]
@@ -236,4 +238,90 @@ fn interrupt_delivery_does_not_advance_perf_counters() {
         aero_cpu_core::exec::StepOutcome::InterruptDelivered
     );
     assert_eq!(perf.lifetime_snapshot().instructions_executed, 0);
+}
+
+#[test]
+fn run_blocks_with_perf_counts_across_multiple_blocks() {
+    let mut bus = FlatTestBus::new(0x1000);
+    bus.load(0, &[0x90, 0x90, 0x90]); // NOP * 3
+
+    let mut cpu = aero_cpu_core::exec::Vcpu::new_with_mode(CpuMode::Bit16, bus);
+    cpu.cpu.state.segments.cs.base = 0;
+    cpu.cpu.state.set_rip(0);
+
+    // Force one instruction per interpreter block so `blocks == instructions`.
+    let interp = aero_cpu_core::exec::Tier0Interpreter::new(1);
+    let config = JitConfig {
+        enabled: false,
+        hot_threshold: 1,
+        cache_max_blocks: 1,
+        cache_max_bytes: 0,
+    };
+    let jit = JitRuntime::new(
+        config,
+        UnusedJitBackend::default(),
+        NoCompileSink::default(),
+    );
+    let mut dispatcher = ExecDispatcher::new(interp, jit);
+
+    let shared = Arc::new(PerfCounters::new());
+    let mut perf = PerfWorker::new(shared);
+
+    dispatcher.run_blocks_with_perf(&mut cpu, &mut perf, 3);
+
+    assert_eq!(perf.lifetime_snapshot().instructions_executed, 3);
+    assert_eq!(cpu.cpu.state.rip(), 3);
+}
+
+#[test]
+fn rep_iter_tracker_is_noop_for_non_rep_string_instruction() {
+    let state = CpuState::new(CpuMode::Bit16);
+    let decoded = aero_x86::decode(&[0xA4], 0, state.bitness()).unwrap(); // MOVSB
+
+    assert!(Tier0RepIterTracker::begin(&state, &decoded, false).is_none());
+
+    let mut bytes = [0u8; 15];
+    bytes[0] = 0xA4;
+    assert!(Tier0RepIterTracker::begin_from_bytes(&state, &decoded, &bytes).is_none());
+}
+
+#[test]
+fn rep_iter_tracker_begin_from_bytes_counts_iterations_with_addr_size_override() {
+    const CODE_ADDR: u64 = 0;
+    let code = [0xF3, 0x67, 0xA4]; // REP + addr-size override + MOVSB
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.segments.cs.base = 0;
+    state.segments.ds.base = 0x1000;
+    state.segments.es.base = 0x2000;
+    state.set_rip(CODE_ADDR);
+
+    // Address-size override in 32-bit mode selects SI/DI/CX.
+    state.write_reg(Register::SI, 0x10);
+    state.write_reg(Register::DI, 0x20);
+    state.write_reg(Register::CX, 3);
+
+    let mut bus = FlatTestBus::new(0x10_000);
+    bus.load(CODE_ADDR, &code);
+    // Initialize DS memory with some bytes for MOVSB to copy.
+    bus.load(0x1000 + 0x10, &[0x11, 0x22, 0x33]);
+
+    let decoded = aero_x86::decode(&code, CODE_ADDR, state.bitness()).unwrap();
+    let mut fetched = [0u8; 15];
+    fetched[..code.len()].copy_from_slice(&code);
+
+    let tracker =
+        Tier0RepIterTracker::begin_from_bytes(&state, &decoded, &fetched).expect("should track");
+
+    let res = run_batch(&mut state, &mut bus, 1);
+    assert_eq!(res.exit, BatchExit::Completed);
+
+    let shared = Arc::new(PerfCounters::new());
+    let mut perf = PerfWorker::new(shared);
+    perf.retire_instructions(1);
+    tracker.finish(&state, &mut perf);
+
+    assert_eq!(perf.lifetime_snapshot().instructions_executed, 1);
+    assert_eq!(perf.lifetime_snapshot().rep_iterations, 3);
+    assert_eq!(state.read_reg(Register::CX), 0);
 }
