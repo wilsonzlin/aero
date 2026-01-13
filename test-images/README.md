@@ -7,6 +7,9 @@ It is used for large binaries that we cannot/should not commit:
 - Open-source OS media downloaded by scripts (e.g. FreeDOS).
 - User-supplied proprietary media (e.g. Windows 7).
 
+Small, deterministic fixtures that *are* committed to the repo (e.g. tiny boot
+sectors used by integration tests) live under `tests/fixtures/`.
+
 ## Prepare open-source images
 
 ```bash

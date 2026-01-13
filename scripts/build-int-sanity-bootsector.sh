@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-SRC="${ROOT_DIR}/test_images/boot_sectors/int_sanity.asm"
-OUT="${ROOT_DIR}/test_images/boot_sectors/int_sanity.bin"
+SRC="${ROOT_DIR}/tests/fixtures/boot/int_sanity.asm"
+OUT="${ROOT_DIR}/tests/fixtures/boot/int_sanity.bin"
 
 if ! command -v nasm >/dev/null 2>&1; then
   echo "error: nasm not found. Install it (e.g. \`apt-get install nasm\`)." >&2
@@ -20,4 +20,3 @@ if [[ "${SIZE}" -ne 512 ]]; then
 fi
 
 echo "wrote ${OUT}"
-

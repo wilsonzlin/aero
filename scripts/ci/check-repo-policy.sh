@@ -56,7 +56,7 @@ FORBIDDEN_EXTENSIONS=(
 ALLOWLIST_FORBIDDEN_EXTENSION_GLOBS=(
   assets/bios.bin
   crates/firmware/acpi/dsdt.aml
-  test_images/boot_sectors/int_sanity.bin
+  tests/fixtures/boot/int_sanity.bin
   tests/fixtures/bootsector.bin
   tests/fixtures/realmode_vbe_test.bin
   tests/fixtures/boot/*.bin
