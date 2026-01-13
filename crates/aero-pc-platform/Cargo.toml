@@ -26,6 +26,7 @@ aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 memory = { path = "../memory" }
 
 [dev-dependencies]
+aero-acpi = { path = "../aero-acpi" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 aero-usb = { path = "../aero-usb" }

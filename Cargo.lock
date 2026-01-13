@@ -517,6 +517,7 @@ dependencies = [
 name = "aero-pc-platform"
 version = "0.1.0"
 dependencies = [
+ "aero-acpi",
  "aero-audio",
  "aero-cpu-core",
  "aero-devices",

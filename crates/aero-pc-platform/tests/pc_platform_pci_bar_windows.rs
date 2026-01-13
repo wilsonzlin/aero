@@ -1,0 +1,306 @@
+use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
+use aero_devices::pci::{PciBarKind, PciBarRange, PciBdf};
+use aero_pc_constants::{PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_SIZE, PCIE_ECAM_START_BUS};
+use aero_pc_platform::{PcPlatform, PcPlatformConfig};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MmioWindow {
+    start: u64,
+    end: u64, // exclusive
+}
+
+impl MmioWindow {
+    fn contains(&self, start: u64, end: u64) -> bool {
+        start >= self.start && end <= self.end
+    }
+}
+
+fn ranges_overlap(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> bool {
+    a_start < b_end && a_end > b_start
+}
+
+fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(bytes.get(offset..offset + 2)?.try_into().ok()?))
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?))
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(bytes.get(offset..offset + 8)?.try_into().ok()?))
+}
+
+/// Parse ACPI AML `PkgLength` encoding.
+///
+/// Returns (length, length_field_bytes).
+fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
+    let b0 = *bytes.get(offset)?;
+    let follow_bytes = (b0 >> 6) as usize;
+    let mut len: usize = (b0 & 0x3F) as usize;
+    for i in 0..follow_bytes {
+        let b = *bytes.get(offset + 1 + i)?;
+        len |= (b as usize) << (4 + i * 8);
+    }
+    Some((len, 1 + follow_bytes))
+}
+
+/// Parse an AML integer object at `offset`.
+///
+/// Returns (value, bytes_consumed).
+fn parse_integer(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
+    match *bytes.get(offset)? {
+        0x00 => Some((0, 1)),                              // ZeroOp
+        0x01 => Some((1, 1)),                              // OneOp
+        0x0A => Some((*bytes.get(offset + 1)? as u64, 2)), // BytePrefix
+        0x0B => Some((
+            u16::from_le_bytes(bytes.get(offset + 1..offset + 3)?.try_into().ok()?) as u64,
+            3,
+        )),
+        0x0C => Some((
+            u32::from_le_bytes(bytes.get(offset + 1..offset + 5)?.try_into().ok()?) as u64,
+            5,
+        )),
+        0x0E => Some((
+            u64::from_le_bytes(bytes.get(offset + 1..offset + 9)?.try_into().ok()?),
+            9,
+        )),
+        _ => None,
+    }
+}
+
+/// Extract the PCI0 `_CRS` buffer contents from the DSDT AML emitted by `aero-acpi`.
+fn extract_pci0_crs_bytes(aml: &[u8]) -> Vec<u8> {
+    let mut i = 0usize;
+    while i + 2 < aml.len() {
+        // DeviceOp = ExtOpPrefix(0x5B) + 0x82.
+        if aml[i] == 0x5B && aml[i + 1] == 0x82 {
+            let (pkg_len, pkg_len_bytes) =
+                parse_pkg_length(aml, i + 2).expect("DeviceOp PkgLength should parse");
+            let payload_start = i + 2 + pkg_len_bytes;
+            let payload_end = payload_start
+                .checked_add(pkg_len)
+                .expect("DeviceOp payload end overflow");
+            assert!(
+                payload_end <= aml.len(),
+                "DeviceOp payload overruns AML (end=0x{payload_end:x} len=0x{:x})",
+                aml.len()
+            );
+            assert!(
+                payload_start + 4 <= payload_end,
+                "DeviceOp payload too small for NameSeg"
+            );
+            let name = &aml[payload_start..payload_start + 4];
+            if name == b"PCI0" {
+                let body_start = payload_start + 4;
+                let body_end = payload_end;
+
+                // Look for: NameOp (0x08) + NameSeg("_CRS") + BufferOp (0x11).
+                let mut j = body_start;
+                while j + 6 <= body_end {
+                    if aml[j] == 0x08 && &aml[j + 1..j + 5] == b"_CRS" {
+                        let buf_op = j + 5;
+                        assert_eq!(
+                            aml.get(buf_op).copied(),
+                            Some(0x11),
+                            "PCI0._CRS should be a BufferOp (0x11)"
+                        );
+
+                        let (buf_pkg_len, buf_pkg_len_bytes) = parse_pkg_length(aml, buf_op + 1)
+                            .expect("BufferOp PkgLength should parse");
+                        let buf_payload_start = buf_op + 1 + buf_pkg_len_bytes;
+                        let buf_payload_end = buf_payload_start
+                            .checked_add(buf_pkg_len)
+                            .expect("BufferOp payload end overflow");
+                        assert!(
+                            buf_payload_end <= body_end,
+                            "PCI0._CRS buffer overruns PCI0 device body"
+                        );
+
+                        // Buffer payload: <Integer buffer_size> + raw bytes.
+                        let (buf_size, buf_size_len) = parse_integer(aml, buf_payload_start)
+                            .expect("PCI0._CRS buffer size integer should parse");
+                        let buf_size_usize =
+                            usize::try_from(buf_size).expect("PCI0._CRS buffer size overflow");
+                        let bytes_start = buf_payload_start + buf_size_len;
+                        let bytes_end = bytes_start
+                            .checked_add(buf_size_usize)
+                            .expect("PCI0._CRS bytes end overflow");
+                        assert!(
+                            bytes_end <= buf_payload_end,
+                            "PCI0._CRS buffer bytes out of bounds"
+                        );
+                        return aml[bytes_start..bytes_end].to_vec();
+                    }
+                    j += 1;
+                }
+
+                panic!("PCI0._CRS not found inside PCI0 device");
+            }
+
+            // Skip past the DeviceOp payload (it contains the nested objects).
+            i = payload_end;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    panic!("PCI0 device not found in DSDT AML");
+}
+
+/// Parse address windows from a `ResourceTemplate` byte buffer (the contents of a `_CRS` buffer).
+fn parse_mmio_windows_from_crs(crs: &[u8]) -> Vec<MmioWindow> {
+    let mut windows = Vec::new();
+    let mut i = 0usize;
+
+    while i < crs.len() {
+        let tag = crs[i];
+        // EndTag (small item, tag=0x79 length=0).
+        if tag == 0x79 {
+            break;
+        }
+
+        // Small items have the high bit clear.
+        if (tag & 0x80) == 0 {
+            let len = (tag & 0x07) as usize;
+            i = i
+                .checked_add(1 + len)
+                .expect("ACPI small descriptor overflow");
+            continue;
+        }
+
+        // Large item: tag + 16-bit length.
+        let len =
+            usize::from(read_u16_le(crs, i + 1).expect("ACPI large descriptor length"));
+        let body_start = i + 3;
+        let body_end = body_start
+            .checked_add(len)
+            .expect("ACPI large descriptor overflow");
+        assert!(body_end <= crs.len(), "ACPI large descriptor truncated");
+
+        match tag {
+            // DWord Address Space Descriptor
+            0x87 if len >= 0x17 => {
+                let resource_type = crs[i + 3];
+                if resource_type == 0x00 {
+                    let start = u64::from(read_u32_le(crs, i + 10).expect("dword.min"));
+                    let length = u64::from(read_u32_le(crs, i + 22).expect("dword.length"));
+                    windows.push(MmioWindow {
+                        start,
+                        end: start.saturating_add(length),
+                    });
+                }
+            }
+            // QWord Address Space Descriptor
+            0x8A if len >= 0x2B => {
+                let resource_type = crs[i + 3];
+                if resource_type == 0x00 {
+                    let start = read_u64_le(crs, i + 14).expect("qword.min");
+                    let length = read_u64_le(crs, i + 38).expect("qword.length");
+                    windows.push(MmioWindow {
+                        start,
+                        end: start.saturating_add(length),
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        i = body_end;
+    }
+
+    windows
+}
+
+#[test]
+fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
+    let mut pc = PcPlatform::new_with_config(
+        32 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_e1000: true,
+            enable_virtio_blk: true,
+            ..Default::default()
+        },
+    );
+
+    // Ensure BAR allocation + decoding is applied (even if the constructor changes).
+    pc.reset_pci();
+
+    let mmio_bars: Vec<(PciBdf, u8, PciBarRange)> = {
+        let mut pci_cfg = pc.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let mut out = Vec::new();
+        for bdf in bus.iter_device_addrs() {
+            let cfg = bus
+                .device_config(bdf)
+                .unwrap_or_else(|| panic!("PCI device disappeared: {bdf:?}"));
+            for bar in 0u8..6 {
+                let Some(range) = cfg.bar_range(bar) else {
+                    continue;
+                };
+                if range.base == 0 {
+                    continue;
+                }
+                if !matches!(range.kind, PciBarKind::Mmio32 | PciBarKind::Mmio64) {
+                    continue;
+                }
+                out.push((bdf, bar, range));
+            }
+        }
+        out
+    };
+
+    assert!(
+        !mmio_bars.is_empty(),
+        "test expected at least one MMIO BAR to be allocated"
+    );
+
+    let acpi_cfg = AcpiConfig {
+        // Enable PCIe-friendly config space access via MMCONFIG/ECAM. This must match the PC
+        // platform memory map (`aero-pc-constants`).
+        pcie_ecam_base: PCIE_ECAM_BASE,
+        pcie_segment: PCIE_ECAM_SEGMENT,
+        pcie_start_bus: PCIE_ECAM_START_BUS,
+        pcie_end_bus: PCIE_ECAM_END_BUS,
+        ..Default::default()
+    };
+
+    let dsdt = AcpiTables::build(&acpi_cfg, AcpiPlacement::default()).dsdt;
+    let aml = &dsdt[36..];
+    let crs = extract_pci0_crs_bytes(aml);
+    let mmio_windows = parse_mmio_windows_from_crs(&crs);
+
+    assert!(
+        !mmio_windows.is_empty(),
+        "expected PCI0._CRS to advertise at least one MMIO window"
+    );
+
+    let ecam_start = PCIE_ECAM_BASE;
+    let ecam_end = ecam_start + PCIE_ECAM_SIZE;
+
+    for (bdf, bar, range) in mmio_bars {
+        let start = range.base;
+        let end = range
+            .base
+            .checked_add(range.size)
+            .unwrap_or_else(|| panic!("BAR range overflow: {bdf:?} BAR{bar} {range:?}"));
+
+        assert!(
+            start >= u64::from(acpi_cfg.pci_mmio_base),
+            "PCI MMIO BAR below ACPI pci_mmio_base: {bdf:?} BAR{bar} start=0x{start:x} pci_mmio_base=0x{:x}",
+            acpi_cfg.pci_mmio_base
+        );
+
+        assert!(
+            mmio_windows.iter().any(|w| w.contains(start, end)),
+            "PCI MMIO BAR outside ACPI-declared PCI0._CRS MMIO windows: {bdf:?} BAR{bar} start=0x{start:x} end=0x{end:x} windows={mmio_windows:?}",
+        );
+
+        assert!(
+            !ranges_overlap(start, end, ecam_start, ecam_end),
+            "PCI MMIO BAR overlaps ECAM window: {bdf:?} BAR{bar} [0x{start:x}..0x{end:x}) overlaps ECAM [0x{ecam_start:x}..0x{ecam_end:x})",
+        );
+    }
+}
+
