@@ -96,6 +96,21 @@ export function resolveVmSnapshotRestoreFromOpfsExport(api: WasmApi): VmSnapshot
 }
 
 export function parseAeroIoSnapshotVersion(bytes: Uint8Array): { version: number; flags: number } {
+  // `usb.uhci` snapshots may be a multi-controller container starting with the magic "AUSB".
+  // When present, forward the container's own version/flags into the outer `DeviceState` metadata
+  // so `WorkerVmSnapshot.add_device_state` preserves clear versioning for the USB blob.
+  if (
+    bytes.byteLength >= 8 &&
+    bytes[0] === 0x41 && // A
+    bytes[1] === 0x55 && // U
+    bytes[2] === 0x53 && // S
+    bytes[3] === 0x42 // B
+  ) {
+    const version = (bytes[4]! | (bytes[5]! << 8)) >>> 0;
+    const flags = (bytes[6]! | (bytes[7]! << 8)) >>> 0;
+    return { version, flags };
+  }
+
   // `aero-io-snapshot` TLV blobs begin with a 16-byte header:
   //   magic[4] = "AERO"
   //   format_version: u16 major, u16 minor

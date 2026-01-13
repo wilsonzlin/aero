@@ -177,6 +177,21 @@ describe("workers/vm_snapshot_wasm", () => {
     expect(parseAeroIoSnapshotVersion(new Uint8Array())).toEqual({ version: 1, flags: 0 });
   });
 
+  it("parses AUSB USB snapshot container header when present", () => {
+    const bytes = new Uint8Array(8);
+    bytes[0] = 0x41; // A
+    bytes[1] = 0x55; // U
+    bytes[2] = 0x53; // S
+    bytes[3] = 0x42; // B
+    // version=0x0201, flags=0x0403
+    bytes[4] = 0x01;
+    bytes[5] = 0x02;
+    bytes[6] = 0x03;
+    bytes[7] = 0x04;
+
+    expect(parseAeroIoSnapshotVersion(bytes)).toEqual({ version: 0x0201, flags: 0x0403 });
+  });
+
   it("parses legacy AERO-prefixed device snapshot header when present", () => {
     const bytes = new Uint8Array(16);
     bytes[0] = 0x41;
