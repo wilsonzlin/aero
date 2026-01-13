@@ -1074,7 +1074,13 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
   }
 
   HRESULT copy_hr = S_OK;
-  if (res->kind == ResourceKind::Texture2D) {
+  if (res->kind == ResourceKind::Texture2D &&
+      upload_offset == 0 &&
+      upload_size == res->storage.size() &&
+      res->mip_levels == 1 &&
+      res->array_size == 1) {
+    // Single-subresource Texture2D: copy row-by-row so we can honor the runtime's
+    // returned pitch if it differs from our requested row_pitch_bytes.
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
     const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
@@ -1109,6 +1115,9 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
       }
     }
   } else {
+    // For buffers and multi-subresource Texture2D resources, treat the resource's
+    // backing allocation as a linear byte array matching our `res->storage`
+    // layout and copy the requested range verbatim.
     std::memcpy(static_cast<uint8_t*>(lock_args.pData) + off, res->storage.data() + off, sz);
   }
 
@@ -2611,67 +2620,153 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     return S_OK;
   };
 
-  const auto copy_initial_bytes = [&](const void* src, size_t bytes) {
-    if (!src || bytes == 0 || res->storage.empty()) {
-      return;
+  const auto copy_initial_bytes_to_storage = [&](const void* src, size_t bytes) -> HRESULT {
+    if (!src) {
+      return E_INVALIDARG;
     }
-    bytes = std::min(bytes, res->storage.size());
+    if (bytes == 0) {
+      return S_OK;
+    }
+    if (res->storage.empty()) {
+      return E_FAIL;
+    }
+    if (bytes > res->storage.size()) {
+      return E_INVALIDARG;
+    }
+    std::fill(res->storage.begin(), res->storage.end(), 0);
     std::memcpy(res->storage.data(), src, bytes);
-    EmitUploadLocked(dev, res, 0, bytes);
+    return S_OK;
   };
 
-  const auto copy_initial_tex2d = [&](const void* src, UINT src_pitch) {
-    if (!src || res->row_pitch_bytes == 0 || res->height == 0 || res->storage.empty()) {
-      return;
+  const auto copy_initial_tex2d_subresources_to_storage = [&](auto init_data) -> HRESULT {
+    if (!init_data) {
+      return S_OK;
+    }
+    if (res->kind != ResourceKind::Texture2D) {
+      return E_FAIL;
+    }
+    if (res->storage.empty() || res->row_pitch_bytes == 0) {
+      return E_FAIL;
     }
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-    const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
-    const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
-    if (row_bytes == 0 || rows == 0) {
-      return;
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      return E_NOTIMPL;
     }
-    const uint8_t* src_bytes = reinterpret_cast<const uint8_t*>(src);
-    const uint32_t pitch = src_pitch ? src_pitch : row_bytes;
-    if (pitch < row_bytes) {
-      return;
+
+    const uint64_t subresource_count_u64 =
+        static_cast<uint64_t>(res->mip_levels) * static_cast<uint64_t>(res->array_size);
+    if (subresource_count_u64 == 0 || subresource_count_u64 > static_cast<uint64_t>(UINT32_MAX)) {
+      return E_INVALIDARG;
     }
-    for (uint32_t y = 0; y < rows; y++) {
-      std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
-                  src_bytes + static_cast<size_t>(y) * pitch,
-                  row_bytes);
-      if (res->row_pitch_bytes > row_bytes) {
-        std::memset(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes + row_bytes,
-                    0,
-                    res->row_pitch_bytes - row_bytes);
+    const uint32_t subresource_count = static_cast<uint32_t>(subresource_count_u64);
+    if (subresource_count > static_cast<uint32_t>(res->tex2d_subresources.size())) {
+      return E_FAIL;
+    }
+
+    using ElemT = std::remove_pointer_t<decltype(init_data)>;
+    static_assert(!std::is_void_v<ElemT>, "Expected typed init_data pointer");
+
+    // Ensure padding is deterministic even if the caller supplies only tight rows.
+    std::fill(res->storage.begin(), res->storage.end(), 0);
+
+    for (uint32_t sub = 0; sub < subresource_count; ++sub) {
+      const ElemT& init = init_data[sub];
+
+      const void* sys = nullptr;
+      if constexpr (has_member_pSysMem<ElemT>::value) {
+        sys = init.pSysMem;
+      } else if constexpr (has_member_pSysMemUP<ElemT>::value) {
+        sys = init.pSysMemUP;
+      } else {
+        return E_NOTIMPL;
+      }
+      if (!sys) {
+        return E_INVALIDARG;
+      }
+
+      uint32_t pitch = 0;
+      if constexpr (has_member_SysMemPitch<ElemT>::value) {
+        pitch = static_cast<uint32_t>(init.SysMemPitch);
+      } else if constexpr (has_member_RowPitch<ElemT>::value) {
+        pitch = static_cast<uint32_t>(init.RowPitch);
+      } else if constexpr (has_member_SrcPitch<ElemT>::value) {
+        pitch = static_cast<uint32_t>(init.SrcPitch);
+      } else {
+        return E_NOTIMPL;
+      }
+
+      const Texture2DSubresourceLayout& dst_layout = res->tex2d_subresources[sub];
+      const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, dst_layout.width);
+      if (row_bytes == 0 || dst_layout.rows_in_layout == 0) {
+        return E_INVALIDARG;
+      }
+      if (dst_layout.row_pitch_bytes < row_bytes) {
+        return E_INVALIDARG;
+      }
+
+      const uint32_t src_pitch = pitch ? pitch : row_bytes;
+      if (src_pitch < row_bytes) {
+        return E_INVALIDARG;
+      }
+
+      const uint8_t* src_base = static_cast<const uint8_t*>(sys);
+      const size_t dst_base = static_cast<size_t>(dst_layout.offset_bytes);
+      if (dst_base > res->storage.size()) {
+        return E_INVALIDARG;
+      }
+
+      for (uint32_t y = 0; y < dst_layout.rows_in_layout; ++y) {
+        const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(src_pitch);
+        const size_t dst_off =
+            dst_base + static_cast<size_t>(y) * static_cast<size_t>(dst_layout.row_pitch_bytes);
+        if (dst_off + row_bytes > res->storage.size()) {
+          return E_INVALIDARG;
+        }
+        std::memcpy(res->storage.data() + dst_off, src_base + src_off, row_bytes);
+        if (dst_layout.row_pitch_bytes > row_bytes) {
+          std::memset(res->storage.data() + dst_off + row_bytes, 0, dst_layout.row_pitch_bytes - row_bytes);
+        }
       }
     }
-    EmitUploadLocked(dev, res, 0, res->storage.size());
+
+    return S_OK;
   };
 
-  const auto maybe_copy_initial = [&](auto init_ptr) {
+  const auto maybe_copy_initial_to_storage = [&](auto init_ptr) -> HRESULT {
     if (!init_ptr) {
-      return;
+      return S_OK;
     }
 
     using ElemT = std::remove_pointer_t<decltype(init_ptr)>;
     if constexpr (std::is_void_v<ElemT>) {
       if (res->kind == ResourceKind::Buffer) {
-        copy_initial_bytes(init_ptr, static_cast<size_t>(res->size_bytes));
-      } else {
-        copy_initial_bytes(init_ptr, res->storage.size());
+        return copy_initial_bytes_to_storage(init_ptr, static_cast<size_t>(res->size_bytes));
       }
-    } else if constexpr (has_member_pSysMem<ElemT>::value) {
-      const void* sys = init_ptr[0].pSysMem;
-      UINT pitch = 0;
-      if constexpr (has_member_SysMemPitch<ElemT>::value) {
-        pitch = init_ptr[0].SysMemPitch;
+      if (res->kind == ResourceKind::Texture2D) {
+        return copy_initial_bytes_to_storage(init_ptr, res->storage.size());
+      }
+      return E_NOTIMPL;
+    } else {
+      if constexpr (!(has_member_pSysMem<ElemT>::value || has_member_pSysMemUP<ElemT>::value)) {
+        return E_NOTIMPL;
       }
 
       if (res->kind == ResourceKind::Buffer) {
-        copy_initial_bytes(sys, static_cast<size_t>(res->size_bytes));
-      } else if (res->kind == ResourceKind::Texture2D) {
-        copy_initial_tex2d(sys, pitch);
+        const void* sys = nullptr;
+        if constexpr (has_member_pSysMem<ElemT>::value) {
+          sys = init_ptr[0].pSysMem;
+        } else if constexpr (has_member_pSysMemUP<ElemT>::value) {
+          sys = init_ptr[0].pSysMemUP;
+        }
+        if (!sys) {
+          return E_INVALIDARG;
+        }
+        return copy_initial_bytes_to_storage(sys, static_cast<size_t>(res->size_bytes));
       }
+      if (res->kind == ResourceKind::Texture2D) {
+        return copy_initial_tex2d_subresources_to_storage(init_ptr);
+      }
+      return E_NOTIMPL;
     }
   };
 
@@ -2726,6 +2821,21 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
                          static_cast<unsigned long long>(res->size_bytes));
 #endif
 
+    bool has_initial_data = false;
+    HRESULT init_hr = S_OK;
+    if constexpr (has_member_pInitialDataUP<D3D11DDIARG_CREATERESOURCE>::value) {
+      has_initial_data = (pDesc->pInitialDataUP != nullptr);
+      init_hr = maybe_copy_initial_to_storage(pDesc->pInitialDataUP);
+    } else if constexpr (has_member_pInitialData<D3D11DDIARG_CREATERESOURCE>::value) {
+      has_initial_data = (pDesc->pInitialData != nullptr);
+      init_hr = maybe_copy_initial_to_storage(pDesc->pInitialData);
+    }
+    if (FAILED(init_hr)) {
+      deallocate_if_needed();
+      res->~Resource();
+      return init_hr;
+    }
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
@@ -2734,10 +2844,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
 
-    if constexpr (has_member_pInitialDataUP<D3D11DDIARG_CREATERESOURCE>::value) {
-      maybe_copy_initial(pDesc->pInitialDataUP);
-    } else if constexpr (has_member_pInitialData<D3D11DDIARG_CREATERESOURCE>::value) {
-      maybe_copy_initial(pDesc->pInitialData);
+    if (has_initial_data) {
+      EmitUploadLocked(dev, res, 0, res->size_bytes);
     }
 
     TrackWddmAllocForSubmitLocked(dev, res);
@@ -2869,6 +2977,21 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
                          static_cast<unsigned>(res->row_pitch_bytes));
 #endif
 
+    bool has_initial_data = false;
+    HRESULT init_hr = S_OK;
+    if constexpr (has_member_pInitialDataUP<D3D11DDIARG_CREATERESOURCE>::value) {
+      has_initial_data = (pDesc->pInitialDataUP != nullptr);
+      init_hr = maybe_copy_initial_to_storage(pDesc->pInitialDataUP);
+    } else if constexpr (has_member_pInitialData<D3D11DDIARG_CREATERESOURCE>::value) {
+      has_initial_data = (pDesc->pInitialData != nullptr);
+      init_hr = maybe_copy_initial_to_storage(pDesc->pInitialData);
+    }
+    if (FAILED(init_hr)) {
+      deallocate_if_needed();
+      res->~Resource();
+      return init_hr;
+    }
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
@@ -2882,10 +3005,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
 
-    if constexpr (has_member_pInitialDataUP<D3D11DDIARG_CREATERESOURCE>::value) {
-      maybe_copy_initial(pDesc->pInitialDataUP);
-    } else if constexpr (has_member_pInitialData<D3D11DDIARG_CREATERESOURCE>::value) {
-      maybe_copy_initial(pDesc->pInitialData);
+    if (has_initial_data) {
+      EmitUploadLocked(dev, res, 0, res->storage.size());
     }
 
     TrackWddmAllocForSubmitLocked(dev, res);

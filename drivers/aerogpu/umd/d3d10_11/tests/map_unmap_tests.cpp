@@ -6085,6 +6085,182 @@ bool TestGuestBackedCreateTexture2DMipArrayInitialDataDirtyRange() {
   return true;
 }
 
+bool TestHostOwnedCreateTexture2DMipArrayInitialDataUploads() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(CreateResource initial mip+array tex2d host-owned)")) {
+    return false;
+  }
+
+  static constexpr uint32_t kWidth = 4;
+  static constexpr uint32_t kHeight = 4;
+  static constexpr uint32_t kMipLevels = 3;
+  static constexpr uint32_t kArraySize = 2;
+
+  struct SubInit {
+    std::vector<uint8_t> bytes;
+    uint32_t row_bytes = 0;
+    uint32_t height = 0;
+  };
+
+  std::vector<SubInit> sub_inits;
+  std::vector<AEROGPU_DDI_SUBRESOURCE_DATA> inits;
+  sub_inits.reserve(static_cast<size_t>(kMipLevels) * kArraySize);
+  inits.reserve(static_cast<size_t>(kMipLevels) * kArraySize);
+
+  for (uint32_t layer = 0; layer < kArraySize; ++layer) {
+    uint32_t level_w = kWidth;
+    uint32_t level_h = kHeight;
+    for (uint32_t mip = 0; mip < kMipLevels; ++mip) {
+      SubInit sub{};
+      sub.row_bytes = level_w * 4u;
+      sub.height = level_h;
+      sub.bytes.resize(static_cast<size_t>(sub.row_bytes) * static_cast<size_t>(sub.height));
+      const uint8_t seed = static_cast<uint8_t>(0x10u + layer * 0x40u + mip * 0x08u);
+      for (size_t i = 0; i < sub.bytes.size(); ++i) {
+        sub.bytes[i] = static_cast<uint8_t>(seed + (i & 0x7u));
+      }
+      sub_inits.push_back(std::move(sub));
+
+      AEROGPU_DDI_SUBRESOURCE_DATA init = {};
+      init.pSysMem = sub_inits.back().bytes.data();
+      init.SysMemPitch = sub_inits.back().row_bytes;
+      init.SysMemSlicePitch = 0;
+      inits.push_back(init);
+
+      level_w = (level_w > 1) ? (level_w / 2) : 1u;
+      level_h = (level_h > 1) ? (level_h / 2) : 1u;
+    }
+  }
+
+  AEROGPU_DDIARG_CREATERESOURCE desc = {};
+  desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
+  desc.BindFlags = 0;
+  desc.MiscFlags = 0;
+  desc.Usage = AEROGPU_D3D11_USAGE_DEFAULT;
+  desc.CPUAccessFlags = 0;
+  desc.Width = kWidth;
+  desc.Height = kHeight;
+  desc.MipLevels = kMipLevels;
+  desc.ArraySize = kArraySize;
+  desc.Format = kDxgiFormatB8G8R8A8Unorm;
+  desc.pInitialData = inits.data();
+  desc.InitialDataCount = static_cast<uint32_t>(inits.size());
+
+  TestResource tex{};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned a non-trivial size")) {
+    return false;
+  }
+  tex.storage.assign(static_cast<size_t>(size), 0);
+  tex.hResource.pDrvPrivate = tex.storage.data();
+
+  HRESULT hr = dev.device_funcs.pfnCreateResource(dev.hDevice, &desc, tex.hResource);
+  if (!Check(hr == S_OK, "CreateResource(tex2d mip+array initial data host-owned)")) {
+    return false;
+  }
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource(mip+array initial data host-owned)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "host-owned CreateResource(mip+array initial tex2d) should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned CreateResource(mip+array initial tex2d) should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->mip_levels == kMipLevels, "CREATE_TEXTURE2D mip_levels matches")) {
+    return false;
+  }
+  if (!Check(create_cmd->array_layers == kArraySize, "CREATE_TEXTURE2D array_layers matches")) {
+    return false;
+  }
+  if (!Check(create_cmd->backing_alloc_id == 0, "CREATE_TEXTURE2D backing_alloc_id == 0")) {
+    return false;
+  }
+  if (!Check(create_cmd->row_pitch_bytes == kWidth * 4u, "CREATE_TEXTURE2D mip0 row_pitch_bytes is tight")) {
+    return false;
+  }
+
+  const uint32_t row_pitch0 = create_cmd->row_pitch_bytes;
+  const uint64_t mip0_size = static_cast<uint64_t>(row_pitch0) * kHeight;
+  const uint64_t mip1_size = static_cast<uint64_t>((kWidth / 2) * 4u) * (kHeight / 2);
+  const uint64_t mip2_size = static_cast<uint64_t>(4u); // 1x1 RGBA8
+  const uint64_t layer_stride = mip0_size + mip1_size + mip2_size;
+  const uint64_t total_bytes = layer_stride * kArraySize;
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == 0, "UPLOAD_RESOURCE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == total_bytes, "UPLOAD_RESOURCE covers full mip+array chain")) {
+    return false;
+  }
+
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  const size_t payload_size = static_cast<size_t>(upload_cmd->size_bytes);
+  if (!Check(payload_offset + payload_size <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+
+  std::vector<uint8_t> expected(static_cast<size_t>(total_bytes), 0);
+  size_t init_index = 0;
+  size_t dst_offset = 0;
+  for (uint32_t layer = 0; layer < kArraySize; ++layer) {
+    uint32_t level_w = kWidth;
+    uint32_t level_h = kHeight;
+    for (uint32_t mip = 0; mip < kMipLevels; ++mip) {
+      const uint32_t src_pitch = inits[init_index].SysMemPitch;
+      const uint32_t dst_pitch = (mip == 0) ? row_pitch0 : src_pitch;
+      const uint32_t row_bytes = src_pitch;
+      const size_t sub_size = static_cast<size_t>(dst_pitch) * static_cast<size_t>(level_h);
+      for (uint32_t y = 0; y < level_h; ++y) {
+        std::memcpy(expected.data() + dst_offset + static_cast<size_t>(y) * dst_pitch,
+                    static_cast<const uint8_t*>(inits[init_index].pSysMem) + static_cast<size_t>(y) * src_pitch,
+                    row_bytes);
+      }
+      dst_offset += sub_size;
+      init_index++;
+      level_w = (level_w > 1) ? (level_w / 2) : 1u;
+      level_h = (level_h > 1) ? (level_h / 2) : 1u;
+    }
+  }
+
+  if (!Check(std::memcmp(stream + payload_offset, expected.data(), expected.size()) == 0,
+             "UPLOAD_RESOURCE payload bytes match all subresource initial data")) {
+    return false;
+  }
+
+  if (!Check(dev.harness.last_allocs.empty(), "host-owned CreateResource(mip+array) alloc list empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestGuestBackedTexture2DMipArrayMapUnmapDirtyRange() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false),
@@ -6934,6 +7110,7 @@ int main() {
   ok &= TestSrgbTexture2DFormatPropagationGuestBacked();
   ok &= TestGuestBackedTexture2DMipArrayCreateEncodesMipAndArray();
   ok &= TestGuestBackedCreateTexture2DMipArrayInitialDataDirtyRange();
+  ok &= TestHostOwnedCreateTexture2DMipArrayInitialDataUploads();
   ok &= TestGuestBackedTexture2DMipArrayMapUnmapDirtyRange();
   ok &= TestGuestBackedUpdateSubresourceUPTexture2DMipArrayDirtyRange();
   ok &= TestGuestBackedCopySubresourceRegionTexture2DMipArrayReadback();
