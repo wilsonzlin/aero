@@ -103,15 +103,24 @@
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 5
 
+/*
+ * Aero virtio-input driver diagnostics (see `src/log.h` in the driver sources).
+ *
+ * These are not standard HID IOCTLs; they are regular DeviceIoControl IOCTLs
+ * (not IOCTL_HID_*) forwarded by HIDCLASS to the underlying minidriver.
+ */
 #ifndef IOCTL_VIOINPUT_QUERY_COUNTERS
-// Copy of the in-driver diagnostic IOCTL (see `src/log.h`). This is a regular
-// DeviceIoControl IOCTL (not IOCTL_HID_*), forwarded by HIDCLASS to the
-// underlying minidriver.
 #define IOCTL_VIOINPUT_QUERY_COUNTERS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
 #endif
 
+#ifndef IOCTL_VIOINPUT_QUERY_STATE
+#define IOCTL_VIOINPUT_QUERY_STATE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
+#endif
+
 #define VIOINPUT_COUNTERS_VERSION 1
+#define VIOINPUT_STATE_VERSION 1
 
 typedef struct VIOINPUT_COUNTERS_V1_MIN {
     ULONG Size;
@@ -162,6 +171,25 @@ typedef struct VIOINPUT_COUNTERS {
     LONG VirtioQueueMaxDepth;
 } VIOINPUT_COUNTERS;
 
+typedef struct VIOINPUT_STATE {
+    ULONG Size;
+    ULONG Version;
+    ULONG DeviceKind;
+    ULONG PciRevisionId;
+    ULONG PciSubsystemDeviceId;
+    ULONG HardwareReady;
+    ULONG InD0;
+    ULONG HidActivated;
+    ULONG VirtioStarted;
+    ULONGLONG NegotiatedFeatures;
+} VIOINPUT_STATE;
+
+enum {
+    VIOINPUT_DEVICE_KIND_UNKNOWN = 0,
+    VIOINPUT_DEVICE_KIND_KEYBOARD = 1,
+    VIOINPUT_DEVICE_KIND_MOUSE = 2,
+};
+
 #pragma pack(push, 1)
 typedef struct HID_DESCRIPTOR_MIN {
     BYTE bLength;
@@ -179,6 +207,7 @@ typedef struct HID_DESCRIPTOR_MIN {
 typedef struct OPTIONS {
     int list_only;
     int selftest;
+    int query_state;
     int have_vid;
     int have_pid;
     int have_index;
@@ -421,7 +450,65 @@ static void dump_collection_descriptor(HANDLE handle)
         wprintf(L"\n");
     }
 }
+static const wchar_t *vioinput_device_kind_to_string(ULONG kind)
+{
+    switch (kind) {
+    case VIOINPUT_DEVICE_KIND_KEYBOARD:
+        return L"keyboard";
+    case VIOINPUT_DEVICE_KIND_MOUSE:
+        return L"mouse";
+    default:
+        return L"unknown";
+    }
+}
 
+static int query_vioinput_state(HANDLE handle, VIOINPUT_STATE *out, DWORD *bytes_out)
+{
+    BOOL ok;
+    DWORD bytes = 0;
+
+    if (bytes_out != NULL) {
+        *bytes_out = 0;
+    }
+
+    if (out == NULL) {
+        return 0;
+    }
+
+    ZeroMemory(out, sizeof(*out));
+    out->Size = (ULONG)sizeof(*out);
+    out->Version = VIOINPUT_STATE_VERSION;
+
+    ok = DeviceIoControl(handle, IOCTL_VIOINPUT_QUERY_STATE, out, (DWORD)sizeof(*out), out, (DWORD)sizeof(*out),
+                         &bytes, NULL);
+    if (!ok) {
+        return 0;
+    }
+
+    if (bytes_out != NULL) {
+        *bytes_out = bytes;
+    }
+    return 1;
+}
+
+static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
+{
+    if (st == NULL) {
+        return;
+    }
+
+    wprintf(L"\nvirtio-input driver state:\n");
+    wprintf(L"  Size:              %lu (returned %lu bytes)\n", st->Size, bytes);
+    wprintf(L"  Version:           %lu\n", st->Version);
+    wprintf(L"  DeviceKind:        %ls (%lu)\n", vioinput_device_kind_to_string(st->DeviceKind), st->DeviceKind);
+    wprintf(L"  PciRevisionId:     0x%02lX\n", st->PciRevisionId);
+    wprintf(L"  PciSubsystemDevId: 0x%04lX\n", st->PciSubsystemDeviceId);
+    wprintf(L"  HardwareReady:     %lu\n", st->HardwareReady);
+    wprintf(L"  InD0:              %lu\n", st->InD0);
+    wprintf(L"  HidActivated:      %lu\n", st->HidActivated);
+    wprintf(L"  VirtioStarted:     %lu\n", st->VirtioStarted);
+    wprintf(L"  NegotiatedFeatures: 0x%016llX\n", (unsigned long long)st->NegotiatedFeatures);
+}
 static void dump_keyboard_report(const BYTE *buf, DWORD len)
 {
     DWORD off = 0;
@@ -780,6 +867,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
     wprintf(L"             [--dump-collection-desc]\n");
+    wprintf(L"             [--state]\n");
     wprintf(L"             [--counters]\n");
     wprintf(L"             [--counters-json]\n");
     wprintf(L"             [--led-ioctl-set-output 0x07]\n");
@@ -797,6 +885,7 @@ static void print_usage(void)
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
     wprintf(L"  --vid 0xVID     Filter by vendor ID (hex)\n");
     wprintf(L"  --pid 0xPID     Filter by product ID (hex)\n");
+    wprintf(L"  --state         Query virtio-input driver state via IOCTL_VIOINPUT_QUERY_STATE and exit\n");
     wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
     wprintf(L"  --led-hidd 0xMASK\n");
@@ -2187,6 +2276,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--state") == 0) {
+            opt.query_state = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--counters") == 0) {
             opt.query_counters = 1;
             continue;
@@ -2355,14 +2449,24 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if (opt.selftest &&
-        (opt.list_only || opt.dump_desc || opt.have_vid || opt.have_pid || opt.have_index || opt.have_led_mask ||
-         opt.led_cycle || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
-         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
-         opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
-         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
-         opt.query_counters)) {
+        (opt.query_state || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
+         opt.have_index || opt.have_led_mask || opt.led_cycle || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
+         opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output || opt.query_counters)) {
         wprintf(
-            L"--selftest cannot be combined with --list, --dump-desc, --vid/--pid/--index, --counters, LED, or negative-test options.\n");
+            L"--selftest cannot be combined with --state, --list, --dump-desc, --dump-collection-desc, --vid/--pid/--index, --counters, LED, or negative-test options.\n");
+        return 2;
+    }
+    if (opt.query_state &&
+        (opt.selftest || opt.query_counters || opt.ioctl_query_counters_short || opt.have_led_mask || opt.led_cycle ||
+         opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report ||
+         opt.have_led_ioctl_set_output)) {
+        wprintf(L"--state is mutually exclusive with --selftest, --counters, and other report/IOCTL tests.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.led_cycle) {
@@ -2490,12 +2594,12 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.query_counters &&
-        (opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet ||
-         opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report ||
-         opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
-         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
-         opt.hidd_bad_set_output_report)) {
-        wprintf(L"--counters is mutually exclusive with LED actions, descriptor dump, and negative tests.\n");
+        (opt.query_state || opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc ||
+         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
+         opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
+         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report)) {
+        wprintf(L"--counters is mutually exclusive with --state, LED actions, descriptor dumps, and negative tests.\n");
         return 2;
     }
 
@@ -2540,6 +2644,21 @@ int wmain(int argc, wchar_t **argv)
             wprintf(L"  [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n", dev.report_desc_len,
                     dev.hid_report_desc_len);
         }
+    }
+
+    if (opt.query_state) {
+        VIOINPUT_STATE st;
+        DWORD bytes = 0;
+
+        if (!query_vioinput_state(dev.handle, &st, &bytes)) {
+            print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_STATE)");
+            free_selected_device(&dev);
+            return 1;
+        }
+
+        print_vioinput_state(&st, bytes);
+        free_selected_device(&dev);
+        return 0;
     }
 
     if (opt.have_led_mask) {

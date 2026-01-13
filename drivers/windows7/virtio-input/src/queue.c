@@ -242,6 +242,44 @@ VOID VirtioInputEvtIoDeviceControl(
         status = STATUS_BUFFER_TOO_SMALL;
         break;
     }
+    case IOCTL_VIOINPUT_QUERY_STATE: {
+        PVIOINPUT_STATE outState;
+        size_t outBytes;
+        VIOINPUT_STATE snapshot;
+        LONG virtioStarted;
+        LONG64 negotiatedFeatures;
+
+        status = WdfRequestRetrieveOutputBuffer(Request, sizeof(*outState), (PVOID *)&outState, &outBytes);
+        if (!NT_SUCCESS(status)) {
+            break;
+        }
+
+        if (OutputBufferLength < sizeof(*outState) || outBytes < sizeof(*outState)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        RtlZeroMemory(&snapshot, sizeof(snapshot));
+        snapshot.Size = sizeof(snapshot);
+        snapshot.Version = VIOINPUT_STATE_VERSION;
+        snapshot.DeviceKind = (ULONG)devCtx->DeviceKind;
+        snapshot.PciRevisionId = (ULONG)devCtx->PciRevisionId;
+        snapshot.PciSubsystemDeviceId = (ULONG)devCtx->PciSubsystemDeviceId;
+        snapshot.HardwareReady = devCtx->HardwareReady ? 1u : 0u;
+        snapshot.InD0 = devCtx->InD0 ? 1u : 0u;
+        snapshot.HidActivated = devCtx->HidActivated ? 1u : 0u;
+
+        virtioStarted = InterlockedCompareExchange(&devCtx->VirtioStarted, 0, 0);
+        snapshot.VirtioStarted = (virtioStarted != 0) ? 1u : 0u;
+
+        negotiatedFeatures = InterlockedCompareExchange64((volatile LONG64*)&devCtx->NegotiatedFeatures, 0, 0);
+        snapshot.NegotiatedFeatures = (UINT64)negotiatedFeatures;
+
+        RtlCopyMemory(outState, &snapshot, sizeof(snapshot));
+        status = STATUS_SUCCESS;
+        info = sizeof(snapshot);
+        break;
+    }
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         info = 0;

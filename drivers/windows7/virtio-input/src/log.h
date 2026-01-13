@@ -54,7 +54,11 @@
 #define IOCTL_VIOINPUT_QUERY_COUNTERS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
 
+#define IOCTL_VIOINPUT_QUERY_STATE \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
+
 #define VIOINPUT_COUNTERS_VERSION 1
+#define VIOINPUT_STATE_VERSION 1
 
 /*
  * Minimal prefix returned by IOCTL_VIOINPUT_QUERY_COUNTERS.
@@ -118,6 +122,24 @@ typedef struct _VIOINPUT_COUNTERS {
     volatile LONG VirtioQueueDepth;
     volatile LONG VirtioQueueMaxDepth;
 } VIOINPUT_COUNTERS, *PVIOINPUT_COUNTERS;
+
+typedef struct _VIOINPUT_STATE {
+    ULONG Size;
+    ULONG Version;
+
+    // Values correspond to VIOINPUT_DEVICE_KIND in virtio_input.h.
+    ULONG DeviceKind;
+
+    ULONG PciRevisionId;
+    ULONG PciSubsystemDeviceId;
+
+    ULONG HardwareReady;
+    ULONG InD0;
+    ULONG HidActivated;
+    ULONG VirtioStarted;
+
+    UINT64 NegotiatedFeatures;
+} VIOINPUT_STATE, *PVIOINPUT_STATE;
 
 #if VIOINPUT_DIAGNOSTICS
 
