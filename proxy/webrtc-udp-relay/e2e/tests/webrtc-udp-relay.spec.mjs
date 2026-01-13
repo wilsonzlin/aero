@@ -2201,8 +2201,20 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket (session cookie fo
     const pong = await runPing(relayWithCookie.port, true);
     expect(pong.data).toEqual([0xa2, 0x03, 0x02, 0x00]); // PONG
 
+    const metricsWithCookie = await page.request.get(`http://127.0.0.1:${relayWithCookie.port}/metrics`);
+    expect(metricsWithCookie.ok()).toBeTruthy();
+    const eventsWithCookie = parseRelayEventCounters(await metricsWithCookie.text());
+    expect(eventsWithCookie.l2_bridge_dials_total).toBeGreaterThanOrEqual(1);
+    expect(eventsWithCookie.l2_bridge_dial_errors_total ?? 0).toBe(0);
+
     const failure = await runPing(relayWithoutCookie.port, false);
     expect(failure.status).not.toBe("message");
+
+    const metricsWithoutCookie = await page.request.get(`http://127.0.0.1:${relayWithoutCookie.port}/metrics`);
+    expect(metricsWithoutCookie.ok()).toBeTruthy();
+    const eventsWithoutCookie = parseRelayEventCounters(await metricsWithoutCookie.text());
+    expect(eventsWithoutCookie.l2_bridge_dials_total).toBeGreaterThanOrEqual(1);
+    expect(eventsWithoutCookie.l2_bridge_dial_errors_total).toBeGreaterThanOrEqual(1);
   } finally {
     await Promise.all([web.close(), relayWithCookie.kill(), relayWithoutCookie.kill(), backend.kill()]);
   }
