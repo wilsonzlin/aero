@@ -446,6 +446,9 @@ Many AeroGPU binding packets already carry a `shader_stage` plus a trailing `res
 - `AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS` (UAV buffers)
 - `AEROGPU_CMD_SET_SHADER_CONSTANTS_F` (legacy D3D9 constants)
 
+Additionally, `AEROGPU_CMD_CREATE_SHADER_DXBC` carries a `stage` field plus `reserved0`, which is
+used to represent HS/DS creation without extending the legacy stage enum.
+
 For GS/HS/DS we need to bind D3D resources **per stage**, but the D3D11 executor’s stable binding
 model only has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS
 as “compute-like” stages but route their bindings into a reserved internal bind group (`@group(3)`),
@@ -453,6 +456,17 @@ using a small `stage_ex` tag carried in the trailing reserved field.
 
 This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageEx` + helpers
 `encode_stage_ex`/`decode_stage_ex` (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
+
+**CREATE_SHADER_DXBC encoding:**
+
+- Legacy encoding: `stage` is `VERTEX/PIXEL/COMPUTE` and `reserved0 = 0`.
+- Stage-ex encoding: set `stage = COMPUTE` and store the extended stage in `reserved0`:
+  - GS: `reserved0 = GEOMETRY` (2) (alternative to legacy `stage = GEOMETRY` where supported)
+  - HS: `reserved0 = HULL` (3)
+  - DS: `reserved0 = DOMAIN` (4)
+
+Hosts should treat unknown non-zero `reserved0` values as invalid for now (reserved for future
+stages/extensions).
 
 **Definition (matches DXBC program type values):**
 
