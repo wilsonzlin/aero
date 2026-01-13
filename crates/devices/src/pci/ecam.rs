@@ -108,7 +108,10 @@ impl memory::MmioHandler for PciEcamMmio {
 
         let mut value = 0u64;
         for i in 0..size {
-            let byte = self.read_u8(offset.wrapping_add(i as u64));
+            let byte = match offset.checked_add(i as u64) {
+                Some(off) => self.read_u8(off),
+                None => 0xFF,
+            };
             value |= (byte as u64) << (8 * i);
         }
         value
@@ -121,7 +124,68 @@ impl memory::MmioHandler for PciEcamMmio {
 
         let bytes = value.to_le_bytes();
         for (i, byte) in bytes.iter().copied().enumerate().take(size) {
-            self.write_u8(offset.wrapping_add(i as u64), byte);
+            let Some(off) = offset.checked_add(i as u64) else {
+                continue;
+            };
+            self.write_u8(off, byte);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pci::{PciBus, PciConfigPorts, PciConfigSpace, PciDevice};
+    use memory::MmioHandler;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct StubDevice {
+        cfg: PciConfigSpace,
+    }
+
+    impl StubDevice {
+        fn new(vendor_id: u16, device_id: u16) -> Self {
+            Self {
+                cfg: PciConfigSpace::new(vendor_id, device_id),
+            }
+        }
+    }
+
+    impl PciDevice for StubDevice {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    #[test]
+    fn ecam_wide_access_near_u64_max_does_not_wrap_offsets() {
+        // Ensure that wide reads/writes near `u64::MAX` do not wrap around and access low ECAM
+        // offsets.
+        let mut bus = PciBus::new();
+        bus.add_device(PciBdf::new(0, 0, 0), Box::new(StubDevice::new(0x1234, 0x5678)));
+
+        let cfg_ports: SharedPciConfigPorts =
+            Rc::new(RefCell::new(PciConfigPorts::with_bus(bus)));
+        let cfg = PciEcamConfig {
+            segment: 0,
+            start_bus: 0,
+            end_bus: 0,
+        };
+        let mut ecam = PciEcamMmio::new(Rc::clone(&cfg_ports), cfg);
+
+        // Old behavior would wrap the final byte to offset 1 (vendor ID high byte = 0x12).
+        let got = ecam.read(u64::MAX - 2, 4);
+        assert_eq!(got, 0xFFFF_FFFF);
+
+        // Old behavior would wrap the final byte write to offset 4 (command low byte), mutating
+        // config space. Hardened behavior must ignore the out-of-range bytes.
+        assert_eq!(ecam.read(0x04, 2), 0);
+        ecam.write(u64::MAX - 2, 8, 0x02u64 << 56);
+        assert_eq!(ecam.read(0x04, 2), 0);
     }
 }
