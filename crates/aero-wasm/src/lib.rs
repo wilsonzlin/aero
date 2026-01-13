@@ -3435,7 +3435,7 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
             ))
             .into()
         }
-        other => JsValue::from_str(&other.to_string()),
+        _ => Error::new(&format!("{operation} failed for OPFS path \"{path}\": {err_str}")).into(),
     }
 }
 
@@ -3781,7 +3781,11 @@ impl Machine {
                 block_size_bytes,
             },
         )
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "Machine.set_disk_aerospar_opfs_create failed for OPFS path \"{path}\": {e}"
+            ))
+        })?;
         self.inner
             .set_disk_backend(Box::new(disk))
             .map_err(js_error)
@@ -3859,7 +3863,8 @@ impl Machine {
         let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
             .await
             .map_err(|e| {
-                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(base)", &base_path, e)
+                let paths = format!("base={base_path}, overlay={overlay_path}");
+                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(base)", &paths, e)
             })?;
         let base_disk = aero_storage::DiskImage::open_auto(base_storage)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -3867,15 +3872,12 @@ impl Machine {
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, true)
             .await
             .map_err(|e| {
-                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(overlay)", &overlay_path, e)
+                let paths = format!("base={base_path}, overlay={overlay_path}");
+                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(overlay)", &paths, e)
             })?;
 
-        let disk = aero_storage::AeroCowDisk::create(
-            base_disk,
-            overlay_backend,
-            overlay_block_size_bytes,
-        )
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk = aero_storage::AeroCowDisk::create(base_disk, overlay_backend, overlay_block_size_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
@@ -3916,18 +3918,25 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
             .await
-            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(base)", &base_path, e))?;
+            .map_err(|e| {
+                let paths = format!("base={base_path}, overlay={overlay_path}");
+                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(base)", &paths, e)
+            })?;
         let base_disk = aero_storage::DiskImage::open_auto(base_storage)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, false)
             .await
             .map_err(|e| {
-                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(overlay)", &overlay_path, e)
+                let paths = format!("base={base_path}, overlay={overlay_path}");
+                opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(overlay)", &paths, e)
             })?;
 
-        let disk = aero_storage::AeroCowDisk::open(base_disk, overlay_backend)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk = aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Machine.set_disk_cow_opfs_open failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
+            ))
+        })?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
