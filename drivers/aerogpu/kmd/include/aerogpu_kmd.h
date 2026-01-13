@@ -300,6 +300,7 @@ typedef struct _AEROGPU_ADAPTER {
      * programmed into AEROGPU_MMIO_REG_CURSOR_FB_GPA_{LO,HI} so the emulator can
      * DMA it during scanout composition.
      */
+    KSPIN_LOCK CursorLock;
     PVOID CursorFbVa;
     PHYSICAL_ADDRESS CursorFbPa;
     SIZE_T CursorFbSizeBytes;

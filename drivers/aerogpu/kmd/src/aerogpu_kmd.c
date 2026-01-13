@@ -1878,6 +1878,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     adapter->NextMetaHandle = 0;
     KeInitializeSpinLock(&adapter->AllocationsLock);
     KeInitializeSpinLock(&adapter->CreateAllocationTraceLock);
+    KeInitializeSpinLock(&adapter->CursorLock);
     InitializeListHead(&adapter->Allocations);
     InitializeListHead(&adapter->ShareTokenRefs);
 
@@ -2401,13 +2402,21 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
     AeroGpuFreeAllPendingSubmissions(adapter);
     AeroGpuFreeAllInternalSubmissions(adapter);
     AeroGpuRingCleanup(adapter);
-
-    AeroGpuFreeContiguousNonCached(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
-    adapter->CursorFbVa = NULL;
-    adapter->CursorFbPa.QuadPart = 0;
-    adapter->CursorFbSizeBytes = 0;
-    adapter->CursorShapeValid = FALSE;
-    adapter->CursorVisible = FALSE;
+    {
+        PVOID cursorVa = NULL;
+        SIZE_T cursorSize = 0;
+        KIRQL cursorIrql;
+        KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+        cursorVa = adapter->CursorFbVa;
+        cursorSize = adapter->CursorFbSizeBytes;
+        adapter->CursorFbVa = NULL;
+        adapter->CursorFbPa.QuadPart = 0;
+        adapter->CursorFbSizeBytes = 0;
+        adapter->CursorShapeValid = FALSE;
+        adapter->CursorVisible = FALSE;
+        KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        AeroGpuFreeContiguousNonCached(cursorVa, cursorSize);
+    }
 
     if (adapter->Bar0) {
         MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
@@ -2586,22 +2595,56 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         /* Restore hardware cursor state (if supported). */
         if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0 &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+            BOOLEAN cursorShapeValid = FALSE;
+            BOOLEAN cursorVisible = FALSE;
+            LONG cursorX = 0;
+            LONG cursorY = 0;
+            ULONG cursorHotX = 0;
+            ULONG cursorHotY = 0;
+            ULONG cursorWidth = 0;
+            ULONG cursorHeight = 0;
+            ULONG cursorFormat = 0;
+            ULONG cursorPitchBytes = 0;
+            PVOID cursorVa = NULL;
+            PHYSICAL_ADDRESS cursorPa;
+            SIZE_T cursorSizeBytes = 0;
+            cursorPa.QuadPart = 0;
+
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                cursorShapeValid = adapter->CursorShapeValid;
+                cursorVisible = adapter->CursorVisible;
+                cursorX = adapter->CursorX;
+                cursorY = adapter->CursorY;
+                cursorHotX = adapter->CursorHotX;
+                cursorHotY = adapter->CursorHotY;
+                cursorWidth = adapter->CursorWidth;
+                cursorHeight = adapter->CursorHeight;
+                cursorFormat = adapter->CursorFormat;
+                cursorPitchBytes = adapter->CursorPitchBytes;
+                cursorVa = adapter->CursorFbVa;
+                cursorPa = adapter->CursorFbPa;
+                cursorSizeBytes = adapter->CursorFbSizeBytes;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
+
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
-            if (adapter->CursorShapeValid && adapter->CursorFbVa && adapter->CursorFbSizeBytes != 0) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)adapter->CursorX);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)adapter->CursorY);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X, adapter->CursorHotX);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y, adapter->CursorHotY);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, adapter->CursorWidth);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, adapter->CursorHeight);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, adapter->CursorFormat);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, adapter->CursorPitchBytes);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, adapter->CursorFbPa.LowPart);
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, (ULONG)(adapter->CursorFbPa.QuadPart >> 32));
+            if (cursorShapeValid && cursorVa && cursorSizeBytes != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)cursorX);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)cursorY);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X, cursorHotX);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y, cursorHotY);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, cursorWidth);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, cursorHeight);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, cursorFormat);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, cursorPitchBytes);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, cursorPa.LowPart);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, (ULONG)(cursorPa.QuadPart >> 32));
                 KeMemoryBarrier();
                 AeroGpuWriteRegU32(adapter,
                                    AEROGPU_MMIO_REG_CURSOR_ENABLE,
-                                   (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u);
+                                   (cursorVisible && cursorShapeValid) ? 1u : 0u);
             } else {
                 /* Ensure the device does not DMA from a stale cursor GPA. */
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
@@ -2793,10 +2836,21 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     }
 
     AEROGPU_LOG0("RemoveDevice");
-    AeroGpuFreeContiguousNonCached(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
-    adapter->CursorFbVa = NULL;
-    adapter->CursorFbPa.QuadPart = 0;
-    adapter->CursorFbSizeBytes = 0;
+    {
+        PVOID cursorVa = NULL;
+        SIZE_T cursorSize = 0;
+        KIRQL cursorIrql;
+        KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+        cursorVa = adapter->CursorFbVa;
+        cursorSize = adapter->CursorFbSizeBytes;
+        adapter->CursorFbVa = NULL;
+        adapter->CursorFbPa.QuadPart = 0;
+        adapter->CursorFbSizeBytes = 0;
+        adapter->CursorShapeValid = FALSE;
+        adapter->CursorVisible = FALSE;
+        KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        AeroGpuFreeContiguousNonCached(cursorVa, cursorSize);
+    }
     AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllAllocations(adapter);
     AeroGpuFreeAllShareTokenRefs(adapter);
@@ -6689,9 +6743,22 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerPosition(_In_ const HANDLE hAdapter
         return STATUS_NOT_SUPPORTED;
     }
 
-    adapter->CursorVisible = pPos->Visible ? TRUE : FALSE;
-    adapter->CursorX = pPos->X;
-    adapter->CursorY = pPos->Y;
+    BOOLEAN cursorVisible = FALSE;
+    BOOLEAN cursorShapeValid = FALSE;
+    LONG cursorX = 0;
+    LONG cursorY = 0;
+    {
+        KIRQL cursorIrql;
+        KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+        adapter->CursorVisible = pPos->Visible ? TRUE : FALSE;
+        adapter->CursorX = pPos->X;
+        adapter->CursorY = pPos->Y;
+        cursorVisible = adapter->CursorVisible;
+        cursorShapeValid = adapter->CursorShapeValid;
+        cursorX = adapter->CursorX;
+        cursorY = adapter->CursorY;
+        KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+    }
 
     if (!adapter->Bar0) {
         /* Be tolerant of pointer calls during early init or teardown. */
@@ -6712,11 +6779,11 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerPosition(_In_ const HANDLE hAdapter
         return STATUS_SUCCESS;
     }
 
-    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)adapter->CursorX);
-    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)adapter->CursorY);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)cursorX);
+    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)cursorY);
     AeroGpuWriteRegU32(adapter,
                        AEROGPU_MMIO_REG_CURSOR_ENABLE,
-                       (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u);
+                       (cursorVisible && cursorShapeValid) ? 1u : 0u);
 
     return STATUS_SUCCESS;
 }
@@ -6753,7 +6820,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         if (poweredOn) {
             AeroGpuCursorDisable(adapter);
         }
-        adapter->CursorShapeValid = FALSE;
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            adapter->CursorShapeValid = FALSE;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
         return STATUS_SUCCESS;
     }
 
@@ -6765,7 +6837,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         if (poweredOn) {
             AeroGpuCursorDisable(adapter);
         }
-        adapter->CursorShapeValid = FALSE;
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            adapter->CursorShapeValid = FALSE;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
         return STATUS_SUCCESS;
     }
 
@@ -6820,23 +6897,63 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!adapter->CursorFbVa || adapter->CursorFbSizeBytes < requiredBytes) {
+    PVOID cursorFbVa = NULL;
+    PHYSICAL_ADDRESS cursorFbPa;
+    SIZE_T cursorFbSizeBytes = 0;
+    cursorFbPa.QuadPart = 0;
+
+    {
+        KIRQL cursorIrql;
+        KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+        cursorFbVa = adapter->CursorFbVa;
+        cursorFbPa = adapter->CursorFbPa;
+        cursorFbSizeBytes = adapter->CursorFbSizeBytes;
+        KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+    }
+
+    if (!cursorFbVa || cursorFbSizeBytes < requiredBytes) {
         if (poweredOn) {
             AeroGpuCursorDisable(adapter);
         }
-        AeroGpuFreeContiguousNonCached(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
-        adapter->CursorFbVa = NULL;
-        adapter->CursorFbPa.QuadPart = 0;
-        adapter->CursorFbSizeBytes = 0;
 
-        adapter->CursorFbVa = AeroGpuAllocContiguous(requiredBytes, &adapter->CursorFbPa);
-        if (!adapter->CursorFbVa) {
+        /* Detach the old cursor buffer under the cursor lock before freeing. */
+        PVOID oldVa = NULL;
+        SIZE_T oldSize = 0;
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            oldVa = adapter->CursorFbVa;
+            oldSize = adapter->CursorFbSizeBytes;
+            adapter->CursorFbVa = NULL;
+            adapter->CursorFbPa.QuadPart = 0;
+            adapter->CursorFbSizeBytes = 0;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
+        AeroGpuFreeContiguousNonCached(oldVa, oldSize);
+
+        cursorFbVa = AeroGpuAllocContiguous(requiredBytes, &cursorFbPa);
+        if (!cursorFbVa) {
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        adapter->CursorFbSizeBytes = requiredBytes;
+        cursorFbSizeBytes = requiredBytes;
+
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            adapter->CursorFbVa = cursorFbVa;
+            adapter->CursorFbPa = cursorFbPa;
+            adapter->CursorFbSizeBytes = cursorFbSizeBytes;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
     } else {
         /* Ensure deterministic contents even when reusing a larger buffer. */
-        RtlZeroMemory(adapter->CursorFbVa, adapter->CursorFbSizeBytes);
+        RtlZeroMemory(cursorFbVa, cursorFbSizeBytes);
     }
 
     ULONG hotX = pShape->XHot;
@@ -6864,7 +6981,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
             if (poweredOn) {
                 AeroGpuCursorDisable(adapter);
             }
-            adapter->CursorShapeValid = FALSE;
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
             return STATUS_INVALID_PARAMETER;
         }
 
@@ -6874,7 +6996,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
          */
         if (heightIn != height * 2u) {
             AeroGpuCursorDisable(adapter);
-            adapter->CursorShapeValid = FALSE;
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
             return STATUS_INVALID_PARAMETER;
         }
 
@@ -6884,7 +7011,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
             if (poweredOn) {
                 AeroGpuCursorDisable(adapter);
             }
-            adapter->CursorShapeValid = FALSE;
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
             return STATUS_INVALID_PARAMETER;
         }
 
@@ -6893,7 +7025,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         const UCHAR* andMask = pixels;
         const UCHAR* xorMask = pixels + maskPlaneBytes;
 
-        UCHAR* dst = (UCHAR*)adapter->CursorFbVa;
+        UCHAR* dst = (UCHAR*)cursorFbVa;
 
         for (ULONG y = 0; y < height; ++y) {
             const UCHAR* andRow = andMask + (SIZE_T)y * (SIZE_T)srcPitch;
@@ -6940,7 +7072,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
             if (poweredOn) {
                 AeroGpuCursorDisable(adapter);
             }
-            adapter->CursorShapeValid = FALSE;
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
             return STATUS_INVALID_PARAMETER;
         }
 
@@ -6949,12 +7086,17 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
             if (poweredOn) {
                 AeroGpuCursorDisable(adapter);
             }
-            adapter->CursorShapeValid = FALSE;
+            {
+                KIRQL cursorIrql;
+                KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+                adapter->CursorShapeValid = FALSE;
+                KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+            }
             return STATUS_INVALID_PARAMETER;
         }
 
         const UCHAR* src = (const UCHAR*)pShape->pPixels;
-        UCHAR* dst = (UCHAR*)adapter->CursorFbVa;
+        UCHAR* dst = (UCHAR*)cursorFbVa;
 
         BOOLEAN anyAlphaNonZero = FALSE;
         for (ULONG y = 0; y < height; ++y) {
@@ -6977,37 +7119,58 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
         if (poweredOn) {
             AeroGpuCursorDisable(adapter);
         }
-        adapter->CursorShapeValid = FALSE;
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            adapter->CursorShapeValid = FALSE;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
         return STATUS_INVALID_PARAMETER;
     }
 
-    adapter->CursorWidth = width;
-    adapter->CursorHeight = height;
-    adapter->CursorPitchBytes = dstPitchBytes;
-    adapter->CursorFormat = format;
-    adapter->CursorHotX = hotX;
-    adapter->CursorHotY = hotY;
-    adapter->CursorShapeValid = TRUE;
+    BOOLEAN cursorVisible = FALSE;
+    BOOLEAN cursorShapeValid = FALSE;
+    LONG cursorX = 0;
+    LONG cursorY = 0;
+    PHYSICAL_ADDRESS cursorPa;
+    cursorPa.QuadPart = 0;
+    {
+        KIRQL cursorIrql;
+        KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+        adapter->CursorWidth = width;
+        adapter->CursorHeight = height;
+        adapter->CursorPitchBytes = dstPitchBytes;
+        adapter->CursorFormat = format;
+        adapter->CursorHotX = hotX;
+        adapter->CursorHotY = hotY;
+        adapter->CursorShapeValid = TRUE;
+        cursorVisible = adapter->CursorVisible;
+        cursorShapeValid = adapter->CursorShapeValid;
+        cursorX = adapter->CursorX;
+        cursorY = adapter->CursorY;
+        cursorPa = adapter->CursorFbPa;
+        KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+    }
 
     if (poweredOn) {
         /* Program cursor registers. */
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)adapter->CursorX);
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)adapter->CursorY);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, (ULONG)cursorX);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)cursorY);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X, hotX);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y, hotY);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH, width);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT, height);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT, format);
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, dstPitchBytes);
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, adapter->CursorFbPa.LowPart);
-        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, (ULONG)(adapter->CursorFbPa.QuadPart >> 32));
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, cursorPa.LowPart);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, (ULONG)(cursorPa.QuadPart >> 32));
 
         KeMemoryBarrier();
 
         AeroGpuWriteRegU32(adapter,
                            AEROGPU_MMIO_REG_CURSOR_ENABLE,
-                           (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u);
+                           (cursorVisible && cursorShapeValid) ? 1u : 0u);
     }
 
     return STATUS_SUCCESS;
@@ -8324,7 +8487,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * Driver-owned contiguous buffers with stable kernel VAs:
          * - ring buffer
          * - fence page
-         * - cursor framebuffer backing store (protocol cursor regs)
+         *
+         * Cursor framebuffer backing store is handled separately under CursorLock below.
          *
          * For scanout we fall back to physical translation via MmGetVirtualForPhysical below.
          */
@@ -8336,7 +8500,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             } ranges[] = {
                 {(ULONGLONG)adapter->RingPa.QuadPart, (ULONGLONG)adapter->RingSizeBytes, adapter->RingVa},
                 {(ULONGLONG)adapter->FencePagePa.QuadPart, (ULONGLONG)PAGE_SIZE, adapter->FencePageVa},
-                {(ULONGLONG)adapter->CursorFbPa.QuadPart, (ULONGLONG)adapter->CursorFbSizeBytes, adapter->CursorFbVa},
             };
 
             for (UINT i = 0; i < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++i) {
@@ -8363,6 +8526,36 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 io->bytes_copied = (uint32_t)bytesToCopy;
                 return STATUS_SUCCESS;
             }
+        }
+
+        /* Cursor framebuffer backing store (protocol cursor regs). */
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+
+            if (adapter->CursorFbVa && adapter->CursorFbSizeBytes != 0) {
+                const ULONGLONG base = (ULONGLONG)adapter->CursorFbPa.QuadPart;
+                const ULONGLONG size = (ULONGLONG)adapter->CursorFbSizeBytes;
+                const void* va = adapter->CursorFbVa;
+
+                if (gpa >= base) {
+                    const ULONGLONG offset = gpa - base;
+                    if (offset < size) {
+                        const ULONGLONG maxBytesU64 = size - offset;
+                        const ULONG bytesToCopy =
+                            (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                        const NTSTATUS opSt = (bytesToCopy == reqBytes) ? STATUS_SUCCESS : STATUS_PARTIAL_COPY;
+
+                        RtlCopyMemory(io->data, (const PUCHAR)va + (SIZE_T)offset, bytesToCopy);
+                        io->status = (uint32_t)opSt;
+                        io->bytes_copied = (uint32_t)bytesToCopy;
+                        KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+                        return STATUS_SUCCESS;
+                    }
+                }
+            }
+
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
         }
 
         /* Scanout framebuffer (best-effort): allow reads within the current SCANOUT0 framebuffer region. */
