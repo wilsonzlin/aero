@@ -6323,6 +6323,10 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
     if (!adapter->Bar0) {
         return STATUS_SUCCESS;
     }
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) != DxgkDevicePowerStateD0) {
+        /* Avoid touching MMIO while the device is in a non-D0 state. */
+        return STATUS_SUCCESS;
+    }
 
     const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG));
     const BOOLEAN haveIrqEnable = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG));
@@ -6450,6 +6454,12 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
             /* Drop any stale pending bits that may have latched while masked. */
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
         }
+    }
+
+    if (adapter->RingVa && adapter->RingEntryCount != 0 &&
+        (adapter->AbiKind != AEROGPU_ABI_KIND_V1 || adapter->RingHeader != NULL)) {
+        /* Ensure the submission paths are unblocked once the restart has restored ring/MMIO state. */
+        InterlockedExchange(&adapter->AcceptingSubmissions, 1);
     }
 
     return STATUS_SUCCESS;
