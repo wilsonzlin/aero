@@ -16,6 +16,20 @@
 #define KSAUDIO_SPEAKER_MONO SPEAKER_FRONT_CENTER
 #endif
 
+/*
+ * PortCls event verbs are defined by portcls.h, but older header environments may
+ * omit them. Provide conservative fallbacks so the driver continues to build.
+ */
+#ifndef PCEVENT_VERB_ADD
+#define PCEVENT_VERB_ADD 0x00000001u
+#endif
+#ifndef PCEVENT_VERB_REMOVE
+#define PCEVENT_VERB_REMOVE 0x00000002u
+#endif
+#ifndef PCEVENT_VERB_SUPPORT
+#define PCEVENT_VERB_SUPPORT 0x00000004u
+#endif
+
 typedef struct _VIRTIOSND_TOPOLOGY_MINIPORT {
     IMiniportTopology Interface;
     LONG RefCount;
@@ -136,10 +150,51 @@ static volatile LONG g_VirtIoSndTopoMute[2] = {0, 0};     // per-channel mute fl
  */
 static volatile LONG g_VirtIoSndTopoJackConnected[VIRTIOSND_JACK_ID_COUNT] = {1, 1};
 
+/*
+ * Jack state change notification (KSEVENTSETID_Jack / KSEVENT_JACK_INFO_CHANGE).
+ *
+ * Windows components (e.g. MMDevAPI/UI) typically register for this event to
+ * refresh jack connection state without polling. If no clients register, the
+ * event list remains empty and state changes are still reflected via property
+ * reads.
+ */
+static LONG g_VirtIoSndTopoJackEventListsInitialized = 0;
+static LIST_ENTRY g_VirtIoSndTopoJackInfoChangeEventList[VIRTIOSND_JACK_ID_COUNT];
+
+static VOID VirtIoSndTopoInitJackEventLists(VOID)
+{
+    ULONG i;
+
+    if (InterlockedCompareExchange(&g_VirtIoSndTopoJackEventListsInitialized, 1, 0) != 0) {
+        return;
+    }
+
+    for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoJackInfoChangeEventList); ++i) {
+        InitializeListHead(&g_VirtIoSndTopoJackInfoChangeEventList[i]);
+    }
+}
+
+static VOID VirtIoSndTopoNotifyJackInfoChange(_In_ ULONG JackId)
+{
+    if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackInfoChangeEventList)) {
+        return;
+    }
+
+    /*
+     * PortCls helper: generate notifications for all registered listeners.
+     *
+     * IRQL: <= DISPATCH_LEVEL (called from the virtio INTx DPC and from the
+     * WaveRT period DPC in polling-only mode).
+     */
+    PcGenerateEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId]);
+}
+
 _Use_decl_annotations_
 VOID VirtIoSndTopology_ResetJackState(VOID)
 {
     ULONG i;
+
+    VirtIoSndTopoInitJackEventLists();
     for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected); ++i) {
         (VOID)InterlockedExchange(&g_VirtIoSndTopoJackConnected[i], 1);
     }
@@ -149,13 +204,19 @@ _Use_decl_annotations_
 VOID VirtIoSndTopology_UpdateJackState(ULONG JackId, BOOLEAN IsConnected)
 {
     LONG v;
+    LONG old;
+
+    VirtIoSndTopoInitJackEventLists();
 
     if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected)) {
         return;
     }
 
     v = IsConnected ? 1 : 0;
-    (VOID)InterlockedExchange(&g_VirtIoSndTopoJackConnected[JackId], v);
+    old = InterlockedExchange(&g_VirtIoSndTopoJackConnected[JackId], v);
+    if (old != v) {
+        VirtIoSndTopoNotifyJackInfoChange(JackId);
+    }
 }
 
 _Use_decl_annotations_
@@ -670,6 +731,47 @@ VirtIoSndProperty_JackContainerId(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS
+VirtIoSndEvent_JackInfoChangeCommon(_In_ PPCEVENT_REQUEST EventRequest, _In_ ULONG JackId)
+{
+    if (EventRequest == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackInfoChangeEventList)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    VirtIoSndTopoInitJackEventLists();
+
+    if (EventRequest->Verb & PCEVENT_VERB_SUPPORT) {
+        /* Best-effort: PortCls will validate the event item metadata. */
+        return STATUS_SUCCESS;
+    }
+
+    if (EventRequest->Verb & PCEVENT_VERB_ADD) {
+        return PcAddToEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId], EventRequest);
+    }
+
+    if (EventRequest->Verb & PCEVENT_VERB_REMOVE) {
+        return PcRemoveFromEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId], EventRequest);
+    }
+
+    return STATUS_INVALID_PARAMETER;
+}
+
+static NTSTATUS
+VirtIoSndEvent_JackInfoChangeSpeaker(_In_ PPCEVENT_REQUEST EventRequest)
+{
+    return VirtIoSndEvent_JackInfoChangeCommon(EventRequest, VIRTIOSND_JACK_ID_SPEAKER);
+}
+
+static NTSTATUS
+VirtIoSndEvent_JackInfoChangeMic(_In_ PPCEVENT_REQUEST EventRequest)
+{
+    return VirtIoSndEvent_JackInfoChangeCommon(EventRequest, VIRTIOSND_JACK_ID_MICROPHONE);
+}
+
 static const PCPROPERTY_ITEM g_VirtIoSndTopoAudioProperties[] = {
     {KSPROPERTY_AUDIO_CHANNEL_CONFIG, KSPROPERTY_TYPE_GET | KSPROPERTY_TYPE_SET | KSPROPERTY_TYPE_BASICSUPPORT, VirtIoSndProperty_ChannelConfig},
 };
@@ -708,13 +810,29 @@ static const PCPROPERTY_SET g_VirtIoSndTopoPropertySetsMic[] = {
     {&KSPROPSETID_Jack, RTL_NUMBER_OF(g_VirtIoSndTopoJackPropertiesMic), g_VirtIoSndTopoJackPropertiesMic},
 };
 
+static const PCEVENT_ITEM g_VirtIoSndTopoJackEvents[] = {
+    {KSEVENT_JACK_INFO_CHANGE, 0, VirtIoSndEvent_JackInfoChangeSpeaker},
+};
+
+static const PCEVENT_SET g_VirtIoSndTopoEventSets[] = {
+    {&KSEVENTSETID_Jack, RTL_NUMBER_OF(g_VirtIoSndTopoJackEvents), g_VirtIoSndTopoJackEvents},
+};
+
+static const PCEVENT_ITEM g_VirtIoSndTopoJackEventsMic[] = {
+    {KSEVENT_JACK_INFO_CHANGE, 0, VirtIoSndEvent_JackInfoChangeMic},
+};
+
+static const PCEVENT_SET g_VirtIoSndTopoEventSetsMic[] = {
+    {&KSEVENTSETID_Jack, RTL_NUMBER_OF(g_VirtIoSndTopoJackEventsMic), g_VirtIoSndTopoJackEventsMic},
+};
+
 static const PCAUTOMATION_TABLE g_VirtIoSndTopoAutomation = {
     RTL_NUMBER_OF(g_VirtIoSndTopoPropertySets),
     g_VirtIoSndTopoPropertySets,
     0,
     NULL,
-    0,
-    NULL,
+    RTL_NUMBER_OF(g_VirtIoSndTopoEventSets),
+    g_VirtIoSndTopoEventSets,
 };
 
 static const PCAUTOMATION_TABLE g_VirtIoSndTopoAutomationMic = {
@@ -722,8 +840,8 @@ static const PCAUTOMATION_TABLE g_VirtIoSndTopoAutomationMic = {
     g_VirtIoSndTopoPropertySetsMic,
     0,
     NULL,
-    0,
-    NULL,
+    RTL_NUMBER_OF(g_VirtIoSndTopoEventSetsMic),
+    g_VirtIoSndTopoEventSetsMic,
 };
 
 static const PCPROPERTY_SET g_VirtIoSndTopoVolumePropertySets[] = {
