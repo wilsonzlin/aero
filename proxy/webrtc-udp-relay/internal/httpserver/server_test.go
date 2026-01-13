@@ -232,6 +232,35 @@ func TestICEEndpoint_EmptyListNotNull(t *testing.T) {
 	}
 }
 
+func TestICEEndpoint_NoStoreHeaders_HEAD(t *testing.T) {
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
+		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
+	}
+
+	baseURL := startTestServer(t, cfg, nil)
+
+	req, err := http.NewRequest(http.MethodHead, baseURL+"/webrtc/ice", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	assertICENoStoreHeaders(t, resp)
+}
+
 func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
