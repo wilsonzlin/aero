@@ -2,7 +2,7 @@ use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
     MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
 };
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
@@ -155,7 +155,8 @@ impl fmt::Display for ShaderTranslateError {
                 match *kind {
                     "cbuffer" => write!(
                         f,
-                        "cbuffer slot {slot} is out of range (max {max}); b# slots map to @binding({BINDING_BASE_CBUFFER} + slot) and must stay below the texture base @binding({BINDING_BASE_TEXTURE})"
+                        "cbuffer slot {slot} is out of range for D3D11 (max {max}); D3D11 exposes constant buffers b0..b{max} ({} slots per stage) which map to @binding({BINDING_BASE_CBUFFER} + slot)",
+                        max.saturating_add(1),
                     ),
                     "texture" => write!(
                         f,
@@ -1530,7 +1531,7 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
     for inst in &module.instructions {
         let mut scan_src = |src: &crate::sm4_ir::SrcOperand| -> Result<(), ShaderTranslateError> {
             if let SrcKind::ConstantBuffer { slot, reg } = src.kind {
-                validate_slot("cbuffer", slot, MAX_CBUFFER_SLOTS)?;
+                validate_slot("cbuffer", slot, D3D11_MAX_CONSTANT_BUFFER_SLOTS)?;
                 let entry = cbuffers.entry(slot).or_insert(0);
                 *entry = (*entry).max(reg + 1);
             }
@@ -2222,11 +2223,11 @@ mod tests {
     }
 
     #[test]
-    fn cbuffer_slot_32_triggers_error() {
+    fn cbuffer_slot_14_triggers_error() {
         let module = minimal_module(vec![Sm4Inst::Mov {
             dst: dummy_dst(),
             src: crate::sm4_ir::SrcOperand {
-                kind: SrcKind::ConstantBuffer { slot: 32, reg: 0 },
+                kind: SrcKind::ConstantBuffer { slot: 14, reg: 0 },
                 swizzle: Swizzle::XYZW,
                 modifier: OperandModifier::None,
             },
@@ -2237,8 +2238,8 @@ mod tests {
             err,
             ShaderTranslateError::ResourceSlotOutOfRange {
                 kind: "cbuffer",
-                slot: 32,
-                max: 31
+                slot: 14,
+                max: 13
             }
         ));
     }

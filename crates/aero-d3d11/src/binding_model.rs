@@ -35,6 +35,12 @@ pub const BINDING_BASE_UAV: u32 = BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS;
 /// Valid slots are `0..MAX_CBUFFER_SLOTS` (inclusive max slot is `MAX_CBUFFER_SLOTS - 1`).
 pub const MAX_CBUFFER_SLOTS: u32 = BINDING_BASE_TEXTURE - BINDING_BASE_CBUFFER;
 
+/// D3D10/11 exposes 14 constant buffer slots per shader stage (`b0..b13`).
+///
+/// Note: This is stricter than [`MAX_CBUFFER_SLOTS`], which is derived from the binding-number
+/// scheme (and exists to prevent `@binding` range collisions).
+pub const D3D11_MAX_CONSTANT_BUFFER_SLOTS: u32 = 14;
+
 /// Maximum number of texture slots that can be represented without colliding with the sampler
 /// binding range.
 ///

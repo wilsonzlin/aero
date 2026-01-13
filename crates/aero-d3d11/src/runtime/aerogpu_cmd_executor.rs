@@ -28,7 +28,7 @@ use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG_READONLY};
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::binding_model::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
+use crate::binding_model::{D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
@@ -50,7 +50,7 @@ const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 const DEFAULT_MAX_TEXTURE_SLOTS: usize = MAX_TEXTURE_SLOTS as usize;
 const DEFAULT_MAX_SAMPLER_SLOTS: usize = MAX_SAMPLER_SLOTS as usize;
 // D3D10/11 exposes 14 constant buffer slots (0..13) per shader stage.
-const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = 14;
+const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = D3D11_MAX_CONSTANT_BUFFER_SLOTS as usize;
 const LEGACY_CONSTANTS_SIZE_BYTES: u64 = 4096 * 16;
 
 // WebGPU pipelines must declare at least one color target when a fragment shader writes a color

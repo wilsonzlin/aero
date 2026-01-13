@@ -1,5 +1,5 @@
 use aero_d3d11::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, MAX_CBUFFER_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
     MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
 };
 use aero_d3d11::{
@@ -541,7 +541,7 @@ fn translates_cbuffer_at_max_slot() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
-    let slot = MAX_CBUFFER_SLOTS - 1;
+    let slot = D3D11_MAX_CONSTANT_BUFFER_SLOTS - 1;
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
         model: ShaderModel { major: 5, minor: 0 },
@@ -1048,7 +1048,7 @@ fn rejects_constant_buffer_slot_out_of_range() {
             Sm4Inst::Mov {
                 dst: dst(RegFile::Output, 0, WriteMask::XYZW),
                 src: SrcOperand {
-                    kind: SrcKind::ConstantBuffer { slot: 32, reg: 0 },
+                    kind: SrcKind::ConstantBuffer { slot: 14, reg: 0 },
                     swizzle: Swizzle::XYZW,
                     modifier: OperandModifier::None,
                 },
@@ -1062,10 +1062,43 @@ fn rejects_constant_buffer_slot_out_of_range() {
         err,
         ShaderTranslateError::ResourceSlotOutOfRange {
             kind: "cbuffer",
-            slot: 32,
+            slot: 14,
             max
-        } if max == MAX_CBUFFER_SLOTS - 1
+        } if max == D3D11_MAX_CONSTANT_BUFFER_SLOTS - 1
     ));
+}
+
+#[test]
+fn rejects_cbuffer_slot_14_d3d11_limit_message() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_cb(14, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("D3D11") && err.contains("max 13"),
+        "expected error to mention D3D11 slot limit (max 13), got: {err}"
+    );
 }
 
 #[test]

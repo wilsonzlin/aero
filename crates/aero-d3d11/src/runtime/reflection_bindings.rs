@@ -11,7 +11,7 @@ use anyhow::{bail, Result};
 
 use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 
 /// The AeroGPU D3D11 binding model uses stage-scoped bind groups:
@@ -147,10 +147,10 @@ pub(super) fn binding_to_layout_entry(
 ) -> Result<wgpu::BindGroupLayoutEntry> {
     let ty = match &binding.kind {
         crate::BindingKind::ConstantBuffer { slot, reg_count } => {
-            if *slot >= MAX_CBUFFER_SLOTS {
+            if *slot >= D3D11_MAX_CONSTANT_BUFFER_SLOTS {
                 bail!(
-                    "cbuffer slot {slot} is out of range for binding model (max {})",
-                    MAX_CBUFFER_SLOTS - 1
+                    "cbuffer slot {slot} is out of range for D3D11 (max {})",
+                    D3D11_MAX_CONSTANT_BUFFER_SLOTS - 1
                 );
             }
             let expected = BINDING_BASE_CBUFFER + slot;
@@ -1204,10 +1204,10 @@ mod tests {
     fn binding_to_layout_entry_rejects_out_of_range_slots() {
         let cb = crate::Binding {
             group: 0,
-            binding: BINDING_BASE_CBUFFER + MAX_CBUFFER_SLOTS,
+            binding: BINDING_BASE_CBUFFER + D3D11_MAX_CONSTANT_BUFFER_SLOTS,
             visibility: wgpu::ShaderStages::VERTEX,
             kind: crate::BindingKind::ConstantBuffer {
-                slot: MAX_CBUFFER_SLOTS,
+                slot: D3D11_MAX_CONSTANT_BUFFER_SLOTS,
                 reg_count: 1,
             },
         };
