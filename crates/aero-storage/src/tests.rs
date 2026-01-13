@@ -117,6 +117,91 @@ fn sparse_disk_allocates_and_persists() {
 }
 
 #[test]
+fn sparse_disk_can_deallocate_blocks_and_read_zeros_afterwards() {
+    let backend = MemBackend::new();
+    let mut disk = AeroSparseDisk::create(
+        backend,
+        AeroSparseConfig {
+            disk_size_bytes: 16 * 1024,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+
+    disk.write_at(0, &[1, 2, 3, 4]).unwrap();
+    assert_eq!(disk.allocated_block_count(), 1);
+
+    let mut buf = [0u8; 4];
+    disk.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, &[1, 2, 3, 4]);
+
+    assert!(disk.is_block_allocated(0));
+    assert!(disk.deallocate_block(0).unwrap());
+    assert!(!disk.is_block_allocated(0));
+    assert_eq!(disk.allocated_block_count(), 0);
+
+    // Deallocated blocks must read as zero.
+    buf.fill(0xFF);
+    disk.read_at(0, &mut buf).unwrap();
+    assert!(buf.iter().all(|&b| b == 0));
+
+    // Re-write the same block and ensure data is visible again.
+    disk.write_at(0, &[5, 6, 7, 8]).unwrap();
+    disk.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, &[5, 6, 7, 8]);
+
+    // Persist and reopen to ensure on-disk consistency.
+    disk.flush().unwrap();
+    let backend = disk.into_backend();
+    let mut reopened = AeroSparseDisk::open(backend).unwrap();
+    reopened.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, &[5, 6, 7, 8]);
+}
+
+#[test]
+fn sparse_discard_range_only_deallocates_fully_covered_blocks() {
+    let backend = MemBackend::new();
+    let mut disk = AeroSparseDisk::create(
+        backend,
+        AeroSparseConfig {
+            disk_size_bytes: 4 * 4096,
+            block_size_bytes: 4096,
+        },
+    )
+    .unwrap();
+
+    // Allocate 4 blocks with distinct markers.
+    for i in 0..4u64 {
+        let off = i * 4096;
+        disk.write_at(off, &[(i as u8) + 1]).unwrap();
+    }
+
+    // Discard a range that:
+    // - partially covers block 0
+    // - fully covers blocks 1 and 2
+    // - partially covers block 3
+    disk.discard_range(2048, 3 * 4096).unwrap();
+
+    let mut b = [0u8; 1];
+    disk.read_at(0, &mut b).unwrap();
+    assert_eq!(b[0], 1);
+
+    disk.read_at(4096, &mut b).unwrap();
+    assert_eq!(b[0], 0);
+
+    disk.read_at(8192, &mut b).unwrap();
+    assert_eq!(b[0], 0);
+
+    disk.read_at(12288, &mut b).unwrap();
+    assert_eq!(b[0], 4);
+
+    assert!(disk.is_block_allocated(0));
+    assert!(!disk.is_block_allocated(1));
+    assert!(!disk.is_block_allocated(2));
+    assert!(disk.is_block_allocated(3));
+}
+
+#[test]
 fn cow_disk_reads_from_base_and_writes_to_overlay() {
     let mut base = RawDisk::create(MemBackend::new(), 8192).unwrap();
     let pattern: Vec<u8> = (0..base.capacity_bytes() as usize)
@@ -223,9 +308,9 @@ fn sparse_open_rejects_oversized_allocation_table() {
 }
 
 #[test]
-fn sparse_open_rejects_allocated_blocks_inconsistent_with_table() {
-    // Valid header/table layout, but header.allocated_blocks does not match the number
-    // of non-zero table entries.
+fn sparse_open_allows_free_physical_block_slots() {
+    // Valid header/table layout, but header.allocated_blocks is larger than the number of
+    // non-zero table entries. This is expected after block deallocation.
     let block_size_bytes = 4096u32;
     let disk_size_bytes = 16 * 1024u64;
     let table_entries = 4u64;
@@ -255,8 +340,9 @@ fn sparse_open_rejects_allocated_blocks_inconsistent_with_table() {
         .write_at(crate::sparse::HEADER_SIZE as u64, &table)
         .unwrap();
 
-    let err = open_sparse_err(backend);
-    assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+    let disk = AeroSparseDisk::open(backend).unwrap();
+    assert_eq!(disk.header().allocated_blocks, 2);
+    assert_eq!(disk.allocated_block_count(), 1);
 }
 
 #[test]

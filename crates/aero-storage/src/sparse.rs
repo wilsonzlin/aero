@@ -210,6 +210,14 @@ pub struct AeroSparseDisk<B> {
     backend: B,
     header: AeroSparseHeader,
     table: Vec<u64>,
+    /// Bitset tracking which physical block slots are currently referenced by the allocation
+    /// table. This enables block deallocation + reuse without any extra on-disk metadata.
+    ///
+    /// `header.allocated_blocks` is treated as the total number of physical block slots in the
+    /// data region (i.e. the high-water mark for appended blocks). The number of non-zero table
+    /// entries may be smaller due to deallocations.
+    phys_used: Vec<u64>,
+    mapped_blocks: u64,
 }
 
 impl<B: StorageBackend> AeroSparseDisk<B> {
@@ -274,6 +282,8 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             backend,
             header,
             table,
+            phys_used: Vec::new(),
+            mapped_blocks: 0,
         })
     }
 
@@ -337,7 +347,7 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         }
 
         // Prepare allocation table validation state.
-        let mut actual_allocated_blocks = 0u64;
+        let mut mapped_blocks = 0u64;
         let allocated_blocks_usize: usize = header
             .allocated_blocks
             .try_into()
@@ -394,16 +404,11 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                     continue;
                 }
 
-                // Validate entries as we go so corrupt images fail fast without reading the
-                // entire allocation table first.
-                actual_allocated_blocks = actual_allocated_blocks
+        // Validate entries as we go so corrupt images fail fast without reading the
+        // entire allocation table first.
+                mapped_blocks = mapped_blocks
                     .checked_add(1)
                     .ok_or(DiskError::OffsetOverflow)?;
-                if actual_allocated_blocks > header.allocated_blocks {
-                    return Err(DiskError::CorruptSparseImage(
-                        "allocated_blocks does not match allocation table",
-                    ));
-                }
 
                 if phys < header.data_offset {
                     return Err(DiskError::CorruptSparseImage(
@@ -456,16 +461,12 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
             remaining -= read_len;
         }
 
-        if actual_allocated_blocks != header.allocated_blocks {
-            return Err(DiskError::CorruptSparseImage(
-                "allocated_blocks does not match allocation table",
-            ));
-        }
-
         Ok(Self {
             backend,
             header,
             table,
+            phys_used: seen_phys_idx,
+            mapped_blocks,
         })
     }
 
@@ -484,39 +485,192 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         self.backend
     }
 
-    pub(crate) fn ensure_block_allocated(&mut self, block_idx: u64) -> Result<(u64, bool)> {
-        let block_idx_usize: usize = block_idx
-            .try_into()
-            .map_err(|_| DiskError::CorruptSparseImage("block index out of range"))?;
-        let entry = self
-            .table
-            .get_mut(block_idx_usize)
-            .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
+    /// Number of currently allocated logical blocks (non-zero entries in the allocation table).
+    ///
+    /// Note: this can be smaller than `header().allocated_blocks` since the latter tracks the
+    /// total number of physical block slots in the data region (including freed/unreferenced
+    /// slots).
+    pub fn allocated_block_count(&self) -> u64 {
+        self.mapped_blocks
+    }
 
-        if *entry != 0 {
-            return Ok((*entry, true));
+    fn phys_offset_for_idx(&self, phys_idx: u64) -> Result<u64> {
+        let block_size = self.header.block_size_u64();
+        self.header
+            .data_offset
+            .checked_add(
+                phys_idx
+                    .checked_mul(block_size)
+                    .ok_or(DiskError::OffsetOverflow)?,
+            )
+            .ok_or(DiskError::OffsetOverflow)
+    }
+
+    fn set_phys_used(&mut self, phys_idx: u64, used: bool) -> Result<()> {
+        let phys_idx_usize: usize = phys_idx
+            .try_into()
+            .map_err(|_| DiskError::CorruptSparseImage("data block offset out of bounds"))?;
+        let word_idx = phys_idx_usize / 64;
+        let bit_idx = phys_idx_usize % 64;
+        let mask = 1u64 << bit_idx;
+        let word = self
+            .phys_used
+            .get_mut(word_idx)
+            .ok_or(DiskError::CorruptSparseImage(
+                "data block offset out of bounds",
+            ))?;
+        if used {
+            *word |= mask;
+        } else {
+            *word &= !mask;
+        }
+        Ok(())
+    }
+
+    fn is_phys_used(&self, phys_idx: u64) -> Result<bool> {
+        let phys_idx_usize: usize = phys_idx
+            .try_into()
+            .map_err(|_| DiskError::CorruptSparseImage("data block offset out of bounds"))?;
+        let word_idx = phys_idx_usize / 64;
+        let bit_idx = phys_idx_usize % 64;
+        let mask = 1u64 << bit_idx;
+        let word = self
+            .phys_used
+            .get(word_idx)
+            .ok_or(DiskError::CorruptSparseImage(
+                "data block offset out of bounds",
+            ))?;
+        Ok((*word & mask) != 0)
+    }
+
+    fn find_free_phys_idx(&mut self) -> Result<Option<u64>> {
+        let total = self.header.allocated_blocks;
+        for (word_idx, word) in self.phys_used.iter_mut().enumerate() {
+            if *word == u64::MAX {
+                continue;
+            }
+            let inv = !*word;
+            let bit = inv.trailing_zeros() as usize;
+            let idx_usize = word_idx
+                .checked_mul(64)
+                .and_then(|v| v.checked_add(bit))
+                .ok_or(DiskError::OffsetOverflow)?;
+            let idx = u64::try_from(idx_usize).map_err(|_| DiskError::OffsetOverflow)?;
+            if idx >= total {
+                // The remaining bits in this (final) word are outside the valid phys_idx range.
+                return Ok(None);
+            }
+            *word |= 1u64 << bit;
+            return Ok(Some(idx));
+        }
+        Ok(None)
+    }
+
+    fn trim_trailing_free_phys(&mut self) -> Result<()> {
+        if self.header.allocated_blocks == 0 {
+            return Ok(());
         }
 
+        let mut new_allocated = self.header.allocated_blocks;
+        while new_allocated > 0 {
+            let last = new_allocated - 1;
+            if self.is_phys_used(last)? {
+                break;
+            }
+            new_allocated -= 1;
+        }
+
+        if new_allocated == self.header.allocated_blocks {
+            return Ok(());
+        }
+
+        self.header.allocated_blocks = new_allocated;
+
+        let new_len_usize: usize = ((new_allocated + 63) / 64)
+            .try_into()
+            .map_err(|_| DiskError::OffsetOverflow)?;
+        self.phys_used.truncate(new_len_usize);
+
+        // Persist the updated header before truncating the backend, to ensure the image is
+        // never left in a state where it references data beyond the backend length.
+        self.backend.write_at(0, &self.header.encode())?;
+
         let block_size = self.header.block_size_u64();
-        let data_offset = self.header.data_offset;
-        let phys = data_offset
+        let new_end = self
+            .header
+            .data_offset
             .checked_add(
-                self.header
-                    .allocated_blocks
+                new_allocated
                     .checked_mul(block_size)
                     .ok_or(DiskError::OffsetOverflow)?,
             )
             .ok_or(DiskError::OffsetOverflow)?;
+        let cur_len = self.backend.len()?;
+        if new_end < cur_len {
+            self.backend.set_len(new_end)?;
+        }
+        Ok(())
+    }
 
-        self.header.allocated_blocks = self
-            .header
-            .allocated_blocks
+    pub(crate) fn ensure_block_allocated(&mut self, block_idx: u64) -> Result<(u64, bool)> {
+        let block_idx_usize: usize = block_idx
+            .try_into()
+            .map_err(|_| DiskError::CorruptSparseImage("block index out of range"))?;
+        let entry = *self
+            .table
+            .get(block_idx_usize)
+            .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
+
+        if entry != 0 {
+            return Ok((entry, true));
+        }
+
+        let block_size = self.header.block_size_u64();
+        let data_offset = self.header.data_offset;
+
+        let (phys, new_phys_slot) = if let Some(phys_idx) = self.find_free_phys_idx()? {
+            (self.phys_offset_for_idx(phys_idx)?, false)
+        } else {
+            let phys_idx = self.header.allocated_blocks;
+            let phys = data_offset
+                .checked_add(
+                    phys_idx
+                        .checked_mul(block_size)
+                        .ok_or(DiskError::OffsetOverflow)?,
+                )
+                .ok_or(DiskError::OffsetOverflow)?;
+
+            self.header.allocated_blocks = self
+                .header
+                .allocated_blocks
+                .checked_add(1)
+                .ok_or(DiskError::OffsetOverflow)?;
+
+            let new_len_usize: usize = ((self.header.allocated_blocks + 63) / 64)
+                .try_into()
+                .map_err(|_| DiskError::OffsetOverflow)?;
+            if self.phys_used.len() < new_len_usize {
+                self.phys_used.resize(new_len_usize, 0);
+            }
+            self.set_phys_used(phys_idx, true)?;
+
+            (phys, true)
+        };
+
+        let entry = self
+            .table
+            .get_mut(block_idx_usize)
+            .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
+        *entry = phys;
+        self.mapped_blocks = self
+            .mapped_blocks
             .checked_add(1)
             .ok_or(DiskError::OffsetOverflow)?;
-        *entry = phys;
 
-        // Persist the updated header and the single updated table entry immediately.
-        self.backend.write_at(0, &self.header.encode())?;
+        // Persist the updated header (if changed) and the single updated table entry immediately.
+        if new_phys_slot {
+            self.backend.write_at(0, &self.header.encode())?;
+        }
         let table_entry_off = (HEADER_SIZE as u64)
             .checked_add(block_idx.checked_mul(8).ok_or(DiskError::OffsetOverflow)?)
             .ok_or(DiskError::OffsetOverflow)?;
@@ -532,6 +686,114 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
         }
 
         Ok((phys, false))
+    }
+
+    fn deallocate_block_inner(&mut self, block_idx: u64) -> Result<bool> {
+        let block_idx_usize: usize = block_idx
+            .try_into()
+            .map_err(|_| DiskError::CorruptSparseImage("block index out of range"))?;
+        let phys = *self
+            .table
+            .get(block_idx_usize)
+            .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
+        if phys == 0 {
+            return Ok(false);
+        }
+
+        // Mark the logical block as unallocated first; the old physical data is treated as
+        // unreachable once the allocation table entry is cleared.
+        let entry = self
+            .table
+            .get_mut(block_idx_usize)
+            .ok_or(DiskError::CorruptSparseImage("block index out of range"))?;
+        *entry = 0;
+
+        let table_entry_off = (HEADER_SIZE as u64)
+            .checked_add(block_idx.checked_mul(8).ok_or(DiskError::OffsetOverflow)?)
+            .ok_or(DiskError::OffsetOverflow)?;
+        self.backend.write_at(table_entry_off, &0u64.to_le_bytes())?;
+
+        // Update the in-memory phys-used bitmap.
+        let block_size = self.header.block_size_u64();
+        if phys < self.header.data_offset {
+            return Err(DiskError::CorruptSparseImage(
+                "data block offset before data region",
+            ));
+        }
+        let rel = phys - self.header.data_offset;
+        if !rel.is_multiple_of(block_size) {
+            return Err(DiskError::CorruptSparseImage(
+                "misaligned data block offset",
+            ));
+        }
+        let phys_idx = rel / block_size;
+        if phys_idx >= self.header.allocated_blocks {
+            return Err(DiskError::CorruptSparseImage(
+                "data block offset out of bounds",
+            ));
+        }
+        self.set_phys_used(phys_idx, false)?;
+
+        self.mapped_blocks = self
+            .mapped_blocks
+            .checked_sub(1)
+            .ok_or(DiskError::CorruptSparseImage(
+                "allocated_blocks out of range",
+            ))?;
+
+        Ok(true)
+    }
+
+    /// Deallocate a single logical block.
+    ///
+    /// Returns `Ok(true)` if the block was previously allocated, `Ok(false)` if it was already
+    /// unallocated.
+    pub fn deallocate_block(&mut self, block_idx: u64) -> Result<bool> {
+        let existed = self.deallocate_block_inner(block_idx)?;
+        if existed {
+            self.trim_trailing_free_phys()?;
+        }
+        Ok(existed)
+    }
+
+    /// Deallocate all *fully covered* blocks in the given byte range.
+    ///
+    /// Blocks are only deallocated if the discard range covers the entire block; partial blocks
+    /// are left allocated (callers that need partial-zeroing should write zeros instead).
+    pub fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
+        if len == 0 {
+            // Still validate offset is in-bounds.
+            if offset > self.capacity_bytes() {
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: 0,
+                    capacity: self.capacity_bytes(),
+                });
+            }
+            return Ok(());
+        }
+
+        let end = offset.checked_add(len).ok_or(DiskError::OffsetOverflow)?;
+        if end > self.capacity_bytes() {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: usize::try_from(len).unwrap_or(usize::MAX),
+                capacity: self.capacity_bytes(),
+            });
+        }
+
+        let block_size = self.header.block_size_u64();
+        let start_block = div_ceil_u64(offset, block_size)?;
+        let end_block = end / block_size;
+        if start_block >= end_block {
+            return Ok(());
+        }
+
+        for block_idx in start_block..end_block {
+            self.deallocate_block_inner(block_idx)?;
+        }
+
+        self.trim_trailing_free_phys()
     }
 
     pub(crate) fn read_from_alloc_table(
