@@ -56,6 +56,26 @@ Build outputs are staged under:
 - `out/drivers/windows7/virtio-snd/x86/aero_virtio_snd.sys`
 - `out/drivers/windows7/virtio-snd/x64/aero_virtio_snd.sys`
 
+Optional (DBG=1 / `VIRTIOSND_TRACE*` enabled) local debug-logging build outputs:
+
+- `out/drivers/windows7/virtio-snd/x86/aero_virtio_snd_dbg.sys`
+- `out/drivers/windows7/virtio-snd/x64/aero_virtio_snd_dbg.sys`
+
+This uses the **DebugLogs** configuration in `aero_virtio_snd.vcxproj` (not built in CI):
+
+```powershell
+# From the repo root:
+.\ci\build-drivers.ps1 -Configuration DebugLogs -Drivers windows7/virtio-snd
+```
+
+You can also build it directly with MSBuild (or from Visual Studio by selecting the
+`DebugLogs` configuration):
+
+```powershell
+msbuild .\drivers\windows7\virtio-snd\aero_virtio_snd.vcxproj /m `
+  /p:Configuration=DebugLogs /p:Platform=x64
+```
+
 Optional (QEMU/transitional) build outputs:
 
 - `out/drivers/windows7/virtio-snd/x86/virtiosnd_legacy.sys`
@@ -72,6 +92,13 @@ To stage an installable/signable package, copy the appropriate `aero_virtio_snd.
 ```text
 drivers/windows7/virtio-snd/inf/aero_virtio_snd.sys
 ```
+
+For the DebugLogs build, the MSBuild output file is named `aero_virtio_snd_dbg.sys`. The
+existing `inf/aero_virtio_snd.inf` references `aero_virtio_snd.sys`, so you must either:
+
+- **Rename** `aero_virtio_snd_dbg.sys` → `aero_virtio_snd.sys` when copying into `inf/` (simplest), or
+- Create a new INF that references `aero_virtio_snd_dbg.sys` (and ideally uses a distinct
+  service name) if you want to keep both binaries in the same staging folder.
 
 For the optional QEMU/transitional package, stage the legacy binary instead:
 
