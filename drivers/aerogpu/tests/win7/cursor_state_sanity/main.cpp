@@ -10,6 +10,22 @@ static int32_t ToS32(uint32_t v) { return (int32_t)v; }
 
 static int AbsI32(int v) { return (v < 0) ? -v : v; }
 
+static bool CursorPosMatchesHotspotOrTopLeft(const aerogpu_escape_query_cursor_out& q, const POINT& pos, int tol) {
+  const int32_t mmio_x = ToS32((uint32_t)q.x);
+  const int32_t mmio_y = ToS32((uint32_t)q.y);
+  const int32_t hot_x = (int32_t)q.hot_x;
+  const int32_t hot_y = (int32_t)q.hot_y;
+
+  // Cursor position semantics can vary: the device registers may represent either the cursor
+  // hot-spot position or the cursor top-left plus a separate hot-spot offset. Be tolerant and
+  // accept either interpretation.
+  const bool pos_match0 =
+      (AbsI32((int)mmio_x - (int)pos.x) <= tol) && (AbsI32((int)mmio_y - (int)pos.y) <= tol);
+  const bool pos_match1 = (AbsI32((int)(mmio_x + hot_x) - (int)pos.x) <= tol) &&
+                          (AbsI32((int)(mmio_y + hot_y) - (int)pos.y) <= tol);
+  return pos_match0 || pos_match1;
+}
+
 static bool WantsJsonReport(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     const char* arg = argv[i];
@@ -478,19 +494,7 @@ static int RunCursorStateSanity(int argc, char** argv) {
       goto cleanup;
     }
 
-    const int32_t mmio_x = ToS32((uint32_t)q0.x);
-    const int32_t mmio_y = ToS32((uint32_t)q0.y);
-    const int32_t hot_x = (int32_t)q0.hot_x;
-    const int32_t hot_y = (int32_t)q0.hot_y;
-
-    // Cursor position semantics can vary: the device registers may represent either the cursor
-    // hot-spot position or the cursor top-left plus a separate hot-spot offset. Be tolerant and
-    // accept either interpretation.
-    const bool pos_match0 = (AbsI32((int)mmio_x - (int)actual_pos.x) <= tol) &&
-                            (AbsI32((int)mmio_y - (int)actual_pos.y) <= tol);
-    const bool pos_match1 = (AbsI32((int)(mmio_x + hot_x) - (int)actual_pos.x) <= tol) &&
-                            (AbsI32((int)(mmio_y + hot_y) - (int)actual_pos.y) <= tol);
-    const bool pos_match = pos_match0 || pos_match1;
+    const bool pos_match = CursorPosMatchesHotspotOrTopLeft(q0, actual_pos, tol);
 
     if (pos_match) {
       pos_ok = true;
@@ -616,15 +620,7 @@ static int RunCursorStateSanity(int argc, char** argv) {
     POINT pos;
     ZeroMemory(&pos, sizeof(pos));
     (void)GetCursorPos(&pos);
-    const int32_t mmio_x = ToS32((uint32_t)q1.x);
-    const int32_t mmio_y = ToS32((uint32_t)q1.y);
-    const int32_t hot_x = (int32_t)q1.hot_x;
-    const int32_t hot_y = (int32_t)q1.hot_y;
-    const bool pos_match0 =
-        (AbsI32((int)mmio_x - (int)pos.x) <= tol) && (AbsI32((int)mmio_y - (int)pos.y) <= tol);
-    const bool pos_match1 = (AbsI32((int)(mmio_x + hot_x) - (int)pos.x) <= tol) &&
-                            (AbsI32((int)(mmio_y + hot_y) - (int)pos.y) <= tol);
-    const bool pos_match = pos_match0 || pos_match1;
+    const bool pos_match = CursorPosMatchesHotspotOrTopLeft(q1, pos, tol);
 
     const bool shape_sane = (q1.width != 0 && q1.height != 0 && q1.pitch_bytes != 0 && q1.format != 0 && q1.fb_gpa != 0);
     const bool hot_ok = ((int)q1.hot_x == cursor_spec.hot_x && (int)q1.hot_y == cursor_spec.hot_y);
