@@ -723,17 +723,36 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
   // Give the driver a moment to program scanout regs before polling.
   Sleep(100);
 
-  const int switched_w = GetSystemMetrics(SM_CXSCREEN);
-  const int switched_h = GetSystemMetrics(SM_CYSCREEN);
-  aerogpu_test::PrintfStdout("INFO: %s: switched desktop=%dx%d", kTestName, switched_w, switched_h);
+  const int switched_metrics_w = GetSystemMetrics(SM_CXSCREEN);
+  const int switched_metrics_h = GetSystemMetrics(SM_CYSCREEN);
+  DEVMODEW switched_mode;
+  std::string switched_mode_err;
+  if (!GetCurrentDesktopMode(&switched_mode, &switched_mode_err)) {
+    std::string restore_err;
+    (void)restore.RestoreNow(&restore_err);
+    aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return reporter.Fail("%s", switched_mode_err.c_str());
+  }
+  PrintModeInfo("switched", switched_mode);
+  aerogpu_test::PrintfStdout("INFO: %s: switched GetSystemMetrics=%dx%d", kTestName, switched_metrics_w, switched_metrics_h);
+  if (switched_metrics_w != (int)switched_mode.dmPelsWidth || switched_metrics_h != (int)switched_mode.dmPelsHeight) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: WARNING: switched GetSystemMetrics != EnumDisplaySettingsW (metrics=%dx%d mode=%lux%lu)",
+        kTestName,
+        switched_metrics_w,
+        switched_metrics_h,
+        (unsigned long)switched_mode.dmPelsWidth,
+        (unsigned long)switched_mode.dmPelsHeight);
+  }
 
   aerogpu_escape_query_scanout_out q1;
   NTSTATUS st1 = 0;
   std::string scanout_err1;
   if (!WaitForScanoutMatch(&kmt,
                            adapter,
-                           (DWORD)switched_w,
-                           (DWORD)switched_h,
+                           (DWORD)switched_mode.dmPelsWidth,
+                           (DWORD)switched_mode.dmPelsHeight,
                            5000,
                            &q1,
                            &st1,
@@ -767,17 +786,34 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
 
   Sleep(100);
 
-  const int restored_w = GetSystemMetrics(SM_CXSCREEN);
-  const int restored_h = GetSystemMetrics(SM_CYSCREEN);
-  aerogpu_test::PrintfStdout("INFO: %s: restored desktop=%dx%d", kTestName, restored_w, restored_h);
+  const int restored_metrics_w = GetSystemMetrics(SM_CXSCREEN);
+  const int restored_metrics_h = GetSystemMetrics(SM_CYSCREEN);
+  DEVMODEW restored_mode;
+  std::string restored_mode_err;
+  if (!GetCurrentDesktopMode(&restored_mode, &restored_mode_err)) {
+    aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return reporter.Fail("%s", restored_mode_err.c_str());
+  }
+  PrintModeInfo("restored", restored_mode);
+  aerogpu_test::PrintfStdout("INFO: %s: restored GetSystemMetrics=%dx%d", kTestName, restored_metrics_w, restored_metrics_h);
+  if (restored_metrics_w != (int)restored_mode.dmPelsWidth || restored_metrics_h != (int)restored_mode.dmPelsHeight) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: WARNING: restored GetSystemMetrics != EnumDisplaySettingsW (metrics=%dx%d mode=%lux%lu)",
+        kTestName,
+        restored_metrics_w,
+        restored_metrics_h,
+        (unsigned long)restored_mode.dmPelsWidth,
+        (unsigned long)restored_mode.dmPelsHeight);
+  }
 
   aerogpu_escape_query_scanout_out q2;
   NTSTATUS st2 = 0;
   std::string scanout_err2;
   if (!WaitForScanoutMatch(&kmt,
                            adapter,
-                           (DWORD)restored_w,
-                           (DWORD)restored_h,
+                           (DWORD)restored_mode.dmPelsWidth,
+                           (DWORD)restored_mode.dmPelsHeight,
                            5000,
                            &q2,
                            &st2,
