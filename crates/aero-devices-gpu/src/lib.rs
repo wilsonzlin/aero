@@ -4,14 +4,19 @@
 //! (MMIO/shared-memory protocols), while still providing the abstraction boundary between:
 //! - the device-model side (rings, guest memory), and
 //! - the host-side GPU command executor.
+//!
+//! The [`executor`] module contains the ring executor responsible for doorbell processing, fence
+//! tracking, and vblank pacing.
+
 pub mod backend;
+pub mod executor;
 pub mod regs;
 pub mod ring;
 pub mod scanout;
 
 pub use backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
-    ImmediateAeroGpuBackend, NullAeroGpuBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend, ImmediateAeroGpuBackend, NullAeroGpuBackend,
 };
 pub use memory::MemoryBus;
 pub use scanout::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};

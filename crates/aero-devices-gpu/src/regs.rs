@@ -1,3 +1,5 @@
+use crate::scanout::{AeroGpuCursorConfig, AeroGpuScanoutConfig};
+
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 
 // Constants mirrored from `drivers/aerogpu/protocol/aerogpu_pci.h` via `aero-protocol`.
@@ -92,89 +94,6 @@ pub mod irq_bits {
     pub const FENCE: u32 = pci::AEROGPU_IRQ_FENCE;
     pub const SCANOUT_VBLANK: u32 = pci::AEROGPU_IRQ_SCANOUT_VBLANK;
     pub const ERROR: u32 = pci::AEROGPU_IRQ_ERROR;
-}
-
-// Values derived from the canonical `aero-protocol` definition of `enum aerogpu_format`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum AeroGpuFormat {
-    Invalid = pci::AerogpuFormat::Invalid as u32,
-    B8G8R8A8Unorm = pci::AerogpuFormat::B8G8R8A8Unorm as u32,
-    B8G8R8X8Unorm = pci::AerogpuFormat::B8G8R8X8Unorm as u32,
-    R8G8B8A8Unorm = pci::AerogpuFormat::R8G8B8A8Unorm as u32,
-    R8G8B8X8Unorm = pci::AerogpuFormat::R8G8B8X8Unorm as u32,
-    B5G6R5Unorm = pci::AerogpuFormat::B5G6R5Unorm as u32,
-    B5G5R5A1Unorm = pci::AerogpuFormat::B5G5R5A1Unorm as u32,
-    B8G8R8A8UnormSrgb = pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32,
-    B8G8R8X8UnormSrgb = pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32,
-    R8G8B8A8UnormSrgb = pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32,
-    R8G8B8X8UnormSrgb = pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32,
-    D24UnormS8Uint = pci::AerogpuFormat::D24UnormS8Uint as u32,
-    D32Float = pci::AerogpuFormat::D32Float as u32,
-    // The scanout/cursor paths do not currently support BC formats, but we keep them representable
-    // so the software executor can compute backing sizes (and ignore them when presenting).
-    Bc1Unorm = pci::AerogpuFormat::BC1RgbaUnorm as u32,
-    Bc1UnormSrgb = pci::AerogpuFormat::BC1RgbaUnormSrgb as u32,
-    Bc2Unorm = pci::AerogpuFormat::BC2RgbaUnorm as u32,
-    Bc2UnormSrgb = pci::AerogpuFormat::BC2RgbaUnormSrgb as u32,
-    Bc3Unorm = pci::AerogpuFormat::BC3RgbaUnorm as u32,
-    Bc3UnormSrgb = pci::AerogpuFormat::BC3RgbaUnormSrgb as u32,
-    Bc7Unorm = pci::AerogpuFormat::BC7RgbaUnorm as u32,
-    Bc7UnormSrgb = pci::AerogpuFormat::BC7RgbaUnormSrgb as u32,
-}
-
-#[derive(Clone, Debug)]
-pub struct AeroGpuScanoutConfig {
-    pub enable: bool,
-    pub width: u32,
-    pub height: u32,
-    pub format: AeroGpuFormat,
-    pub pitch_bytes: u32,
-    pub fb_gpa: u64,
-}
-
-impl Default for AeroGpuScanoutConfig {
-    fn default() -> Self {
-        Self {
-            enable: false,
-            width: 0,
-            height: 0,
-            format: AeroGpuFormat::Invalid,
-            pitch_bytes: 0,
-            fb_gpa: 0,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct AeroGpuCursorConfig {
-    pub enable: bool,
-    pub x: i32,
-    pub y: i32,
-    pub hot_x: u32,
-    pub hot_y: u32,
-    pub width: u32,
-    pub height: u32,
-    pub format: AeroGpuFormat,
-    pub fb_gpa: u64,
-    pub pitch_bytes: u32,
-}
-
-impl Default for AeroGpuCursorConfig {
-    fn default() -> Self {
-        Self {
-            enable: false,
-            x: 0,
-            y: 0,
-            hot_x: 0,
-            hot_y: 0,
-            width: 0,
-            height: 0,
-            format: AeroGpuFormat::Invalid,
-            fb_gpa: 0,
-            pitch_bytes: 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default)]

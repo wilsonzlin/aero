@@ -19,7 +19,7 @@ pub enum AeroGpuFormat {
     D24UnormS8Uint = ProtocolAerogpuFormat::D24UnormS8Uint as u32,
     D32Float = ProtocolAerogpuFormat::D32Float as u32,
     // The scanout/cursor paths do not currently support BC formats, but we keep them representable
-    // so users can compute backing sizes (and ignore them when presenting).
+    // so higher layers can compute backing sizes (and ignore them when presenting).
     Bc1Unorm = ProtocolAerogpuFormat::BC1RgbaUnorm as u32,
     Bc1UnormSrgb = ProtocolAerogpuFormat::BC1RgbaUnormSrgb as u32,
     Bc2Unorm = ProtocolAerogpuFormat::BC2RgbaUnorm as u32,

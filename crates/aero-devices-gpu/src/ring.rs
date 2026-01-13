@@ -182,7 +182,10 @@ mod tests {
         let mut hdr = make_valid_header_with_abi(abi_version);
 
         hdr.magic = 0;
-        assert!(!hdr.is_valid(hdr.size_bytes), "wrong magic must be rejected");
+        assert!(
+            !hdr.is_valid(hdr.size_bytes),
+            "wrong magic must be rejected"
+        );
 
         hdr.magic = AEROGPU_RING_MAGIC;
         hdr.abi_version = 0;
@@ -205,9 +208,10 @@ mod tests {
 
         let mut hdr = make_valid_header_with_abi(abi_version);
         hdr.entry_count = 3; // not a power-of-two
-        // size_bytes must be >= required for validate_prefix to reach BadEntryCount.
+                             // size_bytes must be >= required for validate_prefix to reach BadEntryCount.
         hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
-            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64)
+            as u32;
         assert!(!hdr.is_valid(0xFFFF));
     }
 
@@ -220,7 +224,8 @@ mod tests {
         hdr.entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES - 1;
         // size_bytes must be >= required for validate_prefix to reach BadStrideField.
         hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
-            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64)
+            as u32;
         assert!(!hdr.is_valid(0xFFFF));
 
         // size_bytes too small for declared entry_count/stride.
@@ -274,12 +279,18 @@ mod tests {
         let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
         write_fence_page(&mut mem, fence_gpa, abi_version, 123);
 
-        assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
+        assert_eq!(
+            mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+            AEROGPU_FENCE_PAGE_MAGIC
+        );
         assert_eq!(
             mem.read_u32(fence_gpa + FENCE_PAGE_ABI_VERSION_OFFSET),
             abi_version
         );
-        assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 123);
+        assert_eq!(
+            mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+            123
+        );
     }
 
     #[test]
@@ -475,8 +486,8 @@ impl AeroGpuAllocEntry {
     pub fn read_from(mem: &mut dyn MemoryBus, gpa: u64) -> Self {
         let mut buf = [0u8; protocol_ring::AerogpuAllocEntry::SIZE_BYTES];
         mem.read_physical(gpa, &mut buf);
-        let entry =
-            protocol_ring::AerogpuAllocEntry::decode_from_le_bytes(&buf).expect("buffer matches SIZE_BYTES");
+        let entry = protocol_ring::AerogpuAllocEntry::decode_from_le_bytes(&buf)
+            .expect("buffer matches SIZE_BYTES");
 
         Self {
             alloc_id: entry.alloc_id,

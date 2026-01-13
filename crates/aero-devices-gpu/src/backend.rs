@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use memory::MemoryBus;
 
+/// Submission payload forwarded from the device-side ring executor into a host command backend.
 #[derive(Debug, Clone)]
 pub struct AeroGpuBackendSubmission {
     pub flags: u32,
@@ -28,7 +29,7 @@ pub struct AeroGpuBackendScanout {
     pub rgba8: Vec<u8>,
 }
 
-/// Boundary between device-model side ring processing and host GPU execution.
+/// Boundary between device-side ring processing and host GPU execution.
 ///
 /// Implementations may execute immediately (synchronous) or enqueue work and later surface fence
 /// completions via [`AeroGpuCommandBackend::poll_completions`].
@@ -223,4 +224,3 @@ mod tests {
         assert!(backend.poll_completions().is_empty());
     }
 }
-
