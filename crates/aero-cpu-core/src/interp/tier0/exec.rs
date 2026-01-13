@@ -8,7 +8,7 @@ use crate::mem::CpuBus;
 use crate::state::CpuState;
 use aero_x86::Register;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum StepExit {
     Continue,
     /// The instruction completed normally, and maskable interrupts should be
@@ -17,8 +17,42 @@ pub enum StepExit {
     Branch,
     Halted,
     BiosInterrupt(u8),
-    Assist(AssistReason),
+    /// Tier-0 could decode the instruction but does not implement its semantics
+    /// and wants the caller to emulate it via the assist layer.
+    ///
+    /// The faulting instruction has already been fetched + decoded, so callers
+    /// can avoid a second fetch/decode pass by using [`crate::assist::handle_assist_decoded`]
+    /// (or [`crate::interrupts::exec_interrupt_assist_decoded`] for interrupt-related
+    /// instructions).
+    Assist {
+        reason: AssistReason,
+        decoded: aero_x86::DecodedInst,
+        /// Whether an address-size override prefix (0x67) was present. This is
+        /// tracked separately because Tier-0 currently only uses `iced-x86`'s
+        /// decoded instruction, which does not expose a simple "was 0x67 seen"
+        /// query that matches our string-op/IO assist needs.
+        addr_size_override: bool,
+    },
 }
+
+impl PartialEq for StepExit {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Continue, Self::Continue)
+            | (Self::ContinueInhibitInterrupts, Self::ContinueInhibitInterrupts)
+            | (Self::Branch, Self::Branch)
+            | (Self::Halted, Self::Halted) => true,
+            (Self::BiosInterrupt(a), Self::BiosInterrupt(b)) => a == b,
+            (
+                Self::Assist { reason: a, .. },
+                Self::Assist { reason: b, .. },
+            ) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for StepExit {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BatchExit {
@@ -114,7 +148,11 @@ where
             }
         }
         ExecOutcome::Branch => Ok(StepExit::Branch),
-        ExecOutcome::Assist(r) => Ok(StepExit::Assist(r)),
+        ExecOutcome::Assist(reason) => Ok(StepExit::Assist {
+            reason,
+            decoded,
+            addr_size_override,
+        }),
     }
 }
 
@@ -190,10 +228,10 @@ pub fn run_batch_with_config<B: CpuBus>(
                     exit: BatchExit::BiosInterrupt(vector),
                 };
             }
-            Ok(StepExit::Assist(r)) => {
+            Ok(StepExit::Assist { reason, .. }) => {
                 return BatchResult {
                     executed,
-                    exit: BatchExit::Assist(r),
+                    exit: BatchExit::Assist(reason),
                 };
             }
             Err(e) => {

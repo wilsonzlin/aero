@@ -169,7 +169,7 @@ fn run_until_rip_single_step(state: &mut CpuState, bus: &mut FlatTestBus, stop_r
                     state.rip()
                 )
             }
-            StepExit::Assist(r) => panic!("unexpected assist: {r:?}"),
+            StepExit::Assist { reason: r, .. } => panic!("unexpected assist: {r:?}"),
         }
     }
     panic!("program did not reach stop RIP");

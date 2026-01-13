@@ -18,7 +18,7 @@ fn exec_once(state: &mut CpuState, bus: &mut FlatTestBus, bytes: &[u8]) -> Resul
         StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch => Ok(()),
         StepExit::Halted => panic!("unexpected HLT"),
         StepExit::BiosInterrupt(vector) => panic!("unexpected BIOS interrupt: {vector:#x}"),
-        StepExit::Assist(r) => panic!("unexpected assist: {r:?}"),
+        StepExit::Assist { reason: r, .. } => panic!("unexpected assist: {r:?}"),
     }
 }
 

@@ -1,6 +1,5 @@
-use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
+use crate::assist::{handle_assist_decoded, AssistContext};
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
-use crate::linear_mem::fetch_wrapped;
 use aero_perf::PerfWorker;
 
 mod exception_bridge;
@@ -394,7 +393,7 @@ impl<B: crate::mem::CpuBus> ExecCpu for Vcpu<B> {
 ///
 /// - Interrupt-related assists (`INT*`, `IRET*`, `CLI`, `STI`, `INTO`) are handled
 ///   via the architectural delivery logic in [`crate::interrupts`].
-/// - Privileged/IO/time assists are handled via [`crate::assist::handle_assist`].
+/// - Privileged/IO/time assists are handled via [`crate::assist::handle_assist_decoded`].
 ///
 /// BIOS interrupt exits (real-mode `INT n` hypercalls) are surfaced by re-storing
 /// the vector in [`crate::state::CpuState`] so the embedding can dispatch it.
@@ -449,7 +448,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
     fn exec_block(&mut self, cpu: &mut Vcpu<B>) -> InterpreterBlockExit {
         use aero_x86::{Mnemonic, OpKind, Register};
 
-        use crate::exception::{AssistReason, Exception};
+        use crate::exception::AssistReason;
         use crate::interp::tier0::exec::StepExit;
 
         let max = self.max_insts.max(1);
@@ -526,31 +525,11 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     executed += 1;
                     break;
                 }
-                StepExit::Assist(AssistReason::Interrupt) => {
-                    // Decode the instruction again to execute the interrupt/flag semantics.
-                    let ip = cpu.cpu.state.rip();
-                    let fetch_addr = cpu
-                        .cpu
-                        .state
-                        .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-                    let bytes = match fetch_wrapped(&cpu.cpu.state, &mut cpu.bus, fetch_addr, 15) {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            cpu.cpu.state.apply_exception_side_effects(&e);
-                            deliver_tier0_exception(cpu, ip, e);
-                            break;
-                        }
-                    };
-                    let bitness = cpu.cpu.state.bitness();
-                    let addr_size_override = has_addr_size_override(&bytes, bitness);
-                    let decoded = match self.decode_cache.decode(&bytes, ip, bitness) {
-                        Ok(decoded) => decoded,
-                        Err(_) => {
-                            deliver_tier0_exception(cpu, ip, Exception::InvalidOpcode);
-                            break;
-                        }
-                    };
-
+                StepExit::Assist {
+                    reason: AssistReason::Interrupt,
+                    decoded,
+                    addr_size_override,
+                } => {
                     let outcome = match crate::interrupts::exec_interrupt_assist_decoded(
                         &mut cpu.cpu,
                         &mut cpu.bus,
@@ -582,34 +561,16 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     // Preserve basic-block behavior: treat this instruction as a block boundary.
                     break;
                 }
-                StepExit::Assist(_reason) => {
+                StepExit::Assist {
+                    reason: _reason,
+                    decoded,
+                    addr_size_override,
+                } => {
                     // Some privileged assists (notably `MOV SS, r/m16` and `POP SS`) create an
                     // interrupt shadow, inhibiting maskable interrupts for the following
-                    // instruction. Decode here so we can update the interrupt bookkeeping in
+                    // instruction. Use the already decoded instruction so we can update the
+                    // interrupt bookkeeping in
                     // `PendingEventState`.
-                    let ip = cpu.cpu.state.rip();
-                    let fetch_addr = cpu
-                        .cpu
-                        .state
-                        .apply_a20(cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-                    let bytes = match fetch_wrapped(&cpu.cpu.state, &mut cpu.bus, fetch_addr, 15) {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            cpu.cpu.state.apply_exception_side_effects(&e);
-                            deliver_tier0_exception(cpu, ip, e);
-                            break;
-                        }
-                    };
-                    let bitness = cpu.cpu.state.bitness();
-                    // Keep address-size override prefix state in sync with `assist::handle_assist`.
-                    let addr_size_override = has_addr_size_override(&bytes, bitness);
-                    let decoded = match self.decode_cache.decode(&bytes, ip, bitness) {
-                        Ok(decoded) => decoded,
-                        Err(_) => {
-                            deliver_tier0_exception(cpu, ip, Exception::InvalidOpcode);
-                            break;
-                        }
-                    };
                     let inhibits_interrupt =
                         matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
                             && decoded.instr.op_count() > 0
@@ -618,6 +579,7 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
 
                     // `handle_assist_decoded` does not implicitly sync paging state (unlike
                     // `handle_assist`), so keep the bus coherent before and after.
+                    let ip = cpu.cpu.state.rip();
                     cpu.bus.sync(&cpu.cpu.state);
                     let res = handle_assist_decoded(
                         &mut self.assist,

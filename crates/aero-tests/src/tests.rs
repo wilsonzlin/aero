@@ -5,7 +5,7 @@ use aero_cpu_core::state::{
     mask_bits, CpuMode, CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_SF, FLAG_ZF, RFLAGS_IF,
 };
 use aero_cpu_core::{AssistReason, Exception};
-use aero_x86::{decode, Instruction, Mnemonic, OpKind, Register};
+use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 use std::collections::HashMap;
 
 struct TestMem {
@@ -121,8 +121,12 @@ impl Machine {
                 self.pending.retire_instruction();
                 Ok(StepOutcome::Continue)
             }
-            StepExit::Assist(reason) => {
-                self.handle_assist(reason)?;
+            StepExit::Assist {
+                reason,
+                decoded,
+                addr_size_override,
+            } => {
+                self.handle_assist(reason, &decoded, addr_size_override)?;
                 self.pending.retire_instruction();
                 Ok(StepOutcome::Continue)
             }
@@ -164,21 +168,20 @@ impl Machine {
         Ok(())
     }
 
-    fn handle_assist(&mut self, _reason: AssistReason) -> Result<(), Exception> {
+    fn handle_assist(
+        &mut self,
+        _reason: AssistReason,
+        decoded: &DecodedInst,
+        _addr_size_override: bool,
+    ) -> Result<(), Exception> {
         let mut bus = Bus {
             mem: &mut self.mem,
             ports: &mut self.ports,
         };
 
         let ip = self.cpu.rip();
-        let fetch_addr = self
-            .cpu
-            .apply_a20(self.cpu.seg_base_reg(Register::CS).wrapping_add(ip));
-        let bytes = bus.fetch(fetch_addr, 15)?;
-        let decoded =
-            decode(&bytes, ip, self.cpu.bitness()).map_err(|_| Exception::InvalidOpcode)?;
         let next_ip = ip.wrapping_add(decoded.len as u64) & self.cpu.mode.ip_mask();
-        let instr = decoded.instr;
+        let instr = &decoded.instr;
 
         match instr.mnemonic() {
             Mnemonic::In => {
@@ -266,7 +269,7 @@ impl Machine {
                 if instr.op_kind(0) != OpKind::Memory {
                     return Err(Exception::InvalidOpcode);
                 }
-                let addr = calc_ea(&self.cpu, &instr, next_ip, true)?;
+                let addr = calc_ea(&self.cpu, instr, next_ip, true)?;
                 let limit = bus.read_u16(addr)?;
                 let base = bus.read_u32(addr + 2)? as u64;
                 match instr.mnemonic() {
@@ -287,7 +290,7 @@ impl Machine {
                 let sel = match instr.op_kind(0) {
                     OpKind::Register => self.cpu.read_reg(instr.op0_register()) as u16,
                     OpKind::Memory => {
-                        let addr = calc_ea(&self.cpu, &instr, next_ip, true)?;
+                        let addr = calc_ea(&self.cpu, instr, next_ip, true)?;
                         bus.read_u16(addr)?
                     }
                     _ => return Err(Exception::InvalidOpcode),
