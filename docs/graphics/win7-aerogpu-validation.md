@@ -434,6 +434,7 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
    aerogpu_dbgctl --dump-ring --ring-id 0
    aerogpu_dbgctl --dump-createalloc
    aerogpu_dbgctl --dump-vblank
+   aerogpu_dbgctl --query-perf
    ```
 4. **If the desktop is frozen but the VM is alive**, dump again (to see if anything advances).
 
@@ -469,12 +470,16 @@ For the canonical, up-to-date command list and global options, see:
 
 | Command | What it should report/do | When to use |
 |---|---|---|
-| `--status` / `--query-version` (alias: `--query-device`) | combined snapshot: device/ABI + UMDRIVERPRIVATE summary + fences + ring0 + scanout0 + vblank + CreateAllocation trace summary | first command in any bug report |
+| `--status` / `--query-version` (alias: `--query-device`) | combined snapshot: device/ABI + UMDRIVERPRIVATE summary + fences + ring0 + scanout0 + cursor (when supported) + vblank + CreateAllocation trace summary | first command in any bug report |
 | `--query-umd-private` | KMD-provided `UMDRIVERPRIVATE` blob (ABI + feature discovery used by UMDs) | diagnosing ABI/feature mismatches |
 | `--query-fence` | last submitted + last completed fence | “fence stuck” diagnosis |
+| `--watch-fence --samples N --interval-ms M [--timeout-ms T]` | polls `--query-fence` in a loop and prints one line per sample (deltas + estimated rate + stall warnings) | quickly confirm whether fences are progressing |
+| `--query-perf` (alias: `--perf`) | KMD-provided perf/health counter snapshot (fence/ring progress, submit/IRQ/reset counts, vblank counters) | baseline collection and regression triage |
 | `--dump-ring --ring-id N` | ring head/tail + recent submission descriptors (newest-at-tail window on AGPU) | hangs/TDR triage |
+| `--watch-ring --samples N --interval-ms M [--ring-id N]` | polls ring head/tail in a loop and prints one line per sample (pending count + last fence/flags when available) | diagnose “ring not draining” / stuck submit paths |
 | `--query-scanout` | cached scanout mode/visibility vs best-effort MMIO snapshot (`SCANOUT0_*`, including framebuffer GPA) | diagnosing blank output, mode/pitch mismatches, scanline bounds issues |
-| `--dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)* | recent `DxgkDdiCreateAllocation` trace entries | diagnosing allocation flag mismatches and shared-surface ID issues |
+| `--query-cursor` (alias: `--dump-cursor`) | cursor MMIO state (`CURSOR_*` registers) | diagnosing cursor bring-up issues |
+| `--dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)* | recent `DxgkDdiCreateAllocation` trace entries (optionally `--csv <path>` for stable machine parsing) | diagnosing allocation flag mismatches and shared-surface ID issues |
 | `--dump-vblank` (alias: `--query-vblank`) | IRQ enable/status + vblank seq/time/period; prints `vblank_interrupt_type` when dxgkrnl has enabled vblank delivery via `DxgkDdiControlInterrupt` | DWM stutter / Basic fallback |
 | `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` (bounded by `--timeout-ms`) | verifying vblank interrupts/waits work |
 | `--query-scanline` | `D3DKMTGetScanLine` (scanline + vblank state) | sanity-check scanline/vblank state queries |
@@ -483,14 +488,17 @@ Common global options:
 
 - `--timeout-ms N` bounds driver-private escape calls (and each `--wait-vblank` wait).
 - `--vblank-samples N` + `--vblank-interval-ms N` let you sample `--dump-vblank` / `--query-scanline` over time.
+- `--samples N` + `--interval-ms N` are used by `--watch-fence` and `--watch-ring`.
+- `--ring-id N` selects which ring to dump/watch (default: 0).
 - `--display \\.\DISPLAY1` selects which adapter to query (use `--list-displays` to enumerate).
 
 The key is: **one command to capture “where are my fences and why aren’t they moving?”**
 
 #### Future work / optional extensions (not implemented by `aerogpu_dbgctl` today)
 
-Some bring-up playbooks mention additional “debug knobs” (log verbosity control, lightweight perf capture, hang injection, forced reset, etc.).
+Some bring-up playbooks mention additional “debug knobs” (runtime log verbosity control, hang injection, forced reset, start/stop perf recording to a file, etc.).
 Those are **not implemented** by the in-tree Win7 dbgctl tool today; treat them as driver-specific extensions if/when added.
+For lightweight, snapshot-style counters, use `aerogpu_dbgctl --query-perf`.
 
 ### 5.3 Common error codes and likely causes
 

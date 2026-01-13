@@ -52,6 +52,10 @@ Minimum supported commands:
   - an observed completed-fence rate (fences/sec), and
   - a stall warning if the completed fence does not advance for multiple intervals while work is pending.
 
+- `aerogpu_dbgctl --query-perf` *(alias: `--perf`)*  
+  Dumps a KMD-provided perf/health counter snapshot (fence/ring progress, submit counts, IRQ counts, reset counts, vblank counters).
+  On older KMD builds this may print `(not supported)`; upgrade the driver to enable it.
+
 - `aerogpu_dbgctl --query-scanout`  
   Dumps scanout 0 state as seen by the KMD, including:
   - cached mode (`CurrentWidth/Height/Format/Pitch`) and visibility (`enable`)
@@ -80,11 +84,11 @@ Minimum supported commands:
   - `flags`
   - (AGPU only) `alloc_table_gpa` / `alloc_table_size_bytes`
   
-  Note: for the AGPU (versioned) ring format, the v2 dump returns a **recent tail window** of descriptors ending at `tail-1`
-  (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
-  devices/emulators still expose the most recent submission(s) to tooling/tests.
+   Note: for the AGPU (versioned) ring format, the v2 dump returns a **recent tail window** of descriptors ending at `tail-1`
+   (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
+   devices/emulators still expose the most recent submission(s) to tooling/tests.
 
-- `aerogpu_dbgctl --watch-ring --ring-id N --samples N --interval-ms M`  
+- `aerogpu_dbgctl --watch-ring --samples N --interval-ms M [--ring-id N]`  
   Polls ring head/tail in a loop and prints **one line per sample** with:
   - `head`, `tail`, and `pending` (queue depth, computed as `tail-head` / best-effort legacy wraparound), and
   - (when available) the newest descriptor's `fence` and `flags` for quick correlation with fence progression.
@@ -140,10 +144,11 @@ Examples:
 ```
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
-aerogpu_dbgctl --query-device
+aerogpu_dbgctl --query-version
 aerogpu_dbgctl --query-umd-private
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --watch-fence --samples 120 --interval-ms 250 --timeout-ms 30000
+aerogpu_dbgctl --query-perf
 aerogpu_dbgctl --query-scanout
 aerogpu_dbgctl --dump-scanout-bmp C:\scanout.bmp
 aerogpu_dbgctl --query-cursor
@@ -216,6 +221,7 @@ Escape ops used:
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`, `--watch-fence`
+- `AEROGPU_ESCAPE_OP_QUERY_PERF` → `--query-perf`
 - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`
 - `AEROGPU_ESCAPE_OP_READ_GPA` → `--dump-scanout-bmp`
 - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`
@@ -243,7 +249,7 @@ The in-tree Win7 dbgctl tool is focused on snapshots/queries and compatibility w
 It does **not** currently provide:
 
 - runtime log verbosity controls
-- perf capture / start-stop commands
+- long-running perf capture / start-stop recording (dbgctl only supports snapshot-style counters via `--query-perf`)
 - hang injection or forced reset helpers
 
 If/when we add those as new driver-private escape ops, this README should be updated alongside the implementation.
