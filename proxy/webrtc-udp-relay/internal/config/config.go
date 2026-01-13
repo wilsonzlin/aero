@@ -39,7 +39,7 @@ const (
 	EnvPreferV2                      = "PREFER_V2"
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
-	EnvL2BackendWSURL = "L2_BACKEND_WS_URL"
+	EnvL2BackendWSURL              = "L2_BACKEND_WS_URL"
 	// Preferred env vars for backend auth/header hardening.
 	EnvL2BackendOrigin             = "L2_BACKEND_ORIGIN"
 	EnvL2BackendToken              = "L2_BACKEND_TOKEN"
@@ -96,27 +96,28 @@ const (
 	// Must be non-zero to avoid unbounded session leaks by default.
 	DefaultSessionPreallocTTL    = 60 * time.Second
 
-	DefaultUDPBindingIdleTimeout     = 60 * time.Second
-	DefaultUDPInboundFilterMode      = UDPInboundFilterModeAddressAndPort
-	DefaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
-	DefaultMaxUDPBindingsPerSession  = 128
-	DefaultMaxDatagramPayloadBytes   = udpproto.DefaultMaxPayload
+	DefaultUDPBindingIdleTimeout       = 60 * time.Second
+	DefaultUDPInboundFilterMode        = UDPInboundFilterModeAddressAndPort
+	DefaultDataChannelSendQueueBytes   = 1 << 20 // 1MiB
+	DefaultMaxUDPBindingsPerSession    = 128
+	DefaultMaxDatagramPayloadBytes     = udpproto.DefaultMaxPayload
 	// DefaultUDPReadBufferBytes is the default UDP socket read buffer size for
 	// each UDP port binding (per IP family).
 	//
 	// The buffer is intentionally sized to MaxDatagramPayloadBytes+1, so the
 	// relay can detect and drop oversized UDP datagrams instead of forwarding a
 	// silently truncated payload.
-	DefaultUDPReadBufferBytes        = DefaultMaxDatagramPayloadBytes + 1
+	DefaultUDPReadBufferBytes          = DefaultMaxDatagramPayloadBytes + 1
 	DefaultMaxAllowedRemotesPerBinding = 1024
-	DefaultL2MaxMessageBytes         = 4096
+	DefaultL2MaxMessageBytes           = 4096
+
 	// DefaultWebRTCDataChannelMaxMessageOverheadBytes is added on top of the
 	// protocol-derived minimum when computing the effective default for
 	// WebRTC_DATACHANNEL_MAX_MESSAGE_BYTES.
 	DefaultWebRTCDataChannelMaxMessageOverheadBytes = 256
 	// DefaultWebRTCSCTPMaxReceiveBufferBytes caps the SCTP receive buffer used by
 	// pion (applies before application-level message decoding).
-	DefaultWebRTCSCTPMaxReceiveBufferBytes = 1 << 20 // 1MiB
+	DefaultWebRTCSCTPMaxReceiveBufferBytes          = 1 << 20 // 1MiB
 
 	DefaultAuthMode AuthMode = AuthModeAPIKey
 
