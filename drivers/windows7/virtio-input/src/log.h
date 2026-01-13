@@ -133,10 +133,12 @@ __forceinline BOOLEAN VioInputLogEnabled(_In_ ULONG Mask)
     return FALSE;
 }
 
-#define VIOINPUT_LOG(_mask, ...) \
-    do {                        \
-        UNREFERENCED_PARAMETER(_mask); \
-    } while (0)
+/*
+ * When diagnostics are compiled out, keep VIOINPUT_LOG() as a single statement
+ * without triggering "conditional expression is constant" warnings under /W4.
+ * Extra format/arg parameters are intentionally discarded.
+ */
+#define VIOINPUT_LOG(_mask, ...) (void)(_mask)
 
 #endif
 

@@ -54,8 +54,8 @@
 
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <TreatWarningAsError>false</TreatWarningAsError>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <AdditionalIncludeDirectories>src;..\..\windows\virtio\common;..\..\win7\virtio\virtio-core\include;..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_KERNEL_MODE;KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -68,8 +68,8 @@
 
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <TreatWarningAsError>false</TreatWarningAsError>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <AdditionalIncludeDirectories>src;..\..\windows\virtio\common;..\..\win7\virtio\virtio-core\include;..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_KERNEL_MODE;KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
