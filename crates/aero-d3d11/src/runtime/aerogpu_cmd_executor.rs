@@ -572,6 +572,122 @@ struct ConstantBufferScratch {
     size: u64,
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+struct GsScratchBuffer {
+    id: BufferId,
+    buffer: wgpu::Buffer,
+    size: u64,
+}
+
+#[derive(Debug, Default)]
+#[allow(dead_code)]
+struct GsScratchPool {
+    output: Option<GsScratchBuffer>,
+    counter: Option<GsScratchBuffer>,
+    indirect_args: Option<GsScratchBuffer>,
+    output_allocations: u32,
+    counter_allocations: u32,
+    indirect_allocations: u32,
+}
+
+#[allow(dead_code)]
+impl GsScratchPool {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn ensure_output(
+        &mut self,
+        device: &wgpu::Device,
+        next_id: &mut u64,
+        required_size: u64,
+    ) -> &GsScratchBuffer {
+        Self::ensure_buffer(
+            device,
+            next_id,
+            &mut self.output,
+            &mut self.output_allocations,
+            required_size,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+            "aerogpu_cmd gs scratch output vertex buffer",
+        )
+    }
+
+    fn ensure_counter(
+        &mut self,
+        device: &wgpu::Device,
+        next_id: &mut u64,
+        required_size: u64,
+    ) -> &GsScratchBuffer {
+        Self::ensure_buffer(
+            device,
+            next_id,
+            &mut self.counter,
+            &mut self.counter_allocations,
+            required_size,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            "aerogpu_cmd gs scratch counter buffer",
+        )
+    }
+
+    fn ensure_indirect_args(
+        &mut self,
+        device: &wgpu::Device,
+        next_id: &mut u64,
+        required_size: u64,
+    ) -> &GsScratchBuffer {
+        Self::ensure_buffer(
+            device,
+            next_id,
+            &mut self.indirect_args,
+            &mut self.indirect_allocations,
+            required_size,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            "aerogpu_cmd gs scratch indirect args buffer",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ensure_buffer<'a>(
+        device: &wgpu::Device,
+        next_id: &mut u64,
+        slot: &'a mut Option<GsScratchBuffer>,
+        allocation_counter: &mut u32,
+        required_size: u64,
+        usage: wgpu::BufferUsages,
+        label: &'static str,
+    ) -> &'a GsScratchBuffer {
+        // WebGPU disallows zero-sized buffers; also ensure COPY_BUFFER_ALIGNMENT for any copy/reset.
+        let required_size = required_size.max(wgpu::COPY_BUFFER_ALIGNMENT);
+        let required_size = required_size.saturating_add(wgpu::COPY_BUFFER_ALIGNMENT - 1)
+            & !(wgpu::COPY_BUFFER_ALIGNMENT - 1);
+
+        let needs_new = slot
+            .as_ref()
+            .map(|existing| existing.size < required_size)
+            .unwrap_or(true);
+
+        if needs_new {
+            let size = required_size
+                .checked_next_power_of_two()
+                .unwrap_or(required_size);
+            let id = BufferId(*next_id);
+            *next_id = next_id.wrapping_add(1);
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage,
+                mapped_at_creation: false,
+            });
+            *allocation_counter = allocation_counter.saturating_add(1);
+            *slot = Some(GsScratchBuffer { id, buffer, size });
+        }
+
+        slot.as_ref().expect("buffer inserted above")
+    }
+}
+
 #[derive(Debug, Default)]
 struct AerogpuD3d11Resources {
     buffers: HashMap<u32, BufferResource>,
@@ -668,6 +784,7 @@ pub struct AerogpuD3d11Executor {
     legacy_constants: HashMap<ShaderStage, wgpu::Buffer>,
 
     cbuffer_scratch: HashMap<(ShaderStage, u32), ConstantBufferScratch>,
+    gs_scratch: GsScratchPool,
     next_scratch_buffer_id: u64,
     expansion_scratch: ExpansionScratchAllocator,
 
@@ -854,6 +971,7 @@ impl AerogpuD3d11Executor {
             bindings,
             legacy_constants,
             cbuffer_scratch: HashMap::new(),
+            gs_scratch: GsScratchPool::default(),
             next_scratch_buffer_id: 1u64 << 32,
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
             dummy_uniform,
@@ -968,6 +1086,7 @@ impl AerogpuD3d11Executor {
         self.shared_surfaces.clear();
         self.pipeline_cache.clear();
         self.cbuffer_scratch.clear();
+        self.gs_scratch.clear();
         self.expansion_scratch.reset();
         self.encoder_used_buffers.clear();
         self.encoder_used_textures.clear();
@@ -10321,6 +10440,81 @@ fn main() {
 
         assert!(!aerogpu_format_is_x8(AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB));
         assert!(!aerogpu_format_is_x8(AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB));
+    }
+
+    #[test]
+    fn gs_scratch_pool_reuses_buffers_and_grows() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            assert_eq!(exec.gs_scratch.output_allocations, 0);
+            assert_eq!(exec.gs_scratch.counter_allocations, 0);
+            assert_eq!(exec.gs_scratch.indirect_allocations, 0);
+
+            // First request should allocate all three buffers.
+            let out_id_1 = exec
+                .gs_scratch
+                .ensure_output(&exec.device, &mut exec.next_scratch_buffer_id, 128)
+                .id;
+            let counter_id_1 = exec
+                .gs_scratch
+                .ensure_counter(&exec.device, &mut exec.next_scratch_buffer_id, 4)
+                .id;
+            let indirect_id_1 = exec
+                .gs_scratch
+                .ensure_indirect_args(&exec.device, &mut exec.next_scratch_buffer_id, 16)
+                .id;
+            assert_eq!(exec.gs_scratch.output_allocations, 1);
+            assert_eq!(exec.gs_scratch.counter_allocations, 1);
+            assert_eq!(exec.gs_scratch.indirect_allocations, 1);
+
+            // Smaller requests must reuse the same allocations.
+            let out_id_2 = exec
+                .gs_scratch
+                .ensure_output(&exec.device, &mut exec.next_scratch_buffer_id, 64)
+                .id;
+            let counter_id_2 = exec
+                .gs_scratch
+                .ensure_counter(&exec.device, &mut exec.next_scratch_buffer_id, 4)
+                .id;
+            let indirect_id_2 = exec
+                .gs_scratch
+                .ensure_indirect_args(&exec.device, &mut exec.next_scratch_buffer_id, 16)
+                .id;
+            assert_eq!(out_id_1, out_id_2);
+            assert_eq!(counter_id_1, counter_id_2);
+            assert_eq!(indirect_id_1, indirect_id_2);
+            assert_eq!(exec.gs_scratch.output_allocations, 1);
+            assert_eq!(exec.gs_scratch.counter_allocations, 1);
+            assert_eq!(exec.gs_scratch.indirect_allocations, 1);
+
+            // Request a larger output buffer; only the output allocation should be replaced.
+            let out_id_3 = exec
+                .gs_scratch
+                .ensure_output(&exec.device, &mut exec.next_scratch_buffer_id, 1024)
+                .id;
+            assert_ne!(out_id_1, out_id_3);
+            assert_eq!(exec.gs_scratch.output_allocations, 2);
+            assert_eq!(exec.gs_scratch.counter_allocations, 1);
+            assert_eq!(exec.gs_scratch.indirect_allocations, 1);
+
+            let out_size = exec
+                .gs_scratch
+                .output
+                .as_ref()
+                .expect("output buffer exists")
+                .size;
+            assert!(
+                out_size >= 1024,
+                "output buffer capacity must grow to satisfy request"
+            );
+        });
     }
 
     #[test]
