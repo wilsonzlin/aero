@@ -272,17 +272,17 @@ fn rdef_from_real_dxbc_fixture_parses_creator_and_resources() {
         .expect("RDEF should parse");
 
     assert_eq!(rdef.creator.as_deref(), Some("aero-fixture"));
-    assert_eq!(rdef.resources.len(), 2);
+    assert_eq!(rdef.bound_resources.len(), 2);
 
-    assert_eq!(rdef.resources[0].name, "g_texture");
-    assert_eq!(rdef.resources[0].ty, 2);
-    assert_eq!(rdef.resources[0].bind_point, 0);
-    assert_eq!(rdef.resources[0].bind_count, 1);
+    assert_eq!(rdef.bound_resources[0].name, "g_texture");
+    assert_eq!(rdef.bound_resources[0].input_type, 2);
+    assert_eq!(rdef.bound_resources[0].bind_point, 0);
+    assert_eq!(rdef.bound_resources[0].bind_count, 1);
 
-    assert_eq!(rdef.resources[1].name, "g_sampler");
-    assert_eq!(rdef.resources[1].ty, 3);
-    assert_eq!(rdef.resources[1].bind_point, 0);
-    assert_eq!(rdef.resources[1].bind_count, 1);
+    assert_eq!(rdef.bound_resources[1].name, "g_sampler");
+    assert_eq!(rdef.bound_resources[1].input_type, 3);
+    assert_eq!(rdef.bound_resources[1].bind_point, 0);
+    assert_eq!(rdef.bound_resources[1].bind_count, 1);
 }
 
 #[test]
@@ -295,5 +295,5 @@ fn rdef_from_vertex_shader_fixture_with_no_resources_is_empty() {
         .expect("RDEF should parse");
 
     assert_eq!(rdef.creator.as_deref(), Some("aero-fixture"));
-    assert!(rdef.resources.is_empty());
+    assert!(rdef.bound_resources.is_empty());
 }
