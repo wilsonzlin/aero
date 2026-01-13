@@ -857,6 +857,12 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check(caps.PixelShaderVersion >= D3DPS_VERSION(2, 0), "PixelShaderVersion >= 2.0")) {
     return false;
   }
+  if (!Check((caps.TextureCaps & D3DPTEXTURECAPS_POW2) == 0, "TextureCaps does not include POW2")) {
+    return false;
+  }
+  if (!Check((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) != 0, "RasterCaps includes SCISSORTEST")) {
+    return false;
+  }
 
   uint32_t format_count = 0;
   D3D9DDIARG_GETCAPS get_fmt_count{};

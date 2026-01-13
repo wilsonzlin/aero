@@ -186,7 +186,14 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->DeviceType = D3DDEVTYPE_HAL;
   out->AdapterOrdinal = 0;
 
-  out->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT;
+  // Keep caps conservative: only advertise features that are actually wired up
+  // end-to-end in the AeroGPU D3D9 UMD so the runtime doesn't route into
+  // unimplemented DDIs (notably patch rendering and MSAA).
+  //
+  // We still report SM2.0 (VS/PS 2.0) as required by DWM on Win7.
+  out->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
+                 D3DDEVCAPS_DRAWPRIMITIVES2 |
+                 D3DDEVCAPS_DRAWPRIMITIVES2EX;
 
   out->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
 
@@ -198,9 +205,19 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS;
 
-  out->RasterCaps = D3DPRASTERCAPS_SCISSORTEST;
+  // DWM relies heavily on scissoring for window clipping. Include depth-test and
+  // cull bits as they are commonly queried by apps and are expected for a HAL
+  // device.
+  out->RasterCaps = D3DPRASTERCAPS_SCISSORTEST |
+                    D3DPRASTERCAPS_ZTEST |
+                    D3DPRASTERCAPS_CULLCCW |
+                    D3DPRASTERCAPS_CULLCW;
 
-  out->AlphaCmpCaps = D3DPCMPCAPS_ALWAYS;
+  // Common compare funcs (alpha test + depth test). Keep stencil ops
+  // conservative until exercised more thoroughly.
+  out->ZCmpCaps = D3DPCMPCAPS_NEVER | D3DPCMPCAPS_LESS | D3DPCMPCAPS_EQUAL | D3DPCMPCAPS_LESSEQUAL |
+                  D3DPCMPCAPS_GREATER | D3DPCMPCAPS_NOTEQUAL | D3DPCMPCAPS_GREATEREQUAL | D3DPCMPCAPS_ALWAYS;
+  out->AlphaCmpCaps = out->ZCmpCaps;
 
   out->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA;
   out->DestBlendCaps = out->SrcBlendCaps;
@@ -216,20 +233,25 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP;
 
-  out->TextureCaps = D3DPTEXTURECAPS_ALPHA;
+  // NPOT textures are required for DWM (arbitrary window sizes). Do NOT set
+  // D3DPTEXTURECAPS_POW2. Also avoid cubemap/volume caps until implemented.
+  out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
 
   out->MaxTextureWidth = 4096;
   out->MaxTextureHeight = 4096;
-  out->MaxVolumeExtent = 256;
+  // Volume textures are not supported by the current UMD implementation.
+  out->MaxVolumeExtent = 0;
 
   out->MaxTextureRepeat = 8192;
   out->MaxTextureAspectRatio = 8192;
   out->MaxAnisotropy = 1;
   out->MaxVertexW = 1e10f;
 
-  out->MaxSimultaneousTextures = 8;
-  out->MaxTextureBlendStages = 8;
-  out->MaxStreams = 16;
+  // Be conservative: DWM uses 1-4 textures/streams, and advertising higher
+  // counts can cause apps to select untested fixed-function paths.
+  out->MaxSimultaneousTextures = 4;
+  out->MaxTextureBlendStages = 4;
+  out->MaxStreams = 4;
   out->MaxStreamStride = 2048;
 
   out->MaxPrimitiveCount = 0xFFFFFu;
@@ -245,6 +267,7 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->VS20Caps.DynamicFlowControlDepth = 0;
   out->VS20Caps.NumTemps = 32;
   out->VS20Caps.StaticFlowControlDepth = 0;
+  out->VS20Caps.NumInstructionSlots = 256;
 
   out->PS20Caps.Caps = 0;
   out->PS20Caps.DynamicFlowControlDepth = 0;
@@ -261,16 +284,26 @@ void log_caps_once(const D3DCAPS9& caps) {
     return;
   }
 
-  logf("aerogpu-d3d9: caps summary: VS=0x%08lX PS=0x%08lX MaxTex=%lux%lu Caps2=0x%08lX\n",
+  logf("aerogpu-d3d9: caps summary: VS=0x%08lX PS=0x%08lX MaxTex=%lux%lu Caps2=0x%08lX DevCaps=0x%08lX\n",
        (unsigned long)caps.VertexShaderVersion,
        (unsigned long)caps.PixelShaderVersion,
        (unsigned long)caps.MaxTextureWidth,
        (unsigned long)caps.MaxTextureHeight,
-       (unsigned long)caps.Caps2);
-  logf("aerogpu-d3d9: caps bits: RasterCaps=0x%08lX TextureCaps=0x%08lX TextureFilterCaps=0x%08lX\n",
+       (unsigned long)caps.Caps2,
+       (unsigned long)caps.DevCaps);
+  logf("aerogpu-d3d9: caps bits: RasterCaps=0x%08lX ZCmpCaps=0x%08lX AlphaCmpCaps=0x%08lX TextureCaps=0x%08lX\n",
        (unsigned long)caps.RasterCaps,
-       (unsigned long)caps.TextureCaps,
-       (unsigned long)caps.TextureFilterCaps);
+       (unsigned long)caps.ZCmpCaps,
+       (unsigned long)caps.AlphaCmpCaps,
+       (unsigned long)caps.TextureCaps);
+  logf("aerogpu-d3d9: caps limits: MaxSimulTex=%lu MaxTexStages=%lu MaxStreams=%lu MaxVol=%lu\n",
+       (unsigned long)caps.MaxSimultaneousTextures,
+       (unsigned long)caps.MaxTextureBlendStages,
+       (unsigned long)caps.MaxStreams,
+       (unsigned long)caps.MaxVolumeExtent);
+  logf("aerogpu-d3d9: caps texfilt: TextureFilterCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
+       (unsigned long)caps.TextureFilterCaps,
+       (unsigned long)caps.StretchRectFilterCaps);
   logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
        (unsigned long)caps.SrcBlendCaps,
        (unsigned long)caps.DestBlendCaps,
@@ -342,16 +375,21 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
       caps->DestBlendCaps = caps->SrcBlendCaps;
       caps->MaxTextureWidth = 4096;
       caps->MaxTextureHeight = 4096;
-      caps->MaxVolumeExtent = 256;
-      caps->MaxSimultaneousTextures = 8;
-      caps->MaxStreams = 16;
+      // Keep portable caps aligned with the Win7 WDDM path: no volume textures,
+      // conservative limits for the compositor workload.
+      caps->MaxVolumeExtent = 0;
+      caps->MaxSimultaneousTextures = 4;
+      caps->MaxTextureBlendStages = 4;
+      caps->MaxStreams = 4;
       caps->VertexShaderVersion = D3DVS_VERSION(2, 0);
       caps->PixelShaderVersion = D3DPS_VERSION(2, 0);
       caps->MaxVertexShaderConst = 256;
       caps->PresentationIntervals = D3DPRESENT_INTERVAL_ONE | D3DPRESENT_INTERVAL_IMMEDIATE;
       caps->NumSimultaneousRTs = 1;
       caps->VS20Caps.NumTemps = 32;
+      caps->VS20Caps.NumInstructionSlots = 256;
       caps->PS20Caps.NumTemps = 32;
+      caps->PS20Caps.NumInstructionSlots = 512;
       caps->PixelShader1xMaxValue = 1.0f;
       return S_OK;
 #endif
