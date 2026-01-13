@@ -801,7 +801,9 @@ fn decodes_sample_and_sample_l() {
 #[test]
 fn decodes_sample_via_structural_fallback() {
     const DCL_DUMMY: u32 = 0x280;
-    const OPCODE_UNKNOWN_SAMPLE: u32 = 0x44;
+    // Use an opcode ID that is not currently recognized by the decoder so we can exercise
+    // the structural `sample` fallback path.
+    const OPCODE_UNKNOWN_SAMPLE: u32 = 0x40;
 
     let mut body = Vec::<u32>::new();
 
