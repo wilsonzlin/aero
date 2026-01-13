@@ -23,11 +23,28 @@ Reboot.
 If the driver is test-signed, you must install the signing certificate (.cer)
 into the Local Machine certificate stores:
 
+  - If this folder contains both:
+      * aero-virtio-input-test.cer
+      * INSTALL_CERT.cmd
+    then you can run (elevated):
+      INSTALL_CERT.cmd
+
+  - Or manually (elevated):
   certutil -addstore -f Root <path-to-cert>.cer
   certutil -addstore -f TrustedPublisher <path-to-cert>.cer
 
 3) Install the driver (Device Manager -> "Have Disk...")
 ---------------------------------------------------------
+Option A (pnputil, elevated):
+
+  - If this folder contains INSTALL_DRIVER.cmd, run:
+      INSTALL_DRIVER.cmd
+
+  - Or manually:
+      pnputil -i -a {{INF}}
+
+Option B (Device Manager -> "Have Disk..."):
+
 1. Extract this ZIP somewhere.
 2. Device Manager -> find the virtio-input device -> Update Driver Software...
 3. Browse my computer for driver software -> Let me pick -> Have Disk...
