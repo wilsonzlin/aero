@@ -335,6 +335,19 @@ fn dxbc_container_roundtrip_extracts_shdr() {
 }
 
 #[test]
+fn dxbc_container_honors_total_size_when_buffer_has_trailing_bytes() {
+    // DXBC headers carry a declared `total_size`. The shared `aero-dxbc` parser should treat any
+    // trailing bytes in the backing buffer as out-of-container and ensure chunk slices never
+    // reference them.
+    let vs = to_bytes(&assemble_vs_passthrough());
+    let mut container = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &vs)]);
+    container.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]); // trailing garbage beyond total_size
+
+    let extracted = dxbc::extract_shader_bytecode(&container).unwrap();
+    assert_eq!(extracted, vs);
+}
+
+#[test]
 fn dxbc_container_missing_shdr_is_an_error() {
     // DXBC containers should always provide the shader bytecode in SHDR/SHEX. If the container is
     // missing those chunks, the caller likely passed the wrong blob (or the guest sent corrupted
