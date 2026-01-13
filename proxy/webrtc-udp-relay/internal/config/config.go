@@ -230,7 +230,7 @@ type Config struct {
 	APIKey    string
 	JWTSecret string
 
-	SignalingAuthTimeout time.Duration
+	SignalingAuthTimeout    time.Duration
 	SignalingWSIdleTimeout  time.Duration
 	SignalingWSPingInterval time.Duration
 
