@@ -47,8 +47,8 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
   [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md).
 - With `MachineConfig::enable_aerogpu=true`, the machine exposes the AeroGPU PCI identity at
   `00:07.0` (`A3A0:0001`) for driver binding. In the intended AeroGPU-owned VGA/VBE boot display
-  path, firmware derives the VBE mode-info `PhysBasePtr` from AeroGPU BAR1:
-  `PhysBasePtr = BAR1_BASE + 0x20000`.
+  path (see [`16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md)), firmware derives
+  the VBE mode-info `PhysBasePtr` from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`.
 - With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), boot display is provided by
   the standalone `aero_gpu_vga` VGA/VBE device model, and the machine exposes a minimal PCI VGA
   function at `00:0c.0` (`1234:1111`) so the VBE LFB is reachable via the PCI MMIO router.

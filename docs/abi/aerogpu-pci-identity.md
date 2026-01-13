@@ -19,7 +19,7 @@ The canonical machine supports **two mutually-exclusive** display configurations
   protocol + scanout + VBE mode set) is integrated separately.
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
-  framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x20000`.
+  framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`.
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
   standalone `aero_gpu_vga` VGA/VBE implementation, plus a minimal Bochs/QEMU “Standard VGA”-like
   PCI stub at `00:0c.0` (`1234:1111`) used only to route the VBE linear framebuffer through the PCI
