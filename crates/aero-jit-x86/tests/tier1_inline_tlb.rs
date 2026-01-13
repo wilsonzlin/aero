@@ -876,6 +876,102 @@ fn tier1_inline_tlb_cross_page_store_can_use_fastpath_when_enabled() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_mmio_uses_slow_helper_when_configured() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    // Allocate enough bytes so the slow helper can read both pages, but have `mmu_translate` mark
+    // only the first page as RAM to force the slow path when `inline_tlb_mmio_exit` is disabled.
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 1);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_mmio_uses_slow_helper_when_configured() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+        &block,
+        cpu,
+        ram,
+        0x1000,
+        None,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_writes, 1);
+}
+
+#[test]
 fn tier1_inline_tlb_mmio_load_exits_to_runtime() {
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, 0xF000);
