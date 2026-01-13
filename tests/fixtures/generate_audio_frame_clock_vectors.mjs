@@ -12,6 +12,16 @@
 const NS_PER_SEC = 1_000_000_000n;
 const MAX_SAFE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
 
+function stepsFromDeltas(deltasNs) {
+  let now = 0;
+  const steps = [];
+  for (const delta of deltasNs) {
+    now += delta;
+    steps.push(now);
+  }
+  return steps;
+}
+
 function assertSafeInteger(value, label) {
   if (!Number.isSafeInteger(value)) throw new Error(`${label} must be a JS safe integer, got: ${String(value)}`);
   if (value < 0) throw new Error(`${label} must be >= 0, got: ${String(value)}`);
@@ -72,6 +82,21 @@ const vectors = [
     // 16_666_666 and 16_666_667 ns steps. Frame output is intentionally non-uniform to verify
     // remainder carry semantics (799/800/801 frames at 48kHz).
     steps: [16_666_666, 33_333_333, 50_000_000, 66_666_666, 83_333_333, 100_000_000, 116_666_666],
+  },
+  {
+    name: "48kHz_jittery_60Hz_40x16666667_20x16666666_full_second",
+    sample_rate_hz: 48000,
+    start_time_ns: 0,
+    // 1s split into 60 ticks with the classic 40/20 distribution:
+    // - 40 ticks of 16_666_667ns
+    // - 20 ticks of 16_666_666ns
+    //
+    // The order here is chosen to produce non-uniform per-tick frame counts while still summing to
+    // exactly 1_000_000_000ns, exercising remainder-carry semantics over a longer sequence.
+    steps: stepsFromDeltas([
+      ...Array.from({ length: 20 }, () => 16_666_667).flatMap((d) => [d, 16_666_666]),
+      ...Array.from({ length: 20 }, () => 16_666_667),
+    ]),
   },
   {
     name: "48kHz_jittery_ticks_variable_frames",
