@@ -289,7 +289,6 @@ impl<T: DiskBackend + ?Sized> DiskBackend for &mut T {
         (**self).writev_sectors(lba, bufs)
     }
 }
-
 impl<T: DiskBackend + ?Sized> DiskBackend for Box<T> {
     fn sector_size(&self) -> u32 {
         (**self).sector_size()
@@ -302,7 +301,6 @@ impl<T: DiskBackend + ?Sized> DiskBackend for Box<T> {
     fn capacity_sectors(&self) -> u64 {
         (**self).capacity_sectors()
     }
-
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
         (**self).read_sectors(lba, buf)
     }

@@ -124,10 +124,6 @@ pub fn config_read(cfg: &mut PciConfigSpace, offset: u16, size: usize) -> u32 {
     cfg.read(offset, size)
 }
 
-/// Write to a canonical [`PciConfigSpace`] using the emulator's forgiving semantics.
-///
-/// This converts subword/misaligned BAR writes into safe aligned 32-bit writes, avoiding
-/// `assert!()`s in the canonical config-space model.
 pub fn config_write(cfg: &mut PciConfigSpace, offset: u16, size: usize, value: u32) {
     if !validate_access(offset, size) {
         return;
