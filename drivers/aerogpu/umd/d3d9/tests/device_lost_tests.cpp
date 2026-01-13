@@ -143,7 +143,43 @@ bool TestDeviceLostDdiReturnsStableError() {
   if (!Check(hr == kD3dErrDeviceLost, "DrawPrimitive returns DEVICELOST when device is lost")) {
     return false;
   }
- 
+
+  if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
+    return false;
+  }
+  float rect_segs[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  D3DRECTPATCH_INFO rect_info{};
+  rect_info.StartVertexOffset = 0;
+  rect_info.NumVertices = 16;
+  rect_info.Basis = D3DBASIS_BEZIER;
+  rect_info.Degree = D3DDEGREE_CUBIC;
+  D3DDDIARG_DRAWRECTPATCH draw_rect{};
+  draw_rect.Handle = 1;
+  draw_rect.pNumSegs = rect_segs;
+  draw_rect.pRectPatchInfo = &rect_info;
+  hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect);
+  if (!Check(hr == kD3dErrDeviceLost, "DrawRectPatch returns DEVICELOST when device is lost")) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnDrawTriPatch != nullptr, "DrawTriPatch must be available")) {
+    return false;
+  }
+  float tri_segs[3] = {1.0f, 1.0f, 1.0f};
+  D3DTRIPATCH_INFO tri_info{};
+  tri_info.StartVertexOffset = 0;
+  tri_info.NumVertices = 10;
+  tri_info.Basis = D3DBASIS_BEZIER;
+  tri_info.Degree = D3DDEGREE_CUBIC;
+  D3DDDIARG_DRAWTRIPATCH draw_tri{};
+  draw_tri.Handle = 2;
+  draw_tri.pNumSegs = tri_segs;
+  draw_tri.pTriPatchInfo = &tri_info;
+  hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri);
+  if (!Check(hr == kD3dErrDeviceLost, "DrawTriPatch returns DEVICELOST when device is lost")) {
+    return false;
+  }
+
   if (!Check(cleanup.device_funcs.pfnPresent != nullptr, "Present must be available")) {
     return false;
   }
@@ -171,4 +207,3 @@ bool TestDeviceLostDdiReturnsStableError() {
 int main() {
   return aerogpu::TestDeviceLostDdiReturnsStableError() ? 0 : 1;
 }
-

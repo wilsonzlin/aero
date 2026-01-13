@@ -16066,7 +16066,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
   if (!dev) {
     return trace.ret(E_INVALIDARG);
   }
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
 
   if (!fixedfunc_fvf_supported(dev->fvf) || dev->user_vs || dev->user_ps) {
     return trace.ret(D3DERR_INVALIDCALL);
@@ -16331,7 +16337,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
   if (!dev) {
     return trace.ret(E_INVALIDARG);
   }
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
 
   if (!fixedfunc_fvf_supported(dev->fvf) || dev->user_vs || dev->user_ps) {
     return trace.ret(D3DERR_INVALIDCALL);
