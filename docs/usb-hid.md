@@ -10,6 +10,11 @@ For xHCI (USB 3.x) host controller details and current limitations, see [`docs/u
 > stack for the browser runtime (`crates/aero-usb` + `web/` host integration). This document focuses
 > on HID usages and report formats on top of that stack.
 
+For controller-level design/contract notes:
+
+- EHCI (USB 2.0): [`docs/usb-ehci.md`](./usb-ehci.md)
+- xHCI (USB 3.x): [`docs/usb-xhci.md`](./usb-xhci.md)
+
 The Rust-side usage mapping helpers live in `aero_usb::hid::usage` (`crates/aero-usb/src/hid/usage.rs`).
 Browser-oriented convenience wrappers live in `aero_usb::web` (`crates/aero-usb/src/web.rs`) (e.g.
 `keyboard_code_to_hid_usage`, `mouse_button_to_hid_mask`).

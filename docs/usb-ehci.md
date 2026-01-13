@@ -13,6 +13,7 @@ driver depends on, but it does **not** attempt to restate the entire EHCI specif
 Related docs:
 
 - USB HID devices/report formats: [`docs/usb-hid.md`](./usb-hid.md)
+- USB xHCI (USB 3.x) controller emulation: [`docs/usb-xhci.md`](./usb-xhci.md)
 - IRQ line-level semantics in the browser runtime: [`docs/irq-semantics.md`](./irq-semantics.md)
 - WebUSB passthrough architecture (currently UHCI-focused, but the async “pending → NAK” pattern
   applies to EHCI too): [`docs/webusb-passthrough.md`](./webusb-passthrough.md)

@@ -46,6 +46,7 @@ Input is essential for usability. Without keyboard/mouse, the emulator is unusab
 - [`docs/webhid-webusb-passthrough.md`](../docs/webhid-webusb-passthrough.md) — Passthrough architecture
 - [`docs/webhid-hid-report-descriptor-synthesis.md`](../docs/webhid-hid-report-descriptor-synthesis.md) — HID descriptor synthesis
 - [`docs/webusb-passthrough.md`](../docs/webusb-passthrough.md) — WebUSB passthrough
+- [`docs/usb-xhci.md`](../docs/usb-xhci.md) — xHCI (USB 3.x) controller emulation (in progress)
 - [`docs/usb-hid-gamepad.md`](../docs/usb-hid-gamepad.md) — Gamepad support
 
 ---

@@ -2,7 +2,12 @@
 
 xHCI (“eXtensible Host Controller Interface”) is the USB host controller architecture used by most modern machines. Unlike UHCI/EHCI, xHCI is designed to support USB 3.x and also subsumes USB 2.0/1.1 device support.
 
-This repo’s USB stack historically started with a **minimal UHCI (USB 1.1)** implementation (`crates/aero-usb`) because it is sufficient for Windows 7 in-box USB + HID drivers. xHCI is being added to:
+This repo’s USB stack historically started with a **minimal UHCI (USB 1.1)** implementation (`crates/aero-usb`) because it is sufficient for Windows 7 in-box USB + HID drivers.
+
+EHCI (USB 2.0) is being brought up in parallel for **high-speed** device support; see
+[`docs/usb-ehci.md`](./usb-ehci.md).
+
+xHCI is being added to:
 
 - Support **modern guests** that expect xHCI to exist (or prefer it for USB input).
 - Remove full-speed-only constraints that limit **USB passthrough** compatibility (many real devices are high-speed-only or behave poorly when forced into a UHCI full-speed view).
@@ -12,6 +17,8 @@ Status:
 
 - xHCI support is **in progress** and is not expected to be feature-complete.
 - UHCI remains the “known-good” controller for Windows 7 in-box driver binding today.
+- EHCI bring-up exists (regs + root hub), but schedule walking and snapshot support are still
+  staged; see [`docs/usb-ehci.md`](./usb-ehci.md).
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 

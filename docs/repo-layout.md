@@ -72,6 +72,7 @@ stack is defined by [ADR 0015](./adr/0015-canonical-usb-stack.md):
 Controller design notes:
 
 - EHCI (USB 2.0) emulation contracts: [`docs/usb-ehci.md`](./usb-ehci.md)
+- xHCI (USB 3.x) emulation contracts: [`docs/usb-xhci.md`](./usb-xhci.md)
 
 Legacy/non-canonical USB implementations (do not extend for new browser runtime work):
 
