@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::sync::OnceLock;
 
 const SECTOR_SIZE: usize = 2048;
 const SYSTEM_AREA_SECTORS: u32 = 16;
@@ -995,10 +996,11 @@ fn write_zeros(out: &mut File, len: usize) -> Result<()> {
 }
 
 fn iso_timestamp_7(epoch: i64) -> [u8; 7] {
-    let dt = time::OffsetDateTime::from_unix_timestamp(epoch)
-        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let dt = iso9660_clamped_datetime(epoch);
     [
-        (dt.year() - 1900) as u8,
+        // ISO9660 stores the year as an unsigned byte offset from 1900.
+        // Valid range: 0..=255 => 1900..=2155.
+        dt.year().saturating_sub(1900).clamp(0, 255) as u8,
         dt.month() as u8,
         dt.day(),
         dt.hour(),
@@ -1009,8 +1011,7 @@ fn iso_timestamp_7(epoch: i64) -> [u8; 7] {
 }
 
 fn iso_datetime_17(epoch: i64) -> [u8; 17] {
-    let dt = time::OffsetDateTime::from_unix_timestamp(epoch)
-        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let dt = iso9660_clamped_datetime(epoch);
     let s = format!(
         "{:04}{:02}{:02}{:02}{:02}{:02}00",
         dt.year(),
@@ -1024,4 +1025,31 @@ fn iso_datetime_17(epoch: i64) -> [u8; 17] {
     out[..16].copy_from_slice(&s.as_bytes()[..16]);
     out[16] = 0u8;
     out
+}
+
+fn iso9660_clamped_datetime(epoch: i64) -> time::OffsetDateTime {
+    // Directory records store years as a single unsigned byte offset from 1900,
+    // so the representable range is 1900-01-01 00:00:00 through
+    // 2155-12-31 23:59:59. Clamp SOURCE_DATE_EPOCH into that range to avoid
+    // subtle wraparound bugs (e.g. negative years casting to u8) while still
+    // producing valid, deterministic timestamps.
+    let (min_epoch, max_epoch) = iso9660_epoch_bounds();
+    let clamped = epoch.clamp(min_epoch, max_epoch);
+    time::OffsetDateTime::from_unix_timestamp(clamped).expect("clamped ISO9660 epoch is valid")
+}
+
+fn iso9660_epoch_bounds() -> (i64, i64) {
+    static BOUNDS: OnceLock<(i64, i64)> = OnceLock::new();
+    *BOUNDS.get_or_init(|| {
+        let min_date =
+            time::Date::from_calendar_date(1900, time::Month::January, 1).expect("valid date");
+        let min_dt = time::OffsetDateTime::new_utc(min_date, time::Time::MIDNIGHT);
+
+        let max_date =
+            time::Date::from_calendar_date(2155, time::Month::December, 31).expect("valid date");
+        let max_time = time::Time::from_hms(23, 59, 59).expect("valid time");
+        let max_dt = time::OffsetDateTime::new_utc(max_date, max_time);
+
+        (min_dt.unix_timestamp(), max_dt.unix_timestamp())
+    })
 }
