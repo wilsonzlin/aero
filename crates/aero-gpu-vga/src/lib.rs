@@ -1061,6 +1061,10 @@ impl VgaDevice {
             // reads from either port for maximum guest compatibility.
             0x3CC | 0x3C2 => self.misc_output,
 
+            // VGA register files are exposed as adjacent index/data port pairs. Multi-byte port
+            // accesses (e.g. `inw`/`outw` on the index port) are handled by `PortIO::port_read`
+            // reading consecutive bytes.
+
             // Sequencer.
             0x3C4 => self.sequencer_index,
             0x3C5 => {
@@ -1121,6 +1125,10 @@ impl VgaDevice {
                 self.misc_output = val;
                 self.dirty = true;
             }
+
+            // VGA register files are exposed as adjacent index/data port pairs. Multi-byte port
+            // accesses (e.g. `outw dx, ax` on the index port) are handled by `PortIO::port_write`
+            // splitting the word into consecutive byte writes.
 
             // Sequencer.
             0x3C4 => self.sequencer_index = val,

@@ -51,6 +51,7 @@ fn pc_machine_e1000_tx_ring_pushes_frame_to_net_tx_ring_backend() {
     // Minimum Ethernet frame length: dst MAC (6) + src MAC (6) + ethertype (2).
     const MIN_L2_FRAME_LEN: usize = 14;
     let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
+    let frame_len = frame.len() as u64;
 
     // Write packet bytes into guest RAM.
     m.platform_mut().memory.write_physical(pkt_base, &frame);
@@ -88,10 +89,15 @@ fn pc_machine_e1000_tx_ring_pushes_frame_to_net_tx_ring_backend() {
         .network_backend_l2_ring_stats()
         .expect("expected ring backend stats");
     assert_eq!(stats.tx_pushed_frames, 1);
+    assert_eq!(stats.tx_pushed_bytes, frame_len);
     assert_eq!(stats.tx_dropped_oversize, 0);
+    assert_eq!(stats.tx_dropped_oversize_bytes, 0);
     assert_eq!(stats.tx_dropped_full, 0);
+    assert_eq!(stats.tx_dropped_full_bytes, 0);
     assert_eq!(stats.rx_popped_frames, 0);
+    assert_eq!(stats.rx_popped_bytes, 0);
     assert_eq!(stats.rx_dropped_oversize, 0);
+    assert_eq!(stats.rx_dropped_oversize_bytes, 0);
     assert_eq!(stats.rx_corrupt, 0);
 }
 
@@ -140,6 +146,7 @@ fn pc_machine_network_backend_l2_ring_stats_work_for_boxed_ring_backend() {
     // Minimum Ethernet frame length: dst MAC (6) + src MAC (6) + ethertype (2).
     const MIN_L2_FRAME_LEN: usize = 14;
     let frame = vec![0x11u8; MIN_L2_FRAME_LEN];
+    let frame_len = frame.len() as u64;
 
     // Write packet bytes into guest RAM.
     m.platform_mut().memory.write_physical(pkt_base, &frame);
@@ -175,6 +182,7 @@ fn pc_machine_network_backend_l2_ring_stats_work_for_boxed_ring_backend() {
         .network_backend_l2_ring_stats()
         .expect("expected ring backend stats via trait object");
     assert_eq!(stats.tx_pushed_frames, 1);
+    assert_eq!(stats.tx_pushed_bytes, frame_len);
     assert_eq!(stats.tx_dropped_oversize, 0);
     assert_eq!(stats.tx_dropped_full, 0);
 }
