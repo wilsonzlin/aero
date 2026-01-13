@@ -97,9 +97,9 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   const MIN_RING_CAPACITY_FRAMES = 262_144;
   const BACKLOG_DISCARDED_THRESHOLD_FRAMES = 512;
   // If resume-discard is broken, draining a nearly-full multi-second ring takes far longer than the
-  // bounded timeout (even at unusually high AudioContext sample rates). Keep this tight enough that
-  // a real-time drain can't satisfy it, while still allowing for CI jitter.
-  const DISCARD_TIMEOUT_MS = 150;
+  // bounded timeout. Example: draining ~250k frames takes ~5s @ 48kHz and ~1.3s @ 192kHz. Keep this
+  // tight enough that a real-time drain can't satisfy it, while still allowing for CI jitter.
+  const DISCARD_TIMEOUT_MS = 350;
 
   const setupResult = await page.evaluate(({ MIN_RING_CAPACITY_FRAMES }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
