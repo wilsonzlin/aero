@@ -113,6 +113,7 @@ struct WebHidDeviceState {
 struct WebUsbDeviceState {
     port: usize,
     dev: UsbWebUsbPassthroughDevice,
+    connected: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -531,24 +532,39 @@ impl UhciRuntime {
         }
 
         let port = WEBUSB_ROOT_PORT;
-        let dev = UsbWebUsbPassthroughDevice::new();
+        let dev = if let Some(state) = self.webusb.as_ref() {
+            state.dev.clone()
+        } else {
+            UsbWebUsbPassthroughDevice::new()
+        };
         self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
-        self.webusb = Some(WebUsbDeviceState { port, dev });
+        self.webusb = Some(WebUsbDeviceState {
+            port,
+            dev,
+            connected: true,
+        });
         Ok(port as u32)
     }
 
     pub fn webusb_detach(&mut self) {
-        let Some(state) = self.webusb.take() else {
+        let Some(state) = self.webusb.as_mut() else {
             return;
         };
+        if !state.connected {
+            return;
+        }
         self.ctrl.hub_mut().detach(state.port);
+        state.connected = false;
+        // Preserve pre-existing semantics: detaching clears queued/in-flight host state, but we
+        // keep the handle alive so `UsbPassthroughDevice.next_id` remains monotonic across
+        // reconnects.
+        state.dev.reset();
     }
 
     pub fn webusb_drain_actions(&mut self) -> Result<JsValue, JsValue> {
-        let actions: Vec<UsbHostAction> = if let Some(state) = self.webusb.as_ref() {
-            state.dev.drain_actions()
-        } else {
-            Vec::new()
+        let actions: Vec<UsbHostAction> = match self.webusb.as_ref() {
+            Some(state) if state.connected => state.dev.drain_actions(),
+            _ => Vec::new(),
         };
         let out = Array::new();
         for action in actions {
@@ -561,6 +577,9 @@ impl UhciRuntime {
         let Some(state) = self.webusb.as_ref() else {
             return Ok(());
         };
+        if !state.connected {
+            return Ok(());
+        }
         let obj: Object = completion
             .dyn_into()
             .map_err(|_| js_error("Invalid UsbHostCompletion: expected an object"))?;
@@ -846,7 +865,9 @@ impl UhciRuntime {
         );
 
         if let Some(webusb) = self.webusb.as_ref() {
-            w.field_bytes(TAG_WEBUSB_STATE, webusb.dev.save_state());
+            if webusb.connected {
+                w.field_bytes(TAG_WEBUSB_STATE, webusb.dev.save_state());
+            }
         }
 
         if let Some(hub_ports) = external_hub_ports_with_devices {
@@ -1216,7 +1237,11 @@ impl UhciRuntime {
             // snapshot restore. Drop any inflight/queued host bookkeeping so UHCI TD retries
             // re-emit fresh actions.
             dev.reset_host_state_for_restore();
-            self.webusb = Some(WebUsbDeviceState { port, dev });
+            self.webusb = Some(WebUsbDeviceState {
+                port,
+                dev,
+                connected: true,
+            });
         }
 
         // Recreate WebHID devices (using stored static config), then apply their dynamic snapshots.
@@ -1367,7 +1392,9 @@ impl UhciRuntime {
         // TD retries will re-emit fresh host actions instead of deadlocking on a completion that
         // will never arrive.
         if let Some(webusb) = self.webusb.as_ref() {
-            webusb.dev.reset_host_state_for_restore();
+            if webusb.connected {
+                webusb.dev.reset_host_state_for_restore();
+            }
         }
 
         Ok(())
@@ -1517,7 +1544,7 @@ impl UhciRuntime {
             return false;
         }
         if let Some(webusb) = self.webusb.as_ref() {
-            if webusb.port == port {
+            if webusb.connected && webusb.port == port {
                 return false;
             }
         }
@@ -1601,7 +1628,7 @@ impl UhciRuntime {
         let webusb_on_root = self
             .webusb
             .as_ref()
-            .is_some_and(|webusb| webusb.port == EXTERNAL_HUB_ROOT_PORT);
+            .is_some_and(|webusb| webusb.connected && webusb.port == EXTERNAL_HUB_ROOT_PORT);
         if webusb_on_root {
             self.webusb_detach();
         }

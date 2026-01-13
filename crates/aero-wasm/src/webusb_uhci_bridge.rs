@@ -36,6 +36,7 @@ pub struct WebUsbUhciBridge {
     guest_base: u32,
     controller: UhciController,
     webusb: Option<UsbWebUsbPassthroughDevice>,
+    webusb_connected: bool,
     pci_command: u16,
 }
 
@@ -53,6 +54,7 @@ impl WebUsbUhciBridge {
             guest_base,
             controller,
             webusb: None,
+            webusb_connected: false,
             pci_command: 0,
         }
     }
@@ -126,25 +128,35 @@ impl WebUsbUhciBridge {
     }
 
     pub fn set_connected(&mut self, connected: bool) {
-        let was_connected = self.webusb.is_some();
+        let was_connected = self.webusb_connected;
 
         match (was_connected, connected) {
             (true, true) | (false, false) => {}
             (false, true) => {
-                let dev = UsbWebUsbPassthroughDevice::new();
+                let dev = self
+                    .webusb
+                    .get_or_insert_with(UsbWebUsbPassthroughDevice::new);
                 self.controller
                     .hub_mut()
                     .attach(ROOT_PORT_WEBUSB, Box::new(dev.clone()));
-                self.webusb = Some(dev);
+                self.webusb_connected = true;
             }
             (true, false) => {
                 self.controller.hub_mut().detach(ROOT_PORT_WEBUSB);
-                self.webusb = None;
+                self.webusb_connected = false;
+                // Preserve pre-existing semantics: disconnect drops queued/in-flight host state, but
+                // we keep the handle alive so `UsbPassthroughDevice.next_id` remains monotonic.
+                if let Some(dev) = self.webusb.as_ref() {
+                    dev.reset();
+                }
             }
         }
     }
 
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        if !self.webusb_connected {
+            return Ok(JsValue::NULL);
+        }
         let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
@@ -159,8 +171,10 @@ impl WebUsbUhciBridge {
         let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        if let Some(dev) = self.webusb.as_ref() {
-            dev.push_completion(completion);
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                dev.push_completion(completion);
+            }
         }
 
         Ok(())
@@ -173,12 +187,17 @@ impl WebUsbUhciBridge {
             u32::from(aero_usb::uhci::regs::USBCMD_HCRESET),
         );
 
-        if let Some(dev) = self.webusb.as_ref() {
-            dev.reset();
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                dev.reset();
+            }
         }
     }
 
     pub fn pending_summary(&self) -> Result<JsValue, JsValue> {
+        if !self.webusb_connected {
+            return Ok(JsValue::NULL);
+        }
         let Some(summary) = self.webusb.as_ref().map(|d| d.pending_summary()) else {
             return Ok(JsValue::NULL);
         };
@@ -253,11 +272,13 @@ impl WebUsbUhciBridge {
         if let Some(hub) = self.external_hub() {
             w.field_bytes(TAG_EXTERNAL_HUB, hub.save_state());
         }
-        if let Some(dev) = self.webusb.as_ref() {
-            // Persist the WebUSB passthrough device's USB-visible state (address, control-transfer
-            // stage, etc) so that after restoring a VM snapshot the guest's TD retries can make
-            // forward progress. Host-side action queues are cleared on restore (see `load_state`).
-            w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                // Persist the WebUSB passthrough device's USB-visible state (address, control-transfer
+                // stage, etc) so that after restoring a VM snapshot the guest's TD retries can make
+                // forward progress. Host-side action queues are cleared on restore (see `load_state`).
+                w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
+            }
         }
         w.finish()
     }

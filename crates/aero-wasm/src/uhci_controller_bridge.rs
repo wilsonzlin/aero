@@ -121,6 +121,7 @@ pub struct UhciControllerBridge {
     guest_base: u32,
     guest_size: u64,
     webusb: Option<UsbWebUsbPassthroughDevice>,
+    webusb_connected: bool,
     pci_command: u16,
 }
 
@@ -170,6 +171,7 @@ impl UhciControllerBridge {
             guest_base,
             guest_size: guest_size_u64,
             webusb: None,
+            webusb_connected: false,
             pci_command: 0,
         })
     }
@@ -253,26 +255,37 @@ impl UhciControllerBridge {
     /// The passthrough device is implemented by `aero_usb::UsbWebUsbPassthroughDevice` and emits
     /// host actions that must be executed by the browser `UsbBroker` (see `web/src/usb`).
     pub fn set_connected(&mut self, connected: bool) {
-        let was_connected = self.webusb.is_some();
+        let was_connected = self.webusb_connected;
 
         match (was_connected, connected) {
             (true, true) | (false, false) => {}
             (false, true) => {
-                let dev = UsbWebUsbPassthroughDevice::new();
+                let dev = self
+                    .webusb
+                    .get_or_insert_with(UsbWebUsbPassthroughDevice::new);
                 self.ctrl
                     .hub_mut()
                     .attach(WEBUSB_ROOT_PORT, Box::new(dev.clone()));
-                self.webusb = Some(dev);
+                self.webusb_connected = true;
             }
             (true, false) => {
                 self.ctrl.hub_mut().detach(WEBUSB_ROOT_PORT);
-                self.webusb = None;
+                self.webusb_connected = false;
+                // Preserve pre-existing semantics: disconnecting the device drops any queued actions
+                // and in-flight state, but we keep the handle alive so `UsbPassthroughDevice.next_id`
+                // remains monotonic across reconnects.
+                if let Some(dev) = self.webusb.as_ref() {
+                    dev.reset();
+                }
             }
         }
     }
 
     /// Drain queued WebUSB passthrough host actions as plain JS objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        if !self.webusb_connected {
+            return Ok(JsValue::NULL);
+        };
         let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
@@ -288,21 +301,28 @@ impl UhciControllerBridge {
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
         let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        if let Some(dev) = self.webusb.as_ref() {
-            dev.push_completion(completion);
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                dev.push_completion(completion);
+            }
         }
         Ok(())
     }
 
     /// Reset the WebUSB passthrough device without disturbing the rest of the USB topology.
     pub fn reset(&mut self) {
-        if let Some(dev) = self.webusb.as_ref() {
-            dev.reset();
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                dev.reset();
+            }
         }
     }
 
     /// Return a debug summary of queued actions/completions for the WebUSB passthrough device.
     pub fn pending_summary(&self) -> Result<JsValue, JsValue> {
+        if !self.webusb_connected {
+            return Ok(JsValue::NULL);
+        };
         let Some(summary) = self.webusb.as_ref().map(|d| d.pending_summary()) else {
             return Ok(JsValue::NULL);
         };
@@ -370,8 +390,10 @@ impl UhciControllerBridge {
         let mut w = SnapshotWriter::new(UHCI_BRIDGE_DEVICE_ID, UHCI_BRIDGE_DEVICE_VERSION);
         w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
         w.field_bool(TAG_IRQ_ASSERTED, self.ctrl.irq_level());
-        if let Some(dev) = self.webusb.as_ref() {
-            w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
+            }
         }
         w.finish()
     }
@@ -391,9 +413,8 @@ impl UhciControllerBridge {
         //
         // Note: the underlying `aero-usb` controller snapshot can now reconstruct common USB device
         // models on its own, but the bridge still needs an owned handle to the passthrough device.
-        if r.bytes(TAG_WEBUSB_DEVICE).is_some() && self.webusb.is_none() {
-            self.set_connected(true);
-        }
+        let has_webusb = r.bytes(TAG_WEBUSB_DEVICE).is_some();
+        self.set_connected(has_webusb);
 
         let ctrl_bytes = r
             .bytes(TAG_CONTROLLER)
