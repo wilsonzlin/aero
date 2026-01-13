@@ -34,9 +34,11 @@ Goal for Win7 UX: **the same virtual GPU** should provide *both* boot VGA/VBE ou
 
 ### Missing / still required for Win7
 
-- [~] AeroGPU legacy decode foundation exists in `aero_machine` (`enable_aerogpu=true`):
+- [~] AeroGPU boot-display foundation exists in `aero_machine` (`enable_aerogpu=true`):
   - BAR1-backed VRAM + legacy VGA window aliasing (`0xA0000..0xBFFFF`) + minimal VGA port decode
-  - Still missing: VBE LFB modes + scanout handoff (single device from BIOS → WDDM)
+  - BIOS VBE mode sets (`INT 10h AX=4F02`) work with the VBE LFB mapped inside BAR1 (see
+    `crates/aero-machine/tests/boot_int10_aerogpu_vbe_115_sets_mode.rs`)
+  - Still missing: full BAR0 WDDM/MMIO/ring/vblank device model + scanout handoff once the Win7 driver loads
   - Design doc: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md)
 - [ ] Seamless handoff: boot framebuffer → WDDM scanout without losing display or forcing mode resets
 
