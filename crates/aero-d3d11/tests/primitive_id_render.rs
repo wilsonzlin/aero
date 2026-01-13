@@ -294,8 +294,11 @@ fn primitive_id_pixel_shader_renders_different_colors_per_triangle() {
             model: ShaderModel { major: 5, minor: 0 },
             decls: Vec::new(),
             instructions: vec![
-                // o0 = v0 (primitive ID expanded to vec4<f32>(pid,0,0,1)).
-                Sm4Inst::Mov {
+                // Convert the integer primitive ID bits into numeric float, then write to SV_Target.
+                //
+                // In real DXBC this comes from the `utof` opcode; our internal register model
+                // stores integer system values as raw bits in `vec4<f32>` lanes.
+                Sm4Inst::Utof {
                     dst: dst(RegFile::Output, 0, WriteMask::XYZW),
                     src: src_reg(RegFile::Input, 0),
                 },

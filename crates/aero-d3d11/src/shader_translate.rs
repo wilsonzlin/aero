@@ -1365,7 +1365,13 @@ impl IoMaps {
                             register: reg,
                         },
                     )?;
-                    return Ok(expand_to_vec4("f32(input.primitive_id)", p));
+                    // `SV_PrimitiveID` / `@builtin(primitive_index)` is an integer system value.
+                    //
+                    // As with `SV_VertexID`/`SV_InstanceID`, preserve raw integer bits in the
+                    // internal untyped `vec4<f32>` register model so integer/bitwise ops can be
+                    // translated correctly. Numeric conversion (e.g. to write it to a float render
+                    // target) should be expressed via an explicit `utof` instruction.
+                    return Ok(expand_to_vec4("bitcast<f32>(input.primitive_id)", p));
                 }
                 if Some(reg) == self.ps_front_facing_register {
                     let _p = self.inputs.get(&reg).ok_or(
