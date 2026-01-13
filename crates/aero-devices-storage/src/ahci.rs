@@ -433,6 +433,11 @@ impl AhciController {
 
                 // COMRESET asserted: drop link status and mark device busy.
                 if new_det == SCTL_DET_COMRESET {
+                    // A link reset aborts any in-flight commands and clears transient status.
+                    port.regs.ci = 0;
+                    port.regs.sact = 0;
+                    port.regs.is = 0;
+                    port.regs.serr = 0;
                     port.regs.ssts = 0;
                     port.regs.sig = 0;
                     port.regs.tfd = if port.present {
