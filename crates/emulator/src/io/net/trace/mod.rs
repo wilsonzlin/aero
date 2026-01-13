@@ -1108,6 +1108,44 @@ mod tests {
         buf
     }
 
+    fn make_vlan_ipv4_tcp_frame(payload: &[u8]) -> Vec<u8> {
+        let inner = make_ipv4_tcp_frame(payload, 0);
+        let mut out = Vec::with_capacity(inner.len() + 4);
+        // dst/src MACs (12 bytes)
+        out.extend_from_slice(&inner[..12]);
+        // outer ethertype: 802.1Q VLAN
+        out.extend_from_slice(&0x8100u16.to_be_bytes());
+        // VLAN tag (TCI=0)
+        out.extend_from_slice(&0u16.to_be_bytes());
+        // inner ethertype: IPv4
+        out.extend_from_slice(&0x0800u16.to_be_bytes());
+        // rest of frame (starts at IPv4 header in `inner`)
+        out.extend_from_slice(&inner[14..]);
+        out
+    }
+
+    fn make_arp_request_frame() -> Vec<u8> {
+        let mut buf = Vec::with_capacity(14 + 28);
+
+        // Ethernet header (dst broadcast, src 02:00:00:00:00:02, ethertype ARP)
+        buf.extend_from_slice(&[0xff; 6]);
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
+        buf.extend_from_slice(&0x0806u16.to_be_bytes());
+
+        // ARP payload (Ethernet/IPv4 request).
+        buf.extend_from_slice(&1u16.to_be_bytes()); // HTYPE Ethernet
+        buf.extend_from_slice(&0x0800u16.to_be_bytes()); // PTYPE IPv4
+        buf.push(6); // HW len
+        buf.push(4); // Proto len
+        buf.extend_from_slice(&1u16.to_be_bytes()); // Opcode request
+        buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // sender MAC
+        buf.extend_from_slice(&[10, 0, 2, 15]); // sender IP
+        buf.extend_from_slice(&[0u8; 6]); // target MAC
+        buf.extend_from_slice(&[10, 0, 2, 2]); // target IP (gateway)
+
+        buf
+    }
+
     #[test]
     fn truncate_redactor_truncates_each_record_type() {
         let tracer = NetTracer::new(NetTraceConfig {
@@ -1226,6 +1264,36 @@ mod tests {
             .expect("expected parseable IPv4/TCP frame");
 
         assert_eq!(out.len(), 14 + 20 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_vlan_l3_l4_headers_for_vlan_ipv4_tcp() {
+        let frame = make_vlan_ipv4_tcp_frame(b"hello vlan");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable VLAN IPv4/TCP frame");
+
+        assert_eq!(out.len(), 14 + 4 + 20 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_headers_for_arp() {
+        let frame = make_arp_request_frame();
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestRx, &frame)
+            .expect("expected parseable ARP frame");
+
+        assert_eq!(out.len(), 14 + 28);
         assert_eq!(out.as_slice(), &frame[..out.len()]);
     }
 
