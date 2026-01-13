@@ -3,7 +3,7 @@ import { vi } from "vitest";
 
 import type { WasmApi } from "../runtime/wasm_loader";
 import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs, snapshotUsbDeviceState, restoreUsbDeviceState } from "./io_worker_vm_snapshot";
-import { decodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_UHCI, USB_SNAPSHOT_TAG_XHCI } from "./usb_snapshot_container";
+import { decodeUsbSnapshotContainer, encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_UHCI, USB_SNAPSHOT_TAG_XHCI } from "./usb_snapshot_container";
 import {
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_E1000,
@@ -347,17 +347,17 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
           api,
           path: "state/test.snap",
           guestBase: 0,
-           guestSize: 0x1000,
-           runtimes: {
-             usbXhciControllerBridge: null,
-             usbUhciRuntime: null,
-             usbUhciControllerBridge: null,
-             usbEhciControllerBridge: null,
-             netE1000: null,
-             netStack: null,
-           },
-         }),
-       ).resolves.toMatchObject({ cpu: expect.any(ArrayBuffer), mmu: expect.any(ArrayBuffer) });
+          guestSize: 0x1000,
+          runtimes: {
+            usbXhciControllerBridge: null,
+            usbUhciRuntime: null,
+            usbUhciControllerBridge: null,
+            usbEhciControllerBridge: null,
+            netE1000: null,
+            netStack: null,
+          },
+        }),
+      ).resolves.toMatchObject({ cpu: expect.any(ArrayBuffer), mmu: expect.any(ArrayBuffer) });
 
       expect(warn.mock.calls.some((args) => String(args[0]).includes("net.stack"))).toBe(true);
     } finally {
@@ -464,5 +464,54 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       { kind: "device.123", bytes: unknownBytes },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbFresh },
     ]);
+  });
+
+  it("preserves USB controller sub-blobs across restore → save (USB container merge semantics)", async () => {
+    const uhciOld = new Uint8Array([0x01]);
+    const xhciOld = new Uint8Array([0x02, 0x03]);
+    const cachedContainer = encodeUsbSnapshotContainer([
+      { tag: USB_SNAPSHOT_TAG_UHCI, bytes: uhciOld },
+      { tag: USB_SNAPSHOT_TAG_XHCI, bytes: xhciOld },
+    ]);
+
+    const uhciFresh = new Uint8Array([0x04]);
+    const saveCalls: Array<{ devices: unknown }> = [];
+
+    const api = {
+      vm_snapshot_save_to_opfs: (_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
+        saveCalls.push({ devices });
+      },
+    } as unknown as WasmApi;
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/next.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: { save_state: () => uhciFresh },
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        usbXhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+      restoredDevices: [{ kind: "usb.uhci", bytes: cachedContainer }],
+    });
+
+    expect(saveCalls).toHaveLength(1);
+    const payload = saveCalls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
+    expect(payload).toHaveLength(1);
+    expect(payload[0]!.kind).toBe(`device.${VM_SNAPSHOT_DEVICE_ID_USB}`);
+
+    // Should produce a container preserving the cached XHCI bytes while updating UHCI bytes.
+    const decoded = decodeUsbSnapshotContainer(payload[0]!.bytes);
+    expect(decoded).not.toBeNull();
+    const uhci = decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes ?? null;
+    const xhci = decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes ?? null;
+    expect(uhci).toEqual(uhciFresh);
+    expect(xhci).toEqual(xhciOld);
   });
 });

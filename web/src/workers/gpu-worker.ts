@@ -89,7 +89,6 @@ import {
 import type { AeroConfig } from '../config/aero_config';
 import {
   createSharedMemoryViews,
-  guestPaddrToRamOffset,
   ringRegionsForWorker,
   setReadyFlag,
   StatusIndex,
@@ -2979,7 +2978,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               }
               const basePaddrNum = Number(basePaddr);
 
-              const ramOffset = guestPaddrToRamOffset(layout, basePaddrNum);
+              const ramOffset = guestPaddrToRamOffset(layout.guest_size, basePaddrNum);
               if (ramOffset === null) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
