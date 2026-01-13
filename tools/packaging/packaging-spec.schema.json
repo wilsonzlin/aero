@@ -13,7 +13,6 @@
     "drivers": {
       "type": "array",
       "description": "Unified driver list containing both required and optional drivers.",
-      "minItems": 1,
       "items": {
         "$ref": "#/$defs/driver"
       },
@@ -22,7 +21,6 @@
     "required_drivers": {
       "type": "array",
       "description": "Legacy schema (backward compatibility): required drivers only. aero_packager treats these as drivers with required=true and merges them into the unified drivers list.",
-      "minItems": 1,
       "items": {
         "$ref": "#/$defs/legacyRequiredDriver"
       }
@@ -39,8 +37,11 @@
     }
   },
   "anyOf": [
-    { "required": ["drivers"] },
-    { "required": ["required_drivers"] }
+    { "required": ["drivers"], "properties": { "drivers": { "minItems": 1 } } },
+    {
+      "required": ["required_drivers"],
+      "properties": { "required_drivers": { "minItems": 1 } }
+    }
   ],
   "$defs": {
     "driver": {
@@ -52,7 +53,7 @@
           "type": "string",
           "description": "Driver directory name under drivers/{x86,amd64}/<name>/.",
           "minLength": 1,
-          "pattern": "^[^\\\\/]+$"
+          "pattern": "^(?!\\.?\\.?$)[^\\\\/]+$"
         },
         "required": {
           "type": "boolean",
@@ -130,7 +131,7 @@
           "type": "string",
           "description": "Legacy required driver directory name under drivers/{x86,amd64}/<name>/.",
           "minLength": 1,
-          "pattern": "^[^\\\\/]+$"
+          "pattern": "^(?!\\.?\\.?$)[^\\\\/]+$"
         },
         "expected_hardware_ids": {
           "type": "array",
