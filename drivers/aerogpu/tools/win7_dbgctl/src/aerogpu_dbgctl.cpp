@@ -9,12 +9,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <errno.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
-#include <errno.h>
 
 #include "aerogpu_pci.h"
 #include "aerogpu_dbgctl_escape.h"
@@ -152,6 +153,46 @@ typedef struct D3DKMT_QUERYADAPTERINFO {
   UINT PrivateDriverDataSize;
 } D3DKMT_QUERYADAPTERINFO;
 
+// Minimal Win7-era WDDM segment query structs (from d3dkmddi/d3dkmthk).
+// dbgctl intentionally avoids pulling in WDK headers; keep definitions local.
+typedef struct DXGK_SEGMENTFLAGS {
+  union {
+    struct {
+      UINT Aperture : 1;
+      UINT CpuVisible : 1;
+      UINT CacheCoherent : 1;
+      UINT UseBanking : 1;
+      UINT Reserved : 28;
+    };
+    UINT Value;
+  };
+} DXGK_SEGMENTFLAGS;
+
+typedef enum DXGK_MEMORY_SEGMENT_GROUP {
+  DXGK_MEMORY_SEGMENT_GROUP_LOCAL = 0,
+  DXGK_MEMORY_SEGMENT_GROUP_NON_LOCAL = 1,
+} DXGK_MEMORY_SEGMENT_GROUP;
+
+typedef struct DXGK_SEGMENTDESCRIPTOR {
+  LARGE_INTEGER BaseAddress; // PHYSICAL_ADDRESS
+  ULONGLONG Size;
+  DXGK_SEGMENTFLAGS Flags;
+  UINT MemorySegmentGroup; // DXGK_MEMORY_SEGMENT_GROUP
+} DXGK_SEGMENTDESCRIPTOR;
+
+typedef struct DXGK_QUERYSEGMENTOUT {
+  UINT NbSegments;
+  UINT PagingBufferPrivateDataSize;
+  UINT PagingBufferSegmentId;
+  SIZE_T PagingBufferSize;
+  DXGK_SEGMENTDESCRIPTOR pSegmentDescriptor[1]; // variable-length
+} DXGK_QUERYSEGMENTOUT;
+
+typedef struct DXGK_SEGMENTGROUPSIZE {
+  ULONGLONG LocalMemorySize;
+  ULONGLONG NonLocalMemorySize;
+} DXGK_SEGMENTGROUPSIZE;
+
 typedef enum D3DKMT_ESCAPETYPE {
   D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
 } D3DKMT_ESCAPETYPE;
@@ -272,6 +313,7 @@ static void PrintUsage() {
            L"  --status  (alias: --query-version)\n"
            L"  --query-version  (alias: --query-device)\n"
            L"  --query-umd-private\n"
+           L"  --query-segments\n"
            L"  --query-fence\n"
            L"  --watch-fence  (requires: --samples N --interval-ms M)\n"
            L"  --query-perf  (alias: --perf)\n"
@@ -710,6 +752,202 @@ static const wchar_t *SelftestErrorToString(uint32_t code) {
   }
 }
 
+static const wchar_t *DxgkMemorySegmentGroupToString(UINT group) {
+  switch (group) {
+  case DXGK_MEMORY_SEGMENT_GROUP_LOCAL:
+    return L"Local";
+  case DXGK_MEMORY_SEGMENT_GROUP_NON_LOCAL:
+    return L"NonLocal";
+  default:
+    break;
+  }
+
+  static __declspec(thread) wchar_t buf[4][32];
+  static __declspec(thread) uint32_t buf_index = 0;
+  wchar_t *out = buf[buf_index++ & 3u];
+  swprintf_s(out, sizeof(buf[0]) / sizeof(buf[0][0]), L"Unknown(%lu)", (unsigned long)group);
+  return out;
+}
+
+static void PrintBytesAndMiB(ULONGLONG bytes) {
+  const ULONGLONG mib = bytes / (1024ull * 1024ull);
+  wprintf(L"%I64u bytes (%I64u MiB)", (unsigned long long)bytes, (unsigned long long)mib);
+}
+
+static bool IsPlausibleSegmentDescriptor(const DXGK_SEGMENTDESCRIPTOR &d) {
+  // Keep heuristics permissive: this tool is primarily used on AeroGPU (single
+  // system-memory segment), but should tolerate other WDDM adapters.
+  if (d.Size == 0) {
+    return false;
+  }
+  // Avoid obviously bogus results from mis-detected query types.
+  if (d.Size > (1ull << 52)) { // 4 PiB
+    return false;
+  }
+  if ((d.Size & 0xFFFu) != 0) {
+    // Segment sizes are typically page-aligned.
+    return false;
+  }
+  if (d.MemorySegmentGroup > 8u) {
+    return false;
+  }
+  return true;
+}
+
+static bool FindQuerySegmentTypeAndData(const D3DKMT_FUNCS *f,
+                                       D3DKMT_HANDLE hAdapter,
+                                       UINT segmentCapacity,
+                                       UINT *typeOut,
+                                       DXGK_QUERYSEGMENTOUT **outBuf,
+                                       SIZE_T *outBufSize) {
+  if (typeOut) {
+    *typeOut = 0;
+  }
+  if (outBuf) {
+    *outBuf = NULL;
+  }
+  if (outBufSize) {
+    *outBufSize = 0;
+  }
+  if (!f || !f->QueryAdapterInfo || !hAdapter || segmentCapacity == 0) {
+    return false;
+  }
+
+  const SIZE_T bufSize = offsetof(DXGK_QUERYSEGMENTOUT, pSegmentDescriptor) +
+                         (SIZE_T)segmentCapacity * sizeof(DXGK_SEGMENTDESCRIPTOR);
+
+  DXGK_QUERYSEGMENTOUT *buf = (DXGK_QUERYSEGMENTOUT *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bufSize);
+  if (!buf) {
+    return false;
+  }
+
+  for (UINT type = 0; type < 256; ++type) {
+    ZeroMemory(buf, bufSize);
+    NTSTATUS st = QueryAdapterInfoWithTimeout(f, hAdapter, type, buf, (UINT)bufSize);
+    if (!NT_SUCCESS(st)) {
+      continue;
+    }
+
+    const UINT n = buf->NbSegments;
+    if (n == 0 || n > segmentCapacity) {
+      continue;
+    }
+
+    bool ok = true;
+    for (UINT i = 0; i < n; ++i) {
+      if (!IsPlausibleSegmentDescriptor(buf->pSegmentDescriptor[i])) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) {
+      continue;
+    }
+
+    if (typeOut) {
+      *typeOut = type;
+    }
+    if (outBuf) {
+      *outBuf = buf;
+    }
+    if (outBufSize) {
+      *outBufSize = bufSize;
+    }
+    return true;
+  }
+
+  HeapFree(GetProcessHeap(), 0, buf);
+  return false;
+}
+
+static bool FindSegmentGroupSizeTypeAndData(const D3DKMT_FUNCS *f,
+                                           D3DKMT_HANDLE hAdapter,
+                                           const DXGK_QUERYSEGMENTOUT *segments,
+                                           UINT *typeOut,
+                                           DXGK_SEGMENTGROUPSIZE *outSizes) {
+  if (typeOut) {
+    *typeOut = 0;
+  }
+  if (outSizes) {
+    ZeroMemory(outSizes, sizeof(*outSizes));
+  }
+  if (!f || !f->QueryAdapterInfo || !hAdapter || !outSizes) {
+    return false;
+  }
+
+  ULONGLONG localMin = 0;
+  ULONGLONG nonLocalMin = 0;
+  if (segments) {
+    const UINT n = segments->NbSegments;
+    for (UINT i = 0; i < n; ++i) {
+      const DXGK_SEGMENTDESCRIPTOR &d = segments->pSegmentDescriptor[i];
+      if (!IsPlausibleSegmentDescriptor(d)) {
+        continue;
+      }
+      if (d.MemorySegmentGroup == DXGK_MEMORY_SEGMENT_GROUP_LOCAL) {
+        localMin += d.Size;
+      } else if (d.MemorySegmentGroup == DXGK_MEMORY_SEGMENT_GROUP_NON_LOCAL) {
+        nonLocalMin += d.Size;
+      }
+    }
+  }
+
+  bool haveFallback = false;
+  DXGK_SEGMENTGROUPSIZE fallback = {};
+  UINT fallbackType = 0;
+
+  for (UINT type = 0; type < 256; ++type) {
+    DXGK_SEGMENTGROUPSIZE sizes;
+    ZeroMemory(&sizes, sizeof(sizes));
+    NTSTATUS st = QueryAdapterInfoWithTimeout(f, hAdapter, type, &sizes, sizeof(sizes));
+    if (!NT_SUCCESS(st)) {
+      continue;
+    }
+
+    // Basic sanity: reject very large/obviously bogus values (likely from probing
+    // the wrong KMTQAITYPE).
+    if (sizes.LocalMemorySize > (1ull << 52) || sizes.NonLocalMemorySize > (1ull << 52)) {
+      continue;
+    }
+    if (((sizes.LocalMemorySize | sizes.NonLocalMemorySize) & 0xFFFu) != 0) {
+      continue;
+    }
+
+    if (!haveFallback) {
+      haveFallback = true;
+      fallback = sizes;
+      fallbackType = type;
+    }
+
+    // Prefer a type whose values are consistent with the QuerySegment results.
+    if (segments) {
+      if (sizes.LocalMemorySize >= localMin && sizes.NonLocalMemorySize >= nonLocalMin) {
+        *outSizes = sizes;
+        if (typeOut) {
+          *typeOut = type;
+        }
+        return true;
+      }
+    } else {
+      *outSizes = sizes;
+      if (typeOut) {
+        *typeOut = type;
+      }
+      return true;
+    }
+  }
+
+  if (haveFallback) {
+    *outSizes = fallback;
+    if (typeOut) {
+      *typeOut = fallbackType;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   static const uint32_t kLegacyMmioMagic = 0x41524750u; // "ARGP" little-endian
   const auto DumpFenceSnapshot = [&]() {
@@ -806,6 +1044,38 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long long)blob.device_features,
             decoded_features.c_str(),
             (unsigned long)blob.flags);
+  };
+
+  const auto DumpSegmentBudgetSummary = [&]() {
+    if (!f->QueryAdapterInfo) {
+      return;
+    }
+
+    DXGK_QUERYSEGMENTOUT *segments = NULL;
+    const bool haveSegments =
+        FindQuerySegmentTypeAndData(f, hAdapter, /*segmentCapacity=*/32, NULL, &segments, NULL);
+
+    DXGK_SEGMENTGROUPSIZE groupSizes;
+    const bool haveGroupSizes =
+        FindSegmentGroupSizeTypeAndData(f, hAdapter, haveSegments ? segments : NULL, NULL, &groupSizes);
+
+    if (haveSegments || haveGroupSizes) {
+      wprintf(L"Segments:");
+      if (haveSegments) {
+        wprintf(L" count=%lu", (unsigned long)segments->NbSegments);
+      }
+      if (haveGroupSizes) {
+        wprintf(L" Local=");
+        PrintBytesAndMiB(groupSizes.LocalMemorySize);
+        wprintf(L" NonLocal=");
+        PrintBytesAndMiB(groupSizes.NonLocalMemorySize);
+      }
+      wprintf(L"\n");
+    }
+
+    if (segments) {
+      HeapFree(GetProcessHeap(), 0, segments);
+    }
   };
 
   const auto DumpRingSummary = [&]() {
@@ -1063,6 +1333,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
     DumpFenceSnapshot();
     DumpUmdPrivateSummary();
+    DumpSegmentBudgetSummary();
     DumpRingSummary();
     DumpScanoutSnapshot();
     DumpCursorSummary();
@@ -1099,6 +1370,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
   DumpFenceSnapshot();
   DumpUmdPrivateSummary();
+  DumpSegmentBudgetSummary();
   DumpRingSummary();
   DumpScanoutSnapshot();
   DumpCursorSummary();
@@ -2107,6 +2379,66 @@ static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   wprintf(L"    has_vblank: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0));
   wprintf(L"    has_fence_page: %lu\n", (unsigned long)((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE) != 0));
 
+  return 0;
+}
+
+static int DoQuerySegments(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+  if (!f->QueryAdapterInfo) {
+    fwprintf(stderr, L"D3DKMTQueryAdapterInfo not available (missing gdi32 export)\n");
+    return 1;
+  }
+
+  DXGK_QUERYSEGMENTOUT *segments = NULL;
+  if (!FindQuerySegmentTypeAndData(f, hAdapter, /*segmentCapacity=*/64, NULL, &segments, NULL)) {
+    fwprintf(stderr, L"Failed to find a working KMTQAITYPE_QUERYSEGMENT value (probing range exhausted)\n");
+    return 2;
+  }
+
+  wprintf(L"Segments (QuerySegment)\n");
+  wprintf(L"  count: %lu\n", (unsigned long)segments->NbSegments);
+  for (UINT i = 0; i < segments->NbSegments; ++i) {
+    const DXGK_SEGMENTDESCRIPTOR &d = segments->pSegmentDescriptor[i];
+
+    wprintf(L"  [%lu] size=", (unsigned long)i);
+    PrintBytesAndMiB(d.Size);
+    wprintf(L" flags=0x%08lx", (unsigned long)d.Flags.Value);
+
+    wprintf(L" [");
+    bool first = true;
+    const auto Emit = [&](bool on, const wchar_t *name) {
+      if (!on) {
+        return;
+      }
+      if (!first) {
+        wprintf(L"|");
+      }
+      wprintf(L"%s", name);
+      first = false;
+    };
+    Emit(d.Flags.CpuVisible != 0, L"CpuVisible");
+    Emit(d.Flags.Aperture != 0, L"Aperture");
+    if (first) {
+      wprintf(L"0");
+    }
+    wprintf(L"]");
+
+    wprintf(L" group=%s\n", DxgkMemorySegmentGroupToString(d.MemorySegmentGroup));
+  }
+
+  DXGK_SEGMENTGROUPSIZE groupSizes;
+  if (FindSegmentGroupSizeTypeAndData(f, hAdapter, segments, NULL, &groupSizes)) {
+    wprintf(L"Segment group sizes (GetSegmentGroupSize)\n");
+    wprintf(L"  LocalMemorySize: ");
+    PrintBytesAndMiB(groupSizes.LocalMemorySize);
+    wprintf(L"\n");
+    wprintf(L"  NonLocalMemorySize: ");
+    PrintBytesAndMiB(groupSizes.NonLocalMemorySize);
+    wprintf(L"\n");
+  } else {
+    wprintf(L"Segment group sizes (GetSegmentGroupSize): (not available)\n");
+  }
+
+  HeapFree(GetProcessHeap(), 0, segments);
   return 0;
 }
 
@@ -3389,6 +3721,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_LIST_DISPLAYS,
     CMD_QUERY_VERSION,
     CMD_QUERY_UMD_PRIVATE,
+    CMD_QUERY_SEGMENTS,
     CMD_QUERY_FENCE,
     CMD_WATCH_FENCE,
     CMD_QUERY_PERF,
@@ -3635,6 +3968,12 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--query-segments") == 0) {
+      if (!SetCommand(CMD_QUERY_SEGMENTS)) {
+        return 1;
+      }
+      continue;
+    }
     if (wcscmp(a, L"--query-fence") == 0) {
       if (!SetCommand(CMD_QUERY_FENCE)) {
         return 1;
@@ -3855,6 +4194,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_QUERY_UMD_PRIVATE:
     rc = DoQueryUmdPrivate(&f, open.hAdapter);
+    break;
+  case CMD_QUERY_SEGMENTS:
+    rc = DoQuerySegments(&f, open.hAdapter);
     break;
   case CMD_QUERY_FENCE:
     rc = DoQueryFence(&f, open.hAdapter);

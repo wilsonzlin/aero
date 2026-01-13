@@ -43,6 +43,9 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-umd-private`  
   Calls `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` and prints the `aerogpu_umd_private_v1` blob used by UMDs to discover the active ABI + feature bits.
 
+- `aerogpu_dbgctl --query-segments`  
+  Calls `D3DKMTQueryAdapterInfo(KMTQAITYPE_QUERYSEGMENT)` and `D3DKMTQueryAdapterInfo(KMTQAITYPE_GETSEGMENTGROUPSIZE)` to print the WDDM segment list and segment group budgets (Local/NonLocal memory sizes).
+
 - `aerogpu_dbgctl --query-fence`  
   Prints the last submitted fence and last completed fence.
 
@@ -171,6 +174,7 @@ aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
 aerogpu_dbgctl --query-version
 aerogpu_dbgctl --query-umd-private
+aerogpu_dbgctl --query-segments
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --watch-fence --samples 120 --interval-ms 250 --timeout-ms 30000
 aerogpu_dbgctl --query-perf
@@ -281,6 +285,7 @@ Escape ops used:
 Additional WDDM queries (do not use the escape channel):
 
 - `--query-umd-private` uses `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)` to query the KMD-provided discovery blob.
+- `--query-segments` uses `D3DKMTQueryAdapterInfo(KMTQAITYPE_QUERYSEGMENT)` and `D3DKMTQueryAdapterInfo(KMTQAITYPE_GETSEGMENTGROUPSIZE)` to query the KMD-advertised segment list and segment group sizes.
 - `--wait-vblank` uses `D3DKMTWaitForVerticalBlankEvent` to measure vblank delivery from the OS.
 - `--query-scanline` uses `D3DKMTGetScanLine` to report the current scanline and vblank state.
 
