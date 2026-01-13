@@ -1912,6 +1912,11 @@ mod tests {
         assert_eq!(cfg[1], USB_DESCRIPTOR_TYPE_CONFIGURATION);
         assert_eq!(w_le(&cfg, 2) as usize, cfg.len());
 
+        let (subclass, protocol) =
+            parse_interface_descriptor_fields(&cfg).expect("config descriptor should contain interface descriptor");
+        assert_eq!(subclass, 1, "interface subclass should match constructor parameter");
+        assert_eq!(protocol, 1, "interface protocol should match constructor parameter");
+
         // HID descriptor starts at offset 18 (9 config + 9 interface).
         let hid = &cfg[18..27];
         assert_eq!(hid[0], 0x09);

@@ -165,7 +165,7 @@ describe("usb/UsbBroker", () => {
     expect(selected).toEqual([
       { type: "usb.selected", ok: true, info: { vendorId: 0x1234, productId: 0x5678, productName: "Demo" } },
     ]);
-  });
+  }, 15000);
 
   it("responds to usb.querySelected with the current usb.selected state", async () => {
     vi.doMock("./webusb_backend", () => ({

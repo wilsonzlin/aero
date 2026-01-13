@@ -62,10 +62,6 @@ use core::fmt;
 /// USB bus speed (as seen by the root hub).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsbSpeed {
-    /// USB 1.1 full-speed (12Mbps).
-    Full,
-    /// USB 1.1 low-speed (1.5Mbps).
-    Low,
     /// USB 2.0 high-speed (480Mbps).
     ///
     /// This is primarily used for passthrough/WebUSB devices and EHCI/xHCI modelling; UHCI itself
@@ -73,6 +69,10 @@ pub enum UsbSpeed {
     /// report `High` so snapshotting and cross-controller plumbing can round-trip device
     /// identity/speed.
     High,
+    /// USB 1.1 full-speed (12Mbps).
+    Full,
+    /// USB 1.1 low-speed (1.5Mbps).
+    Low,
 }
 
 /// USB control transfer SETUP packet.

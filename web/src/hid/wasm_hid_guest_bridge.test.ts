@@ -3,7 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { WasmHidGuestBridge } from "./wasm_hid_guest_bridge";
 import { UhciHidTopologyManager } from "./uhci_hid_topology";
 import type { HidAttachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
+import type { NormalizedHidCollectionInfo } from "./webhid_normalize";
 import type { WasmApi } from "../runtime/wasm_context";
+
+function makeTopLevelApplicationCollection(usagePage: number, usage: number): NormalizedHidCollectionInfo {
+  return {
+    usagePage,
+    usage,
+    collectionType: 1, // Application
+    children: [],
+    inputReports: [],
+    outputReports: [],
+    featureReports: [],
+  };
+}
 
 describe("hid/WasmHidGuestBridge", () => {
   it("attaches usb-hid-passthrough devices and forwards input/output reports", () => {
@@ -48,7 +61,9 @@ describe("hid/WasmHidGuestBridge", () => {
       productId: 0xabcd,
       productName: "Demo",
       guestPath: [0],
-      collections: [{ some: "collection" }] as any,
+      // Generic Desktop / Joystick (non-boot). Ensure the guest bridge does not force the HID
+      // boot subclass/protocol.
+      collections: [makeTopLevelApplicationCollection(0x01, 0x04)],
       hasInterruptOut: true,
     };
     guest.attach(attach);
@@ -94,6 +109,116 @@ describe("hid/WasmHidGuestBridge", () => {
     });
   });
 
+  it("infers HID boot keyboard subclass/protocol for keyboard collections", () => {
+    const ctorSpy = vi.fn();
+    const synthesizeSpy = vi.fn(() => new Uint8Array([1, 2, 3]));
+
+    class FakeBridge {
+      readonly push_input_report = vi.fn();
+      readonly drain_next_output_report = vi.fn();
+      readonly configured = vi.fn(() => true);
+      readonly free = vi.fn();
+
+      constructor(...args: unknown[]) {
+        ctorSpy(...args);
+      }
+    }
+
+    const host = {
+      sendReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const topology = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+
+    const api = {
+      UsbHidPassthroughBridge: FakeBridge,
+      synthesize_webhid_report_descriptor: synthesizeSpy,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any as WasmApi;
+
+    const guest = new WasmHidGuestBridge(api, host, topology);
+    const attach: HidAttachMessage = {
+      type: "hid.attach",
+      deviceId: 3,
+      vendorId: 0x1234,
+      productId: 0xabcd,
+      productName: "Keyboard",
+      guestPath: [0],
+      collections: [makeTopLevelApplicationCollection(0x01, 0x06)], // Generic Desktop / Keyboard
+      hasInterruptOut: true,
+    };
+    guest.attach(attach);
+
+    expect(ctorSpy).toHaveBeenCalledWith(
+      attach.vendorId,
+      attach.productId,
+      undefined,
+      attach.productName,
+      undefined,
+      synthesizeSpy.mock.results[0]!.value,
+      attach.hasInterruptOut,
+      1,
+      1,
+    );
+  });
+
+  it("infers HID boot mouse subclass/protocol for mouse collections", () => {
+    const ctorSpy = vi.fn();
+    const synthesizeSpy = vi.fn(() => new Uint8Array([1, 2, 3]));
+
+    class FakeBridge {
+      readonly push_input_report = vi.fn();
+      readonly drain_next_output_report = vi.fn();
+      readonly configured = vi.fn(() => true);
+      readonly free = vi.fn();
+
+      constructor(...args: unknown[]) {
+        ctorSpy(...args);
+      }
+    }
+
+    const host = {
+      sendReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const topology = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+
+    const api = {
+      UsbHidPassthroughBridge: FakeBridge,
+      synthesize_webhid_report_descriptor: synthesizeSpy,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any as WasmApi;
+
+    const guest = new WasmHidGuestBridge(api, host, topology);
+    const attach: HidAttachMessage = {
+      type: "hid.attach",
+      deviceId: 4,
+      vendorId: 0x1234,
+      productId: 0xabcd,
+      productName: "Mouse",
+      guestPath: [0],
+      collections: [makeTopLevelApplicationCollection(0x01, 0x02)], // Generic Desktop / Mouse
+      hasInterruptOut: false,
+    };
+    guest.attach(attach);
+
+    expect(ctorSpy).toHaveBeenCalledWith(
+      attach.vendorId,
+      attach.productId,
+      undefined,
+      attach.productName,
+      undefined,
+      synthesizeSpy.mock.results[0]!.value,
+      attach.hasInterruptOut,
+      1,
+      2,
+    );
+  });
+
   it("falls back to WebHidPassthroughBridge when UsbHidPassthroughBridge is unavailable", () => {
     const ctorSpy = vi.fn();
     let bridgeInstance: FakeBridge | null = null;
@@ -133,7 +258,7 @@ describe("hid/WasmHidGuestBridge", () => {
       productId: 0xabcd,
       productName: "Demo",
       guestPath: [0, 2],
-      collections: [{ some: "collection" }] as any,
+      collections: [makeTopLevelApplicationCollection(0x01, 0x04)],
       hasInterruptOut: false,
     };
     guest.attach(attach);

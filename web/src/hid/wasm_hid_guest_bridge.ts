@@ -29,6 +29,40 @@ type WebHidPassthroughBridge = InstanceType<WasmApi["WebHidPassthroughBridge"]>;
 type UsbHidPassthroughBridge = InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>;
 type HidPassthroughBridge = WebHidPassthroughBridge | UsbHidPassthroughBridge;
 
+const HID_COLLECTION_TYPE_APPLICATION = 1;
+const HID_USAGE_PAGE_GENERIC_DESKTOP = 0x01;
+const HID_USAGE_GENERIC_DESKTOP_MOUSE = 0x02;
+const HID_USAGE_GENERIC_DESKTOP_KEYBOARD = 0x06;
+const HID_INTERFACE_SUBCLASS_BOOT = 0x01;
+const HID_INTERFACE_PROTOCOL_KEYBOARD = 0x01;
+const HID_INTERFACE_PROTOCOL_MOUSE = 0x02;
+
+function inferHidBootInterfaceFromCollections(
+  collections: HidAttachMessage["collections"],
+): { interface_subclass?: number; interface_protocol?: number } {
+  let hasKeyboard = false;
+  let hasMouse = false;
+  for (const col of collections) {
+    if (col.collectionType !== HID_COLLECTION_TYPE_APPLICATION) continue;
+    if (col.usagePage !== HID_USAGE_PAGE_GENERIC_DESKTOP) continue;
+    if (col.usage === HID_USAGE_GENERIC_DESKTOP_KEYBOARD) {
+      hasKeyboard = true;
+    } else if (col.usage === HID_USAGE_GENERIC_DESKTOP_MOUSE) {
+      hasMouse = true;
+    }
+  }
+
+  // If the device exposes both keyboard and mouse collections, don't guess: the USB HID Boot
+  // interface protocol can only represent one.
+  if (hasKeyboard && !hasMouse) {
+    return { interface_subclass: HID_INTERFACE_SUBCLASS_BOOT, interface_protocol: HID_INTERFACE_PROTOCOL_KEYBOARD };
+  }
+  if (hasMouse && !hasKeyboard) {
+    return { interface_subclass: HID_INTERFACE_SUBCLASS_BOOT, interface_protocol: HID_INTERFACE_PROTOCOL_MOUSE };
+  }
+  return {};
+}
+
 export class WasmHidGuestBridge implements HidGuestBridge {
   readonly #bridges = new Map<number, HidPassthroughBridge>();
 
@@ -51,6 +85,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       let kind: "webhid" | "usb-hid-passthrough" = "webhid";
       if (UsbBridge && synthesize) {
         const reportDescriptorBytes = synthesize(msg.collections);
+        const { interface_subclass, interface_protocol } = inferHidBootInterfaceFromCollections(msg.collections);
         bridge = new UsbBridge(
           msg.vendorId,
           msg.productId,
@@ -59,8 +94,8 @@ export class WasmHidGuestBridge implements HidGuestBridge {
           undefined,
           reportDescriptorBytes,
           msg.hasInterruptOut,
-          undefined,
-          undefined,
+          interface_subclass,
+          interface_protocol,
         );
         kind = "usb-hid-passthrough";
       } else {

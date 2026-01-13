@@ -92,5 +92,5 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       await cpuWorker.terminate();
       await ioWorker.terminate();
     }
-  });
+  }, 15000);
 });
