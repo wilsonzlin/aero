@@ -22,7 +22,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:04.0  | Audio  | 8086:2668     | 04/03/00                 | INTA     | Intel HD Audio (HDA) controller |
 | 00:05.0  | NIC    | 8086:100E     | 02/00/00                 | INTA     | Intel E1000 (82540EM) |
 | 00:06.0  | NIC    | 10EC:8139     | 02/00/00                 | INTA     | RTL8139 (alternate NIC option) |
-| 00:07.0  | GPU    | A3A0:0001     | 03/00/00                 | INTA     | AeroGPU display controller (WDDM). **Canonical BDF + VID/DID contract** for Windows driver binding (`PCI\VEN_A3A0&DEV_0001`). Do not assign any other device to `00:07.0`. See `docs/abi/aerogpu-pci-identity.md`. Until AeroGPU is wired up in `aero_machine::Machine`, boot display is provided by the transitional VGA/VBE path (see `00:0c.0`). |
+| 00:07.0  | GPU    | A3A0:0001     | 03/00/00                 | INTA     | AeroGPU display controller (WDDM). **Canonical BDF + VID/DID contract** for Windows driver binding (`PCI\VEN_A3A0&DEV_0001`). Do not assign any other device to `00:07.0`. See `docs/abi/aerogpu-pci-identity.md`. Canonical PCI profile defines BAR0 (64KiB regs) + BAR1 (prefetchable VRAM aperture) per `docs/16-aerogpu-vga-vesa-compat.md`. Until AeroGPU is wired up in `aero_machine::Machine`, boot display is provided by the transitional VGA/VBE path (see `00:0c.0`). |
 | 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1000) |
 | 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1001) |
 | 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input keyboard (Aero Win7 contract v1: `SUBSYS_00101AF4`, `REV_01`, `header_type=0x80` for multi-function discovery) |
@@ -119,12 +119,14 @@ For Windows 7 and Linux to bind drivers predictably:
    - `virtio-input` keyboard (function 0) must set `header_type = 0x80` (multi-function bit) so
       guests enumerate the paired mouse function (function 1).
 4. **BAR types and sizes** must be correct:
-   - Example: AHCI’s ABAR must be MMIO and large enough for the implemented port set (Aero uses 8KiB
-     via `aero_devices::pci::profile::AHCI_ABAR_SIZE`).
-   - Example: HDA MMIO must be 16KiB (`0x4000`) per spec.
+    - Example: AHCI’s ABAR must be MMIO and large enough for the implemented port set (Aero uses 8KiB
+      via `aero_devices::pci::profile::AHCI_ABAR_SIZE`).
+    - Example: HDA MMIO must be 16KiB (`0x4000`) per spec.
+    - Example: AeroGPU’s canonical PCI profile defines BAR0 (64KiB regs) and BAR1 (prefetchable VRAM aperture)
+      for legacy VGA/VBE compatibility (`docs/16-aerogpu-vga-vesa-compat.md`).
 5. **Virtio PCI capabilities** must be present and internally consistent for modern drivers:
-   - Virtio vendor-specific capabilities for Common/ISR/Device/Notify regions
-   - MSI/MSI-X capabilities where supported by the platform implementation
+    - Virtio vendor-specific capabilities for Common/ISR/Device/Notify regions
+    - MSI/MSI-X capabilities where supported by the platform implementation
 
 ## Debugging
 
