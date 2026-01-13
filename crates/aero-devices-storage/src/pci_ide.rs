@@ -739,12 +739,12 @@ impl IdeController {
         let off = port.wrapping_sub(self.primary.ports.ctrl_base);
         if off < 2 {
             let reg = off;
-            return Self::read_ctrl_reg(&mut self.primary, reg);
+            return Self::read_ctrl_reg(&mut self.primary, reg, size);
         }
         let off = port.wrapping_sub(self.secondary.ports.ctrl_base);
         if off < 2 {
             let reg = off;
-            return Self::read_ctrl_reg(&mut self.secondary, reg);
+            return Self::read_ctrl_reg(&mut self.secondary, reg, size);
         }
 
         // Bus master.
@@ -868,10 +868,15 @@ impl IdeController {
         }
     }
 
-    fn read_ctrl_reg(chan: &mut Channel, reg: u16) -> u32 {
+    fn read_ctrl_reg(chan: &mut Channel, reg: u16, size: u8) -> u32 {
         let dev_idx = chan.selected_drive() as usize;
         if !chan.drive_present[dev_idx] {
-            return 0xFF;
+            return match size {
+                1 => 0xFF,
+                2 => 0xFFFF,
+                4 => 0xFFFF_FFFF,
+                _ => 0xFFFF_FFFF,
+            };
         }
         match reg {
             ATA_CTRL_ALT_STATUS_DEVICE_CTRL => chan.status as u32,
