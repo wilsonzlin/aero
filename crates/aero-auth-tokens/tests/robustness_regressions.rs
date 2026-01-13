@@ -159,11 +159,11 @@ fn session_token_valid_signature_but_huge_non_json_payload_is_rejected_without_p
 
     // Force the verifier to:
     // - accept the signature
-    // - base64url-decode a large payload
+    // - base64url-decode a large payload (near the verifier's size cap)
     // - reject it safely when JSON parsing fails
     //
     // Use a payload that decodes to lots of NUL bytes (never valid JSON).
-    let payload_b64 = "A".repeat(256_000);
+    let payload_b64 = "A".repeat(16 * 1024);
     let sig = hmac_sha256(secret, payload_b64.as_bytes());
     let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
     let token = format!("{payload_b64}.{sig_b64}");
@@ -181,7 +181,7 @@ fn jwt_valid_signature_but_huge_non_json_payload_is_rejected_without_panicking()
     // See session_token_valid_signature_but_huge_non_json_payload_is_rejected_without_panicking.
     let header = br#"{"alg":"HS256"}"#;
     let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
-    let payload_b64 = "A".repeat(256_000);
+    let payload_b64 = "A".repeat(16 * 1024);
     let signing_input = format!("{header_b64}.{payload_b64}");
     let sig = hmac_sha256(secret, signing_input.as_bytes());
     let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
@@ -190,4 +190,33 @@ fn jwt_valid_signature_but_huge_non_json_payload_is_rejected_without_panicking()
     let res = std::panic::catch_unwind(|| verify_hs256_jwt(&token, secret, now_sec));
     assert!(res.is_ok(), "verify_hs256_jwt panicked");
     assert!(res.unwrap().is_none(), "expected huge non-json payload to be rejected");
+}
+
+#[test]
+fn session_token_rejects_payloads_over_internal_size_cap() {
+    let secret = b"unit-test-secret";
+
+    // Over the verifier's size cap (keep multiple-of-4 so the only failure mode is the cap).
+    let payload_b64 = "A".repeat(16 * 1024 + 4);
+    let sig = hmac_sha256(secret, payload_b64.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{payload_b64}.{sig_b64}");
+
+    assert!(verify_gateway_session_token(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_payloads_over_internal_size_cap() {
+    let secret = b"unit-test-secret";
+
+    let header = br#"{"alg":"HS256"}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    // Over the verifier's size cap.
+    let payload_b64 = "A".repeat(16 * 1024 + 4);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
 }

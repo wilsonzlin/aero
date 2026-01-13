@@ -18,8 +18,17 @@ pub struct Claims {
     pub iss: Option<String>,
 }
 
-fn decode_base64url(raw: &str) -> Option<Vec<u8>> {
+const MAX_SESSION_TOKEN_PAYLOAD_B64_LEN: usize = 16 * 1024;
+const MAX_SESSION_TOKEN_SIG_B64_LEN: usize = 128;
+const MAX_JWT_HEADER_B64_LEN: usize = 4 * 1024;
+const MAX_JWT_PAYLOAD_B64_LEN: usize = 16 * 1024;
+const MAX_JWT_SIG_B64_LEN: usize = 128;
+
+fn decode_base64url(raw: &str, max_len: usize) -> Option<Vec<u8>> {
     if raw.is_empty() {
+        return None;
+    }
+    if raw.len() > max_len {
         return None;
     }
     if !raw.as_bytes().iter().all(|b| {
@@ -87,13 +96,17 @@ pub fn verify_gateway_session_token(
         return None;
     }
 
-    let provided_sig = decode_base64url(sig_b64)?;
+    if payload_b64.len() > MAX_SESSION_TOKEN_PAYLOAD_B64_LEN || sig_b64.len() > MAX_SESSION_TOKEN_SIG_B64_LEN {
+        return None;
+    }
+
+    let provided_sig = decode_base64url(sig_b64, MAX_SESSION_TOKEN_SIG_B64_LEN)?;
     let expected_sig = hmac_sha256(secret, &[payload_b64.as_bytes()]);
     if !constant_time_equal(&provided_sig, &expected_sig) {
         return None;
     }
 
-    let payload_raw = decode_base64url(payload_b64)?;
+    let payload_raw = decode_base64url(payload_b64, MAX_SESSION_TOKEN_PAYLOAD_B64_LEN)?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_raw).ok()?;
     let obj = payload.as_object()?;
 
@@ -156,7 +169,14 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
         return None;
     }
 
-    let header_raw = decode_base64url(header_b64)?;
+    if header_b64.len() > MAX_JWT_HEADER_B64_LEN
+        || payload_b64.len() > MAX_JWT_PAYLOAD_B64_LEN
+        || sig_b64.len() > MAX_JWT_SIG_B64_LEN
+    {
+        return None;
+    }
+
+    let header_raw = decode_base64url(header_b64, MAX_JWT_HEADER_B64_LEN)?;
     let header: serde_json::Value = serde_json::from_slice(&header_raw).ok()?;
     let header_obj = header.as_object()?;
     let alg = header_obj.get("alg")?.as_str()?;
@@ -169,7 +189,7 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
         }
     }
 
-    let provided_sig = decode_base64url(sig_b64)?;
+    let provided_sig = decode_base64url(sig_b64, MAX_JWT_SIG_B64_LEN)?;
     let expected_sig = hmac_sha256(
         secret,
         &[header_b64.as_bytes(), b".", payload_b64.as_bytes()],
@@ -178,7 +198,7 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
         return None;
     }
 
-    let payload_raw = decode_base64url(payload_b64)?;
+    let payload_raw = decode_base64url(payload_b64, MAX_JWT_PAYLOAD_B64_LEN)?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_raw).ok()?;
     let obj = payload.as_object()?;
 
