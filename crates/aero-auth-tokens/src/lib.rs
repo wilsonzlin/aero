@@ -19,10 +19,15 @@ pub struct Claims {
 }
 
 const MAX_SESSION_TOKEN_PAYLOAD_B64_LEN: usize = 16 * 1024;
-const MAX_SESSION_TOKEN_SIG_B64_LEN: usize = 128;
+const HMAC_SHA256_SIG_LEN: usize = 32;
+// Base64url without padding for a 32-byte HMAC:
+// - base64 output is 44 chars (with one '=' padding)
+// - without padding => 43 chars
+const HMAC_SHA256_SIG_B64_LEN: usize = 43;
+const MAX_SESSION_TOKEN_SIG_B64_LEN: usize = HMAC_SHA256_SIG_B64_LEN;
 const MAX_JWT_HEADER_B64_LEN: usize = 4 * 1024;
 const MAX_JWT_PAYLOAD_B64_LEN: usize = 16 * 1024;
-const MAX_JWT_SIG_B64_LEN: usize = 128;
+const MAX_JWT_SIG_B64_LEN: usize = HMAC_SHA256_SIG_B64_LEN;
 const MAX_SESSION_TOKEN_LEN: usize =
     MAX_SESSION_TOKEN_PAYLOAD_B64_LEN + 1 /* '.' */ + MAX_SESSION_TOKEN_SIG_B64_LEN;
 const MAX_JWT_LEN: usize =
@@ -120,7 +125,7 @@ pub fn verify_gateway_session_token(
     let provided_sig = decode_base64url(sig_b64, MAX_SESSION_TOKEN_SIG_B64_LEN)?;
     // HMAC-SHA256 output is always 32 bytes; reject signatures of other lengths without doing any
     // HMAC work.
-    if provided_sig.len() != 32 {
+    if provided_sig.len() != HMAC_SHA256_SIG_LEN {
         return None;
     }
     let expected_sig = hmac_sha256(secret, &[payload_b64.as_bytes()]);
@@ -219,7 +224,7 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
     }
 
     let provided_sig = decode_base64url(sig_b64, MAX_JWT_SIG_B64_LEN)?;
-    if provided_sig.len() != 32 {
+    if provided_sig.len() != HMAC_SHA256_SIG_LEN {
         return None;
     }
     let expected_sig = hmac_sha256(

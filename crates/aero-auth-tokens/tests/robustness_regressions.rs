@@ -228,7 +228,7 @@ fn session_token_rejects_signature_over_internal_size_cap() {
     let payload = br#"{"v":1,"sid":"abc","exp":12345}"#;
     let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
     // Over the verifier's signature cap (keep divisible-by-4 so it is well-formed base64).
-    let sig_b64 = "A".repeat(132);
+    let sig_b64 = "A".repeat(44);
     let token = format!("{payload_b64}.{sig_b64}");
 
     assert!(verify_gateway_session_token(&token, secret, 0).is_none());
@@ -243,7 +243,7 @@ fn jwt_rejects_signature_over_internal_size_cap() {
     let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
     let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
     // Over the verifier's signature cap.
-    let sig_b64 = "A".repeat(132);
+    let sig_b64 = "A".repeat(44);
     let token = format!("{header_b64}.{payload_b64}.{sig_b64}");
 
     assert!(verify_hs256_jwt(&token, secret, 0).is_none());
