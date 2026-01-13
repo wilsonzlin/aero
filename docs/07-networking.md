@@ -1425,7 +1425,7 @@ It also supports optional per-session traffic capture for debugging:
 - `AERO_L2_CAPTURE_DIR=/path/to/dir` – when set, writes one `.pcapng` file per tunnel session containing:
   - guest→proxy Ethernet frames (inbound)
   - proxy→guest Ethernet frames (outbound)
-- `AERO_L2_CAPTURE_MAX_BYTES=67108864` – maximum captured Ethernet payload bytes written per session file (default: `0` = no cap).
+- `AERO_L2_CAPTURE_MAX_BYTES=67108864` – maximum **capture file size** written per session file (default: **64 MiB**; `0` disables the cap). Note: this includes PCAPNG container overhead, not just Ethernet payload bytes.
 - `AERO_L2_CAPTURE_FLUSH_INTERVAL_MS=1000` – flush interval for capture writers (default: **1000ms**; `0` disables periodic flushing; capture is flushed on close).
 - `AERO_L2_PING_INTERVAL_MS=1000` – when set, the proxy sends protocol-level PINGs; RTT is recorded as `l2_ping_rtt_ms` histogram in `/metrics`.
 
