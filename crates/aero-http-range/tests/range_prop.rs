@@ -49,6 +49,21 @@ fn valid_header() -> impl Strategy<Value = String> {
         .prop_map(|(ws0, specs, ws1, ws2)| format!("{ws0}bytes{ws1}={ws2}{}", specs.join(",")))
 }
 
+fn valid_header_with_specs() -> impl Strategy<Value = (Vec<ByteRangeSpec>, String)> {
+    (ows(), prop::collection::vec(valid_spec(), 1..20), ows(), ows()).prop_map(
+        |(ws0, specs, ws1, ws2)| {
+            let mut out_specs = Vec::with_capacity(specs.len());
+            let mut out_strings = Vec::with_capacity(specs.len());
+            for (spec, s) in specs {
+                out_specs.push(spec);
+                out_strings.push(s);
+            }
+            let header = format!("{ws0}bytes{ws1}={ws2}{}", out_strings.join(","));
+            (out_specs, header)
+        },
+    )
+}
+
 proptest! {
     // Parser should never panic on arbitrary inputs.
     #[test]
@@ -95,6 +110,12 @@ proptest! {
                 prop_assert_eq!(sum, manual);
             }
         }
+    }
+
+    #[test]
+    fn parse_roundtrips_for_generated_specs((expected, header) in valid_header_with_specs()) {
+        let parsed = parse_range_header(&header).expect("generated header must parse");
+        prop_assert_eq!(parsed, expected);
     }
 
     // Coalescing should not change the *set* of bytes covered by the resolved
