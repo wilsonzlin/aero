@@ -19,7 +19,7 @@ impl AeroBackend {
             case.template.kind,
             &mut state,
             &mut memory,
-            case.init.rdi,
+            case.mem_base,
             case.template.bytes.len(),
         ) {
             Ok(()) => ExecOutcome {

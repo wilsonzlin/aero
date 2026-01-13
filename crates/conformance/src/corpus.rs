@@ -235,6 +235,10 @@ pub struct TestCase {
     pub case_idx: usize,
     pub template: InstructionTemplate,
     pub init: CpuState,
+    /// Base address for interpreting `memory` as a linear region.
+    ///
+    /// `memory[0]` corresponds to this address in both backends.
+    pub mem_base: u64,
     pub memory: Vec<u8>,
 }
 
@@ -282,6 +286,7 @@ impl TestCase {
             case_idx,
             template: *template,
             init,
+            mem_base,
             memory,
         }
     }
@@ -372,5 +377,40 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn mem_at_rdi_offset_is_interpreted_relative_to_mem_base_in_aero() {
+        let mem_base = 0x1000u64;
+        let data_off = 16u32;
+        let template = InstructionTemplate {
+            name: "mov [rdi], rax (offset)",
+            coverage_key: "test",
+            bytes: &[0x48, 0x89, 0x07],
+            kind: TemplateKind::MovM64Rax,
+            flags_mask: 0,
+            mem_compare_len: (data_off as usize) + 8,
+            init: InitPreset::MemAtRdi { data_off },
+        };
+
+        let mut rng = XorShift64::new(1);
+        let case = TestCase::generate(0, &template, &mut rng, mem_base);
+
+        let expected = case.init.rax.to_le_bytes();
+        let start = data_off as usize;
+        let end = start + expected.len();
+
+        // Ensure the test is meaningful: the bytes we expect to write differ from
+        // the existing memory at that location.
+        assert_ne!(
+            &case.memory[start..end],
+            expected,
+            "randomized memory already matched expected write"
+        );
+
+        let mut aero = crate::aero::AeroBackend::new();
+        let outcome = aero.execute(&case);
+        assert!(outcome.fault.is_none());
+        assert_eq!(&outcome.memory[start..end], expected);
     }
 }
