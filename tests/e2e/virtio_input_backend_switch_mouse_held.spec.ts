@@ -668,6 +668,8 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
 
   expect(result.initRes.idDword >>> 0).toBe(0x1052_1af4);
   expect(result.initRes.subsysDword >>> 0).toBe(0x0011_1af4);
+  // Ensure we start pre-DRIVER_OK so the initial backend is PS/2 (i8042).
+  expect(result.initRes.deviceStatusBefore & 0x04).toBe(0x00);
 
   // Phase 1: button-down should go through PS/2 i8042 AUX packets.
   expect(result.phase1BtnDown.bytes.length).toBeGreaterThan(0);
@@ -691,4 +693,3 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     { type_: 0, code: 0, value: 0 },
   ]);
 });
-
