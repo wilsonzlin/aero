@@ -4,6 +4,7 @@
 //! - [`aero_storage::VirtualDisk`] (disk image layer)
 //! - `aero_devices_nvme::DiskBackend` (NVMe controller)
 //! - `aero_devices::storage::DiskBackend` (virtio-blk and other device models)
+//! - `aero_virtio::devices::blk::BlockBackend` (virtio-blk device model in `aero-virtio`)
 //!
 //! This crate provides lightweight wrapper *types* around [`aero_storage::VirtualDisk`].
 //! The concrete `DiskBackend` implementations live in the crates that define those
@@ -13,28 +14,46 @@
 //! See `docs/20-storage-trait-consolidation.md` for the repo-wide storage trait consolidation plan
 //! and guidance on where adapter types vs trait impls should live.
 //!
+//! ## Virtio-blk (`aero-virtio`)
+//!
+//! `aero-virtio` keeps its own `BlockBackend` trait for the virtio-blk device model, but most call
+//! sites should still treat [`aero_storage::VirtualDisk`] as the wiring boundary.
+//!
+//! `aero-virtio` provides a blanket impl so a boxed `VirtualDisk` can be used directly as a virtio
+//! backend:
+//!
+//! - `impl<T: aero_storage::VirtualDisk + ?Sized> aero_virtio::devices::blk::BlockBackend for Box<T>`
+//!
+//! If you need the reverse direction (reusing `aero-storage` disk wrappers on top of an existing
+//! virtio backend), use `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk`.
+//!
 //! ## Usage (examples)
 //!
-//! Wrap an [`aero_storage::VirtualDisk`] for use with the NVMe device model:
+//! Wrap an [`aero_storage::VirtualDisk`] for use with crates that expect a `std::io`-style,
+//! byte-addressed backend (e.g. `aero_devices::storage::DiskBackend`):
 //!
-//! ```rust,ignore
-//! use aero_devices_nvme::{from_virtual_disk, NvmeController};
-//! use aero_storage::{MemBackend, RawDisk};
-//!
-//! let disk = RawDisk::create(MemBackend::new(), 1024 * 512).unwrap();
-//! let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
-//! ```
-//!
-//! Wrap an [`aero_storage::VirtualDisk`] for use with `aero-devices` virtio-blk:
-//!
-//! ```rust,ignore
-//! use aero_devices::storage::VirtualDrive;
-//! use aero_storage::{MemBackend, RawDisk};
+//! ```rust
+//! use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 //! use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
 //!
-//! let disk = RawDisk::create(MemBackend::new(), 1024 * 512).unwrap();
+//! let disk = RawDisk::create(MemBackend::new(), (2 * SECTOR_SIZE) as u64).unwrap();
 //! let backend = AeroVirtualDiskAsDeviceBackend::new(Box::new(disk));
-//! let drive = VirtualDrive::new(512, Box::new(backend));
+//!
+//! // The wrapper enforces 512-byte alignment at the device boundary.
+//! let mut buf = [0u8; SECTOR_SIZE];
+//! backend.read_at_aligned(0, &mut buf).unwrap();
+//! ```
+//!
+//! Wrap an [`aero_storage::VirtualDisk`] for use with the NVMe adapter wrapper type (the actual
+//! `aero_devices_nvme::DiskBackend` impl lives in `aero-devices-nvme`):
+//!
+//! ```rust
+//! use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
+//! use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend;
+//!
+//! let disk = RawDisk::create(MemBackend::new(), (4 * SECTOR_SIZE) as u64).unwrap();
+//! let adapter = AeroVirtualDiskAsNvmeBackend::new(Box::new(disk));
+//! assert_eq!(adapter.capacity_bytes(), (4 * SECTOR_SIZE) as u64);
 //! ```
 
 use std::io;

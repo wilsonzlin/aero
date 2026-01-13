@@ -130,6 +130,11 @@ error types, sector-size reporting, or different mutability requirements). Those
 treated as **device-internal integration traits**, and code should prefer accepting a
 `Box<dyn aero_storage::VirtualDisk>` at public boundaries unless there is a concrete reason not to.
 
+In particular, virtio-blk device models may expose crate-local backend traits
+(`aero_devices::storage::DiskBackend`, `aero_virtio::devices::blk::BlockBackend`). Treat those
+traits as *device-internal*; “platform wiring” should prefer `aero_storage::VirtualDisk` and adapt
+at the device boundary.
+
 When a device crate *must* keep its own trait, the preferred integration pattern is:
 
 - Accept the device’s trait internally (e.g. `aero_devices_nvme::DiskBackend`)
@@ -160,16 +165,21 @@ Therefore:
 
 This pattern is already used today:
 
-- Wrapper types: `crates/aero-storage-adapters`
-- `impl aero_devices_nvme::DiskBackend for AeroVirtualDiskAsNvmeBackend`: in `crates/aero-devices-nvme`
-- `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend`: in `crates/devices`
-- Reverse adapter: `crates/devices/src/storage/mod.rs` defines `DeviceBackendAsAeroVirtualDisk`, which
-  allows reusing `aero-storage` disk wrappers (cache/sparse/COW) on top of an existing
-  `aero_devices::storage::DiskBackend`.
-- BIOS/firmware bridge: `crates/aero-machine/src/shared_disk.rs` defines `SharedDisk`, a wrapper type
-  that implements both `firmware::bios::BlockDevice` and `aero_storage::VirtualDisk` so a single
-  disk image can be used consistently across the “boot firmware” and “PCI storage controller”
-  phases.
+ - Wrapper types: `crates/aero-storage-adapters`
+ - `impl aero_devices_nvme::DiskBackend for AeroVirtualDiskAsNvmeBackend`: in `crates/aero-devices-nvme`
+ - `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend`: in `crates/devices`
+ - `impl aero_virtio::devices::blk::BlockBackend for Box<T: aero_storage::VirtualDisk>`: in `crates/aero-virtio`
+ - Reverse adapter: `crates/devices/src/storage/mod.rs` defines `DeviceBackendAsAeroVirtualDisk`, which
+   allows reusing `aero-storage` disk wrappers (cache/sparse/COW) on top of an existing
+   `aero_devices::storage::DiskBackend`.
+ - Reverse adapter: `aero_virtio::devices::blk::BlockBackendAsAeroVirtualDisk` allows reusing
+   `aero-storage` disk wrappers on top of an existing `aero_virtio::devices::blk::BlockBackend`.
+ - Reverse adapter (optional, if/when implemented): `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`
+   allows reusing `aero-storage` disk wrappers on top of an existing `aero_devices_nvme::DiskBackend`.
+ - BIOS/firmware bridge: `crates/aero-machine/src/shared_disk.rs` defines `SharedDisk`, a wrapper type
+   that implements both `firmware::bios::BlockDevice` and `aero_storage::VirtualDisk` so a single
+   disk image can be used consistently across the “boot firmware” and “PCI storage controller”
+   phases.
 
 If a new device crate needs a disk backend trait, it should follow the same structure:
 
@@ -255,10 +265,12 @@ Goal: ensure there is exactly one place in-tree implementing raw/qcow2/vhd/spars
 1. Prefer passing `Box<dyn aero_storage::VirtualDisk>` through “platform wiring” layers.
 2. Limit crate-specific `DiskBackend` traits to truly internal needs.
 3. Keep `crates/aero-storage-adapters` as the shared home for adapter wrapper *types*.
-4. (Optional cleanup) Evaluate consolidating virtio-blk device models on fewer backend traits:
-   - `aero_devices::storage::DiskBackend`
-   - `aero_virtio::devices::blk::BlockBackend`
-   In both cases, keep `aero_storage::VirtualDisk` as the common “disk image” boundary and adapt.
+4. virtio-blk: keep `aero_storage::VirtualDisk` as the wiring boundary and treat backend traits as
+   device-internal (adapt at the edge). (Optional cleanup) Evaluate consolidating virtio-blk device
+   models on fewer backend traits:
+    - `aero_devices::storage::DiskBackend`
+    - `aero_virtio::devices::blk::BlockBackend`
+    In both cases, keep `aero_storage::VirtualDisk` as the common “disk image” boundary and adapt.
 
 ### Phase 3: deprecate and remove legacy emulator traits
 
