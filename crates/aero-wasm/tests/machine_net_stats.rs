@@ -105,6 +105,18 @@ fn machine_net_stats_smoke() {
         .expect("BigInt::to_string returned non-string");
     assert_eq!(s, "1", "rx_popped_frames should increment after polling");
 
+    let got = get_bigint(&stats, "rx_popped_bytes");
+    let s = got
+        .to_string(10)
+        .expect("BigInt::to_string")
+        .as_string()
+        .expect("BigInt::to_string returned non-string");
+    assert_eq!(
+        s,
+        frame.len().to_string(),
+        "rx_popped_bytes should increment by frame.len() after polling"
+    );
+
     // Detach via alias and ensure stats are no longer reported.
     m.detach_net_rings();
     assert!(m.net_stats().is_null());
