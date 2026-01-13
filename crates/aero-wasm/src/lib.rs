@@ -2642,6 +2642,108 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Create a new OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
+    /// canonical disk.
+    ///
+    /// This is the preferred persistence format for large VM disks in the browser: it stores only
+    /// allocated blocks in OPFS while presenting a fixed-capacity virtual disk to the guest.
+    ///
+    /// Notes:
+    /// - OPFS sync access handles are worker-only; this requires running in a Dedicated Worker.
+    /// - `block_size_bytes` must be a power-of-two multiple of 512.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_aerospar_opfs_create(
+        &mut self,
+        path: String,
+        disk_size_bytes: u64,
+        block_size_bytes: u32,
+    ) -> Result<(), JsValue> {
+        let storage = aero_opfs::OpfsByteStorage::open(&path, true)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk = aero_storage::AeroSparseDisk::create(
+            storage,
+            aero_storage::AeroSparseConfig {
+                disk_size_bytes,
+                block_size_bytes,
+            },
+        )
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.inner
+            .set_disk_backend(Box::new(disk))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Open an existing OPFS-backed Aero sparse disk (`.aerospar`) and attach it as the machine's
+    /// canonical disk.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_aerospar_opfs_open(&mut self, path: String) -> Result<(), JsValue> {
+        let storage = aero_opfs::OpfsByteStorage::open(&path, false)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk =
+            aero_storage::AeroSparseDisk::open(storage).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.inner
+            .set_disk_backend(Box::new(disk))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Create an OPFS-backed copy-on-write disk: `base_path` (read-only, any supported format) +
+    /// `overlay_path` (writable Aero sparse disk).
+    ///
+    /// The overlay is created with the same capacity as the base disk and attached as the
+    /// machine's canonical disk.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_cow_opfs_create(
+        &mut self,
+        base_path: String,
+        overlay_path: String,
+        overlay_block_size_bytes: u32,
+    ) -> Result<(), JsValue> {
+        let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let base_disk =
+            aero_storage::DiskImage::open_auto(base_storage).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, true)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let disk = aero_storage::AeroCowDisk::create(base_disk, overlay_backend, overlay_block_size_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.inner
+            .set_disk_backend(Box::new(disk))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Open an existing OPFS-backed copy-on-write disk: `base_path` (read-only) + `overlay_path`
+    /// (existing writable Aero sparse disk overlay).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_disk_cow_opfs_open(
+        &mut self,
+        base_path: String,
+        overlay_path: String,
+    ) -> Result<(), JsValue> {
+        let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let base_disk =
+            aero_storage::DiskImage::open_auto(base_storage).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_path, false)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let disk = aero_storage::AeroCowDisk::open(base_disk, overlay_backend)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.inner
+            .set_disk_backend(Box::new(disk))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
         RunExit::from_native(self.inner.run_slice(max_insts as u64))
     }
@@ -3383,6 +3485,164 @@ impl Machine {
         // Restoring rewinds machine device state; we no longer know the current mouse buttons.
         self.mouse_buttons_known = false;
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod machine_opfs_disk_tests {
+    use super::*;
+
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use aero_storage::VirtualDisk as _;
+
+    fn unique_path(prefix: &str, ext: &str) -> String {
+        let now = js_sys::Date::now() as u64;
+        format!("tests/{prefix}-{now}.{ext}")
+    }
+
+    fn fill_deterministic(buf: &mut [u8], seed: u32) {
+        let mut x = seed;
+        for b in buf {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            *b = (x & 0xff) as u8;
+        }
+    }
+
+    fn js_error_to_string(err: &JsValue) -> String {
+        err.as_string().unwrap_or_else(|| format!("{err:?}"))
+    }
+
+    fn should_skip_opfs(msg: &str) -> bool {
+        // `aero_storage::DiskError` `Display` strings.
+        msg.contains("backend not supported")
+            || msg.contains("backend unavailable")
+            || msg.contains("storage quota exceeded")
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn machine_disk_aerospar_opfs_roundtrip() {
+        let path = unique_path("machine-aerospar", "aerospar");
+
+        let mut m = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+        if let Err(err) = m
+            .set_disk_aerospar_opfs_create(path.clone(), 1024 * 1024, 32 * 1024)
+            .await
+        {
+            let msg = js_error_to_string(&err);
+            if should_skip_opfs(&msg) {
+                return;
+            }
+            panic!("set_disk_aerospar_opfs_create failed: {msg}");
+        }
+
+        let mut write_buf = vec![0u8; 4096];
+        fill_deterministic(&mut write_buf, 0x1234_5678);
+
+        let mut disk = m.inner.shared_disk();
+        disk.write_sectors(7, &write_buf).unwrap();
+        disk.flush().unwrap();
+        drop(m);
+
+        let mut m = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+        if let Err(err) = m.set_disk_aerospar_opfs_open(path.clone()).await {
+            let msg = js_error_to_string(&err);
+            if should_skip_opfs(&msg) {
+                return;
+            }
+            panic!("set_disk_aerospar_opfs_open failed: {msg}");
+        }
+
+        let mut disk = m.inner.shared_disk();
+        let mut read_buf = vec![0u8; write_buf.len()];
+        disk.read_sectors(7, &mut read_buf).unwrap();
+        assert_eq!(read_buf, write_buf);
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn machine_disk_cow_opfs_roundtrip() {
+        let base_path = unique_path("machine-cow-base", "img");
+        let overlay_path = unique_path("machine-cow-overlay", "aerospar");
+        let size_bytes = 1024 * 1024u64;
+
+        // Create a small base disk image. If OPFS sync access handles are unavailable, verify the
+        // Machine API reports NotSupported and skip.
+        let storage = match aero_opfs::OpfsByteStorage::open(&base_path, true).await {
+            Ok(s) => s,
+            Err(aero_opfs::DiskError::NotSupported(_))
+            | Err(aero_opfs::DiskError::BackendUnavailable) => {
+                let mut m = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+                let err = m
+                    .set_disk_cow_opfs_create(base_path.clone(), overlay_path.clone(), 32 * 1024)
+                    .await
+                    .expect_err("expected NotSupported when OPFS sync access handles unavailable");
+                let msg = js_error_to_string(&err);
+                assert!(
+                    should_skip_opfs(&msg),
+                    "expected NotSupported/BackendUnavailable error, got: {msg}"
+                );
+                return;
+            }
+            Err(aero_opfs::DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("OpfsByteStorage::open failed: {e:?}"),
+        };
+
+        let mut base_disk = aero_storage::RawDisk::create(storage, size_bytes).unwrap();
+        let mut base_contents = vec![0u8; 4096];
+        fill_deterministic(&mut base_contents, 0x1111_2222);
+        base_disk.write_sectors(7, &base_contents).unwrap();
+        base_disk.flush().unwrap();
+        drop(base_disk);
+
+        let mut m = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+        if let Err(err) = m
+            .set_disk_cow_opfs_create(base_path.clone(), overlay_path.clone(), 32 * 1024)
+            .await
+        {
+            let msg = js_error_to_string(&err);
+            if should_skip_opfs(&msg) {
+                return;
+            }
+            panic!("set_disk_cow_opfs_create failed: {msg}");
+        }
+
+        let mut overlay_contents = vec![0u8; 4096];
+        fill_deterministic(&mut overlay_contents, 0x3333_4444);
+
+        let mut disk = m.inner.shared_disk();
+        disk.write_sectors(7, &overlay_contents).unwrap();
+        disk.flush().unwrap();
+        drop(m);
+
+        // Base disk should remain unchanged (COW writes go to the overlay).
+        let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
+            .await
+            .unwrap();
+        let mut base_disk = aero_storage::DiskImage::open_auto(base_storage).unwrap();
+        let mut read_base = vec![0u8; base_contents.len()];
+        base_disk.read_sectors(7, &mut read_base).unwrap();
+        assert_eq!(read_base, base_contents);
+        drop(base_disk);
+
+        // Reopen overlay and verify the data persisted.
+        let mut m = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+        if let Err(err) = m
+            .set_disk_cow_opfs_open(base_path.clone(), overlay_path.clone())
+            .await
+        {
+            let msg = js_error_to_string(&err);
+            if should_skip_opfs(&msg) {
+                return;
+            }
+            panic!("set_disk_cow_opfs_open failed: {msg}");
+        }
+
+        let mut disk = m.inner.shared_disk();
+        let mut read_overlay = vec![0u8; overlay_contents.len()];
+        disk.read_sectors(7, &mut read_overlay).unwrap();
+        assert_eq!(read_overlay, overlay_contents);
     }
 }
 

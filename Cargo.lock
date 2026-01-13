@@ -743,6 +743,7 @@ dependencies = [
  "aero-platform",
  "aero-shared",
  "aero-snapshot",
+ "aero-storage",
  "aero-usb",
  "aero-virtio",
  "js-sys",
