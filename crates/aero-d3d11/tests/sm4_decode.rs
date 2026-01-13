@@ -607,6 +607,62 @@ fn skips_customdata_comment_without_ending_decl_section() {
 }
 
 #[test]
+fn preserves_non_comment_customdata_and_does_not_end_decl_section() {
+    const DCL_DUMMY: u32 = 0x100;
+    const CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER: u32 = 3;
+
+    let mut body = Vec::<u32>::new();
+
+    // Non-comment customdata block, commonly used for embedded immediate constant buffers.
+    body.extend_from_slice(&[
+        opcode_token(OPCODE_CUSTOMDATA, 5),
+        CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER,
+        0x1111_1111,
+        0x2222_2222,
+        0x3333_3333,
+    ]);
+
+    body.extend_from_slice(&[opcode_token(DCL_DUMMY, 3)]);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
+
+    // mov r0, v0
+    let mut mov = vec![opcode_token(OPCODE_MOV, 5)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov.extend_from_slice(&reg_src(
+        OPERAND_TYPE_INPUT,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&mov);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::CustomData {
+                class: CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER,
+                len_dwords: 5,
+            },
+            Sm4Decl::Input {
+                reg: 0,
+                mask: WriteMask::XYZW,
+            },
+        ]
+    );
+
+    // Customdata should not appear as an executable instruction.
+    assert_eq!(module.instructions.len(), 2);
+    assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
+}
+
+#[test]
 fn decodes_sample_and_sample_l() {
     const DCL_DUMMY: u32 = 0x200;
     let mut body = Vec::<u32>::new();
