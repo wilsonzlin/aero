@@ -987,6 +987,49 @@ fn does_not_misclassify_scalar_resource_op_as_ld() {
 }
 
 #[test]
+fn decodes_resinfo_texture2d() {
+    let mut body = Vec::<u32>::new();
+
+    // resinfo r0.xyzw, l(0), t3
+    let lod = imm32_scalar(0f32.to_bits());
+    let mut resinfo = vec![opcode_token(
+        OPCODE_RESINFO,
+        (1 + 2 + lod.len() + 2) as u32,
+    )];
+    resinfo.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    resinfo.extend_from_slice(&lod);
+    resinfo.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[3],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&resinfo);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 is compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::ResInfo {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            texture: TextureRef { slot: 3 },
+            mip_level: SrcOperand {
+                kind: SrcKind::ImmediateF32([0f32.to_bits(); 4]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+    assert_eq!(module.stage, aero_d3d11::ShaderStage::Compute);
+}
+
+#[test]
 fn decodes_ld_texture_load() {
     let mut body = Vec::<u32>::new();
 

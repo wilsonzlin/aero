@@ -1,8 +1,8 @@
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
-    translate_sm4_module_to_wgsl, DxbcFile, FourCC, ShaderSignatures, Sm4Inst, Sm4Program,
-    WriteMask,
+    translate_sm4_module_to_wgsl, BindingKind, DxbcFile, FourCC, ShaderSignatures, Sm4Inst,
+    Sm4Program, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -144,6 +144,15 @@ fn decodes_and_translates_resinfo_for_texture2d() {
         translated.wgsl.contains("bitcast<vec4<f32>>"),
         "expected resinfo to store integer bits via bitcast:\n{}",
         translated.wgsl
+    );
+    assert!(
+        translated
+            .reflection
+            .bindings
+            .iter()
+            .any(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 })),
+        "expected reflection to include t0 Texture2D binding (bindings={:#?})",
+        translated.reflection.bindings
     );
     assert_wgsl_validates(&translated.wgsl);
 }
