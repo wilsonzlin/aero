@@ -250,6 +250,8 @@ pub const PCI_VENDOR_ID_AERO: u16 = 0xA3A0;
 pub const PCI_DEVICE_ID_INTEL_PIIX3_IDE: u16 = 0x7010;
 pub const PCI_DEVICE_ID_INTEL_PIIX3_UHCI: u16 = 0x7020;
 pub const PCI_DEVICE_ID_INTEL_PIIX3_ISA: u16 = 0x7000;
+/// Intel ICH6 EHCI (USB 2.0) controller (commonly supported by Windows in-box drivers).
+pub const PCI_DEVICE_ID_INTEL_ICH6_EHCI: u16 = 0x265c;
 pub const PCI_DEVICE_ID_INTEL_ICH9_AHCI: u16 = 0x2922;
 /// Intel 82801I (ICH9 family) USB2 Enhanced Host Controller (EHCI).
 ///
