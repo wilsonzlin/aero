@@ -18,7 +18,12 @@ use crate::binding_model::{
 /// - `@group(0)` = vertex shader resources
 /// - `@group(1)` = pixel/fragment shader resources
 /// - `@group(2)` = compute shader resources
-const MAX_BIND_GROUP_INDEX: u32 = 2;
+///
+/// Additional bind groups may be reserved for internal emulation needs (e.g.
+/// GS/HS/DS emulation helpers). By default we allow one additional internal
+/// group (`@group(3)`), but callers can override this via
+/// [`build_pipeline_bindings_info_with_max_group`].
+const DEFAULT_MAX_BIND_GROUP_INDEX: u32 = 3;
 pub(super) const UNIFORM_BINDING_SIZE_ALIGN: u64 = 16;
 
 #[derive(Debug, Clone)]
@@ -36,16 +41,33 @@ pub(super) fn build_pipeline_bindings_info<'a, I>(
 where
     I: IntoIterator<Item = &'a [crate::Binding]>,
 {
+    build_pipeline_bindings_info_with_max_group(
+        device,
+        bind_group_layout_cache,
+        DEFAULT_MAX_BIND_GROUP_INDEX,
+        shader_bindings,
+    )
+}
+
+pub(super) fn build_pipeline_bindings_info_with_max_group<'a, I>(
+    device: &wgpu::Device,
+    bind_group_layout_cache: &mut BindGroupLayoutCache,
+    max_bind_group_index: u32,
+    shader_bindings: I,
+) -> Result<PipelineBindingsInfo>
+where
+    I: IntoIterator<Item = &'a [crate::Binding]>,
+{
     let max_uniform_binding_size = device.limits().max_uniform_buffer_binding_size as u64;
 
     let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
     for shader in shader_bindings {
         for binding in shader {
-            if binding.group > MAX_BIND_GROUP_INDEX {
+            if binding.group > max_bind_group_index {
                 bail!(
                     "binding @group({}) is out of range for AeroGPU D3D11 binding model (max {})",
                     binding.group,
-                    MAX_BIND_GROUP_INDEX
+                    max_bind_group_index
                 );
             }
 
@@ -561,6 +583,112 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_bindings_info_includes_empty_groups_for_group3() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let empty: Vec<crate::Binding> = Vec::new();
+            let internal = vec![crate::Binding {
+                group: 3,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let info = build_pipeline_bindings_info_with_max_group(
+                device,
+                &mut layout_cache,
+                3,
+                [empty.as_slice(), internal.as_slice()],
+            )
+            .unwrap();
+
+            assert_eq!(info.group_bindings.len(), 4);
+            assert!(info.group_bindings[0].is_empty());
+            assert!(info.group_bindings[1].is_empty());
+            assert!(info.group_bindings[2].is_empty());
+            assert_eq!(info.group_bindings[3].len(), 1);
+            assert_eq!(info.group_bindings[3][0].group, 3);
+
+            assert_eq!(info.group_layouts.len(), 4);
+            assert!(
+                Arc::ptr_eq(&info.group_layouts[0].layout, &info.group_layouts[1].layout),
+                "expected group0/group1 empty layouts to be reused"
+            );
+            assert!(
+                Arc::ptr_eq(&info.group_layouts[0].layout, &info.group_layouts[2].layout),
+                "expected group0/group2 empty layouts to be reused"
+            );
+
+            assert_eq!(info.layout_key.bind_group_layout_hashes.len(), 4);
+            for (idx, layout) in info.group_layouts.iter().enumerate() {
+                assert_eq!(
+                    info.layout_key.bind_group_layout_hashes[idx], layout.hash,
+                    "PipelineLayoutKey should include group {idx} layout hash"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn pipeline_bindings_info_with_max_group_does_not_allocate_unused_groups() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let vs = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+            let ps = vec![crate::Binding {
+                group: 1,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let info = build_pipeline_bindings_info_with_max_group(
+                device,
+                &mut layout_cache,
+                DEFAULT_MAX_BIND_GROUP_INDEX,
+                [vs.as_slice(), ps.as_slice()],
+            )
+            .unwrap();
+
+            assert_eq!(
+                info.layout_key.bind_group_layout_hashes.len(),
+                2,
+                "VS/PS pipelines should only allocate the groups they use"
+            );
+            assert_eq!(info.group_layouts.len(), 2);
+            assert_eq!(info.group_bindings.len(), 2);
+            assert_eq!(info.group_bindings[0].len(), 1);
+            assert_eq!(info.group_bindings[0][0].group, 0);
+            assert_eq!(info.group_bindings[1].len(), 1);
+            assert_eq!(info.group_bindings[1][0].group, 1);
+        });
+    }
+
+    #[test]
     fn pipeline_bindings_info_rejects_kind_mismatch_across_shaders() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
@@ -625,7 +753,7 @@ mod tests {
             let mut layout_cache = BindGroupLayoutCache::new();
 
             let bindings = vec![crate::Binding {
-                group: MAX_BIND_GROUP_INDEX + 1,
+                group: DEFAULT_MAX_BIND_GROUP_INDEX + 1,
                 binding: BINDING_BASE_TEXTURE,
                 visibility: wgpu::ShaderStages::VERTEX,
                 kind: crate::BindingKind::Texture2D { slot: 0 },
