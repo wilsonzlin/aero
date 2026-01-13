@@ -39,10 +39,15 @@ pub trait DiskBackend {
 ///
 /// `aero_storage` uses `&mut self` for reads as well (to support internal caching),
 /// so we wrap the disk in a [`RefCell`] to provide interior mutability.
-pub struct AeroStorageDiskBackend(pub RefCell<Box<dyn aero_storage::VirtualDisk + Send>>);
+///
+/// ## wasm32 note
+///
+/// This adapter intentionally accepts `!Send` disks so wasm32 backends that wrap JS objects (for
+/// example OPFS backends) can participate in snapshot flows without unsafe `Send` shims.
+pub struct AeroStorageDiskBackend(pub RefCell<Box<dyn aero_storage::VirtualDisk>>);
 
 impl AeroStorageDiskBackend {
-    pub fn new(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Self {
+    pub fn new(disk: Box<dyn aero_storage::VirtualDisk>) -> Self {
         Self(RefCell::new(disk))
     }
 }
@@ -69,9 +74,12 @@ impl DiskBackend for AeroStorageDiskBackend {
 
 /// Convenience helper to attach an [`aero_storage::VirtualDisk`] to an existing
 /// [`DiskLayerState`].
+///
+/// This intentionally accepts `!Send` disks (see [`AeroStorageDiskBackend`]) so wasm32 backends
+/// don't need unsafe `Send` shims just to participate in snapshot flows.
 pub fn attach_aero_storage_disk(
     state: &mut DiskLayerState,
-    disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    disk: Box<dyn aero_storage::VirtualDisk>,
 ) {
     state.attach_backend(Box::new(AeroStorageDiskBackend::new(disk)));
 }

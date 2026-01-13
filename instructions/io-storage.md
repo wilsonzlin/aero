@@ -227,6 +227,10 @@ under the `emulator` crate via `crates/emulator/Cargo.toml` `[[test]]` entries (
 bash ./scripts/safe-run.sh cargo test -p aero-storage --locked
 bash ./scripts/safe-run.sh cargo test -p aero-devices-storage --locked
 bash ./scripts/safe-run.sh cargo test -p aero-opfs --locked
+bash ./scripts/safe-run.sh cargo test -p aero-io-snapshot --locked
+
+# Snapshot layer should compile on wasm32 (e.g. for OPFS-backed disks).
+bash ./scripts/safe-run.sh cargo check --target wasm32-unknown-unknown -p aero-io-snapshot --locked
 
 # Compile-check selected crates for wasm32-unknown-unknown (no test runner required).
 # This helps catch `Send`/threading bound regressions that break browser storage backends.
