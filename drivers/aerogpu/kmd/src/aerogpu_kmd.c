@@ -4148,6 +4148,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
         /* Also use this as the preferred pin target when we build a fresh mode set. */
         ULONG pinnedW = 0;
         ULONG pinnedH = 0;
+        ULONG pinnedTargetW = 0;
+        ULONG pinnedTargetH = 0;
 
         if (vidpn.pfnGetSourceModeSet && modeCount < (UINT)(sizeof(modes) / sizeof(modes[0]))) {
             D3DKMDT_HVIDPNSOURCEMODESET hExisting = 0;
@@ -4171,6 +4173,38 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
             }
         }
 
+        if (vidpn.pfnGetTargetModeSet && modeCount < (UINT)(sizeof(modes) / sizeof(modes[0]))) {
+            D3DKMDT_HVIDPNTARGETMODESET hExisting = 0;
+            NTSTATUS st2 = vidpn.pfnGetTargetModeSet(pEnum->hFunctionalVidPn, AEROGPU_VIDPN_TARGET_ID, &hExisting);
+            if (NT_SUCCESS(st2) && hExisting) {
+                DXGK_VIDPNTARGETMODESET_INTERFACE tmsExisting;
+                RtlZeroMemory(&tmsExisting, sizeof(tmsExisting));
+                st2 = vidpn.pfnGetTargetModeSetInterface(pEnum->hFunctionalVidPn, hExisting, &tmsExisting);
+                if (NT_SUCCESS(st2) && tmsExisting.pfnAcquirePinnedModeInfo && tmsExisting.pfnReleaseModeInfo) {
+                    const D3DKMDT_VIDPN_TARGET_MODE* pinned = NULL;
+                    st2 = tmsExisting.pfnAcquirePinnedModeInfo(hExisting, &pinned);
+                    if (NT_SUCCESS(st2) && pinned) {
+                        pinnedTargetW = pinned->VideoSignalInfo.ActiveSize.cx;
+                        pinnedTargetH = pinned->VideoSignalInfo.ActiveSize.cy;
+                    }
+                    if (pinned) {
+                        tmsExisting.pfnReleaseModeInfo(hExisting, pinned);
+                    }
+                }
+                vidpn.pfnReleaseTargetModeSet(pEnum->hFunctionalVidPn, hExisting);
+            }
+        }
+
+        if (pinnedW != 0 && pinnedH != 0 && pinnedTargetW != 0 && pinnedTargetH != 0 &&
+            (pinnedW != pinnedTargetW || pinnedH != pinnedTargetH)) {
+            return STATUS_GRAPHICS_INVALID_VIDPN_TOPOLOGY;
+        }
+
+        if ((pinnedW == 0 || pinnedH == 0) && pinnedTargetW != 0 && pinnedTargetH != 0) {
+            pinnedW = pinnedTargetW;
+            pinnedH = pinnedTargetH;
+        }
+
         if (pinnedW != 0 && pinnedH != 0) {
             AeroGpuModeListAddUnique(modes, &modeCount, (UINT)(sizeof(modes) / sizeof(modes[0])), pinnedW, pinnedH);
         }
@@ -4192,6 +4226,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
                 }
             }
         }
+    }
+
+    if (modeCount == 0) {
+        /* No supported modes; keep bring-up tolerant by leaving the VidPN unchanged. */
+        return STATUS_SUCCESS;
     }
 
     /* Create and assign a fresh source mode set. */
@@ -4659,6 +4698,9 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
 
     AEROGPU_DISPLAY_MODE modes[16];
     UINT modeCount = AeroGpuBuildModeList(modes, (UINT)(sizeof(modes) / sizeof(modes[0])));
+    const ULONG pinW = (modeCount > 0) ? modes[0].Width : 0;
+    const ULONG pinH = (modeCount > 0) ? modes[0].Height : 0;
+    BOOLEAN pinned = FALSE;
 
     /* Avoid failing on duplicates if dxgkrnl already populated the set from EDID. */
     AEROGPU_DISPLAY_MODE existing[32];
@@ -4718,6 +4760,10 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
         modeInfo->VideoSignalInfo.ScanLineOrdering = D3DKMDT_VSSLO_PROGRESSIVE;
 
         st2 = msi->pfnAddMode(pRecommend->hMonitorSourceModeSet, modeInfo);
+        if (NT_SUCCESS(st2) && !pinned && msi->pfnPinMode && w == pinW && h == pinH) {
+            (void)msi->pfnPinMode(pRecommend->hMonitorSourceModeSet, modeInfo);
+            pinned = TRUE;
+        }
         msi->pfnReleaseModeInfo(pRecommend->hMonitorSourceModeSet, modeInfo);
 
         if (!NT_SUCCESS(st2)) {
