@@ -1069,7 +1069,24 @@ function renderAudioPanel(): HTMLElement {
       stopHdaDemo();
       stopVirtioSndDemo();
       stopHdaPciDevice();
-      const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
+      // Allow Playwright specs to override the ring-buffer capacity without adding extra UI knobs.
+      // (CI uses this to validate resume-discard behaviour with large backlogs.)
+      let ringBufferFrames: number | undefined;
+      try {
+        const params = new URLSearchParams(location.search);
+        const raw = params.get("ringBufferFrames") ?? params.get("audioRingFrames");
+        if (typeof raw === "string" && raw.trim()) {
+          const parsed = Number.parseInt(raw, 10);
+          if (Number.isFinite(parsed) && parsed > 0) ringBufferFrames = parsed;
+        }
+      } catch {
+        // ignore
+      }
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        ...(ringBufferFrames ? { ringBufferFrames } : {}),
+      });
       // Expose for Playwright smoke tests.
       (globalThis as typeof globalThis & { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
 

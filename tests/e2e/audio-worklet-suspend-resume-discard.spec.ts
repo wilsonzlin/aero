@@ -6,7 +6,11 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   test.setTimeout(60_000);
   test.skip(test.info().project.name !== "chromium", "AudioWorklet suspend/resume discard test only runs on Chromium.");
 
-  await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
+  // Use a large ring buffer so that "no discard" behaviour would require hundreds of ms of real-time
+  // playback to drain, making the regression easy to detect.
+  const url = new URL(`${PREVIEW_ORIGIN}/`);
+  url.searchParams.set("ringBufferFrames", "48000");
+  await page.goto(url.toString(), { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
     const AudioContextCtor =
@@ -49,187 +53,101 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   }
 
   const CAPACITY_FRAMES = 48_000;
-  // Target a large backlog so that "no discard" behaviour would require hundreds of ms
-  // of real-time playback to drain, even on higher-sample-rate devices.
   const BACKLOG_TARGET_FRAMES = 40_000;
   const BACKLOG_DISCARDED_THRESHOLD_FRAMES = 512;
 
-  const setupResult = await page.evaluate(
-    ({ CAPACITY_FRAMES }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const out = (globalThis as any).__aeroAudioOutput;
-      if (!out?.enabled) return { ok: false as const, reason: "Missing enabled audio output." };
+  const setupResult = await page.evaluate(({ CAPACITY_FRAMES }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (globalThis as any).__aeroAudioOutput;
+    if (!out?.enabled) return { ok: false as const, reason: "Missing enabled audio output." };
 
-      const context: AudioContext = out.context;
-      if (!context) return { ok: false as const, reason: "Missing AudioContext." };
-      if (typeof SharedArrayBuffer === "undefined") {
-        return { ok: false as const, reason: "SharedArrayBuffer unavailable." };
-      }
-
-      const channelCount = (out?.ringBuffer?.channelCount as number | undefined) ?? 2;
-      const headerBytes = 4 * Uint32Array.BYTES_PER_ELEMENT;
-      const sab = new SharedArrayBuffer(headerBytes + CAPACITY_FRAMES * channelCount * Float32Array.BYTES_PER_ELEMENT);
-      const header = new Uint32Array(sab, 0, 4);
-      const samples = new Float32Array(sab, headerBytes);
-
-      const ring = {
-        buffer: sab,
-        header,
-        readIndex: header.subarray(0, 1),
-        writeIndex: header.subarray(1, 2),
-        underrunCount: header.subarray(2, 3),
-        overrunCount: header.subarray(3, 4),
-        samples,
-        channelCount,
-        capacityFrames: CAPACITY_FRAMES,
-      };
-
-      Atomics.store(ring.readIndex, 0, 0);
-      Atomics.store(ring.writeIndex, 0, 0);
-      Atomics.store(ring.underrunCount, 0, 0);
-      Atomics.store(ring.overrunCount, 0, 0);
-
-      // Disconnect the harness' default node so it stops consuming/writing into its
-      // own ring while we run this spec. (The demo tone loop is level-based; once
-      // disconnected, it will stop writing after the initial fill.)
-      try {
-        out.node?.disconnect?.();
-      } catch {
-        // ignore
-      }
-
-      let node: AudioWorkletNode;
-      try {
-        node = new AudioWorkletNode(context, "aero-audio-processor", {
-          processorOptions: {
-            ringBuffer: sab,
-            channelCount,
-            capacityFrames: CAPACITY_FRAMES,
-            // Task 20: enable resume-discard behaviour when supported (harmless for older processors).
-            discardOnResume: true,
-          },
-          outputChannelCount: [channelCount],
-        });
-        node.connect(context.destination);
-      } catch (err) {
-        return {
-          ok: false as const,
-          reason: err instanceof Error ? `Failed to create AudioWorkletNode: ${err.message}` : "Failed to create AudioWorkletNode.",
-        };
-      }
-
-      const framesAvailableClamped = (read: number, write: number) => {
-        const cap = CAPACITY_FRAMES >>> 0;
-        return Math.min(((write - read) >>> 0) >>> 0, cap);
-      };
-
-      const framesFree = (read: number, write: number) => {
-        const cap = CAPACITY_FRAMES >>> 0;
-        return (cap - framesAvailableClamped(read, write)) >>> 0;
-      };
-
-      const writeInterleaved = (input: Float32Array) => {
-        const cc = channelCount | 0;
-        const requestedFrames = Math.floor(input.length / cc);
-        if (requestedFrames <= 0) return 0;
-
-        const read = Atomics.load(ring.readIndex, 0) >>> 0;
-        const write = Atomics.load(ring.writeIndex, 0) >>> 0;
-        const free = framesFree(read, write);
-        const framesToWrite = Math.min(requestedFrames, free);
-        const dropped = requestedFrames - framesToWrite;
-        if (dropped > 0) Atomics.add(ring.overrunCount, 0, dropped);
-        if (framesToWrite === 0) return 0;
-
-        const cap = CAPACITY_FRAMES >>> 0;
-        const writePos = write % cap;
-        const firstFrames = Math.min(framesToWrite, cap - writePos);
-        const secondFrames = framesToWrite - firstFrames;
-        const firstSamples = firstFrames * cc;
-        const totalSamples = framesToWrite * cc;
-        ring.samples.set(input.subarray(0, firstSamples), writePos * cc);
-        if (secondFrames > 0) {
-          ring.samples.set(input.subarray(firstSamples, totalSamples), 0);
+    const ring = out.ringBuffer as
+      | {
+          readIndex: Uint32Array;
+          writeIndex: Uint32Array;
+          overrunCount: Uint32Array;
+          channelCount: number;
+          capacityFrames: number;
         }
-        Atomics.store(ring.writeIndex, 0, write + framesToWrite);
-        return framesToWrite;
+      | undefined;
+    if (!ring?.readIndex || !ring?.writeIndex || !ring?.overrunCount) {
+      return { ok: false as const, reason: "Missing audio ring buffer views." };
+    }
+
+    const capacity = ring.capacityFrames >>> 0;
+    if (capacity < (CAPACITY_FRAMES as number)) {
+      return {
+        ok: false as const,
+        reason: `Unexpected ring capacity (${capacity} frames); expected >= ${CAPACITY_FRAMES}.`,
       };
+    }
 
-      const producer = {
-        timer: null as number | null,
-        tickMs: 20,
-        framesPerTick: 2048,
-        chunk: null as Float32Array | null,
-      };
-      producer.chunk = new Float32Array(producer.framesPerTick * channelCount);
-      for (let i = 0; i < producer.framesPerTick; i++) {
-        const s = Math.sin((i / producer.framesPerTick) * 2 * Math.PI) * 0.1;
-        for (let c = 0; c < channelCount; c++) producer.chunk[i * channelCount + c] = s;
-      }
+    if (typeof out.writeInterleaved !== "function") {
+      return { ok: false as const, reason: "Missing audioOutput.writeInterleaved()." };
+    }
 
-      const startProducer = () => {
-        if (producer.timer !== null) return;
-        const id = window.setInterval(() => {
-          writeInterleaved(producer.chunk!);
-        }, producer.tickMs);
-        (id as unknown as { unref?: () => void }).unref?.();
-        producer.timer = id;
-      };
+    // The harness installs a demo tone producer that keeps the ring ~200ms full. Disable it so it
+    // doesn't refill the buffer after resume/discard (we want to observe the discard promptly).
+    const originalWriteInterleaved = out.writeInterleaved.bind(out) as (samples: Float32Array, srcRate: number) => number;
+    out.writeInterleaved = () => 0;
 
-      const stopProducer = () => {
-        if (producer.timer === null) return;
-        window.clearInterval(producer.timer);
-        producer.timer = null;
-      };
+    const context: AudioContext = out.context;
+    const channelCount = ring.channelCount | 0;
+    const framesPerTick = 2048;
+    const tickMs = 20;
+    const chunk = new Float32Array(framesPerTick * channelCount);
+    for (let i = 0; i < framesPerTick; i++) {
+      const s = Math.sin((i / framesPerTick) * 2 * Math.PI) * 0.1;
+      for (let c = 0; c < channelCount; c++) chunk[i * channelCount + c] = s;
+    }
 
-      const getMetrics = () => {
-        const read = Atomics.load(ring.readIndex, 0) >>> 0;
-        const write = Atomics.load(ring.writeIndex, 0) >>> 0;
-        const level = framesAvailableClamped(read, write);
-        const overrun = Atomics.load(ring.overrunCount, 0) >>> 0;
-        return { read, write, level, overrun, state: context.state };
-      };
+    let producerTimer: number | null = null;
+    const startProducer = () => {
+      if (producerTimer !== null) return;
+      const id = window.setInterval(() => {
+        try {
+          originalWriteInterleaved(chunk, context.sampleRate);
+        } catch {
+          // ignore
+        }
+      }, tickMs);
+      (id as unknown as { unref?: () => void }).unref?.();
+      producerTimer = id;
+    };
+    const stopProducer = () => {
+      if (producerTimer === null) return;
+      window.clearInterval(producerTimer);
+      producerTimer = null;
+    };
 
-      // Expose the custom output for subsequent `page.evaluate()` calls.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioSuspendResumeDiscardTest = {
-        context,
-        node,
-        ring,
-        startProducer,
-        stopProducer,
-        getMetrics,
-      };
+    const getMetrics = () => {
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
+      const write = Atomics.load(ring.writeIndex, 0) >>> 0;
+      const overrun = Atomics.load(ring.overrunCount, 0) >>> 0;
+      const level = typeof out.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : ((write - read) >>> 0);
+      return { read, write, overrun, level, capacity, state: context.state, sampleRate: context.sampleRate };
+    };
 
-      startProducer();
+    // Expose for subsequent eval steps.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroAudioSuspendResumeDiscardTest = {
+      out,
+      context,
+      ring,
+      originalWriteInterleaved,
+      startProducer,
+      stopProducer,
+      getMetrics,
+    };
 
-      return { ok: true as const };
-    },
-    { CAPACITY_FRAMES },
-  );
+    return { ok: true as const, capacity };
+  }, { CAPACITY_FRAMES });
 
   if (!setupResult.ok) {
-    test.skip(true, `Failed to set up suspend/resume harness: ${setupResult.reason}`);
+    throw new Error(`Failed to set up suspend/resume harness: ${setupResult.reason}`);
   }
 
-  // Ensure the consumer is actually alive (read index advances) before we suspend.
-  const warmupRead = await page.evaluate(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
-    return t?.getMetrics?.()?.read ?? 0;
-  });
-
-  await page.waitForFunction(
-    (baselineRead) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
-      const rec = t?.getMetrics?.();
-      if (!rec) return false;
-      return (((rec.read as number) - (baselineRead as number)) >>> 0) > 0;
-    },
-    warmupRead,
-    { timeout: 20_000 },
-  );
+  expect(setupResult.capacity).toBeGreaterThanOrEqual(CAPACITY_FRAMES);
 
   const beforeSuspend = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -250,33 +168,39 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     return t?.context?.state === "suspended";
   });
 
-  // Let the producer run while the AudioWorklet consumer is suspended.
-  // Wait until we have a large backlog (or the ring saturates and starts overrunning).
-  await page.waitForFunction(
-    ({ BACKLOG_TARGET_FRAMES }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
-      const rec = t?.getMetrics?.();
-      if (!rec) return false;
-      return (rec.level as number) >= (BACKLOG_TARGET_FRAMES as number) || (rec.overrun as number) > 0;
-    },
-    { BACKLOG_TARGET_FRAMES },
-    { timeout: 5_000 },
-  );
-
-  const afterSuspend = await page.evaluate(() => {
+  const suspendedBaseline = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
     return t.getMetrics();
   });
 
-  expect(afterSuspend.state).toBe("suspended");
-  // Ensure the backlog actually grew while suspended (or we hit producer overruns, which
-  // implies the backlog reached capacity).
-  const backlogIncreased = afterSuspend.level > beforeSuspend.level;
-  const overrunIncreased = afterSuspend.overrun > beforeSuspend.overrun;
-  expect(backlogIncreased || overrunIncreased).toBe(true);
-  expect(afterSuspend.level >= BACKLOG_TARGET_FRAMES || overrunIncreased).toBe(true);
+  await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
+    t.startProducer();
+  });
+
+  // Wait until we have a large backlog (or the ring saturates and starts overrunning).
+  await page.waitForFunction(
+    ({ BACKLOG_TARGET_FRAMES, baselineOverrun }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
+      const rec = t?.getMetrics?.();
+      if (!rec) return false;
+      return (rec.level as number) >= (BACKLOG_TARGET_FRAMES as number) || (rec.overrun as number) > (baselineOverrun as number);
+    },
+    { BACKLOG_TARGET_FRAMES, baselineOverrun: suspendedBaseline.overrun },
+    { timeout: 5_000 },
+  );
+
+  const afterFill = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
+    return t.getMetrics();
+  });
+
+  expect(afterFill.state).toBe("suspended");
+  expect(afterFill.level >= BACKLOG_TARGET_FRAMES || afterFill.overrun > suspendedBaseline.overrun).toBe(true);
 
   // Stop the producer so the ring indices remain stable for the discard check.
   await page.evaluate(() => {
@@ -297,8 +221,8 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     return t?.context?.state === "running";
   });
 
-  // On resume, discard any accumulated backlog quickly; otherwise the output would play
-  // stale buffered audio for hundreds of ms.
+  // On resume, discard any accumulated backlog quickly; otherwise the output would play stale buffered
+  // audio for hundreds of ms.
   await page.waitForFunction(
     ({ BACKLOG_DISCARDED_THRESHOLD_FRAMES }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -320,8 +244,8 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   expect(afterResume.state).toBe("running");
   expect(afterResume.level).toBeLessThan(BACKLOG_DISCARDED_THRESHOLD_FRAMES);
 
-  // Best-effort cleanup: disconnect the test node so future specs aren't impacted if the page
-  // is reused in the same worker (rare, but cheap to do).
+  // Best-effort cleanup: restore the original write method so the harness doesn't keep the ring empty
+  // if the page is reused.
   await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
@@ -331,7 +255,7 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
       // ignore
     }
     try {
-      t.node?.disconnect?.();
+      t.out.writeInterleaved = t.originalWriteInterleaved;
     } catch {
       // ignore
     }
