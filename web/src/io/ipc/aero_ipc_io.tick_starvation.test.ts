@@ -121,6 +121,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
       execArgv: ["--experimental-strip-types"],
     } as unknown as WorkerOptions);
 
+    let exited = false;
     try {
       await withTimeout(once(worker, "message") as Promise<[any]>, 2000, "server worker ready");
 
@@ -139,8 +140,16 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
 
       expect(Atomics.load(tickCounter, 0)).toBeGreaterThan(0);
       expect(Atomics.load(tickSawCmdData, 0)).toBe(1);
+
+      // Gracefully stop the blocking server loop so the worker can exit cleanly.
+      const shutdownBytes = encodeCommand({ kind: "shutdown" });
+      while (!cmdQ.tryPush(shutdownBytes)) {
+        await sleep0();
+      }
+      await withTimeout(once(worker, "exit") as Promise<[number]>, 4000, "server worker exit");
+      exited = true;
     } finally {
-      await worker.terminate();
+      if (!exited) await worker.terminate();
     }
   });
 });
