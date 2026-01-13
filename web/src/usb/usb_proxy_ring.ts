@@ -162,21 +162,6 @@ export class UsbProxyRing {
   pushAction(action: UsbHostAction): boolean {
     // Producer-side validation: keep the ring robust by refusing to encode records that the
     // consumer would later treat as corruption (and detach the SAB fast-path).
-    if (action.kind === "controlOut" && action.data.byteLength !== action.setup.wLength) {
-      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
-      return false;
-    }
-    if (action.kind === "bulkIn" && !isUsbInEndpointAddress(action.endpoint)) {
-      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
-      return false;
-    }
-    if (action.kind === "bulkOut" && !isUsbOutEndpointAddress(action.endpoint)) {
-      Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
-      return false;
-    }
-
-    const kindTag = this.#actionKindToTag(action.kind);
-
     let recordSize = 0;
     let payloadLen = 0;
 
@@ -186,13 +171,25 @@ export class UsbProxyRing {
         break;
       case "controlOut":
         payloadLen = action.data.byteLength >>> 0;
+        if (payloadLen !== (action.setup.wLength & 0xffff)) {
+          Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+          return false;
+        }
         recordSize = USB_PROXY_ACTION_HEADER_BYTES + SETUP_PACKET_BYTES + 4 + payloadLen;
         break;
       case "bulkIn":
+        if (!isUsbInEndpointAddress(action.endpoint)) {
+          Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+          return false;
+        }
         recordSize = USB_PROXY_ACTION_HEADER_BYTES + 8;
         break;
       case "bulkOut":
         payloadLen = action.data.byteLength >>> 0;
+        if (!isUsbOutEndpointAddress(action.endpoint)) {
+          Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
+          return false;
+        }
         recordSize = USB_PROXY_ACTION_HEADER_BYTES + 8 + payloadLen;
         break;
       default: {
@@ -211,6 +208,8 @@ export class UsbProxyRing {
 
     const { start, startIndex, reserve, tail } = this.#reserve(recordSize);
     if (startIndex === null) return false;
+
+    const kindTag = this.#actionKindToTag(action.kind);
 
     // Header
     this.#view.setUint8(startIndex + 0, kindTag & 0xff);

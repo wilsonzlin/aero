@@ -94,7 +94,7 @@ describe("usb/UsbProxyRing", () => {
     expect(ring.popAction()?.id).toBe(2);
 
     // bulkOut record is 16 + 1 bytes (aligned to 20). Tail is at 48, leaving 16 bytes -> wrap.
-    expect(ring.pushAction({ kind: "bulkOut", id: 4, endpoint: 2, data: Uint8Array.of(9) })).toBe(true);
+    expect(ring.pushAction({ kind: "bulkOut", id: 4, endpoint: 0x02, data: Uint8Array.of(9) })).toBe(true);
 
     expect(ring.popAction()?.id).toBe(3);
     const wrapped = ring.popAction();
@@ -115,7 +115,7 @@ describe("usb/UsbProxyRing", () => {
     expect(ring.dropped()).toBe(1);
   });
 
-  it("drops invalid controlOut payload lengths and remains usable", () => {
+  it("rejects malformed controlOut payload length mismatches and keeps the ring usable", () => {
     const sab = createUsbProxyRingBuffer(256);
     const ring = new UsbProxyRing(sab);
 
@@ -128,6 +128,7 @@ describe("usb/UsbProxyRing", () => {
 
     expect(ring.pushAction(invalid)).toBe(false);
     expect(ring.dropped()).toBe(1);
+    expect(ring.popAction()).toBeNull();
 
     const valid: UsbHostAction = { kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 };
     expect(ring.pushAction(valid)).toBe(true);
@@ -135,19 +136,34 @@ describe("usb/UsbProxyRing", () => {
     expect(ring.popAction()).toBeNull();
   });
 
-  it("drops invalid bulk endpoint addresses and remains usable", () => {
+  it("rejects invalid bulkIn endpoint addresses (OUT endpoints)", () => {
     const sab = createUsbProxyRingBuffer(256);
     const ring = new UsbProxyRing(sab);
 
-    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 0x01, length: 8 })).toBe(false);
+    expect(ring.pushAction({ kind: "bulkIn", id: 1, endpoint: 0x02, length: 8 })).toBe(false);
     expect(ring.dropped()).toBe(1);
+    expect(ring.popAction()).toBeNull();
 
-    expect(ring.pushAction({ kind: "bulkOut", id: 2, endpoint: 0x81, data: Uint8Array.of(1) })).toBe(false);
-    expect(ring.dropped()).toBe(2);
-
-    const valid: UsbHostAction = { kind: "bulkIn", id: 3, endpoint: 0x81, length: 8 };
+    const valid: UsbHostAction = { kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 };
     expect(ring.pushAction(valid)).toBe(true);
     expect(ring.popAction()).toEqual(valid);
+    expect(ring.popAction()).toBeNull();
+  });
+
+  it("rejects invalid bulkOut endpoint addresses (IN endpoints)", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushAction({ kind: "bulkOut", id: 1, endpoint: 0x81, data: Uint8Array.of(1) })).toBe(false);
+    expect(ring.dropped()).toBe(1);
+    expect(ring.popAction()).toBeNull();
+
+    const ok = { kind: "bulkOut", id: 2, endpoint: 0x02, data: Uint8Array.of(1) } as const satisfies UsbHostAction;
+    expect(ring.pushAction(ok)).toBe(true);
+    const popped = ring.popAction();
+    if (!popped || popped.kind !== "bulkOut") throw new Error("unreachable");
+    expect(popped.endpoint).toBe(ok.endpoint);
+    expect(Array.from(popped.data)).toEqual(Array.from(ok.data));
     expect(ring.popAction()).toBeNull();
   });
 });
