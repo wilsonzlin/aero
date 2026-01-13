@@ -772,9 +772,14 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     out
 }
 
-fn aml_pkg_length(len: usize) -> Vec<u8> {
-    // Encoding used by ACPICA; bits 4-5 are reserved and set to zero when
-    // additional bytes are present.
+fn aml_encode_pkg_length(len: usize) -> Vec<u8> {
+    // Raw PkgLength value encoding (ACPI spec).
+    //
+    // Note that for opcodes that use a PkgLength (Scope/Device/Method/Package/etc),
+    // the encoded value includes the size of the PkgLength field itself but
+    // excludes the opcode byte(s). See `aml_pkg_length_for_payload` below.
+    //
+    // Bits 4-5 are reserved and set to zero when additional bytes are present.
     if len <= 0x3F {
         return vec![len as u8];
     }
@@ -808,7 +813,7 @@ fn aml_pkg_length_for_payload(payload_len: usize) -> Vec<u8> {
         .checked_add(1)
         .expect("AML PkgLength overflow");
     loop {
-        let enc = aml_pkg_length(total_len);
+        let enc = aml_encode_pkg_length(total_len);
         let new_total_len = payload_len
             .checked_add(enc.len())
             .expect("AML PkgLength overflow");
@@ -927,7 +932,7 @@ fn aml_field(region: [u8; 4], field_flags: u8, fields: &[([u8; 4], usize)]) -> V
     payload.push(field_flags);
     for (name, bits) in fields {
         payload.extend_from_slice(name);
-        payload.extend_from_slice(&aml_pkg_length(*bits));
+        payload.extend_from_slice(&aml_encode_pkg_length(*bits));
     }
 
     let mut out = Vec::new();
@@ -1452,11 +1457,11 @@ mod tests {
 
     #[test]
     fn pkg_length_encoding_matches_acpica_examples() {
-        assert_eq!(aml_pkg_length(0x3F), vec![0x3F]);
-        assert_eq!(aml_pkg_length(0x40), vec![0x40, 0x04]);
-        assert_eq!(aml_pkg_length(0x70), vec![0x40, 0x07]);
-        assert_eq!(aml_pkg_length(0x0FFF), vec![0x4F, 0xFF]);
-        assert_eq!(aml_pkg_length(0x1000), vec![0x80, 0x00, 0x01]);
+        assert_eq!(aml_encode_pkg_length(0x3F), vec![0x3F]);
+        assert_eq!(aml_encode_pkg_length(0x40), vec![0x40, 0x04]);
+        assert_eq!(aml_encode_pkg_length(0x70), vec![0x40, 0x07]);
+        assert_eq!(aml_encode_pkg_length(0x0FFF), vec![0x4F, 0xFF]);
+        assert_eq!(aml_encode_pkg_length(0x1000), vec![0x80, 0x00, 0x01]);
     }
 
     fn parse_pkg_length(bytes: &[u8]) -> (usize, usize) {
@@ -1732,7 +1737,7 @@ mod tests {
                 let desc = &crs[i..i + total];
                 assert_eq!(desc[3], 0x00, "expected Memory address space descriptor");
                 assert_eq!(desc[4], 0x0D, "unexpected general flags");
-                assert_eq!(desc[5], 0x06, "unexpected type-specific flags");
+                assert_eq!(desc[5], 0x03, "unexpected type-specific flags");
 
                 let min = u32::from_le_bytes(desc[10..14].try_into().unwrap());
                 let max = u32::from_le_bytes(desc[14..18].try_into().unwrap());
@@ -1812,7 +1817,7 @@ mod tests {
             AddrSpaceDescriptorHeader {
                 resource_type: 0x00,
                 general_flags: 0x0D,
-                type_specific_flags: 0x06,
+                type_specific_flags: 0x03,
             },
             AddrSpaceDescriptorRange {
                 granularity: 0,
@@ -1826,7 +1831,7 @@ mod tests {
             AddrSpaceDescriptorHeader {
                 resource_type: 0x00,
                 general_flags: 0x0D,
-                type_specific_flags: 0x06,
+                type_specific_flags: 0x03,
             },
             AddrSpaceDescriptorRange {
                 granularity: 0,

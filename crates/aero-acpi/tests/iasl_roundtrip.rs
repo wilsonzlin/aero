@@ -8,6 +8,14 @@ use std::{
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 
+fn iasl_available() -> bool {
+    match Command::new("iasl").arg("-v").output() {
+        Ok(_) => true,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => false,
+        Err(err) => panic!("failed to invoke `iasl`: {err}"),
+    }
+}
+
 fn run_iasl(current_dir: &Path, args: &[&str]) -> io::Result<Output> {
     Command::new("iasl")
         .args(args)
@@ -47,7 +55,10 @@ fn find_generated_dsl(temp_dir: &Path) -> io::Result<PathBuf> {
     for entry in fs::read_dir(temp_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(OsStr::to_str).is_some_and(|ext| ext.eq_ignore_ascii_case("dsl"))
+        if path
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dsl"))
         {
             found.push(path);
         }
@@ -66,29 +77,23 @@ fn find_generated_dsl(temp_dir: &Path) -> io::Result<PathBuf> {
     }
 }
 
-#[test]
-fn dsdt_iasl_roundtrip() {
-    let cfg = AcpiConfig::default();
+fn dsdt_iasl_roundtrip(cfg: &AcpiConfig, label: &str) {
     let placement = AcpiPlacement::default();
-    let tables = AcpiTables::build(&cfg, placement);
+    let tables = AcpiTables::build(cfg, placement);
 
-    let tempdir = tempfile::tempdir().expect("create tempdir");
+    let tempdir = tempfile::Builder::new()
+        .prefix(&format!("aero-acpi-iasl-{label}-"))
+        .tempdir()
+        .expect("create tempdir");
     let temp_path = tempdir.path();
 
     // `iasl -d` expects a full ACPI table blob (header + AML).
     let dsdt_aml_path = temp_path.join("dsdt.aml");
     fs::write(&dsdt_aml_path, &tables.dsdt).expect("write dsdt.aml");
 
-    // Disassemble DSDT AML -> DSL. If `iasl` is not available, skip this test
-    // (we don't want to make CI dependent on ACPICA being installed).
-    let disasm = match run_iasl(temp_path, &["-d", "dsdt.aml"]) {
-        Ok(out) => out,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            eprintln!("skipping: `iasl` not found in PATH");
-            return;
-        }
-        Err(err) => panic!("failed to spawn `iasl -d dsdt.aml`: {err}"),
-    };
+    // Disassemble DSDT AML -> DSL.
+    let disasm = run_iasl(temp_path, &["-d", "dsdt.aml"])
+        .unwrap_or_else(|err| panic!("failed to spawn `iasl -d dsdt.aml`: {err}"));
     if !disasm.status.success() {
         panic!(
             "`iasl -d dsdt.aml` failed\n{}\n(temp dir: {})",
@@ -112,12 +117,13 @@ fn dsdt_iasl_roundtrip() {
     });
 
     // Recompile DSL -> AML.
+    let output_prefix = format!("dsdt_recompiled_{label}");
     let recompile = run_iasl(
         temp_path,
         &[
             "-tc",
             "-p",
-            "dsdt_recompiled",
+            &output_prefix,
             dsdt_dsl
                 .file_name()
                 .expect("dsdt.dsl has a file name")
@@ -129,10 +135,30 @@ fn dsdt_iasl_roundtrip() {
 
     if !recompile.status.success() {
         panic!(
-            "`iasl -tc -p dsdt_recompiled ...` failed\n{}\n(temp dir: {})",
+            "`iasl -tc -p {output_prefix} ...` failed\n{}\n(temp dir: {})",
             fmt_output(&recompile),
             temp_path.display()
         );
     }
+}
+
+#[test]
+fn dsdt_iasl_roundtrip_handles_ecam_disabled_and_enabled_variants() {
+    if !iasl_available() {
+        eprintln!("skipping: `iasl` not found in PATH");
+        return;
+    }
+
+    dsdt_iasl_roundtrip(&AcpiConfig::default(), "ecam-disabled");
+    dsdt_iasl_roundtrip(
+        &AcpiConfig {
+            pcie_ecam_base: 0xB000_0000,
+            pcie_segment: 0,
+            pcie_start_bus: 0,
+            pcie_end_bus: 0xFF,
+            ..Default::default()
+        },
+        "ecam-enabled",
+    );
 }
 
