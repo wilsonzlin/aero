@@ -24,6 +24,12 @@ pub enum PushError {
 pub enum PopError {
     /// The queue is empty.
     Empty,
+    /// The record was dropped because its payload length exceeds a caller-provided bound.
+    ///
+    /// This is not corruption: writers are allowed to enqueue arbitrary-sized records up to the
+    /// ring's capacity. Consumers that expect an application-level maximum (e.g. max Ethernet frame
+    /// size) can use a capped pop API to drop oversize records without allocating.
+    TooLarge { len: u32, max: u32 },
     /// Corruption detected (e.g. a bogus length).
     Corrupt,
 }
@@ -175,7 +181,7 @@ impl RingBuffer {
             }
 
             let len_usize = len as usize;
-            let total = align_up(4 + len_usize, RECORD_ALIGN);
+            let total = record_size_checked(len_usize).ok_or(PopError::Corrupt)?;
             if total > remaining {
                 return Err(PopError::Corrupt);
             }
@@ -200,12 +206,85 @@ impl RingBuffer {
         }
     }
 
+    /// Pop a record, dropping any record whose payload length exceeds `max_len` without allocating.
+    ///
+    /// This is useful when the producer may be attacker-controlled and can enqueue very large
+    /// records that are valid at the ring-buffer level but should not be processed at the
+    /// application level (e.g., oversized Ethernet frames in NET_RX).
+    ///
+    /// Behaviour:
+    /// - If the queue is empty, returns [`PopError::Empty`].
+    /// - If the next record's payload length exceeds `max_len`, advances `head` past the record and
+    ///   returns [`PopError::TooLarge`].
+    /// - If corruption is detected (bogus length, out-of-bounds record), returns
+    ///   [`PopError::Corrupt`].
+    /// - Otherwise, returns the payload as an owned [`Vec<u8>`].
+    pub fn try_pop_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        let max_u32 = max_len.min(u32::MAX as usize) as u32;
+        loop {
+            let head = self.head.load(Ordering::Acquire);
+            let tail = self.tail_commit.load(Ordering::Acquire);
+            if head == tail {
+                return Err(PopError::Empty);
+            }
+
+            let head_index = (head % self.cap) as usize;
+            let remaining = (self.cap as usize) - head_index;
+
+            if remaining < 4 {
+                // Implicit padding.
+                let new_head = head.wrapping_add(remaining as u32);
+                self.head.store(new_head, Ordering::Release);
+                continue;
+            }
+
+            let len = unsafe { read_u32_le(self.data_ptr.add(head_index)) };
+            if len == WRAP_MARKER {
+                // Explicit wrap marker: skip to the start of the next segment.
+                let new_head = head.wrapping_add(remaining as u32);
+                self.head.store(new_head, Ordering::Release);
+                continue;
+            }
+
+            let len_usize = len as usize;
+            let total = record_size_checked(len_usize).ok_or(PopError::Corrupt)?;
+            if total > remaining {
+                return Err(PopError::Corrupt);
+            }
+            let committed = tail.wrapping_sub(head);
+            if committed < total as u32 {
+                // Shouldn't happen with in-order commits.
+                return Err(PopError::Corrupt);
+            }
+
+            if len > max_u32 {
+                let new_head = head.wrapping_add(total as u32);
+                self.head.store(new_head, Ordering::Release);
+                return Err(PopError::TooLarge { len, max: max_u32 });
+            }
+
+            let mut out = vec![0u8; len_usize];
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    self.data_ptr.add(head_index + 4),
+                    out.as_mut_ptr(),
+                    len_usize,
+                );
+            }
+
+            let new_head = head.wrapping_add(total as u32);
+            self.head.store(new_head, Ordering::Release);
+            return Ok(out);
+        }
+    }
+
     /// Convenience helper used by tests to drain the queue without busy loops.
     pub fn pop_spinning(&self) -> Vec<u8> {
         loop {
             match self.try_pop() {
                 Ok(v) => return v,
                 Err(PopError::Empty) => core::hint::spin_loop(),
+                Err(PopError::TooLarge { .. }) => panic!("unexpected too-large record"),
                 Err(PopError::Corrupt) => panic!("ring buffer corruption"),
             }
         }
@@ -236,6 +315,21 @@ fn write_u32_le(ptr: *mut u8, v: u32) {
         let bytes = v.to_le_bytes();
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, 4);
     }
+}
+
+fn record_size_checked(payload_len: usize) -> Option<usize> {
+    // Worst-case record layout: 4-byte length + payload + alignment padding.
+    // Use checked arithmetic so a bogus length field cannot overflow `usize` and produce a small
+    // `total` that would make the bounds checks pass.
+    let total = 4usize
+        .checked_add(payload_len)
+        .and_then(|v| align_up_checked(v, RECORD_ALIGN))?;
+    Some(total)
+}
+
+fn align_up_checked(value: usize, align: usize) -> Option<usize> {
+    debug_assert!(align.is_power_of_two());
+    value.checked_add(align - 1).map(|v| v & !(align - 1))
 }
 
 /// A `SharedArrayBuffer` ring buffer is represented as:

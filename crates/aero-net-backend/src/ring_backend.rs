@@ -16,6 +16,22 @@ pub trait FrameRing {
     fn capacity_bytes(&self) -> usize;
     fn try_push(&self, payload: &[u8]) -> Result<(), PushError>;
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError>;
+
+    /// Pop a frame, but drop any record whose payload length exceeds `max_len` and return
+    /// [`PopError::TooLarge`].
+    ///
+    /// Implementors may override this to avoid allocating the full record when it is going to be
+    /// dropped anyway (e.g. `aero_ipc::ring::RingBuffer::try_pop_capped`).
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        let frame = self.try_pop_vec()?;
+        if frame.len() > max_len {
+            return Err(PopError::TooLarge {
+                len: u32::try_from(frame.len()).unwrap_or(u32::MAX),
+                max: u32::try_from(max_len).unwrap_or(u32::MAX),
+            });
+        }
+        Ok(frame)
+    }
 }
 
 impl<T: FrameRing + ?Sized> FrameRing for &T {
@@ -29,6 +45,10 @@ impl<T: FrameRing + ?Sized> FrameRing for &T {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         <T as FrameRing>::try_pop_vec(&**self)
+    }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        <T as FrameRing>::try_pop_vec_capped(&**self, max_len)
     }
 }
 
@@ -44,6 +64,10 @@ impl<T: FrameRing + ?Sized> FrameRing for &mut T {
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         <T as FrameRing>::try_pop_vec(&**self)
     }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        <T as FrameRing>::try_pop_vec_capped(&**self, max_len)
+    }
 }
 
 impl<T: FrameRing + ?Sized> FrameRing for Box<T> {
@@ -57,6 +81,10 @@ impl<T: FrameRing + ?Sized> FrameRing for Box<T> {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         <T as FrameRing>::try_pop_vec(&**self)
+    }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        <T as FrameRing>::try_pop_vec_capped(&**self, max_len)
     }
 }
 
@@ -72,6 +100,10 @@ impl<T: FrameRing + ?Sized> FrameRing for std::rc::Rc<T> {
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         <T as FrameRing>::try_pop_vec(&**self)
     }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        <T as FrameRing>::try_pop_vec_capped(&**self, max_len)
+    }
 }
 impl FrameRing for aero_ipc::ring::RingBuffer {
     fn capacity_bytes(&self) -> usize {
@@ -84,6 +116,10 @@ impl FrameRing for aero_ipc::ring::RingBuffer {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         aero_ipc::ring::RingBuffer::try_pop(self)
+    }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        aero_ipc::ring::RingBuffer::try_pop_capped(self, max_len)
     }
 }
 
@@ -98,6 +134,10 @@ impl<T: FrameRing + ?Sized> FrameRing for RefCell<T> {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         self.borrow().try_pop_vec()
+    }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        self.borrow().try_pop_vec_capped(max_len)
     }
 }
 
@@ -119,6 +159,12 @@ impl<T: FrameRing + ?Sized> FrameRing for Mutex<T> {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .try_pop_vec()
     }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        self.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_pop_vec_capped(max_len)
+    }
 }
 
 impl<T: FrameRing + ?Sized> FrameRing for RwLock<T> {
@@ -139,6 +185,12 @@ impl<T: FrameRing + ?Sized> FrameRing for RwLock<T> {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .try_pop_vec()
     }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        self.write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_pop_vec_capped(max_len)
+    }
 }
 
 impl<T: FrameRing + ?Sized> FrameRing for Arc<T> {
@@ -152,6 +204,10 @@ impl<T: FrameRing + ?Sized> FrameRing for Arc<T> {
 
     fn try_pop_vec(&self) -> Result<Vec<u8>, PopError> {
         <T as FrameRing>::try_pop_vec(&**self)
+    }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        <T as FrameRing>::try_pop_vec_capped(&**self, max_len)
     }
 }
 
@@ -178,6 +234,25 @@ impl FrameRing for aero_ipc::wasm::SharedRingBuffer {
         match aero_ipc::wasm::SharedRingBuffer::try_pop(self) {
             Some(buf) => {
                 let mut out = vec![0u8; buf.length() as usize];
+                buf.copy_to(&mut out);
+                Ok(out)
+            }
+            None => Err(PopError::Empty),
+        }
+    }
+
+    fn try_pop_vec_capped(&self, max_len: usize) -> Result<Vec<u8>, PopError> {
+        match aero_ipc::wasm::SharedRingBuffer::try_pop(self) {
+            Some(buf) => {
+                let len = buf.length() as usize;
+                if len > max_len {
+                    return Err(PopError::TooLarge {
+                        len: u32::try_from(len).unwrap_or(u32::MAX),
+                        max: u32::try_from(max_len).unwrap_or(u32::MAX),
+                    });
+                }
+
+                let mut out = vec![0u8; len];
                 buf.copy_to(&mut out);
                 Ok(out)
             }
@@ -301,7 +376,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
         }
 
         for _ in 0..MAX_RX_POPS_PER_POLL {
-            match self.rx.try_pop_vec() {
+            match self.rx.try_pop_vec_capped(self.max_frame_bytes) {
                 Ok(frame) => {
                     let frame_len = frame.len() as u64;
                     if frame.len() > self.max_frame_bytes {
@@ -309,12 +384,16 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
                         self.stats.rx_dropped_oversize_bytes += frame_len;
                         continue;
                     }
-
                     self.stats.rx_popped_frames += 1;
                     self.stats.rx_popped_bytes += frame_len;
                     return Some(frame);
                 }
                 Err(PopError::Empty) => return None,
+                Err(PopError::TooLarge { len, .. }) => {
+                    self.stats.rx_dropped_oversize += 1;
+                    self.stats.rx_dropped_oversize_bytes += u64::from(len);
+                    continue;
+                }
                 Err(PopError::Corrupt) => {
                     self.stats.rx_corrupt += 1;
                     self.stats.rx_broken = true;

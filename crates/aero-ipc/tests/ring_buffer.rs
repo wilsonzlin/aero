@@ -61,6 +61,7 @@ fn ring_buffer_single_thread_fuzz() {
                         assert_eq!(v, expected);
                     }
                     Err(PopError::Empty) => assert!(model.is_empty()),
+                    Err(PopError::TooLarge { .. }) => panic!("unexpected TooLarge"),
                     Err(PopError::Corrupt) => panic!("corrupt"),
                 }
             }

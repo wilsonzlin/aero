@@ -95,6 +95,26 @@ fn ring_backend_paths_work() {
 }
 
 #[test]
+fn ring_backend_drops_oversize_rx_without_marking_corrupt_or_broken() {
+    // Use a ring large enough to hold a single oversized record so this exercises the capped-pop
+    // drop path rather than `PushError::TooLarge`.
+    let oversize = vec![0u8; 1024];
+    let cap = aero_ipc::ring::record_size(oversize.len());
+    let tx = Arc::new(RingBuffer::new(64));
+    let rx = Arc::new(RingBuffer::new(cap));
+    let mut backend = L2TunnelRingBackend::with_max_frame_bytes(tx, rx.clone(), 64);
+
+    rx.try_push(&oversize).unwrap();
+    assert_eq!(backend.poll_receive(), None);
+    assert_eq!(backend.stats().rx_dropped_oversize, 1);
+    assert_eq!(backend.stats().rx_corrupt, 0);
+
+    // Prove RX is not marked broken by delivering a subsequent valid frame.
+    rx.try_push(&[9, 9, 9]).unwrap();
+    assert_eq!(backend.poll_receive(), Some(vec![9, 9, 9]));
+}
+
+#[test]
 fn ring_backend_stats_are_available_through_network_backend_trait_object() {
     let tx = Arc::new(RingBuffer::new(64));
     let rx = Arc::new(RingBuffer::new(64));
