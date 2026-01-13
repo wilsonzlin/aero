@@ -10042,6 +10042,7 @@ mod tests {
     use super::*;
     use aero_gpu::guest_memory::VecGuestMemory;
     use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
+    use std::sync::Arc;
 
     fn require_webgpu() -> bool {
         let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
@@ -10133,6 +10134,70 @@ mod tests {
             map_aerogpu_texture_format(AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB, true).unwrap(),
             wgpu::TextureFormat::Bc1RgbaUnormSrgb
         );
+    }
+
+    #[test]
+    fn expansion_scratch_advances_on_present_and_flush() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            let a0 = exec
+                .expansion_scratch
+                .alloc_vertex_output(&exec.device, 16)
+                .expect("initial scratch allocation should succeed");
+            let per_frame = exec
+                .expansion_scratch
+                .per_frame_capacity()
+                .expect("allocator must be initialized after first alloc");
+            assert_eq!(a0.offset, 0);
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd expansion scratch present test"),
+                });
+
+            // PRESENT advances the scratch frame segment.
+            let size_bytes = 16u32;
+            let mut cmd_bytes = Vec::with_capacity(size_bytes as usize);
+            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::Present as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // scanout_id
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+            assert_eq!(cmd_bytes.len(), size_bytes as usize);
+            let mut report = ExecuteReport::default();
+            exec.exec_present(&mut encoder, &cmd_bytes, &mut report)
+                .expect("PRESENT should succeed");
+
+            let a1 = exec
+                .expansion_scratch
+                .alloc_vertex_output(&exec.device, 16)
+                .expect("post-present scratch allocation should succeed");
+            assert!(Arc::ptr_eq(&a0.buffer, &a1.buffer));
+            assert_eq!(
+                a1.offset, per_frame,
+                "PRESENT must advance to the next frame segment"
+            );
+
+            // FLUSH advances again.
+            exec.exec_flush(&mut encoder).expect("FLUSH should succeed");
+            let a2 = exec
+                .expansion_scratch
+                .alloc_vertex_output(&exec.device, 16)
+                .expect("post-flush scratch allocation should succeed");
+            assert!(Arc::ptr_eq(&a0.buffer, &a2.buffer));
+            assert_eq!(
+                a2.offset,
+                per_frame * 2,
+                "FLUSH must advance to the next frame segment"
+            );
+        });
     }
 
     #[test]
