@@ -209,8 +209,14 @@ export class IdbRemoteChunkCache {
 
     const db = await openDiskManagerDb();
     const cache = new IdbRemoteChunkCache(db, opts.cacheKey, opts.signature, opts.cacheLimitBytes ?? null, maxCachedChunks);
-    await cache.ensureCompatible();
-    return cache;
+    try {
+      await cache.ensureCompatible();
+      return cache;
+    } catch (err) {
+      // If initialization fails, ensure we don't leak the DB connection.
+      db.close();
+      throw err;
+    }
   }
 
   close(): void {
@@ -225,9 +231,18 @@ export class IdbRemoteChunkCache {
     const metaStore = tx.objectStore("remote_chunk_meta");
     await deleteAllChunksForCacheKey(chunksStore, this.cacheKey);
     metaStore.delete(this.cacheKey);
-    await idbTxDone(tx);
-    this.pendingAccess.clear();
-    this.cache.clear();
+    try {
+      await idbTxDone(tx);
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
+      }
+      throw err;
+    } finally {
+      // Always drop the in-memory cache to avoid serving stale bytes if the caller proceeds.
+      this.pendingAccess.clear();
+      this.cache.clear();
+    }
   }
 
   async getStatus(): Promise<{ bytesUsed: number; cacheLimitBytes: number | null }> {
@@ -475,9 +490,15 @@ export class IdbRemoteChunkCache {
       metaStore.put(meta);
     }
 
-    await idbTxDone(tx);
-    this.cache.delete(chunkIndex);
-    this.pendingAccess.delete(chunkIndex);
+    try {
+      await idbTxDone(tx);
+    } catch (err) {
+      // Healing deletes are best-effort; do not fail read paths if the cache DB is at quota.
+      if (!isQuotaExceededError(err)) throw err;
+    } finally {
+      this.cache.delete(chunkIndex);
+      this.pendingAccess.delete(chunkIndex);
+    }
   }
 
   async listChunkIndices(): Promise<number[]> {
@@ -511,8 +532,15 @@ export class IdbRemoteChunkCache {
 
     const meta = (await idbReq(metaStore.get(this.cacheKey))) as RemoteChunkCacheMetaRecord | undefined;
     if (meta && signatureMatches(meta, this.signature)) {
-      await idbTxDone(tx);
-      return;
+      try {
+        await idbTxDone(tx);
+        return;
+      } catch (err) {
+        if (isQuotaExceededError(err)) {
+          throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
+        }
+        throw err;
+      }
     }
 
     // Invalidate: signature mismatch or missing meta.
@@ -532,7 +560,14 @@ export class IdbRemoteChunkCache {
       accessCounter: 0,
     };
     metaStore.put(fresh);
-    await idbTxDone(tx);
+    try {
+      await idbTxDone(tx);
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
+      }
+      throw err;
+    }
   }
 
   private async getOrInitMetaAndMaybeClearInTx(

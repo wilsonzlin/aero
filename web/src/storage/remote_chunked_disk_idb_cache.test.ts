@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 
 import { clearIdb } from "./metadata";
+import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "./idb_remote_chunk_cache";
 import { RemoteChunkedDisk } from "./remote_chunked_disk";
 
 function buildTestImageBytes(totalSize: number): Uint8Array {
@@ -335,6 +336,74 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
 
     quota.restore();
     await disk.close();
+  });
+
+  it("treats cache open quota failures as non-fatal (cache disabled)", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const originalOpen = IdbRemoteChunkCache.open;
+    IdbRemoteChunkCache.open = (async () => {
+      throw new IdbRemoteChunkCacheQuotaError();
+    }) as unknown as typeof IdbRemoteChunkCache.open;
+
+    try {
+      const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        cacheBackend: "idb",
+        cacheLimitBytes: chunkSize * 8,
+        prefetchSequentialChunks: 0,
+        retryBaseDelayMs: 0,
+      });
+
+      expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+      await disk.readSectors(0, new Uint8Array(512));
+      await disk.readSectors(0, new Uint8Array(512));
+
+      // With caching disabled, both reads must hit the network.
+      expect(hits.get("/chunks/00000000.bin")).toBe(2);
+
+      await disk.close();
+    } finally {
+      IdbRemoteChunkCache.open = originalOpen;
+    }
   });
 
   it("disables persistent caching entirely when cacheLimitBytes is 0", async () => {

@@ -3,6 +3,7 @@ import "../../test/fake_indexeddb_auto.ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { clearIdb } from "../storage/metadata";
+import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "../storage/idb_remote_chunk_cache";
 import { RemoteStreamingDisk } from "./remote_disk";
 
 function makeTestImage(size: number): Uint8Array {
@@ -302,6 +303,41 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     quota.restore();
     disk.close();
     mock.restore();
+  });
+
+  it("treats cache open quota failures as non-fatal (cache disabled)", async () => {
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const originalOpen = IdbRemoteChunkCache.open;
+    IdbRemoteChunkCache.open = (async () => {
+      throw new IdbRemoteChunkCacheQuotaError();
+    }) as unknown as typeof IdbRemoteChunkCache.open;
+
+    try {
+      const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+        blockSize,
+        cacheBackend: "idb",
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 0,
+      });
+
+      expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+      const before = mock.stats.chunkRangeCalls;
+      await disk.read(0, 16);
+      await disk.read(0, 16);
+
+      // With caching disabled, both reads must hit the network.
+      expect(mock.stats.chunkRangeCalls).toBe(before + 2);
+
+      disk.close();
+    } finally {
+      IdbRemoteChunkCache.open = originalOpen;
+      mock.restore();
+    }
   });
 
   it("does not wipe telemetry for reads that occur while clearCache is in-flight", async () => {

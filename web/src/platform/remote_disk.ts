@@ -589,20 +589,32 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
       disk.remoteEtag = probe.etag;
       disk.remoteLastModified = probe.lastModified;
-      disk.idbCache = await IdbRemoteChunkCache.open({
-        cacheKey,
-        signature: {
-          imageId: parts.imageId,
-          version: parts.version,
-          etag: resolvedEtag,
-          lastModified: probe.lastModified,
-          sizeBytes: probe.size,
-          chunkSize: resolved.blockSize,
-        },
-        cacheLimitBytes: resolved.cacheLimitBytes,
-      });
-      const status = await disk.idbCache.getStatus();
-      disk.cachedBytes = status.bytesUsed;
+      try {
+        disk.idbCache = await IdbRemoteChunkCache.open({
+          cacheKey,
+          signature: {
+            imageId: parts.imageId,
+            version: parts.version,
+            etag: resolvedEtag,
+            lastModified: probe.lastModified,
+            sizeBytes: probe.size,
+            chunkSize: resolved.blockSize,
+          },
+          cacheLimitBytes: resolved.cacheLimitBytes,
+        });
+        const status = await disk.idbCache.getStatus();
+        disk.cachedBytes = status.bytesUsed;
+      } catch (err) {
+        if (err instanceof IdbRemoteChunkCacheQuotaError) {
+          // If the cache cannot be initialized due to quota pressure, treat caching as disabled
+          // and continue with network-only reads.
+          disk.idbCacheDisabled = true;
+          disk.idbCache = null;
+          disk.cachedBytes = 0;
+        } else {
+          throw err;
+        }
+      }
       disk.leaseRefresher.start();
       return disk;
     }
@@ -1188,7 +1200,18 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       if (this.cacheLimitBytes !== 0) {
         if (this.cacheBackend === "idb") {
           if (!this.idbCacheDisabled) {
-            await this.idbCache?.clear();
+            try {
+              await this.idbCache?.clear();
+            } catch (err) {
+              if (err instanceof IdbRemoteChunkCacheQuotaError) {
+                // If we cannot clear the cache due to quota errors, do not risk serving stale cached
+                // bytes under a new validator. Disable caching for the remainder of the disk lifetime.
+                this.idbCacheDisabled = true;
+                this.cachedBytes = 0;
+              } else {
+                throw err;
+              }
+            }
           }
         } else {
           await this.opfsCache?.clear();
