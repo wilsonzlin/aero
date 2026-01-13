@@ -21,6 +21,11 @@
 #define CONNECT_MESSAGE_BASED 0x2
 #endif
 
+#ifndef DISCONNECT_MESSAGE_BASED
+/* Some WDKs use DISCONNECT_MESSAGE_BASED for IoDisconnectInterruptEx; others reuse CONNECT_MESSAGE_BASED. */
+#define DISCONNECT_MESSAGE_BASED CONNECT_MESSAGE_BASED
+#endif
+
 typedef struct _VIRTIOSND_EVENTQ_DRAIN_CONTEXT {
     PVIRTIOSND_DEVICE_EXTENSION Dx;
     ULONG Reposted;
@@ -406,6 +411,10 @@ static __forceinline VOID VirtIoSndDrainQueue(_Inout_ PVIRTIOSND_DEVICE_EXTENSIO
         return;
     }
 
+    if (queueIndex < VIRTIOSND_QUEUE_COUNT) {
+        (VOID)InterlockedIncrement(&dx->QueueDrainCount[queueIndex]);
+    }
+
     if (dx->Queues[queueIndex].Ops == NULL) {
         return;
     }
@@ -515,10 +524,14 @@ VOID VirtIoSndInterruptInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx)
     RtlZeroMemory(&Dx->MessageDpc, sizeof(Dx->MessageDpc));
     Dx->MessageDpcInFlight = 0;
     Dx->MessagePendingMask = 0;
+    Dx->MessageIsrCount = 0;
+    Dx->MessageDpcCount = 0;
 
     Dx->MsixAllOnVector0 = TRUE;
     Dx->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
     RtlZeroMemory(Dx->MsixQueueVectors, sizeof(Dx->MsixQueueVectors));
+
+    RtlZeroMemory(Dx->QueueDrainCount, sizeof(Dx->QueueDrainCount));
 }
 
 _Use_decl_annotations_
@@ -737,7 +750,7 @@ static VOID VirtIoSndDisconnectMessageInternal(_Inout_ PVIRTIOSND_DEVICE_EXTENSI
 
     if (Dx->MessageInterruptConnectionContext != NULL) {
         RtlZeroMemory(&params, sizeof(params));
-        params.Version = CONNECT_MESSAGE_BASED;
+        params.Version = DISCONNECT_MESSAGE_BASED;
         params.MessageBased.ConnectionContext = Dx->MessageInterruptConnectionContext;
         IoDisconnectInterruptEx(&params);
     }
@@ -848,6 +861,8 @@ static BOOLEAN VirtIoSndMessageIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID Servic
         return TRUE;
     }
 
+    (VOID)InterlockedIncrement(&dx->MessageIsrCount);
+
     mask = (MessageID < 32) ? (1u << MessageID) : 1u;
     (VOID)InterlockedOr(&dx->MessagePendingMask, (LONG)mask);
 
@@ -881,6 +896,8 @@ static VOID VirtIoSndMessageDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_
     if (dx == NULL) {
         return;
     }
+
+    (VOID)InterlockedIncrement(&dx->MessageDpcCount);
 
     pending = (ULONG)InterlockedExchange(&dx->MessagePendingMask, 0);
     if (pending == 0) {

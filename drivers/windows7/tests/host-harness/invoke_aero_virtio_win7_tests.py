@@ -864,6 +864,66 @@ def _qmp_input_send_event_command(
     return _qmp_input_send_event_cmd(events, device=device)
 
 
+def _qmp_query_pci(endpoint: _QmpEndpoint) -> list[dict[str, object]]:
+    """
+    Query PCI devices via QMP `query-pci`.
+
+    Returns the raw `return` value (list of buses).
+    """
+    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        resp = _qmp_send_command(s, {"execute": "query-pci"})
+        buses = resp.get("return")
+        if not isinstance(buses, list):
+            raise RuntimeError(f"unexpected QMP query-pci response: {resp}")
+        out: list[dict[str, object]] = []
+        for b in buses:
+            if isinstance(b, dict):
+                out.append(b)
+        return out
+
+
+def _qmp_find_pci_device(
+    buses: list[dict[str, object]], *, vendor_id: int, device_id: int
+) -> Optional[dict[str, object]]:
+    for bus in buses:
+        devs = bus.get("devices")
+        if not isinstance(devs, list):
+            continue
+        for dev in devs:
+            if not isinstance(dev, dict):
+                continue
+            ident = dev.get("id")
+            if not isinstance(ident, dict):
+                continue
+            ven = ident.get("vendor")
+            did = ident.get("device")
+            if isinstance(ven, int) and isinstance(did, int) and ven == vendor_id and did == device_id:
+                return dev
+    return None
+
+
+def _qmp_pci_device_msix_enabled(dev: dict[str, object]) -> Optional[bool]:
+    """
+    Best-effort extraction of the MSI-X enable bit from `query-pci` device info.
+    """
+    caps = dev.get("capabilities")
+    if isinstance(caps, list):
+        for cap in caps:
+            if not isinstance(cap, dict):
+                continue
+            if cap.get("id") != "msix":
+                continue
+            enabled = cap.get("enabled")
+            if isinstance(enabled, bool):
+                return enabled
+    msix = dev.get("msix")
+    if isinstance(msix, dict):
+        enabled = msix.get("enabled")
+        if isinstance(enabled, bool):
+            return enabled
+    return None
+
+
 def _qmp_deterministic_keyboard_events(*, qcode: str) -> list[dict[str, object]]:
     # Press + release a single key via qcode (stable across host layouts).
     return [
@@ -1551,6 +1611,15 @@ def main() -> int:
         default=50,
         help="RMS threshold for --virtio-snd-verify-wav in 16-bit PCM units (default: 50)",
     )
+    parser.add_argument(
+        "--require-virtio-snd-msix",
+        dest="require_virtio_snd_msix",
+        action="store_true",
+        help=(
+            "Require virtio-snd to run with MSI-X enabled (host-side check via QMP query-pci). "
+            "This option requires QMP and --with-virtio-snd."
+        ),
+    )
     # NOTE: `--with-virtio-input-events`/`--enable-virtio-input-events` used to be separate flags; they remain accepted
     # as aliases for `--with-input-events` for backwards compatibility.
     parser.add_argument(
@@ -1638,6 +1707,8 @@ def main() -> int:
     if not args.enable_virtio_snd:
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
             parser.error("--virtio-snd-* options require --with-virtio-snd/--enable-virtio-snd")
+        if args.require_virtio_snd_msix:
+            parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
     elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
         parser.error("--virtio-snd-wav-path is required when --virtio-snd-audio-backend=wav")
 
@@ -1757,6 +1828,7 @@ def main() -> int:
                         file=sys.stderr,
                     )
                     return 2
+
                 print(
                     "WARNING: disabling QMP shutdown because a free TCP port could not be allocated",
                     file=sys.stderr,
@@ -3136,9 +3208,9 @@ def main() -> int:
                                             "--with-input-tablet-events/--with-tablet-events was enabled",
                                             file=sys.stderr,
                                         )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                             if need_input_wheel:
                                 if saw_virtio_input_wheel_fail:
                                     print(

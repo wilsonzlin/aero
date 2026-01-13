@@ -10,7 +10,8 @@
  * Interrupt integration for virtio-snd (WDM).
  *
  * - Prefer message-signaled interrupts (MSI/MSI-X) when the PnP resource list
- *   contains CM_RESOURCE_INTERRUPT_MESSAGE.
+ *   contains CM_RESOURCE_INTERRUPT_MESSAGE (opt-in via INF
+ *   Interrupt Management\\MessageSignaledInterruptProperties).
  * - Fall back to legacy line-based INTx (contract v1 default).
  *
  * INTx uses the shared WDM helper in:
@@ -18,6 +19,10 @@
  *
  * That helper implements the contract-required ISR read-to-ack semantics and
  * coalesces interrupts into a DPC callback.
+ *
+ * When message interrupts are present, the driver connects via
+ * IoConnectInterruptEx(CONNECT_MESSAGE_BASED) and programs virtio MSI-X vectors
+ * (msix_config + queue_msix_vector).
  */
 
 #ifdef __cplusplus

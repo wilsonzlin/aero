@@ -222,10 +222,20 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     volatile LONG MessageDpcInFlight;
     volatile LONG MessagePendingMask; /* bitmask of pending MessageID values */
 
+    /* Diagnostic counters for MSI/MSI-X (incremented via interlocked ops). */
+    volatile LONG MessageIsrCount;
+    volatile LONG MessageDpcCount;
+
     /* Device vector routing when MessageInterruptsActive==TRUE. */
     BOOLEAN MsixAllOnVector0;
     USHORT MsixConfigVector;
     USHORT MsixQueueVectors[VIRTIOSND_QUEUE_COUNT];
+
+    /* Per-queue drain count (incremented in interrupt DPC paths). */
+    volatile LONG QueueDrainCount[VIRTIOSND_QUEUE_COUNT];
+
+    /* Optional diagnostic device object (\\.\aero_virtio_snd_diag). */
+    PDEVICE_OBJECT DiagDeviceObject;
 
     VIRTIOSND_DMA_CONTEXT DmaCtx;
 

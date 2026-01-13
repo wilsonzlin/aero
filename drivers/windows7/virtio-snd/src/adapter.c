@@ -9,6 +9,7 @@
 #include "trace.h"
 #include "virtio_pci_contract.h"
 #include "virtiosnd.h"
+#include "aero_virtio_snd_diag.h"
 #include "virtiosnd_intx.h"
 #include "wavert.h"
 
@@ -16,7 +17,22 @@ DRIVER_INITIALIZE DriverEntry;
 
 static DRIVER_ADD_DEVICE VirtIoSndAddDevice;
 static DRIVER_DISPATCH VirtIoSndDispatchPnp;
+static DRIVER_DISPATCH VirtIoSndDispatchCreate;
+static DRIVER_DISPATCH VirtIoSndDispatchClose;
+static DRIVER_DISPATCH VirtIoSndDispatchDeviceControl;
 static NTSTATUS VirtIoSndStartDevice(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp, _In_ PRESOURCELIST ResourceList);
+
+/* Dedicated diag device object extension (\\.\aero_virtio_snd_diag). */
+#define VIRTIOSND_DIAG_SIGNATURE 'gDdV' /* 'VdDg' */
+typedef struct _VIRTIOSND_DIAG_DEVICE_EXTENSION {
+    ULONG Signature;
+    PVIRTIOSND_DEVICE_EXTENSION TargetDx;
+} VIRTIOSND_DIAG_DEVICE_EXTENSION, *PVIRTIOSND_DIAG_DEVICE_EXTENSION;
+
+static NTSTATUS VirtIoSndDiagCreate(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+static VOID VirtIoSndDiagDestroy(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+
+static NTSTATUS VirtIoSndCompleteIrp(_Inout_ PIRP Irp, _In_ NTSTATUS Status, _In_ ULONG_PTR Information);
 
 _Use_decl_annotations_
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
@@ -36,6 +52,9 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     // Wrap PortCls PnP handling so we can stop/unregister virtio transport cleanly
     // on STOP/REMOVE. All other PnP IRPs are forwarded to PcDispatchIrp.
     DriverObject->MajorFunction[IRP_MJ_PNP] = VirtIoSndDispatchPnp;
+    DriverObject->MajorFunction[IRP_MJ_CREATE] = VirtIoSndDispatchCreate;
+    DriverObject->MajorFunction[IRP_MJ_CLOSE] = VirtIoSndDispatchClose;
+    DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = VirtIoSndDispatchDeviceControl;
     return STATUS_SUCCESS;
 }
 
@@ -266,6 +285,9 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
             dx->Removed = TRUE;
         }
 
+        /* Best-effort teardown of the optional diagnostic device. */
+        VirtIoSndDiagDestroy(dx);
+
         VirtIoSndStopHardware(dx);
 
         if (removing) {
@@ -287,6 +309,200 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     }
 
     return PcDispatchIrp(DeviceObject, Irp);
+}
+
+static NTSTATUS VirtIoSndCompleteIrp(_Inout_ PIRP Irp, _In_ NTSTATUS Status, _In_ ULONG_PTR Information)
+{
+    if (Irp == NULL) {
+        return Status;
+    }
+    Irp->IoStatus.Status = Status;
+    Irp->IoStatus.Information = Information;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    return Status;
+}
+
+_Use_decl_annotations_
+static NTSTATUS VirtIoSndDispatchCreate(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PVIRTIOSND_DIAG_DEVICE_EXTENSION diag;
+
+    diag = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)(DeviceObject ? DeviceObject->DeviceExtension : NULL);
+    if (diag != NULL && diag->Signature == VIRTIOSND_DIAG_SIGNATURE) {
+        return VirtIoSndCompleteIrp(Irp, STATUS_SUCCESS, 0);
+    }
+    return PcDispatchIrp(DeviceObject, Irp);
+}
+
+_Use_decl_annotations_
+static NTSTATUS VirtIoSndDispatchClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PVIRTIOSND_DIAG_DEVICE_EXTENSION diag;
+
+    diag = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)(DeviceObject ? DeviceObject->DeviceExtension : NULL);
+    if (diag != NULL && diag->Signature == VIRTIOSND_DIAG_SIGNATURE) {
+        return VirtIoSndCompleteIrp(Irp, STATUS_SUCCESS, 0);
+    }
+    return PcDispatchIrp(DeviceObject, Irp);
+}
+
+static VOID VirtIoSndDiagFillInfo(_In_ PVIRTIOSND_DEVICE_EXTENSION Dx, _Out_ PAERO_VIRTIO_SND_DIAG_INFO Info)
+{
+    ULONG i;
+    ULONG irqCount;
+    ULONG dpcCount;
+
+    RtlZeroMemory(Info, sizeof(*Info));
+    Info->Size = sizeof(*Info);
+    Info->Version = AERO_VIRTIO_SND_DIAG_VERSION;
+
+    if (Dx->MessageInterruptsActive) {
+        Info->IrqMode = AERO_VIRTIO_SND_DIAG_IRQ_MODE_MSIX;
+        Info->MessageCount = Dx->MessageInterruptCount;
+        Info->MsixConfigVector = Dx->MsixConfigVector;
+        for (i = 0; i < AERO_VIRTIO_SND_DIAG_QUEUE_COUNT; ++i) {
+            Info->QueueMsixVector[i] = (i < VIRTIOSND_QUEUE_COUNT) ? Dx->MsixQueueVectors[i] : VIRTIO_PCI_MSI_NO_VECTOR;
+        }
+
+        irqCount = (ULONG)InterlockedCompareExchange(&Dx->MessageIsrCount, 0, 0);
+        dpcCount = (ULONG)InterlockedCompareExchange(&Dx->MessageDpcCount, 0, 0);
+    } else if (Dx->Intx.InterruptObject != NULL) {
+        Info->IrqMode = AERO_VIRTIO_SND_DIAG_IRQ_MODE_INTX;
+        Info->MessageCount = 0;
+        Info->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+        for (i = 0; i < AERO_VIRTIO_SND_DIAG_QUEUE_COUNT; ++i) {
+            Info->QueueMsixVector[i] = VIRTIO_PCI_MSI_NO_VECTOR;
+        }
+
+        irqCount = (ULONG)InterlockedCompareExchange(&Dx->Intx.IsrCount, 0, 0);
+        dpcCount = (ULONG)InterlockedCompareExchange(&Dx->Intx.DpcCount, 0, 0);
+    } else {
+        Info->IrqMode = AERO_VIRTIO_SND_DIAG_IRQ_MODE_NONE;
+        Info->MessageCount = 0;
+        Info->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+        for (i = 0; i < AERO_VIRTIO_SND_DIAG_QUEUE_COUNT; ++i) {
+            Info->QueueMsixVector[i] = VIRTIO_PCI_MSI_NO_VECTOR;
+        }
+        irqCount = 0;
+        dpcCount = 0;
+    }
+
+    Info->InterruptCount = irqCount;
+    Info->DpcCount = dpcCount;
+
+    for (i = 0; i < AERO_VIRTIO_SND_DIAG_QUEUE_COUNT; ++i) {
+        Info->QueueDrainCount[i] = (ULONG)InterlockedCompareExchange(&Dx->QueueDrainCount[i], 0, 0);
+    }
+}
+
+_Use_decl_annotations_
+static NTSTATUS VirtIoSndDispatchDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION stack;
+    PVIRTIOSND_DIAG_DEVICE_EXTENSION diag;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    ULONG code;
+    ULONG outLen;
+
+    stack = IoGetCurrentIrpStackLocation(Irp);
+    diag = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)(DeviceObject ? DeviceObject->DeviceExtension : NULL);
+
+    if (diag == NULL || diag->Signature != VIRTIOSND_DIAG_SIGNATURE) {
+        return PcDispatchIrp(DeviceObject, Irp);
+    }
+
+    dx = diag->TargetDx;
+    if (dx == NULL || dx->Signature != VIRTIOSND_DX_SIGNATURE) {
+        return VirtIoSndCompleteIrp(Irp, STATUS_INVALID_DEVICE_STATE, 0);
+    }
+
+    code = stack ? stack->Parameters.DeviceIoControl.IoControlCode : 0;
+    outLen = stack ? stack->Parameters.DeviceIoControl.OutputBufferLength : 0;
+
+    switch (code) {
+    case IOCTL_AERO_VIRTIO_SND_DIAG_QUERY:
+    {
+        AERO_VIRTIO_SND_DIAG_INFO info;
+
+        if (outLen < sizeof(info) || Irp->AssociatedIrp.SystemBuffer == NULL) {
+            return VirtIoSndCompleteIrp(Irp, STATUS_BUFFER_TOO_SMALL, sizeof(info));
+        }
+
+        VirtIoSndDiagFillInfo(dx, &info);
+        RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &info, sizeof(info));
+        return VirtIoSndCompleteIrp(Irp, STATUS_SUCCESS, sizeof(info));
+    }
+    default:
+        return VirtIoSndCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    }
+}
+
+static NTSTATUS VirtIoSndDiagCreate(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    NTSTATUS status;
+    PDEVICE_OBJECT diagDevice;
+    PVIRTIOSND_DIAG_DEVICE_EXTENSION diagExt;
+    UNICODE_STRING deviceName;
+    UNICODE_STRING symLink;
+
+    if (Dx == NULL || Dx->Self == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Dx->DiagDeviceObject != NULL) {
+        return STATUS_SUCCESS;
+    }
+
+    RtlInitUnicodeString(&deviceName, L"\\Device\\AeroVirtioSndDiag");
+    diagDevice = NULL;
+    status = IoCreateDevice(
+        Dx->Self->DriverObject,
+        (ULONG)sizeof(VIRTIOSND_DIAG_DEVICE_EXTENSION),
+        &deviceName,
+        FILE_DEVICE_UNKNOWN,
+        0,
+        FALSE,
+        &diagDevice);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    diagDevice->Flags |= DO_BUFFERED_IO;
+
+    diagExt = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)diagDevice->DeviceExtension;
+    RtlZeroMemory(diagExt, sizeof(*diagExt));
+    diagExt->Signature = VIRTIOSND_DIAG_SIGNATURE;
+    diagExt->TargetDx = Dx;
+
+    RtlInitUnicodeString(&symLink, L"\\DosDevices\\aero_virtio_snd_diag");
+    status = IoCreateSymbolicLink(&symLink, &deviceName);
+    if (!NT_SUCCESS(status)) {
+        IoDeleteDevice(diagDevice);
+        return status;
+    }
+
+    diagDevice->Flags &= ~DO_DEVICE_INITIALIZING;
+    Dx->DiagDeviceObject = diagDevice;
+    return STATUS_SUCCESS;
+}
+
+static VOID VirtIoSndDiagDestroy(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    UNICODE_STRING symLink;
+
+    if (Dx == NULL) {
+        return;
+    }
+
+    if (Dx->DiagDeviceObject == NULL) {
+        return;
+    }
+
+    RtlInitUnicodeString(&symLink, L"\\DosDevices\\aero_virtio_snd_diag");
+    (VOID)IoDeleteSymbolicLink(&symLink);
+
+    IoDeleteDevice(Dx->DiagDeviceObject);
+    Dx->DiagDeviceObject = NULL;
 }
 
 #if defined(AERO_VIRTIO_SND_LEGACY)
@@ -444,6 +660,8 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
 
     /* Initialize interrupt state before any best-effort StopHardware calls. */
     VirtIoSndInterruptInitialize(dx);
+    /* Clean up any stale diagnostic device from a previous STOP/START cycle. */
+    VirtIoSndDiagDestroy(dx);
 
     if (dx->LowerDeviceObject == NULL || dx->Pdo == NULL) {
         PDEVICE_OBJECT base = IoGetDeviceAttachmentBaseRef(DeviceObject);
@@ -571,8 +789,15 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
                      (ULONGLONG)captureInfo.formats,
                      (ULONGLONG)captureInfo.rates);
              }
-         }
-     }
+          }
+      }
+
+    if (hwStarted && dx->Started) {
+        NTSTATUS diagStatus = VirtIoSndDiagCreate(dx);
+        if (!NT_SUCCESS(diagStatus)) {
+            VIRTIOSND_TRACE_ERROR("diag: failed to create \\Device\\AeroVirtioSndDiag: 0x%08X\n", (UINT)diagStatus);
+        }
+    }
 
     status = VirtIoSndAdapterContext_Register(unknownAdapter, dx, forceNullBackend);
     if (!NT_SUCCESS(status)) {
@@ -688,6 +913,8 @@ Exit:
         if (topologyRegistered) {
             (VOID)PcUnregisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY);
         }
+        /* Ensure the optional diagnostic device does not leak on StartDevice failure. */
+        VirtIoSndDiagDestroy(dx);
         if (hwStarted) {
             VirtIoSndStopHardware(dx);
         }
