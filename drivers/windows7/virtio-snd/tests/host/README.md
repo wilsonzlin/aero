@@ -49,6 +49,9 @@ ctest --test-dir out/virtiosnd-tests --output-on-failure
 For fast iteration on just the shim-based protocol-engine tests in this folder, you can also
 run:
 
+> Note: this subset does **not** include `virtiosnd_proto_tests` (which lives in the parent
+> `drivers/windows7/virtio-snd/tests/` project).
+
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
 ```

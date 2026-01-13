@@ -344,6 +344,9 @@ The `drivers/windows7/virtio-snd/tests/host/` project can still be built standal
 you only want that smaller subset of tests (it is also included when building the full
 suite above):
 
+> Note: this subset does **not** build `virtiosnd_proto_tests`. Use the full suite above
+> when you want integrated coverage of the protocol engines compiled from `src/*.c`.
+
 ```sh
 ./drivers/windows7/virtio-snd/scripts/run-host-tests.sh --host-only
 ```
