@@ -1921,64 +1921,42 @@ fn is_rel_branch_or_call(opcode: OpcodeBytes) -> bool {
 }
 
 trait RegSpecLike: Copy {
-    type Class: core::fmt::Debug;
-
     fn num(self) -> u8;
-    fn class(self) -> Self::Class;
+    fn is_rip(self) -> bool;
 }
 
 impl RegSpecLike for yaxpeax_x86::real_mode::RegSpec {
-    type Class = yaxpeax_x86::real_mode::RegisterClass;
-
     fn num(self) -> u8 {
         yaxpeax_x86::real_mode::RegSpec::num(&self)
     }
 
-    fn class(self) -> Self::Class {
-        yaxpeax_x86::real_mode::RegSpec::class(&self)
+    fn is_rip(self) -> bool {
+        false
     }
 }
 
 impl RegSpecLike for yaxpeax_x86::protected_mode::RegSpec {
-    type Class = yaxpeax_x86::protected_mode::RegisterClass;
-
     fn num(self) -> u8 {
         yaxpeax_x86::protected_mode::RegSpec::num(&self)
     }
 
-    fn class(self) -> Self::Class {
-        yaxpeax_x86::protected_mode::RegSpec::class(&self)
+    fn is_rip(self) -> bool {
+        false
     }
 }
 
 impl RegSpecLike for yaxpeax_x86::long_mode::RegSpec {
-    type Class = yaxpeax_x86::long_mode::RegisterClass;
-
     fn num(self) -> u8 {
         yaxpeax_x86::long_mode::RegSpec::num(&self)
     }
 
-    fn class(self) -> Self::Class {
-        yaxpeax_x86::long_mode::RegSpec::class(&self)
+    fn is_rip(self) -> bool {
+        self == yaxpeax_x86::long_mode::RegSpec::rip()
     }
-}
-
-fn is_rip_reg<R: RegSpecLike>(reg: R) -> bool {
-    let dbg = format!("{:?}", reg.class());
-    let kind = dbg
-        .split("kind: ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .unwrap_or(dbg.as_str());
-    kind == "RIP"
 }
 
 fn gpr_from_regspec<R: RegSpecLike>(reg: R) -> Option<crate::inst::Gpr> {
-    if is_rip_reg(reg) {
-        None
-    } else {
-        Some(crate::inst::Gpr { index: reg.num() })
-    }
+    (!reg.is_rip()).then(|| crate::inst::Gpr { index: reg.num() })
 }
 
 fn mem_disp(prefixes: Prefixes, addr_size: AddressSize, disp: i64) -> crate::inst::MemoryOperand {
@@ -2016,7 +1994,7 @@ fn mem_reg_disp<R: RegSpecLike>(
     base: R,
     disp: i64,
 ) -> crate::inst::MemoryOperand {
-    if is_rip_reg(base) {
+    if base.is_rip() {
         crate::inst::MemoryOperand {
             segment: prefixes.segment,
             addr_size,
@@ -2039,7 +2017,7 @@ fn mem_base_index<R: RegSpecLike>(
     scale: u8,
     disp: i64,
 ) -> crate::inst::MemoryOperand {
-    if is_rip_reg(base) {
+    if base.is_rip() {
         // There is no RIP+index form in the legacy SIB encoding; keep base/index empty and mark
         // RIP-relative.
         crate::inst::MemoryOperand {
@@ -2367,6 +2345,21 @@ mod tests {
         assert_eq!(mem.base, None);
         assert_eq!(mem.index, None);
         assert_eq!(mem.disp, 0x1234);
+
+        // mov eax, [rip-0x10]
+        let inst = decode(&[0x8B, 0x05, 0xF0, 0xFF, 0xFF, 0xFF], DecodeMode::Bits64, 0).unwrap();
+        let mem = inst
+            .operands
+            .iter()
+            .find_map(|op| match op {
+                Operand::Memory(m) => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert!(mem.rip_relative);
+        assert_eq!(mem.base, None);
+        assert_eq!(mem.index, None);
+        assert_eq!(mem.disp, -16);
 
         // mov eax, [rcx*4 + 0x10] (no base)
         let inst = decode(
