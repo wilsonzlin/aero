@@ -393,10 +393,6 @@ All values are `REG_DWORD`.
 
 Most changes take effect the next time the driver is started (reboot or disable/enable the device). In diagnostics builds, `DiagnosticsMask` can also be changed at runtime via IOCTLs (see above).
 
-Some options are **per-device-instance** rather than per-service. For example, to use non-Aero virtio-input
-frontends (stock QEMU), you may need to enable the per-device `CompatDeviceKind` flag under the device’s
-`HKR\Device Parameters` key. See `docs/virtio-input-notes.md` for details.
-
 ### Debugging `StatusQDropOnFull`
 
 To enable drop-on-full (elevated cmd):
@@ -430,8 +426,8 @@ For contract-v1 testing under QEMU, you typically want:
 - `x-pci-revision=0x01` (so the device matches the `REV_01` contract major version / INF HWID gate)
 
 Note: QEMU’s virtio-input devices typically report `ID_NAME` strings like `"QEMU Virtio Keyboard"`. This driver is
-**strict by default** and expects the Aero contract strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`), so
-stock QEMU virtio-input usually requires enabling the per-device `CompatDeviceKind` mode (see `docs/virtio-input-notes.md`).
+**contract-first** and expects the Aero contract strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`). If the
+device reports a different `ID_NAME`, the driver will fail to start with Code 10 (`STATUS_NOT_SUPPORTED`).
 
 Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). Tablet/absolute input is not yet supported
 end-to-end by the in-tree Win7 driver package (see “Known limitations”).
@@ -487,28 +483,14 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 | Fixed BAR0 virtio-pci modern layout (contract v1) | **Required** | `VirtioPciModernValidateAeroContractV1FixedLayout` in `src/device.c` (expects BAR0 `len >= 0x4000`, caps at offsets `0x0000/0x1000/0x2000/0x3000`, `notify_off_multiplier = 4`) |
 | Required virtqueues | **2 queues** (`eventq` + `statusq`) | `src/device.c` (expects 64/64 and `queue_notify_off` of `0/1`) |
 | Virtqueue/ring feature negotiation | **Split ring only** | `src/device.c` requires `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` and refuses to negotiate `VIRTIO_F_RING_EVENT_IDX` (no EVENT_IDX / packed rings in contract v1). |
-| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces minimum `EV_BITS` sets per device kind (keyboard vs mouse; see `docs/windows7-virtio-driver-contract.md` §3.3.5 for the contract minimum lists). Tablet (`EV_ABS`) requires `ABS_X/ABS_Y` and `ABS_INFO` ranges when enabled via compat mode. |
-| Device identification strings | **Strict by default** | Strict mode requires Aero `ID_NAME` strings + contract `ID_DEVIDS`. QEMU/non-Aero devices require enabling `CompatDeviceKind` (see `docs/virtio-input-notes.md`). |
+| Required advertised event types/codes (`EV_BITS`) | **Required** | `src/device.c` enforces minimum `EV_BITS` sets per device kind (keyboard vs mouse; see `docs/windows7-virtio-driver-contract.md` §3.3.5 for the contract minimum lists). |
+| Device identification strings | **Required** | `src/device.c` enforces Aero `ID_NAME` strings + contract `ID_DEVIDS` and cross-checks them against the PCI subsystem device ID when present. |
 
 ### QEMU compatibility expectations
 
-This driver is built for the **Aero contract v1** device model (`AERO-W7-VIRTIO`). Using “stock” QEMU virtio-input
-devices is **best-effort** for development and is not guaranteed to work unless the device matches the contract
-(PCI identity, virtio-pci layout, and required virtio-input config).
-
-In strict mode (default), the driver expects the Aero `ID_NAME` / `ID_DEVIDS` values and will refuse to start if the
-device does not match.
-
-To use “stock” QEMU virtio-input frontends (`virtio-keyboard-pci` / `virtio-mouse-pci`), enable the driver’s
-compatibility mode (`CompatDeviceKind`) so it accepts QEMU-style `ID_NAME` strings and relaxes some identification
-checks. See `docs/virtio-input-notes.md` for details.
-
-Compat mode only affects device-kind identification (keyboard vs mouse vs tablet) and relaxes some virtio-input
-config validation; it does **not** relax the underlying virtio-pci contract checks (PCI IDs/revision, BAR0 layout,
-queue sizes, etc.).
-
-Even in compat mode, the INF/runtime checks are still **contract-v1 identity gated** (modern virtio-input `DEV_1052`,
-`REV_01`); under QEMU you typically need `disable-legacy=on,x-pci-revision=0x01` for the device to bind and start.
+This driver is built for the **Aero contract v1** device model (`AERO-W7-VIRTIO`) and expects the contract `ID_NAME`
+/ `ID_DEVIDS` values. If a virtio-input device reports different identification strings (as stock QEMU often does),
+the driver will refuse to start (typically Code 10 / `STATUS_NOT_SUPPORTED`).
 
 For authoritative PCI-ID and contract rules, see:
 
