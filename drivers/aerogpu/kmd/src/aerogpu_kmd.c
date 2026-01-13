@@ -6924,6 +6924,18 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         const ULONGLONG deadline = startTime + ((ULONGLONG)timeoutMs * 10000ull);
 
         /*
+         * Selftest submits a ring entry directly and polls for head advancement.
+         * Require the adapter to be in D0 (and accepting submissions) so we never
+         * touch MMIO while powered down.
+         */
+        if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) !=
+                DxgkDevicePowerStateD0 ||
+            InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) == 0) {
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+            return STATUS_SUCCESS;
+        }
+
+        /*
          * Submit a "no-op" entry using the current completed fence value so we
          * don't advance the device fence beyond what dxgkrnl has issued.
          *
