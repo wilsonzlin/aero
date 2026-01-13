@@ -9,8 +9,8 @@
 #include <stdarg.h>
 
 // Global diagnostic mask (read-mostly). Accessed at DISPATCH_LEVEL.
-static volatile ULONG g_VioInputDiagnosticsMask =
-    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL | VIOINPUT_LOG_QUEUE | VIOINPUT_LOG_VIRTQ;
+static volatile LONG g_VioInputDiagnosticsMask =
+    (LONG)(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL | VIOINPUT_LOG_QUEUE | VIOINPUT_LOG_VIRTQ);
 
 static __forceinline PCSTR VioInputMaskToCategory(_In_ ULONG Mask)
 {
@@ -46,7 +46,7 @@ VOID VioInputLogInitialize(_In_ PUNICODE_STRING RegistryPath)
 
     status = RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE, RegistryPath->Buffer, table, NULL, NULL);
     if (NT_SUCCESS(status)) {
-        InterlockedExchange((volatile LONG*)&g_VioInputDiagnosticsMask, (LONG)mask);
+        InterlockedExchange(&g_VioInputDiagnosticsMask, (LONG)mask);
     }
 
     // Always print the resulting mask in checked builds to aid bring-up.
@@ -89,12 +89,12 @@ BOOLEAN VioInputLogEnabled(_In_ ULONG Mask)
 
 ULONG VioInputLogGetMask(VOID)
 {
-    return (ULONG)InterlockedCompareExchange((volatile LONG*)&g_VioInputDiagnosticsMask, 0, 0);
+    return (ULONG)InterlockedCompareExchange(&g_VioInputDiagnosticsMask, 0, 0);
 }
 
 ULONG VioInputLogSetMask(_In_ ULONG Mask)
 {
-    return (ULONG)InterlockedExchange((volatile LONG*)&g_VioInputDiagnosticsMask, (LONG)Mask);
+    return (ULONG)InterlockedExchange(&g_VioInputDiagnosticsMask, (LONG)Mask);
 }
 
 VOID VioInputLogPrint(

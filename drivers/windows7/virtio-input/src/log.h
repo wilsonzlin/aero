@@ -18,6 +18,9 @@
  *          DiagnosticsMask (REG_DWORD)
  *
  *    A value of 0 disables all logging. Combine VIOINPUT_LOG_* bits below.
+ *
+ *  - In diagnostics builds, the mask can also be queried/updated at runtime via
+ *    IOCTL_VIOINPUT_GET_LOG_MASK / IOCTL_VIOINPUT_SET_LOG_MASK.
  */
 
 #include <ntddk.h>
