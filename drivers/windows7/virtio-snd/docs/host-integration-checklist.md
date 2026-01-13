@@ -156,7 +156,6 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
   - `u32 status`
   - `u32 latency_bytes`
 - [ ] Used length (`used.len`) must include at least the 8-byte status (otherwise the driver treats it as `BAD_MSG`).
-  - For TX, `used.len` should be exactly `8` (only the status buffer is device-writable).
   - `BAD_MSG` / `NOT_SUPP` completions are treated as **fatal** by the Win7 driver (streaming stops).
 
 ### RX (queue 3, stream 1) — mono S16_LE
@@ -173,7 +172,6 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
   - `u32 status`
   - `u32 latency_bytes`
 - [ ] Used length (`used.len`) must include at least the 8-byte status (otherwise the driver treats it as `BAD_MSG`).
-  - For RX, `used.len` should be `8 + <payload_bytes_written>`.
   - `BAD_MSG` / `NOT_SUPP` completions are treated as **fatal** by the Win7 driver (capture stops).
 
 ### Status codes
