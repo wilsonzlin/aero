@@ -584,6 +584,25 @@ pub enum Sm4Inst {
     Clip {
         src: SrcOperand,
     },
+    /// `f32tof16 dest, src`
+    ///
+    /// Converts each `f32` component into an IEEE 754 binary16 bit-pattern stored in the low 16
+    /// bits of the destination lane.
+    ///
+    /// Note: The DXBC register file is untyped; downstream translation stores these integer bits in
+    /// our `vec4<f32>` register model via bitcasts.
+    F32ToF16 {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
+    /// `f16tof32 dest, src`
+    ///
+    /// Converts each IEEE 754 binary16 bit-pattern stored in the low 16 bits of the source lane
+    /// into a numeric `f32`.
+    F16ToF32 {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     /// `sample dest, coord, t#, s#`
     Sample {
         dst: DstOperand,

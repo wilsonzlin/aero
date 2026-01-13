@@ -1345,7 +1345,9 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::Itof { dst: _, src }
             | Sm4Inst::Utof { dst: _, src }
             | Sm4Inst::Ftoi { dst: _, src }
-            | Sm4Inst::Ftou { dst: _, src } => scan_src_regs(src, &mut scan_reg),
+            | Sm4Inst::Ftou { dst: _, src }
+            | Sm4Inst::F32ToF16 { dst: _, src }
+            | Sm4Inst::F16ToF32 { dst: _, src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src_regs(cond, &mut scan_reg);
                 scan_src_regs(a, &mut scan_reg);
@@ -1548,7 +1550,9 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             | Sm4Inst::Utof { dst: _, src }
             | Sm4Inst::Itof { dst: _, src }
             | Sm4Inst::Ftoi { dst: _, src }
-            | Sm4Inst::Ftou { dst: _, src } => scan_src(src),
+            | Sm4Inst::Ftou { dst: _, src }
+            | Sm4Inst::F32ToF16 { dst: _, src }
+            | Sm4Inst::F16ToF32 { dst: _, src } => scan_src(src),
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src(cond);
                 scan_src(a);
@@ -2922,7 +2926,9 @@ fn scan_resources(
             | Sm4Inst::Utof { dst: _, src }
             | Sm4Inst::Ftoi { dst: _, src }
             | Sm4Inst::Ftou { dst: _, src }
-            | Sm4Inst::Not { dst: _, src } => scan_src(src)?,
+            | Sm4Inst::Not { dst: _, src }
+            | Sm4Inst::F32ToF16 { dst: _, src }
+            | Sm4Inst::F16ToF32 { dst: _, src } => scan_src(src)?,
             Sm4Inst::Bfi {
                 dst: _,
                 width,
@@ -3439,7 +3445,9 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::Utof { dst, src }
             | Sm4Inst::Ftoi { dst, src }
             | Sm4Inst::Ftou { dst, src }
-            | Sm4Inst::Not { dst, src } => {
+            | Sm4Inst::Not { dst, src }
+            | Sm4Inst::F32ToF16 { dst, src }
+            | Sm4Inst::F16ToF32 { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
             }
@@ -4582,6 +4590,48 @@ fn emit_instructions(
                 w.line("discard;");
                 w.dedent();
                 w.line("}");
+            }
+            Sm4Inst::F32ToF16 { dst, src } => {
+                // `f32tof16` produces integer bits (binary16) in the low 16 bits of each lane.
+                // Our register model stores everything as `vec4<f32>`, so preserve those integer
+                // bits by bitcasting through `u32`.
+                let src_f = emit_src_vec4(src, inst_index, "f32tof16", ctx)?;
+                let src_f = if dst.saturate {
+                    format!("clamp(({src_f}), vec4<f32>(0.0), vec4<f32>(1.0))")
+                } else {
+                    src_f
+                };
+
+                let pack_lane = |c: char| {
+                    format!(
+                        "(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)"
+                    )
+                };
+                let ux = pack_lane('x');
+                let uy = pack_lane('y');
+                let uz = pack_lane('z');
+                let uw = pack_lane('w');
+
+                let rhs_u = format!("vec4<u32>({ux}, {uy}, {uz}, {uw})");
+                let rhs = format!("bitcast<vec4<f32>>({rhs_u})");
+                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "f32tof16", ctx)?;
+            }
+            Sm4Inst::F16ToF32 { dst, src } => {
+                // `f16tof32` consumes raw binary16 bits in the low 16 bits of each lane.
+                // Operand modifiers are defined for numeric operands; ignore them here so the half
+                // bit-pattern is preserved.
+                let mut src_bits = src.clone();
+                src_bits.modifier = OperandModifier::None;
+                let src_u = emit_src_vec4_u32(&src_bits, inst_index, "f16tof32", ctx)?;
+                let unpack_lane =
+                    |c: char| format!("unpack2x16float((({src_u}).{c} & 0xffffu)).x");
+                let x = unpack_lane('x');
+                let y = unpack_lane('y');
+                let z = unpack_lane('z');
+                let w_lane = unpack_lane('w');
+                let rhs = format!("vec4<f32>({x}, {y}, {z}, {w_lane})");
+                let rhs = maybe_saturate(dst, rhs);
+                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "f16tof32", ctx)?;
             }
             Sm4Inst::Sample {
                 dst,

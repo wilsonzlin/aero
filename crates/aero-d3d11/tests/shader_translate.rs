@@ -1907,6 +1907,91 @@ fn translates_utof_from_vertex_id_bits() {
 }
 
 #[test]
+fn translates_f32tof16_via_pack2x16float_masking_low_16_bits() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::F32ToF16 {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 2.0, 3.0, 4.0]),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("pack2x16float"),
+        "expected f32tof16 lowering to use pack2x16float:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("& 0xffffu"),
+        "expected f32tof16 lowering to mask low 16 bits:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_f16tof32_via_unpack2x16float() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // Round-trip through f32tof16 so the input bits are present in our untyped register
+            // file model.
+            Sm4Inst::F32ToF16 {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::F16ToF32 {
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected f16tof32 lowering to use unpack2x16float:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_vs_system_value_builtins_from_siv_decls() {
     const D3D_NAME_POSITION: u32 = 1;
     const D3D_NAME_VERTEX_ID: u32 = 6;

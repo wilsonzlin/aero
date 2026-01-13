@@ -1115,6 +1115,20 @@ pub fn decode_instruction(
 
             Ok(Sm4Inst::Cmp { dst, a, b, op, ty })
         }
+        OPCODE_F32TOF16 => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::F32ToF16 { dst, src })
+        }
+        OPCODE_F16TOF32 => {
+            let mut dst = decode_dst(&mut r)?;
+            dst.saturate = saturate;
+            let src = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::F16ToF32 { dst, src })
+        }
         OPCODE_SWITCH => {
             let selector = decode_src(&mut r)?;
             r.expect_eof()?;

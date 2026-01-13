@@ -237,6 +237,11 @@ pub const OPCODE_FIRSTBIT_LO: u32 = 0x5b;
 /// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_SHI`.
 pub const OPCODE_FIRSTBIT_SHI: u32 = 0x5c;
 
+/// `f32tof16` (convert `f32` to IEEE 754 binary16 bits; result in low 16 bits).
+pub const OPCODE_F32TOF16: u32 = 0x5d;
+/// `f16tof32` (convert IEEE 754 binary16 bits in low 16 bits to `f32`).
+pub const OPCODE_F16TOF32: u32 = 0x5e;
+
 /// `sync` (SM5 barrier / thread-group synchronization).
 ///
 /// In DXBC the `sync` instruction encodes a set of barrier flags in the opcode token's
@@ -459,6 +464,8 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_USUBB => Some("usubb"),
         OPCODE_UDIV => Some("udiv"),
         OPCODE_IDIV => Some("idiv"),
+        OPCODE_F32TOF16 => Some("f32tof16"),
+        OPCODE_F16TOF32 => Some("f16tof32"),
         OPCODE_BFI => Some("bfi"),
         OPCODE_UBFE => Some("ubfe"),
         OPCODE_IBFE => Some("ibfe"),

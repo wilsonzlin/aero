@@ -3,7 +3,7 @@ mod common;
 use std::collections::BTreeMap;
 
 use aero_d3d11::binding_model::{BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE};
-use aero_d3d11::runtime::bindings::ShaderStage as RuntimeShaderStage;
+use aero_d3d11::runtime::bindings::ShaderStage;
 use aero_d3d11::runtime::vertex_pulling::{VertexPullingLayout, VERTEX_PULLING_GROUP};
 use anyhow::{anyhow, Result};
 
@@ -123,7 +123,7 @@ fn gs_stage_bindings_do_not_conflict_with_vertex_pulling() {
         // Extended D3D11 stages (GS/HS/DS) and vertex pulling share bind group 3 in the binding
         // model. Vertex pulling uses a reserved high binding-number range so it doesn't collide
         // with the stage-ex D3D register mappings.
-        let gs_group = RuntimeShaderStage::Geometry.as_bind_group_index();
+        let gs_group = ShaderStage::Geometry.as_bind_group_index();
         assert_eq!(gs_group, 3);
         assert_eq!(VERTEX_PULLING_GROUP, gs_group);
 
@@ -225,7 +225,7 @@ fn main() {{
         let err = device.pop_error_scope().await;
         assert!(
             err.is_none(),
-            "expected pipeline creation to succeed with disjoint GS+vertex pulling bindings, got: {err:?}"
+            "expected pipeline creation to succeed with disjoint group3 bindings, got: {err:?}"
         );
     });
 }
