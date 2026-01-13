@@ -41,6 +41,10 @@ From the repository root:
 # Stage into release\<arch>\virtio-snd\
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/package-release.ps1
 
+# DebugLogs (DBG=1 / `VIRTIOSND_TRACE*` enabled) build:
+# (Packages whatever is currently staged as inf\aero_virtio_snd.sys, but enables a friendly variant name.)
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/package-release.ps1 -Variant debuglogs
+
 # Force an arch label (and validate aero_virtio_snd.sys matches it)
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/package-release.ps1 -Arch amd64
 
@@ -81,6 +85,9 @@ The same sequence can be run by a wrapper script:
 ```powershell
 # Contract v1 (default):
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/build-release.ps1 -Arch both -InputDir <build-output-root>
+
+# DebugLogs (DBG=1 / `VIRTIOSND_TRACE*` enabled):
+powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/build-release.ps1 -Arch both -Variant debuglogs -InputDir <build-output-root>
 
 # Transitional/QEMU:
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/build-release.ps1 -Arch both -Variant legacy -InputDir <build-output-root>
