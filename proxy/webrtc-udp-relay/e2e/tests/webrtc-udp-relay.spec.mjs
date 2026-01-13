@@ -696,6 +696,12 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
     exp: now + 5 * 60,
     secret: jwtSecret,
   });
+  const invalidToken = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: `${jwtSecret}-wrong`,
+  });
 
   const echo = await startUdpEchoServer("udp4", "127.0.0.1");
   const relay = await spawnRelayServer({
@@ -708,9 +714,16 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
     await page.goto(web.url);
 
     const res = await page.evaluate(
-      async ({ relayPort, echoPort, token }) => {
+      async ({ relayPort, echoPort, token, invalidToken }) => {
         const unauth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`);
         const unauthStatus = unauth.status;
+
+        const invalidAuth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
+          headers: {
+            Authorization: `Bearer ${invalidToken}`,
+          },
+        });
+        const invalidAuthStatus = invalidAuth.status;
 
         const authIceRes = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
           headers: {
@@ -859,12 +872,13 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
 
         ws.close();
         pc.close();
-        return { unauthStatus, authStatus, echoedText };
+        return { unauthStatus, invalidAuthStatus, authStatus, echoedText };
       },
-      { relayPort: relay.port, echoPort: echo.port, token },
+      { relayPort: relay.port, echoPort: echo.port, token, invalidToken },
     );
 
     expect(res.unauthStatus).toBe(401);
+    expect(res.invalidAuthStatus).toBe(401);
     expect(res.authStatus).toBe(200);
     expect(res.echoedText).toBe("hello from chromium jwt");
   } finally {
