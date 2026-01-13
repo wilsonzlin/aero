@@ -229,7 +229,10 @@ function dirtyWordsCoverAllTiles(tileCount: number, dirtyWords: Uint32Array): bo
 
   if (remaining === 0) return true;
 
-  const mask = (1 << remaining) - 1;
+  // `1 << 31` overflows signed 32-bit and becomes negative, which then breaks the
+  // `(dirtyWords[fullWords] & mask) === mask` comparison when `remaining === 31`.
+  // Construct the mask using an unsigned shift instead.
+  const mask = 0xffffffff >>> (32 - remaining);
   return (dirtyWords[fullWords] & mask) === mask;
 }
 

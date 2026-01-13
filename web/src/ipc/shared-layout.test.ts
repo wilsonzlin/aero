@@ -44,5 +44,36 @@ describe("ipc/shared-layout dirtyTilesToRects", () => {
     const rects = dirtyTilesToRects(layout, dirtyWords);
     expect(rects).toEqual([{ x: 0, y: 0, w: 64, h: 32 }]);
   });
-});
 
+  it("treats 31-bit trailing dirty word as fully set (remaining === 31 regression)", () => {
+    // 7 * 9 = 63 tiles => fullWords=1, remaining=31.
+    const layout = computeSharedFramebufferLayout(
+      7,
+      9,
+      /*strideBytes=*/ 7 * 4,
+      FramebufferFormat.RGBA8,
+      /*tileSize=*/ 1,
+    );
+
+    const dirtyWords = new Uint32Array([
+      0xffffffff, // first 32 tiles
+      0x7fffffff, // remaining 31 tiles
+    ]);
+
+    expect(dirtyTilesToRects(layout, dirtyWords)).toEqual([{ x: 0, y: 0, w: 7, h: 9 }]);
+  });
+
+  it("still fast-paths when tile count is a multiple of 32 (remaining === 0)", () => {
+    // 8 * 8 = 64 tiles => remaining=0.
+    const layout = computeSharedFramebufferLayout(
+      8,
+      8,
+      /*strideBytes=*/ 8 * 4,
+      FramebufferFormat.RGBA8,
+      /*tileSize=*/ 1,
+    );
+    const dirtyWords = new Uint32Array([0xffffffff, 0xffffffff]);
+
+    expect(dirtyTilesToRects(layout, dirtyWords)).toEqual([{ x: 0, y: 0, w: 8, h: 8 }]);
+  });
+});
