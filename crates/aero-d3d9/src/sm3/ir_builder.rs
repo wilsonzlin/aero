@@ -3,8 +3,9 @@ use crate::sm3::decode::{
     ResultShift, SrcModifier,
 };
 use crate::sm3::ir::{
-    Block, CompareOp, Cond, ConstDefF32, Dst, InstModifiers, IoDecl, IrOp, PredicateRef, RegFile,
-    RegRef, RelativeRef, SamplerDecl, Semantic, ShaderIr, Src, Stmt, TexSampleKind,
+    Block, CompareOp, Cond, ConstDefBool, ConstDefF32, ConstDefI32, Dst, InstModifiers, IoDecl,
+    IrOp, PredicateRef, RegFile, RegRef, RelativeRef, SamplerDecl, Semantic, ShaderIr, Src, Stmt,
+    TexSampleKind,
 };
 use crate::sm3::types::ShaderStage;
 
@@ -37,6 +38,8 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
     let mut outputs = Vec::new();
     let mut samplers = Vec::new();
     let mut const_defs_f32 = Vec::new();
+    let mut const_defs_i32 = Vec::new();
+    let mut const_defs_bool = Vec::new();
 
     // Pass 1: declarations and constant defs.
     for inst in &shader.instructions {
@@ -55,6 +58,12 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             }
             Opcode::Def => {
                 handle_def_f32(inst, &mut const_defs_f32)?;
+            }
+            Opcode::DefI => {
+                handle_def_i32(inst, &mut const_defs_i32)?;
+            }
+            Opcode::DefB => {
+                handle_def_bool(inst, &mut const_defs_bool)?;
             }
             _ => {}
         }
@@ -260,6 +269,8 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
         outputs,
         samplers,
         const_defs_f32,
+        const_defs_i32,
+        const_defs_bool,
         body,
     })
 }
@@ -341,6 +352,58 @@ fn handle_def_f32(inst: &DecodedInstruction, out: &mut Vec<ConstDefF32>) -> Resu
     out.push(ConstDefF32 {
         index: dst.reg.index,
         value: vals,
+    });
+    Ok(())
+}
+
+fn handle_def_i32(inst: &DecodedInstruction, out: &mut Vec<ConstDefI32>) -> Result<(), BuildError> {
+    let dst = match inst.operands.first() {
+        Some(Operand::Dst(dst)) => dst,
+        _ => return Err(err(inst, "defi missing destination operand")),
+    };
+    if dst.reg.file != RegisterFile::ConstInt {
+        return Err(err(
+            inst,
+            "defi destination is not an integer constant register",
+        ));
+    }
+
+    let mut vals = [0i32; 4];
+    for (i, val) in vals.iter_mut().enumerate() {
+        let token = match inst.operands.get(1 + i) {
+            Some(Operand::Imm32(v)) => *v,
+            _ => return Err(err(inst, "defi missing immediate constant tokens")),
+        };
+        *val = token as i32;
+    }
+
+    out.push(ConstDefI32 {
+        index: dst.reg.index,
+        value: vals,
+    });
+    Ok(())
+}
+
+fn handle_def_bool(inst: &DecodedInstruction, out: &mut Vec<ConstDefBool>) -> Result<(), BuildError> {
+    let dst = match inst.operands.first() {
+        Some(Operand::Dst(dst)) => dst,
+        _ => return Err(err(inst, "defb missing destination operand")),
+    };
+    if dst.reg.file != RegisterFile::ConstBool {
+        return Err(err(
+            inst,
+            "defb destination is not a boolean constant register",
+        ));
+    }
+
+    let token = match inst.operands.get(1) {
+        Some(Operand::Imm32(v)) => *v,
+        _ => return Err(err(inst, "defb missing immediate constant token")),
+    };
+
+    out.push(ConstDefBool {
+        index: dst.reg.index,
+        value: token != 0,
     });
     Ok(())
 }

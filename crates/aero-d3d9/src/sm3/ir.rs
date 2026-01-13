@@ -12,6 +12,10 @@ pub struct ShaderIr {
     pub outputs: Vec<IoDecl>,
     pub samplers: Vec<SamplerDecl>,
     pub const_defs_f32: Vec<ConstDefF32>,
+    /// `defi i#` constants embedded in the shader bytecode.
+    pub const_defs_i32: Vec<ConstDefI32>,
+    /// `defb b#` constants embedded in the shader bytecode.
+    pub const_defs_bool: Vec<ConstDefBool>,
     pub body: Block,
 }
 
@@ -32,6 +36,18 @@ pub struct SamplerDecl {
 pub struct ConstDefF32 {
     pub index: u32,
     pub value: [f32; 4],
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDefI32 {
+    pub index: u32,
+    pub value: [i32; 4],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstDefBool {
+    pub index: u32,
+    pub value: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -208,7 +224,7 @@ pub struct RelativeRef {
     pub component: SwizzleComponent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RegFile {
     Temp,
     Input,
@@ -314,6 +330,22 @@ impl fmt::Display for ShaderIr {
                     "  c{} = [{:.8}, {:.8}, {:.8}, {:.8}]",
                     def.index, def.value[0], def.value[1], def.value[2], def.value[3]
                 )?;
+            }
+        }
+        if !self.const_defs_i32.is_empty() {
+            writeln!(f, "const-defs-i32:")?;
+            for def in &self.const_defs_i32 {
+                writeln!(
+                    f,
+                    "  i{} = [{}, {}, {}, {}]",
+                    def.index, def.value[0], def.value[1], def.value[2], def.value[3]
+                )?;
+            }
+        }
+        if !self.const_defs_bool.is_empty() {
+            writeln!(f, "const-defs-bool:")?;
+            for def in &self.const_defs_bool {
+                writeln!(f, "  b{} = {}", def.index, def.value)?;
             }
         }
         writeln!(f, "body:")?;

@@ -5,9 +5,11 @@ pub mod ir;
 pub mod ir_builder;
 pub mod types;
 pub mod verify;
+pub mod wgsl;
 
 pub use decode::{decode_u32_tokens, decode_u8_le_bytes, DecodedShader};
 pub use ir::ShaderIr;
 pub use ir_builder::build_ir;
 pub use types::{ShaderStage, ShaderVersion};
 pub use verify::verify_ir;
+pub use wgsl::{generate_wgsl, WgslError, WgslOutput};
