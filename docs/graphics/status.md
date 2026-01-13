@@ -34,7 +34,9 @@ Goal for Win7 UX: **the same virtual GPU** should provide *both* boot VGA/VBE ou
 
 ### Missing / still required for Win7
 
-- [ ] AeroGPU device model provides **VGA legacy decode + VBE LFB modes** directly (single device from BIOS → WDDM)
+- [~] AeroGPU legacy decode foundation exists in `aero_machine` (`enable_aerogpu=true`):
+  - BAR1-backed VRAM + legacy VGA window aliasing (`0xA0000..0xBFFFF`) + minimal VGA port decode
+  - Still missing: VBE LFB modes + scanout handoff (single device from BIOS → WDDM)
   - Design doc: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md)
 - [ ] Seamless handoff: boot framebuffer → WDDM scanout without losing display or forcing mode resets
 
@@ -49,7 +51,7 @@ Goal for Win7 UX: the Win7 driver package binds to one stable identity and the e
 - [x] **Canonical AeroGPU PCI IDs**: `VID:DID = A3A0:0001`
   - Source of truth: [`drivers/aerogpu/protocol/aerogpu_pci.h`](../../drivers/aerogpu/protocol/aerogpu_pci.h)
   - Status + ABI notes: [`docs/abi/aerogpu-pci-identity.md`](../abi/aerogpu-pci-identity.md)
-- [x] **Canonical BDF reserved** for AeroGPU: `00:07.0`
+- [x] **Canonical BDF** for AeroGPU: `00:07.0` (exposed when `enable_aerogpu=true`)
   - Guard test: [`crates/aero-machine/tests/pci_display_bdf_contract.rs`](../../crates/aero-machine/tests/pci_display_bdf_contract.rs)
 - [x] Transitional VGA/VBE PCI stub (Bochs/QEMU “Standard VGA”-like) is intentionally *not* at `00:07.0`
   - BDF: `00:0c.0`
@@ -57,8 +59,8 @@ Goal for Win7 UX: the Win7 driver package binds to one stable identity and the e
 
 ### Missing / still required for Win7
 
-- [ ] Wire the full AeroGPU WDDM device model into the canonical `aero_machine::Machine` path
-  - Today `aero_machine::Machine` only reserves the slot; it does not yet expose the full AeroGPU MMIO/ring device.
+- [ ] Wire the full AeroGPU BAR0 WDDM/MMIO/ring device model into the canonical `aero_machine::Machine` path
+  - Today `aero_machine::Machine` exposes the PCI identity plus BAR1-backed VRAM/legacy VGA aliasing, but it does not yet wire the full BAR0 WDDM/MMIO/ring protocol or scanout path.
 
 ---
 
@@ -84,7 +86,7 @@ Goal for Win7 UX: DWM and apps must see a stable scanout + vsync model (no deadl
 ### Missing / still required for Win7
 
 - [ ] End-to-end validation in the **canonical browser machine** that Win7 can:
-  - boot with AeroGPU at `00:07.0`
+  - boot with the full AeroGPU WDDM device model at `00:07.0`
   - enable scanout
   - block on `D3DKMTWaitForVerticalBlankEvent` without deadlocking
   - keep DWM composition enabled and paced
@@ -198,4 +200,3 @@ bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
 ```
-
