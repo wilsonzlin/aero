@@ -19,6 +19,9 @@ fn hda_capture_dma_writes_guest_memory() {
     let set_fmt = (0x200u32 << 8) | (fmt_raw as u8 as u32);
     hda.codec_mut().execute_verb(4, set_fmt);
 
+    // Enable the mic pin (NID 5). The codec model gates capture on pin_ctl != 0.
+    hda.codec_mut().execute_verb(5, (0x707u32 << 8) | 0x20);
+
     let bdl_base = 0x1000u64;
     let pcm_base = 0x2000u64;
     let frames = 8usize;
@@ -82,6 +85,9 @@ fn hda_capture_resamples_from_configured_capture_rate() {
     let fmt_raw: u16 = 1 << 4;
     let set_fmt = (0x200u32 << 8) | (fmt_raw as u8 as u32);
     hda.codec_mut().execute_verb(4, set_fmt);
+
+    // Enable the mic pin (NID 5). The codec model gates capture on pin_ctl != 0.
+    hda.codec_mut().execute_verb(5, (0x707u32 << 8) | 0x20);
 
     let bdl_base = 0x1000u64;
     let pcm_base = 0x2000u64;

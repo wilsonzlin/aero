@@ -146,3 +146,16 @@ fn pin_ctl_zero_silences_output() {
     let out = render(&mut mem, &mut hda, 16);
     assert!(out.iter().all(|&s| s == 0.0));
 }
+
+#[test]
+fn output_pin_power_state_d3_silences_output() {
+    let mut hda = HdaController::new();
+    let mut mem = GuestMemory::new(0x20_000);
+    setup_basic_playback(&mut mem, &mut hda, 16);
+
+    // SET_POWER_STATE (output pin nid=3) to D3.
+    hda.codec_mut().execute_verb(3, verb_12(0x705, 0x03));
+
+    let out = render(&mut mem, &mut hda, 16);
+    assert!(out.iter().all(|&s| s == 0.0));
+}

@@ -476,16 +476,27 @@ impl HdaCodec {
         self.output.stream_id
     }
 
+    fn output_enabled(&self) -> bool {
+        // Treat anything other than D0 as powered down. The Intel HDA spec defines the power-state
+        // verb payload as a D-state selector; this simplified model treats any non-zero value as
+        // "off" for gating.
+        self.afg_power_state == 0
+            && self.output_pin.power_state == 0
+            // For the minimal model, treat pin_ctl==0 as disabled and non-zero as enabled.
+            && self.output_pin.pin_ctl != 0
+    }
+
     fn output_gain_scalars(&self) -> [f32; 2] {
-        // Treat anything other than D0 as powered down.
-        if self.afg_power_state != 0 {
-            return [0.0, 0.0];
-        }
-        // For the minimal model, treat pin_ctl==0 as disabled and non-zero as enabled.
-        if self.output_pin.pin_ctl == 0 {
+        if !self.output_enabled() {
             return [0.0, 0.0];
         }
         self.output.gain_scalars()
+    }
+
+    fn capture_enabled(&self) -> bool {
+        self.afg_power_state == 0
+            && self.mic_pin.power_state == 0
+            && self.mic_pin.pin_ctl != 0
     }
 
     pub fn input_stream_id(&self) -> u8 {
@@ -1919,50 +1930,84 @@ impl HdaController {
             return;
         }
 
+        let capture_enabled = self.codec.capture_enabled();
+
         let fire_ioc;
         {
             let rt = &mut self.stream_rt[stream];
 
-            let required_src = rt.resampler.required_source_frames(dst_frames);
-            let queued_src = rt.resampler.queued_source_frames();
-            let need_src = required_src.saturating_sub(queued_src);
+            if !capture_enabled {
+                // When capture is gated (AFG powered down, mic pin powered down, or pin widget
+                // control disabled), the capture DMA engine should still advance exactly as if it
+                // captured silence. However, it must *not* consume any samples from the host
+                // `AudioCaptureSource`.
+                //
+                // Clear any queued/resampled audio so gating immediately takes effect, then DMA
+                // all-zero PCM into guest memory.
+                rt.resampler
+                    .reset_rates(self.capture_sample_rate_hz, fmt.sample_rate_hz);
 
-            if need_src > 0 {
-                rt.capture_mono_scratch.resize(need_src, 0.0);
-                let got = capture.read_mono_f32(&mut rt.capture_mono_scratch);
-                if got < need_src {
-                    rt.capture_mono_scratch[got..].fill(0.0);
+                let bytes_per_frame = fmt.bytes_per_frame();
+                let Some(byte_len) = dst_frames.checked_mul(bytes_per_frame) else {
+                    return;
+                };
+                if byte_len == 0 {
+                    return;
                 }
 
-                rt.decode_scratch.resize(need_src, [0.0; 2]);
-                for (dst, &s) in rt.decode_scratch.iter_mut().zip(&rt.capture_mono_scratch) {
-                    *dst = [s, s];
+                rt.dma_scratch.clear();
+                rt.dma_scratch.resize(byte_len, 0);
+                let sd = &mut self.streams[stream];
+                let (_, ioc) = dma_write_stream_bytes(
+                    mem,
+                    sd,
+                    &mut rt.bdl_index,
+                    &mut rt.bdl_offset,
+                    &rt.dma_scratch,
+                );
+                fire_ioc = ioc;
+            } else {
+                let required_src = rt.resampler.required_source_frames(dst_frames);
+                let queued_src = rt.resampler.queued_source_frames();
+                let need_src = required_src.saturating_sub(queued_src);
+
+                if need_src > 0 {
+                    rt.capture_mono_scratch.resize(need_src, 0.0);
+                    let got = capture.read_mono_f32(&mut rt.capture_mono_scratch);
+                    if got < need_src {
+                        rt.capture_mono_scratch[got..].fill(0.0);
+                    }
+
+                    rt.decode_scratch.resize(need_src, [0.0; 2]);
+                    for (dst, &s) in rt.decode_scratch.iter_mut().zip(&rt.capture_mono_scratch) {
+                        *dst = [s, s];
+                    }
+                    rt.resampler.push_source_frames(&rt.decode_scratch);
                 }
-                rt.resampler.push_source_frames(&rt.decode_scratch);
-            }
 
-            rt.resampler
-                .produce_interleaved_stereo_into(dst_frames, &mut rt.resample_out_scratch);
-            let produced_frames = rt.resample_out_scratch.len() / 2;
-            if produced_frames == 0 {
-                return;
-            }
+                rt.resampler
+                    .produce_interleaved_stereo_into(dst_frames, &mut rt.resample_out_scratch);
+                let produced_frames = rt.resample_out_scratch.len() / 2;
+                if produced_frames == 0 {
+                    return;
+                }
 
-            rt.capture_mono_scratch.resize(produced_frames, 0.0);
-            for i in 0..produced_frames {
-                rt.capture_mono_scratch[i] = rt.resample_out_scratch[i * 2];
-            }
-            encode_mono_f32_to_pcm_into(&rt.capture_mono_scratch, fmt, &mut rt.dma_scratch);
+                rt.capture_mono_scratch.resize(produced_frames, 0.0);
+                for i in 0..produced_frames {
+                    rt.capture_mono_scratch[i] = rt.resample_out_scratch[i * 2];
+                }
+                encode_mono_f32_to_pcm_into(&rt.capture_mono_scratch, fmt, &mut rt.dma_scratch);
 
-            let sd = &mut self.streams[stream];
-            let (_, ioc) = dma_write_stream_bytes(
-                mem,
-                sd,
-                &mut rt.bdl_index,
-                &mut rt.bdl_offset,
-                &rt.dma_scratch,
-            );
-            fire_ioc = ioc;
+                let sd = &mut self.streams[stream];
+                let (_, ioc) = dma_write_stream_bytes(
+                    mem,
+                    sd,
+                    &mut rt.bdl_index,
+                    &mut rt.bdl_offset,
+                    &rt.dma_scratch,
+                );
+                fire_ioc = ioc;
+            }
         }
 
         if fire_ioc {
