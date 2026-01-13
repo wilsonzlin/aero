@@ -23,6 +23,42 @@ fn parses_segment_and_size_prefixes() {
 }
 
 #[test]
+fn ignores_ds_segment_override_in_64bit_mode_without_clobbering_fs() {
+    // 64 3E 8B 00
+    // FS override + (ignored) DS override + MOV EAX, [RAX]
+    let bytes = [0x64, 0x3E, 0x8B, 0x00];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode");
+    assert_eq!(decoded.prefixes.segment, Some(Segment::Fs));
+}
+
+#[test]
+fn ignores_ds_segment_override_in_64bit_mode() {
+    // 3E 8B 00
+    // (ignored) DS override + MOV EAX, [RAX]
+    let bytes = [0x3E, 0x8B, 0x00];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode");
+    assert_eq!(decoded.prefixes.segment, None);
+}
+
+#[test]
+fn group1_prefix_last_wins_lock_vs_rep() {
+    // 01 00 => add dword ptr [rax], eax
+    // LOCK; REP; <opcode> => REP wins
+    let bytes = [0xF0, 0xF3, 0x01, 0x00];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode");
+    assert!(!decoded.prefixes.lock);
+    assert!(decoded.prefixes.rep);
+    assert!(!decoded.prefixes.repne);
+
+    // REP; LOCK; <opcode> => LOCK wins
+    let bytes = [0xF3, 0xF0, 0x01, 0x00];
+    let decoded = decode_one(DecodeMode::Bits64, 0, &bytes).expect("decode");
+    assert!(decoded.prefixes.lock);
+    assert!(!decoded.prefixes.rep);
+    assert!(!decoded.prefixes.repne);
+}
+
+#[test]
 fn parses_rex_prefix_in_64bit_mode() {
     // 4C 8B D0  => mov r10, rax (REX.WRXB=0100_1100)
     let bytes = [0x4C, 0x8B, 0xD0];

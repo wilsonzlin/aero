@@ -286,33 +286,48 @@ fn parse_prefixes(mode: DecodeMode, bytes: &[u8]) -> Result<Prefixes, PrefixPars
         match b {
             0xF0 => {
                 p.lock = true;
+                // Group 1 prefixes are mutually exclusive; "last prefix wins".
+                p.rep = false;
+                p.repne = false;
                 i += 1;
             }
             0xF2 => {
                 p.repne = true;
                 p.rep = false;
+                p.lock = false;
                 i += 1;
             }
             0xF3 => {
                 p.rep = true;
                 p.repne = false;
+                p.lock = false;
                 i += 1;
             }
 
             0x26 => {
-                p.segment = Some(Segment::Es);
+                // ES/CS/SS/DS segment overrides are accepted but ignored in 64-bit
+                // mode. They must not clear a prior FS/GS override.
+                if mode != DecodeMode::Bits64 {
+                    p.segment = Some(Segment::Es);
+                }
                 i += 1;
             }
             0x2E => {
-                p.segment = Some(Segment::Cs);
+                if mode != DecodeMode::Bits64 {
+                    p.segment = Some(Segment::Cs);
+                }
                 i += 1;
             }
             0x36 => {
-                p.segment = Some(Segment::Ss);
+                if mode != DecodeMode::Bits64 {
+                    p.segment = Some(Segment::Ss);
+                }
                 i += 1;
             }
             0x3E => {
-                p.segment = Some(Segment::Ds);
+                if mode != DecodeMode::Bits64 {
+                    p.segment = Some(Segment::Ds);
+                }
                 i += 1;
             }
             0x64 => {
