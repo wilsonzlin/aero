@@ -56,6 +56,223 @@ pub trait NetTraceRedactor: Send + Sync {
     }
 }
 
+fn copy_prefix_bytes(data: &[u8], max_bytes: usize) -> Option<Vec<u8>> {
+    // Avoid allocating the full payload and then truncating (which could capture sensitive data
+    // and/or blow up memory usage when tracing untrusted guests). By reserving exactly the
+    // truncated length, we ensure the allocation is bounded by `max_bytes`.
+    let n = data.len().min(max_bytes);
+    let mut out = Vec::new();
+    out.try_reserve_exact(n).ok()?;
+    out.extend_from_slice(&data[..n]);
+    Some(out)
+}
+
+/// Redactor that truncates captured payloads to a fixed maximum size.
+///
+/// This is the safest "drop-in" option: it keeps the first `N` bytes of each payload (which is
+/// usually enough to retain protocol metadata) while bounding memory usage and reducing the chance
+/// of capturing full sensitive payloads.
+///
+/// Enable via [`NetTraceConfig::redactor`].
+#[derive(Debug, Clone)]
+pub struct TruncateRedactor {
+    pub max_ethernet_bytes: usize,
+    pub max_tcp_proxy_bytes: usize,
+    pub max_udp_proxy_bytes: usize,
+}
+
+impl TruncateRedactor {
+    pub fn new(max_ethernet_bytes: usize, max_tcp_proxy_bytes: usize, max_udp_proxy_bytes: usize) -> Self {
+        Self {
+            max_ethernet_bytes,
+            max_tcp_proxy_bytes,
+            max_udp_proxy_bytes,
+        }
+    }
+}
+
+impl NetTraceRedactor for TruncateRedactor {
+    fn redact_ethernet(&self, direction: FrameDirection, frame: &[u8]) -> Option<Vec<u8>> {
+        let _ = direction;
+        copy_prefix_bytes(frame, self.max_ethernet_bytes)
+    }
+
+    fn redact_tcp_proxy(
+        &self,
+        direction: ProxyDirection,
+        connection_id: u32,
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
+        let _ = (direction, connection_id);
+        copy_prefix_bytes(data, self.max_tcp_proxy_bytes)
+    }
+
+    fn redact_udp_proxy(
+        &self,
+        direction: ProxyDirection,
+        transport: UdpTransport,
+        remote_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
+        let _ = (direction, transport, remote_ip, src_port, dst_port);
+        copy_prefix_bytes(data, self.max_udp_proxy_bytes)
+    }
+}
+
+/// Redactor that keeps only L2+L3+L4 headers for Ethernet frames (when parseable) and drops all
+/// proxy payloads.
+///
+/// This is a more aggressive option than [`TruncateRedactor`]: it is intended to capture enough
+/// information for flow-level debugging (addresses / ports / flags), but without application-layer
+/// bytes.
+///
+/// Enable via [`NetTraceConfig::redactor`].
+#[derive(Debug, Clone)]
+pub struct HeadersOnlyRedactor {
+    /// Hard upper bound for captured Ethernet bytes.
+    pub max_ethernet_bytes: usize,
+}
+
+impl HeadersOnlyRedactor {
+    pub fn new(max_ethernet_bytes: usize) -> Self {
+        Self { max_ethernet_bytes }
+    }
+}
+
+impl NetTraceRedactor for HeadersOnlyRedactor {
+    fn redact_ethernet(&self, direction: FrameDirection, frame: &[u8]) -> Option<Vec<u8>> {
+        let _ = direction;
+        let header_len = ethernet_l2_l3_l4_header_len(frame)?;
+        copy_prefix_bytes(frame, header_len.min(self.max_ethernet_bytes))
+    }
+
+    fn redact_tcp_proxy(
+        &self,
+        direction: ProxyDirection,
+        connection_id: u32,
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
+        let _ = (direction, connection_id, data);
+        None
+    }
+
+    fn redact_udp_proxy(
+        &self,
+        direction: ProxyDirection,
+        transport: UdpTransport,
+        remote_ip: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
+        let _ = (direction, transport, remote_ip, src_port, dst_port, data);
+        None
+    }
+}
+
+fn ethernet_l2_l3_l4_header_len(frame: &[u8]) -> Option<usize> {
+    // Ethernet II base header: 6 dst + 6 src + 2 ethertype.
+    const ETH_HDR_LEN: usize = 14;
+    if frame.len() < ETH_HDR_LEN {
+        return None;
+    }
+
+    let mut ethertype = u16::from_be_bytes([frame[12], frame[13]]);
+    let mut l3_off = ETH_HDR_LEN;
+
+    // Optional 802.1Q / 802.1ad VLAN tag. Keep parsing simple and support a single tag; if the
+    // frame is more exotic, we conservatively drop it.
+    if ethertype == 0x8100 || ethertype == 0x88a8 {
+        if frame.len() < l3_off + 4 {
+            return None;
+        }
+        ethertype = u16::from_be_bytes([frame[l3_off + 2], frame[l3_off + 3]]);
+        l3_off += 4;
+    }
+
+    match ethertype {
+        // IPv4
+        0x0800 => ipv4_l3_l4_header_len(frame, l3_off),
+        // ARP (no L4, but still a "headers only" view)
+        0x0806 => arp_header_len(frame, l3_off),
+        _ => None,
+    }
+}
+
+fn ipv4_l3_l4_header_len(frame: &[u8], ip_off: usize) -> Option<usize> {
+    // Minimum IPv4 header is 20 bytes.
+    if frame.len() < ip_off + 20 {
+        return None;
+    }
+    let ver_ihl = frame[ip_off];
+    let version = ver_ihl >> 4;
+    if version != 4 {
+        return None;
+    }
+    let ihl = (ver_ihl & 0x0f) as usize;
+    let ip_header_len = ihl.checked_mul(4)?;
+    if ip_header_len < 20 || ip_header_len > 60 {
+        return None;
+    }
+    if frame.len() < ip_off + ip_header_len {
+        return None;
+    }
+
+    let proto = frame[ip_off + 9];
+    let l4_off = ip_off + ip_header_len;
+    match proto {
+        // TCP
+        6 => tcp_header_len(frame, l4_off),
+        // UDP
+        17 => {
+            if frame.len() < l4_off + 8 {
+                return None;
+            }
+            Some(l4_off + 8)
+        }
+        // ICMPv4 (8 byte header)
+        1 => {
+            if frame.len() < l4_off + 8 {
+                return None;
+            }
+            Some(l4_off + 8)
+        }
+        _ => None,
+    }
+}
+
+fn tcp_header_len(frame: &[u8], tcp_off: usize) -> Option<usize> {
+    if frame.len() < tcp_off + 20 {
+        return None;
+    }
+    let data_offset_words = frame[tcp_off + 12] >> 4;
+    let tcp_header_len = (data_offset_words as usize).checked_mul(4)?;
+    if tcp_header_len < 20 || tcp_header_len > 60 {
+        return None;
+    }
+    if frame.len() < tcp_off + tcp_header_len {
+        return None;
+    }
+    Some(tcp_off + tcp_header_len)
+}
+
+fn arp_header_len(frame: &[u8], arp_off: usize) -> Option<usize> {
+    if frame.len() < arp_off + 8 {
+        return None;
+    }
+    let hw_len = frame[arp_off + 4] as usize;
+    let proto_len = frame[arp_off + 5] as usize;
+    let total = 8usize
+        .checked_add(hw_len.checked_mul(2)?)?
+        .checked_add(proto_len.checked_mul(2)?)?;
+    if frame.len() < arp_off + total {
+        return None;
+    }
+    Some(arp_off + total)
+}
+
 #[derive(Clone)]
 pub struct NetTraceConfig {
     /// Hard cap on total captured payload bytes (not including PCAPNG overhead).
@@ -66,6 +283,27 @@ pub struct NetTraceConfig {
     pub capture_ethernet: bool,
     pub capture_tcp_proxy: bool,
     pub capture_udp_proxy: bool,
+    /// Optional redactor that is applied to payload bytes before they are stored in memory.
+    ///
+    /// Returning `None` from a redactor method drops the record entirely.
+    ///
+    /// Enable a built-in redactor like this:
+    ///
+    /// ```rust,no_run
+    /// use std::sync::Arc;
+    /// use emulator::io::net::trace::{NetTraceConfig, TruncateRedactor};
+    ///
+    /// let cfg = NetTraceConfig {
+    ///     capture_ethernet: true,
+    ///     capture_tcp_proxy: true,
+    ///     capture_udp_proxy: true,
+    ///     redactor: Some(Arc::new(TruncateRedactor {
+    ///         max_ethernet_bytes: 128,
+    ///         max_tcp_proxy_bytes: 256,
+    ///         max_udp_proxy_bytes: 256,
+    ///     })),
+    /// };
+    /// ```
     pub redactor: Option<Arc<dyn NetTraceRedactor>>,
 }
 
@@ -723,4 +961,111 @@ pub fn net_tracing_available() -> bool {
 #[cfg(not(any(debug_assertions, feature = "net-trace")))]
 pub fn net_tracing_available() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn truncate_redactor_truncates_each_record_type() {
+        let tracer = NetTracer::new(NetTraceConfig {
+            capture_ethernet: true,
+            capture_tcp_proxy: true,
+            capture_udp_proxy: true,
+            redactor: Some(Arc::new(TruncateRedactor {
+                max_ethernet_bytes: 4,
+                max_tcp_proxy_bytes: 3,
+                max_udp_proxy_bytes: 2,
+            })),
+        });
+        tracer.enable();
+
+        tracer.record_ethernet_at(1, FrameDirection::GuestTx, &[1, 2, 3, 4, 5, 6]);
+        tracer.record_tcp_proxy_at(2, ProxyDirection::GuestToRemote, 99, &[10, 11, 12, 13]);
+        tracer.record_udp_proxy_at(
+            3,
+            ProxyDirection::RemoteToGuest,
+            UdpTransport::Proxy,
+            Ipv4Addr::new(1, 2, 3, 4),
+            (1000, 2000),
+            &[0xff, 0xfe, 0xfd],
+        );
+
+        let guard = tracer.records.lock().expect("net trace lock poisoned");
+        assert_eq!(guard.len(), 3);
+
+        match &guard[0] {
+            TraceRecord::Ethernet { frame, .. } => assert_eq!(frame.as_slice(), &[1, 2, 3, 4]),
+            other => panic!("unexpected record: {other:?}"),
+        }
+        match &guard[1] {
+            TraceRecord::TcpProxy { data, .. } => assert_eq!(data.as_slice(), &[10, 11, 12]),
+            other => panic!("unexpected record: {other:?}"),
+        }
+        match &guard[2] {
+            TraceRecord::UdpProxy { data, .. } => assert_eq!(data.as_slice(), &[0xff, 0xfe]),
+            other => panic!("unexpected record: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redactor_none_drops_records() {
+        #[derive(Debug)]
+        struct DropAll;
+
+        impl NetTraceRedactor for DropAll {
+            fn redact_ethernet(&self, _: FrameDirection, _: &[u8]) -> Option<Vec<u8>> {
+                None
+            }
+            fn redact_tcp_proxy(
+                &self,
+                _: ProxyDirection,
+                _: u32,
+                _: &[u8],
+            ) -> Option<Vec<u8>> {
+                None
+            }
+            fn redact_udp_proxy(
+                &self,
+                _: ProxyDirection,
+                _: UdpTransport,
+                _: Ipv4Addr,
+                _: u16,
+                _: u16,
+                _: &[u8],
+            ) -> Option<Vec<u8>> {
+                None
+            }
+        }
+
+        let tracer = NetTracer::new(NetTraceConfig {
+            capture_ethernet: true,
+            capture_tcp_proxy: true,
+            capture_udp_proxy: true,
+            redactor: Some(Arc::new(DropAll)),
+        });
+        tracer.enable();
+
+        tracer.record_ethernet_at(1, FrameDirection::GuestTx, &[1, 2, 3]);
+        tracer.record_tcp_proxy_at(2, ProxyDirection::GuestToRemote, 1, &[4, 5, 6]);
+        tracer.record_udp_proxy_at(
+            3,
+            ProxyDirection::GuestToRemote,
+            UdpTransport::WebRtc,
+            Ipv4Addr::new(8, 8, 8, 8),
+            (1234, 53),
+            &[7, 8, 9],
+        );
+
+        assert!(
+            tracer
+                .records
+                .lock()
+                .expect("net trace lock poisoned")
+                .is_empty(),
+            "records should be dropped when redactor returns None"
+        );
+    }
 }
