@@ -115,6 +115,10 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidInputReportMessage(input)).toBe(true);
     expect(isHidProxyMessage(input)).toBe(true);
 
+    // reportId must be an integer 0..=255.
+    expect(isHidInputReportMessage({ ...input, reportId: 1.5 } as unknown)).toBe(false);
+    expect(isHidInputReportMessage({ ...input, reportId: 256 } as unknown)).toBe(false);
+
     const send: HidSendReportMessage = {
       type: "hid.sendReport",
       deviceId: 1,
@@ -124,6 +128,9 @@ describe("hid/hid_proxy_protocol", () => {
     };
     expect(isHidSendReportMessage(send)).toBe(true);
     expect(isHidProxyMessage(send)).toBe(true);
+
+    expect(isHidSendReportMessage({ ...send, reportId: 1.5 } as unknown)).toBe(false);
+    expect(isHidSendReportMessage({ ...send, reportId: 256 } as unknown)).toBe(false);
 
     expect(isHidSendReportMessage({ type: "hid.sendReport", deviceId: 1, reportType: "bad", reportId: 0, data: Uint8Array.of() })).toBe(
       false,

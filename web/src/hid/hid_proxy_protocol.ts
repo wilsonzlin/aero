@@ -107,6 +107,18 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isUint32(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffff_ffff;
+}
+
+function isUint16(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffff;
+}
+
+function isUint8(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xff;
+}
+
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
@@ -168,7 +180,7 @@ function isHidReportItem(value: unknown): boolean {
 
 function isHidReportInfo(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  return isFiniteNumber(value.reportId) && Array.isArray(value.items) && value.items.every(isHidReportItem);
+  return isUint8(value.reportId) && Array.isArray(value.items) && value.items.every(isHidReportItem);
 }
 
 function isNormalizedHidCollectionInfo(value: unknown): value is NormalizedHidCollectionInfo {
@@ -186,8 +198,8 @@ function isNormalizedHidCollectionInfo(value: unknown): value is NormalizedHidCo
 
 export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
   if (!isRecord(value) || value.type !== "hid.attach") return false;
-  if (!isFiniteNumber(value.deviceId)) return false;
-  if (!isFiniteNumber(value.vendorId) || !isFiniteNumber(value.productId)) return false;
+  if (!isUint32(value.deviceId)) return false;
+  if (!isUint16(value.vendorId) || !isUint16(value.productId)) return false;
   if (!isOptionalString(value.productName)) return false;
 
   const guestPath = value.guestPath;
@@ -204,7 +216,7 @@ export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
 
 export function isHidDetachMessage(value: unknown): value is HidDetachMessage {
   if (!isRecord(value) || value.type !== "hid.detach") return false;
-  return isFiniteNumber(value.deviceId);
+  return isUint32(value.deviceId);
 }
 
 export function isHidRingAttachMessage(value: unknown): value is HidRingAttachMessage {
@@ -225,7 +237,7 @@ export function isHidRingInitMessage(value: unknown): value is HidRingInitMessag
 
 export function isHidInputReportMessage(value: unknown): value is HidInputReportMessage {
   if (!isRecord(value) || value.type !== "hid.inputReport") return false;
-  if (!isFiniteNumber(value.deviceId) || !isFiniteNumber(value.reportId)) return false;
+  if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
   if (!isArrayBufferBackedUint8Array(value.data)) return false;
   if (value.tsMs !== undefined && !isFiniteNumber(value.tsMs)) return false;
   return true;
@@ -233,7 +245,7 @@ export function isHidInputReportMessage(value: unknown): value is HidInputReport
 
 export function isHidSendReportMessage(value: unknown): value is HidSendReportMessage {
   if (!isRecord(value) || value.type !== "hid.sendReport") return false;
-  if (!isFiniteNumber(value.deviceId) || !isFiniteNumber(value.reportId)) return false;
+  if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
   if (value.reportType !== "output" && value.reportType !== "feature") return false;
   if (!isArrayBufferBackedUint8Array(value.data)) return false;
   return true;
@@ -242,14 +254,14 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
 export function isHidLogMessage(value: unknown): value is HidLogMessage {
   if (!isRecord(value) || value.type !== "hid.log") return false;
   if (typeof value.message !== "string") return false;
-  if (value.deviceId !== undefined && !isFiniteNumber(value.deviceId)) return false;
+  if (value.deviceId !== undefined && !isUint32(value.deviceId)) return false;
   return true;
 }
 
 export function isHidErrorMessage(value: unknown): value is HidErrorMessage {
   if (!isRecord(value) || value.type !== "hid.error") return false;
   if (typeof value.message !== "string") return false;
-  if (value.deviceId !== undefined && !isFiniteNumber(value.deviceId)) return false;
+  if (value.deviceId !== undefined && !isUint32(value.deviceId)) return false;
   return true;
 }
 
