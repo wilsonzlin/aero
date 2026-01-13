@@ -327,3 +327,32 @@ fn jwt_rejects_deeply_nested_json_payload_without_panicking() {
     let token = mint_hs256_jwt(header, payload.as_bytes(), secret);
     assert!(verify_hs256_jwt(&token, secret, 0).is_none());
 }
+
+#[test]
+fn session_token_rejects_signature_that_decodes_to_wrong_length() {
+    let secret = b"unit-test-secret";
+
+    let payload = br#"{"v":1,"sid":"abc","exp":12345}"#;
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+
+    // Valid base64url, but decodes to only 3 bytes.
+    let sig_b64 = "AAAA";
+    let token = format!("{payload_b64}.{sig_b64}");
+
+    assert!(verify_gateway_session_token(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_signature_that_decodes_to_wrong_length() {
+    let secret = b"unit-test-secret";
+
+    let header = br#"{"alg":"HS256"}"#;
+    let payload = br#"{"sid":"abc","exp":1,"iat":0}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+
+    let sig_b64 = "AAAA";
+    let token = format!("{header_b64}.{payload_b64}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
