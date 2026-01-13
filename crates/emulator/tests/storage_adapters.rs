@@ -329,17 +329,23 @@ fn virtual_disk_from_emu_disk_backend_reports_offset_overflow() {
 }
 
 #[test]
-fn virtual_disk_from_emu_disk_backend_rejects_non_512_sector_size() {
-    let backend = EmuMemDisk::new_with_sector_size(1, 4096);
+fn virtual_disk_from_emu_disk_backend_supports_4096_sector_backends() {
+    let mut backend = EmuMemDisk::new_with_sector_size(2, 4096);
+    backend.data_mut()[0..4096].fill(0xAA);
+    backend.data_mut()[4096..8192].fill(0xBB);
     let mut disk = VirtualDiskFromEmuDiskBackend(backend);
 
     let mut buf = [0u8; 1];
-    let err = disk.read_at(0, &mut buf).unwrap_err();
-    assert!(matches!(err, aero_storage::DiskError::InvalidConfig(_)));
+    disk.read_at(4095, &mut buf).unwrap();
+    assert_eq!(buf, [0xAA]);
 
-    let err = disk.write_at(0, &[0u8; 1]).unwrap_err();
-    assert!(matches!(err, aero_storage::DiskError::InvalidConfig(_)));
+    let mut buf = [0u8; 2];
+    disk.read_at(4095, &mut buf).unwrap();
+    assert_eq!(buf, [0xAA, 0xBB]);
 
-    let err = disk.flush().unwrap_err();
-    assert!(matches!(err, aero_storage::DiskError::InvalidConfig(_)));
+    disk.write_at(4095, &[0x11, 0x22]).unwrap();
+    assert_eq!(disk.0.data()[4094], 0xAA);
+    assert_eq!(disk.0.data()[4095], 0x11);
+    assert_eq!(disk.0.data()[4096], 0x22);
+    assert_eq!(disk.0.data()[4097], 0xBB);
 }

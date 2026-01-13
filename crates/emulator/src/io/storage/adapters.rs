@@ -53,7 +53,8 @@ impl<D> EmuDiskBackendFromVirtualDisk<D> {
 
 /// Wrap an emulator [`DiskBackend`] and expose it as an [`aero_storage::VirtualDisk`].
 ///
-/// This adapter is only correct when the emulator backend uses 512-byte sectors.
+/// This adapter supports emulator backends with 512- and 4096-byte sectors (and, more generally,
+/// any reasonable sector size) by doing read-modify-write on partial backend sectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VirtualDiskFromEmuDiskBackend<B>(pub B);
 
@@ -328,9 +329,13 @@ impl<D: aero_storage::VirtualDisk + Send> DiskBackend for EmuDiskBackendFromVirt
 
 impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend<B> {
     fn capacity_bytes(&self) -> u64 {
-        self.0
-            .total_sectors()
-            .saturating_mul(self.0.sector_size() as u64)
+        let sector_size = self.0.sector_size();
+        // Guard against pathological backends returning 0 (would otherwise risk panics in some
+        // `total_sectors()` implementations).
+        if sector_size == 0 || sector_size > 1024 * 1024 {
+            return 0;
+        }
+        self.0.total_sectors().saturating_mul(sector_size as u64)
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
@@ -339,12 +344,19 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         }
 
         let sector_size = self.0.sector_size();
-        if sector_size != aero_storage::SECTOR_SIZE as u32 {
+        if sector_size == 0 {
             return Err(aero_storage::DiskError::InvalidConfig(
-                "VirtualDiskFromEmuDiskBackend requires 512-byte sectors",
+                "emulator disk reported sector size 0",
+            ));
+        }
+        // DoS guard: RMW uses a scratch buffer sized to the backend sector.
+        if sector_size > 1024 * 1024 {
+            return Err(aero_storage::DiskError::InvalidConfig(
+                "emulator disk sector size too large",
             ));
         }
 
+        let sector_size_usize: usize = sector_size as usize;
         let capacity = self
             .0
             .total_sectors()
@@ -365,12 +377,18 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         let mut remaining = buf;
         let mut cur_offset = offset;
 
+        // Only allocate the scratch buffer when we actually need RMW.
+        let mut scratch = Vec::new();
+        if (offset % sector_size_u64) != 0 || (end % sector_size_u64) != 0 {
+            scratch.resize(sector_size_usize, 0);
+        }
+
         // Handle an initial partial sector.
         let first_off = (cur_offset % sector_size_u64) as usize;
         if first_off != 0 {
             let lba = cur_offset / sector_size_u64;
-            let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+            let sector_buf = scratch.as_mut_slice();
+            self.0.read_sectors(lba, sector_buf).map_err(|e| {
                 emulator_disk_error_to_aero_storage(
                     e,
                     Some(cur_offset),
@@ -378,7 +396,7 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
                     Some(capacity),
                 )
             })?;
-            let to_copy = remaining.len().min(aero_storage::SECTOR_SIZE - first_off);
+            let to_copy = remaining.len().min(sector_size_usize - first_off);
             remaining[..to_copy].copy_from_slice(&sector_buf[first_off..first_off + to_copy]);
             remaining = &mut remaining[to_copy..];
             cur_offset = cur_offset
@@ -388,8 +406,7 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
 
         // Middle aligned sectors.
         if !remaining.is_empty() {
-            let aligned_len =
-                remaining.len() / aero_storage::SECTOR_SIZE * aero_storage::SECTOR_SIZE;
+            let aligned_len = remaining.len() / sector_size_usize * sector_size_usize;
             if aligned_len > 0 {
                 let lba = cur_offset / sector_size_u64;
                 self.0
@@ -412,8 +429,8 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         // Trailing partial sector.
         if !remaining.is_empty() {
             let lba = cur_offset / sector_size_u64;
-            let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+            let sector_buf = scratch.as_mut_slice();
+            self.0.read_sectors(lba, sector_buf).map_err(|e| {
                 emulator_disk_error_to_aero_storage(
                     e,
                     Some(cur_offset),
@@ -433,12 +450,18 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         }
 
         let sector_size = self.0.sector_size();
-        if sector_size != aero_storage::SECTOR_SIZE as u32 {
+        if sector_size == 0 {
             return Err(aero_storage::DiskError::InvalidConfig(
-                "VirtualDiskFromEmuDiskBackend requires 512-byte sectors",
+                "emulator disk reported sector size 0",
+            ));
+        }
+        if sector_size > 1024 * 1024 {
+            return Err(aero_storage::DiskError::InvalidConfig(
+                "emulator disk sector size too large",
             ));
         }
 
+        let sector_size_usize: usize = sector_size as usize;
         let capacity = self
             .0
             .total_sectors()
@@ -459,12 +482,18 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         let mut remaining = buf;
         let mut cur_offset = offset;
 
+        // Only allocate the scratch buffer when we actually need RMW.
+        let mut scratch = Vec::new();
+        if (offset % sector_size_u64) != 0 || (end % sector_size_u64) != 0 {
+            scratch.resize(sector_size_usize, 0);
+        }
+
         // Initial partial sector.
         let first_off = (cur_offset % sector_size_u64) as usize;
         if first_off != 0 {
             let lba = cur_offset / sector_size_u64;
-            let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+            let sector_buf = scratch.as_mut_slice();
+            self.0.read_sectors(lba, sector_buf).map_err(|e| {
                 emulator_disk_error_to_aero_storage(
                     e,
                     Some(cur_offset),
@@ -472,9 +501,9 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
                     Some(capacity),
                 )
             })?;
-            let to_copy = remaining.len().min(aero_storage::SECTOR_SIZE - first_off);
+            let to_copy = remaining.len().min(sector_size_usize - first_off);
             sector_buf[first_off..first_off + to_copy].copy_from_slice(&remaining[..to_copy]);
-            self.0.write_sectors(lba, &sector_buf).map_err(|e| {
+            self.0.write_sectors(lba, sector_buf).map_err(|e| {
                 emulator_disk_error_to_aero_storage(
                     e,
                     Some(cur_offset),
@@ -490,8 +519,7 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
 
         // Middle aligned sectors.
         if !remaining.is_empty() {
-            let aligned_len =
-                remaining.len() / aero_storage::SECTOR_SIZE * aero_storage::SECTOR_SIZE;
+            let aligned_len = remaining.len() / sector_size_usize * sector_size_usize;
             if aligned_len > 0 {
                 let lba = cur_offset / sector_size_u64;
                 self.0
@@ -514,8 +542,8 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
         // Trailing partial sector.
         if !remaining.is_empty() {
             let lba = cur_offset / sector_size_u64;
-            let mut sector_buf = [0u8; aero_storage::SECTOR_SIZE];
-            self.0.read_sectors(lba, &mut sector_buf).map_err(|e| {
+            let sector_buf = scratch.as_mut_slice();
+            self.0.read_sectors(lba, sector_buf).map_err(|e| {
                 emulator_disk_error_to_aero_storage(
                     e,
                     Some(cur_offset),
@@ -524,7 +552,7 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
                 )
             })?;
             sector_buf[..remaining.len()].copy_from_slice(remaining);
-            self.0.write_sectors(lba, &sector_buf).map_err(|e| {
+            self.0.write_sectors(lba, sector_buf).map_err(|e| {
                 emulator_disk_error_to_aero_storage(
                     e,
                     Some(cur_offset),
@@ -539,9 +567,14 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
 
     fn flush(&mut self) -> aero_storage::Result<()> {
         let sector_size = self.0.sector_size();
-        if sector_size != aero_storage::SECTOR_SIZE as u32 {
+        if sector_size == 0 {
             return Err(aero_storage::DiskError::InvalidConfig(
-                "VirtualDiskFromEmuDiskBackend requires 512-byte sectors",
+                "emulator disk reported sector size 0",
+            ));
+        }
+        if sector_size > 1024 * 1024 {
+            return Err(aero_storage::DiskError::InvalidConfig(
+                "emulator disk sector size too large",
             ));
         }
         self.0
