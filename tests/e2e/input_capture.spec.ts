@@ -129,6 +129,39 @@ test('translates keyboard events into PS/2 set-2 scancode sequences', async ({ p
   expect(printBreak[1]!.b).toBe(2);
   expect(printBreak[1]!.a & 0xff).toBe(0xf0);
   expect((printBreak[1]!.a >>> 8) & 0xff).toBe(0x12);
+
+  // Pause is an 8-byte Set 2 make sequence and has no break sequence.
+  await page.evaluate(() => {
+    (globalThis as any).__inputMessages.length = 0;
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Pause", bubbles: true }));
+    (globalThis as any).__capture.flushNow();
+  });
+  events = await popBatchEvents(page);
+  const pauseMake = events.filter((e) => e.type === 1);
+  expect(pauseMake).toHaveLength(2);
+
+  // Bytes 0..3.
+  expect(pauseMake[0]!.b).toBe(4);
+  expect(pauseMake[0]!.a & 0xff).toBe(0xe1);
+  expect((pauseMake[0]!.a >>> 8) & 0xff).toBe(0x14);
+  expect((pauseMake[0]!.a >>> 16) & 0xff).toBe(0x77);
+  expect((pauseMake[0]!.a >>> 24) & 0xff).toBe(0xe1);
+
+  // Bytes 4..7.
+  expect(pauseMake[1]!.b).toBe(4);
+  expect(pauseMake[1]!.a & 0xff).toBe(0xf0);
+  expect((pauseMake[1]!.a >>> 8) & 0xff).toBe(0x14);
+  expect((pauseMake[1]!.a >>> 16) & 0xff).toBe(0xf0);
+  expect((pauseMake[1]!.a >>> 24) & 0xff).toBe(0x77);
+
+  await page.evaluate(() => {
+    (globalThis as any).__inputMessages.length = 0;
+    window.dispatchEvent(new KeyboardEvent("keyup", { code: "Pause", bubbles: true }));
+    (globalThis as any).__capture.flushNow();
+  });
+  events = await popBatchEvents(page);
+  const pauseBreak = events.filter((e) => e.type === 1);
+  expect(pauseBreak).toHaveLength(0);
 });
 
 test('captures mouse move/buttons/wheel and batches to worker', async ({ page }) => {
