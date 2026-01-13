@@ -23,6 +23,10 @@ const MAX_SESSION_TOKEN_SIG_B64_LEN: usize = 128;
 const MAX_JWT_HEADER_B64_LEN: usize = 4 * 1024;
 const MAX_JWT_PAYLOAD_B64_LEN: usize = 16 * 1024;
 const MAX_JWT_SIG_B64_LEN: usize = 128;
+const MAX_SESSION_TOKEN_LEN: usize =
+    MAX_SESSION_TOKEN_PAYLOAD_B64_LEN + 1 /* '.' */ + MAX_SESSION_TOKEN_SIG_B64_LEN;
+const MAX_JWT_LEN: usize =
+    MAX_JWT_HEADER_B64_LEN + 1 /* '.' */ + MAX_JWT_PAYLOAD_B64_LEN + 1 /* '.' */ + MAX_JWT_SIG_B64_LEN;
 
 fn is_base64url(raw: &str, max_len: usize) -> bool {
     if raw.is_empty() {
@@ -97,6 +101,10 @@ pub fn verify_gateway_session_token(
     secret: &[u8],
     now_ms: u64,
 ) -> Option<VerifiedSession> {
+    // Quick coarse cap to avoid scanning attacker-controlled strings for delimiters.
+    if token.len() > MAX_SESSION_TOKEN_LEN {
+        return None;
+    }
     let mut parts = token.split('.');
     let payload_b64 = parts.next()?;
     let sig_b64 = parts.next()?;
@@ -170,6 +178,10 @@ pub fn verify_gateway_session_token(
 }
 
 pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Claims> {
+    // Quick coarse cap to avoid scanning attacker-controlled strings for delimiters.
+    if token.len() > MAX_JWT_LEN {
+        return None;
+    }
     let mut parts = token.split('.');
     let header_b64 = parts.next()?;
     let payload_b64 = parts.next()?;
