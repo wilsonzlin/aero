@@ -86,6 +86,10 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   const CAPACITY_FRAMES = 262_144;
   const BACKLOG_TARGET_FRAMES = 250_000;
   const BACKLOG_DISCARDED_THRESHOLD_FRAMES = 512;
+  // If resume-discard is broken, draining ~120k frames at 48kHz takes ~2.5s (and still >600ms at
+  // 192kHz). Keep the assertion window tight enough that a real-time drain can't satisfy it, while
+  // still allowing for CI jitter.
+  const DISCARD_TIMEOUT_MS = 150;
 
   const setupResult = await page.evaluate(({ CAPACITY_FRAMES }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -97,8 +101,10 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
           readIndex: Uint32Array;
           writeIndex: Uint32Array;
           overrunCount: Uint32Array;
+          samples: Float32Array;
           channelCount: number;
           capacityFrames: number;
+          header?: Uint32Array;
         }
       | undefined;
     if (!ring?.readIndex || !ring?.writeIndex || !ring?.overrunCount) {
@@ -117,38 +123,69 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
       return { ok: false as const, reason: "Missing audioOutput.writeInterleaved()." };
     }
 
+    const node = out.node as AudioWorkletNode | undefined;
+    if (!node?.port || typeof node.port.postMessage !== "function") {
+      return { ok: false as const, reason: "Missing AudioWorkletNode port." };
+    }
+
     // The harness installs a demo tone producer that keeps the ring ~200ms full. Disable it so it
     // doesn't refill the buffer after resume/discard (we want to observe the discard promptly).
     const originalWriteInterleaved = out.writeInterleaved.bind(out) as (samples: Float32Array, srcRate: number) => number;
     out.writeInterleaved = () => 0;
 
-    const context: AudioContext = out.context;
-    const channelCount = ring.channelCount | 0;
-    const framesPerTick = 2048;
-    const tickMs = 20;
-    const chunk = new Float32Array(framesPerTick * channelCount);
-    for (let i = 0; i < framesPerTick; i++) {
-      const s = Math.sin((i / framesPerTick) * 2 * Math.PI) * 0.1;
-      for (let c = 0; c < channelCount; c++) chunk[i * channelCount + c] = s;
-    }
-
-    let producerTimer: number | null = null;
-    const startProducer = () => {
-      if (producerTimer !== null) return;
-      const id = window.setInterval(() => {
+    // Track whether the resume-discard mechanism actually posts the control message to the worklet.
+    // This makes the test explicitly cover the implemented feature (a `{ type: "ring.reset" }`
+    // message on resume), not an implicit browser behaviour.
+    let ringResetPosts = 0;
+    let portPatched = false;
+    let originalPortPostMessage: ((message: unknown, transfer?: Transferable[]) => void) | null = null;
+    try {
+      originalPortPostMessage = node.port.postMessage.bind(node.port) as (message: unknown, transfer?: Transferable[]) => void;
+      const patched = (message: unknown, transfer?: Transferable[]) => {
         try {
-          originalWriteInterleaved(chunk, context.sampleRate);
+          const msg = message as { type?: unknown } | null;
+          if (msg && typeof msg === "object" && msg.type === "ring.reset") ringResetPosts++;
         } catch {
           // ignore
         }
-      }, tickMs);
-      (id as unknown as { unref?: () => void }).unref?.();
-      producerTimer = id;
-    };
-    const stopProducer = () => {
-      if (producerTimer === null) return;
-      window.clearInterval(producerTimer);
-      producerTimer = null;
+        if (transfer !== undefined) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return (originalPortPostMessage as any)(message, transfer);
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (originalPortPostMessage as any)(message);
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (node.port as any).postMessage = patched;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      portPatched = (node.port as any).postMessage === patched;
+    } catch {
+      // ignore; the buffer-level assertion still validates discard behaviour.
+    }
+
+    const context: AudioContext = out.context;
+
+    const fillBacklog = (targetFrames: number) => {
+      const frames = Math.max(0, Math.min(capacity, Math.floor(Number.isFinite(targetFrames) ? targetFrames : 0)));
+      if (frames === 0) return;
+
+      // Best-effort: write silence into the ring (so even if discard is broken, playback is not a
+      // loud glitch) and then advance the producer write index while the AudioContext is suspended.
+      //
+      // The ring is shared memory; advancing `writeIndex` is sufficient to create a backlog that
+      // the AudioWorklet will drain unless it receives a `{ type: "ring.reset" }`.
+      try {
+        ring.samples?.fill(0);
+      } catch {
+        // ignore
+      }
+
+      const read = Atomics.load(ring.readIndex, 0) >>> 0;
+      const currentWrite = Atomics.load(ring.writeIndex, 0) >>> 0;
+      const currentLevel = typeof out.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : ((currentWrite - read) >>> 0);
+      if (currentLevel >= frames) return;
+
+      Atomics.store(ring.writeIndex, 0, (read + frames) >>> 0);
     };
 
     const getMetrics = () => {
@@ -156,7 +193,17 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
       const write = Atomics.load(ring.writeIndex, 0) >>> 0;
       const overrun = Atomics.load(ring.overrunCount, 0) >>> 0;
       const level = typeof out.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : ((write - read) >>> 0);
-      return { read, write, overrun, level, capacity, state: context.state, sampleRate: context.sampleRate };
+      return {
+        read,
+        write,
+        overrun,
+        level,
+        capacity,
+        state: context.state,
+        sampleRate: context.sampleRate,
+        ringResetPosts,
+        portPatched,
+      };
     };
 
     // Expose for subsequent eval steps.
@@ -166,8 +213,8 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
       context,
       ring,
       originalWriteInterleaved,
-      startProducer,
-      stopProducer,
+      originalPortPostMessage,
+      fillBacklog,
       getMetrics,
     };
 
@@ -205,24 +252,11 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     return t.getMetrics();
   });
 
-  await page.evaluate(() => {
+  await page.evaluate(({ BACKLOG_TARGET_FRAMES }) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
-    t.startProducer();
-  });
-
-  // Wait until we have a large backlog (or the ring saturates and starts overrunning).
-  await page.waitForFunction(
-    ({ BACKLOG_TARGET_FRAMES, baselineOverrun }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
-      const rec = t?.getMetrics?.();
-      if (!rec) return false;
-      return (rec.level as number) >= (BACKLOG_TARGET_FRAMES as number) || (rec.overrun as number) > (baselineOverrun as number);
-    },
-    { BACKLOG_TARGET_FRAMES, baselineOverrun: suspendedBaseline.overrun },
-    { timeout: 5_000 },
-  );
+    t.fillBacklog(BACKLOG_TARGET_FRAMES);
+  }, { BACKLOG_TARGET_FRAMES });
 
   const afterFill = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -231,14 +265,9 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
   });
 
   expect(afterFill.state).toBe("suspended");
-  expect(afterFill.level >= BACKLOG_TARGET_FRAMES || afterFill.overrun > suspendedBaseline.overrun).toBe(true);
-
-  // Stop the producer so the ring indices remain stable for the discard check.
-  await page.evaluate(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
-    t.stopProducer();
-  });
+  expect(afterFill.level).toBeGreaterThanOrEqual(BACKLOG_TARGET_FRAMES);
+  // Ensure the backlog-building step actually did work (avoid silently passing due to an already-empty ring).
+  expect(afterFill.level).toBeGreaterThanOrEqual(suspendedBaseline.level);
 
   await page.evaluate(async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -263,7 +292,7 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
       return (rec.level as number) < (BACKLOG_DISCARDED_THRESHOLD_FRAMES as number);
     },
     { BACKLOG_DISCARDED_THRESHOLD_FRAMES },
-    { timeout: 350 },
+    { timeout: DISCARD_TIMEOUT_MS },
   );
 
   const afterResume = await page.evaluate(() => {
@@ -274,6 +303,9 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
 
   expect(afterResume.state).toBe("running");
   expect(afterResume.level).toBeLessThan(BACKLOG_DISCARDED_THRESHOLD_FRAMES);
+  if (afterResume.portPatched) {
+    expect(afterResume.ringResetPosts).toBeGreaterThanOrEqual(1);
+  }
   // Stronger assertion than bufferLevelFrames alone: a discard should advance the consumer read
   // index all the way to the producer write index (i.e. an empty ring).
   expect(((afterResume.write - afterResume.read) >>> 0)).toBe(0);
@@ -284,7 +316,10 @@ test("AudioContext suspend/resume discards playback ring backlog (stale latency 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const t = (globalThis as any).__aeroAudioSuspendResumeDiscardTest;
     try {
-      t.stopProducer();
+      if (t.originalPortPostMessage) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        t.out.node.port.postMessage = t.originalPortPostMessage;
+      }
     } catch {
       // ignore
     }
