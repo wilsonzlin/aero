@@ -45,6 +45,17 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=msix|msix_config_vector=0|msix_queue_vector=1",
         )
 
+    def test_emits_pass_with_hex_vector_values(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=intx|msix_config_vector=0xffff|"
+            b"msix_queue_vector=0xFFFF\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=intx|msix_config_vector=0xffff|msix_queue_vector=0xFFFF",
+        )
+
     def test_emits_fail_token(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL|irq_mode=intx\n"
         out = self._emit(tail)
