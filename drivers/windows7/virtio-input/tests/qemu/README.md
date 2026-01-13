@@ -346,8 +346,40 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --keyboard --ioctl-bad-get-indexed-string
    hidtest.exe --keyboard --ioctl-bad-get-string-out
    hidtest.exe --keyboard --ioctl-bad-get-indexed-string-out
-   hidtest.exe --keyboard --hidd-bad-set-output-report
-   ```
+    hidtest.exe --keyboard --hidd-bad-set-output-report
+    ```
+
+## Regression test: "stuck keys" on power transition / hot-unplug
+
+The driver emits an all-zero input report when transitioning away from a running device
+(D0Exit, surprise removal, HID deactivate) so Windows releases any latched key state.
+
+### D0Exit (sleep / resume)
+
+1. Open Notepad.
+2. Hold a key down (e.g. `A`) so autorepeat is visible.
+3. Trigger a sleep/resume transition:
+   - In the guest: **Start → Shut down → Sleep**, then resume the VM.
+4. Verify the key is **not** still logically pressed after resume (no continued autorepeat).
+
+### SurpriseRemoval (QEMU hot-unplug)
+
+To exercise `EvtDeviceSurpriseRemoval`, start QEMU with a monitor and explicit device IDs:
+
+```bash
+qemu-system-x86_64 \
+  ... \
+  -monitor stdio \
+  -device virtio-keyboard-pci,id=vkbd,disable-legacy=on,x-pci-revision=0x01 \
+  -device virtio-mouse-pci,id=vmouse,disable-legacy=on,x-pci-revision=0x01
+```
+
+Then:
+
+1. In the guest, hold a key down (autorepeat in Notepad is an easy visual).
+2. In the QEMU monitor, remove the device:
+   - `device_del vkbd`
+3. Verify the key does **not** remain logically pressed after removal.
 
 ## Troubleshooting
 
