@@ -193,6 +193,16 @@ impl PciConfigSpaceCompat {
     }
 }
 
+impl crate::io::pci::PciDevice for PciConfigSpaceCompat {
+    fn config_read(&self, offset: u16, size: usize) -> u32 {
+        self.read_u32(offset, size)
+    }
+
+    fn config_write(&mut self, offset: u16, size: usize, value: u32) {
+        self.write_u32(offset, size, value);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PciConfigSpaceCompat;
