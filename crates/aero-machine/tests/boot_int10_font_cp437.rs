@@ -3,7 +3,7 @@ use aero_machine::{Machine, MachineConfig, RunExit};
 fn build_int10_get_font_and_read_cp437_glyph_boot_sector() -> [u8; 512] {
     // This boot sector:
     // 1. Calls INT 10h AX=1130h (Get Font Information) requesting the 8x16 ROM font table.
-    // 2. Reads the first byte of the CP437 glyph at index 0xDB ("full block" in CP437).
+    // 2. Reads the first byte of the CP437 box-drawing glyph at index 0xC3 ("├" in CP437).
     // 3. Stores that byte to physical address 0x0500.
     // 4. Halts.
     //
@@ -25,8 +25,8 @@ fn build_int10_get_font_and_read_cp437_glyph_boot_sector() -> [u8; 512] {
     i += 2;
 
     // ES:BP now points at the start of the font table. Each glyph is 16 bytes.
-    // add bp, 0x0DB0  ; 0xDB * 16
-    sector[i..i + 4].copy_from_slice(&[0x81, 0xC5, 0xB0, 0x0D]);
+    // add bp, 0x0C30  ; 0xC3 * 16
+    sector[i..i + 4].copy_from_slice(&[0x81, 0xC5, 0x30, 0x0C]);
     i += 4;
     // mov al, [es:bp]
     sector[i..i + 4].copy_from_slice(&[0x26, 0x8A, 0x46, 0x00]);
@@ -84,4 +84,3 @@ fn boot_int10_font_cp437() {
         "INT 10h AX=1130h returned a font table with a blank CP437 glyph"
     );
 }
-
