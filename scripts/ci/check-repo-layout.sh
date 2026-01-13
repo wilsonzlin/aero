@@ -315,7 +315,6 @@ import sys
 path = "drivers/_template/ci-package.json"
 with open(path, "r", encoding="utf-8") as f:
     manifest = json.load(f)
-
 required = ["infFiles", "wow64Files", "requiredBuildOutputFiles", "additionalFiles", "toolFiles"]
 missing = [k for k in required if k not in manifest]
 if missing:

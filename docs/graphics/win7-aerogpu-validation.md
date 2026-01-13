@@ -434,20 +434,12 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 
 ### 5.1 Where to find dbgctl (packaged locations)
 
-### Where to find dbgctl on Guest Tools media
+**Packaged location (relative to the `aerogpu` driver directory / package root):**
 
-If you are using a default Guest Tools ISO/zip (often mounted as `X:`), dbgctl is packaged inside the AeroGPU driver folder at:
+- Tool: `tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+- Docs: `tools\win7_dbgctl\README.md`
 
-- Win7 x64: `X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
-- Win7 x86: `X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
-
-Example (run in-place from the ISO mount):
-
-```bat
-X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status
-```
-
-### Packaged locations
+Packaged locations:
 
 - Guest Tools ISO/zip:
   - x64: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
@@ -464,7 +456,7 @@ On Windows 7 x64 it runs via **WOW64**. This ensures Windows 7 x86 users can alw
 Example (run directly from a mounted Guest Tools ISO/zip; replace `<GuestToolsDrive>` with the drive letter, e.g. `D`):
 
 ```bat
-cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin
 aerogpu_dbgctl.exe --status
 ```
 
@@ -517,7 +509,7 @@ If you need to debug a hang or incorrect rendering without attaching WinDbg, cap
 ### 5.3 Suggested `aerogpu_dbgctl` commands (implemented today)
 
 For the canonical, up-to-date command list and global options, see:
-`drivers/aerogpu/tools/win7_dbgctl/README.md`.
+`drivers/aerogpu/tools/win7_dbgctl/README.md` (source tree) or `tools\win7_dbgctl\README.md` inside CI packages / Guest Tools.
 
 | Command | What it should report/do | When to use |
 |---|---|---|

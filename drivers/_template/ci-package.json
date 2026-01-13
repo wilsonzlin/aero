@@ -3,6 +3,6 @@
   "infFiles": ["REPLACE_ME.inf"],
   "wow64Files": [],
   "requiredBuildOutputFiles": [],
-  "additionalFiles": [],
-  "toolFiles": []
+  "toolFiles": [],
+  "additionalFiles": []
 }

@@ -750,12 +750,22 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     foreach ($relPath in $manifest.ToolFiles) {
       $ext = [IO.Path]::GetExtension($relPath)
       if ($ext -ne '.exe') {
-        throw "Driver '$driverNameForLog' toolFiles entries must be .exe; refusing to include '$relPath'."
+        throw "Driver '$driverNameForLog' toolFiles entries must be .exe files; refusing to include '$relPath'."
       }
 
-      $src = Resolve-ChildPathUnderRoot -Root $driverSourceDir -ChildPath $relPath
-      if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
-        throw "Driver '$driverNameForLog' requests tool file '$relPath' via '$($manifest.ManifestPath)', but it was not found: $src"
+      $srcFromBuildOut = Resolve-ChildPathUnderRoot -Root $buildOutDir -ChildPath $relPath
+      $srcFromSourceDir = Resolve-ChildPathUnderRoot -Root $driverSourceDir -ChildPath $relPath
+
+      $src = $null
+      $srcKind = $null
+      if (Test-Path -LiteralPath $srcFromBuildOut -PathType Leaf) {
+        $src = $srcFromBuildOut
+        $srcKind = "build outputs"
+      } elseif (Test-Path -LiteralPath $srcFromSourceDir -PathType Leaf) {
+        $src = $srcFromSourceDir
+        $srcKind = "driver source tree"
+      } else {
+        throw "Driver '$driverNameForLog' requests tool file '$relPath' via '$($manifest.ManifestPath)', but it was not found in either build outputs ('$srcFromBuildOut') or driver source tree ('$srcFromSourceDir')."
       }
 
       $dest = Resolve-ChildPathUnderRoot -Root $packageDir -ChildPath $relPath
@@ -763,8 +773,7 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
       }
-
-      Write-Host "     Including tool file: $relPath"
+      Write-Host "     Including tool file: $relPath ($srcKind)"
       Copy-Item -LiteralPath $src -Destination $dest -Force
     }
 

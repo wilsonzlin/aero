@@ -2,6 +2,7 @@
   "$schema": "../../ci/driver-package.schema.json",
   "additionalFiles": [
     "packaging/win7/README.md",
+    "tools/win7_dbgctl/README.md",
     "legacy/README.md",
     "legacy/aerogpu.inf",
     "packaging/win7/install.cmd",
@@ -11,6 +12,7 @@
     "packaging/win7/verify_umd_registration.cmd"
   ],
   "requiredBuildOutputFiles": ["tools/win7_dbgctl/bin/aerogpu_dbgctl.exe"],
+  "toolFiles": ["tools/win7_dbgctl/bin/aerogpu_dbgctl.exe"],
   "infFiles": ["packaging/win7/aerogpu_dx11.inf"],
   "wow64Files": ["aerogpu_d3d9.dll", "aerogpu_d3d10.dll"]
 }

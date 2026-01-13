@@ -407,10 +407,15 @@ For bring-up and debugging, you can use the Escape-based dbgctl tool:
 The same `aerogpu_dbgctl.exe` binary is copied into both the x86 and x64 driver packages (and therefore
 onto Guest Tools media).
 
-Packaged driver directories include dbgctl at:
+CI packages / Guest Tools note: CI-staged driver packages under `out/packages/aerogpu/<arch>/` (and the Guest Tools ISO/zip) ship dbgctl at:
 
-- CI driver packages (`out\packages\...`): `tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (for example `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`)
-- Guest Tools ISO/zip: `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (for example `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`)
+- `tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (relative to the AeroGPU package root)
+- `tools\win7_dbgctl\README.md` (tool documentation)
+
+Examples:
+
+- CI driver packages: `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (and `...\x86\...`)
+- Guest Tools ISO/zip: `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe` (and `...\x86\...`)
 
 If `drivers\aerogpu\build\stage_packaging_win7.cmd` finds an already-built dbgctl
 binary at `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`, it will copy

@@ -90,7 +90,6 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
         # Packaged path (AeroGPU driver payload).
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
-
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
@@ -104,7 +103,6 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
         # Packaged path (AeroGPU driver payload).
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
-
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
