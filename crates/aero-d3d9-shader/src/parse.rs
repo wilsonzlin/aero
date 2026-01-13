@@ -112,7 +112,14 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                 });
             }
             let decl_token = operands[0];
-            let dst = decode_dst(operands[1]);
+            let dst_token = operands[1];
+            let dst = decode_dst(dst_token);
+            if matches!(dst.reg.ty, RegisterType::Unknown(_)) {
+                return Err(ShaderParseError::InvalidRegisterEncoding {
+                    token: dst_token,
+                    at_token: at_token + 2,
+                });
+            }
 
             match dst.reg.ty {
                 RegisterType::Sampler => {
@@ -142,7 +149,10 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
         if let Some(opcode) = decode_opcode(opcode_raw, specific) {
             let mut idx = 0usize;
             let predicate = if predicated {
-                Some(decode_src(operands, &mut idx))
+                let token_idx = idx;
+                let pred = decode_src(operands, &mut idx);
+                validate_src(&pred, operands, at_token + 1, token_idx)?;
+                Some(pred)
             } else {
                 None
             };
@@ -177,7 +187,15 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
             );
 
             let dst = if has_dst && idx < operands.len() {
-                let dst = crate::reg::decode_dst(operands[idx]);
+                let dst_token_idx = idx;
+                let dst_token = operands[dst_token_idx];
+                let dst = crate::reg::decode_dst(dst_token);
+                if matches!(dst.reg.ty, RegisterType::Unknown(_)) {
+                    return Err(ShaderParseError::InvalidRegisterEncoding {
+                        token: dst_token,
+                        at_token: at_token + 1 + dst_token_idx,
+                    });
+                }
                 idx = idx.saturating_add(1);
                 Some(dst)
             } else {
@@ -186,7 +204,10 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
 
             let mut src = Vec::new();
             while idx < operands.len() {
-                src.push(decode_src(operands, &mut idx));
+                let token_idx = idx;
+                let s = decode_src(operands, &mut idx);
+                validate_src(&s, operands, at_token + 1, token_idx)?;
+                src.push(s);
             }
 
             let inst = Instruction::Op {
@@ -200,12 +221,10 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
             inst.observe_stats(&mut stats);
             instructions.push(inst);
         } else {
-            let mut all_tokens = Vec::with_capacity(1 + operands.len());
-            all_tokens.push(opcode_token);
-            all_tokens.extend_from_slice(operands);
-            instructions.push(Instruction::Unknown {
-                opcode_raw,
-                tokens: all_tokens,
+            return Err(ShaderParseError::UnknownOpcode {
+                opcode: opcode_raw,
+                specific,
+                at_token,
             });
         }
     }
@@ -223,6 +242,38 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
 struct TokenReader<'a> {
     tokens: &'a [u32],
     pos: usize,
+}
+
+fn validate_src(
+    src: &crate::reg::SrcParam,
+    operands: &[u32],
+    operands_base_token: usize,
+    token_idx: usize,
+) -> Result<(), ShaderParseError> {
+    match src {
+        crate::reg::SrcParam::Immediate(_) => Ok(()),
+        crate::reg::SrcParam::Register { reg, relative, .. } => {
+            if matches!(reg.ty, RegisterType::Unknown(_)) {
+                return Err(ShaderParseError::InvalidRegisterEncoding {
+                    token: operands[token_idx],
+                    at_token: operands_base_token + token_idx,
+                });
+            }
+            if let Some(rel) = relative {
+                if matches!(rel.reg.ty, RegisterType::Unknown(_)) {
+                    // The relative address register token is always immediately after the main
+                    // source token.
+                    if let Some(token) = operands.get(token_idx + 1) {
+                        return Err(ShaderParseError::InvalidRegisterEncoding {
+                            token: *token,
+                            at_token: operands_base_token + token_idx + 1,
+                        });
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 impl<'a> TokenReader<'a> {

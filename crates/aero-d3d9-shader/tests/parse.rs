@@ -1,4 +1,4 @@
-use aero_d3d9_shader::{D3d9Shader, Instruction, Opcode, ShaderStage};
+use aero_d3d9_shader::{D3d9Shader, Instruction, Opcode, ShaderParseError, ShaderStage};
 
 fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(words.len() * 4);
@@ -232,8 +232,75 @@ fn parse_dxbc_wrapped_sm2() {
 
 #[test]
 fn malformed_truncated_instruction_errors() {
-    let words = [0xFFFE_0200, 0x0200_0001];
+    let words = [0xFFFE_0200, 0x0200_0001, 0xC00F_0000];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
-    let msg = err.to_string();
-    assert!(msg.contains("truncated instruction"));
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 2,
+            remaining_tokens: 1,
+        }
+    );
+}
+
+#[test]
+fn malformed_unknown_opcode_errors() {
+    // Unknown opcode with a valid (zero) operand length.
+    let words = [0xFFFE_0200, 0x0000_7777, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::UnknownOpcode {
+            opcode: 0x7777,
+            specific: 0,
+            at_token: 1,
+        }
+    );
+}
+
+#[test]
+fn malformed_invalid_register_encoding_errors() {
+    // mov <dst>, <src> with an invalid/unknown register type encoding in the dst token.
+    //
+    // Register type encoding is 5 bits split across the token:
+    // - bits 28..=30
+    // - bits 11..=12
+    //
+    // Here we encode 0b11111 (=31), which is not a valid D3D9 register type.
+    let invalid_reg_token = 0xF00F_1800;
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0200_0001, // mov (len=2)
+        invalid_reg_token,
+        0x90E4_0000, // v0
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidRegisterEncoding {
+            token: invalid_reg_token,
+            at_token: 2,
+        }
+    );
+}
+
+#[test]
+fn malformed_absurdly_large_instruction_length_errors() {
+    // Comment instruction with an absurd length (15-bit length field set to max).
+    // Ensure we fail with a structured error rather than panicking on bounds/allocations.
+    let comment_token = 0x7FFF_FFFE; // opcode=0xfffe, length=0x7fff
+    let words = [0xFFFE_0200, comment_token];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0xFFFE,
+            at_token: 1,
+            needed_tokens: 0x7FFF,
+            remaining_tokens: 0,
+        }
+    );
 }

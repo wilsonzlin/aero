@@ -20,6 +20,15 @@ pub enum ShaderParseError {
         needed_tokens: usize,
         remaining_tokens: usize,
     },
+    UnknownOpcode {
+        opcode: u16,
+        specific: u8,
+        at_token: usize,
+    },
+    InvalidRegisterEncoding {
+        token: u32,
+        at_token: usize,
+    },
 }
 
 impl From<aero_dxbc::DxbcError> for ShaderParseError {
@@ -51,6 +60,18 @@ impl fmt::Display for ShaderParseError {
             } => write!(
                 f,
                 "truncated instruction opcode 0x{opcode:04x} at token {at_token} (needed {needed_tokens} tokens, had {remaining_tokens})"
+            ),
+            ShaderParseError::UnknownOpcode {
+                opcode,
+                specific,
+                at_token,
+            } => write!(
+                f,
+                "unknown opcode 0x{opcode:04x} (specific {specific}) at token {at_token}"
+            ),
+            ShaderParseError::InvalidRegisterEncoding { token, at_token } => write!(
+                f,
+                "invalid register encoding 0x{token:08x} at token {at_token}"
             ),
         }
     }
