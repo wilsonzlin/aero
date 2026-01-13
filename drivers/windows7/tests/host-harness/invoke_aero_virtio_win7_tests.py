@@ -37,7 +37,7 @@ It:
   - request a graceful QEMU shutdown so side-effectful devices (notably the `wav` audiodev backend) can flush/finalize
     their output files before verification
   - inject deterministic virtio-input events via `input-send-event` (when `--with-input-events` /
-    `--with-virtio-input-events` is enabled)
+    `--with-virtio-input-events` or `--with-input-tablet-events` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
@@ -45,6 +45,7 @@ It:
      so older selftest binaries cannot accidentally pass
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
+  - when --with-input-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
 
 For convenience when scraping CI logs, the harness may also emit a host-side virtio-net marker when the guest
 includes large-transfer fields:
@@ -1838,6 +1839,30 @@ def main() -> int:
                                 else:
                                     print(
                                         "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events PASS marker while --with-input-events was enabled",
+                                        file=sys.stderr,
+                                    )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                        if need_input_tablet_events:
+                            if saw_virtio_input_tablet_events_fail:
+                                print(
+                                    "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events was enabled",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_input_tablet_events_pass:
+                                if saw_virtio_input_tablet_events_skip:
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
+                                        "--with-input-tablet-events was enabled (provision the guest with --test-input-tablet-events)",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events PASS marker while --with-input-tablet-events was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
