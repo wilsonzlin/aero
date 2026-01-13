@@ -23,6 +23,44 @@ impl Bios {
                     self.video.vbe.current_mode = None;
                     self.video.vga.set_text_mode_03h(memory, clear);
                     self.video_mode = 0x03;
+                } else if mode == 0x13 {
+                    // VGA mode 13h: 320x200x256 (chain-4).
+                    //
+                    // We model this as a simple linear 64KiB framebuffer at A0000 with an 8-bit
+                    // palette index per pixel.
+                    self.video.vbe.current_mode = None;
+
+                    // Plausible BDA state for mode 13h. BIOS clients frequently use AH=0Fh ("Get
+                    // current video mode") which returns BDA mode + columns.
+                    BiosDataArea::write_video_mode(memory, 0x13);
+                    // 320 pixels / 8 pixels-per-character = 40 columns (common BIOS convention).
+                    BiosDataArea::write_screen_cols(memory, 40);
+                    BiosDataArea::write_text_rows(memory, 25);
+                    // 64,000 bytes visible (320*200). Some BIOSes report 64KiB here; we report the
+                    // exact visible size.
+                    BiosDataArea::write_page_size(memory, 320 * 200);
+                    BiosDataArea::write_video_page_offset(memory, 0);
+                    BiosDataArea::write_active_page(memory, 0);
+                    BiosDataArea::write_crtc_base(memory, 0x3D4);
+
+                    if clear {
+                        // Clear the full 64KiB VGA graphics window A0000-AFFFF.
+                        const VGA_FB_BASE: u64 = 0xA0000;
+                        const VGA_FB_SIZE: usize = 64 * 1024;
+                        const CHUNK_SIZE: usize = 4096;
+
+                        let chunk = [0u8; CHUNK_SIZE];
+                        let mut addr = VGA_FB_BASE;
+                        let mut remaining = VGA_FB_SIZE;
+                        while remaining != 0 {
+                            let len = remaining.min(CHUNK_SIZE);
+                            memory.write_physical(addr, &chunk[..len]);
+                            addr = addr.saturating_add(len as u64);
+                            remaining -= len;
+                        }
+                    }
+
+                    self.video_mode = 0x13;
                 }
             }
             0x05 => {

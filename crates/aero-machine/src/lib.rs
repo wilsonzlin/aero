@@ -4660,6 +4660,25 @@ impl Machine {
         let dx_before = self.cpu.state.gpr[gpr::RDX] as u16;
         let vbe_mode_before = self.bios.video.vbe.current_mode;
 
+        // Detect classic VGA mode sets (INT 10h AH=00h). The HLE BIOS updates BDA state and clears
+        // framebuffer memory, but does not perform VGA port I/O itself. Program the emulated VGA
+        // device so BIOS memory writes (e.g. clears) target the correct mapping.
+        let int10_is_set_mode = vector == 0x10 && (ax_before & 0xFF00) == 0x0000;
+        let set_mode = (ax_before as u8) & 0x7F;
+        let is_set_mode_03h = int10_is_set_mode && set_mode == 0x03;
+        let is_set_mode_13h = int10_is_set_mode && set_mode == 0x13;
+
+        if int10_is_set_mode {
+            if let Some(vga) = &self.vga {
+                let mut vga = vga.borrow_mut();
+                if is_set_mode_13h {
+                    vga.set_mode_13h();
+                } else if is_set_mode_03h {
+                    vga.set_text_mode_80x25();
+                }
+            }
+        }
+
         // VBE mode sets (INT 10h AX=4F02) optionally clear the framebuffer. The HLE BIOS
         // implements this as a byte-at-a-time write loop, which is unnecessarily slow when
         // targeting an emulated VGA device.
@@ -4778,15 +4797,15 @@ impl Machine {
                 }
                 None => {
                     // Only reset the VGA register file when the BIOS actually performed a mode
-                    // set (e.g. INT 10h AH=00 AL=03h), or when transitioning from a VBE mode back
-                    // to BIOS text mode.
+                    // set (e.g. INT 10h AH=00 AL=03h / 13h), or when transitioning from a VBE mode
+                    // back to BIOS text mode.
                     //
                     // This avoids clobbering guest-programmed text registers (like the CRTC start
                     // address used for paging) on unrelated INT 10h text services (cursor moves,
                     // teletype output, etc.).
-                    let is_set_mode_03h =
-                        (ax_before & 0xFF00) == 0x0000 && (ax_before & 0x007F) == 0x03;
-                    if vbe_mode_before.is_some() || is_set_mode_03h {
+                    if is_set_mode_13h {
+                        vga.borrow_mut().set_mode_13h();
+                    } else if is_set_mode_03h || vbe_mode_before.is_some() {
                         vga.borrow_mut().set_text_mode_80x25();
                     }
 
