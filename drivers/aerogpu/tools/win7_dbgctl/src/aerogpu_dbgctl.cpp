@@ -626,12 +626,14 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       magicStr[3] = (wchar_t)((m >> 24) & 0xFF);
     }
 
-    wprintf(L"UMDRIVERPRIVATE: type=%lu magic=0x%08lx (%s) abi=0x%08lx features=0x%I64x flags=0x%08lx\n",
+    const std::wstring decoded_features = aerogpu::FormatDeviceFeatureBits(blob.device_features, 0);
+    wprintf(L"UMDRIVERPRIVATE: type=%lu magic=0x%08lx (%s) abi=0x%08lx features=0x%I64x (%s) flags=0x%08lx\n",
             (unsigned long)foundType,
             (unsigned long)blob.device_mmio_magic,
             magicStr,
             (unsigned long)blob.device_abi_version_u32,
             (unsigned long long)blob.device_features,
+            decoded_features.c_str(),
             (unsigned long)blob.flags);
   };
 
