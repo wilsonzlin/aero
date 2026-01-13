@@ -740,6 +740,24 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Movc { dst, cond, a, b })
         }
+        OPCODE_UMUL | OPCODE_IMUL => {
+            // Integer multiply does not support saturate; ignore the modifier if present.
+            let signed = opcode == OPCODE_IMUL;
+            let mut r_multi = r.clone();
+            if let Ok(inst) = decode_int_mul(signed, &mut r_multi) {
+                return Ok(inst);
+            }
+            decode_int_mul_single(signed, &mut r)
+        }
+        OPCODE_UMAD | OPCODE_IMAD => {
+            // Integer multiply-add does not support saturate; ignore the modifier if present.
+            let signed = opcode == OPCODE_IMAD;
+            let mut r_multi = r.clone();
+            if let Ok(inst) = decode_int_mad(signed, &mut r_multi) {
+                return Ok(inst);
+            }
+            decode_int_mad_single(signed, &mut r)
+        }
         OPCODE_ADD => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;
@@ -898,13 +916,6 @@ pub fn decode_instruction(
             let b = decode_src(&mut r)?;
             r.expect_eof()?;
             Ok(Sm4Inst::ISub { dst, a, b })
-        }
-        OPCODE_IMUL => {
-            let dst = decode_dst(&mut r)?;
-            let a = decode_src(&mut r)?;
-            let b = decode_src(&mut r)?;
-            r.expect_eof()?;
-            Ok(Sm4Inst::IMul { dst, a, b })
         }
         OPCODE_AND => {
             let dst = decode_dst(&mut r)?;
@@ -1412,6 +1423,108 @@ fn decode_cmp(
         b,
         op,
         ty: CmpType::F32,
+    })
+}
+
+fn decode_int_mul(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let dst_lo = decode_dst(r)?;
+    let dst_hi = decode_dst(r)?;
+    let a = decode_src(r)?;
+    let b = decode_src(r)?;
+    r.expect_eof()?;
+    Ok(if signed {
+        Sm4Inst::IMul {
+            dst_lo,
+            dst_hi: Some(dst_hi),
+            a,
+            b,
+        }
+    } else {
+        Sm4Inst::UMul {
+            dst_lo,
+            dst_hi: Some(dst_hi),
+            a,
+            b,
+        }
+    })
+}
+
+fn decode_int_mul_single(
+    signed: bool,
+    r: &mut InstrReader<'_>,
+) -> Result<Sm4Inst, Sm4DecodeError> {
+    let dst_lo = decode_dst(r)?;
+    let a = decode_src(r)?;
+    let b = decode_src(r)?;
+    r.expect_eof()?;
+    Ok(if signed {
+        Sm4Inst::IMul {
+            dst_lo,
+            dst_hi: None,
+            a,
+            b,
+        }
+    } else {
+        Sm4Inst::UMul {
+            dst_lo,
+            dst_hi: None,
+            a,
+            b,
+        }
+    })
+}
+
+fn decode_int_mad(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let dst_lo = decode_dst(r)?;
+    let dst_hi = decode_dst(r)?;
+    let a = decode_src(r)?;
+    let b = decode_src(r)?;
+    let c = decode_src(r)?;
+    r.expect_eof()?;
+    Ok(if signed {
+        Sm4Inst::IMad {
+            dst_lo,
+            dst_hi: Some(dst_hi),
+            a,
+            b,
+            c,
+        }
+    } else {
+        Sm4Inst::UMad {
+            dst_lo,
+            dst_hi: Some(dst_hi),
+            a,
+            b,
+            c,
+        }
+    })
+}
+
+fn decode_int_mad_single(
+    signed: bool,
+    r: &mut InstrReader<'_>,
+) -> Result<Sm4Inst, Sm4DecodeError> {
+    let dst_lo = decode_dst(r)?;
+    let a = decode_src(r)?;
+    let b = decode_src(r)?;
+    let c = decode_src(r)?;
+    r.expect_eof()?;
+    Ok(if signed {
+        Sm4Inst::IMad {
+            dst_lo,
+            dst_hi: None,
+            a,
+            b,
+            c,
+        }
+    } else {
+        Sm4Inst::UMad {
+            dst_lo,
+            dst_hi: None,
+            a,
+            b,
+            c,
+        }
     })
 }
 
@@ -2759,6 +2872,16 @@ struct InstrReader<'a> {
     toks: &'a [u32],
     pos: usize,
     base_at: usize,
+}
+
+impl<'a> Clone for InstrReader<'a> {
+    fn clone(&self) -> Self {
+        Self {
+            toks: self.toks,
+            pos: self.pos,
+            base_at: self.base_at,
+        }
+    }
 }
 
 impl<'a> InstrReader<'a> {

@@ -1351,13 +1351,14 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             }
             Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
+            | Sm4Inst::IMul { a, b, .. }
+            | Sm4Inst::UMul { a, b, .. }
             | Sm4Inst::Dp3 { dst: _, a, b }
             | Sm4Inst::Dp4 { dst: _, a, b }
             | Sm4Inst::Min { dst: _, a, b }
             | Sm4Inst::Max { dst: _, a, b }
             | Sm4Inst::IAdd { dst: _, a, b }
             | Sm4Inst::ISub { dst: _, a, b }
-            | Sm4Inst::IMul { dst: _, a, b }
             | Sm4Inst::And { dst: _, a, b }
             | Sm4Inst::Or { dst: _, a, b }
             | Sm4Inst::Xor { dst: _, a, b }
@@ -1388,7 +1389,9 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
-            Sm4Inst::Mad { dst: _, a, b, c } => {
+            Sm4Inst::Mad { dst: _, a, b, c }
+            | Sm4Inst::IMad { a, b, c, .. }
+            | Sm4Inst::UMad { a, b, c, .. } => {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
                 scan_src_regs(c, &mut scan_reg);
@@ -1562,7 +1565,8 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             | Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::IAdd { dst: _, a, b }
             | Sm4Inst::ISub { dst: _, a, b }
-            | Sm4Inst::IMul { dst: _, a, b }
+            | Sm4Inst::IMul { a, b, .. }
+            | Sm4Inst::UMul { a, b, .. }
             | Sm4Inst::Or { dst: _, a, b }
             | Sm4Inst::Xor { dst: _, a, b }
             | Sm4Inst::IShl { dst: _, a, b }
@@ -1623,7 +1627,9 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
                 scan_src(a);
                 scan_src(b);
             }
-            Sm4Inst::Mad { dst: _, a, b, c } => {
+            Sm4Inst::Mad { dst: _, a, b, c }
+            | Sm4Inst::IMad { a, b, c, .. }
+            | Sm4Inst::UMad { a, b, c, .. } => {
                 scan_src(a);
                 scan_src(b);
                 scan_src(c);
@@ -2891,7 +2897,8 @@ fn scan_resources(
             }
             | Sm4Inst::IAdd { dst: _, a, b }
             | Sm4Inst::ISub { dst: _, a, b }
-            | Sm4Inst::IMul { dst: _, a, b }
+            | Sm4Inst::IMul { a, b, .. }
+            | Sm4Inst::UMul { a, b, .. }
             | Sm4Inst::And { dst: _, a, b }
             | Sm4Inst::Or { dst: _, a, b }
             | Sm4Inst::Xor { dst: _, a, b }
@@ -2905,7 +2912,21 @@ fn scan_resources(
                 scan_src(a)?;
                 scan_src(b)?;
             }
-            Sm4Inst::Mad { dst: _, a, b, c } => {
+            Sm4Inst::IMad {
+                dst_lo: _,
+                dst_hi: _,
+                a,
+                b,
+                c,
+            }
+            | Sm4Inst::UMad {
+                dst_lo: _,
+                dst_hi: _,
+                a,
+                b,
+                c,
+            }
+            | Sm4Inst::Mad { dst: _, a, b, c } => {
                 scan_src(a)?;
                 scan_src(b)?;
                 scan_src(c)?;
@@ -3382,7 +3403,27 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
-            Sm4Inst::Add { dst, a, b }
+            Sm4Inst::IMul {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+            }
+            | Sm4Inst::UMul {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+            } => {
+                scan_reg(dst_lo.reg);
+                if let Some(dst_hi) = dst_hi {
+                    scan_reg(dst_hi.reg);
+                }
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
+            Sm4Inst::And { dst, a, b }
+            | Sm4Inst::Add { dst, a, b }
             | Sm4Inst::Mul { dst, a, b }
             | Sm4Inst::Dp3 { dst, a, b }
             | Sm4Inst::Dp4 { dst, a, b }
@@ -3390,8 +3431,6 @@ fn emit_temp_and_output_decls(
             | Sm4Inst::Max { dst, a, b }
             | Sm4Inst::IAdd { dst, a, b }
             | Sm4Inst::ISub { dst, a, b }
-            | Sm4Inst::IMul { dst, a, b }
-            | Sm4Inst::And { dst, a, b }
             | Sm4Inst::Or { dst, a, b }
             | Sm4Inst::Xor { dst, a, b }
             | Sm4Inst::IShl { dst, a, b }
@@ -3422,6 +3461,28 @@ fn emit_temp_and_output_decls(
                 scan_reg(dst_rem.reg);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
+            }
+            Sm4Inst::IMad {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+                c,
+            }
+            | Sm4Inst::UMad {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+                c,
+            } => {
+                scan_reg(dst_lo.reg);
+                if let Some(dst_hi) = dst_hi {
+                    scan_reg(dst_hi.reg);
+                }
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+                scan_src_regs(c, &mut scan_reg);
             }
             Sm4Inst::Mad { dst, a, b, c } => {
                 scan_reg(dst.reg);
@@ -4099,6 +4160,78 @@ fn emit_instructions(
                 let rhs = format!("bitcast<vec4<f32>>(({a}) & ({b}))");
                 emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "and", ctx)?;
             }
+            Sm4Inst::UMul {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+            } => {
+                let a = emit_src_vec4_u32_int(a, inst_index, "umul", ctx)?;
+                let b = emit_src_vec4_u32_int(b, inst_index, "umul", ctx)?;
+                let lo = format!("bitcast<vec4<f32>>((({a}) * ({b})))");
+                emit_write_masked(w, dst_lo.reg, dst_lo.mask, lo, inst_index, "umul", ctx)?;
+
+                if let Some(dst_hi) = dst_hi {
+                    let hi_u = emit_u32_mul_hi(&a, &b);
+                    let hi = format!("bitcast<vec4<f32>>({hi_u})");
+                    emit_write_masked(w, dst_hi.reg, dst_hi.mask, hi, inst_index, "umul", ctx)?;
+                }
+            }
+            Sm4Inst::IMul {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+            } => {
+                let a = emit_src_vec4_i32_int(a, inst_index, "imul", ctx)?;
+                let b = emit_src_vec4_i32_int(b, inst_index, "imul", ctx)?;
+                let lo = format!("bitcast<vec4<f32>>((({a}) * ({b})))");
+                emit_write_masked(w, dst_lo.reg, dst_lo.mask, lo, inst_index, "imul", ctx)?;
+
+                if let Some(dst_hi) = dst_hi {
+                    let hi_i = emit_i32_mul_hi(&a, &b);
+                    let hi = format!("bitcast<vec4<f32>>({hi_i})");
+                    emit_write_masked(w, dst_hi.reg, dst_hi.mask, hi, inst_index, "imul", ctx)?;
+                }
+            }
+            Sm4Inst::UMad {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+                c,
+            } => {
+                let a = emit_src_vec4_u32_int(a, inst_index, "umad", ctx)?;
+                let b = emit_src_vec4_u32_int(b, inst_index, "umad", ctx)?;
+                let c = emit_src_vec4_u32_int(c, inst_index, "umad", ctx)?;
+                let lo = format!("bitcast<vec4<f32>>((({a}) * ({b}) + ({c})))");
+                emit_write_masked(w, dst_lo.reg, dst_lo.mask, lo, inst_index, "umad", ctx)?;
+
+                if let Some(dst_hi) = dst_hi {
+                    let hi_u = emit_u32_mad_hi(&a, &b, &c);
+                    let hi = format!("bitcast<vec4<f32>>({hi_u})");
+                    emit_write_masked(w, dst_hi.reg, dst_hi.mask, hi, inst_index, "umad", ctx)?;
+                }
+            }
+            Sm4Inst::IMad {
+                dst_lo,
+                dst_hi,
+                a,
+                b,
+                c,
+            } => {
+                let a = emit_src_vec4_i32_int(a, inst_index, "imad", ctx)?;
+                let b = emit_src_vec4_i32_int(b, inst_index, "imad", ctx)?;
+                let c = emit_src_vec4_i32_int(c, inst_index, "imad", ctx)?;
+                let lo = format!("bitcast<vec4<f32>>((({a}) * ({b}) + ({c})))");
+                emit_write_masked(w, dst_lo.reg, dst_lo.mask, lo, inst_index, "imad", ctx)?;
+
+                if let Some(dst_hi) = dst_hi {
+                    let hi_i = emit_i32_mad_hi(&a, &b, &c);
+                    let hi = format!("bitcast<vec4<f32>>({hi_i})");
+                    emit_write_masked(w, dst_hi.reg, dst_hi.mask, hi, inst_index, "imad", ctx)?;
+                }
+            }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "add", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "add", ctx)?;
@@ -4285,12 +4418,6 @@ fn emit_instructions(
                 let b = emit_src_vec4_i32(b, inst_index, "isub", ctx)?;
                 let expr = format!("bitcast<vec4<f32>>(({a}) - ({b}))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "isub", ctx)?;
-            }
-            Sm4Inst::IMul { dst, a, b } => {
-                let a = emit_src_vec4_i32(a, inst_index, "imul", ctx)?;
-                let b = emit_src_vec4_i32(b, inst_index, "imul", ctx)?;
-                let expr = format!("bitcast<vec4<f32>>(({a}) * ({b}))");
-                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "imul", ctx)?;
             }
             Sm4Inst::Or { dst, a, b } => {
                 let a = emit_src_vec4_u32(a, inst_index, "or", ctx)?;
@@ -5421,6 +5548,19 @@ fn emit_src_scalar_u32_addr(
     Ok(format!("select({bits}, u32({f}), {cond})"))
 }
 
+/// Emits a `vec4<i32>` source for signed integer operations.
+///
+/// This is equivalent to `emit_src_vec4_i32`; it exists to mirror the `*_u32_int` helper and make
+/// call sites for signed integer instructions clearer.
+fn emit_src_vec4_i32_int(
+    src: &crate::sm4_ir::SrcOperand,
+    inst_index: usize,
+    opcode: &'static str,
+    ctx: &EmitCtx<'_>,
+) -> Result<String, ShaderTranslateError> {
+    emit_src_vec4_i32(src, inst_index, opcode, ctx)
+}
+
 fn emit_src_vec4_i32(
     src: &crate::sm4_ir::SrcOperand,
     inst_index: usize,
@@ -5642,6 +5782,50 @@ fn emit_src_scalar_u32(
         "({}).x",
         emit_src_vec4_u32(src, inst_index, opcode, ctx)?
     ))
+}
+
+fn emit_u32_mul_hi(a: &str, b: &str) -> String {
+    let lanes = ['x', 'y', 'z', 'w'].map(|c| {
+        format!("u32((u64(({a}).{c}) * u64(({b}).{c})) >> 32u)")
+    });
+    format!(
+        "vec4<u32>({}, {}, {}, {})",
+        lanes[0], lanes[1], lanes[2], lanes[3]
+    )
+}
+
+fn emit_u32_mad_hi(a: &str, b: &str, c: &str) -> String {
+    let lanes = ['x', 'y', 'z', 'w'].map(|lane| {
+        format!(
+            "u32((u64(({a}).{lane}) * u64(({b}).{lane}) + u64(({c}).{lane})) >> 32u)"
+        )
+    });
+    format!(
+        "vec4<u32>({}, {}, {}, {})",
+        lanes[0], lanes[1], lanes[2], lanes[3]
+    )
+}
+
+fn emit_i32_mul_hi(a: &str, b: &str) -> String {
+    let lanes = ['x', 'y', 'z', 'w'].map(|c| {
+        format!("i32((i64(({a}).{c}) * i64(({b}).{c})) >> 32u)")
+    });
+    format!(
+        "vec4<i32>({}, {}, {}, {})",
+        lanes[0], lanes[1], lanes[2], lanes[3]
+    )
+}
+
+fn emit_i32_mad_hi(a: &str, b: &str, c: &str) -> String {
+    let lanes = ['x', 'y', 'z', 'w'].map(|lane| {
+        format!(
+            "i32((i64(({a}).{lane}) * i64(({b}).{lane}) + i64(({c}).{lane})) >> 32u)"
+        )
+    });
+    format!(
+        "vec4<i32>({}, {}, {}, {})",
+        lanes[0], lanes[1], lanes[2], lanes[3]
+    )
 }
 
 fn emit_write_masked(

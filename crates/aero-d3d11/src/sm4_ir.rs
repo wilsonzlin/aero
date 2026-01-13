@@ -303,6 +303,36 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    /// Signed 32-bit integer multiply.
+    IMul {
+        dst_lo: DstOperand,
+        dst_hi: Option<DstOperand>,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Unsigned 32-bit integer multiply.
+    UMul {
+        dst_lo: DstOperand,
+        dst_hi: Option<DstOperand>,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    /// Signed 32-bit integer multiply-add (`a * b + c`) with wrap-around semantics.
+    IMad {
+        dst_lo: DstOperand,
+        dst_hi: Option<DstOperand>,
+        a: SrcOperand,
+        b: SrcOperand,
+        c: SrcOperand,
+    },
+    /// Unsigned 32-bit integer multiply-add (`a * b + c`) with wrap-around semantics.
+    UMad {
+        dst_lo: DstOperand,
+        dst_hi: Option<DstOperand>,
+        a: SrcOperand,
+        b: SrcOperand,
+        c: SrcOperand,
+    },
     Add {
         dst: DstOperand,
         a: SrcOperand,
@@ -383,12 +413,6 @@ pub enum Sm4Inst {
     },
     /// Integer subtract (wrap-around).
     ISub {
-        dst: DstOperand,
-        a: SrcOperand,
-        b: SrcOperand,
-    },
-    /// Integer multiply (wrap-around).
-    IMul {
         dst: DstOperand,
         a: SrcOperand,
         b: SrcOperand,

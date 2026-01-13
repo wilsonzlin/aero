@@ -2457,3 +2457,178 @@ fn decodes_and_translates_ftou_conversion() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_umul_low_from_dxbc() {
+    let mut body = Vec::<u32>::new();
+
+    // umul r0, imm(3), imm(4)
+    let dst = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let a = imm32_vec4([3, 3, 3, 3]);
+    let b = imm32_vec4([4, 4, 4, 4]);
+    body.push(opcode_token(
+        OPCODE_UMUL,
+        1 + dst.len() as u32 + a.len() as u32 + b.len() as u32,
+    ));
+    body.extend_from_slice(&dst);
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // mov o0, r0
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::UMul { .. })),
+        "expected UMul instruction"
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn decodes_and_translates_imul_low_from_dxbc() {
+    let mut body = Vec::<u32>::new();
+
+    // imul r0, imm(-2), imm(3)
+    let dst = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let a = imm32_vec4([0xffff_fffe, 0xffff_fffe, 0xffff_fffe, 0xffff_fffe]);
+    let b = imm32_vec4([3, 3, 3, 3]);
+    body.push(opcode_token(
+        OPCODE_IMUL,
+        1 + dst.len() as u32 + a.len() as u32 + b.len() as u32,
+    ));
+    body.extend_from_slice(&dst);
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // mov o0, r0
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::IMul { .. })),
+        "expected IMul instruction"
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn decodes_and_translates_umul_multi_dst_hi_lo_from_dxbc() {
+    let mut body = Vec::<u32>::new();
+
+    // mov r2, imm(0xffff_ffff)
+    // Keep the operand as a runtime value (not a literal multiplication) so the WGSL parser does
+    // not attempt constant-folding with overflow checks.
+    let imm = imm32_vec4([0xffff_ffff; 4]);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + 2 + imm.len() as u32, /* dst + imm */
+    ));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    body.extend_from_slice(&imm);
+
+    // umul r0 (lo), r1 (hi), r2, r2
+    let dst_lo = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let dst_hi = reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW);
+    let a = reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW);
+    let b = reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW);
+    body.push(opcode_token(
+        OPCODE_UMUL,
+        1 + dst_lo.len() as u32 + dst_hi.len() as u32 + a.len() as u32 + b.len() as u32,
+    ));
+    body.extend_from_slice(&dst_lo);
+    body.extend_from_slice(&dst_hi);
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // mov o0, r1 (use hi result so it isn't dead code)
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::UMul { dst_hi: Some(_), .. })),
+        "expected UMul instruction with dst_hi"
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Multi-destination encoding should translate into assignments for both destinations.
+    assert!(
+        translated.wgsl.contains("r0.x ="),
+        "expected low destination to be written:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("r1.x ="),
+        "expected high destination to be written:\n{}",
+        translated.wgsl
+    );
+}

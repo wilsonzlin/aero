@@ -47,6 +47,15 @@ pub const OPCODE_IADDC: u32 = 0x6c;
 /// Signed integer subtract with carry (no-borrow flag): `isubc dst_diff, dst_carry, a, b`.
 pub const OPCODE_ISUBC: u32 = 0x6d;
 
+/// Unsigned 32-bit integer multiply: `umul dst_lo[, dst_hi], a, b`.
+///
+/// When present, `dst_hi` receives the high 32 bits of the 64-bit product.
+pub const OPCODE_UMUL: u32 = 0x6e;
+/// Unsigned 32-bit integer multiply-add: `umad dst_lo[, dst_hi], a, b, c`.
+pub const OPCODE_UMAD: u32 = 0x74;
+/// Signed 32-bit integer multiply-add: `imad dst_lo[, dst_hi], a, b, c`.
+pub const OPCODE_IMAD: u32 = 0x75;
+
 /// `udiv dst_quot, dst_rem, a, b` (unsigned integer quotient + remainder).
 pub const OPCODE_UDIV: u32 = 0x3c;
 /// `idiv dst_quot, dst_rem, a, b` (signed integer quotient + remainder).
@@ -458,6 +467,9 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_UADDC => Some("uaddc"),
         OPCODE_ISUBC => Some("isubc"),
         OPCODE_USUBB => Some("usubb"),
+        OPCODE_UMUL => Some("umul"),
+        OPCODE_UMAD => Some("umad"),
+        OPCODE_IMAD => Some("imad"),
         OPCODE_UDIV => Some("udiv"),
         OPCODE_IDIV => Some("idiv"),
         OPCODE_F32TOF16 => Some("f32tof16"),

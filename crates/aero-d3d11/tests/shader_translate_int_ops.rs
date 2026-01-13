@@ -112,7 +112,8 @@ fn translates_integer_and_bitwise_ops() {
                 b: src_reg(RegFile::Temp, 1),
             },
             Sm4Inst::IMul {
-                dst: dst(RegFile::Temp, 3),
+                dst_lo: dst(RegFile::Temp, 3),
+                dst_hi: None,
                 a: src_reg(RegFile::Temp, 2),
                 b: src_reg(RegFile::Temp, 1),
             },
