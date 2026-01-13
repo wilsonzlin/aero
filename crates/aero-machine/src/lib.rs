@@ -1642,7 +1642,7 @@ const LEGACY_VGA_WINDOW_SIZE: usize = 0x20000; // 128KiB
 /// This keeps the LFB aligned to 64KiB and leaves the first 128KiB reserved for legacy VGA
 /// mappings.
 #[allow(dead_code)]
-const VBE_LFB_OFFSET: usize = 0x20000;
+pub const VBE_LFB_OFFSET: usize = 0x20000;
 
 /// Total VRAM size exposed via AeroGPU BAR1.
 const AEROGPU_VRAM_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;
