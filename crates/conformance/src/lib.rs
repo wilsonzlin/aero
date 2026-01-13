@@ -130,15 +130,17 @@ pub fn run(
 
     let mut rng = corpus::XorShift64::new(seed);
     let mut report = ConformanceReport::new(cases);
+    let mem_base = reference.memory_base();
 
     for (case_idx, template) in templates.iter().cycle().take(cases).enumerate() {
-        let test_case = TestCase::generate(case_idx, template, &mut rng, reference.memory_base());
+        let test_case = TestCase::generate(case_idx, template, &mut rng, mem_base);
         report.coverage.increment(template.coverage_key);
 
         let expected = reference.execute(&test_case);
         let actual = aero.execute(&test_case);
 
-        if let Some(message) = compare_outcomes(template, &test_case, &expected, &actual) {
+        if let Some(message) = compare_outcomes(mem_base, template, &test_case, &expected, &actual)
+        {
             report.failures += 1;
             if let Some(report_path) = report_path {
                 let _ = report.write_json(report_path);
@@ -227,13 +229,14 @@ fn detect_memory_fault_signal(
 }
 
 fn compare_outcomes(
+    mem_base: u64,
     template: &InstructionTemplate,
     case: &TestCase,
     expected: &ExecOutcome,
     actual: &ExecOutcome,
 ) -> Option<String> {
     if expected.fault != actual.fault {
-        return Some(report::format_failure(template, case, expected, actual));
+        return Some(report::format_failure(mem_base, template, case, expected, actual));
     }
 
     if expected.fault.is_some() {
@@ -244,13 +247,13 @@ fn compare_outcomes(
     let actual_state = &actual.state;
 
     if !report::states_equal(expected_state, actual_state, template.flags_mask) {
-        return Some(report::format_failure(template, case, expected, actual));
+        return Some(report::format_failure(mem_base, template, case, expected, actual));
     }
 
     if template.mem_compare_len > 0
         && !report::memory_equal(&expected.memory, &actual.memory, template.mem_compare_len)
     {
-        return Some(report::format_failure(template, case, expected, actual));
+        return Some(report::format_failure(mem_base, template, case, expected, actual));
     }
 
     None

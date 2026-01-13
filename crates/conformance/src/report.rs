@@ -128,6 +128,7 @@ pub fn memory_equal(expected: &[u8], actual: &[u8], len: usize) -> bool {
 }
 
 pub fn format_failure(
+    mem_base: u64,
     template: &InstructionTemplate,
     case: &TestCase,
     expected: &ExecOutcome,
@@ -152,12 +153,13 @@ pub fn format_failure(
     let _ = writeln!(&mut out, "bytes: {byte_hex}");
     let _ = writeln!(&mut out, "effective_rip: {effective_rip:#x}");
     if template.mem_compare_len > 0 {
-        let mem_base = case.init.rdi;
         let _ = writeln!(
             &mut out,
             "mem_base: {mem_base:#x} (compare_len={} bytes)",
             template.mem_compare_len
         );
+    } else {
+        let _ = writeln!(&mut out, "mem_base: {mem_base:#x}");
     }
     if let Some(decoded) = decoded {
         let _ = writeln!(&mut out, "iced-x86: {decoded}");
@@ -191,7 +193,6 @@ pub fn format_failure(
         template.flags_mask,
     );
     if template.mem_compare_len > 0 {
-        let mem_base = case.init.rdi;
         format_memory_dump(
             &mut out,
             "initial",
@@ -416,6 +417,7 @@ fn format_memory_dump(out: &mut String, label: &str, memory: &[u8], base: u64, l
 fn format_memory_diff(out: &mut String, expected: &[u8], actual: &[u8], base: u64, len: usize) {
     let expected = expected.get(..len).unwrap_or(expected);
     let actual = actual.get(..len).unwrap_or(actual);
+    let compared_len = expected.len().min(actual.len());
 
     let mut diffs = Vec::new();
     for (idx, (&exp, &act)) in expected.iter().zip(actual.iter()).enumerate() {
@@ -428,7 +430,10 @@ fn format_memory_diff(out: &mut String, expected: &[u8], actual: &[u8], base: u6
         return;
     }
 
-    let _ = writeln!(out, "memory diff (first {} bytes):", len.min(64));
+    let _ = writeln!(
+        out,
+        "memory diff (compared {compared_len} bytes; showing first 16 mismatches):"
+    );
     for (idx, exp, act) in diffs.into_iter().take(16) {
         let addr = base.wrapping_add(idx as u64);
         let _ = writeln!(
