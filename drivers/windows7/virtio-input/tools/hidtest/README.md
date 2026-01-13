@@ -21,6 +21,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   (with optional `--duration`/`--count` auto-exit + summary at end):
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
+- Can query the virtio-input driver diagnostic counters (`--counters`, `--counters-json`).
 - Optionally writes a keyboard LED output report (`ReportID=1`) via:
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
