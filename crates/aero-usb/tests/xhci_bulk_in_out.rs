@@ -14,15 +14,15 @@ use util::{Alloc, TestMemory};
 const TRB_LEN: u64 = 0x10;
 
 fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, chain: bool, ioc: bool) -> Trb {
-    let mut trb = Trb::new(buf_ptr, len & 0x1ffff, 0);
+    let mut trb = Trb::new(buf_ptr, len & Trb::STATUS_TRANSFER_LEN_MASK, 0);
     trb.set_cycle(cycle);
+    trb.set_trb_type(TrbType::Normal);
     if chain {
-        trb.control |= 1 << 4;
+        trb.control |= Trb::CONTROL_CHAIN_BIT;
     }
     if ioc {
-        trb.control |= 1 << 5;
+        trb.control |= Trb::CONTROL_IOC_BIT;
     }
-    trb.set_trb_type(TrbType::Normal);
     trb
 }
 
