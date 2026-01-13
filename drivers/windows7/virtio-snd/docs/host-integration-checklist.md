@@ -70,12 +70,30 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 ## Interrupt delivery
 
-- [ ] **INTx** is implemented and functional (required by contract v1; used as fallback).
-- [ ] (Optional) MSI/MSI-X is implemented and functional.
-  - The driver will prefer **message interrupts** when Windows grants them (INF opt-in).
-- [ ] PCI **Interrupt Pin** register is `1` (INTA#) for INTx fallback.
-- [ ] INTx ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
-- [ ] If MSI/MSI-X is used, virtio MSI-X vector routing works (readback of `msix_config` / `queue_msix_vector` matches programmed values).
+The driver needs **at least one usable interrupt mechanism** (unless you explicitly opt into bring-up mode with `AllowPollingOnly=1`).
+`AERO-W7-VIRTIO` v1 still requires **INTx** compatibility as a baseline, but the driver also supports (and prefers) **MSI/MSI-X** when Windows provides message interrupts.
+
+- [ ] At least one of the following is present and functional:
+  - [ ] **MSI/MSI-X** message interrupts (`CM_RESOURCE_INTERRUPT_MESSAGE`)
+  - [ ] **INTx** line-based interrupts
+
+### MSI/MSI-X (message-signaled interrupts)
+
+- [ ] Device exposes PCI MSI/MSI-X so Windows can allocate message interrupts (the canonical INF sets `Interrupt Management\\MessageSignaledInterruptProperties\\MSISupported=1`).
+- [ ] When message interrupts are used, virtio MSI-X vector routing works correctly:
+  - [ ] `common_cfg.msix_config` (config vector) is writable and reads back the value the driver programs.
+  - [ ] `common_cfg.queue_msix_vector` (queue vectors) is writable and reads back the value the driver programs.
+  - [ ] The device delivers interrupts on the programmed vector indices.
+- [ ] Expected vector programming from the driver:
+  - [ ] `msix_config = 0` (config on message 0)
+  - [ ] If Windows grants at least `1 + 4` messages, queues 0..3 are programmed as `queue_msix_vector = 1..4`.
+  - [ ] Otherwise (or if per-queue assignment is rejected), the driver falls back to `queue_msix_vector = 0` for all queues (all sources on message 0).
+
+### INTx (line interrupt, contract v1 baseline)
+
+- [ ] **INTx** is implemented and functional (baseline requirement for `AERO-W7-VIRTIO` v1; also used as fallback if MSI/MSI-X connect or vector programming fails).
+- [ ] PCI **Interrupt Pin** register is `1` (INTA#).
+- [ ] ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
 
 ## virtio-snd `DEVICE_CFG` (read-only)
 

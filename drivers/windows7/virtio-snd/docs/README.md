@@ -88,7 +88,8 @@ The contract also permits **MSI-X** as an optional enhancement; Windows reports 
 The in-tree virtio-snd driver supports both interrupt delivery modes:
 
 - The driver supports both **message-signaled interrupts** (MSI/MSI-X) and legacy **INTx**.
-- If Windows provides message interrupts (INF opt-in), the driver prefers MSI/MSI-X and programs virtio MSI-X vectors:
+- The canonical `inf/aero_virtio_snd.inf` opts into MSI/MSI-X on Windows 7 (see the `Interrupt Management\\MessageSignaledInterruptProperties` keys below).
+- When message interrupts are present, the driver prefers MSI/MSI-X and programs virtio MSI-X vector routing:
   - if Windows grants enough messages: **vector 0 = config**, **vectors 1..4 = queues 0..3** (`controlq`/`eventq`/`txq`/`rxq`)
   - otherwise: **all sources on vector 0**
 - If MSI/MSI-X is unavailable or vector programming fails, the driver falls back to INTx and (best-effort) disables virtio MSI-X routing
@@ -128,7 +129,7 @@ When MSI/MSI-X is active and Windows grants enough messages, the expected mappin
 - **Vector/message 0:** virtio **config** interrupt (`common_cfg.msix_config`)
 - **Vector/message 1..4:** queues 0..3 (`controlq`, `eventq`, `txq`, `rxq`)
 
-If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
+If Windows grants fewer than `1 + numQueues` messages, or if the device rejects per-queue vector assignment (vector readback mismatch), the driver falls back to:
 
 - **All sources on vector/message 0** (config + all queues)
 
@@ -237,7 +238,7 @@ Backend layer (WaveRT ↔ virtio-snd):
   - Default: `0` (created by the INF)
   - When `AllowPollingOnly=1`, the driver may start even if no usable interrupt resource can be discovered/connected (neither MSI/MSI-X nor INTx).
   - In that case it relies on polling used rings (driven by the WaveRT period timer DPC) instead of ISR/DPC delivery, and disables per-queue virtqueue interrupts best-effort to reduce interrupt storm risk.
-  - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains interrupt-driven by default.
+  - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains interrupt-driven (prefers MSI/MSI-X when available and falls back to INTx).
   - Applies to the modern virtio-pci transport packages (`aero_virtio_snd.sys` and `virtiosnd_legacy.sys`); the legacy I/O-port bring-up package does not use this toggle.
   - After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
