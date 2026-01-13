@@ -14,7 +14,7 @@ This crate implements an NVMe controller with:
   - I/O: `READ`, `WRITE`, `FLUSH`, `WRITE ZEROES`, `DATASET MANAGEMENT (DSM deallocate)`
 - DMA:
   - PRP1/PRP2 + PRP list support
-  - Limited SGL support for READ/WRITE:
+  - Limited SGL support for data transfers (e.g. `IDENTIFY`, `READ`, `WRITE`, DSM range lists):
     - Data Block descriptors (address + length)
     - Segment / Last Segment chaining (bounded)
 

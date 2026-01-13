@@ -13,7 +13,7 @@
 //! - Admin commands: IDENTIFY, CREATE/DELETE IO SQ/CQ, GET/SET FEATURES
 //! - NVM commands: READ, WRITE, FLUSH, WRITE ZEROES, DSM (deallocate)
 //! - PRP (PRP1/PRP2 + PRP lists)
-//! - Limited SGL support for READ/WRITE (Data Block + Segment/Last Segment chaining)
+//! - Limited SGL support for data transfers (Data Block + Segment/Last Segment chaining)
 //!
 //! ## Best-effort semantics
 //!
