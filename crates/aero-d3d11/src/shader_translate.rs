@@ -7,6 +7,7 @@ use crate::binding_model::{
 };
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::ShaderStage;
+use crate::sm4::opcode::opcode_name;
 use crate::sm4_ir::{
     OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
 };
@@ -2631,9 +2632,12 @@ fn emit_instructions(
                 });
             }
             Sm4Inst::Unknown { opcode } => {
+                let opcode = opcode_name(*opcode)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("opcode_{opcode}"));
                 return Err(ShaderTranslateError::UnsupportedInstruction {
                     inst_index,
-                    opcode: format!("opcode_{opcode}"),
+                    opcode,
                 });
             }
             Sm4Inst::Emit { .. } => {
@@ -3197,5 +3201,34 @@ mod tests {
         assert!(translated
             .wgsl
             .contains("@compute @workgroup_size(64, 2, 1)"));
+    }
+
+    #[test]
+    fn unknown_opcode_error_uses_friendly_name_when_known() {
+        // Force an "unknown opcode" through the emitter path and ensure the resulting error
+        // message uses `opcode_name()` instead of a raw `opcode_<n>` placeholder.
+        let module = minimal_module(vec![Sm4Inst::Unknown { opcode: 44 }]);
+
+        let io = IoMaps::default();
+        let resources = ResourceUsage {
+            cbuffers: BTreeMap::new(),
+            textures: BTreeSet::new(),
+            srv_buffers: BTreeSet::new(),
+            samplers: BTreeSet::new(),
+            uav_buffers: BTreeSet::new(),
+        };
+        let ctx = EmitCtx {
+            stage: ShaderStage::Pixel,
+            io: &io,
+            resources: &resources,
+        };
+
+        let mut w = WgslWriter::new();
+        let err = emit_instructions(&mut w, &module, &ctx).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("if_nz"),
+            "expected friendly opcode name in error message, got: {msg}"
+        );
     }
 }

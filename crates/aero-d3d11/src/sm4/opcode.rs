@@ -173,3 +173,57 @@ pub const OPERAND_INDEX_REP_IMMEDIATE32: u32 = 0;
 pub const OPERAND_SEL_MASK: u32 = 0;
 pub const OPERAND_SEL_SWIZZLE: u32 = 1;
 pub const OPERAND_SEL_SELECT1: u32 = 2;
+
+/// Returns the human-friendly name for an SM4/SM5 opcode.
+///
+/// The DXBC token stream encodes opcodes as numeric values. For bring-up work it's
+/// useful to turn "unknown opcode 44" into a disassembly-style mnemonic like
+/// "if_nz".
+///
+/// This table is intentionally small and is only used for diagnostics. It is
+/// expected to grow over time as more instructions are supported.
+pub fn opcode_name(opcode: u32) -> Option<&'static str> {
+    match opcode {
+        // ---- Currently supported by the decoder/translator ----
+        OPCODE_NOP => Some("nop"),
+        OPCODE_MOV => Some("mov"),
+        OPCODE_ADD => Some("add"),
+        OPCODE_MAD => Some("mad"),
+        OPCODE_MUL => Some("mul"),
+        OPCODE_RCP => Some("rcp"),
+        OPCODE_RSQ => Some("rsq"),
+        OPCODE_DP3 => Some("dp3"),
+        OPCODE_DP4 => Some("dp4"),
+        OPCODE_MIN => Some("min"),
+        OPCODE_MAX => Some("max"),
+        OPCODE_CUSTOMDATA => Some("customdata"),
+        OPCODE_RET => Some("ret"),
+        OPCODE_SAMPLE => Some("sample"),
+        OPCODE_SAMPLE_L => Some("sample_l"),
+        OPCODE_LD => Some("ld"),
+
+        // ---- Common SM4/SM5 opcodes not implemented yet (diagnostics only) ----
+        //
+        // The numeric IDs below are the DXBC `opcode_type` values (low 11 bits of the opcode token)
+        // as used by the D3D10+/SM4 tokenized program format.
+        //
+        // This is intentionally a small, "bring-up oriented" set: it is not meant to be a full
+        // disassembler table.
+        // Integer/bit ops.
+        OPCODE_MOVC => Some("movc"),
+        OPCODE_BFI => Some("bfi"),
+        OPCODE_UBFE => Some("ubfe"),
+        OPCODE_IBFE => Some("ibfe"),
+        // Raw/structured buffer ops.
+        OPCODE_LD_RAW => Some("ld_raw"),
+        OPCODE_LD_STRUCTURED => Some("ld_structured"),
+        OPCODE_STORE_RAW => Some("store_raw"),
+        OPCODE_STORE_STRUCTURED => Some("store_structured"),
+        // Control-flow / compare / integer ops not modeled by the IR yet.
+        30 => Some("iadd"),
+        44 => Some("if_nz"),
+        75 => Some("resinfo"),
+
+        _ => None,
+    }
+}
