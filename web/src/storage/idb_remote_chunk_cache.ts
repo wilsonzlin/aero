@@ -1,5 +1,13 @@
 import { idbReq, idbTxDone, openDiskManagerDb } from "./metadata.ts";
 
+export class IdbRemoteChunkCacheQuotaError extends Error {
+  override name = "IdbRemoteChunkCacheQuotaError";
+
+  constructor(message?: string, opts?: { cause?: unknown }) {
+    super(message ?? "IndexedDB quota exceeded while writing remote chunk cache", opts);
+  }
+}
+
 export type RemoteChunkCacheSignature = {
   imageId: string;
   version: string;
@@ -47,6 +55,14 @@ function validateChunkSize(chunkSize: number): void {
       `chunkSize must be within ${MIN_CHUNK_SIZE_BYTES}..${MAX_CHUNK_SIZE_BYTES} bytes (got ${chunkSize})`,
     );
   }
+}
+
+function isQuotaExceededError(err: unknown): boolean {
+  if (!err) return false;
+  if (err instanceof DOMException && err.name === "QuotaExceededError") return true;
+  if (err instanceof Error && err.name === "QuotaExceededError") return true;
+  if (typeof err === "object" && "name" in err && (err as { name?: unknown }).name === "QuotaExceededError") return true;
+  return false;
 }
 
 function signatureMatches(
@@ -351,51 +367,88 @@ export class IdbRemoteChunkCache {
     // Store as an ArrayBuffer with exact length (avoid capturing a larger backing buffer).
     const data = bytes.slice().buffer;
 
-    const tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
-    const chunksStore = tx.objectStore("remote_chunks");
-    const metaStore = tx.objectStore("remote_chunk_meta");
+    const attemptPut = async (): Promise<void> => {
+      const tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
+      const chunksStore = tx.objectStore("remote_chunks");
+      const metaStore = tx.objectStore("remote_chunk_meta");
 
-    const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
-    await this.applyPendingAccessInTx(meta, chunksStore);
+      const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
+      await this.applyPendingAccessInTx(meta, chunksStore);
 
-    const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
-    const oldBytes = existing?.byteLength ?? existing?.data?.byteLength ?? 0;
+      const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
+      const oldBytes = existing?.byteLength ?? existing?.data?.byteLength ?? 0;
 
-    meta.accessCounter += 1;
-    const lastAccess = meta.accessCounter;
+      meta.accessCounter += 1;
+      const lastAccess = meta.accessCounter;
 
-    const rec: RemoteChunkRecord = {
-      cacheKey: this.cacheKey,
-      chunkIndex,
-      data,
-      byteLength: data.byteLength,
-      lastAccess,
-    };
-    chunksStore.put(rec);
-
-    meta.bytesUsed = Math.max(0, meta.bytesUsed - oldBytes) + data.byteLength;
-    metaStore.put(meta);
-
-    let evicted: number[] = [];
-    if (this.cacheLimitBytes !== null && meta.bytesUsed > this.cacheLimitBytes) {
-      evicted = await enforceCacheLimitInTx({
+      const rec: RemoteChunkRecord = {
         cacheKey: this.cacheKey,
-        chunksStore,
-        metaStore,
-        meta,
-        cacheLimitBytes: this.cacheLimitBytes,
-        protectedChunkIndex: chunkIndex,
-      });
-    }
+        chunkIndex,
+        data,
+        byteLength: data.byteLength,
+        lastAccess,
+      };
+      chunksStore.put(rec);
 
-    await idbTxDone(tx);
+      meta.bytesUsed = Math.max(0, meta.bytesUsed - oldBytes) + data.byteLength;
+      metaStore.put(meta);
 
-    if (this.maxCachedChunks > 0) {
-      const cached = new Uint8Array(data);
-      this.cache.set(chunkIndex, cached);
-      this.touchCacheKey(chunkIndex, cached);
-      for (const idx of evicted) this.cache.delete(idx);
-      this.evictMemoryIfNeeded();
+      let evicted: number[] = [];
+      if (this.cacheLimitBytes !== null && meta.bytesUsed > this.cacheLimitBytes) {
+        evicted = await enforceCacheLimitInTx({
+          cacheKey: this.cacheKey,
+          chunksStore,
+          metaStore,
+          meta,
+          cacheLimitBytes: this.cacheLimitBytes,
+          protectedChunkIndex: chunkIndex,
+        });
+      }
+
+      await idbTxDone(tx);
+
+      if (this.maxCachedChunks > 0) {
+        const cached = new Uint8Array(data);
+        this.cache.set(chunkIndex, cached);
+        this.touchCacheKey(chunkIndex, cached);
+        for (const idx of evicted) this.cache.delete(idx);
+        this.evictMemoryIfNeeded();
+      }
+    };
+
+    try {
+      await attemptPut();
+      return;
+    } catch (err) {
+      if (!isQuotaExceededError(err)) {
+        throw err;
+      }
+
+      // If the cache is configured as unbounded, we have no safe eviction policy to
+      // resolve the quota pressure here. Surface a typed error so callers can
+      // treat the cache as disabled rather than failing the remote read.
+      if (this.cacheLimitBytes === null) {
+        throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
+      }
+
+      // Best-effort: evict older chunks to make room, then retry once. This helps
+      // in environments where quota checks happen before we can commit the same-tx
+      // eviction (or where the effective quota is smaller than our configured cap).
+      try {
+        await this.evictForQuotaInTx(Math.max(0, this.cacheLimitBytes - data.byteLength));
+      } catch {
+        // Best-effort eviction only; we'll retry once and then surface a typed error.
+      }
+
+      try {
+        await attemptPut();
+        return;
+      } catch (err2) {
+        if (isQuotaExceededError(err2)) {
+          throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err2 });
+        }
+        throw err2;
+      }
     }
   }
 
@@ -500,5 +553,30 @@ export class IdbRemoteChunkCache {
     };
     metaStore.put(fresh);
     return fresh;
+  }
+
+  private async evictForQuotaInTx(targetBytesUsed: number): Promise<void> {
+    // Only meaningful for finite cache limits. Callers should check.
+    const tx = this.db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
+    const chunksStore = tx.objectStore("remote_chunks");
+    const metaStore = tx.objectStore("remote_chunk_meta");
+
+    const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
+
+    const evicted = await enforceCacheLimitInTx({
+      cacheKey: this.cacheKey,
+      chunksStore,
+      metaStore,
+      meta,
+      cacheLimitBytes: targetBytesUsed,
+    });
+
+    await idbTxDone(tx);
+
+    for (const idx of evicted) {
+      this.cache.delete(idx);
+      this.pendingAccess.delete(idx);
+    }
+    this.evictMemoryIfNeeded();
   }
 }

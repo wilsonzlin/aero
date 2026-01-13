@@ -1,7 +1,7 @@
 import { openFileHandle, removeOpfsEntry } from "../platform/opfs.ts";
 import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
-import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
+import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "./idb_remote_chunk_cache";
 import { RemoteCacheManager, remoteChunkedDeliveryType, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR, pickDefaultBackend, type DiskBackend } from "./metadata";
 import { readJsonResponseWithLimit, readResponseBytesWithLimit, ResponseTooLargeError } from "./response_json";
@@ -1008,7 +1008,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private readonly sourceId: string;
   private readonly lease: DiskAccessLease;
   private readonly manifest: ParsedChunkedDiskManifest;
-  private readonly chunkCache: ChunkCache;
+  private chunkCache: ChunkCache;
   private readonly prefetchSequentialChunks: number;
   private readonly maxConcurrentFetches: number;
   private readonly semaphore: Semaphore;
@@ -1504,7 +1504,18 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       // If the cache was cleared (or the disk closed), allow the read to succeed
       // but avoid writing into a cache that the caller explicitly cleared.
       if (generation === this.cacheGeneration && !this.closed) {
-        await this.chunkCache.putChunk(chunkIndex, bytes);
+        try {
+          await this.chunkCache.putChunk(chunkIndex, bytes);
+        } catch (err) {
+          if (err instanceof IdbRemoteChunkCacheQuotaError) {
+            // Cache write failures (quota) should never fail the caller's remote read. Disable
+            // caching for the remainder of the disk lifetime so we don't retry failing writes.
+            this.chunkCache.close?.();
+            this.chunkCache = new NoopChunkCache();
+          } else {
+            throw err;
+          }
+        }
         this.telemetry.lastFetchMs = performance.now() - startTime;
         this.telemetry.lastFetchAtMs = Date.now();
       }

@@ -1,6 +1,6 @@
 import type { AsyncSectorDisk } from "../storage/disk.ts";
 import { RANGE_STREAM_CHUNK_SIZE } from "../storage/chunk_sizes.ts";
-import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache.ts";
+import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "../storage/idb_remote_chunk_cache.ts";
 import { pickDefaultBackend, type DiskBackend } from "../storage/metadata.ts";
 import { OpfsLruChunkCache } from "../storage/remote/opfs_lru_chunk_cache.ts";
 import { RemoteCacheManager, remoteRangeDeliveryType, type RemoteCacheKeyParts } from "../storage/remote_cache_manager.ts";
@@ -455,6 +455,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
   private cacheGeneration = 0;
   private idbCache: IdbRemoteChunkCache | null = null;
+  private idbCacheDisabled = false;
   private readonly leaseRefresher: DiskAccessLeaseRefresher;
   private remoteEtag: string | null = null;
   private remoteLastModified: string | null = null;
@@ -631,7 +632,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async getCacheStatus(): Promise<RemoteDiskCacheStatus> {
-    if (this.cacheLimitBytes === 0) {
+    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) {
       return {
         totalSize: this.totalSize,
         cachedBytes: 0,
@@ -672,8 +673,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       url: this.sourceId,
       totalSize: this.totalSize,
       blockSize: this.blockSize,
-      cacheLimitBytes: this.cacheLimitBytes,
-      cachedBytes: this.cachedBytes,
+      cacheLimitBytes: this.idbCacheDisabled ? 0 : this.cacheLimitBytes,
+      cachedBytes: this.idbCacheDisabled ? 0 : this.cachedBytes,
 
       blockRequests: this.telemetry.blockRequests,
       cacheHits: this.telemetry.cacheHits,
@@ -692,7 +693,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async flushCache(): Promise<void> {
-    if (this.cacheLimitBytes === 0) return;
+    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) return;
     if (this.cacheBackend === "idb") return;
     await this.opfsCache?.flush();
   }
@@ -716,7 +717,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       try {
         // Batch-load cached blocks when using IndexedDB. This reduces IDB roundtrips when a read spans
         // multiple blocks (e.g. large sequential reads).
-        if (this.cacheBackend === "idb" && this.idbCache && endBlock > startBlock) {
+        if (this.cacheBackend === "idb" && !this.idbCacheDisabled && this.idbCache && endBlock > startBlock) {
           const indices: number[] = [];
           for (let block = startBlock; block <= endBlock; block += 1) indices.push(block);
           await this.idbCache.getMany(indices);
@@ -857,7 +858,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       lastFetchRange: null,
     };
 
-    if (this.cacheLimitBytes === 0) return;
+    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) return;
 
     if (this.cacheBackend === "idb") {
       if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
@@ -909,7 +910,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     }
 
     this.telemetry.blockRequests++;
-    if (this.cacheLimitBytes === 0) {
+    if (this.cacheLimitBytes === 0 || this.idbCacheDisabled) {
       return await this.getBlockNoCache(blockIndex, onLog);
     }
     if (this.cacheBackend === "idb") {
@@ -1068,9 +1069,20 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         return buf;
       }
 
-      await this.idbCache!.put(blockIndex, buf);
-      const status = await this.idbCache!.getStatus();
-      this.cachedBytes = status.bytesUsed;
+      try {
+        await this.idbCache!.put(blockIndex, buf);
+        const status = await this.idbCache!.getStatus();
+        this.cachedBytes = status.bytesUsed;
+      } catch (err) {
+        if (err instanceof IdbRemoteChunkCacheQuotaError) {
+          // Cache write failures (quota) should never fail the caller's remote read. Disable
+          // caching for the remainder of the disk lifetime so we don't retry failing writes.
+          this.idbCacheDisabled = true;
+          this.cachedBytes = 0;
+        } else {
+          throw err;
+        }
+      }
       this.telemetry.bytesDownloaded += buf.byteLength;
       this.telemetry.lastFetchMs = performance.now() - start;
       this.telemetry.lastFetchAtMs = Date.now();
@@ -1175,7 +1187,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
       if (this.cacheLimitBytes !== 0) {
         if (this.cacheBackend === "idb") {
-          await this.idbCache?.clear();
+          if (!this.idbCacheDisabled) {
+            await this.idbCache?.clear();
+          }
         } else {
           await this.opfsCache?.clear();
         }

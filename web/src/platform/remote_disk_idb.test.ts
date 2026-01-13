@@ -106,6 +106,57 @@ function installMockRangeFetch(
   };
 }
 
+function installQuotaExceededOnRemoteChunksPut(disk: RemoteStreamingDisk): { putCalls: { count: number }; restore: () => void } {
+  const idbCache = (disk as unknown as { idbCache?: unknown }).idbCache as
+    | { db?: { transaction: (...args: any[]) => any } }
+    | undefined;
+  if (!idbCache?.db) throw new Error("expected disk to have an IDB cache");
+
+  const db = idbCache.db;
+  const putCalls = { count: 0 };
+  const originalTransaction = db.transaction.bind(db);
+
+  db.transaction = (storeNames: any, mode: any) => {
+    const tx = originalTransaction(storeNames, mode);
+    const originalObjectStore = tx.objectStore.bind(tx);
+    tx.objectStore = (name: any) => {
+      const store = originalObjectStore(name);
+      if (mode === "readwrite" && name === "remote_chunks") {
+        store.put = (_value: any, _key?: any) => {
+          putCalls.count += 1;
+
+          // Model a request that fails asynchronously and aborts the transaction,
+          // similar to how IndexedDB signals QuotaExceededError.
+          const req: { error: unknown; onerror: null | (() => void) } = { error: null, onerror: null };
+          (tx as any).requestStarted?.();
+          queueMicrotask(() => {
+            const err = new DOMException("quota exceeded", "QuotaExceededError");
+            req.error = err;
+            (tx as any).error = err;
+            try {
+              req.onerror?.();
+            } finally {
+              tx.onerror?.();
+              tx.onabort?.();
+              (tx as any).requestFinished?.();
+            }
+          });
+          return req;
+        };
+      }
+      return store;
+    };
+    return tx;
+  };
+
+  return {
+    putCalls,
+    restore: () => {
+      db.transaction = originalTransaction;
+    },
+  };
+}
+
 describe("RemoteStreamingDisk (IndexedDB cache)", () => {
   // For these tests we want caching enabled without eviction. Use a large cap (or `null`)
   // so we don't evict during the test runs.
@@ -176,6 +227,41 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     expect(Array.from(second)).toEqual(Array.from(image.subarray(0, 16)));
     expect(mock.stats.chunkRangeCalls).toBe(before + 1);
 
+    disk.close();
+    mock.restore();
+  });
+
+  it("tolerates IndexedDB quota errors when persisting cached blocks", async () => {
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+      blockSize,
+      cacheBackend: "idb",
+      cacheLimitBytes,
+      prefetchSequentialBlocks: 0,
+    });
+
+    const quota = installQuotaExceededOnRemoteChunksPut(disk);
+
+    const first = await disk.read(0, 16);
+    expect(Array.from(first)).toEqual(Array.from(image.subarray(0, 16)));
+
+    // Cache put should be attempted twice (initial + retry) but must not fail the read.
+    expect(quota.putCalls.count).toBe(2);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    const before = mock.stats.chunkRangeCalls;
+    const second = await disk.read(0, 16);
+    expect(Array.from(second)).toEqual(Array.from(image.subarray(0, 16)));
+
+    // With caching disabled, the second read must re-fetch.
+    expect(mock.stats.chunkRangeCalls).toBe(before + 1);
+    expect(quota.putCalls.count).toBe(2);
+
+    quota.restore();
     disk.close();
     mock.restore();
   });
