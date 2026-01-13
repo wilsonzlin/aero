@@ -25,10 +25,16 @@ import {
 export type IoWorkerSnapshotDeviceState = { kind: string; bytes: Uint8Array };
 
 export type IoWorkerSnapshotRuntimes = Readonly<{
+  // Optional USB controller snapshot bridges/runtimes.
+  //
+  // All controller snapshots are stored under a single outer `DeviceId::USB` entry (kind
+  // `usb.uhci` in the web runtime for historical reasons). When multiple controllers are present
+  // (UHCI+EHCI+xHCI), we wrap their individual blobs in a deterministic container so they can be
+  // snapshotted/restored together.
+  usbXhciControllerBridge: unknown | null;
   usbUhciRuntime: unknown | null;
   usbUhciControllerBridge: unknown | null;
   usbEhciControllerBridge: unknown | null;
-  usbXhciControllerBridge: unknown | null;
   i8042?: unknown | null;
   audioHda?: unknown | null;
   audioVirtioSnd?: unknown | null;
@@ -112,8 +118,22 @@ function tryLoadState(instance: unknown, bytes: Uint8Array): boolean {
 }
 
 export function snapshotUsbDeviceState(
-  runtimes: Pick<IoWorkerSnapshotRuntimes, "usbUhciRuntime" | "usbUhciControllerBridge" | "usbEhciControllerBridge" | "usbXhciControllerBridge">,
+  runtimes: Pick<
+    IoWorkerSnapshotRuntimes,
+    "usbXhciControllerBridge" | "usbUhciRuntime" | "usbUhciControllerBridge" | "usbEhciControllerBridge"
+  >,
 ): IoWorkerSnapshotDeviceState | null {
+  let xhciBytes: Uint8Array | null = null;
+  const xhci = runtimes.usbXhciControllerBridge;
+  if (xhci) {
+    try {
+      const bytes = trySaveState(xhci);
+      if (bytes) xhciBytes = bytes;
+    } catch (err) {
+      console.warn("[io.worker] XhciControllerBridge save_state failed:", err);
+    }
+  }
+
   let uhciBytes: Uint8Array | null = null;
   const runtime = runtimes.usbUhciRuntime;
   if (runtime) {
@@ -146,26 +166,15 @@ export function snapshotUsbDeviceState(
     }
   }
 
-  let xhciBytes: Uint8Array | null = null;
-  const xhci = runtimes.usbXhciControllerBridge;
-  if (xhci) {
-    try {
-      const bytes = trySaveState(xhci);
-      if (bytes) xhciBytes = bytes;
-    } catch (err) {
-      console.warn("[io.worker] XhciControllerBridge save_state failed:", err);
-    }
-  }
-
-  if (!uhciBytes && !ehciBytes && !xhciBytes) return null;
+  if (!xhciBytes && !uhciBytes && !ehciBytes) return null;
 
   // Backwards compatibility: older snapshots contain a single UHCI blob.
-  if (uhciBytes && !ehciBytes && !xhciBytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: uhciBytes };
+  if (uhciBytes && !xhciBytes && !ehciBytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: uhciBytes };
 
   const entries: Array<{ tag: string; bytes: Uint8Array }> = [];
+  if (xhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_XHCI, bytes: xhciBytes });
   if (uhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_UHCI, bytes: uhciBytes });
   if (ehciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_EHCI, bytes: ehciBytes });
-  if (xhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_XHCI, bytes: xhciBytes });
   return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: encodeUsbSnapshotContainer(entries) };
 }
 
@@ -263,9 +272,30 @@ export function collectIoWorkerSnapshotDeviceStates(runtimes: IoWorkerSnapshotRu
 }
 
 export function restoreUsbDeviceState(
-  runtimes: Pick<IoWorkerSnapshotRuntimes, "usbUhciRuntime" | "usbUhciControllerBridge" | "usbEhciControllerBridge" | "usbXhciControllerBridge">,
+  runtimes: Pick<
+    IoWorkerSnapshotRuntimes,
+    "usbXhciControllerBridge" | "usbUhciRuntime" | "usbUhciControllerBridge" | "usbEhciControllerBridge"
+  >,
   bytes: Uint8Array,
 ): void {
+  const restoreXhci = (xhciBytes: Uint8Array): void => {
+    const bridge = runtimes.usbXhciControllerBridge;
+    if (!bridge) {
+      console.warn("[io.worker] Snapshot contains xHCI USB state but XhciControllerBridge runtime is unavailable; ignoring blob.");
+      return;
+    }
+
+    try {
+      if (!tryLoadState(bridge, xhciBytes)) {
+        console.warn(
+          "[io.worker] Snapshot contains xHCI USB state but XhciControllerBridge has no load_state/restore_state hook; ignoring blob.",
+        );
+      }
+    } catch (err) {
+      console.warn("[io.worker] XhciControllerBridge load_state failed:", err);
+    }
+  };
+
   const restoreUhci = (uhciBytes: Uint8Array): void => {
     // Backwards compatibility: the entire blob is a UHCI snapshot.
     const runtime = runtimes.usbUhciRuntime;
@@ -289,9 +319,10 @@ export function restoreUsbDeviceState(
 
   const decoded = decodeUsbSnapshotContainer(bytes);
   if (decoded) {
+    const xhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes ?? null;
     const uhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes ?? null;
     const ehci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_EHCI)?.bytes ?? null;
-    const xhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes ?? null;
+    if (xhci) restoreXhci(xhci);
     if (uhci) restoreUhci(uhci);
     if (ehci) {
       const bridge = runtimes.usbEhciControllerBridge;
@@ -309,25 +340,19 @@ export function restoreUsbDeviceState(
         }
       }
     }
-    if (xhci) {
-      const bridge = runtimes.usbXhciControllerBridge;
-      if (!bridge) {
-        console.warn("[io.worker] Snapshot contains xHCI USB state but XhciControllerBridge runtime is unavailable; ignoring blob.");
-      } else {
-        try {
-          if (!tryLoadState(bridge, xhci)) {
-            console.warn(
-              "[io.worker] Snapshot contains xHCI USB state but XhciControllerBridge has no load_state/restore_state hook; ignoring blob.",
-            );
-          }
-        } catch (err) {
-          console.warn("[io.worker] XhciControllerBridge load_state failed:", err);
-        }
-      }
-    }
     return;
   }
 
+  // Legacy/raw USB snapshots: try xHCI first so older xHCI-only snapshots can be restored when an
+  // xHCI bridge is present. If that fails, fall back to the historical UHCI restore path.
+  const xhciBridge = runtimes.usbXhciControllerBridge;
+  if (xhciBridge) {
+    try {
+      if (tryLoadState(xhciBridge, bytes)) return;
+    } catch (err) {
+      console.warn("[io.worker] XhciControllerBridge load_state failed:", err);
+    }
+  }
   restoreUhci(bytes);
 }
 

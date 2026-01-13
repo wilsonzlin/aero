@@ -27,7 +27,7 @@
     "test:unit": "node ./scripts/vitest_grep_shim.mjs",
     "test:unit:watch": "vitest",
     "pretest:unit:coverage": "npm run check:node",
-    "test:unit:coverage": "vitest run --coverage",
+    "test:unit:coverage": "node ./scripts/vitest_grep_shim.mjs --coverage",
     "wasm:build:dev": "node ./scripts/build_wasm.mjs single dev",
     "wasm:build:release": "npm run wasm:build",
     "wasm:size": "node ./scripts/wasm-size.mjs"

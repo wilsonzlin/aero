@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 
 /**
  * Vitest does not currently support a Mocha-style `--grep` flag, but a large part of the repo's
@@ -12,31 +11,40 @@ import { fileURLToPath } from "node:url";
  */
 function translateArgs(argv) {
   const out = [];
-  const filters = [];
+  const patterns = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--grep") {
+    if (arg === "--grep" || arg === "-g") {
       const pattern = argv[i + 1];
       if (pattern) {
-        filters.push(pattern);
+        patterns.push(pattern);
         i++;
       }
       continue;
     }
     if (arg.startsWith("--grep=")) {
       const pattern = arg.slice("--grep=".length);
-      if (pattern) filters.push(pattern);
+      if (pattern) patterns.push(pattern);
       continue;
     }
     out.push(arg);
   }
-  return { args: out, filters };
+  return { args: out, patterns };
 }
 
-const { args, filters } = translateArgs(process.argv.slice(2));
-const vitestBin = fileURLToPath(new URL("../../node_modules/.bin/vitest", import.meta.url));
+const { args, patterns } = translateArgs(process.argv.slice(2));
 
-const child = spawn(process.execPath, [vitestBin, "run", ...args, ...filters], { stdio: "inherit" });
+if (patterns.length) {
+  // Vitest expects a regexp source string here (same idea as Mocha/Jest).
+  // If multiple `--grep` flags are provided, match any of them.
+  args.push("--testNamePattern", patterns.length === 1 ? patterns[0] : patterns.map((p) => `(?:${p})`).join("|"));
+}
+
+const child = spawn("vitest", ["run", ...args], {
+  stdio: "inherit",
+  // `shell: true` is required for Windows because `vitest` is a `.cmd` shim.
+  shell: process.platform === "win32",
+});
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 1);
