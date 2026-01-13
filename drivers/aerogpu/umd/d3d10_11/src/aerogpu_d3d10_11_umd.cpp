@@ -2916,10 +2916,10 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (map_type == AEROGPU_DDI_MAP_WRITE_DISCARD) {
-    if (subresource != 0) {
-      return E_INVALIDARG;
-    }
     if (res->bind_flags & (kD3D11BindVertexBuffer | kD3D11BindIndexBuffer)) {
+      if (subresource != 0) {
+        return E_INVALIDARG;
+      }
       void* data = nullptr;
       HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/true, &data);
       if (FAILED(hr)) {
@@ -2931,6 +2931,9 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
       return S_OK;
     }
     if (res->bind_flags & kD3D11BindConstantBuffer) {
+      if (subresource != 0) {
+        return E_INVALIDARG;
+      }
       void* data = nullptr;
       HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/true, &data);
       if (FAILED(hr)) {
@@ -2942,10 +2945,10 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
       return S_OK;
     }
   } else if (map_type == AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE) {
-    if (subresource != 0) {
-      return E_INVALIDARG;
-    }
     if (res->bind_flags & (kD3D11BindVertexBuffer | kD3D11BindIndexBuffer)) {
+      if (subresource != 0) {
+        return E_INVALIDARG;
+      }
       void* data = nullptr;
       HRESULT hr = map_dynamic_buffer_locked(dev, res, /*discard=*/false, &data);
       if (FAILED(hr)) {
@@ -2958,11 +2961,11 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     }
   }
 
-  if (res->kind == ResourceKind::Texture2D && res->bind_flags == 0) {
+  if (res->kind == ResourceKind::Texture2D) {
     return map_resource_locked(dev, res, subresource, map_type, map_flags, pMapped);
   }
 
-  // Conservative: only support generic map on buffers and staging textures for now.
+  // Conservative: only support generic map on buffers and textures for now.
   if (res->kind == ResourceKind::Buffer) {
     return map_resource_locked(dev, res, subresource, map_type, map_flags, pMapped);
   }
@@ -4496,7 +4499,9 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
     rt = view ? view->resource : nullptr;
   }
   if (!rt) {
-    rt = dev->current_rtv;
+    // D3D10/10.1 ClearRTV always provides an explicit RTV handle, but keep a
+    // fallback for tests/tools that call into the portable UMD without a view.
+    rt = (dev->current_rtv_count != 0) ? dev->current_rtv_resources[0] : nullptr;
   }
 
   if (rt && rt->kind == ResourceKind::Texture2D && rt->width != 0 && rt->height != 0) {

@@ -2623,10 +2623,10 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     #endif
     }
     want_host_owned = want_host_owned && !is_shared;
-    if (want_host_owned && (res->mip_levels != 1 || res->array_size != 1)) {
-      // Host-owned Texture2D updates go through UPLOAD_RESOURCE, which only supports mip0/layer0.
-      want_host_owned = false;
-    }
+    // Host-owned Texture2D updates go through `AEROGPU_CMD_UPLOAD_RESOURCE`. The protocol supports
+    // arbitrary byte ranges, so host-owned is compatible with mip/array textures as long as uploads
+    // are expressed in terms of subresource byte offsets (the Map/Unmap and UpdateSubresourceUP
+    // paths upload whole subresources).
     HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
