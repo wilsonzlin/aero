@@ -32,6 +32,19 @@ endpoints reliably, with deterministic snapshot/restore.
 
 The EHCI bring-up work in-tree is intentionally staged.
 
+What exists today (bring-up stage):
+
+- Capability + operational MMIO registers are implemented (including W1C status masking).
+- Root hub ports are implemented with **deterministic timers** (reset/resume) and change-bit latching.
+- `FRINDEX` advances in 1ms ticks (adds 8 microframes per tick) when the controller is running.
+- IRQ line level is derived from `USBSTS`/`USBINTR` (notably `PCD` for port changes).
+
+What is *not* implemented yet (still MVP-relevant):
+
+- Async/periodic schedule walking (QH/qTD) is currently a stub.
+- Snapshot/restore for EHCI controller state + attached USB topology.
+- Companion routing (`CONFIGFLAG` / `PORT_OWNER`) and any split/TT behavior.
+
 Current code locations:
 
 - Rust EHCI controller core: `crates/aero-usb/src/ehci/{mod.rs, regs.rs, hub.rs}`
@@ -156,6 +169,12 @@ Each port tracks:
 - **Suspend/Resume** (SUSP/FPR) and a **resume timer** (if modeled)
 - **Port power** (`PP`) (Aero currently models ports as powered-on by default, but honors writes)
 - **Port owner** (`PORT_OWNER`) when companion routing is enabled (planned; not modeled yet)
+
+Implementation note:
+
+- The current `aero-usb` EHCI model defaults to **6 root hub ports** (see
+  `crates/aero-usb/src/ehci/mod.rs::DEFAULT_PORT_COUNT`), which is a common PC-style EHCI
+  configuration.
 
 ### Timing model
 
@@ -374,6 +393,15 @@ restore (Promises cannot be rewound). The restore path must:
 
 This is the same rule described for UHCI passthrough in
 [`docs/webusb-passthrough.md#snapshotrestore-save-state`](./webusb-passthrough.md#snapshotrestore-save-state).
+
+### Browser snapshot container note (current runtime wiring)
+
+In the browser runtime, the I/O worker may store multiple USB controller blobs inside a single
+`"AUSB"` container so newer snapshots can carry UHCI + EHCI side-by-side.
+
+See:
+
+- `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`)
 
 ---
 
