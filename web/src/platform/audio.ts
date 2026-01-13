@@ -19,6 +19,19 @@ export type CreateAudioOutputOptions = {
   latencyHint?: AudioContextLatencyCategory | number;
   channelCount?: number;
   /**
+   * If true, the AudioWorklet posts `type: "underrun"` messages when it renders missing frames.
+   *
+   * This is intended for debugging/diagnostics. In persistent underrun situations, posting a
+   * message every render quantum can be expensive, so messages are disabled by default and (when
+   * enabled) rate-limited via `underrunMessageIntervalMs`.
+   */
+  sendUnderrunMessages?: boolean;
+  /**
+   * Minimum interval between `type: "underrun"` messages posted by the AudioWorklet, in
+   * milliseconds (default handled by the worklet).
+   */
+  underrunMessageIntervalMs?: number;
+  /**
    * When an AudioContext is resumed after being suspended/interrupted, the shared ring buffer may
    * contain a backlog of buffered audio. Discarding the backlog keeps playback "live" instead of
    * playing stale buffered audio with high latency.
@@ -548,6 +561,8 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       ? Math.max(1, Math.min(2, Math.floor(requestedChannelCount)))
       : 2;
   const discardOnResume = typeof options.discardOnResume === "boolean" ? options.discardOnResume : true;
+  const sendUnderrunMessages = options.sendUnderrunMessages === true;
+  const underrunMessageIntervalMs = finiteNonNegative(options.underrunMessageIntervalMs);
 
   type AudioContextCtorArgs = [] | [AudioContextOptions];
   const contextAttempts: ReadonlyArray<Readonly<{ label: string; args: AudioContextCtorArgs }>> = [
@@ -646,6 +661,8 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     ringBuffer: ringBuffer.buffer,
     channelCount,
     capacityFrames: ringBufferFrames,
+    sendUnderrunMessages,
+    underrunMessageIntervalMs,
   };
   const nodeOptionsFull = {
     processorOptions,

@@ -31,6 +31,21 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     const ringBuffer = options?.processorOptions?.ringBuffer;
     const channelCount = options?.processorOptions?.channelCount;
     const capacityFrames = options?.processorOptions?.capacityFrames;
+    const sendUnderrunMessages = options?.processorOptions?.sendUnderrunMessages;
+    const underrunMessageIntervalMs = options?.processorOptions?.underrunMessageIntervalMs;
+
+    // Underrun messages are optional diagnostics. Persistent underruns can happen at render-quantum
+    // rate (~375 msg/sec at 48kHz), which can add overhead and worsen glitches. Default to *not*
+    // posting per-underrun messages; the shared-memory counter is always updated.
+    this._sendUnderrunMessages = sendUnderrunMessages === true;
+    // Rate-limit underrun messages when enabled (default: 250ms). Treat invalid/negative values
+    // defensively to avoid accidental MessagePort spam.
+    this._underrunMessageIntervalMs =
+      typeof underrunMessageIntervalMs === "number" && Number.isFinite(underrunMessageIntervalMs) && underrunMessageIntervalMs >= 0
+        ? underrunMessageIntervalMs
+        : 250;
+    this._lastUnderrunMessageTimeMs = null;
+    this._pendingUnderrunFrames = 0;
 
     if (typeof SharedArrayBuffer !== "undefined" && ringBuffer instanceof SharedArrayBuffer) {
       // Layout is described in:
@@ -165,13 +180,40 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     if (framesToRead < framesNeeded) {
       const missing = framesNeeded - framesToRead;
       const newTotal = addUnderrunFrames(this._header, missing);
-      this.port.postMessage({
-        type: "underrun",
-        underrunFramesAdded: missing,
-        underrunFramesTotal: newTotal,
-        // Backwards-compatible field name; this is a frame counter (not events).
-        underrunCount: newTotal,
-      });
+      if (this._sendUnderrunMessages) {
+        this._pendingUnderrunFrames = (this._pendingUnderrunFrames + (missing >>> 0)) >>> 0;
+
+        const nowMs = (() => {
+          // AudioWorkletGlobalScope exposes `currentTime` (seconds) / `currentFrame` (frames). When
+          // running under Node-based tests, fall back to `performance.now()` / `Date.now()`.
+          // eslint-disable-next-line no-undef
+          const ct = typeof currentTime === "number" && Number.isFinite(currentTime) ? currentTime : null;
+          if (ct !== null) return ct * 1000;
+          if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
+          return Date.now();
+        })();
+
+        const last = this._lastUnderrunMessageTimeMs;
+        const intervalMs = this._underrunMessageIntervalMs;
+        const canSend = last === null || !Number.isFinite(last) || nowMs - last >= intervalMs || nowMs < last;
+
+        if (canSend) {
+          this._lastUnderrunMessageTimeMs = nowMs;
+          const added = this._pendingUnderrunFrames >>> 0;
+          this._pendingUnderrunFrames = 0;
+          try {
+            this.port.postMessage({
+              type: "underrun",
+              underrunFramesAdded: added,
+              underrunFramesTotal: newTotal,
+              // Backwards-compatible field name; this is a frame counter (not events).
+              underrunCount: newTotal,
+            });
+          } catch (_e) {
+            // Avoid crashing the AudioWorklet if the host's MessagePort is misbehaving.
+          }
+        }
+      }
     }
 
     if (framesToRead > 0) {

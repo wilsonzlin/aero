@@ -6,6 +6,8 @@ export class AeroAudioProcessor {
       ringBuffer?: SharedArrayBuffer;
       channelCount?: number;
       capacityFrames?: number;
+      sendUnderrunMessages?: boolean;
+      underrunMessageIntervalMs?: number;
     };
   });
 

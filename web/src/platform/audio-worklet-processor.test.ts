@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AeroAudioProcessor, addUnderrunFrames } from "./audio-worklet-processor.js";
 import { requiredBytes, wrapRingBuffer } from "../audio/audio_worklet_ring";
@@ -57,47 +57,125 @@ describe("audio-worklet-processor underrun counter", () => {
     // Interleaved samples: [L0, R0, L1, R1, ...]
     views.samples.set([0.1, 0.2, 1.1, 1.2]);
 
-    const proc = new AeroAudioProcessor({
-      processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
-    });
+    const originalCurrentTime = (globalThis as unknown as { currentTime?: unknown }).currentTime;
+    try {
+      // Control the worklet's time source so we can deterministically exercise the message rate
+      // limiter in Node-based unit tests.
+      (globalThis as unknown as { currentTime?: number }).currentTime = 0;
 
-    let lastMessage: unknown = null;
-    proc.port.postMessage = (msg: unknown) => {
-      lastMessage = msg;
-    };
+      const proc = new AeroAudioProcessor({
+        processorOptions: { ringBuffer: sab, channelCount, capacityFrames, sendUnderrunMessages: true },
+      });
 
-    const framesNeeded = 4;
-    const outputs: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
-    proc.process([], outputs);
+      let lastMessage: unknown = null;
+      proc.port.postMessage = (msg: unknown) => {
+        lastMessage = msg;
+      };
 
-    expect(outputs[0][0]).toEqual(Float32Array.from([0.1, 1.1, 0, 0]));
-    expect(outputs[0][1]).toEqual(Float32Array.from([0.2, 1.2, 0, 0]));
+      const framesNeeded = 4;
+      const outputs: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
+      proc.process([], outputs);
 
-    expect(Atomics.load(views.readIndex, 0) >>> 0).toBe(2);
-    expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(2);
-    expect(lastMessage).toEqual({
-      type: "underrun",
-      underrunFramesAdded: 2,
-      underrunFramesTotal: 2,
-      underrunCount: 2,
-    });
+      expect(outputs[0][0]).toEqual(Float32Array.from([0.1, 1.1, 0, 0]));
+      expect(outputs[0][1]).toEqual(Float32Array.from([0.2, 1.2, 0, 0]));
 
-    // Next render quantum: no frames available (fully underrun). The counter should add *frames*.
-    lastMessage = null;
-    const outputs2: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
-    proc.process([], outputs2);
+      expect(Atomics.load(views.readIndex, 0) >>> 0).toBe(2);
+      expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(2);
+      expect(lastMessage).toEqual({
+        type: "underrun",
+        underrunFramesAdded: 2,
+        underrunFramesTotal: 2,
+        underrunCount: 2,
+      });
 
-    expect(outputs2[0][0]).toEqual(new Float32Array(framesNeeded));
-    expect(outputs2[0][1]).toEqual(new Float32Array(framesNeeded));
+      // Next render quantum: no frames available (fully underrun). The counter should add *frames*.
+      // Advance time so the rate limiter allows a second message.
+      (globalThis as unknown as { currentTime?: number }).currentTime = 1;
+      lastMessage = null;
+      const outputs2: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
+      proc.process([], outputs2);
 
-    // Missing 4 more frames -> total 6.
-    expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(6);
-    expect(lastMessage).toEqual({
-      type: "underrun",
-      underrunFramesAdded: 4,
-      underrunFramesTotal: 6,
-      underrunCount: 6,
-    });
+      expect(outputs2[0][0]).toEqual(new Float32Array(framesNeeded));
+      expect(outputs2[0][1]).toEqual(new Float32Array(framesNeeded));
+
+      // Missing 4 more frames -> total 6.
+      expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(6);
+      expect(lastMessage).toEqual({
+        type: "underrun",
+        underrunFramesAdded: 4,
+        underrunFramesTotal: 6,
+        underrunCount: 6,
+      });
+    } finally {
+      const g = globalThis as unknown as { currentTime?: unknown };
+      if (originalCurrentTime === undefined) {
+        delete g.currentTime;
+      } else {
+        g.currentTime = originalCurrentTime;
+      }
+    }
+  });
+
+  it("rate-limits underrun messages (and still updates the shared counter)", () => {
+    const capacityFrames = 4;
+    const channelCount = 1;
+    const { sab, views } = makeRingBuffer(capacityFrames, channelCount);
+
+    Atomics.store(views.readIndex, 0, 0);
+    Atomics.store(views.writeIndex, 0, 0);
+    Atomics.store(views.underrunCount, 0, 0);
+
+    const originalCurrentTime = (globalThis as unknown as { currentTime?: unknown }).currentTime;
+    try {
+      (globalThis as unknown as { currentTime?: number }).currentTime = 0;
+
+      const proc = new AeroAudioProcessor({
+        processorOptions: {
+          ringBuffer: sab,
+          channelCount,
+          capacityFrames,
+          sendUnderrunMessages: true,
+          underrunMessageIntervalMs: 1000,
+        },
+      });
+
+      const postMessage = vi.fn();
+      proc.port.postMessage = postMessage;
+
+      const framesNeeded = 4;
+      const outputs: Float32Array[][] = [[new Float32Array(framesNeeded)]];
+
+      proc.process([], outputs);
+      proc.process([], outputs);
+      proc.process([], outputs);
+
+      // Three consecutive underruns: the shared counter should always reflect total missing frames.
+      expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(12);
+
+      // But underrun messages should be rate-limited to at most 1 within the interval.
+      expect(postMessage.mock.calls.length).toBe(1);
+
+      // Advance time beyond the interval; the next underrun should emit a new message including the
+      // latest total.
+      (globalThis as unknown as { currentTime?: number }).currentTime = 2;
+      proc.process([], outputs);
+
+      expect(Atomics.load(views.underrunCount, 0) >>> 0).toBe(16);
+      expect(postMessage.mock.calls.length).toBe(2);
+      expect(postMessage.mock.calls[1]?.[0]).toEqual({
+        type: "underrun",
+        underrunFramesAdded: 12,
+        underrunFramesTotal: 16,
+        underrunCount: 16,
+      });
+    } finally {
+      const g = globalThis as unknown as { currentTime?: unknown };
+      if (originalCurrentTime === undefined) {
+        delete g.currentTime;
+      } else {
+        g.currentTime = originalCurrentTime;
+      }
+    }
   });
 
   it("wraps the underrun counter as u32", () => {
