@@ -215,3 +215,66 @@ fn wgsl_frc_cmp_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn wgsl_setp_and_predication_compiles() {
+    // ps_3_0:
+    //   def c0, 1,1,1,1
+    //   def c1, 0,0,0,0
+    //   def c2, 0.25, 0.5, 0.75, 1.0
+    //   setp_ge p0, c0.x, c1.x
+    //   mov (p0) oC0, c2
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // def c0, 1,1,1,1
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3F80_0000,
+        0x3F80_0000,
+        0x3F80_0000,
+        0x3F80_0000,
+        // def c1, 0,0,0,0
+        opcode_token(81, 5),
+        dst_token(2, 1, 0xF),
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        // def c2, 0.25, 0.5, 0.75, 1.0
+        opcode_token(81, 5),
+        dst_token(2, 2, 0xF),
+        0x3E80_0000,
+        0x3F00_0000,
+        0x3F40_0000,
+        0x3F80_0000,
+        // setp_ge p0, c0.x, c1.x  (compare op 2 = ge)
+        opcode_token(78, 3) | (2u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        src_token(2, 1, 0x00, 0), // c1.xxxx
+        // mov (p0) oC0, c2
+        opcode_token(1, 3) | 0x1000_0000, // predicated
+        dst_token(8, 0, 0xF),
+        src_token(2, 2, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("var p0"), "{wgsl}");
+    assert!(wgsl.contains("if ("), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}

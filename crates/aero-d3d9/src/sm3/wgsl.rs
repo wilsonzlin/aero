@@ -171,6 +171,7 @@ fn default_vec4(ty: ScalarTy) -> &'static str {
 struct RegUsage {
     temps: BTreeSet<u32>,
     outputs: BTreeSet<(RegFile, u32)>,
+    predicates: BTreeSet<u32>,
     float_consts: BTreeSet<u32>,
     int_consts: BTreeSet<u32>,
     bool_consts: BTreeSet<u32>,
@@ -181,6 +182,7 @@ impl RegUsage {
         Self {
             temps: BTreeSet::new(),
             outputs: BTreeSet::new(),
+            predicates: BTreeSet::new(),
             float_consts: BTreeSet::new(),
             int_consts: BTreeSet::new(),
             bool_consts: BTreeSet::new(),
@@ -212,6 +214,11 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage) {
 }
 
 fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
+    // Predicate modifier usage.
+    if let Some(pred) = &op_modifiers(op).predicate {
+        collect_reg_ref_usage(&pred.reg, usage);
+    }
+
     match op {
         IrOp::Mov { dst, src, .. }
         | IrOp::Rcp { dst, src, .. }
@@ -299,6 +306,9 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
         RegFile::Temp => {
             usage.temps.insert(reg.index);
         }
+        RegFile::Predicate => {
+            usage.predicates.insert(reg.index);
+        }
         RegFile::ColorOut | RegFile::DepthOut | RegFile::RastOut | RegFile::AttrOut
         | RegFile::TexCoordOut | RegFile::Output => {
             usage.outputs.insert((reg.file, reg.index));
@@ -319,6 +329,26 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
     }
     if let Some(rel) = &reg.relative {
         collect_reg_ref_usage(&rel.reg, usage);
+    }
+}
+
+fn op_modifiers(op: &IrOp) -> &InstModifiers {
+    match op {
+        IrOp::Mov { modifiers, .. }
+        | IrOp::Add { modifiers, .. }
+        | IrOp::Sub { modifiers, .. }
+        | IrOp::Mul { modifiers, .. }
+        | IrOp::Mad { modifiers, .. }
+        | IrOp::Dp3 { modifiers, .. }
+        | IrOp::Dp4 { modifiers, .. }
+        | IrOp::Rcp { modifiers, .. }
+        | IrOp::Rsq { modifiers, .. }
+        | IrOp::Frc { modifiers, .. }
+        | IrOp::Min { modifiers, .. }
+        | IrOp::Max { modifiers, .. }
+        | IrOp::SetCmp { modifiers, .. }
+        | IrOp::Select { modifiers, .. }
+        | IrOp::TexSample { modifiers, .. } => modifiers,
     }
 }
 
@@ -447,17 +477,37 @@ fn cond_expr(cond: &Cond) -> Result<String, WgslError> {
     }
 }
 
-fn apply_float_result_modifiers(
-    expr: String,
-    mods: &InstModifiers,
-) -> Result<String, WgslError> {
-    if mods.shift != ResultShift::None {
-        return Err(err("result shift modifiers not supported in WGSL lowering"));
-    }
+fn apply_float_result_modifiers(expr: String, mods: &InstModifiers) -> Result<String, WgslError> {
+    let mut out = expr;
+    out = match mods.shift {
+        ResultShift::None => out,
+        ResultShift::Mul2 => format!("({out}) * 2.0"),
+        ResultShift::Mul4 => format!("({out}) * 4.0"),
+        ResultShift::Mul8 => format!("({out}) * 8.0"),
+        ResultShift::Div2 => format!("({out}) / 2.0"),
+        ResultShift::Div4 => format!("({out}) / 4.0"),
+        ResultShift::Div8 => format!("({out}) / 8.0"),
+        ResultShift::Unknown(v) => return Err(err(format!("unknown result shift modifier {v}"))),
+    };
     if mods.saturate {
-        Ok(format!("clamp({expr}, vec4<f32>(0.0), vec4<f32>(1.0))"))
+        out = format!("clamp({out}, vec4<f32>(0.0), vec4<f32>(1.0))");
+    }
+    Ok(out)
+}
+
+fn predicate_ref_expr(pred: &crate::sm3::ir::PredicateRef) -> Result<String, WgslError> {
+    let mut e = reg_var_name(&pred.reg)?;
+    e.push('.');
+    e.push(match pred.component {
+        SwizzleComponent::X => 'x',
+        SwizzleComponent::Y => 'y',
+        SwizzleComponent::Z => 'z',
+        SwizzleComponent::W => 'w',
+    });
+    if pred.negate {
+        Ok(format!("!({e})"))
     } else {
-        Ok(expr)
+        Ok(e)
     }
 }
 
@@ -587,9 +637,6 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             if aty != bty {
                 return Err(err("comparison between mismatched types"));
             }
-            if aty != ScalarTy::F32 {
-                return Err(err("setcmp only supports float sources in WGSL lowering"));
-            }
             let op_str = match op {
                 CompareOp::Gt => ">",
                 CompareOp::Ge => ">=",
@@ -599,15 +646,34 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
                 CompareOp::Le => "<=",
                 CompareOp::Unknown(_) => return Err(err("unknown comparison op")),
             };
+            let cmp_expr = format!("({a} {op_str} {b})");
+
             let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
-            if dst_ty != ScalarTy::F32 {
-                return Err(err("cmp destination must be float"));
+            match dst_ty {
+                ScalarTy::F32 => {
+                    if aty != ScalarTy::F32 {
+                        return Err(err("setcmp only supports float sources in WGSL lowering"));
+                    }
+                    let e = apply_float_result_modifiers(
+                        format!("select(vec4<f32>(0.0), vec4<f32>(1.0), {cmp_expr})"),
+                        modifiers,
+                    )?;
+                    emit_assign(dst, e)
+                }
+                ScalarTy::Bool => {
+                    // `setp` writes predicate registers; result modifiers are meaningless.
+                    if modifiers.saturate || modifiers.shift != ResultShift::None {
+                        return Err(err("result modifiers not supported for predicate writes"));
+                    }
+                    if aty == ScalarTy::Bool
+                        && !matches!(op, CompareOp::Eq | CompareOp::Ne)
+                    {
+                        return Err(err("ordered comparison on bool source"));
+                    }
+                    emit_assign(dst, cmp_expr)
+                }
+                ScalarTy::I32 => Err(err("setcmp destination cannot be integer")),
             }
-            let e = apply_float_result_modifiers(
-                format!("select(vec4<f32>(0.0), vec4<f32>(1.0), ({a} {op_str} {b}))"),
-                modifiers,
-            )?;
-            emit_assign(dst, e)
         }
         IrOp::Select {
             dst,
@@ -702,8 +768,17 @@ fn emit_stmt(wgsl: &mut String, stmt: &Stmt, indent: usize) -> Result<(), WgslEr
     let pad = "  ".repeat(indent);
     match stmt {
         Stmt::Op(op) => {
-            let line = emit_op_line(op)?;
-            let _ = writeln!(wgsl, "{pad}{line}");
+            if let Some(pred) = &op_modifiers(op).predicate {
+                let pred_cond = predicate_ref_expr(pred)?;
+                let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
+                let line = emit_op_line(op)?;
+                let inner_pad = "  ".repeat(indent + 1);
+                let _ = writeln!(wgsl, "{inner_pad}{line}");
+                let _ = writeln!(wgsl, "{pad}}}");
+            } else {
+                let line = emit_op_line(op)?;
+                let _ = writeln!(wgsl, "{pad}{line}");
+            }
         }
         Stmt::If {
             cond,
@@ -794,6 +869,11 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     // Local temp registers.
     for r in &usage.temps {
         let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
+    }
+
+    // Predicate registers.
+    for p in &usage.predicates {
+        let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
     }
 
     // Outputs used by the shader. These are mutable locals that get copied into the function
