@@ -28,6 +28,32 @@ constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 
+#pragma pack(push, 1)
+struct D3DVERTEXELEMENT9_COMPAT {
+  uint16_t Stream;
+  uint16_t Offset;
+  uint8_t Type;
+  uint8_t Method;
+  uint8_t Usage;
+  uint8_t UsageIndex;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9 must be 8 bytes");
+
+constexpr uint8_t kD3dDeclTypeFloat2 = 1;
+constexpr uint8_t kD3dDeclTypeFloat3 = 2;
+constexpr uint8_t kD3dDeclTypeFloat4 = 3;
+constexpr uint8_t kD3dDeclTypeD3dColor = 4;
+constexpr uint8_t kD3dDeclTypeUnused = 17;
+
+constexpr uint8_t kD3dDeclMethodDefault = 0;
+
+constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageTexcoord = 5;
+constexpr uint8_t kD3dDeclUsagePositionT = 9;
+constexpr uint8_t kD3dDeclUsageColor = 10;
+
 bool Check(bool cond, const char* msg) {
   if (!cond) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
@@ -4864,6 +4890,470 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   return true;
 }
 
+bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HVERTEXDECL hDecl{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_decl = false;
+
+    ~Cleanup() {
+      if (has_decl && device_funcs.pfnDestroyVertexDecl) {
+        device_funcs.pfnDestroyVertexDecl(hDevice, hDecl);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateVertexDecl != nullptr, "CreateVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetVertexDecl != nullptr, "SetVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // XYZRHW | DIFFUSE | TEX1:
+  //   POSITIONT float4 @0
+  //   COLOR0    D3DCOLOR @16
+  //   TEXCOORD0 float2 @20
+  //   END
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      create_dev.hDevice, elems, static_cast<uint32_t>(sizeof(elems)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  cleanup.hDecl = hDecl;
+  cleanup.has_decl = true;
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(create_dev.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  if (!Check(dev->fvf == 0x144u, "SetVertexDecl implies FVF=XYZRHW|DIFFUSE|TEX1")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen, 0.0f, 0.0f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen, 1.0f, 0.0f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen, 0.5f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
+             "fixed-function fallback creates shaders")) {
+    return false;
+  }
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles")) {
+    return false;
+  }
+
+  // Validate that the XYZRHW vertices were converted to clip-space and that the
+  // extra TEXCOORD field is preserved by the conversion.
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "upload_resource emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource size matches vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0, payload + 24, sizeof(float));
+
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "XYZRHW|TEX1->clip: x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "XYZRHW|TEX1->clip: y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZRHW|TEX1->clip: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "XYZRHW|TEX1->clip: w preserved")) {
+    return false;
+  }
+  if (!Check(c0 == kGreen, "XYZRHW|TEX1->clip: diffuse color preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZRHW|TEX1->clip: u preserved")) {
+    return false;
+  }
+  return Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZRHW|TEX1->clip: v preserved");
+}
+
+bool TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HVERTEXDECL hDecl{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_decl = false;
+
+    ~Cleanup() {
+      if (has_decl && device_funcs.pfnDestroyVertexDecl) {
+        device_funcs.pfnDestroyVertexDecl(hDevice, hDecl);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateVertexDecl != nullptr, "CreateVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetVertexDecl != nullptr, "SetVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // XYZ | DIFFUSE:
+  //   POSITION float3 @0
+  //   COLOR0    D3DCOLOR @12
+  //   END
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      create_dev.hDevice, elems, static_cast<uint32_t>(sizeof(elems)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|DIFFUSE)")) {
+    return false;
+  }
+  cleanup.hDecl = hDecl;
+  cleanup.has_decl = true;
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(create_dev.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40).
+  if (!Check(dev->fvf == 0x42u, "SetVertexDecl implies FVF=XYZ|DIFFUSE")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+  };
+
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  // Provide clip-space-ish positions (no fixed-function transforms are applied
+  // by the bring-up passthrough shader).
+  verts[0] = {-0.5f, -0.5f, 0.5f, kGreen};
+  verts[1] = {0.5f, -0.5f, 0.5f, kGreen};
+  verts[2] = {0.0f, 0.5f, 0.5f, kGreen};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
+             "fixed-function fallback creates shaders")) {
+    return false;
+  }
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
+}
+
+bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HVERTEXDECL hDecl{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_decl = false;
+
+    ~Cleanup() {
+      if (has_decl && device_funcs.pfnDestroyVertexDecl) {
+        device_funcs.pfnDestroyVertexDecl(hDevice, hDecl);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateVertexDecl != nullptr, "CreateVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetVertexDecl != nullptr, "SetVertexDecl must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // XYZ | DIFFUSE | TEX1:
+  //   POSITION float3 @0
+  //   COLOR0    D3DCOLOR @12
+  //   TEXCOORD0 float2 @16
+  //   END
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      create_dev.hDevice, elems, static_cast<uint32_t>(sizeof(elems)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  cleanup.hDecl = hDecl;
+  cleanup.has_decl = true;
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(create_dev.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  if (!Check(dev->fvf == 0x142u, "SetVertexDecl implies FVF=XYZ|DIFFUSE|TEX1")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  verts[0] = {-0.5f, -0.5f, 0.5f, kGreen, 0.0f, 0.0f};
+  verts[1] = {0.5f, -0.5f, 0.5f, kGreen, 1.0f, 0.0f};
+  verts[2] = {0.0f, 0.5f, 0.5f, kGreen, 0.5f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
+             "fixed-function fallback creates shaders")) {
+    return false;
+  }
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
+}
+
 bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -8270,6 +8760,9 @@ int main() {
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestDrawRectPatchReusesTessellationCache();
   failures += !aerogpu::TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands();

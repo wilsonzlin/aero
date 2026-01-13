@@ -2537,8 +2537,30 @@ constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kSupportedFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
+constexpr uint32_t kSupportedFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
+
 bool fixedfunc_fvf_supported(uint32_t fvf) {
+  // Fixed-function bring-up paths which require a known internal FVF-driven
+  // vertex declaration (e.g. patch emulation) are limited to pre-transformed
+  // XYZRHW variants.
   return fvf == kSupportedFvfXyzrhwDiffuse || fvf == kSupportedFvfXyzrhwDiffuseTex1;
+}
+
+constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
+  switch (fvf) {
+    case kSupportedFvfXyzrhwDiffuse:
+    case kSupportedFvfXyzrhwDiffuseTex1:
+    case kSupportedFvfXyzDiffuse:
+    case kSupportedFvfXyzDiffuseTex1:
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
+  return (fvf == kSupportedFvfXyzrhwDiffuse) || (fvf == kSupportedFvfXyzrhwDiffuseTex1);
 }
 
 #pragma pack(push, 1)
@@ -2555,15 +2577,17 @@ struct D3DVERTEXELEMENT9_COMPAT {
 static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9 must be 8 bytes");
 
 constexpr uint8_t kD3dDeclTypeFloat2 = 1;
+constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
 constexpr uint8_t kD3dDeclTypeD3dColor = 4;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
 
 constexpr uint8_t kD3dDeclMethodDefault = 0;
 
+constexpr uint8_t kD3dDeclUsagePosition = 0;
+constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
 constexpr uint8_t kD3dDeclUsageColor = 10;
-constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 
 // -----------------------------------------------------------------------------
 // Handle helpers
@@ -3826,11 +3850,11 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     return E_FAIL;
   }
 
-  const bool fvf_xyzrhw_diffuse = (dev->fvf == kSupportedFvfXyzrhwDiffuse);
-  const bool fvf_xyzrhw_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
-  if (!fvf_xyzrhw_diffuse && !fvf_xyzrhw_diffuse_tex1) {
+  if (!fixedfunc_supported_fvf(dev->fvf)) {
     return D3DERR_INVALIDCALL;
   }
+
+  const bool tex1 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1 || dev->fvf == kSupportedFvfXyzDiffuseTex1);
 
   Shader** vs_slot = nullptr;
   Shader** ps_slot = nullptr;
@@ -3840,10 +3864,12 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   const void* ps_bytes = nullptr;
   uint32_t ps_size = 0;
 
-  if (fvf_xyzrhw_diffuse) {
+  if (!tex1) {
     vs_slot = &dev->fixedfunc_vs;
     ps_slot = &dev->fixedfunc_ps;
-    fvf_decl = dev->fvf_vertex_decl;
+    if (dev->fvf == kSupportedFvfXyzrhwDiffuse) {
+      fvf_decl = dev->fvf_vertex_decl;
+    }
     vs_bytes = fixedfunc::kVsPassthroughPosColor;
     vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
     ps_bytes = fixedfunc::kPsPassthroughColor;
@@ -3851,7 +3877,9 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   } else {
     vs_slot = &dev->fixedfunc_vs_tex1;
     ps_slot = &dev->fixedfunc_ps_tex1;
-    fvf_decl = dev->fvf_vertex_decl_tex1;
+    if (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) {
+      fvf_decl = dev->fvf_vertex_decl_tex1;
+    }
     vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
     vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
     ps_bytes = fixedfunc::kPsTexturedModulateVertexColor;
@@ -3871,8 +3899,11 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     }
   }
 
-  // Ensure the FVF-derived declaration is bound.
-  if (fvf_decl) {
+  // Ensure the FVF-derived declaration is bound when the app is using the
+  // SetFVF path (internal declaration). When the app uses an explicit vertex
+  // declaration (SetVertexDecl), preserve it so GetVertexDecl/state blocks
+  // remain consistent.
+  if (fvf_decl && (!dev->vertex_decl || dev->vertex_decl == fvf_decl)) {
     if (!emit_set_input_layout_locked(dev, fvf_decl)) {
       return E_OUTOFMEMORY;
     }
@@ -9518,41 +9549,91 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     return trace.ret(E_OUTOFMEMORY);
   }
 
-  // Some runtimes implement SetFVF by synthesizing a declaration and calling
-  // SetVertexDecl. Detect the fixed-function layouts we can emulate so we can
-  // enable the fixed-function fallback path even if `pfnSetFVF` is not invoked.
-  bool matches_fvf_xyzrhw_diffuse = false;
-  bool matches_fvf_xyzrhw_diffuse_tex1 = false;
-  if (decl && decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 3) {
+  // Many D3D9 apps (and some D3D9 runtimes implementing SetFVF) use vertex
+  // declarations directly, but still rely on the fixed-function pipeline (no
+  // shaders). Track a small set of common decl patterns and synthesize an
+  // implied FVF value so the fixed-function fallback path can activate even
+  // when `pfnSetFVF` is never invoked.
+  uint32_t implied_fvf = 0;
+  if (decl && !decl->blob.empty() && (decl->blob.size() % sizeof(D3DVERTEXELEMENT9_COMPAT) == 0)) {
+    const size_t elem_count = decl->blob.size() / sizeof(D3DVERTEXELEMENT9_COMPAT);
     const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(decl->blob.data());
-    const auto& e0 = elems[0];
-    const auto& e1 = elems[1];
 
-    const bool e0_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
-                       (e0.Method == kD3dDeclMethodDefault) &&
-                       (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == 0) && (e0.UsageIndex == 0);
-    const bool e1_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
-                       (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+    auto is_end = [](const D3DVERTEXELEMENT9_COMPAT& e) -> bool {
+      return (e.Stream == 0xFF) && (e.Type == kD3dDeclTypeUnused);
+    };
 
-    // XYZRHW | DIFFUSE
-    {
+    // XYZRHW | DIFFUSE:
+    //   POSITIONT float4 @0
+    //   COLOR0    D3DCOLOR @16
+    //   END
+    if (elem_count == 3) {
+      const auto& e0 = elems[0];
+      const auto& e1 = elems[1];
       const auto& e2 = elems[2];
-      const bool e2_ok = (e2.Stream == 0xFF) && (e2.Type == kD3dDeclTypeUnused);
-      matches_fvf_xyzrhw_diffuse = e0_ok && e1_ok && e2_ok;
+
+      const bool e0_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                         (e0.Method == kD3dDeclMethodDefault) &&
+                         (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                         (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+
+      if (e0_ok && e1_ok && is_end(e2)) {
+        implied_fvf = kSupportedFvfXyzrhwDiffuse;
+      }
+
+      // XYZ | DIFFUSE:
+      //   POSITION float3 @0
+      //   COLOR0    D3DCOLOR @12
+      //   END
+      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
+                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                             (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_ok && is_end(e2)) {
+        implied_fvf = kSupportedFvfXyzDiffuse;
+      }
     }
 
-    // XYZRHW | DIFFUSE | TEX1
-    if (decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 4) {
+    if (elem_count == 4) {
+      const auto& e0 = elems[0];
+      const auto& e1 = elems[1];
       const auto& e2 = elems[2];
       const auto& e3 = elems[3];
-      const bool e2_ok = (e2.Stream == 0) && (e2.Offset == 20) && (e2.Type == kD3dDeclTypeFloat2) &&
-                         (e2.Method == kD3dDeclMethodDefault) && (e2.Usage == kD3dDeclUsageTexcoord) && (e2.UsageIndex == 0);
-      const bool e3_ok = (e3.Stream == 0xFF) && (e3.Type == kD3dDeclTypeUnused);
-      matches_fvf_xyzrhw_diffuse_tex1 = e0_ok && e1_ok && e2_ok && e3_ok;
+
+      // XYZRHW | DIFFUSE | TEX1:
+      //   POSITIONT float4 @0
+      //   COLOR0    D3DCOLOR @16
+      //   TEXCOORD0 float2 @20
+      //   END
+      const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                              (e0.Method == kD3dDeclMethodDefault) &&
+                              (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_xyzw_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                              (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+      const bool e2_xyzw_ok = (e2.Stream == 0) && (e2.Offset == 20) && (e2.Type == kD3dDeclTypeFloat2) &&
+                              (e2.Method == kD3dDeclMethodDefault) && (e2.Usage == kD3dDeclUsageTexcoord) && (e2.UsageIndex == 0);
+      if (e0_xyzw_ok && e1_xyzw_ok && e2_xyzw_ok && is_end(e3)) {
+        implied_fvf = kSupportedFvfXyzrhwDiffuseTex1;
+      }
+
+      // XYZ | DIFFUSE | TEX1:
+      //   POSITION float3 @0
+      //   COLOR0    D3DCOLOR @12
+      //   TEXCOORD0 float2 @16
+      //   END
+      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
+                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                             (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+      const bool e2_xyz_ok = (e2.Stream == 0) && (e2.Offset == 16) && (e2.Type == kD3dDeclTypeFloat2) &&
+                             (e2.Method == kD3dDeclMethodDefault) && (e2.Usage == kD3dDeclUsageTexcoord) && (e2.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_ok && e2_xyz_ok && is_end(e3)) {
+        implied_fvf = kSupportedFvfXyzDiffuseTex1;
+      }
     }
   }
-  dev->fvf = matches_fvf_xyzrhw_diffuse_tex1 ? kSupportedFvfXyzrhwDiffuseTex1
-                                             : (matches_fvf_xyzrhw_diffuse ? kSupportedFvfXyzrhwDiffuse : 0);
+  dev->fvf = implied_fvf;
   stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
   return trace.ret(S_OK);
 }
@@ -14707,10 +14788,14 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return trace.ret(pipeline_hr);
   }
 
-  // Fixed-function emulation path: for supported FVFs we upload a transformed
+  const bool fixedfunc_active =
+      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+
+  // Fixed-function emulation path: for XYZRHW vertices we upload a transformed
   // (clip-space) copy of the referenced vertices into a scratch VB and draw
   // using a built-in shader pair.
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_xyzrhw) {
     DeviceStateStream saved = dev->streams[0];
     DeviceStateStream& ss = dev->streams[0];
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
@@ -14846,6 +14931,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return S_OK;
   }
 
+  if (fixedfunc_active) {
+    const HRESULT ff_hr = ensure_fixedfunc_pipeline_locked(dev);
+    if (FAILED(ff_hr)) {
+      return trace.ret(ff_hr);
+    }
+  }
+
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
                             align_up(sizeof(aerogpu_cmd_draw), 4);
   if (!ensure_cmd_space(dev, draw_bytes)) {
@@ -14908,6 +15000,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  const bool fixedfunc_active =
+      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+
   const uint32_t vertex_count = vertex_count_from_primitive(type, primitive_count);
   const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * stride_bytes;
   if (size_u64 == 0 || size_u64 > 0x7FFFFFFFu) {
@@ -14928,7 +15024,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   const void* upload_data = pVertexData;
   uint32_t upload_size = static_cast<uint32_t>(size_u64);
 
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_xyzrhw) {
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
     if (stride_bytes < min_stride) {
       return trace.ret(E_INVALIDARG);
@@ -14954,7 +15050,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(E_OUTOFMEMORY);
   }
 
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_active) {
     hr = ensure_fixedfunc_pipeline_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -15063,6 +15159,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  const bool fixedfunc_active =
+      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+
   const uint32_t vertex_count = vertex_count_from_primitive(pDraw->PrimitiveType, pDraw->PrimitiveCount);
   const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * pDraw->VertexStreamZeroStride;
   if (size_u64 == 0 || size_u64 > 0x7FFFFFFFu) {
@@ -15082,7 +15182,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   const void* upload_data = pDraw->pVertexStreamZeroData;
   uint32_t upload_size = static_cast<uint32_t>(size_u64);
 
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_xyzrhw) {
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
     if (pDraw->VertexStreamZeroStride < min_stride) {
       return E_INVALIDARG;
@@ -15109,7 +15209,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return E_OUTOFMEMORY;
   }
 
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_active) {
     hr = ensure_fixedfunc_pipeline_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -15172,6 +15272,10 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  const bool fixedfunc_active =
+      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
+
   const uint32_t index_count = index_count_from_primitive(pDraw->PrimitiveType, pDraw->PrimitiveCount);
   const uint32_t index_size = (pDraw->IndexDataFormat == kD3dFmtIndex32) ? 4u : 2u;
   const uint64_t ib_size_u64 = static_cast<uint64_t>(index_count) * index_size;
@@ -15202,7 +15306,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   const void* vb_upload_data = pDraw->pVertexStreamZeroData;
   uint32_t vb_upload_size = static_cast<uint32_t>(vb_size_u64);
 
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_xyzrhw) {
     const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
     if (pDraw->VertexStreamZeroStride < min_stride) {
       return E_INVALIDARG;
@@ -15259,7 +15363,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
 
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_active) {
     hr = ensure_fixedfunc_pipeline_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
@@ -15403,11 +15507,14 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   if (FAILED(pipeline_hr)) {
     return trace.ret(pipeline_hr);
   }
+  const bool fixedfunc_active =
+      fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
+  const bool fixedfunc_xyzrhw = fixedfunc_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   // Fixed-function emulation for indexed draws: expand indices into a temporary
   // vertex stream and issue a non-indexed draw. This is intentionally
   // conservative but is sufficient for bring-up.
-  if (fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (fixedfunc_xyzrhw) {
     DeviceStateStream saved_stream = dev->streams[0];
     DeviceStateStream& ss = dev->streams[0];
 
@@ -15688,6 +15795,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       return E_OUTOFMEMORY;
     }
     return S_OK;
+  }
+
+  if (fixedfunc_active) {
+    const HRESULT ff_hr = ensure_fixedfunc_pipeline_locked(dev);
+    if (FAILED(ff_hr)) {
+      return trace.ret(ff_hr);
+    }
   }
 
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
