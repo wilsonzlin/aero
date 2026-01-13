@@ -425,6 +425,16 @@ The relay supports multiple signaling surfaces:
 - `GET /webrtc/signal`: WebSocket signaling with trickle ICE (recommended; fastest connect).
 - `POST /webrtc/offer`: HTTP offer → answer (non-trickle ICE fallback; simplest clients/tests).
 
+### WebRTC session establishment timeout
+
+To avoid leaking server-side resources due to half-open WebRTC sessions (misbehaving clients / DoS), the relay enforces a connect timeout and closes PeerConnections that never reach a connected state:
+
+- Config: `WEBRTC_SESSION_CONNECT_TIMEOUT` / `--webrtc-session-connect-timeout` (default `30s`).
+- Applies regardless of signaling surface (HTTP offer endpoints and WebSocket signaling).
+- A session counts as "connected" once ICE is connected/completed (`ICEConnectionStateConnected` / `ICEConnectionStateCompleted`) or the PeerConnection state is connected (`PeerConnectionStateConnected`).
+- Observability: timeouts increment the `/metrics` event counter `webrtc_session_connect_timeout`.
+- Setting this too low can break slow networks / delayed ICE or TURN negotiation.
+
 ### Authentication
 
 When `AUTH_MODE != none`, `GET /webrtc/ice` and **all** signaling endpoints (`POST /offer`, `POST /webrtc/offer`, `POST /session`, `GET /webrtc/signal`) require credentials.
