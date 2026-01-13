@@ -9,7 +9,8 @@ use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
+    OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle,
+    WriteMask,
 };
 use crate::DxbcFile;
 use aero_dxbc::RdefChunk;
@@ -1015,8 +1016,12 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             }
             Sm4Inst::Switch { selector } => scan_src_regs(selector, &mut scan_reg),
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
-            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
-            Sm4Inst::Unknown { .. } | Sm4Inst::Ret => {}
+            Sm4Inst::Emit { .. }
+            | Sm4Inst::Cut { .. }
+            | Sm4Inst::BufInfoRaw { .. }
+            | Sm4Inst::BufInfoStructured { .. }
+            | Sm4Inst::Unknown { .. }
+            | Sm4Inst::Ret => {}
         }
     }
     inputs
@@ -1943,7 +1948,7 @@ fn scan_resources(
         }
     }
 
-    for inst in &module.instructions {
+    for (_inst_index, inst) in module.instructions.iter().enumerate() {
         let mut scan_src = |src: &crate::sm4_ir::SrcOperand| -> Result<(), ShaderTranslateError> {
             if let SrcKind::ConstantBuffer { slot, reg } = src.kind {
                 validate_slot("cbuffer", slot, D3D11_MAX_CONSTANT_BUFFER_SLOTS)?;
@@ -2112,6 +2117,11 @@ fn scan_resources(
                 scan_src(selector)?;
             }
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
+            Sm4Inst::BufInfoRaw { dst: _, buffer }
+            | Sm4Inst::BufInfoStructured { dst: _, buffer, .. } => {
+                validate_slot("srv_buffer", buffer.slot, MAX_TEXTURE_SLOTS)?;
+                srv_buffers.insert(buffer.slot);
+            }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Ret => {}
@@ -2404,6 +2414,9 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(selector, &mut scan_reg);
             }
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
+            Sm4Inst::BufInfoRaw { dst, .. } | Sm4Inst::BufInfoStructured { dst, .. } => {
+                scan_reg(dst.reg);
+            }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Ret => {}
@@ -3327,6 +3340,26 @@ fn emit_instructions(
                         ));
                     }
                 }
+            }
+            Sm4Inst::BufInfoRaw { dst, buffer } => {
+                let dwords = format!("arrayLength(&t{}.data)", buffer.slot);
+                let bytes = format!("({dwords}) * 4u");
+                let expr = format!("vec4<f32>(f32({bytes}), 0.0, 0.0, 0.0)");
+                let expr = maybe_saturate(dst, expr);
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
+            }
+            Sm4Inst::BufInfoStructured {
+                dst,
+                buffer,
+                stride_bytes,
+            } => {
+                let dwords = format!("arrayLength(&t{}.data)", buffer.slot);
+                let byte_size = format!("({dwords}) * 4u");
+                let stride = format!("{}u", stride_bytes);
+                let elem_count = format!("({byte_size}) / ({stride})");
+                let expr = format!("vec4<f32>(f32({elem_count}), f32({stride}), 0.0, 0.0)");
+                let expr = maybe_saturate(dst, expr);
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::Unknown { opcode } => {
                 let opcode = opcode_name(*opcode)

@@ -877,6 +877,10 @@ pub fn decode_instruction(
             if let Some(ld) = try_decode_ld_like(saturate, inst_toks, at)? {
                 return Ok(ld);
             }
+            // Structural fallback for `bufinfo` when opcode IDs differ.
+            if let Some(bufinfo) = try_decode_bufinfo_like(saturate, inst_toks, at)? {
+                return Ok(bufinfo);
+            }
             Ok(Sm4Inst::Unknown { opcode: other })
         }
     }
@@ -897,6 +901,14 @@ fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u32, Sm4DecodeError> {
         });
     };
     Ok(imm[0])
+}
+
+fn decode_bufinfo(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let mut dst = decode_dst(r)?;
+    dst.saturate = saturate;
+    let buffer = decode_buffer_ref(r)?;
+    r.expect_eof()?;
+    Ok(Sm4Inst::BufInfoRaw { dst, buffer })
 }
 
 fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
@@ -1335,6 +1347,20 @@ fn try_decode_ld_like(
     }
 
     Ok(None)
+}
+
+fn try_decode_bufinfo_like(
+    saturate: bool,
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+    match decode_bufinfo(saturate, &mut r) {
+        Ok(v) => Ok(Some(v)),
+        Err(_) => Ok(None),
+    }
 }
 
 // ---- Operand decoding ----

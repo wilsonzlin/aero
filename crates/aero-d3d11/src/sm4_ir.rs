@@ -454,6 +454,26 @@ pub enum Sm4Inst {
     EndSwitch,
     /// Structured `break` instruction (break out of `loop`/`switch`).
     Break,
+    /// `bufinfo` on a raw SRV buffer (e.g. `ByteAddressBuffer.GetDimensions`).
+    ///
+    /// Output packing:
+    /// - `dst.x` = total buffer size in **bytes**.
+    /// - other lanes are 0 (but still respect `dst.mask`).
+    BufInfoRaw {
+        dst: DstOperand,
+        buffer: BufferRef,
+    },
+    /// `bufinfo` on a structured SRV buffer (e.g. `StructuredBuffer.GetDimensions`).
+    ///
+    /// Output packing:
+    /// - `dst.x` = element count
+    /// - `dst.y` = stride in bytes
+    /// - other lanes are 0 (but still respect `dst.mask`).
+    BufInfoStructured {
+        dst: DstOperand,
+        buffer: BufferRef,
+        stride_bytes: u32,
+    },
     Ret,
 }
 
