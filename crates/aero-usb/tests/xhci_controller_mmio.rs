@@ -3,19 +3,6 @@ use aero_usb::xhci::{context::SlotContext, regs, CommandCompletion, XhciControll
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
 #[derive(Default)]
-struct PanicMem;
-
-impl MemoryBus for PanicMem {
-    fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
-        panic!("unexpected DMA read");
-    }
-
-    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
-        panic!("unexpected DMA write");
-    }
-}
-
-#[derive(Default)]
 struct CountingMem {
     data: Vec<u8>,
     reads: usize,
@@ -72,34 +59,33 @@ impl MemoryBus for NoDmaCountingMem {
 #[test]
 fn xhci_controller_caplength_hciversion_reads() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION, 4),
+        ctrl.mmio_read(regs::REG_CAPLENGTH_HCIVERSION, 4) as u32,
         regs::CAPLENGTH_HCIVERSION
     );
 
     // Byte/word reads should match the LE layout.
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION, 1),
+        ctrl.mmio_read(regs::REG_CAPLENGTH_HCIVERSION, 1) as u32,
         u32::from(regs::CAPLENGTH_BYTES)
     );
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 2, 2),
+        ctrl.mmio_read(regs::REG_CAPLENGTH_HCIVERSION + 2, 2) as u32,
         0x0100
     );
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 3, 1),
+        ctrl.mmio_read(regs::REG_CAPLENGTH_HCIVERSION + 3, 1) as u32,
         0x01
     );
 
     // Cross-dword reads should behave like little-endian memory.
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 3, 2),
+        ctrl.mmio_read(regs::REG_CAPLENGTH_HCIVERSION + 3, 2) as u32,
         0x2001
     );
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION + 1, 4),
+        ctrl.mmio_read(regs::REG_CAPLENGTH_HCIVERSION + 1, 4) as u32,
         0x2001_0000
     );
 }
@@ -107,9 +93,8 @@ fn xhci_controller_caplength_hciversion_reads() {
 #[test]
 fn xhci_controller_dboff_rtsoff_are_plausible() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
-    let dboff = ctrl.mmio_read(&mut mem, regs::REG_DBOFF, 4);
+    let dboff = ctrl.mmio_read(regs::REG_DBOFF, 4) as u32;
     assert_ne!(dboff, 0, "DBOFF should be non-zero");
     assert_eq!(
         dboff & 0x3,
@@ -125,7 +110,7 @@ fn xhci_controller_dboff_rtsoff_are_plausible() {
         "DBOFF should not overlap the capability register block"
     );
 
-    let rtsoff = ctrl.mmio_read(&mut mem, regs::REG_RTSOFF, 4);
+    let rtsoff = ctrl.mmio_read(regs::REG_RTSOFF, 4) as u32;
     assert_ne!(rtsoff, 0, "RTSOFF should be non-zero");
     assert_eq!(
         rtsoff & 0x1f,
@@ -145,25 +130,19 @@ fn xhci_controller_dboff_rtsoff_are_plausible() {
 #[test]
 fn xhci_controller_pagesize_supports_4k_pages() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
-
-    assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_PAGESIZE, 4),
-        regs::PAGESIZE_4K
-    );
+    assert_eq!(ctrl.mmio_read(regs::REG_PAGESIZE, 4) as u32, regs::PAGESIZE_4K);
 }
 
 #[test]
 fn xhci_controller_dnctrl_is_writable_and_snapshots() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_DNCTRL, 4) as u32, 0);
 
-    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1234_5678);
+    ctrl.mmio_write(regs::REG_DNCTRL, 4, 0x1234_5678);
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4),
-        0x1234_5678,
+        ctrl.mmio_read(regs::REG_DNCTRL, 4) as u32,
+        0x1234_5678u32,
         "DNCTRL should roundtrip through MMIO reads/writes"
     );
 
@@ -171,8 +150,8 @@ fn xhci_controller_dnctrl_is_writable_and_snapshots() {
     let mut restored = XhciController::new();
     restored.load_state(&bytes).expect("load snapshot");
     assert_eq!(
-        restored.mmio_read(&mut mem, regs::REG_DNCTRL, 4),
-        0x1234_5678,
+        restored.mmio_read(regs::REG_DNCTRL, 4) as u32,
+        0x1234_5678u32,
         "DNCTRL should roundtrip through snapshot restore"
     );
 }
@@ -180,26 +159,26 @@ fn xhci_controller_dnctrl_is_writable_and_snapshots() {
 #[test]
 fn xhci_controller_config_and_dnctrl_roundtrip_and_reset() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), 0);
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_CONFIG, 4) as u32, 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_DNCTRL, 4) as u32, 0);
 
-    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 0xa5a5);
-    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1234_5678);
+    ctrl.mmio_write(regs::REG_CONFIG, 4, 0xa5a5);
+    ctrl.mmio_write(regs::REG_DNCTRL, 4, 0x1234_5678);
 
     // CONFIG has reserved bits and clamps MaxSlotsEn to HCSPARAMS1.MaxSlots.
-    let expected_config = ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
+    let expected_config =
+        ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4),
+        ctrl.mmio_read(regs::REG_CONFIG, 4) as u32,
         expected_config
     );
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0x1234_5678);
+    assert_eq!(ctrl.mmio_read(regs::REG_DNCTRL, 4) as u32, 0x1234_5678);
 
     // Host controller reset should clear operational register state.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), 0);
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));
+    assert_eq!(ctrl.mmio_read(regs::REG_CONFIG, 4) as u32, 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_DNCTRL, 4) as u32, 0);
 }
 
 #[test]
@@ -213,9 +192,9 @@ fn xhci_controller_hcrst_clears_tick_counters() {
 
     mem.data[0x1000..0x1004].copy_from_slice(&0xdead_beefu32.to_le_bytes());
     // Set RCS=1 so the controller must mask off CRCR flags when reading from the ring pointer.
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000 | 1);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.tick_1ms_with_dma(&mut mem);
 
@@ -228,7 +207,7 @@ fn xhci_controller_hcrst_clears_tick_counters() {
     );
 
     // Host controller reset should clear controller-local tick bookkeeping.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));
 
     let after = ctrl.save_state();
     let r2 = SnapshotReader::parse(&after, *b"XHCI").expect("parse snapshot after reset");
@@ -249,11 +228,11 @@ fn xhci_controller_tick_dma_dword_is_snapshotted() {
     // Set the RCS flag bit in CRCR_LO to ensure the controller masks off CRCR flags before using
     // the pointer as a guest physical address.
     mem.data[0x1000..0x1004].copy_from_slice(&0xfeed_beefu32.to_le_bytes());
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000 | 1);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
 
     // Enable RUN so `tick_1ms_with_dma` will read from CRCR.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick_1ms_with_dma(&mut mem);
 
     let bytes = ctrl.save_state();
@@ -302,9 +281,9 @@ fn xhci_controller_tick_dma_dword_is_gated_by_dma_enabled() {
     let mut mem = CountingMem::new(0x4000);
 
     mem.data[0x1000..0x1004].copy_from_slice(&0xdead_beefu32.to_le_bytes());
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick_1ms_with_dma(&mut mem);
 
     // Now tick with a DMA-disabled bus; the controller should still advance time, but should not
@@ -337,9 +316,9 @@ fn xhci_controller_tick_dma_dword_masks_crcr_flags() {
 
     // Set CRCR with the ring cycle-state flag (bit 0). The tick DMA read must mask off low flag
     // bits and use the aligned pointer.
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000 | 1);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick_1ms_with_dma(&mut mem);
 
     let bytes = ctrl.save_state();
@@ -354,57 +333,61 @@ fn xhci_controller_tick_dma_dword_masks_crcr_flags() {
 #[test]
 fn xhci_mfindex_advances_on_tick_1ms_and_wraps() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_MFINDEX, 4) as u32 & 0x3fff, 0);
 
     ctrl.tick_1ms_no_dma();
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 8);
+    assert_eq!(ctrl.mmio_read(regs::REG_MFINDEX, 4) as u32 & 0x3fff, 8);
 
     // MFINDEX is 14 bits and counts microframes; 2048ms == 16384 microframes wraps to 0.
     for _ in 0..2047 {
         ctrl.tick_1ms_no_dma();
     }
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_MFINDEX, 4) as u32 & 0x3fff, 0);
 }
 
 #[test]
-fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
+fn xhci_controller_tick_triggers_dma_and_w1c_clears_irq() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x4000);
 
     // Seed the DMA target.
     mem.data[0x1000..0x1004].copy_from_slice(&[1, 2, 3, 4]);
 
-    // Program CRCR and start the controller: first RUN transition should DMA once.
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+    // Program CRCR and start the controller. DMA happens in `tick_1ms`.
+    ctrl.mmio_write(regs::REG_CRCR_LO, 8, 0x1000 | 0x1);
     assert_eq!(mem.reads, 0);
 
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    assert_eq!(mem.reads, 1);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
+    // DMA is issued on the next tick.
+    ctrl.tick_1ms(&mut mem);
+    // One DMA read for the deferred DMA-on-RUN probe + one DMA read for the tick-driven CRCR probe.
+    assert_eq!(mem.reads, 2);
     assert!(ctrl.irq_level());
     assert_ne!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
+        ctrl.mmio_read(regs::REG_USBSTS, 4) as u32 & regs::USBSTS_EINT,
         0
     );
 
-    // Writing RUN again should not DMA (no rising edge).
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    assert_eq!(mem.reads, 1);
-
-    // Stop then start again -> second rising edge DMA.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, 0);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    assert_eq!(mem.reads, 2);
+    // Further ticks should not re-run the deferred DMA-on-RUN probe (no new "run session"), but
+    // should still perform the tick-driven CRCR DMA read.
+    ctrl.tick_1ms(&mut mem);
+    assert_eq!(mem.reads, 3);
 
     // USBSTS is RW1C: writing 1 clears the pending interrupt.
-    ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    ctrl.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!ctrl.irq_level());
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
+        ctrl.mmio_read(regs::REG_USBSTS, 4) as u32 & regs::USBSTS_EINT,
         0
     );
+
+    // Stop then start again -> second DMA touchpoint.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.tick_1ms(&mut mem);
+    assert_eq!(mem.reads, 5);
 }
 
 #[test]
@@ -418,9 +401,12 @@ fn xhci_controller_run_does_not_dma_when_dma_disabled() {
 
     // Program CRCR and start the controller. The dma-on-RUN probe should be skipped when DMA is
     // disabled, leaving the memory bus untouched.
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
+    // Tick once to ensure the controller does not attempt DMA while `dma_enabled()==false`.
+    ctrl.tick_1ms(&mut mem);
 
     assert_eq!(mem.reads, 0);
     assert_eq!(mem.writes, 0);
@@ -433,13 +419,12 @@ fn xhci_controller_run_does_not_dma_when_dma_disabled() {
 #[test]
 fn xhci_snapshot_preserves_pending_dma_on_run_probe() {
     let mut ctrl = XhciController::new();
-    let mut nodma = NoDmaCountingMem::default();
 
     // Put the controller into the running state with DMA disabled so the dma-on-RUN probe is
     // deferred. This should leave `pending_dma_on_run` set internally without raising an interrupt.
-    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_LO, 4, 0x1000);
-    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_HI, 4, 0);
-    ctrl.mmio_write(&mut nodma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     assert!(!ctrl.irq_level());
 
     let bytes = ctrl.save_state();
@@ -525,7 +510,7 @@ fn xhci_tick_1ms_does_not_dma_when_dma_disabled() {
     let mut mem = NoDmaCountingMem::default();
 
     // Put the controller into the running state without allowing DMA.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     assert_eq!(mem.reads, 0);
     assert_eq!(mem.writes, 0);
 
@@ -542,12 +527,13 @@ fn xhci_dma_on_run_probe_is_deferred_until_dma_is_available() {
 
     // Program CRCR so the DMA-on-RUN probe has a target address.
     let mut nodma = NoDmaCountingMem::default();
-    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_LO, 4, 0x1000);
-    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
 
     // Latch the rising edge of RUN via a no-DMA bus. This must not touch guest memory or assert an
     // interrupt yet, but it should leave the probe pending for a future tick.
-    ctrl.mmio_write(&mut nodma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.tick_1ms(&mut nodma);
     assert_eq!(
         nodma.reads, 0,
         "setting RUN must not DMA when dma_enabled() is false"
@@ -576,7 +562,7 @@ fn xhci_dma_on_run_probe_is_deferred_until_dma_is_available() {
     );
 
     // Clear the pending interrupt.
-    ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    ctrl.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!ctrl.irq_level());
 
     // Subsequent ticks should not re-run the DMA-on-RUN probe (the probe is one-shot).
@@ -590,18 +576,12 @@ fn xhci_dma_on_run_probe_is_deferred_until_dma_is_available() {
 #[test]
 fn xhci_doorbell_does_not_process_command_ring_without_dma() {
     let mut ctrl = XhciController::new();
-    let mut mem = CountingMem::new(0x4000);
-
-    // Point CRCR at a plausible guest physical address and set RCS=1 so the controller would
-    // normally attempt to fetch a command TRB when doorbell 0 is rung.
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-
-    // Start the controller so doorbell processing would run.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
 
     let mut nodma = NoDmaCountingMem::default();
-    ctrl.mmio_write(&mut nodma, u64::from(regs::DBOFF_VALUE), 4, 0);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 8, 0x1000 | 1);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    ctrl.tick_1ms(&mut nodma);
 
     assert_eq!(nodma.reads, 0);
     assert_eq!(nodma.writes, 0);
@@ -646,7 +626,7 @@ fn xhci_endpoint_doorbell_does_not_process_transfers_without_dma() {
     ctrl.set_dcbaap(0);
 
     // Start the controller so future run/stop gating changes don't invalidate this test.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let doorbell = u64::from(regs::DBOFF_VALUE)
         + u64::from(completion.slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
@@ -654,7 +634,8 @@ fn xhci_endpoint_doorbell_does_not_process_transfers_without_dma() {
     // With DMA enabled, ringing an endpoint doorbell should cause the controller to fetch transfer
     // ring state from guest memory.
     let reads_before = mem.reads;
-    ctrl.mmio_write(&mut mem, doorbell, 4, 3);
+    ctrl.mmio_write(doorbell, 4, 3);
+    ctrl.tick(&mut mem);
     assert!(
         mem.reads > reads_before,
         "endpoint doorbell should DMA-read transfer ring state when dma_enabled() is true"
@@ -662,7 +643,8 @@ fn xhci_endpoint_doorbell_does_not_process_transfers_without_dma() {
 
     // With DMA disabled, the doorbell handler still kicks `tick()`, but all DMA must be gated.
     let mut nodma = NoDmaCountingMem::default();
-    ctrl.mmio_write(&mut nodma, doorbell, 4, 3);
+    ctrl.mmio_write(doorbell, 4, 3);
+    ctrl.tick(&mut nodma);
     assert_eq!(
         nodma.reads, 0,
         "endpoint doorbell must not DMA-read when dma_enabled() is false"
@@ -750,36 +732,35 @@ fn xhci_doorbell_ignores_halted_endpoint_without_device_context() {
 #[test]
 fn xhci_controller_hchalted_tracks_run_stop_and_reset() {
     let mut ctrl = XhciController::new();
-    let mut mem = CountingMem::new(0x100);
 
     assert_ne!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        ctrl.mmio_read(regs::REG_USBSTS, 4) as u32 & regs::USBSTS_HCHALTED,
         0,
         "controller should begin halted"
     );
 
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        ctrl.mmio_read(regs::REG_USBSTS, 4) as u32 & regs::USBSTS_HCHALTED,
         0,
         "setting RUN should clear HCHalted"
     );
 
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, 0);
     assert_ne!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        ctrl.mmio_read(regs::REG_USBSTS, 4) as u32 & regs::USBSTS_HCHALTED,
         0,
         "clearing RUN should set HCHalted"
     );
 
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBCMD, 4) & regs::USBCMD_HCRST,
+        ctrl.mmio_read(regs::REG_USBCMD, 4) as u32 & regs::USBCMD_HCRST,
         0,
         "HCRST should be self-clearing"
     );
     assert_ne!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        ctrl.mmio_read(regs::REG_USBSTS, 4) as u32 & regs::USBSTS_HCHALTED,
         0,
         "controller should be halted after reset"
     );
@@ -788,16 +769,15 @@ fn xhci_controller_hchalted_tracks_run_stop_and_reset() {
 #[test]
 fn xhci_controller_cross_dword_write_splits_into_bytes() {
     let mut ctrl = XhciController::new();
-    let mut mem = CountingMem::new(0x4000);
 
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1122_3344);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0x5566_7788);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1122_3344);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0x5566_7788);
 
     // Write a u16 spanning CRCR_LO byte 3 and CRCR_HI byte 0.
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO + 3, 2, 0xaaaa);
+    ctrl.mmio_write(regs::REG_CRCR_LO + 3, 2, 0xaaaa);
 
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CRCR_LO, 4), 0xaa22_3344);
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CRCR_HI, 4), 0x5566_77aa);
+    assert_eq!(ctrl.mmio_read(regs::REG_CRCR_LO, 4) as u32, 0xaa22_3344);
+    assert_eq!(ctrl.mmio_read(regs::REG_CRCR_HI, 4) as u32, 0x5566_77aa);
 }
 
 #[test]
@@ -805,12 +785,16 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x4000);
 
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1234);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1122_3344);
-    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 0xa5a5);
-    ctrl.tick_1ms_no_dma();
+    // Program a few operational registers.
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1234);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_DNCTRL, 4, 0x1122_3344);
+    ctrl.mmio_write(regs::REG_CONFIG, 4, 0xa5a5);
+
+    // Start the controller and advance one tick to trigger the DMA-on-RUN probe so
+    // interrupt-related bits are non-zero in the snapshot.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.tick_1ms(&mut mem);
 
     let bytes = ctrl.save_state();
 
@@ -818,27 +802,24 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
     restored.load_state(&bytes).expect("load snapshot");
 
     assert_eq!(
-        restored.mmio_read(&mut mem, regs::REG_USBCMD, 4),
+        restored.mmio_read(regs::REG_USBCMD, 4) as u32 & regs::USBCMD_RUN,
         regs::USBCMD_RUN
     );
     // CRCR stores a 64-byte-aligned ring pointer; low bits hold flags/cycle state.
     assert_eq!(
-        restored.mmio_read(&mut mem, regs::REG_CRCR_LO, 4),
-        (0x1234 & !0x3f) | (0x1234 & 0x0f)
+        restored.mmio_read(regs::REG_CRCR_LO, 4) as u32,
+        (0x1234u32 & !0x3f) | (0x1234u32 & 0x07)
     );
     assert_eq!(
-        restored.mmio_read(&mut mem, regs::REG_DNCTRL, 4),
+        restored.mmio_read(regs::REG_DNCTRL, 4) as u32,
         0x1122_3344
     );
     let expected_config = ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
     assert_eq!(
-        restored.mmio_read(&mut mem, regs::REG_CONFIG, 4),
+        restored.mmio_read(regs::REG_CONFIG, 4) as u32,
         expected_config
     );
-    assert_eq!(
-        restored.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff,
-        8
-    );
+    assert_eq!(restored.mmio_read(regs::REG_MFINDEX, 4) as u32 & 0x3fff, 8);
     assert!(restored.irq_level());
 }
 
@@ -846,25 +827,24 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
 fn xhci_controller_snapshot_roundtrip_preserves_dcbaap_and_port_count() {
     // Use a non-default port count so we can validate it roundtrips via the HCSPARAMS1 read.
     let mut ctrl = XhciController::with_port_count(4);
-    let mut mem = PanicMem;
 
     // Program DCBAAP with a deliberately misaligned value; the controller should mask low bits away.
-    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_LO, 4, 0x1234_5678);
-    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_HI, 4, 0x9abc_def0);
+    ctrl.mmio_write(regs::REG_DCBAAP_LO, 4, 0x1234_5678);
+    ctrl.mmio_write(regs::REG_DCBAAP_HI, 4, 0x9abc_def0);
 
     let expected_dcbaap = 0x9abc_def0_1234_5640u64;
     assert_eq!(ctrl.dcbaap(), Some(expected_dcbaap));
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_DCBAAP_LO, 4),
+        ctrl.mmio_read(regs::REG_DCBAAP_LO, 4) as u32,
         expected_dcbaap as u32
     );
     assert_eq!(
-        ctrl.mmio_read(&mut mem, regs::REG_DCBAAP_HI, 4),
+        ctrl.mmio_read(regs::REG_DCBAAP_HI, 4) as u32,
         (expected_dcbaap >> 32) as u32
     );
 
     // Port count is exposed via HCSPARAMS1 bits 31..=24.
-    let hcsparams1 = ctrl.mmio_read(&mut mem, regs::REG_HCSPARAMS1, 4);
+    let hcsparams1 = ctrl.mmio_read(regs::REG_HCSPARAMS1, 4) as u32;
     assert_eq!((hcsparams1 >> 24) & 0xff, 4);
 
     let bytes = ctrl.save_state();
@@ -872,23 +852,22 @@ fn xhci_controller_snapshot_roundtrip_preserves_dcbaap_and_port_count() {
     restored.load_state(&bytes).expect("load snapshot");
 
     assert_eq!(restored.dcbaap(), Some(expected_dcbaap));
-    let restored_hcsparams1 = restored.mmio_read(&mut mem, regs::REG_HCSPARAMS1, 4);
+    let restored_hcsparams1 = restored.mmio_read(regs::REG_HCSPARAMS1, 4) as u32;
     assert_eq!((restored_hcsparams1 >> 24) & 0xff, 4);
 }
 
 #[test]
 fn xhci_controller_config_register_is_writable_and_clamped() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_CONFIG, 4) as u32, 0);
 
-    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 8);
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4) & 0xff, 8);
+    ctrl.mmio_write(regs::REG_CONFIG, 4, 8);
+    assert_eq!(ctrl.mmio_read(regs::REG_CONFIG, 4) as u32 & 0xff, 8);
 
     // Clamp MaxSlotsEn to HCSPARAMS1.MaxSlots.
-    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 1, 0xff);
-    let cfg = ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4);
+    ctrl.mmio_write(regs::REG_CONFIG, 1, 0xff);
+    let cfg = ctrl.mmio_read(regs::REG_CONFIG, 4) as u32;
     assert_eq!(cfg & 0xff, u32::from(regs::MAX_SLOTS));
     assert_eq!(cfg & !0x3ff, 0, "reserved CONFIG bits should read as 0");
 }
@@ -896,48 +875,44 @@ fn xhci_controller_config_register_is_writable_and_clamped() {
 #[test]
 fn xhci_controller_mfindex_advances() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
-    let before = ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff;
+    let before = ctrl.mmio_read(regs::REG_MFINDEX, 4) as u32 & 0x3fff;
     ctrl.tick_1ms_no_dma();
-    let after = ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff;
+    let after = ctrl.mmio_read(regs::REG_MFINDEX, 4) as u32 & 0x3fff;
     assert_eq!(after, (before + 8) & 0x3fff);
 }
 
 #[test]
 fn xhci_controller_portsc_array_bounds() {
     let mut ctrl = XhciController::with_port_count(2);
-    let mut mem = PanicMem;
 
-    let p0 = ctrl.mmio_read(&mut mem, regs::port::portsc_offset(0), 4);
-    let p1 = ctrl.mmio_read(&mut mem, regs::port::portsc_offset(1), 4);
+    let p0 = ctrl.mmio_read(regs::port::portsc_offset(0), 4) as u32;
+    let p1 = ctrl.mmio_read(regs::port::portsc_offset(1), 4) as u32;
     assert_ne!(p0 & regs::PORTSC_PP, 0);
     assert_ne!(p1 & regs::PORTSC_PP, 0);
 
     // Port index 2 is out-of-range for a 2-port controller and should read as 0 (unimplemented).
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::port::portsc_offset(2), 4), 0);
+    assert_eq!(ctrl.mmio_read(regs::port::portsc_offset(2), 4), 0);
 
     // Writes to out-of-range ports should be ignored.
-    ctrl.mmio_write(&mut mem, regs::port::portsc_offset(2), 4, 0xffff_ffff);
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::port::portsc_offset(2), 4), 0);
+    ctrl.mmio_write(regs::port::portsc_offset(2), 4, 0xffff_ffff);
+    assert_eq!(ctrl.mmio_read(regs::port::portsc_offset(2), 4), 0);
 }
 
 #[test]
 fn xhci_controller_doorbell_writes_do_not_alias_operational_regs() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
 
-    let dboff = ctrl.mmio_read(&mut mem, regs::REG_DBOFF, 4) as u64;
+    let dboff = ctrl.mmio_read(regs::REG_DBOFF, 4);
     assert_eq!(dboff, u64::from(regs::DBOFF_VALUE));
 
-    ctrl.mmio_write(&mut mem, dboff, 4, 0x1); // DB0
+    ctrl.mmio_write(dboff, 4, 0x1); // DB0
     ctrl.mmio_write(
-        &mut mem,
         dboff + u64::from(regs::doorbell::DOORBELL_STRIDE),
         4,
         0x1,
     ); // DB1
 
     // Doorbell writes should not affect the operational register file directly.
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_USBCMD, 4), 0);
+    assert_eq!(ctrl.mmio_read(regs::REG_USBCMD, 4), 0);
 }

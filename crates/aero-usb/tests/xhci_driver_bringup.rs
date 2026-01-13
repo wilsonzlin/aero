@@ -174,7 +174,7 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     // command/transfer events; drain host-side pending events so the first IRQ we observe is
     // deterministic.
     while xhci.pop_pending_event().is_some() {}
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
 
     // Verify CAPLENGTH is sane and fetch DBOFF/RTSOFF like a real guest driver would.
     let caplen_hciver = xhci.mmio_read_u32(&mut mem, regs::REG_CAPLENGTH_HCIVERSION);
@@ -187,39 +187,37 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     let rtsoff = xhci.mmio_read_u32(&mut mem, regs::cap::RTSOFF as u64);
 
     // Program operational registers.
-    xhci.mmio_write(&mut mem, regs::REG_DCBAAP_LO, 4, dcbaa as u32);
-    xhci.mmio_write(&mut mem, regs::REG_DCBAAP_HI, 4, (dcbaa >> 32) as u32);
+    xhci.mmio_write(regs::REG_DCBAAP_LO, 4, dcbaa);
+    xhci.mmio_write(regs::REG_DCBAAP_HI, 4, dcbaa >> 32);
 
     // CRCR: pointer (aligned) + initial cycle state = 1.
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (cmd_ring as u32) | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (cmd_ring >> 32) as u32);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, cmd_ring | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, cmd_ring >> 32);
 
     // Enable a single slot.
-    xhci.mmio_write(&mut mem, regs::REG_CONFIG, 4, 1);
+    xhci.mmio_write(regs::REG_CONFIG, 4, 1);
 
     // Program interrupter 0 event ring.
     let intr0 = (rtsoff as u64) + 0x20;
-    xhci.mmio_write(&mut mem, intr0 + 0x08, 4, 1); // ERSTSZ = 1 entry
-    xhci.mmio_write(&mut mem, intr0 + 0x10, 4, erst as u32);
-    xhci.mmio_write(&mut mem, intr0 + 0x14, 4, (erst >> 32) as u32);
-    xhci.mmio_write(&mut mem, intr0 + 0x18, 4, event_ring as u32);
-    xhci.mmio_write(&mut mem, intr0 + 0x1c, 4, (event_ring >> 32) as u32);
+    xhci.mmio_write(intr0 + 0x08, 4, 1); // ERSTSZ = 1 entry
+    xhci.mmio_write(intr0 + 0x10, 4, erst);
+    xhci.mmio_write(intr0 + 0x14, 4, erst >> 32);
+    xhci.mmio_write(intr0 + 0x18, 4, event_ring);
+    xhci.mmio_write(intr0 + 0x1c, 4, event_ring >> 32);
     // Enable interrupter 0.
-    xhci.mmio_write(&mut mem, intr0, 4, IMAN_IE);
+    xhci.mmio_write(intr0, 4, u64::from(IMAN_IE));
 
     // Start controller (RUN). This triggers a small DMA read + sets USBSTS.EINT; clear it so the
     // subsequent assertions are tied to command/transfer events.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    assert!(
-        xhci.irq_level(),
-        "RUN should assert an IRQ due to dma_on_run"
-    );
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci.tick_1ms(&mut mem);
+    assert!(xhci.irq_level(), "RUN should assert an IRQ due to dma_on_run");
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.irq_level(), "USBSTS RW1C should clear IRQ");
 
     // ---- Ring doorbell 0 (Enable Slot) ----
-    xhci.mmio_write(&mut mem, dboff as u64, 4, 0);
-    xhci.service_event_ring(&mut mem);
+    xhci.mmio_write(dboff as u64, 4, 0);
+    xhci.tick_1ms(&mut mem);
 
     let ev0 = Trb::read_from(&mut mem, event_ring);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
@@ -236,7 +234,7 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     );
 
     assert!(xhci.irq_level(), "Enable Slot completion should assert IRQ");
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.irq_level(), "IRQ should be clearable via USBSTS RW1C");
 
     // Install DCBAA[slot_id] -> Device Context pointer (guest responsibility, after Enable Slot).
@@ -254,8 +252,8 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     .write_to(&mut mem, cmd_ring + 0x20);
     make_link_trb(cmd_ring, true, true).write_to(&mut mem, cmd_ring + 0x30);
 
-    xhci.mmio_write(&mut mem, dboff as u64, 4, 0);
-    xhci.service_event_ring(&mut mem);
+    xhci.mmio_write(dboff as u64, 4, 0);
+    xhci.tick_1ms(&mut mem);
 
     let ev1 = Trb::read_from(&mut mem, event_ring + 0x10);
     let ev2 = Trb::read_from(&mut mem, event_ring + 0x20);
@@ -279,15 +277,15 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     assert_eq!(ev2.pointer(), cmd_ring + 0x20);
 
     assert!(xhci.irq_level(), "command completions should assert IRQ");
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.irq_level(), "IRQ should be clearable via USBSTS RW1C");
 
     // ---- Validate command-ring cycle-bit wrap ----
     // The Link TRB toggles the consumer cycle state. Overwrite TRB0 with cycle=0 and ensure it is
     // consumed on a subsequent doorbell ring.
     make_command_trb(TrbType::NoOpCommand, 0, 0, false).write_to(&mut mem, cmd_ring);
-    xhci.mmio_write(&mut mem, dboff as u64, 4, 0);
-    xhci.service_event_ring(&mut mem);
+    xhci.mmio_write(dboff as u64, 4, 0);
+    xhci.tick_1ms(&mut mem);
 
     let ev3 = Trb::read_from(&mut mem, event_ring + 0x30);
     assert_eq!(ev3.trb_type(), TrbType::CommandCompletionEvent);
@@ -295,20 +293,17 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     assert_eq!(ev3.pointer(), cmd_ring);
     assert_eq!(ev3.completion_code_raw(), CompletionCode::Success.as_u8());
 
-    assert!(
-        xhci.irq_level(),
-        "second command completion should assert IRQ"
-    );
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    assert!(xhci.irq_level(), "second command completion should assert IRQ");
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.irq_level());
 
     // Tell the controller we consumed all 4 events by writing ERDP back to the same address.
     // When the ring was full, this should toggle the consumer cycle state and allow new events.
-    xhci.mmio_write(&mut mem, intr0 + 0x18, 4, event_ring as u32);
-    xhci.mmio_write(&mut mem, intr0 + 0x1c, 4, (event_ring >> 32) as u32);
+    xhci.mmio_write(intr0 + 0x18, 4, event_ring);
+    xhci.mmio_write(intr0 + 0x1c, 4, event_ring >> 32);
 
     // ---- Ring endpoint doorbell (slot 1, target EP1 IN = endpoint ID 3) ----
-    xhci.mmio_write(&mut mem, dboff as u64 + u64::from(slot_id) * 4, 4, 3);
+    xhci.mmio_write(dboff as u64 + u64::from(slot_id) * 4, 4, 3);
     xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);
 
@@ -334,6 +329,6 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     assert_eq!(got, payload, "DMA buffer should contain IN payload");
 
     assert!(xhci.irq_level(), "transfer event should assert IRQ");
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.irq_level());
 }

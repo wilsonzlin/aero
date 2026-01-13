@@ -31,17 +31,17 @@ fn doorbell0_command_ring_continues_processing_on_tick() {
     let mut xhci = XhciController::new();
 
     // Configure event ring on interrupter 0 so command completion events are written to guest RAM.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, u64::from(erstba));
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, u64::from(event_ring));
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Program CRCR and start the controller.
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, cmd_ring | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, u64::from(cmd_ring | 1));
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     const COMMAND_COUNT: usize = 128;
 
@@ -62,7 +62,7 @@ fn doorbell0_command_ring_continues_processing_on_tick() {
     );
 
     // Ring doorbell 0 (Command Ring). The controller processes a bounded number of TRBs per MMIO.
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
 
     // Tick enough times to ensure the remainder of the command ring is processed.
     for _ in 0..32 {

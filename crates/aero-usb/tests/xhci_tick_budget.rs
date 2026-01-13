@@ -87,15 +87,15 @@ fn xhci_step_1ms_command_ring_is_bounded_and_makes_progress() {
     ctrl.set_command_ring(cmd_ring_base, true);
 
     // Configure interrupter 0 to deliver events into our guest event ring.
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (event_ring_base >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Start the controller so command ring processing is enabled.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Ring the command doorbell (doorbell 0) without triggering the MMIO-side command processing
     // fast path; this lets the test assert that `step_1ms` itself is properly budgeted.

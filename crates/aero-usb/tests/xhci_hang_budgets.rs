@@ -123,7 +123,7 @@ fn xhci_controller_command_ring_self_link_sets_hce() {
 
     xhci.process_command_ring(&mut mem, usize::MAX);
 
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts & regs::USBSTS_HCE, 0, "controller should latch HCE");
 }
 

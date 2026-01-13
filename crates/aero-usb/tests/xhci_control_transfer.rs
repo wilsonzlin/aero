@@ -107,30 +107,20 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
 
     // Configure interrupter 0 to deliver events into our guest event ring.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (event_ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Endpoint 0 uses DCI=1.
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
 
     // Ring the endpoint doorbell then tick to process.
-    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
-        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
-    xhci.mmio_write(&mut mem, doorbell_offset, 4, 1);
+    let doorbell_offset =
+        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    xhci.mmio_write(doorbell_offset, 4, 1);
     xhci.tick_1ms_and_service_event_ring(&mut mem);
 
     // Verify the device descriptor bytes landed in guest memory.

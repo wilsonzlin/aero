@@ -279,41 +279,21 @@ impl XhciPciDevice {
 
     /// Advance the device by 1ms.
     pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
-        // Transfer execution + event ring delivery both perform DMA. Gate them on PCI COMMAND.BME
-        // (bit 2) so clearing bus mastering does not interpret guest ERST state via open-bus reads
-        // (which would spuriously set USBSTS.HCE and/or drop pending events).
+        // Transfer execution + event ring delivery perform DMA. Gate them on PCI COMMAND.BME (bit
+        // 2) so clearing bus mastering does not interpret guest ring pointers via open-bus reads.
         let dma_enabled = (self.config.command() & (1 << 2)) != 0;
-
-        enum TickMemoryBus<'a> {
-            Dma(&'a mut MemoryBus),
-        }
-
-        impl aero_usb::MemoryBus for TickMemoryBus<'_> {
-            fn dma_enabled(&self) -> bool {
-                matches!(self, TickMemoryBus::Dma(_))
-            }
-
-            fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-                match self {
-                    TickMemoryBus::Dma(inner) => inner.read_physical(paddr, buf),
-                }
-            }
-
-            fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-                match self {
-                    TickMemoryBus::Dma(inner) => inner.write_physical(paddr, buf),
-                }
-            }
-        }
-
         if dma_enabled {
-            let mut adapter = TickMemoryBus::Dma(mem);
-            self.controller
-                .tick_1ms_and_service_event_ring(&mut adapter);
+            if let Some(mem_bus) = self.dma_mem.as_ref() {
+                let mut mem_ref = mem_bus.borrow_mut();
+                let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
+                self.controller.tick_1ms(&mut adapter);
+            } else {
+                let mut adapter = AeroUsbMemoryBus::Dma(mem as &mut dyn memory::MemoryBus);
+                self.controller.tick_1ms(&mut adapter);
+            }
         } else {
             self.controller.tick_1ms_no_dma();
         }
-
         self.service_interrupts();
     }
 }
@@ -343,9 +323,8 @@ impl PciDevice for XhciPciDevice {
         // Like UHCI/EHCI, a host controller reset should not "unplug" devices. The xHCI controller
         // model implements `USBCMD.HCRST` as an in-place reset that preserves physical connection
         // state while clearing guest-visible operational state.
-        let mut bus = AeroUsbMemoryBus::NoDma;
         self.controller
-            .mmio_write(&mut bus, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
+            .mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));
         self.irq.set_level(false);
         self.last_irq_level = false;
     }
@@ -353,6 +332,7 @@ impl PciDevice for XhciPciDevice {
 
 enum AeroUsbMemoryBus<'a> {
     Dma(&'a mut dyn memory::MemoryBus),
+    #[allow(dead_code)]
     NoDma,
 }
 
@@ -420,17 +400,7 @@ impl MmioHandler for XhciPciDevice {
             }
         }
 
-        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
-        if dma_enabled {
-            if let Some(mem) = self.dma_mem.as_ref() {
-                let mut mem_ref = mem.borrow_mut();
-                let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
-                return xhci_mmio_read(&mut self.controller, &mut adapter, offset, size);
-            }
-        }
-
-        let mut adapter = AeroUsbMemoryBus::NoDma;
-        xhci_mmio_read(&mut self.controller, &mut adapter, offset, size)
+        self.controller.mmio_read(offset, size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
@@ -470,24 +440,8 @@ impl MmioHandler for XhciPciDevice {
                 }
             }
         }
-
-        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
         let masked = value & all_ones(size);
-
-        if dma_enabled {
-            if let Some(mem) = self.dma_mem.as_ref() {
-                {
-                    let mut mem_ref = mem.borrow_mut();
-                    let mut adapter = AeroUsbMemoryBus::Dma(&mut *mem_ref);
-                    xhci_mmio_write(&mut self.controller, &mut adapter, offset, size, masked);
-                }
-                self.service_interrupts();
-                return;
-            }
-        }
-
-        let mut adapter = AeroUsbMemoryBus::NoDma;
-        xhci_mmio_write(&mut self.controller, &mut adapter, offset, size, masked);
+        self.controller.mmio_write(offset, size, masked);
         self.service_interrupts();
     }
 }
@@ -614,50 +568,6 @@ impl IoSnapshot for XhciPciDevice {
         }
 
         Ok(())
-    }
-}
-
-fn xhci_mmio_read(
-    controller: &mut XhciController,
-    bus: &mut dyn aero_usb::MemoryBus,
-    offset: u64,
-    size: usize,
-) -> u64 {
-    // `XhciController` models 1/2/4-byte reads. Synthesize larger reads by composing byte-sized
-    // accesses to preserve little-endian semantics.
-    let mut out = 0u64;
-    for i in 0..size {
-        let b = controller.mmio_read(bus, offset + i as u64, 1);
-        out |= (b as u64) << (i * 8);
-    }
-    out & all_ones(size)
-}
-
-fn xhci_mmio_write(
-    controller: &mut XhciController,
-    bus: &mut dyn aero_usb::MemoryBus,
-    offset: u64,
-    size: usize,
-    value: u64,
-) {
-    // Prefer natural 4-byte writes when possible to avoid spurious side effects from decomposing
-    // wide writes into byte writes (e.g. RUN bit edges).
-    match size {
-        1 | 2 | 4 => controller.mmio_write(bus, offset, size, value as u32),
-        8 if (offset & 3) == 0 => {
-            controller.mmio_write(bus, offset, 4, value as u32);
-            controller.mmio_write(bus, offset + 4, 4, (value >> 32) as u32);
-        }
-        _ => {
-            for i in 0..size {
-                controller.mmio_write(
-                    bus,
-                    offset + i as u64,
-                    1,
-                    ((value >> (i * 8)) & 0xff) as u32,
-                );
-            }
-        }
     }
 }
 

@@ -451,6 +451,7 @@ pub struct XhciController {
     // subsequent MMIO accesses without requiring the guest to ring doorbell 0 for every TRB.
     command_ring: Option<RingCursor>,
     cmd_kick: bool,
+    dma_on_run_pending: bool,
 
     // Runtime registers: interrupter 0 + guest event ring delivery.
     interrupter0: InterrupterRegs,
@@ -516,6 +517,7 @@ impl fmt::Debug for XhciController {
             .field("slots", &self.slots.len())
             .field("command_ring", &self.command_ring)
             .field("cmd_kick", &self.cmd_kick)
+            .field("dma_on_run_pending", &self.dma_on_run_pending)
             .field("pending_events", &self.pending_events.len())
             .field("dropped_event_trbs", &self.dropped_event_trbs)
             .field("time_ms", &self.time_ms)
@@ -570,6 +572,7 @@ impl XhciController {
             config: 0,
             slots,
             cmd_kick: false,
+            dma_on_run_pending: false,
             ports: (0..port_count).map(|_| XhciPort::new()).collect(),
             command_ring: None,
             interrupter0: InterrupterRegs::default(),
@@ -735,8 +738,9 @@ impl XhciController {
 
     /// Advance the controller by one 1ms USB frame while allowing DMA via `mem`.
     ///
-    /// Wrappers can enforce PCI Bus Master Enable (BME) gating by passing a `MemoryBus`
-    /// implementation that provides open-bus reads and ignores writes.
+    /// This helper exists for snapshot coverage and some wrapper tests: it advances the 1ms tick
+    /// counter/MFINDEX and, when the controller is running and DMA is enabled, performs a minimal
+    /// DMA read against the guest-provided CRCR pointer.
     pub fn tick_1ms_with_dma(&mut self, mem: &mut dyn MemoryBus) {
         self.tick_ports_1ms();
 
@@ -746,12 +750,13 @@ impl XhciController {
             return;
         }
 
-        if self.pending_dma_on_run {
-            self.dma_on_run(mem);
-        }
+        // Run any deferred "DMA-on-RUN" probe (used by PCI wrappers to validate BME gating).
+        //
+        // This is gated on `dma_enabled()` inside `dma_on_run`.
+        self.dma_on_run(mem);
 
-        // Minimal DMA touch-point used by wrapper tests: read a dword from CRCR while the
-        // controller is running.
+        // Minimal DMA touch-point used by wrapper tests: read a dword from CRCR while the controller
+        // is running.
         //
         // Gate this on `dma_enabled()` so wrappers can pass an open-bus/no-DMA `MemoryBus` without
         // the controller interpreting those reads as real guest memory.
@@ -759,12 +764,14 @@ impl XhciController {
             // CRCR stores flags in the low bits; mask them away before using the pointer as a guest
             // physical address.
             let paddr = self.crcr & regs::CRCR_PTR_MASK;
-            self.last_tick_dma_dword = mem.read_u32(paddr);
+            if paddr != 0 {
+                self.last_tick_dma_dword = mem.read_u32(paddr);
+            }
         }
     }
 
-    pub fn mmio_read_u32(&mut self, mem: &mut dyn MemoryBus, offset: u64) -> u32 {
-        self.mmio_read(mem, offset, 4)
+    pub fn mmio_read_u32(&mut self, _mem: &mut dyn MemoryBus, offset: u64) -> u32 {
+        self.mmio_read(offset, 4) as u32
     }
 
     /// Returns the currently configured DCBAAP base (64-byte aligned), if set.
@@ -2035,8 +2042,9 @@ impl XhciController {
 
     fn sync_command_ring_from_crcr(&mut self) {
         // CRCR bits 63:6 contain the ring pointer; bits 3:0 contain flags (RCS/CS/CA/CRR).
-        // Preserve the low flag bits while masking the pointer to the required alignment.
-        let flags = self.crcr & 0x0f;
+        // Preserve guest-writable flag bits while masking the pointer to the required alignment.
+        // CRCR.CRR (bit 3) is read-only and is therefore forced to 0 in the stored register value.
+        let flags = self.crcr & 0x07;
         let cycle = (flags & 0x1) != 0;
         let ptr = self.crcr & !0x3f;
         self.crcr = ptr | flags;
@@ -2050,7 +2058,7 @@ impl XhciController {
     fn sync_crcr_from_command_ring(&mut self) {
         if let Some(ring) = self.command_ring {
             let ptr = ring.dequeue_ptr() & !0x3f;
-            let mut flags = self.crcr & 0x0e;
+            let mut flags = self.crcr & 0x06;
             if ring.cycle_state() {
                 flags |= 0x1;
             }
@@ -2695,15 +2703,10 @@ impl XhciController {
     }
 
     /// Read from the controller's MMIO register space.
-    pub fn mmio_read(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
-        // Treat out-of-range reads as open bus.
-        let open_bus = match size {
-            1 => 0xff,
-            2 => 0xffff,
-            4 => u32::MAX,
-            _ => 0,
-        };
-        if !matches!(size, 1 | 2 | 4) {
+    pub fn mmio_read(&mut self, offset: u64, size: usize) -> u64 {
+        // Treat invalid/out-of-range reads as open bus.
+        let open_bus = all_ones(size);
+        if !matches!(size, 1 | 2 | 4 | 8) {
             return open_bus;
         }
         let Some(end) = offset.checked_add(size as u64) else {
@@ -2713,31 +2716,47 @@ impl XhciController {
             return open_bus;
         }
 
-        self.maybe_process_command_ring(mem);
-
         // Read per-byte so unaligned/cross-dword reads behave like normal little-endian memory.
         // This is more robust against guests doing odd-sized or misaligned accesses.
-        let mut out = 0u32;
+        let mut out = 0u64;
         for i in 0..size {
             let Some(off) = offset.checked_add(i as u64) else {
                 break;
             };
             let byte = self.mmio_read_u8(off);
-            out |= (byte as u32) << (i * 8);
+            out |= (byte as u64) << (i * 8);
         }
 
-        out
+        out & open_bus
     }
 
     /// Write to the controller's MMIO register space.
-    pub fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
-        if !matches!(size, 1 | 2 | 4) {
+    pub fn mmio_write(&mut self, offset: u64, size: usize, value: u64) {
+        if !matches!(size, 1 | 2 | 4 | 8) {
             return;
         }
         let Some(end) = offset.checked_add(size as u64) else {
             return;
         };
         if end > u64::from(Self::MMIO_SIZE) {
+            return;
+        }
+
+        // Handle 64-bit accesses explicitly. Prefer splitting into two natural dword writes when
+        // aligned so side effects are closer to what real hardware would expose.
+        if size == 8 {
+            if (offset & 3) == 0 {
+                self.mmio_write(offset, 4, value & 0xffff_ffff);
+                self.mmio_write(offset + 4, 4, value >> 32);
+            } else {
+                for i in 0..8usize {
+                    let Some(off) = offset.checked_add(i as u64) else {
+                        break;
+                    };
+                    let byte = (value >> (i * 8)) & 0xff;
+                    self.mmio_write(off, 1, byte);
+                }
+            }
             return;
         }
 
@@ -2750,17 +2769,18 @@ impl XhciController {
                     break;
                 };
                 let byte = (value >> (i * 8)) & 0xff;
-                self.mmio_write(mem, off, 1, byte);
+                self.mmio_write(off, 1, byte);
             }
             return;
         }
 
         let aligned = offset & !3;
         let shift = (offset & 3) * 8;
+        let value_u32 = value as u32;
         let (mask, value_shifted) = match size {
-            1 => (0xffu32 << shift, (value & 0xff) << shift),
-            2 => (0xffffu32 << shift, (value & 0xffff) << shift),
-            4 => (u32::MAX, value),
+            1 => (0xffu32 << shift, (value_u32 & 0xff) << shift),
+            2 => (0xffffu32 << shift, (value_u32 & 0xffff) << shift),
+            4 => (u32::MAX, value_u32),
             _ => return,
         };
 
@@ -2790,45 +2810,31 @@ impl XhciController {
                     ((off - doorbell_base) / u64::from(regs::doorbell::DOORBELL_STRIDE)) as u8;
                 let write_val = merge(0);
                 self.write_doorbell(target, write_val);
-                // Endpoint doorbells should trigger transfer execution promptly even if the outer
-                // integration does not model a periodic controller tick (mirroring how we process
-                // the command ring when doorbell 0 is rung).
-                //
-                // For bulk/interrupt endpoints this runs at most one TD per call via the transfer
-                // executor.
-                if target != 0 && mem.dma_enabled() {
-                    self.tick(mem);
-                    self.service_event_ring(mem);
-                }
             }
             regs::REG_USBCMD => {
                 let prev = self.usbcmd;
                 let next = merge(self.usbcmd);
 
+                // Host Controller Reset (HCRST) is write-1-to-reset and is self-clearing.
                 if (next & regs::USBCMD_HCRST) != 0 {
-                    // Host Controller Reset (HCRST) is self-clearing. We model it as an immediate
-                    // reset of operational registers and controller-local bookkeeping so real
-                    // xHCI drivers waiting for the bit to clear can make progress.
                     self.reset_controller();
                     return;
                 }
 
-                self.usbcmd = next;
+                // Ignore HCRST bit (it is not persistent).
+                self.usbcmd = next & !regs::USBCMD_HCRST;
 
-                // On the rising edge of RUN, perform a small DMA read from CRCR to validate PCI Bus
-                // Master Enable (BME) gating in the emulator wrapper.
+                // On the rising edge of RUN, schedule a small DMA read (performed by tick_1ms) to
+                // validate PCI Bus Master Enable (BME) gating in the wrapper.
                 let was_running = (prev & regs::USBCMD_RUN) != 0;
                 let now_running = (self.usbcmd & regs::USBCMD_RUN) != 0;
                 if was_running && !now_running {
                     // Dropping RUN cancels any deferred DMA-on-RUN probe.
                     self.pending_dma_on_run = false;
                 } else if !was_running && now_running {
-                    // Latch the rising edge and attempt to execute the DMA-on-RUN probe immediately.
-                    // If DMA is not available for this MMIO access (e.g. Bus Mastering disabled or
-                    // the integration doesn't provide a DMA memory view for MMIO), the probe will
-                    // be performed later from `tick_1ms_with_dma`.
+                    // Latch the rising edge. The probe will be executed by `tick_1ms_with_dma` once
+                    // DMA is available.
                     self.pending_dma_on_run = true;
-                    self.dma_on_run(mem);
                 }
             }
             regs::REG_USBSTS => {
@@ -2909,8 +2915,6 @@ impl XhciController {
             }
             _ => {}
         }
-
-        self.maybe_process_command_ring(mem);
     }
 
     fn reset_controller(&mut self) {
@@ -2923,6 +2927,7 @@ impl XhciController {
         self.config = 0;
         self.command_ring = None;
         self.cmd_kick = false;
+        self.dma_on_run_pending = false;
         self.mfindex = 0;
         self.time_ms = 0;
         self.last_tick_dma_dword = 0;
@@ -3799,6 +3804,15 @@ fn make_port_status_change_event_trb(port_id: u8) -> Trb {
     trb.set_cycle(true);
     trb.set_trb_type(TrbType::PortStatusChangeEvent);
     trb
+}
+fn all_ones(size: usize) -> u64 {
+    if size == 0 {
+        return 0;
+    }
+    if size >= 8 {
+        return u64::MAX;
+    }
+    (1u64 << (size * 8)) - 1
 }
 
 #[cfg(test)]

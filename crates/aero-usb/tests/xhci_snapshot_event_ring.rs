@@ -22,22 +22,12 @@ fn xhci_snapshot_preserves_event_ring_producer_cursor() {
     let ring_base = 0x2000;
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    ctrl.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    ctrl.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut ev0 = Trb {
         parameter: 0xaaaa,

@@ -1219,22 +1219,12 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     xhci.dnctrl = 0x0a0b_0c0d;
 
     // Configure interrupter 0 (this bumps generation counters which are part of the snapshot).
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Attach a device so port snapshots include a nested `AttachedUsbDevice` record.
     let keyboard = UsbHidKeyboardHandle::new();
@@ -1406,37 +1396,31 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     let mut ctrl = super::XhciController::new();
 
     // Program controller state via MMIO.
-    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_LO, 4, dcbaa as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_HI, 4, (dcbaa >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 8); // MaxSlotsEn
+    ctrl.mmio_write(regs::REG_DCBAAP_LO, 4, dcbaa);
+    ctrl.mmio_write(regs::REG_DCBAAP_HI, 4, dcbaa >> 32);
+    ctrl.mmio_write(regs::REG_CONFIG, 4, 8); // MaxSlotsEn
 
     // Command ring base + RCS=1.
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (cmd_ring as u32) | 1);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (cmd_ring >> 32) as u32);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, cmd_ring | 1);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, cmd_ring >> 32);
 
     // Program interrupter 0 event ring.
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erst as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erst >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring as u32);
-    ctrl.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (event_ring >> 32) as u32,
-    );
+    ctrl.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
+    ctrl.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erst);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erst >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring >> 32);
 
     // Start controller and clear the synthetic RUN-transition IRQ.
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
-    assert!(
-        !ctrl.irq_level(),
-        "IRQ should be clear before ringing doorbell"
-    );
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.tick_1ms(&mut mem);
+    ctrl.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
+    assert!(!ctrl.irq_level(), "IRQ should be clear before ringing doorbell");
 
     // Ring the command doorbell (DB0).
-    ctrl.mmio_write(&mut mem, regs::DBOFF_VALUE as u64, 4, 0);
+    ctrl.mmio_write(regs::DBOFF_VALUE as u64, 4, 0);
+    ctrl.tick_1ms(&mut mem);
 
     // Enable Slot -> one completion event.
     let ev0 = mem.read_trb(event_ring);
@@ -1448,13 +1432,13 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     // Interrupt should be asserted for the completion event.
     assert!(ctrl.irq_level());
     assert_ne!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
+        (ctrl.mmio_read(regs::REG_USBSTS, 4) as u32) & regs::USBSTS_EINT,
         0
     );
 
     // Clear interrupt pending state so we can observe a second interrupt.
-    ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
-    ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    ctrl.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IP | IMAN_IE));
+    ctrl.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!ctrl.irq_level());
 
     // Enable Slot clears DCBAA[1] to 0; install the device context pointer after it completes.
@@ -1486,7 +1470,8 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     }
 
     // Ring the command doorbell (DB0) again.
-    ctrl.mmio_write(&mut mem, regs::DBOFF_VALUE as u64, 4, 0);
+    ctrl.mmio_write(regs::DBOFF_VALUE as u64, 4, 0);
+    ctrl.tick_1ms(&mut mem);
 
     // Two commands -> two completion events.
     let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
@@ -1508,7 +1493,7 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     // Interrupt should be asserted for the second batch of events.
     assert!(ctrl.irq_level());
     assert_ne!(
-        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
+        (ctrl.mmio_read(regs::REG_USBSTS, 4) as u32) & regs::USBSTS_EINT,
         0
     );
 }

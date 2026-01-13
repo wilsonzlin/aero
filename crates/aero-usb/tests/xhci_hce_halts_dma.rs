@@ -64,18 +64,18 @@ fn force_hce(xhci: &mut XhciController, mem: &mut CountingMem) {
     let ring_base = 0x2000u64;
     write_erst_entry(mem, erstba, ring_base, 0);
 
-    xhci.mmio_write(mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
-    xhci.mmio_write(mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
 
     let mut evt = Trb::default();
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt);
     xhci.service_event_ring(mem);
 
-    let sts = xhci.mmio_read(mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts & regs::USBSTS_HCE, 0, "controller should latch HCE");
 }
 
@@ -103,7 +103,7 @@ fn xhci_run_does_not_dma_after_host_controller_error() {
 
     // Setting RUN should not perform the DMA-on-RUN probe while HCE is latched.
     mem.reset_counts();
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
     assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
 }
@@ -119,7 +119,7 @@ fn xhci_doorbell_does_not_dma_after_host_controller_error() {
     // With HCE latched, we should not touch guest memory.
     let doorbell1 = u64::from(regs::DBOFF_VALUE) + u64::from(regs::doorbell::DOORBELL_STRIDE);
     mem.reset_counts();
-    xhci.mmio_write(&mut mem, doorbell1, 4, 2);
+    xhci.mmio_write(doorbell1, 4, 2);
     assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
     assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
 }
@@ -134,10 +134,10 @@ fn xhci_mmio_read_does_not_dma_after_host_controller_error() {
     // MMIO reads run `maybe_process_command_ring()` first. Ensure that path does not DMA after HCE,
     // even if we set `cmd_kick` by ringing doorbell 0.
     let doorbell0 = u64::from(regs::DBOFF_VALUE);
-    xhci.mmio_write(&mut mem, doorbell0, 4, 0);
+    xhci.mmio_write(doorbell0, 4, 0);
 
     mem.reset_counts();
-    let _ = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let _ = xhci.mmio_read(regs::REG_USBSTS, 4);
     assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
     assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
 }

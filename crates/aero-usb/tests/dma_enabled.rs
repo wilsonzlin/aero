@@ -97,9 +97,9 @@ fn xhci_tick_1ms_does_not_touch_guest_memory_without_dma() {
     let mut xhci = XhciController::new();
 
     // Start the controller so the tick-driven CRCR probe would normally run.
-    xhci.mmio_write(&mut mem, xhci_regs::REG_USBCMD, 4, xhci_regs::USBCMD_RUN);
+    xhci.mmio_write(xhci_regs::REG_USBCMD, 4, u64::from(xhci_regs::USBCMD_RUN));
 
-    let mf0 = xhci.mmio_read(&mut mem, xhci_regs::REG_MFINDEX, 4) & 0x3fff;
+    let mf0 = xhci.mmio_read(xhci_regs::REG_MFINDEX, 4) & 0x3fff;
 
     xhci.tick_1ms(&mut mem);
 
@@ -112,7 +112,7 @@ fn xhci_tick_1ms_does_not_touch_guest_memory_without_dma() {
         "xHCI tick_1ms must not DMA-write guest memory when dma_enabled() is false"
     );
 
-    let mf1 = xhci.mmio_read(&mut mem, xhci_regs::REG_MFINDEX, 4) & 0x3fff;
+    let mf1 = xhci.mmio_read(xhci_regs::REG_MFINDEX, 4) & 0x3fff;
     assert_eq!(
         mf1,
         (mf0 + 8) & 0x3fff,

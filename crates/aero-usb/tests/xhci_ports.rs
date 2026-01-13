@@ -52,6 +52,9 @@ fn write_erst_entry(mem: &mut TestMemory, erstba: u64, seg_base: u64, seg_size_t
 }
 
 fn drain_event(xhci: &mut XhciController, mem: &mut TestMemory, ring_base: u64, index: u64) -> Trb {
+    // Ensure events are flushed into guest memory (tick_1ms normally does this).
+    xhci.service_event_ring(mem);
+    assert_eq!(xhci.pending_event_count(), 0);
     let ev = Trb::read_from(mem, ring_base + index * (TRB_LEN as u64));
     assert!(ev.cycle());
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
@@ -60,7 +63,7 @@ fn drain_event(xhci: &mut XhciController, mem: &mut TestMemory, ring_base: u64, 
     assert!(xhci.irq_level());
 
     // Acknowledge the interrupt by clearing IMAN.IP.
-    xhci.mmio_write(mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IP | IMAN_IE));
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 
@@ -79,22 +82,12 @@ fn xhci_ports_attach_reset_and_events() {
     let ring_base = 0x2000;
     write_erst_entry(&mut mem, erstba, ring_base, 8);
 
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let reset_count = Rc::new(Cell::new(0));
     xhci.attach_device(
@@ -104,7 +97,7 @@ fn xhci_ports_attach_reset_and_events() {
         }),
     );
 
-    let portsc = xhci.mmio_read(&mut mem, portsc_off, 4);
+    let portsc = xhci.mmio_read(portsc_off, 4) as u32;
     assert_portsc_has(portsc, PORTSC_CCS);
     assert_portsc_has(portsc, PORTSC_CSC);
 
@@ -115,12 +108,12 @@ fn xhci_ports_attach_reset_and_events() {
     assert_eq!(port_id, 1);
 
     // Clear CSC via write-1-to-clear.
-    xhci.mmio_write(&mut mem, portsc_off, 4, PORTSC_CSC);
-    let portsc = xhci.mmio_read(&mut mem, portsc_off, 4);
+    xhci.mmio_write(portsc_off, 4, u64::from(PORTSC_CSC));
+    let portsc = xhci.mmio_read(portsc_off, 4) as u32;
     assert_portsc_not(portsc, PORTSC_CSC);
 
     // Trigger port reset.
-    xhci.mmio_write(&mut mem, portsc_off, 4, PORTSC_PR);
+    xhci.mmio_write(portsc_off, 4, u64::from(PORTSC_PR));
     assert_eq!(reset_count.get(), 1, "device reset should be called once");
 
     // Wait ~50ms for reset to complete.
@@ -128,7 +121,7 @@ fn xhci_ports_attach_reset_and_events() {
         xhci.tick_1ms(&mut mem);
     }
 
-    let portsc = xhci.mmio_read(&mut mem, portsc_off, 4);
+    let portsc = xhci.mmio_read(portsc_off, 4) as u32;
     assert_portsc_not(portsc, PORTSC_PR);
     assert_portsc_has(portsc, PORTSC_PED);
     assert_portsc_has(portsc, PORTSC_PEC);
@@ -139,10 +132,10 @@ fn xhci_ports_attach_reset_and_events() {
     assert_eq!(port_id, 1);
 
     // Clear PEC/PRC so we can observe a second reset completion while the port is already enabled.
-    xhci.mmio_write(&mut mem, portsc_off, 4, PORTSC_PEC | PORTSC_PRC);
+    xhci.mmio_write(portsc_off, 4, u64::from(PORTSC_PEC | PORTSC_PRC));
 
     // Trigger a second reset while the port is enabled. This sets PEC and queues a PSC event.
-    xhci.mmio_write(&mut mem, portsc_off, 4, PORTSC_PR);
+    xhci.mmio_write(portsc_off, 4, u64::from(PORTSC_PR));
     assert_eq!(reset_count.get(), 2, "device reset should be called twice");
 
     // Flush PSC event for the port enable change (port disabled during reset).
@@ -156,7 +149,7 @@ fn xhci_ports_attach_reset_and_events() {
         xhci.tick_1ms(&mut mem);
     }
 
-    let portsc = xhci.mmio_read(&mut mem, portsc_off, 4);
+    let portsc = xhci.mmio_read(portsc_off, 4) as u32;
     assert_portsc_not(portsc, PORTSC_PR);
     assert_portsc_has(portsc, PORTSC_PED);
     assert_portsc_has(portsc, PORTSC_PRC);
@@ -175,7 +168,7 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
     let mut xhci = XhciController::with_port_count(1);
     let mut mem = TestMemory::new(0x20_000);
 
-    let mf0 = xhci.mmio_read(&mut mem, regs::REG_MFINDEX, 4);
+    let mf0 = xhci.mmio_read(regs::REG_MFINDEX, 4);
 
     let reset_count = Rc::new(Cell::new(0));
     xhci.attach_device(
@@ -193,7 +186,7 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
 
     // Tick without an event ring: MFINDEX should advance, but the PSC event should remain queued.
     xhci.tick_1ms(&mut mem);
-    let mf1 = xhci.mmio_read(&mut mem, regs::REG_MFINDEX, 4);
+    let mf1 = xhci.mmio_read(regs::REG_MFINDEX, 4);
     assert_ne!(mf1, mf0, "expected MFINDEX to advance on tick_1ms");
     assert_eq!(xhci.pending_event_count(), 1);
     assert_eq!(&mem.data[ring_base..ring_base + TRB_LEN], &[0xA5; TRB_LEN]);
@@ -202,23 +195,12 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
     // should flush into guest memory.
     let erstba = 0x1000u64;
     write_erst_entry(&mut mem, erstba, ring_base as u64, 8);
-
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base_u64 >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base as u64);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, (ring_base as u64) >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     xhci.tick_1ms(&mut mem);
     assert_eq!(xhci.pending_event_count(), 0);

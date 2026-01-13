@@ -42,22 +42,12 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut evt = Trb {
         parameter: 0x1234_5678,
@@ -77,14 +67,14 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     assert!(xhci.irq_level());
 
     // IMAN.IE gates IRQ assertion while preserving the pending latch.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, 0);
     assert!(xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
     assert!(xhci.irq_level());
 
     // Verify USBSTS.EINT is W1C and can be used to acknowledge interrupter 0.
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 
@@ -95,7 +85,7 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     assert!(xhci.irq_level());
 
     // Verify IMAN.IP is W1C.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IP | IMAN_IE));
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 }
@@ -109,22 +99,12 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut evt = Trb {
         parameter: 0x1234_5678,
@@ -140,14 +120,13 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
 
     // Many xHCI drivers acknowledge interrupts by writing ERDP with EHB set.
     xhci.mmio_write(
-        &mut mem,
         regs::REG_INTR0_ERDP_LO,
         4,
-        (ring_base as u32) | (ERDP_EHB as u32),
+        ring_base | u64::from(ERDP_EHB),
     );
-    let erdp_lo = xhci.mmio_read(&mut mem, regs::REG_INTR0_ERDP_LO, 4);
+    let erdp_lo = xhci.mmio_read(regs::REG_INTR0_ERDP_LO, 4);
     assert_eq!(
-        erdp_lo & (ERDP_EHB as u32),
+        erdp_lo & u64::from(ERDP_EHB),
         0,
         "EHB should be a transient ack bit"
     );
@@ -164,22 +143,12 @@ fn event_ring_erdp_ehb_byte_write_clears_interrupt_pending() {
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut evt = Trb {
         parameter: 0x1234_5678,
@@ -195,10 +164,10 @@ fn event_ring_erdp_ehb_byte_write_clears_interrupt_pending() {
 
     // Exercise sub-dword MMIO writes: a byte write with EHB set should still acknowledge the
     // interrupt pending latch.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 1, ERDP_EHB as u32);
-    let erdp_lo = xhci.mmio_read(&mut mem, regs::REG_INTR0_ERDP_LO, 4);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 1, u64::from(ERDP_EHB));
+    let erdp_lo = xhci.mmio_read(regs::REG_INTR0_ERDP_LO, 4);
     assert_eq!(
-        erdp_lo & (ERDP_EHB as u32),
+        erdp_lo & u64::from(ERDP_EHB),
         0,
         "EHB should be a transient ack bit"
     );
@@ -259,11 +228,11 @@ fn event_ring_invalid_config_sets_host_controller_error() {
     let mut xhci = XhciController::new();
 
     // Program ERSTSZ/ERSTBA/ERDP with an out-of-range ERSTBA (unmapped guest memory).
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, 0xdead_beef);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, 0x100);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, 0xdead_beef);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, 0x100);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, 0);
 
     let mut evt = Trb::default();
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
@@ -272,12 +241,12 @@ fn event_ring_invalid_config_sets_host_controller_error() {
     // Must not panic, and should set USBSTS.HCE as a sticky error bit.
     xhci.service_event_ring(&mut mem);
 
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts & regs::USBSTS_HCE, 0, "controller should latch HCE");
 
     // USBSTS is RW1C, but HCE is sticky: writing 1 must not clear it.
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_HCE);
-    let sts2 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_HCE));
+    let sts2 = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts2 & regs::USBSTS_HCE, 0, "HCE should be sticky");
 }
 
@@ -291,22 +260,12 @@ fn event_ring_out_of_range_segment_base_sets_host_controller_error() {
     let ring_base = 0xdead_beef_u64 << 12;
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
     // ERDP must point into the segment; use the (invalid) base address.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
 
     let mut evt = Trb::default();
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
@@ -319,7 +278,7 @@ fn event_ring_out_of_range_segment_base_sets_host_controller_error() {
         1,
         "invalid segment base must not consume the queued event"
     );
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(
         sts & regs::USBSTS_HCE,
         0,
@@ -336,25 +295,15 @@ fn event_ring_invalid_erdp_sets_host_controller_error() {
     let ring_base = 0x2000;
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
 
     // ERDP points outside the configured segment (segment length = 4 * 16 bytes = 0x40).
     let invalid_erdp = ring_base + 0x1000;
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, invalid_erdp as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (invalid_erdp >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, invalid_erdp);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, invalid_erdp >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut evt = Trb::default();
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
@@ -367,7 +316,7 @@ fn event_ring_invalid_erdp_sets_host_controller_error() {
         "invalid ERDP must not consume the queued event"
     );
 
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(
         sts & regs::USBSTS_HCE,
         0,
@@ -390,22 +339,12 @@ fn event_ring_wrap_and_budget_are_bounded() {
     );
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     for i in 0..(EVENT_ENQUEUE_BUDGET_PER_TICK + 1) {
         let mut evt = Trb {
@@ -439,22 +378,12 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
     write_erst_entry(&mut mem, erstba, ring_base, 2);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut ev0 = Trb {
         parameter: 0xaaaa,
@@ -494,16 +423,14 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
 
     // Simulate the guest consuming the first TRB by advancing ERDP to entry 1.
     xhci.mmio_write(
-        &mut mem,
         regs::REG_INTR0_ERDP_LO,
         4,
-        (ring_base + TRB_LEN as u64) as u32,
+        ring_base + TRB_LEN as u64,
     );
     xhci.mmio_write(
-        &mut mem,
         regs::REG_INTR0_ERDP_HI,
         4,
-        ((ring_base + TRB_LEN as u64) >> 32) as u32,
+        (ring_base + TRB_LEN as u64) >> 32,
     );
 
     // Now the producer should be able to wrap and enqueue the final event with a toggled cycle bit.
@@ -529,22 +456,12 @@ fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() 
     write_erst_entry(&mut mem, erstba, ring_base, 2);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut ev0 = Trb {
         parameter: 0xaaaa,
@@ -577,17 +494,11 @@ fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() 
     // when they consume a whole number of ring laps. The model should treat this as a wrap and
     // toggle the consumer cycle state to unblock the producer.
     xhci.mmio_write(
-        &mut mem,
         regs::REG_INTR0_ERDP_LO,
         4,
-        (ring_base as u32) | (ERDP_EHB as u32),
+        ring_base | u64::from(ERDP_EHB),
     );
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
 
     xhci.service_event_ring(&mut mem);
     assert_eq!(xhci.pending_event_count(), 0);
@@ -612,22 +523,12 @@ fn event_ring_multi_segment_wraps_to_first_segment_and_toggles_cycle() {
     write_erst_entry(&mut mem, erstba + 16, seg1_base, 2);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 2);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, seg0_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (seg0_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 2);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, seg0_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, seg0_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     for i in 0..5u64 {
         let mut evt = Trb {
@@ -657,13 +558,8 @@ fn event_ring_multi_segment_wraps_to_first_segment_and_toggles_cycle() {
     assert_eq!(trb3.parameter, 0x1003);
 
     // Simulate the guest consuming both TRBs in the first segment by advancing ERDP into segment 1.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, seg1_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (seg1_base >> 32) as u32,
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, seg1_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, seg1_base >> 32);
 
     // The producer should have wrapped back to segment 0 and toggled its cycle bit, so it can now
     // overwrite the consumed TRB0 slot.
@@ -687,22 +583,12 @@ fn port_status_change_event_is_delivered_into_guest_event_ring() {
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Root hub port 0 connect should enqueue a Port Status Change Event TRB.
     xhci.attach_device(0, Box::new(DummyDevice));
@@ -728,22 +614,12 @@ fn event_ring_cycle_toggles_on_wrap() {
     write_erst_entry(&mut mem, erstba, ring_base, 2);
 
     let mut xhci = XhciController::new();
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     let mut evt1 = Trb {
         parameter: 0x1111_1111,
@@ -768,8 +644,8 @@ fn event_ring_cycle_toggles_on_wrap() {
 
     // Advance ERDP to the second entry so the ring is no longer full.
     let erdp = ring_base + TRB_LEN as u64;
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, erdp as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (erdp >> 32) as u32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, erdp);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, erdp >> 32);
 
     let mut evt3 = Trb {
         parameter: 0x3333_3333,
@@ -806,22 +682,12 @@ fn event_ring_flushes_pending_events_after_erst_programmed() {
     let ring_base = 0x6000;
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     xhci.service_event_ring(&mut mem);
 

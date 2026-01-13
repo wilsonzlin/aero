@@ -44,41 +44,29 @@ fn command_ring_noop_then_enable_slot_emits_completion_events() {
     let mut xhci = XhciController::new();
 
     // Configure DCBAAP so Enable Slot can succeed.
-    xhci.mmio_write(&mut mem, regs::REG_DCBAAP_LO, 4, DCBAAP_BASE as u32);
-    xhci.mmio_write(&mut mem, regs::REG_DCBAAP_HI, 4, (DCBAAP_BASE >> 32) as u32);
+    xhci.mmio_write(regs::REG_DCBAAP_LO, 4, DCBAAP_BASE);
+    xhci.mmio_write(regs::REG_DCBAAP_HI, 4, DCBAAP_BASE >> 32);
 
     // Configure interrupter 0 event ring.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (ERST_BASE >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (EVENT_RING_BASE >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, ERST_BASE >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, EVENT_RING_BASE >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Program the command ring dequeue pointer + cycle state.
     xhci.mmio_write(
-        &mut mem,
         regs::REG_CRCR_LO,
         4,
-        (CMD_RING_BASE as u32) | 1, // RCS=1
+        CMD_RING_BASE | 1, // RCS=1
     );
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (CMD_RING_BASE >> 32) as u32);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, CMD_RING_BASE >> 32);
 
     // Start the controller and ring doorbell 0 to process commands.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
-    // Ensure completion events are flushed to the guest event ring.
-    xhci.service_event_ring(&mut mem);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
 
     let ev0 = Trb::read_from(&mut mem, EVENT_RING_BASE);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
@@ -129,38 +117,26 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
     let mut xhci = XhciController::new();
 
     // Configure interrupter 0 event ring.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (ERST_BASE >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (EVENT_RING_BASE >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, ERST_BASE >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, EVENT_RING_BASE >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Program the command ring dequeue pointer + cycle state.
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (CMD_RING_BASE as u32) | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (CMD_RING_BASE >> 32) as u32);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, CMD_RING_BASE | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, CMD_RING_BASE >> 32);
 
     // Start controller + ring doorbell0 once.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
 
-    // Command processing is bounded per MMIO access; ensure the controller keeps making progress
-    // across subsequent MMIO reads without requiring another doorbell ring.
+    // Command processing is bounded per tick; ensure the controller keeps making progress across
+    // subsequent ticks without requiring another doorbell ring.
     let mut remaining = CMD_COUNT;
     for _ in 0..128 {
-        // Any MMIO read should advance the command ring if cmd_kick is still set.
-        let _ = xhci.mmio_read(&mut mem, regs::REG_USBCMD, 4);
-        xhci.service_event_ring(&mut mem);
+        xhci.tick_1ms(&mut mem);
 
         remaining = (0..CMD_COUNT)
             .filter(|&i| {
@@ -186,8 +162,7 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
 
     // Allow the controller to observe the cycle mismatch and transition to the idle state.
     for _ in 0..4 {
-        let _ = xhci.mmio_read(&mut mem, regs::REG_USBCMD, 4);
-        xhci.service_event_ring(&mut mem);
+        xhci.tick_1ms(&mut mem);
     }
     let ev_before_new_command = Trb::read_from(
         &mut mem,
@@ -207,8 +182,7 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
 
     // Without ringing doorbell0, no additional completion event should be produced.
     for _ in 0..16 {
-        let _ = xhci.mmio_read(&mut mem, regs::REG_USBCMD, 4);
-        xhci.service_event_ring(&mut mem);
+        xhci.tick_1ms(&mut mem);
     }
     let ev_without_doorbell = Trb::read_from(
         &mut mem,
@@ -217,10 +191,9 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
     assert_eq!(ev_without_doorbell.trb_type(), TrbType::Unknown(0));
 
     // Ring doorbell0 again to kick command processing.
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
     for _ in 0..16 {
-        let _ = xhci.mmio_read(&mut mem, regs::REG_USBCMD, 4);
-        xhci.service_event_ring(&mut mem);
+        xhci.tick_1ms(&mut mem);
     }
 
     let ev_after_doorbell = Trb::read_from(

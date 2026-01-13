@@ -26,7 +26,7 @@ use aero_usb::xhci::XhciController;
 use aero_usb::xhci::context::{XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT};
 use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
 
-use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len};
+use crate::guest_memory_bus::{GuestMemoryBus, wasm_memory_byte_len};
 
 const XHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"XHCB";
 const XHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
@@ -217,17 +217,7 @@ impl XhciControllerBridge {
         if size == 0 {
             return 0;
         }
-
-        // Gate DMA on PCI Bus Master Enable (command bit 2). When bus mastering is disabled, the
-        // controller must not touch guest memory.
-        let dma_enabled = (self.pci_command & (1 << 2)) != 0;
-        if dma_enabled {
-            let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
-            self.ctrl.mmio_read(&mut mem, u64::from(offset), size)
-        } else {
-            let mut mem = NoDmaMemory;
-            self.ctrl.mmio_read(&mut mem, u64::from(offset), size)
-        }
+        self.ctrl.mmio_read(u64::from(offset), size) as u32
     }
 
     pub fn mmio_write(&mut self, offset: u32, size: u8, value: u32) {
@@ -235,19 +225,8 @@ impl XhciControllerBridge {
         if size == 0 {
             return;
         }
-
-        // Gate DMA on PCI Bus Master Enable (command bit 2). When bus mastering is disabled, the
-        // controller must not touch guest memory.
-        let dma_enabled = (self.pci_command & (1 << 2)) != 0;
-        if dma_enabled {
-            let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
-            self.ctrl
-                .mmio_write(&mut mem, u64::from(offset), size, value);
-        } else {
-            let mut mem = NoDmaMemory;
-            self.ctrl
-                .mmio_write(&mut mem, u64::from(offset), size, value);
-        }
+        self.ctrl
+            .mmio_write(u64::from(offset), size, u64::from(value));
     }
 
     /// Mirror the guest-written PCI command register (0x04, low 16 bits) into the WASM device
@@ -275,9 +254,9 @@ impl XhciControllerBridge {
         if frames == 0 {
             return;
         }
-
         // Gate DMA on PCI Bus Master Enable (command bit 2). When bus mastering is disabled, the
-        // controller must not touch guest memory.
+        // controller must not touch guest memory. Still tick internal timers so port operations
+        // (e.g. reset/debounce) complete deterministically.
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
             let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);

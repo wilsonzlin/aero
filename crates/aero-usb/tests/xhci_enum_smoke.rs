@@ -116,8 +116,8 @@ fn wait_for_event(
             RingPoll::Ready(item) => {
                 // Update ERDP to simulate an interrupt handler consuming the event.
                 let erdp = ev_cursor.dequeue_ptr();
-                xhci.mmio_write(mem, rt_erdp_lo, 4, erdp as u32);
-                xhci.mmio_write(mem, rt_erdp_hi, 4, (erdp >> 32) as u32);
+                xhci.mmio_write(rt_erdp_lo, 4, erdp);
+                xhci.mmio_write(rt_erdp_hi, 4, erdp >> 32);
                 return item.trb;
             }
             RingPoll::NotReady => xhci.tick_1ms_and_service_event_ring(mem),
@@ -135,15 +135,15 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let mut xhci = XhciController::new();
 
     // --- Capability discovery (driver-style) ---
-    let cap0 = xhci.mmio_read(&mut mem, regs::REG_CAPLENGTH_HCIVERSION, 4);
+    let cap0 = xhci.mmio_read(regs::REG_CAPLENGTH_HCIVERSION, 4);
     let caplength = (cap0 & 0xff) as u64;
     assert_eq!(caplength as u8, regs::CAPLENGTH_BYTES);
 
-    let _hcsparams1 = xhci.mmio_read(&mut mem, regs::REG_HCSPARAMS1, 4);
-    let _hccparams1 = xhci.mmio_read(&mut mem, regs::REG_HCCPARAMS1, 4);
+    let _hcsparams1 = xhci.mmio_read(regs::REG_HCSPARAMS1, 4);
+    let _hccparams1 = xhci.mmio_read(regs::REG_HCCPARAMS1, 4);
 
-    let dboff = xhci.mmio_read(&mut mem, regs::REG_DBOFF, 4) as u64 & !0x3;
-    let rtsoff = xhci.mmio_read(&mut mem, regs::REG_RTSOFF, 4) as u64 & !0x1f;
+    let dboff = xhci.mmio_read(regs::REG_DBOFF, 4) & !0x3;
+    let rtsoff = xhci.mmio_read(regs::REG_RTSOFF, 4) & !0x1f;
 
     let op_base = caplength;
     let reg_usbcmd = op_base;
@@ -177,38 +177,38 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     write_u32(&mut mem, erst + 0x0c, 0);
 
     // --- Program operational registers ---
-    xhci.mmio_write(&mut mem, reg_dcbaap_lo, 4, dcbaa as u32);
-    xhci.mmio_write(&mut mem, reg_dcbaap_hi, 4, (dcbaa >> 32) as u32);
+    xhci.mmio_write(reg_dcbaap_lo, 4, dcbaa);
+    xhci.mmio_write(reg_dcbaap_hi, 4, dcbaa >> 32);
 
     // Command ring pointer + RCS=1.
     let crcr = cmd_ring | 1;
-    xhci.mmio_write(&mut mem, reg_crcr_lo, 4, crcr as u32);
-    xhci.mmio_write(&mut mem, reg_crcr_hi, 4, (crcr >> 32) as u32);
+    xhci.mmio_write(reg_crcr_lo, 4, crcr);
+    xhci.mmio_write(reg_crcr_hi, 4, crcr >> 32);
 
     // Enable one slot.
-    xhci.mmio_write(&mut mem, reg_config, 4, 1);
+    xhci.mmio_write(reg_config, 4, 1);
 
     // --- Configure interrupter 0 event ring ---
-    xhci.mmio_write(&mut mem, rt_imod, 4, 0);
-    xhci.mmio_write(&mut mem, rt_erstsz, 4, 1);
-    xhci.mmio_write(&mut mem, rt_erstba_lo, 4, erst as u32);
-    xhci.mmio_write(&mut mem, rt_erstba_hi, 4, (erst >> 32) as u32);
-    xhci.mmio_write(&mut mem, rt_erdp_lo, 4, event_ring as u32);
-    xhci.mmio_write(&mut mem, rt_erdp_hi, 4, (event_ring >> 32) as u32);
+    xhci.mmio_write(rt_imod, 4, 0);
+    xhci.mmio_write(rt_erstsz, 4, 1);
+    xhci.mmio_write(rt_erstba_lo, 4, erst);
+    xhci.mmio_write(rt_erstba_hi, 4, erst >> 32);
+    xhci.mmio_write(rt_erdp_lo, 4, event_ring);
+    xhci.mmio_write(rt_erdp_hi, 4, event_ring >> 32);
     // Enable interrupter.
-    xhci.mmio_write(&mut mem, rt_iman, 4, IMAN_IE);
+    xhci.mmio_write(rt_iman, 4, u64::from(IMAN_IE));
 
     // --- Run controller and wait for HCHalted to clear ---
-    xhci.mmio_write(&mut mem, reg_usbcmd, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(reg_usbcmd, 4, u64::from(regs::USBCMD_RUN));
     for _ in 0..10 {
-        let st = xhci.mmio_read(&mut mem, reg_usbsts, 4);
+        let st = xhci.mmio_read(reg_usbsts, 4) as u32;
         if (st & regs::USBSTS_HCHALTED) == 0 {
             break;
         }
         xhci.tick_1ms_and_service_event_ring(&mut mem);
     }
     assert_eq!(
-        xhci.mmio_read(&mut mem, reg_usbsts, 4) & regs::USBSTS_HCHALTED,
+        (xhci.mmio_read(reg_usbsts, 4) as u32) & regs::USBSTS_HCHALTED,
         0
     );
 
@@ -231,22 +231,26 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
 
     // --- Port reset / enable sequence ---
-    let portsc_before = xhci.mmio_read(&mut mem, reg_portsc1, 4);
-    assert_ne!(portsc_before & PORTSC_CCS, 0, "device should be connected");
+    let portsc_before = xhci.mmio_read(reg_portsc1, 4) as u32;
+    assert_ne!(
+        portsc_before & PORTSC_CCS,
+        0,
+        "device should be connected"
+    );
     assert_eq!(portsc_before & PORTSC_PED, 0, "port starts disabled");
 
     // Assert port reset.
-    xhci.mmio_write(&mut mem, reg_portsc1, 4, portsc_before | PORTSC_PR);
+    xhci.mmio_write(reg_portsc1, 4, u64::from(portsc_before | PORTSC_PR));
 
     // Wait for reset to complete and the port to become enabled (50ms model).
     for _ in 0..60 {
-        let portsc = xhci.mmio_read(&mut mem, reg_portsc1, 4);
+        let portsc = xhci.mmio_read(reg_portsc1, 4) as u32;
         if (portsc & PORTSC_PR) == 0 && (portsc & PORTSC_PED) != 0 {
             break;
         }
         xhci.tick_1ms_and_service_event_ring(&mut mem);
     }
-    let portsc_after = xhci.mmio_read(&mut mem, reg_portsc1, 4);
+    let portsc_after = xhci.mmio_read(reg_portsc1, 4) as u32;
     assert_eq!(portsc_after & PORTSC_PR, 0);
     assert_ne!(portsc_after & PORTSC_PED, 0);
 
@@ -268,7 +272,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     enable_slot.write_to(&mut mem, cmd_ring);
 
     // Ring doorbell 0.
-    xhci.mmio_write(&mut mem, dboff, 4, 0);
+    xhci.mmio_write(dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -302,7 +306,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     addr_dev.set_slot_id(slot_id);
     addr_dev.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
 
-    xhci.mmio_write(&mut mem, dboff, 4, 0);
+    xhci.mmio_write(dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -348,7 +352,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     eval_ctx.set_slot_id(slot_id);
     eval_ctx.write_to(&mut mem, cmd_ring + 2 * TRB_LEN as u64);
 
-    xhci.mmio_write(&mut mem, dboff, 4, 0);
+    xhci.mmio_write(dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -380,7 +384,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     cfg_ep.set_slot_id(slot_id);
     cfg_ep.write_to(&mut mem, cmd_ring + 3 * TRB_LEN as u64);
 
-    xhci.mmio_write(&mut mem, dboff, 4, 0);
+    xhci.mmio_write(dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -434,7 +438,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     link.write_to(&mut mem, ep1_ring + TRB_LEN as u64);
 
     // Ring slot doorbell for endpoint ID 3 (EP1 IN).
-    xhci.mmio_write(&mut mem, dboff + (slot_id as u64) * 4, 4, 3);
+    xhci.mmio_write(dboff + (slot_id as u64) * 4, 4, 3);
 
     // Wait for a Transfer Event.
     let ev = wait_for_event(

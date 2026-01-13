@@ -20,6 +20,7 @@ use aero_devices::pci::{PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterCon
 
 enum AeroUsbMemoryBus<'a> {
     Dma(&'a mut dyn MemoryBus),
+    #[allow(dead_code)]
     NoDma,
 }
 
@@ -181,6 +182,10 @@ impl PciDevice for XhciPciDevice {
 
 impl MmioDevice for XhciPciDevice {
     fn mmio_read(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize) -> u32 {
+        // `mem` is unused for MMIO reads today (xHCI DMA happens in `tick_1ms`), but is part of the
+        // emulator's `MmioDevice` trait signature.
+        let _ = mem;
+
         // Gate MMIO decoding on PCI command Memory Space Enable (bit 1).
         if !self.mem_space_enabled() {
             return match size {
@@ -191,29 +196,18 @@ impl MmioDevice for XhciPciDevice {
             };
         }
 
-        // Gate DMA on PCI command Bus Master Enable (bit 2).
-        let mut adapter = if self.bus_master_enabled() {
-            AeroUsbMemoryBus::Dma(mem)
-        } else {
-            AeroUsbMemoryBus::NoDma
-        };
-        self.controller.mmio_read(&mut adapter, offset, size)
+        self.controller.mmio_read(offset, size) as u32
     }
 
     fn mmio_write(&mut self, mem: &mut dyn MemoryBus, offset: u64, size: usize, value: u32) {
+        let _ = mem;
+
         // Gate MMIO decoding on PCI command Memory Space Enable (bit 1).
         if !self.mem_space_enabled() {
             return;
         }
 
-        // Gate DMA on PCI command Bus Master Enable (bit 2).
-        let mut adapter = if self.bus_master_enabled() {
-            AeroUsbMemoryBus::Dma(mem)
-        } else {
-            AeroUsbMemoryBus::NoDma
-        };
-        self.controller
-            .mmio_write(&mut adapter, offset, size, value);
+        self.controller.mmio_write(offset, size, value as u64);
     }
 }
 

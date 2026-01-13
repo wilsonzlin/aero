@@ -1,7 +1,7 @@
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, XhciController};
+use aero_usb::xhci::{budget, regs, XhciController};
 use aero_usb::MemoryBus;
 
 mod util;
@@ -27,8 +27,9 @@ fn xhci_snapshot_preserves_cmd_kick_and_command_ring_cursor() {
     const CMD_RING_BASE: u64 = 0x1000;
     const ERST_BASE: u64 = 0x2000;
     const EVENT_RING_BASE: u64 = 0x3000;
-    const CMD_COUNT: usize = 40;
-    const ERST_SEG_TRBS: u32 = 128;
+    // Ensure the command ring requires multiple ticks to drain so we can snapshot mid-flight.
+    const CMD_COUNT: usize = budget::MAX_COMMAND_TRBS_PER_FRAME + 16;
+    const ERST_SEG_TRBS: u32 = (CMD_COUNT as u32) + 16;
 
     let mut mem = TestMemory::new(0x40_000);
 
@@ -54,34 +55,23 @@ fn xhci_snapshot_preserves_cmd_kick_and_command_ring_cursor() {
     let mut xhci = XhciController::new();
 
     // Configure interrupter 0 event ring.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (ERST_BASE >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (EVENT_RING_BASE >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, ERST_BASE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, ERST_BASE >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, EVENT_RING_BASE);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, EVENT_RING_BASE >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Program the command ring dequeue pointer + cycle state.
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (CMD_RING_BASE as u32) | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (CMD_RING_BASE >> 32) as u32);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, CMD_RING_BASE | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, CMD_RING_BASE >> 32);
 
     // Start controller + ring doorbell0 once to kick processing.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
 
     // Process one additional chunk of commands so we snapshot mid-flight.
-    let _ = xhci.mmio_read(&mut mem, regs::REG_USBCMD, 4);
-    xhci.service_event_ring(&mut mem);
+    xhci.tick_1ms(&mut mem);
 
     let produced_before = count_completion_events(&mut mem, EVENT_RING_BASE, CMD_COUNT);
     assert!(
@@ -98,8 +88,7 @@ fn xhci_snapshot_preserves_cmd_kick_and_command_ring_cursor() {
     // Continue without ringing doorbell0 again. If `cmd_kick` didn't roundtrip, progress would
     // stall here.
     for _ in 0..128 {
-        let _ = restored.mmio_read(&mut mem, regs::REG_USBSTS, 4);
-        restored.service_event_ring(&mut mem);
+        restored.tick_1ms(&mut mem);
         if count_completion_events(&mut mem, EVENT_RING_BASE, CMD_COUNT) == CMD_COUNT {
             break;
         }

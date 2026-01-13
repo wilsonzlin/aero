@@ -24,11 +24,11 @@ fn xhci_doorbell_does_not_service_event_ring_when_dma_disabled() {
 
     // Configure interrupter 0 so the controller believes an event ring is programmed, but perform
     // all accesses through an open-bus/no-DMA memory bus.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, 0x1000);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, 0x2000);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, 0x1000);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, 0x2000);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, 0);
 
     // Queue an event that would require interpreting the ERST/ERDP state to deliver.
     let mut trb = Trb::default();
@@ -40,9 +40,13 @@ fn xhci_doorbell_does_not_service_event_ring_when_dma_disabled() {
     // guest event ring even when DMA was disabled, which could spuriously set USBSTS.HCE due to
     // open-bus reads of the ERST.
     let doorbell1 = u64::from(regs::DBOFF_VALUE) + u64::from(regs::doorbell::DOORBELL_STRIDE);
-    xhci.mmio_write(&mut mem, doorbell1, 4, 3);
+    xhci.mmio_write(doorbell1, 4, 3);
 
-    let usbsts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    // xHCI defers doorbell work to `tick_1ms`; ensure the controller respects `dma_enabled()` and
+    // does not interpret open-bus reads as real ERST state.
+    xhci.tick_1ms(&mut mem);
+
+    let usbsts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_eq!(
         usbsts & regs::USBSTS_HCE,
         0,
@@ -54,4 +58,3 @@ fn xhci_doorbell_does_not_service_event_ring_when_dma_disabled() {
         "pending events should remain queued while DMA is disabled"
     );
 }
-

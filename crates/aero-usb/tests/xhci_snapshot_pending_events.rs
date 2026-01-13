@@ -37,22 +37,20 @@ fn xhci_snapshot_roundtrip_preserves_pending_events() {
     let ring_base = 0x2000;
     write_erst_entry(&mut mem, erstba, ring_base, 4);
 
-    restored.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    restored.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    restored.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    restored.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
     restored.mmio_write(
-        &mut mem,
         regs::REG_INTR0_ERSTBA_HI,
         4,
-        (erstba >> 32) as u32,
+        erstba >> 32,
     );
-    restored.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    restored.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
     restored.mmio_write(
-        &mut mem,
         regs::REG_INTR0_ERDP_HI,
         4,
-        (ring_base >> 32) as u32,
+        ring_base >> 32,
     );
-    restored.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    restored.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     restored.service_event_ring(&mut mem);
 
@@ -110,15 +108,14 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_state() {
     let dma_value = 0x1122_3344u32;
     MemoryBus::write_u32(&mut mem, crcr_addr, dma_value);
 
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_addr as u32);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, crcr_addr);
     xhci.mmio_write(
-        &mut mem,
         regs::REG_CRCR_HI,
         4,
-        (crcr_addr >> 32) as u32,
+        crcr_addr >> 32,
     );
     // Enable RUN so `tick_1ms_with_dma` performs the CRCR dword read.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Advance a few ticks so `time_ms` and `last_tick_dma_dword` become non-zero.
     for _ in 0..3 {
@@ -177,9 +174,9 @@ fn xhci_snapshot_load_accepts_legacy_time_tag_collision_mapping() {
     let crcr_addr = 0x1000u64;
     let dma_value = 0x5566_7788u32;
     MemoryBus::write_u32(&mut mem, crcr_addr, dma_value);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_addr as u32);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_addr >> 32) as u32);
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, crcr_addr);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, crcr_addr >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     for _ in 0..2 {
         xhci.tick_1ms_with_dma(&mut mem);
     }
@@ -279,9 +276,9 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
 
     // Program CRCR and set RUN while DMA is disabled: the controller should latch the RUN edge but
     // must not DMA or raise an interrupt yet.
-    xhci.mmio_write(&mut mem_no_dma, regs::REG_CRCR_LO, 4, 0x1000);
-    xhci.mmio_write(&mut mem_no_dma, regs::REG_CRCR_HI, 4, 0);
-    xhci.mmio_write(&mut mem_no_dma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, 0x1000);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     assert_eq!(mem_no_dma.reads, 0);
     assert!(
         !xhci.irq_level(),

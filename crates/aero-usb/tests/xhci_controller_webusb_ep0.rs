@@ -64,22 +64,12 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
 
     // Configure interrupter 0 to deliver events into our guest event ring.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        (event_ring_base >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // EP0 control-IN GET_DESCRIPTOR via Setup/Data/Status stage TRBs.
     let setup = SetupPacket {
@@ -124,9 +114,9 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
 
     // Ring doorbell via MMIO and tick once: SETUP is consumed, DATA stage NAKs, no event yet.
-    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
-        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
-    xhci.mmio_write(&mut mem, doorbell_offset, 4, 1);
+    let doorbell_offset =
+        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    xhci.mmio_write(doorbell_offset, 4, 1);
     xhci.tick(&mut mem);
 
     // xHCI should not advance the architectural dequeue pointer while a control TD is pending.

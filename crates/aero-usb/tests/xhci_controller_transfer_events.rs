@@ -79,20 +79,15 @@ fn configure_dcbaa(mem: &mut TestMemory, dcbaa: u64, slot_id: u8, dev_ctx_ptr: u
     mem.write_u32((entry + 4) as u32, (dev_ctx_ptr >> 32) as u32);
 }
 
-fn set_dcbaap(ctrl: &mut XhciController, mem: &mut TestMemory, dcbaa: u64) {
-    ctrl.mmio_write(mem, regs::REG_DCBAAP_LO, 4, dcbaa as u32);
-    ctrl.mmio_write(mem, regs::REG_DCBAAP_HI, 4, (dcbaa >> 32) as u32);
+fn set_dcbaap(ctrl: &mut XhciController, dcbaa: u64) {
+    ctrl.mmio_write(regs::REG_DCBAAP_LO, 4, dcbaa);
+    ctrl.mmio_write(regs::REG_DCBAAP_HI, 4, dcbaa >> 32);
 }
 
-fn ring_endpoint_doorbell(
-    ctrl: &mut XhciController,
-    mem: &mut TestMemory,
-    slot_id: u8,
-    endpoint_id: u8,
-) {
-    let dboff = ctrl.mmio_read_u32(mem, regs::REG_DBOFF) as u64;
+fn ring_endpoint_doorbell(ctrl: &mut XhciController, slot_id: u8, endpoint_id: u8) {
+    let dboff = ctrl.mmio_read(regs::REG_DBOFF, 4);
     let doorbell = dboff + u64::from(slot_id) * 4;
-    ctrl.mmio_write(mem, doorbell, 4, endpoint_id as u32);
+    ctrl.mmio_write(doorbell, 4, u64::from(endpoint_id));
 }
 
 fn configure_event_ring(
@@ -107,12 +102,12 @@ fn configure_event_ring(
     MemoryBus::write_u32(mem, erstba + 8, ring_size_trbs);
     MemoryBus::write_u32(mem, erstba + 12, 0);
 
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 }
 
 #[derive(Clone, Debug)]
@@ -165,7 +160,7 @@ fn xhci_controller_interrupt_in_dmas_and_emits_transfer_event_trb() {
 
     let dcbaa = alloc.alloc(0x800, 0x40) as u64;
     let dev_ctx = alloc.alloc(0x400, 0x40) as u64;
-    set_dcbaap(&mut xhci, &mut mem, dcbaa);
+    set_dcbaap(&mut xhci, dcbaa);
 
     let enable = xhci.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
@@ -192,7 +187,8 @@ fn xhci_controller_interrupt_in_dmas_and_emits_transfer_event_trb() {
     Trb::write_to(&make_normal_trb(buf, 8, true, true), &mut mem, ring_base);
 
     // No report available yet: NAK leaves TRB pending and no event is emitted.
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, EP_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, EP_ID);
+    xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);
     let ev0 = Trb::read_from(&mut mem, event_ring);
     assert_ne!(ev0.trb_type(), TrbType::TransferEvent);
@@ -204,7 +200,8 @@ fn xhci_controller_interrupt_in_dmas_and_emits_transfer_event_trb() {
 
     // Produce a keypress and retry.
     keyboard.key_event(0x04, true);
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, EP_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, EP_ID);
+    xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);
 
     let mut got = [0u8; 8];
@@ -240,7 +237,7 @@ fn xhci_controller_transfer_event_sets_ed_bit_and_copies_event_data_parameter() 
 
     let dcbaa = alloc.alloc(0x800, 0x40) as u64;
     let dev_ctx = alloc.alloc(0x400, 0x40) as u64;
-    set_dcbaap(&mut xhci, &mut mem, dcbaa);
+    set_dcbaap(&mut xhci, dcbaa);
 
     let enable = xhci.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
@@ -273,7 +270,8 @@ fn xhci_controller_transfer_event_sets_ed_bit_and_copies_event_data_parameter() 
         ring_base + TRB_LEN as u64,
     );
 
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, EP_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, EP_ID);
+    xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);
 
     let mut got = [0u8; 4];
@@ -303,7 +301,7 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
 
     let dcbaa = alloc.alloc(0x800, 0x40) as u64;
     let dev_ctx = alloc.alloc(0x800, 0x40) as u64;
-    set_dcbaap(&mut xhci, &mut mem, dcbaa);
+    set_dcbaap(&mut xhci, dcbaa);
 
     let enable = xhci.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
@@ -332,7 +330,8 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
         out_ring,
     );
 
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_OUT_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, BULK_OUT_ID);
+    xhci.tick(&mut mem);
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
     let (bulk_out_id, bulk_out_ep) = match actions.pop().unwrap() {
@@ -351,7 +350,8 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
     );
 
     // Retry without completion must not duplicate the host action.
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_OUT_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, BULK_OUT_ID);
+    xhci.tick(&mut mem);
     assert!(dev.drain_actions().is_empty());
 
     dev.push_completion(UsbHostCompletion::BulkOut {
@@ -360,7 +360,8 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
             bytes_written: out_payload.len() as u32,
         },
     });
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_OUT_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, BULK_OUT_ID);
+    xhci.tick(&mut mem);
     assert_eq!(
         read_u64(&mem, endpoint_ctx_addr(dev_ctx, BULK_OUT_ID) + 8),
         ((out_ring + TRB_LEN as u64) & !0x0f) | 1,
@@ -380,7 +381,8 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
         in_ring,
     );
 
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_IN_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, BULK_IN_ID);
+    xhci.tick(&mut mem);
     let mut actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
     let bulk_in_id = match actions.pop().unwrap() {
@@ -397,7 +399,8 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
     };
 
     // Retry without completion must not duplicate the host action.
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_IN_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, BULK_IN_ID);
+    xhci.tick(&mut mem);
     assert!(dev.drain_actions().is_empty());
 
     dev.push_completion(UsbHostCompletion::BulkIn {
@@ -406,7 +409,8 @@ fn xhci_controller_bulk_in_out_webusb_actions_complete_and_emit_events() {
             data: in_payload.to_vec(),
         },
     });
-    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, BULK_IN_ID);
+    ring_endpoint_doorbell(&mut xhci, slot_id, BULK_IN_ID);
+    xhci.tick(&mut mem);
     // Flush both transfer events into the guest event ring.
     xhci.service_event_ring(&mut mem);
     assert_eq!(

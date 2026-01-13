@@ -51,20 +51,20 @@ fn doorbell0_processes_command_ring_and_emits_completion_events() {
     while xhci.pop_pending_event().is_some() {}
 
     // Configure event ring on interrupter 0 so command completion events are written to guest RAM.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, u64::from(erstba));
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, u64::from(event_ring));
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, 0);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Program DCBAAP and CRCR.
-    xhci.mmio_write(&mut mem, regs::REG_DCBAAP_LO, 4, dcbaa);
-    xhci.mmio_write(&mut mem, regs::REG_DCBAAP_HI, 4, 0);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, cmd_ring | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+    xhci.mmio_write(regs::REG_DCBAAP_LO, 4, u64::from(dcbaa));
+    xhci.mmio_write(regs::REG_DCBAAP_HI, 4, 0);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, u64::from(cmd_ring) | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, 0);
     // Command processing is only active while USBCMD.RUN is set.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Enable Slot command TRB.
     {
@@ -82,8 +82,8 @@ fn doorbell0_processes_command_ring_and_emits_completion_events() {
     }
 
     // Ring doorbell 0 (Command Ring).
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
-    xhci.service_event_ring(&mut mem);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
 
     let evt0 = Trb::read_from(&mut mem, event_ring as u64);
     assert_eq!(evt0.trb_type(), TrbType::CommandCompletionEvent);
@@ -125,8 +125,8 @@ fn doorbell0_processes_command_ring_and_emits_completion_events() {
     }
 
     // Ring doorbell 0 again to process Address Device.
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
-    xhci.service_event_ring(&mut mem);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
 
     let evt1 = Trb::read_from(&mut mem, (event_ring as u64) + TRB_LEN as u64);
     assert_eq!(evt1.trb_type(), TrbType::CommandCompletionEvent);

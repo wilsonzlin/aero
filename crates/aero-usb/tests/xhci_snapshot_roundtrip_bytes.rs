@@ -1,22 +1,18 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
 use aero_usb::xhci::{regs, XhciController};
 
-mod util;
-use util::TestMemory;
-
 #[test]
 fn xhci_snapshot_roundtrips_byte_for_byte() {
-    let mut mem = TestMemory::new(0x10_000);
     let mut ctrl = XhciController::new();
 
     // Mutate a register and advance time so the snapshot is not all-default.
-    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1234_5678);
+    ctrl.mmio_write(regs::REG_DNCTRL, 4, 0x1234_5678);
     ctrl.tick_1ms_no_dma();
 
     let snap1 = ctrl.save_state();
 
     // Mutate again so restore has something to do.
-    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0xDEAD_BEEF);
+    ctrl.mmio_write(regs::REG_DNCTRL, 4, 0xDEAD_BEEF);
 
     ctrl.load_state(&snap1).expect("load_state");
 

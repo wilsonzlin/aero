@@ -318,22 +318,16 @@ fn xhci_interrupt_in_nak_is_retried_on_tick_without_additional_doorbells() {
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
 
     // Configure interrupter 0 to deliver events into our guest event ring.
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
     xhci.mmio_write(
-        &mut mem,
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        (erstba >> 32) as u32,
-    );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring_base as u32);
-    xhci.mmio_write(
-        &mut mem,
         regs::REG_INTR0_ERDP_HI,
         4,
-        (event_ring_base >> 32) as u32,
+        event_ring_base >> 32,
     );
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Interrupt IN endpoint 1 uses DCI=3.
     const ENDPOINT_ID: u8 = 3;
@@ -353,7 +347,7 @@ fn xhci_interrupt_in_nak_is_retried_on_tick_without_additional_doorbells() {
 
     let doorbell_offset = u64::from(regs::DBOFF_VALUE)
         + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
-    xhci.mmio_write(&mut mem, doorbell_offset, 4, u32::from(ENDPOINT_ID));
+    xhci.mmio_write(doorbell_offset, 4, u64::from(ENDPOINT_ID));
 
     // First tick: transfer is attempted and should NAK. Buffer unchanged and no transfer event.
     xhci.tick_1ms(&mut mem);
@@ -448,7 +442,7 @@ fn xhci_tick_has_bounded_work_budget_for_large_transfer_backlogs() {
 
     let doorbell_offset = u64::from(regs::DBOFF_VALUE)
         + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
-    xhci.mmio_write(&mut mem, doorbell_offset, 4, u32::from(ENDPOINT_ID));
+    xhci.mmio_write(doorbell_offset, 4, u64::from(ENDPOINT_ID));
 
     xhci.tick_1ms(&mut mem);
 

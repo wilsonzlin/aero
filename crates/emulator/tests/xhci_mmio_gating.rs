@@ -111,18 +111,20 @@ fn pci_command_bme_bit_gates_xhci_dma() {
     dev.config_write(0x04, 2, 1 << 1);
 
     // Program a non-zero CRCR so the controller has something to DMA from.
-    dev.mmio_write(&mut PanicMem, regs::REG_CRCR_LO, 4, 0x1000);
-    dev.mmio_write(&mut PanicMem, regs::REG_CRCR_HI, 4, 0);
+    dev.mmio_write(&mut PanicMem, regs::REG_CRCR_LO, 8, 0x1000 | 0x1);
 
-    // With BME clear, starting the controller must not DMA (PanicMem would panic if touched).
-    dev.mmio_write(&mut PanicMem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    // Start the controller with BME still clear, but do not tick yet (DMA happens in tick_1ms).
+    dev.mmio_write(
+        &mut PanicMem,
+        regs::REG_USBCMD,
+        4,
+        regs::USBCMD_RUN | regs::USBCMD_INTE,
+    );
 
-    // Enable bus mastering and verify the DMA path is now reachable.
+    // Enable bus mastering and verify the DMA path is now reachable when ticking.
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
-    dev.mmio_write(&mut PanicMem, regs::REG_USBCMD, 4, 0); // clear RUN
-
     let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        dev.mmio_write(&mut PanicMem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+        dev.tick_1ms(&mut PanicMem);
     }));
     assert!(err.is_err());
 }
@@ -196,11 +198,21 @@ fn pci_command_intx_disable_bit_masks_irq_level() {
     let mut dev = XhciPciDevice::new(XhciController::new(), 0xfebf_0000);
     let mut mem = VecMemory::new(0x4000);
 
-    // Enable MMIO decoding + bus mastering so the DMA path runs and asserts an IRQ.
+    // Enable MMIO decoding + bus mastering so the DMA path runs and can assert an IRQ.
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
-    dev.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000);
-    dev.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
-    dev.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    dev.mmio_write(&mut mem, regs::REG_CRCR_LO, 8, 0x1000 | 0x1);
+
+    // Enable interrupter 0 and global interrupts.
+    let rtsoff = dev.mmio_read(&mut mem, regs::REG_RTSOFF, 4) as u64;
+    let iman = rtsoff + 0x20; // interrupter 0 block base + IMAN
+    dev.mmio_write(&mut mem, iman, 4, IMAN_IE);
+    dev.mmio_write(
+        &mut mem,
+        regs::REG_USBCMD,
+        4,
+        regs::USBCMD_RUN | regs::USBCMD_INTE,
+    );
+    dev.tick_1ms(&mut mem);
 
     assert!(dev.controller.irq_level());
     assert!(dev.irq_level());
@@ -213,7 +225,6 @@ fn pci_command_intx_disable_bit_masks_irq_level() {
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
     assert!(dev.irq_level());
 }
-
 #[test]
 fn pci_bar0_probe_reports_xhci_mmio_window_size() {
     // Use a deliberately misaligned base to ensure the wrapper applies BAR-size alignment.

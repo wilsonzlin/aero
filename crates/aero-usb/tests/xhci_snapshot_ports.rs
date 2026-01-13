@@ -4,19 +4,6 @@ use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::xhci::{regs, XhciController, PORTSC_PED, PORTSC_PR};
 use aero_usb::{MemoryBus, SetupPacket, UsbInResult, UsbOutResult};
 
-#[derive(Default)]
-struct PanicMem;
-
-impl MemoryBus for PanicMem {
-    fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
-        panic!("unexpected DMA read");
-    }
-
-    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
-        panic!("unexpected DMA write");
-    }
-}
-
 struct TestMem {
     data: Vec<u8>,
 }
@@ -59,9 +46,9 @@ fn make_tick_time_snapshot() -> Vec<u8> {
     let crcr_ptr = 0x1000u64;
     mem.write_u32(crcr_ptr, 0xaabb_ccdd);
 
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_ptr as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_ptr >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, crcr_ptr);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, crcr_ptr >> 32);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Advance time and run the tick-driven DMA probe.
     for _ in 0..3 {
@@ -113,14 +100,13 @@ fn xhci_snapshot_save_state_is_parseable_and_has_unique_tags() {
 #[test]
 fn xhci_snapshot_roundtrip_preserves_ports_and_device_state() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
     let portsc_off = regs::port::portsc_offset(0);
 
     let keyboard = UsbHidKeyboardHandle::new();
     ctrl.attach_device(0, Box::new(keyboard.clone()));
 
     // Reset the port so it becomes enabled (PED=1) before snapshotting.
-    ctrl.mmio_write(&mut mem, portsc_off, 4, PORTSC_PR);
+    ctrl.mmio_write(portsc_off, 4, u64::from(PORTSC_PR));
     for _ in 0..50 {
         ctrl.tick_1ms_no_dma();
     }
@@ -189,14 +175,13 @@ fn xhci_snapshot_roundtrip_preserves_ports_and_device_state() {
 #[test]
 fn xhci_snapshot_loads_legacy_tag_mapping_for_ports_and_hce() {
     let mut ctrl = XhciController::new();
-    let mut mem = PanicMem;
     let portsc_off = regs::port::portsc_offset(0);
 
     let keyboard = UsbHidKeyboardHandle::new();
     ctrl.attach_device(0, Box::new(keyboard.clone()));
 
     // Reset the port so it becomes enabled (PED=1) before snapshotting.
-    ctrl.mmio_write(&mut mem, portsc_off, 4, PORTSC_PR);
+    ctrl.mmio_write(portsc_off, 4, u64::from(PORTSC_PR));
     for _ in 0..50 {
         ctrl.tick_1ms_no_dma();
     }
@@ -322,9 +307,10 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
     let mut nodma = NoDmaPanicMem;
 
     // Program CRCR and set RUN via a dma-disabled bus so the DMA-on-RUN probe remains pending.
-    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_LO, 4, 0x1000);
-    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_HI, 4, 0);
-    ctrl.mmio_write(&mut nodma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.tick_1ms(&mut nodma);
     assert!(
         !ctrl.irq_level(),
         "DMA-on-RUN probe should be deferred when DMA is disabled"
@@ -422,9 +408,9 @@ fn xhci_snapshot_loads_legacy_tick_tag_collision_mapping() {
     let crcr_ptr = 0x1000u64;
     mem.write_u32(crcr_ptr, 0xaabb_ccdd);
 
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_ptr as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_ptr >> 32) as u32);
-    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(regs::REG_CRCR_LO, 4, crcr_ptr);
+    ctrl.mmio_write(regs::REG_CRCR_HI, 4, crcr_ptr >> 32);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     for _ in 0..3 {
         ctrl.tick_1ms_with_dma(&mut mem);

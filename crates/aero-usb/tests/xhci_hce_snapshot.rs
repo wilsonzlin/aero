@@ -26,18 +26,18 @@ fn xhci_snapshot_roundtrip_preserves_host_controller_error() {
     let ring_base = 0x2000u64;
     write_erst_entry(&mut mem, erstba, ring_base, 0);
 
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
 
     let mut evt = Trb::default();
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt);
     xhci.service_event_ring(&mut mem);
 
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts & regs::USBSTS_HCE, 0, "controller should latch HCE");
 
     let bytes = xhci.save_state();
@@ -45,7 +45,7 @@ fn xhci_snapshot_roundtrip_preserves_host_controller_error() {
     let mut restored = XhciController::new();
     restored.load_state(&bytes).expect("load snapshot");
 
-    let sts2 = restored.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts2 = restored.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(
         sts2 & regs::USBSTS_HCE,
         0,
@@ -53,12 +53,11 @@ fn xhci_snapshot_roundtrip_preserves_host_controller_error() {
     );
 
     // HCE should still only clear via a controller reset.
-    restored.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
-    let sts3 = restored.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    restored.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));
+    let sts3 = restored.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_eq!(
         sts3 & regs::USBSTS_HCE,
         0,
         "controller reset should clear HCE after restore"
     );
 }
-

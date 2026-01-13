@@ -19,9 +19,9 @@ fn xhci_doorbell0_processes_command_ring_from_crcr() {
     xhci.set_dcbaap(dcbaa);
 
     // Program CRCR (pointer + cycle state) and start the controller so doorbell 0 is accepted.
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (cmd_ring as u32) | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (cmd_ring >> 32) as u32);
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, cmd_ring | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, cmd_ring >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Command ring: Enable Slot, No-Op, then stop (cycle mismatch).
     {
@@ -44,7 +44,8 @@ fn xhci_doorbell0_processes_command_ring_from_crcr() {
     }
 
     // Ring doorbell 0 (command ring).
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
 
     let ev0 = xhci
         .pop_pending_event()
@@ -117,12 +118,13 @@ fn xhci_doorbell0_persists_command_ring_state_across_rings() {
     let mut xhci = XhciController::new();
     xhci.set_dcbaap(dcbaa);
 
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (cmd_ring as u32) | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (cmd_ring >> 32) as u32);
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, cmd_ring | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, cmd_ring >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // First doorbell: process Enable Slot only.
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
     let ev0 = xhci.pop_pending_event().expect("Enable Slot completion");
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev0.completion_code_raw(), CompletionCode::Success.as_u8());
@@ -142,7 +144,8 @@ fn xhci_doorbell0_persists_command_ring_state_across_rings() {
     }
 
     // Second doorbell: Evaluate Context should run using the preserved command ring cursor.
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
     let ev1 = xhci
         .pop_pending_event()
         .expect("Evaluate Context completion");

@@ -178,15 +178,21 @@ fn xhci_mmio_read_write_does_not_panic_on_malformed_guest_accesses() {
                 0xA5A5_5A5A_u32 ^ (offset as u32).wrapping_mul(31) ^ (size as u32).wrapping_mul(17);
 
             let write_res = catch_unwind(AssertUnwindSafe(|| {
-                xhci.mmio_write(&mut mem, offset, size, value)
+                xhci.mmio_write(offset, size, u64::from(value))
             }));
             assert!(
                 write_res.is_ok(),
                 "panic in XhciController::mmio_write(offset=0x{offset:x}, size={size}, value=0x{value:x})"
             );
 
-            let read_res =
-                catch_unwind(AssertUnwindSafe(|| xhci.mmio_read(&mut mem, offset, size)));
+            // Tick after the write so any DMA path sourced from register state also stays robust.
+            let tick_res = catch_unwind(AssertUnwindSafe(|| xhci.tick_1ms(&mut mem)));
+            assert!(
+                tick_res.is_ok(),
+                "panic in XhciController::tick_1ms after mmio_write(offset=0x{offset:x}, size={size})"
+            );
+
+            let read_res = catch_unwind(AssertUnwindSafe(|| xhci.mmio_read(offset, size)));
             assert!(
                 read_res.is_ok(),
                 "panic in XhciController::mmio_read(offset=0x{offset:x}, size={size})"
@@ -202,14 +208,20 @@ fn xhci_mmio_read_write_does_not_panic_on_malformed_guest_accesses() {
         let value = rng.next_u64() as u32;
 
         let write_res = catch_unwind(AssertUnwindSafe(|| {
-            xhci.mmio_write(&mut mem, offset, size, value)
+            xhci.mmio_write(offset, size, u64::from(value))
         }));
         assert!(
             write_res.is_ok(),
             "panic in XhciController::mmio_write iter={iter} offset=0x{offset:x} size={size} value=0x{value:x}"
         );
 
-        let read_res = catch_unwind(AssertUnwindSafe(|| xhci.mmio_read(&mut mem, offset, size)));
+        let tick_res = catch_unwind(AssertUnwindSafe(|| xhci.tick_1ms(&mut mem)));
+        assert!(
+            tick_res.is_ok(),
+            "panic in XhciController::tick_1ms iter={iter} offset=0x{offset:x} size={size}"
+        );
+
+        let read_res = catch_unwind(AssertUnwindSafe(|| xhci.mmio_read(offset, size)));
         assert!(
             read_res.is_ok(),
             "panic in XhciController::mmio_read iter={iter} offset=0x{offset:x} size={size}"
@@ -252,29 +264,31 @@ fn xhci_doorbell0_sets_host_controller_error_on_open_bus_command_ring_fetch() {
     let mut mem = SafeMemory::new(0x1000);
 
     let bad_ring_ptr = 0x2000u64;
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (bad_ring_ptr as u32) | 1);
-    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (bad_ring_ptr >> 32) as u32);
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, (bad_ring_ptr & 0xffff_ffff) | 1);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, bad_ring_ptr >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Ring doorbell 0 (command ring).
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
 
-    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts & regs::USBSTS_HCE, 0, "controller should latch HCE");
 
     // HCE is sticky; additional doorbells should not clear it.
-    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
-    let sts2 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+    xhci.tick_1ms(&mut mem);
+    let sts2 = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts2 & regs::USBSTS_HCE, 0, "HCE should remain set");
 
     // HCE is *not* RW1C. Real controllers require a reset to clear it, so emulate that stickiness
     // even though we treat USBSTS as RW1C for other bits (e.g. USBSTS.EINT).
-    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_HCE);
-    let sts3 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_HCE));
+    let sts3 = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_ne!(sts3 & regs::USBSTS_HCE, 0, "USBSTS write must not clear HCE");
 
     // Host Controller Reset should clear HCE.
-    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
-    let sts4 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));
+    let sts4 = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
     assert_eq!(sts4 & regs::USBSTS_HCE, 0, "HCRST should clear HCE");
 }
