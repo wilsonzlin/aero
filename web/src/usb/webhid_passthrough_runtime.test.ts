@@ -28,8 +28,8 @@ class FakeHidDevice {
     this.opened = false;
   });
 
-  readonly sendReport = vi.fn(async () => {});
-  readonly sendFeatureReport = vi.fn(async () => {});
+  readonly sendReport = vi.fn(async (_reportId: number, _data: Uint8Array) => {});
+  readonly sendFeatureReport = vi.fn(async (_reportId: number, _data: Uint8Array) => {});
 
   readonly #listeners = new Map<string, Set<Listener>>();
 
