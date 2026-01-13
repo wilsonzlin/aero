@@ -85,19 +85,13 @@ fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) ->
 fn parse_webhid_collections(
     collections_json: &JsValue,
 ) -> Result<Vec<webhid::HidCollectionInfo>, JsValue> {
-    let collections_json_str = js_sys::JSON::stringify(collections_json)
-        .map_err(|err| {
-            js_error(&format!(
-                "Invalid WebHID collection schema (stringify failed): {err:?}"
-            ))
-        })?
-        .as_string()
-        .ok_or_else(|| {
-            js_error("Invalid WebHID collection schema (stringify returned non-string)")
-        })?;
-
-    let mut deserializer = serde_json::Deserializer::from_str(&collections_json_str);
-    serde_path_to_error::deserialize(&mut deserializer)
+    // Improve deserialization errors with a precise path into the collections metadata.
+    //
+    // Note: Avoid a JSON stringify/parse roundtrip here; complex WebHID devices can produce large
+    // normalized collection trees and `JSON.stringify` would allocate a large intermediate string.
+    serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(
+        collections_json.clone(),
+    ))
         .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))
 }
 struct WebHidDeviceState {
