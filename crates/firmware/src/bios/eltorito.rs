@@ -45,23 +45,35 @@ pub(super) struct BootImageInfo {
     pub(super) load_rba: u32,
 }
 
-pub(super) fn parse_boot_image(disk: &mut dyn BlockDevice) -> Result<BootImageInfo, &'static str> {
+/// Parsed/default El Torito boot image selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ParsedBootImage {
+    /// 2048-byte logical block address of the El Torito boot catalog.
+    pub(super) boot_catalog_lba: u32,
+    /// Initial/default boot image entry fields (no-emulation).
+    pub(super) image: BootImageInfo,
+}
+
+pub(super) fn parse_boot_image(disk: &mut dyn BlockDevice) -> Result<ParsedBootImage, &'static str> {
     let boot_catalog_lba = find_boot_catalog_lba(disk)?;
-    let info = parse_boot_catalog(disk, boot_catalog_lba)?;
+    let image = parse_boot_catalog(disk, boot_catalog_lba)?;
 
     // Validate that the boot image fits within the underlying disk. This is a hard safety check so
     // we do not attempt out-of-range reads on corrupt catalogs.
-    let start_lba_512 = u64::from(info.load_rba)
+    let start_lba_512 = u64::from(image.load_rba)
         .checked_mul(BIOS_SECTORS_PER_ISO_BLOCK)
         .ok_or("El Torito boot image load past end-of-image")?;
     let end_lba_512 = start_lba_512
-        .checked_add(u64::from(info.sector_count))
+        .checked_add(u64::from(image.sector_count))
         .ok_or("El Torito boot image load past end-of-image")?;
     if end_lba_512 > disk.size_in_sectors() {
         return Err("El Torito boot image load past end-of-image");
     }
 
-    Ok(info)
+    Ok(ParsedBootImage {
+        boot_catalog_lba,
+        image,
+    })
 }
 
 fn find_boot_catalog_lba(disk: &mut dyn BlockDevice) -> Result<u32, &'static str> {
@@ -339,9 +351,10 @@ mod tests {
         );
         let mut disk = InMemoryDisk::new(img);
 
-        let info = parse_boot_image(&mut disk).expect("parser should succeed");
+        let parsed = parse_boot_image(&mut disk).expect("parser should succeed");
+        assert_eq!(parsed.boot_catalog_lba, boot_catalog_lba);
         assert_eq!(
-            info,
+            parsed.image,
             BootImageInfo {
                 load_segment: 0x07C0,
                 sector_count: 4,
@@ -385,6 +398,17 @@ mod tests {
         assert_eq!(cpu.segments.ds.selector, 0);
         assert_eq!(cpu.segments.es.selector, 0);
         assert_eq!(cpu.segments.ss.selector, 0);
+
+        let info = bios
+            .el_torito_boot_info
+            .expect("El Torito boot should populate cached boot metadata");
+        assert_eq!(info.media_type, crate::bios::ElToritoBootMediaType::NoEmulation);
+        assert_eq!(info.boot_drive, 0xE0);
+        assert_eq!(info.controller_index, 0);
+        assert_eq!(info.boot_catalog_lba, Some(boot_catalog_lba));
+        assert_eq!(info.boot_image_lba, Some(boot_image_lba));
+        assert_eq!(info.load_segment, Some(0x07C0));
+        assert_eq!(info.sector_count, Some(4));
     }
 
     #[test]
@@ -401,8 +425,8 @@ mod tests {
         );
         let mut disk = InMemoryDisk::new(img);
 
-        let info = parse_boot_image(&mut disk).expect("parser should succeed");
-        assert_eq!(info.sector_count, DEFAULT_SECTOR_COUNT);
+        let parsed = parse_boot_image(&mut disk).expect("parser should succeed");
+        assert_eq!(parsed.image.sector_count, DEFAULT_SECTOR_COUNT);
     }
 
     #[test]
@@ -480,9 +504,9 @@ mod tests {
         write_iso_block(&mut img, boot_image_lba as usize, &boot_image);
 
         let mut disk = InMemoryDisk::new(img);
-        let info = parse_boot_image(&mut disk).expect("parser should succeed");
+        let parsed = parse_boot_image(&mut disk).expect("parser should succeed");
         assert_eq!(
-            info,
+            parsed.image,
             BootImageInfo {
                 load_segment: DEFAULT_LOAD_SEGMENT,
                 sector_count: 4,

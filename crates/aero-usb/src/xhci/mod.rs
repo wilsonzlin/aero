@@ -199,8 +199,8 @@ impl XhciController {
                 let prev = self.usbcmd;
                 self.usbcmd = merge(self.usbcmd);
 
-                // On the rising edge of RUN, perform a small DMA read from CRCR to validate PCI
-                // Bus Master Enable gating in the emulator wrapper.
+                // On the rising edge of RUN, perform a small DMA read from CRCR to validate PCI Bus
+                // Master Enable (BME) gating in the emulator wrapper.
                 let was_running = (prev & regs::USBCMD_RUN) != 0;
                 let now_running = (self.usbcmd & regs::USBCMD_RUN) != 0;
                 if !was_running && now_running {

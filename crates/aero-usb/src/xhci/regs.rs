@@ -22,7 +22,6 @@ pub const REG_CRCR_HI: u64 = 0x5c;
 
 /// USBCMD bit 0 (Run/Stop).
 pub const USBCMD_RUN: u32 = 1 << 0;
-
 /// USBSTS bit 3 (Event Interrupt).
 ///
 /// The full xHCI interrupt model is not implemented yet; the skeleton uses this bit as a generic

@@ -4,7 +4,8 @@ use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_IF};
 
 use super::{
     eltorito, ivt, pci::PciConfigSpace, rom, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus,
-    BlockDevice, BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
+    BlockDevice, ElToritoBootInfo, ElToritoBootMediaType, BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT,
+    EBDA_BASE,
 };
 use crate::smbios::{SmbiosConfig, SmbiosTables};
 
@@ -173,7 +174,19 @@ impl Bios {
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
     ) -> Result<(), &'static str> {
-        let entry = eltorito::parse_boot_image(disk)?;
+        let parsed = eltorito::parse_boot_image(disk)?;
+        let entry = parsed.image;
+
+        // Cache boot metadata for INT 13h AH=4Bh ("El Torito disk emulation services").
+        self.el_torito_boot_info = Some(ElToritoBootInfo {
+            media_type: ElToritoBootMediaType::NoEmulation,
+            boot_drive: self.config.boot_drive,
+            controller_index: 0,
+            boot_catalog_lba: Some(parsed.boot_catalog_lba),
+            boot_image_lba: Some(entry.load_rba),
+            load_segment: Some(entry.load_segment),
+            sector_count: Some(entry.sector_count),
+        });
 
         let start_lba = u64::from(entry.load_rba)
             .checked_mul(4)
