@@ -40,6 +40,7 @@ extern "C" {
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
+#define AEROGPU_DBGCTL_READ_GPA_MAX_BYTES 4096u
 
 #define AEROGPU_DBGCTL_CONCAT2_(a, b) a##b
 #define AEROGPU_DBGCTL_CONCAT_(a, b) AEROGPU_DBGCTL_CONCAT2_(a, b)
@@ -146,10 +147,11 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
 
-  aerogpu_escape_u32 ring0_size_bytes;
-  aerogpu_escape_u32 ring0_entry_count;
+  /* Ring 0 head/tail indices (best-effort for legacy devices). */
   aerogpu_escape_u32 ring0_head;
   aerogpu_escape_u32 ring0_tail;
+  aerogpu_escape_u32 ring0_size_bytes;
+  aerogpu_escape_u32 ring0_entry_count;
 
   aerogpu_escape_u64 total_submissions;
   aerogpu_escape_u64 total_presents;
@@ -175,35 +177,16 @@ typedef struct aerogpu_escape_query_perf_out {
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 144);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 36);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 40);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 44);
-
-/*
- * Read GPA packet.
- *
- * Best-effort, bounded guest physical memory read, used by dbgctl to dump
- * driver-tracked buffers (scanout, cursor, ring, pending DMA).
- */
-#define AEROGPU_DBGCTL_READ_GPA_MAX_BYTES 4096u
-
-typedef struct aerogpu_escape_read_gpa_inout {
-  aerogpu_escape_header hdr;
-  aerogpu_escape_u64 gpa;
-  aerogpu_escape_u32 size_bytes;
-  aerogpu_escape_u32 reserved0;
-  aerogpu_escape_u32 status;       /* NTSTATUS */
-  aerogpu_escape_u32 bytes_copied; /* bytes copied into `data` */
-  unsigned char data[AEROGPU_DBGCTL_READ_GPA_MAX_BYTES];
-} aerogpu_escape_read_gpa_inout;
-
-/* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_read_gpa_inout) == (40 + AEROGPU_DBGCTL_READ_GPA_MAX_BYTES));
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, gpa) == 16);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, size_bytes) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, status) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, data) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 44);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, total_submissions) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, irq_fence_delivered) == 80);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reset_from_timeout_count) == 104);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_seq) == 120);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_period_ns) == 136);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reserved0) == 140);
 
 /*
  * Must remain stable across x86/x64.
@@ -447,6 +430,26 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, error_code
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, error_fence) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, error_count) == 32);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_error_out, reserved0) == 36);
+
+typedef struct aerogpu_escape_read_gpa_inout {
+  aerogpu_escape_header hdr;
+  aerogpu_escape_u64 gpa;
+  aerogpu_escape_u32 size_bytes;
+  aerogpu_escape_u32 reserved0;
+
+  /* Output fields (filled by the KMD). */
+  aerogpu_escape_u32 status;       /* NTSTATUS */
+  aerogpu_escape_u32 bytes_copied; /* <= AEROGPU_DBGCTL_READ_GPA_MAX_BYTES */
+  unsigned char data[AEROGPU_DBGCTL_READ_GPA_MAX_BYTES];
+} aerogpu_escape_read_gpa_inout;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_read_gpa_inout) == (40 + AEROGPU_DBGCTL_READ_GPA_MAX_BYTES));
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, gpa) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, size_bytes) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, status) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, bytes_copied) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, data) == 40);
 
 /*
  * Recent CreateAllocation trace entry (DxgkDdiCreateAllocation inputs/outputs).
