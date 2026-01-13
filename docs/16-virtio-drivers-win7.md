@@ -213,7 +213,9 @@ Virtio’s side of MSI-X routing is programmed through `virtio_pci_common_cfg`:
 
 - `msix_config` selects which MSI-X vector the device uses for config-change interrupts.
 - `queue_msix_vector` (for a selected queue via `queue_select`) selects which MSI-X vector the device uses for that queue.
-- Writing `0xFFFF` disables MSI-X for that vector.
+- Writing `0xFFFF` disables **MSI-X routing** for that interrupt source. Per the Aero Win7 virtio
+  contract (`AERO-W7-VIRTIO` v1), devices MUST then fall back to **INTx + ISR** semantics (it does
+  not mean “no interrupts”).
 
 If MSI-X resources are not available, the driver should fall back to a single INTx interrupt and use the ISR status byte to demultiplex causes.
 
