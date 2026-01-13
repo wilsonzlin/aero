@@ -125,6 +125,14 @@ typedef struct _AEROVNET_ADAPTER {
   NDIS_HANDLE DmaHandle;
   NDIS_HANDLE NblPool;
 
+  // Interrupt mode selected from translated resources (INTx fallback retained).
+  BOOLEAN UseMsix;
+  BOOLEAN MsixAllOnVector0;
+  USHORT MsixMessageCount;
+  USHORT MsixConfigVector;
+  USHORT MsixRxVector;
+  USHORT MsixTxVector;
+
   NDIS_SPIN_LOCK Lock;
 
   AEROVNET_ADAPTER_STATE State;

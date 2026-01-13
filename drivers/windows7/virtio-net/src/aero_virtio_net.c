@@ -289,14 +289,55 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   UINT32 Bar0Low;
   UINT32 Bar0High;
   UCHAR InterruptPin;
+  BOOLEAN SawMessageInterrupt;
+  USHORT MessageCount;
 
   Adapter->Bar0Va = NULL;
   Adapter->Bar0Length = 0;
   Adapter->Bar0Pa.QuadPart = 0;
   RtlZeroMemory(&Adapter->Vdev, sizeof(Adapter->Vdev));
 
+  Adapter->UseMsix = FALSE;
+  Adapter->MsixAllOnVector0 = FALSE;
+  Adapter->MsixMessageCount = 0;
+  Adapter->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  Adapter->MsixRxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  Adapter->MsixTxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+
   if (!Resources) {
     return NDIS_STATUS_RESOURCES;
+  }
+
+  // Interrupts: prefer message-signaled interrupts when Windows granted them.
+  SawMessageInterrupt = FALSE;
+  MessageCount = 0;
+  for (I = 0; I < Resources->Count; I++) {
+    PCM_PARTIAL_RESOURCE_DESCRIPTOR Desc = &Resources->PartialDescriptors[I];
+    if (Desc->Type != CmResourceTypeInterrupt) {
+      continue;
+    }
+    if ((Desc->Flags & CM_RESOURCE_INTERRUPT_MESSAGE) != 0) {
+      SawMessageInterrupt = TRUE;
+      MessageCount = Desc->u.MessageInterrupt.MessageCount;
+      break;
+    }
+  }
+
+  if (SawMessageInterrupt && MessageCount != 0) {
+    Adapter->UseMsix = TRUE;
+    Adapter->MsixMessageCount = MessageCount;
+    Adapter->MsixConfigVector = 0;
+
+    if (MessageCount >= 3u) {
+      Adapter->MsixAllOnVector0 = FALSE;
+      Adapter->MsixRxVector = 1;
+      Adapter->MsixTxVector = 2;
+    } else {
+      // Not enough vectors for config+rx+tx: route all interrupts to message 0.
+      Adapter->MsixAllOnVector0 = TRUE;
+      Adapter->MsixRxVector = 0;
+      Adapter->MsixTxVector = 0;
+    }
   }
 
   // Prefer matching the assigned memory range (CmResourceTypeMemory or
@@ -752,6 +793,63 @@ static VOID AerovNetDisableQueueMsixVector(_Inout_ AEROVNET_ADAPTER* Adapter, _I
   KeReleaseSpinLock(&Adapter->Vdev.CommonCfgLock, OldIrql);
 }
 
+static NDIS_STATUS AerovNetProgramMsixConfigVector(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ USHORT Vector) {
+  USHORT Readback;
+
+  if (!Adapter || !Adapter->Vdev.CommonCfg) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  if (Vector == VIRTIO_PCI_MSI_NO_VECTOR) {
+    return NDIS_STATUS_INVALID_PARAMETER;
+  }
+
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config, Vector);
+  KeMemoryBarrier();
+
+  Readback = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config);
+  KeMemoryBarrier();
+
+  if (Readback != Vector) {
+    DbgPrint("aero_virtio_net: msix_config readback mismatch: wrote=%hu read=%hu\n", Vector, Readback);
+    return NDIS_STATUS_FAILURE;
+  }
+
+  return NDIS_STATUS_SUCCESS;
+}
+
+static NDIS_STATUS AerovNetProgramQueueMsixVector(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ USHORT QueueIndex, _In_ USHORT Vector) {
+  KIRQL OldIrql;
+  USHORT Readback;
+
+  if (!Adapter || !Adapter->Vdev.CommonCfg) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  if (Vector == VIRTIO_PCI_MSI_NO_VECTOR) {
+    return NDIS_STATUS_INVALID_PARAMETER;
+  }
+
+  KeAcquireSpinLock(&Adapter->Vdev.CommonCfgLock, &OldIrql);
+
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, QueueIndex);
+  KeMemoryBarrier();
+  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector, Vector);
+  KeMemoryBarrier();
+
+  Readback = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector);
+  KeMemoryBarrier();
+
+  KeReleaseSpinLock(&Adapter->Vdev.CommonCfgLock, OldIrql);
+
+  if (Readback != Vector) {
+    DbgPrint("aero_virtio_net: queue_msix_vector readback mismatch: q=%hu wrote=%hu read=%hu\n", QueueIndex, Vector, Readback);
+    return NDIS_STATUS_FAILURE;
+  }
+
+  return NDIS_STATUS_SUCCESS;
+}
+
 static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_VQ* Vq, _In_ USHORT QueueIndex,
                                   _In_ USHORT ExpectedQueueSize, _In_ USHORT IndirectMaxDesc) {
   USHORT QueueSize;
@@ -834,8 +932,24 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
     return NDIS_STATUS_RESOURCES;
   }
 
-  // Disable MSI-X for this queue; INTx/ISR is required by contract v1.
-  AerovNetDisableQueueMsixVector(Adapter, QueueIndex);
+  if (Adapter->UseMsix) {
+    USHORT Vector;
+    if (QueueIndex == 0) {
+      Vector = Adapter->MsixRxVector;
+    } else if (QueueIndex == 1) {
+      Vector = Adapter->MsixTxVector;
+    } else {
+      return NDIS_STATUS_NOT_SUPPORTED;
+    }
+
+    // MSI/MSI-X: route virtqueue interrupts to the desired vector.
+    if (AerovNetProgramQueueMsixVector(Adapter, QueueIndex, Vector) != NDIS_STATUS_SUCCESS) {
+      return NDIS_STATUS_FAILURE;
+    }
+  } else {
+    // INTx: disable MSI-X routing for this queue; INTx/ISR is required by contract v1.
+    AerovNetDisableQueueMsixVector(Adapter, QueueIndex);
+  }
 
   DescPa = Vq->RingDma.paddr + (UINT64)((PUCHAR)Vq->Vq.desc - (PUCHAR)Vq->RingDma.vaddr);
   AvailPa = Vq->RingDma.paddr + (UINT64)((PUCHAR)Vq->Vq.avail - (PUCHAR)Vq->RingDma.vaddr);
@@ -889,9 +1003,19 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   Adapter->GuestFeatures = (UINT64)NegotiatedFeatures;
 
-  // Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.
-  WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
-  KeMemoryBarrier();
+  if (Adapter->UseMsix) {
+    // MSI/MSI-X: route config-change interrupts to the selected vector.
+    Status = AerovNetProgramMsixConfigVector(Adapter, Adapter->MsixConfigVector);
+    if (Status != NDIS_STATUS_SUCCESS) {
+      VirtioPciFailDevice(&Adapter->Vdev);
+      VirtioPciResetDevice(&Adapter->Vdev);
+      return Status;
+    }
+  } else {
+    // INTx: disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.
+    WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
+    KeMemoryBarrier();
+  }
 
   // Read virtio-net device config (MAC + link status).
   RtlZeroMemory(Mac, sizeof(Mac));
@@ -1116,6 +1240,37 @@ static BOOLEAN AerovNetInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _
   return TRUE;
 }
 
+static BOOLEAN AerovNetMessageInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _In_ ULONG MessageId,
+                                          _Out_ PBOOLEAN QueueDefaultInterruptDpc, _Out_ PULONG TargetProcessors) {
+  AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportInterruptContext;
+
+  UNREFERENCED_PARAMETER(TargetProcessors);
+
+  if (!Adapter) {
+    return FALSE;
+  }
+
+  /*
+   * MSI/MSI-X: do not read the virtio ISR status byte. Message interrupts are
+   * edge-triggered and not shared, so treat any delivered message as ours and
+   * always queue the DPC.
+   *
+   * Record synthetic ISR status bits to reuse the existing DPC logic (config
+   * change handling + ring draining).
+   */
+  if (Adapter->MsixAllOnVector0) {
+    // Vector 0 is shared for config + all queues.
+    InterlockedOr(&Adapter->IsrStatus, 0x3);
+  } else if (MessageId == (ULONG)Adapter->MsixConfigVector) {
+    InterlockedOr(&Adapter->IsrStatus, 0x2);
+  } else {
+    InterlockedOr(&Adapter->IsrStatus, 0x1);
+  }
+
+  *QueueDefaultInterruptDpc = TRUE;
+  return TRUE;
+}
+
 static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_ PVOID MiniportDpcContext,
                                 _In_ PULONG NdisReserved1, _In_ PULONG NdisReserved2) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportInterruptContext;
@@ -1317,6 +1472,12 @@ static VOID AerovNetInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_
   if (LinkChanged) {
     AerovNetIndicateLinkState(Adapter);
   }
+}
+
+static VOID AerovNetMessageInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext, _In_ ULONG MessageId, _In_ PVOID MiniportDpcContext,
+                                       _In_ PULONG NdisReserved1, _In_ PULONG NdisReserved2) {
+  UNREFERENCED_PARAMETER(MessageId);
+  AerovNetInterruptDpc(MiniportInterruptContext, MiniportDpcContext, NdisReserved1, NdisReserved2);
 }
 
 static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVOID Reserved,
@@ -2296,13 +2457,15 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
     return Status;
   }
 
-  // Interrupt registration (INTx).
+  // Interrupt registration (MSI/MSI-X if granted, INTx fallback).
   RtlZeroMemory(&Intr, sizeof(Intr));
   Intr.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_INTERRUPT;
-  Intr.Header.Revision = NDIS_MINIPORT_INTERRUPT_CHARACTERISTICS_REVISION_1;
+  Intr.Header.Revision = NDIS_MINIPORT_INTERRUPT_CHARACTERISTICS_REVISION_2;
   Intr.Header.Size = sizeof(Intr);
   Intr.InterruptHandler = AerovNetInterruptIsr;
   Intr.InterruptDpcHandler = AerovNetInterruptDpc;
+  Intr.MessageInterruptHandler = AerovNetMessageInterruptIsr;
+  Intr.MessageInterruptDpcHandler = AerovNetMessageInterruptDpc;
 
   Status = NdisMRegisterInterruptEx(MiniportAdapterHandle, Adapter, &Intr, &Adapter->InterruptHandle);
   if (Status != NDIS_STATUS_SUCCESS) {

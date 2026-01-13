@@ -37,6 +37,9 @@ BusType         = 5    ; PCI
 CopyFiles       = AeroVirtioNet.CopyFiles
 AddReg          = AeroVirtioNet.AddReg
 
+[AeroVirtioNet_Install.NT.HW]
+AddReg = AeroVirtioNet_InterruptManagement_AddReg
+
 [AeroVirtioNet_Install.NT.Services]
 AddService = aero_virtio_net, 2, AeroVirtioNet.Service, AeroVirtioNet.EventLog
 
@@ -64,6 +67,16 @@ HKR, Ndi, Service, 0, "aero_virtio_net"
 ; NDIS 6.x miniport
 HKR, Ndi\Interfaces, UpperRange, 0, "ndis6"
 HKR, Ndi\Interfaces, LowerRange, 0, "ethernet"
+
+; Interrupt Management (MSI/MSI-X)
+;
+; virtio-net benefits from message-signaled interrupts (config + RX + TX). Request
+; a future-proof value; Windows may grant fewer messages and the driver will
+; fall back to sharing vector 0.
+[AeroVirtioNet_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
 
 [Strings]
 Aero = "Aero Project"

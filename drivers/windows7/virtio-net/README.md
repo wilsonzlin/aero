@@ -3,7 +3,7 @@
 This directory contains a clean-room, spec-based **virtio-net** driver for **Windows 7 SP1** implemented as an **NDIS 6.20** miniport.
 
 > **AERO-W7-VIRTIO contract v1:** this driver supports **virtio-pci modern** (virtio 1.0+) using a fixed **BAR0 MMIO** layout and **INTx**
-> interrupts and binds to `PCI\VEN_1AF4&DEV_1041&REV_01`.
+> interrupts (with optional **MSI/MSI-X** when enabled via INF) and binds to `PCI\VEN_1AF4&DEV_1041&REV_01`.
 >
 > When using QEMU, pass:
 > - `disable-legacy=on` (ensures the device enumerates as `DEV_1041`)
@@ -25,7 +25,9 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 - Feature negotiation (minimal):
   - Required: `VIRTIO_F_VERSION_1`, `VIRTIO_F_RING_INDIRECT_DESC`, `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS`
 - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
-- INTx interrupt path (via virtio ISR register; read-to-ack). MSI-X is intentionally disabled; INTx is required.
+- Interrupts:
+  - INTx (via virtio ISR status register; read-to-ack, spurious-safe)
+  - Optional MSI/MSI-X (message-signaled) when enabled via INF. The driver programs virtio MSI-X vectors for config/RX/TX and falls back to sharing vector 0 if Windows grants fewer messages.
 - No checksum offloads / TSO / LRO
 
 ## Files
