@@ -295,8 +295,8 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
       const header = decodeHeader(headerBytes);
 
       // Bound the sparse allocation table size before doing any file-size based checks, so callers
-      // get a stable/meaningful error for pathological headers (and so we never even consider
-      // allocating a huge Float64Array for the table).
+      // get a stable/meaningful error for pathological headers (including truncated/corrupted
+      // images) and so we never even consider allocating a huge Float64Array for the table.
       const tableBytesLenBig = BigInt(header.tableEntries) * 8n;
       if (tableBytesLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw new Error("sparse table size overflow");
