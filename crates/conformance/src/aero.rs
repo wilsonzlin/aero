@@ -1,38 +1,28 @@
 use std::ops::Range;
 
-use aero_cpu_core::exec::{Interpreter, Tier0Interpreter, Vcpu};
-use aero_cpu_core::interrupts::CpuExit;
+use aero_cpu_core::interp::tier0::exec::StepExit;
+use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState as CoreState};
 use aero_cpu_core::{CpuBus, CpuCore, Exception};
 
-use crate::corpus::{TemplateKind, TestCase};
+use crate::corpus::TestCase;
 use crate::{CpuState, ExecOutcome, Fault};
 
 pub struct AeroBackend {
-    interp: Tier0Interpreter,
+    cfg: Tier0Config,
     mem_fault_signal: i32,
 }
 
 impl AeroBackend {
     pub fn new(mem_fault_signal: i32) -> Self {
         Self {
-            interp: Tier0Interpreter::new(1),
+            cfg: Tier0Config::default(),
             mem_fault_signal,
         }
     }
 
     pub fn execute(&mut self, case: &TestCase) -> ExecOutcome {
-        // Templates that intentionally fault on the reference backend are mapped directly to the
-        // corresponding host signal to avoid depending on guest exception delivery semantics.
-        if matches!(case.template.kind, TemplateKind::Ud2) {
-            return ExecOutcome {
-                state: CpuState::default(),
-                memory: Vec::new(),
-                fault: Some(Fault::Signal(libc::SIGILL)),
-            };
-        }
-
-        let bus = ConformanceBus {
+        let mut bus = ConformanceBus {
             base: case.mem_base,
             mem: case.memory.clone(),
         };
@@ -40,14 +30,19 @@ impl AeroBackend {
         let mut cpu = CpuCore::new(CpuMode::Long);
         import_state(&case.init, &mut cpu.state);
 
-        let mut vcpu = Vcpu::new(cpu, bus);
-        self.interp.exec_block(&mut vcpu);
+        let step = aero_cpu_core::interp::tier0::exec::step_with_config(
+            &self.cfg,
+            &mut cpu.state,
+            &mut bus,
+        );
 
-        let fault = vcpu
-            .exit
-            .map(|exit| map_exit(exit, self.mem_fault_signal));
-        let state = export_state(&vcpu.cpu.state);
-        let memory = vcpu.bus.mem;
+        let fault = match step {
+            Ok(StepExit::Assist { .. }) => Some(Fault::Unsupported("tier-0 assist exit")),
+            Ok(_) => None,
+            Err(e) => Some(map_exception(e, self.mem_fault_signal)),
+        };
+        let state = export_state(&cpu.state);
+        let memory = bus.mem;
 
         ExecOutcome {
             state,
@@ -57,11 +52,20 @@ impl AeroBackend {
     }
 }
 
-fn map_exit(exit: CpuExit, mem_fault_signal: i32) -> Fault {
-    match exit {
-        CpuExit::MemoryFault => Fault::Signal(mem_fault_signal),
-        CpuExit::UnimplementedInstruction(name) => Fault::Unsupported(name),
-        CpuExit::TripleFault => Fault::Unsupported("tier-0 triple fault"),
+fn map_exception(exception: Exception, mem_fault_signal: i32) -> Fault {
+    match exception {
+        Exception::InvalidOpcode => Fault::Signal(libc::SIGILL),
+        Exception::MemoryFault => Fault::Signal(mem_fault_signal),
+        Exception::DivideError => Fault::Signal(libc::SIGFPE),
+        Exception::Unimplemented(name) => Fault::Unsupported(name),
+        Exception::GeneralProtection(_) => Fault::Unsupported("#GP"),
+        Exception::PageFault { .. } => Fault::Unsupported("#PF"),
+        Exception::SegmentNotPresent(_) => Fault::Unsupported("#NP"),
+        Exception::StackSegment(_) => Fault::Unsupported("#SS"),
+        Exception::InvalidTss(_) => Fault::Unsupported("#TS"),
+        Exception::DeviceNotAvailable => Fault::Unsupported("#NM"),
+        Exception::X87Fpu => Fault::Unsupported("#MF"),
+        Exception::SimdFloatingPointException => Fault::Unsupported("#XM"),
     }
 }
 

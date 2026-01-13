@@ -29,7 +29,7 @@ impl ReferenceBackend {
     }
 
     pub fn execute(&mut self, case: &TestCase) -> ExecOutcome {
-        if self.isolate {
+        if self.isolate || case.template.kind.is_fault_template() {
             return self.execute_isolated(case);
         }
 

@@ -129,14 +129,7 @@ pub fn run(
     let isolate = std::env::var("AERO_CONFORMANCE_REFERENCE_ISOLATE")
         .map(|v| v != "0")
         .unwrap_or(true);
-    if !isolate
-        && templates.iter().any(|t| {
-            matches!(
-                t.kind,
-                corpus::TemplateKind::Ud2 | corpus::TemplateKind::MovRaxM64Abs0
-            )
-        })
-    {
+    if !isolate && templates.iter().any(|t| t.kind.is_fault_template()) {
         return Err(
             "fault templates require AERO_CONFORMANCE_REFERENCE_ISOLATE=1 (fork isolation)"
                 .to_string(),
@@ -397,22 +390,35 @@ mod tests {
         let mem_fault_signal = detect_memory_fault_signal(&mut reference, &templates);
         let mut aero = aero::AeroBackend::new(mem_fault_signal);
 
-        let fault_templates: Vec<&InstructionTemplate> = templates
-            .iter()
-            .filter(|t| {
-                matches!(
-                    t.kind,
-                    corpus::TemplateKind::Ud2 | corpus::TemplateKind::MovRaxM64Abs0
-                )
-            })
-            .collect();
-        assert!(
-            fault_templates.len() >= 2,
-            "expected at least ud2 + memory fault templates"
-        );
+        let fault_templates: Vec<&InstructionTemplate> =
+            templates.iter().filter(|t| t.kind.is_fault_template()).collect();
+
+        let mut saw_ud2 = false;
+        let mut saw_mem_abs0 = false;
+        let mut saw_oob_load = false;
+        let mut saw_oob_store = false;
+        let mut saw_div0 = false;
 
         let mut rng = corpus::XorShift64::new(0x_0bad_f00d_f00d_f00d);
         for (idx, template) in fault_templates.into_iter().enumerate() {
+            match template.kind {
+                corpus::TemplateKind::Ud2 => saw_ud2 = true,
+                corpus::TemplateKind::MovRaxM64Abs0 => saw_mem_abs0 = true,
+                corpus::TemplateKind::GuardedOobLoad => saw_oob_load = true,
+                corpus::TemplateKind::GuardedOobStore => saw_oob_store = true,
+                corpus::TemplateKind::DivRbxByZero => saw_div0 = true,
+                _ => {}
+            }
+
+            let expected_fault = match template.kind {
+                corpus::TemplateKind::Ud2 => Fault::Signal(libc::SIGILL),
+                corpus::TemplateKind::DivRbxByZero => Fault::Signal(libc::SIGFPE),
+                corpus::TemplateKind::MovRaxM64Abs0
+                | corpus::TemplateKind::GuardedOobLoad
+                | corpus::TemplateKind::GuardedOobStore => Fault::Signal(mem_fault_signal),
+                _ => unreachable!("filtered by is_fault_template"),
+            };
+
             let case = TestCase::generate(idx, template, &mut rng, reference.memory_base());
             let expected = reference.execute(&case);
             let actual = aero.execute(&case);
@@ -423,11 +429,23 @@ mod tests {
                 template.name
             );
             assert_eq!(
+                expected.fault,
+                Some(expected_fault),
+                "reference did not terminate with expected signal for template {}",
+                template.name
+            );
+            assert_eq!(
                 expected.fault, actual.fault,
                 "fault mismatch for template {}",
                 template.name
             );
         }
+
+        assert!(saw_ud2, "missing ud2 template");
+        assert!(saw_mem_abs0, "missing [0] memory-fault template");
+        assert!(saw_oob_load, "missing guarded OOB load template");
+        assert!(saw_oob_store, "missing guarded OOB store template");
+        assert!(saw_div0, "missing div-by-zero template");
     }
 
     #[test]

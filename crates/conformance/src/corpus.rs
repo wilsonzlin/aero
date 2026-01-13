@@ -93,6 +93,22 @@ pub enum TemplateKind {
     SubM64Rax,
     Ud2,
     MovRaxM64Abs0,
+    GuardedOobLoad,
+    GuardedOobStore,
+    DivRbxByZero,
+}
+
+impl TemplateKind {
+    pub fn is_fault_template(self) -> bool {
+        matches!(
+            self,
+            TemplateKind::Ud2
+                | TemplateKind::MovRaxM64Abs0
+                | TemplateKind::GuardedOobLoad
+                | TemplateKind::GuardedOobStore
+                | TemplateKind::DivRbxByZero
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +130,8 @@ pub enum InitPreset {
     /// Ensure `RBX` is non-zero (useful for instructions like BSF/BSR where a zero source
     /// produces architecturally-undefined destination results).
     NonZeroRbx,
+    /// Force `RBX` to 0 (useful for divide-by-zero fault templates).
+    ZeroRbx,
 }
 
 impl InitPreset {
@@ -133,6 +151,9 @@ impl InitPreset {
             }
             InitPreset::NonZeroRbx => {
                 init.rbx |= 1;
+            }
+            InitPreset::ZeroRbx => {
+                init.rbx = 0;
             }
         }
     }
@@ -672,6 +693,33 @@ pub fn templates() -> Vec<InstructionTemplate> {
             // Not used by the instruction itself, but needed so the Aero backend anchors its
             // in-memory buffer at `mem_base` and treats address 0 as out-of-bounds.
             init: InitPreset::MemAtRdi { data_off: 0 },
+        },
+        InstructionTemplate {
+            name: "guarded OOB load (mov rax, qword ptr [rdi-8])",
+            coverage_key: "fault_oob_load",
+            bytes: &[0x48, 0x8B, 0x47, 0xF8],
+            kind: TemplateKind::GuardedOobLoad,
+            flags_mask: all_flags,
+            mem_compare_len: 0,
+            init: InitPreset::MemAtRdi { data_off: 0 },
+        },
+        InstructionTemplate {
+            name: "guarded OOB store (mov qword ptr [rdi-8], rax)",
+            coverage_key: "fault_oob_store",
+            bytes: &[0x48, 0x89, 0x47, 0xF8],
+            kind: TemplateKind::GuardedOobStore,
+            flags_mask: all_flags,
+            mem_compare_len: 0,
+            init: InitPreset::MemAtRdi { data_off: 0 },
+        },
+        InstructionTemplate {
+            name: "div rbx (divide-by-zero)",
+            coverage_key: "fault_div0",
+            bytes: &[0x48, 0xF7, 0xF3],
+            kind: TemplateKind::DivRbxByZero,
+            flags_mask: all_flags,
+            mem_compare_len: 0,
+            init: InitPreset::ZeroRbx,
         },
     ]
 }
