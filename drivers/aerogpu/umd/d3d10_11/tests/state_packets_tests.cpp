@@ -6,19 +6,14 @@
 
 #include "aerogpu_d3d10_11_umd.h"
 #include "aerogpu_cmd.h"
+#include "aerogpu_d3d10_blend_state_validate.h"
 
 namespace {
 
+using namespace aerogpu::d3d10_11;
+
 constexpr uint32_t kD3D10FillWireframe = 2;
 constexpr uint32_t kD3D10CullFront = 2;
-
-constexpr uint32_t kD3D10BlendSrcAlpha = 5;
-constexpr uint32_t kD3D10BlendInvSrcAlpha = 6;
-constexpr uint32_t kD3D10BlendBlendFactor = 14;
-constexpr uint32_t kD3D10BlendInvBlendFactor = 15;
-
-constexpr uint32_t kD3D10BlendOpAdd = 1;
-constexpr uint32_t kD3D10BlendOpSubtract = 2;
 
 constexpr uint32_t kD3D10CompareGreaterEqual = 7;
 constexpr uint32_t kD3D10DepthWriteMaskZero = 0;
@@ -265,12 +260,12 @@ bool TestSetBlendStateEmitsPacket() {
 
   AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
   desc.AlphaToCoverageEnable = 0;
-  desc.SrcBlend = kD3D10BlendBlendFactor;
-  desc.DestBlend = kD3D10BlendInvBlendFactor;
-  desc.BlendOp = kD3D10BlendOpSubtract;
-  desc.SrcBlendAlpha = kD3D10BlendSrcAlpha;
-  desc.DestBlendAlpha = kD3D10BlendInvSrcAlpha;
-  desc.BlendOpAlpha = kD3D10BlendOpAdd;
+  desc.SrcBlend = kD3dBlendBlendFactor;
+  desc.DestBlend = kD3dBlendInvBlendFactor;
+  desc.BlendOp = kD3dBlendOpSubtract;
+  desc.SrcBlendAlpha = kD3dBlendSrcAlpha;
+  desc.DestBlendAlpha = kD3dBlendInvSrcAlpha;
+  desc.BlendOpAlpha = kD3dBlendOpAdd;
   for (uint32_t i = 0; i < 8; ++i) {
     desc.BlendEnable[i] = 1;
     desc.RenderTargetWriteMask[i] = 0x3u;

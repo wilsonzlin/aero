@@ -5,8 +5,11 @@
 #include <vector>
 
 #include "aerogpu_d3d10_11_umd.h"
+#include "aerogpu_d3d10_blend_state_validate.h"
 
 namespace {
+
+using namespace aerogpu::d3d10_11;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -77,20 +80,14 @@ bool TestUnsupportedBlendFactorReturnsNotImpl() {
     return false;
   }
 
-  // Numeric values match D3D10_BLEND / D3D11_BLEND.
-  constexpr uint32_t kBlendZero = 1;
-  constexpr uint32_t kBlendOne = 2;
-  constexpr uint32_t kBlendSrcColor = 3; // unsupported by AeroGPU protocol
-  constexpr uint32_t kBlendOpAdd = 1;
-
   AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
   desc.AlphaToCoverageEnable = 0;
-  desc.SrcBlend = kBlendSrcColor;
-  desc.DestBlend = kBlendZero;
-  desc.BlendOp = kBlendOpAdd;
-  desc.SrcBlendAlpha = kBlendOne;
-  desc.DestBlendAlpha = kBlendZero;
-  desc.BlendOpAlpha = kBlendOpAdd;
+  desc.SrcBlend = kD3dBlendSrcColor; // unsupported by AeroGPU protocol
+  desc.DestBlend = kD3dBlendZero;
+  desc.BlendOp = kD3dBlendOpAdd;
+  desc.SrcBlendAlpha = kD3dBlendOne;
+  desc.DestBlendAlpha = kD3dBlendZero;
+  desc.BlendOpAlpha = kD3dBlendOpAdd;
   for (uint32_t i = 0; i < 8; ++i) {
     desc.BlendEnable[i] = 1;
     desc.RenderTargetWriteMask[i] = 0xF;
@@ -121,21 +118,14 @@ bool TestPerRenderTargetMismatchReturnsNotImpl() {
     return false;
   }
 
-  // Numeric values match D3D10_BLEND / D3D11_BLEND.
-  constexpr uint32_t kBlendZero = 1;
-  constexpr uint32_t kBlendOne = 2;
-  constexpr uint32_t kBlendSrcAlpha = 5;
-  constexpr uint32_t kBlendInvSrcAlpha = 6;
-  constexpr uint32_t kBlendOpAdd = 1;
-
   AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
   desc.AlphaToCoverageEnable = 0;
-  desc.SrcBlend = kBlendSrcAlpha;
-  desc.DestBlend = kBlendInvSrcAlpha;
-  desc.BlendOp = kBlendOpAdd;
-  desc.SrcBlendAlpha = kBlendOne;
-  desc.DestBlendAlpha = kBlendZero;
-  desc.BlendOpAlpha = kBlendOpAdd;
+  desc.SrcBlend = kD3dBlendSrcAlpha;
+  desc.DestBlend = kD3dBlendInvSrcAlpha;
+  desc.BlendOp = kD3dBlendOpAdd;
+  desc.SrcBlendAlpha = kD3dBlendOne;
+  desc.DestBlendAlpha = kD3dBlendZero;
+  desc.BlendOpAlpha = kD3dBlendOpAdd;
   for (uint32_t i = 0; i < 8; ++i) {
     desc.BlendEnable[i] = 1;
     desc.RenderTargetWriteMask[i] = 0xF;
@@ -167,18 +157,14 @@ bool TestAlphaToCoverageReturnsNotImpl() {
     return false;
   }
 
-  constexpr uint32_t kBlendZero = 1;
-  constexpr uint32_t kBlendOne = 2;
-  constexpr uint32_t kBlendOpAdd = 1;
-
   AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
   desc.AlphaToCoverageEnable = 1; // not representable by AeroGPU protocol
-  desc.SrcBlend = kBlendOne;
-  desc.DestBlend = kBlendZero;
-  desc.BlendOp = kBlendOpAdd;
-  desc.SrcBlendAlpha = kBlendOne;
-  desc.DestBlendAlpha = kBlendZero;
-  desc.BlendOpAlpha = kBlendOpAdd;
+  desc.SrcBlend = kD3dBlendOne;
+  desc.DestBlend = kD3dBlendZero;
+  desc.BlendOp = kD3dBlendOpAdd;
+  desc.SrcBlendAlpha = kD3dBlendOne;
+  desc.DestBlendAlpha = kD3dBlendZero;
+  desc.BlendOpAlpha = kD3dBlendOpAdd;
   for (uint32_t i = 0; i < 8; ++i) {
     desc.BlendEnable[i] = 0;
     desc.RenderTargetWriteMask[i] = 0xF;
@@ -207,18 +193,14 @@ bool TestWriteMaskHighBitsReturnsNotImpl() {
     return false;
   }
 
-  constexpr uint32_t kBlendZero = 1;
-  constexpr uint32_t kBlendOne = 2;
-  constexpr uint32_t kBlendOpAdd = 1;
-
   AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
   desc.AlphaToCoverageEnable = 0;
-  desc.SrcBlend = kBlendOne;
-  desc.DestBlend = kBlendZero;
-  desc.BlendOp = kBlendOpAdd;
-  desc.SrcBlendAlpha = kBlendOne;
-  desc.DestBlendAlpha = kBlendZero;
-  desc.BlendOpAlpha = kBlendOpAdd;
+  desc.SrcBlend = kD3dBlendOne;
+  desc.DestBlend = kD3dBlendZero;
+  desc.BlendOp = kD3dBlendOpAdd;
+  desc.SrcBlendAlpha = kD3dBlendOne;
+  desc.DestBlendAlpha = kD3dBlendZero;
+  desc.BlendOpAlpha = kD3dBlendOpAdd;
   for (uint32_t i = 0; i < 8; ++i) {
     desc.BlendEnable[i] = 0;
     // Bits outside RGBA are not representable by the AeroGPU protocol.
