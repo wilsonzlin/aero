@@ -3287,6 +3287,49 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
 
 // Views
 
+static bool D3dViewFormatCompatible(const Device* dev, const Resource* res, uint32_t view_dxgi_format) {
+  if (!dev || !res) {
+    return false;
+  }
+  // DXGI_FORMAT_UNKNOWN means "use the resource's format".
+  if (view_dxgi_format == kDxgiFormatUnknown) {
+    return true;
+  }
+
+  const uint32_t res_aer = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+  const uint32_t view_aer = dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
+  if (res_aer == AEROGPU_FORMAT_INVALID || view_aer == AEROGPU_FORMAT_INVALID) {
+    return false;
+  }
+  return res_aer == view_aer;
+}
+
+static bool D3dSrvMipLevelsIsAll(uint32_t view_mip_levels, uint32_t resource_mip_levels) {
+  // D3D11 uses UINT(-1) for "all mip levels"; some headers/paths use 0.
+  if (view_mip_levels == 0 || view_mip_levels == 0xFFFFFFFFu) {
+    return true;
+  }
+  return view_mip_levels == resource_mip_levels;
+}
+
+static bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
+  bool ok = false;
+  // Prefer DDI-specific enumerators when available.
+  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+
+  // Conservative fallback: the AeroGPU portable ABI models Texture2D as 3.
+  // If the above enumerators are not available, assume the same encoding.
+  if (!ok) {
+    ok = (view_dimension == 3u);
+  }
+  return ok;
+}
+
 SIZE_T AEROGPU_APIENTRY CalcPrivateRenderTargetViewSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATERENDERTARGETVIEW*) {
   return sizeof(RenderTargetView);
 }
@@ -3297,6 +3340,11 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
                                                   D3D11DDI_HRTRENDERTARGETVIEW) {
   if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
     return E_INVALIDARG;
+  }
+
+  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  if (!dev) {
+    return E_FAIL;
   }
 
   D3D11DDI_HRESOURCE hRes{};
@@ -3313,8 +3361,89 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
   }
 
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hRes);
+  if (!res) {
+    return E_INVALIDARG;
+  }
+
+  // The current protocol has no explicit RTV objects. Until it does, accept only
+  // subresource 0 of a non-array Texture2D.
+  if (res->kind != ResourceKind::Texture2D || res->array_size != 1) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateRenderTargetView11: reject unsupported RTV resource (kind=%u array=%u handle=%u)",
+        static_cast<unsigned>(res->kind),
+        static_cast<unsigned>(res->array_size),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t view_fmt = kDxgiFormatUnknown;
+  __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::Format) {
+    view_fmt = static_cast<uint32_t>(pDesc->Format);
+  }
+  if (!D3dViewFormatCompatible(dev, res, view_fmt)) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateRenderTargetView11: reject unsupported RTV format (view_fmt=%u res_fmt=%u handle=%u)",
+        static_cast<unsigned>(view_fmt),
+        static_cast<unsigned>(res->dxgi_format),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t view_dim = 0;
+  bool have_dim = false;
+  __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::ResourceDimension) {
+    view_dim = static_cast<uint32_t>(pDesc->ResourceDimension);
+    have_dim = true;
+  }
+  __if_not_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::ResourceDimension) {
+    __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::ViewDimension) {
+      view_dim = static_cast<uint32_t>(pDesc->ViewDimension);
+      have_dim = true;
+    }
+  }
+  if (have_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateRenderTargetView11: reject unsupported RTV view_dim=%u (handle=%u)",
+        static_cast<unsigned>(view_dim),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t mip_slice = 0;
+  bool have_mip_slice = false;
+  __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::MipSlice) {
+    mip_slice = static_cast<uint32_t>(pDesc->MipSlice);
+    have_mip_slice = true;
+  }
+  __if_not_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::MipSlice) {
+    __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
+      mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
+      have_mip_slice = true;
+    }
+    __if_not_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
+      __if_exists(D3D11DDIARG_CREATERENDERTARGETVIEW::Texture2D) {
+        mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+        have_mip_slice = true;
+      }
+    }
+  }
+
+  if (have_mip_slice) {
+    if (mip_slice >= res->mip_levels) {
+      return E_INVALIDARG;
+    }
+    if (mip_slice != 0) {
+      AEROGPU_D3D10_11_LOG(
+          "CreateRenderTargetView11: reject unsupported RTV mip_slice=%u (res_mips=%u handle=%u)",
+          static_cast<unsigned>(mip_slice),
+          static_cast<unsigned>(res->mip_levels),
+          static_cast<unsigned>(res->handle));
+      return E_NOTIMPL;
+    }
+  }
+
   auto* rtv = new (hView.pDrvPrivate) RenderTargetView();
-  rtv->texture = res ? res->handle : 0;
+  rtv->texture = res->handle;
   rtv->resource = res;
   return S_OK;
 }
@@ -3338,6 +3467,11 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
 
+  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  if (!dev) {
+    return E_FAIL;
+  }
+
   D3D11DDI_HRESOURCE hRes{};
   __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::hDrvResource) {
     hRes = pDesc->hDrvResource;
@@ -3352,8 +3486,103 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
   }
 
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hRes);
+  if (!res) {
+    return E_INVALIDARG;
+  }
+
+  // The current protocol has no explicit DSV objects. Until it does, accept only
+  // subresource 0 of a non-array Texture2D.
+  if (res->kind != ResourceKind::Texture2D || res->array_size != 1) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateDepthStencilView11: reject unsupported DSV resource (kind=%u array=%u handle=%u)",
+        static_cast<unsigned>(res->kind),
+        static_cast<unsigned>(res->array_size),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t view_fmt = kDxgiFormatUnknown;
+  __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::Format) {
+    view_fmt = static_cast<uint32_t>(pDesc->Format);
+  }
+  if (!D3dViewFormatCompatible(dev, res, view_fmt)) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateDepthStencilView11: reject unsupported DSV format (view_fmt=%u res_fmt=%u handle=%u)",
+        static_cast<unsigned>(view_fmt),
+        static_cast<unsigned>(res->dxgi_format),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t view_dim = 0;
+  bool have_dim = false;
+  __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::ResourceDimension) {
+    view_dim = static_cast<uint32_t>(pDesc->ResourceDimension);
+    have_dim = true;
+  }
+  __if_not_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::ResourceDimension) {
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::ViewDimension) {
+      view_dim = static_cast<uint32_t>(pDesc->ViewDimension);
+      have_dim = true;
+    }
+  }
+  if (have_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateDepthStencilView11: reject unsupported DSV view_dim=%u (handle=%u)",
+        static_cast<unsigned>(view_dim),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t mip_slice = 0;
+  bool have_mip_slice = false;
+  __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::MipSlice) {
+    mip_slice = static_cast<uint32_t>(pDesc->MipSlice);
+    have_mip_slice = true;
+  }
+  __if_not_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::MipSlice) {
+    __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
+      mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
+      have_mip_slice = true;
+    }
+    __if_not_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
+      __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::Texture2D) {
+        mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+        have_mip_slice = true;
+      }
+    }
+  }
+
+  if (have_mip_slice) {
+    if (mip_slice >= res->mip_levels) {
+      return E_INVALIDARG;
+    }
+    if (mip_slice != 0) {
+      AEROGPU_D3D10_11_LOG(
+          "CreateDepthStencilView11: reject unsupported DSV mip_slice=%u (res_mips=%u handle=%u)",
+          static_cast<unsigned>(mip_slice),
+          static_cast<unsigned>(res->mip_levels),
+          static_cast<unsigned>(res->handle));
+      return E_NOTIMPL;
+    }
+  }
+
+  uint32_t flags = 0;
+  bool have_flags = false;
+  __if_exists(D3D11DDIARG_CREATEDEPTHSTENCILVIEW::Flags) {
+    flags = static_cast<uint32_t>(pDesc->Flags);
+    have_flags = true;
+  }
+  if (have_flags && flags != 0) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateDepthStencilView11: reject unsupported DSV flags=0x%x (handle=%u)",
+        static_cast<unsigned>(flags),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
   auto* dsv = new (hView.pDrvPrivate) DepthStencilView();
-  dsv->texture = res ? res->handle : 0;
+  dsv->texture = res->handle;
   dsv->resource = res;
   return S_OK;
 }
@@ -3382,6 +3611,11 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
 
+  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  if (!dev) {
+    return E_FAIL;
+  }
+
   D3D11DDI_HRESOURCE hRes{};
   __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::hDrvResource) {
     hRes = pDesc->hDrvResource;
@@ -3402,6 +3636,97 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
   if (res->kind != ResourceKind::Texture2D) {
     return E_NOTIMPL;
   }
+
+  // The current protocol has no explicit SRV objects. Until it does, accept only
+  // a full-resource Texture2D view (mip 0, all mips, non-array, compatible
+  // format).
+  if (res->array_size != 1) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateShaderResourceView11: reject unsupported SRV texture array (array=%u handle=%u)",
+        static_cast<unsigned>(res->array_size),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t view_fmt = kDxgiFormatUnknown;
+  __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Format) {
+    view_fmt = static_cast<uint32_t>(pDesc->Format);
+  }
+  if (!D3dViewFormatCompatible(dev, res, view_fmt)) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateShaderResourceView11: reject unsupported SRV format (view_fmt=%u res_fmt=%u handle=%u)",
+        static_cast<unsigned>(view_fmt),
+        static_cast<unsigned>(res->dxgi_format),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t view_dim = 0;
+  bool have_dim = false;
+  __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ResourceDimension) {
+    view_dim = static_cast<uint32_t>(pDesc->ResourceDimension);
+    have_dim = true;
+  }
+  __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ResourceDimension) {
+    __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ViewDimension) {
+      view_dim = static_cast<uint32_t>(pDesc->ViewDimension);
+      have_dim = true;
+    }
+  }
+  if (have_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
+    AEROGPU_D3D10_11_LOG(
+        "CreateShaderResourceView11: reject unsupported SRV view_dim=%u (handle=%u)",
+        static_cast<unsigned>(view_dim),
+        static_cast<unsigned>(res->handle));
+    return E_NOTIMPL;
+  }
+
+  uint32_t most_detailed_mip = 0;
+  uint32_t mip_levels = 0;
+  bool have_mip_range = false;
+  __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
+    most_detailed_mip = static_cast<uint32_t>(pDesc->MostDetailedMip);
+    mip_levels = static_cast<uint32_t>(pDesc->MipLevels);
+    have_mip_range = true;
+  }
+  __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
+    __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+      most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
+      mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
+      have_mip_range = true;
+    }
+    __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+      __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Texture2D) {
+        most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2D.MostDetailedMip);
+        mip_levels = static_cast<uint32_t>(pDesc->Texture2D.MipLevels);
+        have_mip_range = true;
+      }
+    }
+  }
+
+  if (have_mip_range) {
+    if (most_detailed_mip >= res->mip_levels) {
+      return E_INVALIDARG;
+    }
+
+    // Only accept the "all mips from mip 0" case.
+    if (most_detailed_mip != 0 || !D3dSrvMipLevelsIsAll(mip_levels, res->mip_levels)) {
+      AEROGPU_D3D10_11_LOG(
+          "CreateShaderResourceView11: reject unsupported SRV mip range (most=%u mips=%u res_mips=%u handle=%u)",
+          static_cast<unsigned>(most_detailed_mip),
+          static_cast<unsigned>(mip_levels),
+          static_cast<unsigned>(res->mip_levels),
+          static_cast<unsigned>(res->handle));
+      return E_NOTIMPL;
+    }
+
+    // If the runtime explicitly specifies a finite mip count, ensure it is
+    // within bounds.
+    if (mip_levels != 0 && mip_levels != 0xFFFFFFFFu && mip_levels > res->mip_levels) {
+      return E_INVALIDARG;
+    }
+  }
+
   auto* srv = new (hView.pDrvPrivate) ShaderResourceView();
   srv->texture = res->handle;
   srv->resource = res;
