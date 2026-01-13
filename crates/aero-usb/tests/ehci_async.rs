@@ -38,6 +38,7 @@ const QTD_IOC: u32 = 1 << 15;
 const QTD_TOTAL_BYTES_SHIFT: u32 = 16;
 
 const PID_IN: u32 = 1;
+const PID_OUT: u32 = 0;
 const PID_SETUP: u32 = 2;
 
 fn qh_ep_char(dev_addr: u8, endpoint: u8, max_packet: u16) -> u32 {
@@ -59,9 +60,9 @@ fn qtd_token(pid: u32, total_bytes: u16, active: bool, ioc: bool) -> u32 {
     tok
 }
 
-fn write_qtd(mem: &mut TestMemory, addr: u32, next: u32, token: u32, buf0: u32) {
+fn write_qtd(mem: &mut TestMemory, addr: u32, next: u32, alt_next: u32, token: u32, buf0: u32) {
     mem.write_u32(addr + QTD_NEXT, next);
-    mem.write_u32(addr + QTD_ALT_NEXT, LINK_TERMINATE);
+    mem.write_u32(addr + QTD_ALT_NEXT, alt_next);
     mem.write_u32(addr + QTD_TOKEN, token);
     mem.write_u32(addr + QTD_BUF0, buf0);
     // Unused buffer pointers.
@@ -164,6 +165,30 @@ impl UsbDeviceModel for NakInDevice {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ShortControlInDevice;
+
+impl UsbDeviceModel for ShortControlInDevice {
+    fn speed(&self) -> UsbSpeed {
+        UsbSpeed::High
+    }
+
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        // Return a fixed 18-byte "device descriptor" payload for GET_DESCRIPTOR(Device).
+        if setup.b_request == 0x06 && setup.descriptor_type() == 0x01 {
+            return ControlResponse::Data(vec![
+                0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00,
+                0x01, 0x01, 0x02, 0x03, 0x01,
+            ]);
+        }
+        ControlResponse::Stall
+    }
+}
+
 #[test]
 fn ehci_async_executes_control_and_bulk_transfers() {
     let mut mem = TestMemory::new(0x20000);
@@ -207,12 +232,14 @@ fn ehci_async_executes_control_and_bulk_transfers() {
         &mut mem,
         qtd0,
         qtd1, // next
+        LINK_TERMINATE,
         qtd_token(PID_SETUP, 8, true, false),
         setup_buf,
     );
     write_qtd(
         &mut mem,
         qtd1,
+        LINK_TERMINATE,
         LINK_TERMINATE,
         qtd_token(PID_IN, 0, true, true), // IOC=1
         status_buf,
@@ -272,12 +299,14 @@ fn ehci_async_executes_control_and_bulk_transfers() {
         &mut mem,
         qtd0,
         qtd1,
+        LINK_TERMINATE,
         qtd_token(PID_SETUP, 8, true, false),
         setup_buf,
     );
     write_qtd(
         &mut mem,
         qtd1,
+        LINK_TERMINATE,
         LINK_TERMINATE,
         qtd_token(PID_IN, 0, true, false), // IOC=0
         status_buf,
@@ -316,6 +345,7 @@ fn ehci_async_executes_control_and_bulk_transfers() {
         &mut mem,
         bulk_qtd,
         LINK_TERMINATE,
+        LINK_TERMINATE,
         qtd_token(PID_IN, 4, true, true),
         bulk_buf,
     );
@@ -339,6 +369,131 @@ fn ehci_async_executes_control_and_bulk_transfers() {
     assert_eq!(got, [1, 2, 3, 4]);
 
     assert_ne!(ctrl.mmio_read(REG_USBSTS, 4) & USBSTS_USBINT, 0);
+}
+
+#[test]
+fn ehci_async_short_packet_uses_alt_next_to_skip_remaining_qtds() {
+    let mut mem = TestMemory::new(0x40000);
+    let mut ctrl = EhciController::new();
+    ctrl.hub_mut().attach(0, Box::new(ShortControlInDevice));
+
+    // Reset + enable port 0 (and keep power enabled).
+    ctrl.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.mmio_write(REG_USBINTR, 4, USBINTR_USBINT | USBINTR_USBERRINT);
+    ctrl.mmio_write(REG_USBCMD, 4, USBCMD_RS | USBCMD_ASE);
+
+    let mut alloc = Alloc::new(0x1000);
+    let qh_addr = alloc.alloc(0x40, 0x20);
+    let qtd_setup = alloc.alloc(0x20, 0x20);
+    let qtd_data = alloc.alloc(0x20, 0x20);
+    let qtd_unused = alloc.alloc(0x20, 0x20);
+    let qtd_status = alloc.alloc(0x20, 0x20);
+
+    let setup_buf = alloc.alloc(0x1000, 0x1000);
+    let data_buf = alloc.alloc(0x1000, 0x1000);
+    let unused_buf = alloc.alloc(0x1000, 0x1000);
+    let status_buf = alloc.alloc(0x1000, 0x1000);
+
+    ctrl.mmio_write(REG_ASYNCLISTADDR, 4, qh_addr);
+
+    // GET_DESCRIPTOR(Device) with wLength=64. The device returns only 18 bytes, causing a short
+    // packet relative to the qTD TotalBytes.
+    let setup = SetupPacket {
+        bm_request_type: 0x80,
+        b_request: 0x06,
+        w_value: 0x0100,
+        w_index: 0,
+        w_length: 64,
+    };
+    mem.write(setup_buf, &setup_packet_bytes(setup));
+
+    write_qtd(
+        &mut mem,
+        qtd_setup,
+        qtd_data,
+        LINK_TERMINATE,
+        qtd_token(PID_SETUP, 8, true, false),
+        setup_buf,
+    );
+
+    // Data qTD expects 64 bytes, but the device will return a single 18-byte packet. Configure
+    // AltNext to jump straight to the STATUS stage so we can skip the unused qTD.
+    write_qtd(
+        &mut mem,
+        qtd_data,
+        qtd_unused,
+        qtd_status,
+        qtd_token(PID_IN, 64, true, false),
+        data_buf,
+    );
+
+    // This qTD should remain untouched because the short packet on qtd_data will take AltNext.
+    write_qtd(
+        &mut mem,
+        qtd_unused,
+        LINK_TERMINATE,
+        LINK_TERMINATE,
+        qtd_token(PID_IN, 64, true, false),
+        unused_buf,
+    );
+
+    // Status stage for control-IN is an OUT ZLP.
+    write_qtd(
+        &mut mem,
+        qtd_status,
+        LINK_TERMINATE,
+        LINK_TERMINATE,
+        qtd_token(PID_OUT, 0, true, true),
+        status_buf,
+    );
+
+    write_qh(&mut mem, qh_addr, qh_ep_char(0, 0, 64), qtd_setup);
+
+    ctrl.mmio_write(REG_USBSTS, 4, USBSTS_USBINT | USBSTS_USBERRINT);
+    for _ in 0..10 {
+        ctrl.tick_1ms(&mut mem);
+        let tok = mem.read_u32(qtd_status + QTD_TOKEN);
+        if (tok & QTD_STS_ACTIVE) == 0 {
+            break;
+        }
+    }
+
+    let tok_data = mem.read_u32(qtd_data + QTD_TOKEN);
+    assert_eq!(tok_data & QTD_STS_ACTIVE, 0, "data qTD should complete");
+    assert_eq!(
+        (tok_data >> QTD_TOTAL_BYTES_SHIFT) & 0x7fff,
+        46,
+        "short packet should preserve remaining bytes (64-18)"
+    );
+
+    let tok_unused = mem.read_u32(qtd_unused + QTD_TOKEN);
+    assert_ne!(
+        tok_unused & QTD_STS_ACTIVE,
+        0,
+        "AltNext should skip intermediate qTDs without modifying them"
+    );
+
+    let tok_status = mem.read_u32(qtd_status + QTD_TOKEN);
+    assert_eq!(tok_status & QTD_STS_ACTIVE, 0, "status qTD should complete");
+    assert_ne!(
+        ctrl.mmio_read(REG_USBSTS, 4) & USBSTS_USBINT,
+        0,
+        "IOC on STATUS qTD should raise USBINT"
+    );
+
+    let mut got = [0u8; 18];
+    mem.read(data_buf, &mut got);
+    assert_eq!(
+        got,
+        [
+            0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00,
+            0x01, 0x01, 0x02, 0x03, 0x01
+        ]
+    );
 }
 
 #[test]
@@ -368,6 +523,7 @@ fn ehci_async_missing_device_halts_qtd_and_sets_usberrint() {
     write_qtd(
         &mut mem,
         qtd,
+        LINK_TERMINATE,
         LINK_TERMINATE,
         qtd_token(PID_IN, 0, true, true),
         buf,
@@ -413,6 +569,7 @@ fn ehci_async_nak_leaves_qtd_active_and_no_interrupt() {
     write_qtd(
         &mut mem,
         qtd,
+        LINK_TERMINATE,
         LINK_TERMINATE,
         qtd_token(PID_IN, 4, true, true),
         buf,
