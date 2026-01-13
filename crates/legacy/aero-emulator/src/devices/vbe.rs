@@ -7,6 +7,7 @@
 //! | 0x112| 640x480    | 32  |
 //! | 0x115| 800x600    | 32  |
 //! | 0x118| 1024x768   | 32  |
+//! | 0x160| 1280x720   | 32  |
 //!
 //! The mode IDs match common “Bochs/QEMU stdvga” expectations where `0x118` is
 //! `1024x768x32`.
@@ -70,6 +71,12 @@ const VBE_MODES: &[VbeMode] = &[
         id: VbeModeId(0x118),
         width: 1024,
         height: 768,
+        bpp: 32,
+    },
+    VbeMode {
+        id: VbeModeId(0x160),
+        width: 1280,
+        height: 720,
         bpp: 32,
     },
 ];
