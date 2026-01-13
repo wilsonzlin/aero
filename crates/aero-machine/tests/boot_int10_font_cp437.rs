@@ -79,8 +79,9 @@ fn boot_int10_font_cp437() {
     run_until_halt(&mut m);
 
     let glyph_byte = m.read_physical_u8(0x0500);
-    assert_ne!(
-        glyph_byte, 0,
-        "INT 10h AX=1130h returned a font table with a blank CP437 glyph"
+    assert!(
+        glyph_byte != 0 && glyph_byte != 0xFF,
+        "INT 10h AX=1130h returned an unexpected glyph byte 0x{glyph_byte:02X} \
+         (0x00 = blank glyph; 0xFF usually indicates open-bus/unmapped ROM reads)"
     );
 }
