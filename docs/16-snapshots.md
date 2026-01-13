@@ -74,21 +74,24 @@ This framing enables **backward-compatible schema evolution**:
     - `disk_id = 1` → IDE PIIX3 secondary master ATAPI CD-ROM
     - `disk_id = 2` → (optional) IDE PIIX3 primary master ATA disk
 - `CPUS` entries are written in canonical order: ascending `apic_id`.
+- `MMUS` entries are written in canonical order: ascending `apic_id`.
 - Dirty-page RAM snapshots canonicalize the dirty page list: sorted ascending, deduplicated, and validated against the guest RAM size.
 - Snapshot restore also canonicalizes list ordering **before** passing data to the restore target:
-  - `restore_snapshot` sorts `CPUS` by `apic_id`, `DEVICES` by `(device_id, version, flags)`, and `DISKS` by `disk_id`.
+  - `restore_snapshot` sorts `CPUS` by `apic_id`, `MMUS` by `apic_id`, `DEVICES` by `(device_id, version, flags)`, and `DISKS` by `disk_id`.
   - This makes restore deterministic even if a snapshot producer writes entries in arbitrary order.
 
 ### Validation / corruption handling
 
 To keep restore behavior deterministic and avoid ambiguous state merges, the decoder treats the following as **corrupt**:
 
-- Duplicate core sections (e.g. multiple `META`/`MMU`/`DEVICES`/`DISKS`/`RAM` sections).
+- Duplicate core sections (e.g. multiple `META`/`MMU`/`MMUS`/`DEVICES`/`DISKS`/`RAM` sections).
 - Multiple CPU sections (any mix of `CPU` + `CPUS`).
+- Ambiguous MMU state (any mix of `MMU` + `MMUS`).
 - Duplicate entries inside canonical lists:
   - `DEVICES`: duplicate `(device_id, version, flags)` (must be unique)
   - `DISKS`: duplicate `disk_id` (must be unique)
   - `CPUS`: duplicate `apic_id` (must be unique)
+  - `MMUS`: duplicate `apic_id` (must be unique)
 - Dirty RAM snapshots (`RAM` `mode = Dirty`) whose page index list is not **strictly increasing**.
 
 ### Format limits / resource bounds
@@ -122,10 +125,14 @@ Current notable limits include:
 | `META` | Snapshot id, parent id, timestamp, optional label |
 | `CPU` | Architectural CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
 | `CPUS` | Multi-vCPU CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
-| `MMU` | System/MMU state (v1: minimal; v2: control/debug/MSR + descriptor tables) |
+| `MMU` | **Legacy single-vCPU** MMU state (`MmuState`) (v1: minimal; v2: control/debug/MSR + descriptor tables). SMP snapshots use `MMUS`. |
+| `MMUS` | Multi-vCPU MMU state (list of per-vCPU `MmuState` keyed by `apic_id`) |
 | `DEVICES` | List of device states (PIC/APIC/PLATFORM_INTERRUPTS/PIT/RTC/I8042/HPET/ACPI_PM/PCI_CFG/PCI_INTX_ROUTER/DISK_CONTROLLER/VGA/etc) as typed TLVs |
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
+
+Section IDs are numeric (`u32`) and are defined by `aero_snapshot::SectionId`:
+`META=1`, `CPU=2`, `MMU=3`, `DEVICES=4`, `DISKS=5`, `RAM=6`, `CPUS=7`, `MMUS=8`.
 
 ### Recommended device payload convention (DEVICES)
 
@@ -505,6 +512,18 @@ Tier-0 treats the `HLT` as a `BiosInterrupt(vector)` exit rather than halting th
 
 ## MMU section encoding
 
+`MmuState` is **per-vCPU architectural state** (control/debug registers, descriptor tables, and key
+MSRs like FS/GS base and TSC).
+
+- `MMU` stores a single `MmuState` and is a **legacy / single-vCPU** section.
+- SMP snapshots should use `MMUS`, which stores one `MmuState` per vCPU keyed by `apic_id`.
+
+For both `MMU` and `MMUS`, the section TLV `section_version` selects the embedded `MmuState` encoding
+version:
+
+- `section_version = 1` — legacy minimal `MmuState`
+- `section_version = 2` — current full `MmuState`
+
 ### MMU section v1 (section_version = 1)
 
 Legacy encoding:
@@ -535,12 +554,33 @@ re-seed that time source from `TSC` (and keep `CpuState.msr.tsc` coherent) when 
 - `u64 IDTR_BASE`, `u16 IDTR_LIMIT`
 - **SegmentState** `LDTR` then `TR` (same layout as CPU v2 SegmentState)
 
+### MMUS section encoding
+
+Payload layout:
+
+```text
+u32 count
+repeat count times:
+  u64 entry_len
+  entry payload (entry_len bytes):
+    u32 apic_id
+    MmuState (encoded according to the MMUS section_version)
+```
+
+Determinism: `MMUS` entries are written in canonical order by ascending `apic_id` (and restore
+re-sorts/canonicalizes by `apic_id` before passing entries to snapshot targets).
+
+Backward compatibility:
+
+- Older snapshots may include `CPUS` + a single `MMU` section. New restore implementations interpret
+  that `MMU` payload as applying to **all** vCPUs in `CPUS`.
+
 ---
 
 ## CPU internal (device) encoding
 
-Some CPU execution state is not part of the architectural `CPU`/`MMU` sections (e.g. pending
-external interrupts). If needed, it is stored in the `DEVICES` section as a device entry:
+Some CPU execution state is not part of the architectural `CPU`/`CPUS` + `MMU`/`MMUS` sections (e.g.
+pending external interrupts). If needed, it is stored in the `DEVICES` section as a device entry:
 
 - `DeviceId::CPU_INTERNAL` (`9`)
 
