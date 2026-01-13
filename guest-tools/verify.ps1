@@ -671,6 +671,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "guest_tools_manifest",
         "certs_on_media_policy_mismatch",
         "packaged_drivers_summary",
+        "optional_tools",
         "guest_tools_setup_state",
         "guest_tools_config",
         "kb3033929",
@@ -2445,6 +2446,107 @@ try {
         "No virtio input devices detected (system may still be using PS/2 input)."
 } catch {
     Add-Check "bound_devices" "Bound Devices (WMI Win32_PnPEntity)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Optional packaged tools (tools\*) ---
+try {
+    $toolsDir = Join-Path $scriptDir "tools"
+    $toolsStatus = "PASS"
+    $toolsSummary = ""
+    $toolsDetails = @()
+
+    $toolsData = @{
+        tools_dir = $toolsDir
+        tools_dir_present = $false
+        tools_dir_readable = $null
+        exe_files = @()
+        inventory_errors = @()
+    }
+
+    if (-not (Test-Path $toolsDir)) {
+        $toolsSummary = "No tools\\ directory present (optional)."
+        Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
+    } else {
+        $toolsData.tools_dir_present = $true
+
+        $gciErrors = @()
+        $exeItems = @()
+        try {
+            $exeItems = Get-ChildItem -Path $toolsDir -Recurse -Filter *.exe -ErrorAction SilentlyContinue -ErrorVariable gciErrors
+        } catch {
+            # Get-ChildItem can still throw in some cases; treat as unreadable.
+            $gciErrors += $_
+        }
+
+        $invErrors = @()
+        if ($gciErrors -and $gciErrors.Count -gt 0) {
+            $toolsStatus = "WARN"
+            foreach ($e in $gciErrors) {
+                try {
+                    if ($e -and $e.Exception -and $e.Exception.Message) {
+                        $invErrors += ("" + $e.Exception.Message)
+                    } elseif ($e) {
+                        $invErrors += ("" + $e.ToString())
+                    }
+                } catch { }
+            }
+        }
+
+        $rootFull = $null
+        try { $rootFull = [System.IO.Path]::GetFullPath($scriptDir) } catch { $rootFull = $scriptDir }
+        $rootLower = $null
+        try { $rootLower = $rootFull.ToLower() } catch { $rootLower = "" }
+
+        $exeFiles = @()
+        foreach ($f in @($exeItems)) {
+            if (-not $f -or -not $f.FullName) { continue }
+            $full = "" + $f.FullName
+            $rel = $full
+            try {
+                $fullCanon = [System.IO.Path]::GetFullPath($full)
+                if ($rootLower -and $fullCanon.ToLower().StartsWith($rootLower)) {
+                    $rel = $fullCanon.Substring($rootFull.Length)
+                    $rel = $rel.TrimStart('\','/')
+                } else {
+                    $rel = $fullCanon
+                }
+            } catch { }
+
+            $sha = Get-FileSha256Hex $full
+            if (-not $sha) {
+                $toolsStatus = "WARN"
+                $invErrors += ("Failed to compute SHA-256 for: " + $rel)
+            }
+
+            $exeFiles += @{
+                relative_path = $rel
+                sha256 = $sha
+                size_bytes = $f.Length
+            }
+        }
+
+        $toolsData.exe_files = $exeFiles
+        $toolsData.inventory_errors = $invErrors
+        $toolsData.tools_dir_readable = ($toolsStatus -ne "WARN")
+
+        $toolsSummary = "tools\\ directory present. EXE file(s): " + $exeFiles.Count
+        if ($toolsStatus -eq "WARN") {
+            $toolsSummary += " (inventory incomplete)."
+        }
+
+        foreach ($e in $exeFiles) {
+            $line = "" + $e.relative_path
+            if ($e.sha256) { $line += " sha256=" + $e.sha256 } else { $line += " sha256=<error>" }
+            $toolsDetails += $line
+        }
+        foreach ($m in $invErrors) {
+            if ($m) { $toolsDetails += ("Inventory error: " + $m) }
+        }
+
+        Add-Check "optional_tools" "Optional Tools (tools\\*)" $toolsStatus $toolsSummary $toolsData $toolsDetails
+    }
+} catch {
+    Add-Check "optional_tools" "Optional Tools (tools\\*)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Installed driver binding correlation (media INFs vs active device bindings) ---
