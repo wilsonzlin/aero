@@ -1,7 +1,8 @@
 use super::capabilities::VendorSpecificCapability;
 use super::irq_router::{PciIntxRouter, PciIntxRouterConfig};
 use super::{
-    PciBarDefinition, PciBdf, PciBus, PciConfigSpace, PciDevice, PciInterruptPin, PciPlatform,
+    MsiCapability, MsixCapability, PciBarDefinition, PciBdf, PciBus, PciConfigSpace, PciDevice,
+    PciInterruptPin, PciPlatform,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,6 +94,56 @@ impl PciBarProfile {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PciCapabilityProfile {
     VendorSpecific { payload: &'static [u8] },
+    /// Single-vector MSI capability.
+    ///
+    /// This is sufficient for simple PCI functions (e.g. AHCI/NVMe controllers) that only need one
+    /// interrupt vector.
+    Msi {
+        is_64bit: bool,
+        per_vector_masking: bool,
+    },
+    /// MSI-X capability.
+    Msix {
+        table_size: u16,
+        table_bar: u8,
+        table_offset: u32,
+        pba_bar: u8,
+        pba_offset: u32,
+    },
+}
+
+impl PciCapabilityProfile {
+    pub fn add_to_config_space(self, config: &mut PciConfigSpace) {
+        match self {
+            PciCapabilityProfile::VendorSpecific { payload } => {
+                config.add_capability(Box::new(VendorSpecificCapability::new(payload.to_vec())));
+            }
+            PciCapabilityProfile::Msi {
+                is_64bit,
+                per_vector_masking,
+            } => {
+                config.add_capability(Box::new(MsiCapability::new_with_config(
+                    is_64bit,
+                    per_vector_masking,
+                )));
+            }
+            PciCapabilityProfile::Msix {
+                table_size,
+                table_bar,
+                table_offset,
+                pba_bar,
+                pba_offset,
+            } => {
+                config.add_capability(Box::new(MsixCapability::new(
+                    table_size,
+                    table_bar,
+                    table_offset,
+                    pba_bar,
+                    pba_offset,
+                )));
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,12 +208,7 @@ impl PciDeviceProfile {
         }
 
         for cap in self.capabilities {
-            match cap {
-                PciCapabilityProfile::VendorSpecific { payload } => {
-                    config
-                        .add_capability(Box::new(VendorSpecificCapability::new(payload.to_vec())));
-                }
-            }
+            cap.add_to_config_space(&mut config);
         }
 
         let router = PciIntxRouter::new(PciIntxRouterConfig::default());
@@ -301,7 +347,7 @@ pub const VIRTIO_CAP_DEVICE: [u8; 14] = [
     16, 4, 0, 0, 0, 0, 0x00, 0x30, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
 ];
 
-pub const VIRTIO_CAPS: [PciCapabilityProfile; 4] = [
+pub const VIRTIO_VENDOR_CAPS: [PciCapabilityProfile; 4] = [
     PciCapabilityProfile::VendorSpecific {
         payload: &VIRTIO_CAP_COMMON,
     },
@@ -314,6 +360,99 @@ pub const VIRTIO_CAPS: [PciCapabilityProfile; 4] = [
     PciCapabilityProfile::VendorSpecific {
         payload: &VIRTIO_CAP_DEVICE,
     },
+];
+
+/// BAR0 offset within the virtio-pci MMIO window where the MSI-X table starts.
+///
+/// This offset is chosen to live immediately after the 0x100-byte device-specific config window
+/// (0x3000..=0x30ff) used by the canonical virtio-pci capability payloads above.
+pub const VIRTIO_MSIX_TABLE_BAR0_OFFSET: u32 = 0x3100;
+
+const VIRTIO_MSIX_TABLE_ENTRY_SIZE_BYTES: u32 = 16;
+
+const fn virtio_msix_table_bytes(table_size: u16) -> u32 {
+    (table_size as u32).saturating_mul(VIRTIO_MSIX_TABLE_ENTRY_SIZE_BYTES)
+}
+
+pub const fn virtio_msix_pba_offset(table_size: u16) -> u32 {
+    // Align to 8 bytes as required by MSI-X.
+    let end = VIRTIO_MSIX_TABLE_BAR0_OFFSET.saturating_add(virtio_msix_table_bytes(table_size));
+    (end + 7) & !7
+}
+
+const fn virtio_msix_pba_bytes(table_size: u16) -> u32 {
+    // One bit per vector, packed into u64 words.
+    ((table_size as u32).saturating_add(63) / 64).saturating_mul(8)
+}
+
+const fn virtio_msix_end_offset(table_size: u16) -> u32 {
+    virtio_msix_pba_offset(table_size).saturating_add(virtio_msix_pba_bytes(table_size))
+}
+
+/// Builds the canonical MSI-X capability profile for a virtio-pci device.
+///
+/// Virtio uses one vector for config change notifications plus one vector per virtqueue.
+///
+/// # Panics
+///
+/// Panics if the derived MSI-X table/PBA layout does not fit within the provided BAR0 size.
+pub fn virtio_msix_capability_profile(num_queues: usize, bar0_size: u64) -> PciCapabilityProfile {
+    let table_size =
+        u16::try_from(num_queues.saturating_add(1)).unwrap_or(u16::MAX);
+    let msix_end = u64::from(virtio_msix_end_offset(table_size));
+    assert!(
+        msix_end <= bar0_size,
+        "virtio-pci BAR0 too small for MSI-X table: end=0x{msix_end:x} bar0_size=0x{bar0_size:x}"
+    );
+    virtio_msix_capability_profile_for_table_size(table_size)
+}
+
+pub const fn virtio_msix_capability_profile_for_table_size(
+    table_size: u16,
+) -> PciCapabilityProfile {
+    PciCapabilityProfile::Msix {
+        table_size,
+        table_bar: 0,
+        table_offset: VIRTIO_MSIX_TABLE_BAR0_OFFSET,
+        pba_bar: 0,
+        pba_offset: virtio_msix_pba_offset(table_size),
+    }
+}
+
+pub const VIRTIO_NET_CAPS: [PciCapabilityProfile; 5] = [
+    VIRTIO_VENDOR_CAPS[0],
+    VIRTIO_VENDOR_CAPS[1],
+    VIRTIO_VENDOR_CAPS[2],
+    VIRTIO_VENDOR_CAPS[3],
+    // virtio-net has 2 virtqueues (RX/TX) + 1 config vector.
+    virtio_msix_capability_profile_for_table_size(3),
+];
+
+pub const VIRTIO_BLK_CAPS: [PciCapabilityProfile; 5] = [
+    VIRTIO_VENDOR_CAPS[0],
+    VIRTIO_VENDOR_CAPS[1],
+    VIRTIO_VENDOR_CAPS[2],
+    VIRTIO_VENDOR_CAPS[3],
+    // virtio-blk has 1 virtqueue + 1 config vector.
+    virtio_msix_capability_profile_for_table_size(2),
+];
+
+pub const VIRTIO_INPUT_CAPS: [PciCapabilityProfile; 5] = [
+    VIRTIO_VENDOR_CAPS[0],
+    VIRTIO_VENDOR_CAPS[1],
+    VIRTIO_VENDOR_CAPS[2],
+    VIRTIO_VENDOR_CAPS[3],
+    // virtio-input has 2 virtqueues (event/status) + 1 config vector.
+    virtio_msix_capability_profile_for_table_size(3),
+];
+
+pub const VIRTIO_SND_CAPS: [PciCapabilityProfile; 5] = [
+    VIRTIO_VENDOR_CAPS[0],
+    VIRTIO_VENDOR_CAPS[1],
+    VIRTIO_VENDOR_CAPS[2],
+    VIRTIO_VENDOR_CAPS[3],
+    // virtio-snd has 4 virtqueues + 1 config vector.
+    virtio_msix_capability_profile_for_table_size(5),
 ];
 
 pub const IDE_PIIX3: PciDeviceProfile = PciDeviceProfile {
@@ -478,7 +617,7 @@ pub const VIRTIO_NET: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,
-    capabilities: &VIRTIO_CAPS,
+    capabilities: &VIRTIO_NET_CAPS,
 };
 
 pub const VIRTIO_BLK: PciDeviceProfile = PciDeviceProfile {
@@ -493,7 +632,7 @@ pub const VIRTIO_BLK: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,
-    capabilities: &VIRTIO_CAPS,
+    capabilities: &VIRTIO_BLK_CAPS,
 };
 
 pub const VIRTIO_INPUT_KEYBOARD: PciDeviceProfile = PciDeviceProfile {
@@ -508,7 +647,7 @@ pub const VIRTIO_INPUT_KEYBOARD: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x80,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,
-    capabilities: &VIRTIO_CAPS,
+    capabilities: &VIRTIO_INPUT_CAPS,
 };
 
 pub const VIRTIO_INPUT: PciDeviceProfile = PciDeviceProfile {
@@ -523,7 +662,7 @@ pub const VIRTIO_INPUT: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x80,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,
-    capabilities: &VIRTIO_CAPS,
+    capabilities: &VIRTIO_INPUT_CAPS,
 };
 
 pub const VIRTIO_INPUT_MOUSE: PciDeviceProfile = PciDeviceProfile {
@@ -538,7 +677,7 @@ pub const VIRTIO_INPUT_MOUSE: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,
-    capabilities: &VIRTIO_CAPS,
+    capabilities: &VIRTIO_INPUT_CAPS,
 };
 
 pub const VIRTIO_SND: PciDeviceProfile = PciDeviceProfile {
@@ -555,7 +694,7 @@ pub const VIRTIO_SND: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &VIRTIO_BARS,
-    capabilities: &VIRTIO_CAPS,
+    capabilities: &VIRTIO_SND_CAPS,
 };
 
 pub const CANONICAL_IO_DEVICES: &[PciDeviceProfile] = &[
@@ -622,4 +761,80 @@ pub fn pci_dump(profiles: &[PciDeviceProfile]) -> String {
         );
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pci::msi::PCI_CAP_ID_MSI;
+    use crate::pci::msix::PCI_CAP_ID_MSIX;
+
+    const TEST_CAPABILITIES: [PciCapabilityProfile; 2] = [
+        PciCapabilityProfile::Msi {
+            is_64bit: false,
+            per_vector_masking: false,
+        },
+        PciCapabilityProfile::Msix {
+            table_size: 4,
+            table_bar: 2,
+            table_offset: 0x1230,
+            pba_bar: 2,
+            pba_offset: 0x1300,
+        },
+    ];
+
+    #[test]
+    fn build_config_space_adds_msi_and_msix_capabilities_from_profile() {
+        let profile = PciDeviceProfile {
+            name: "test",
+            bdf: PciBdf::new(0, 0, 0),
+            vendor_id: 0x1234,
+            device_id: 0x5678,
+            subsystem_vendor_id: 0,
+            subsystem_id: 0,
+            revision_id: 0,
+            class: PciClassCode::new(0, 0, 0),
+            header_type: 0x00,
+            interrupt_pin: None,
+            bars: &[],
+            capabilities: &TEST_CAPABILITIES,
+        };
+
+        let mut cfg = profile.build_config_space();
+
+        let caps = cfg.capability_list();
+        assert_eq!(caps.len(), 2);
+        assert_eq!(caps[0].id, PCI_CAP_ID_MSI);
+        assert_eq!(caps[0].offset, 0x40);
+        assert_eq!(caps[1].id, PCI_CAP_ID_MSIX);
+        assert_eq!(caps[1].offset, 0x4c);
+
+        let msi_off = cfg.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+        let msix_off = cfg.find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
+
+        // MSI capability bytes match the profile fields (32-bit, no per-vector masking).
+        assert_eq!(cfg.read(msi_off, 1) as u8, PCI_CAP_ID_MSI);
+        assert_eq!(cfg.read(msi_off + 1, 1) as u8, msix_off as u8);
+        let msi_ctrl = cfg.read(msi_off + 0x02, 2) as u16;
+        assert_eq!(msi_ctrl & 0x0001, 0, "MSI should start disabled");
+        assert_eq!(msi_ctrl & (1 << 7), 0, "MSI 64-bit flag should match profile");
+        assert_eq!(
+            msi_ctrl & (1 << 8),
+            0,
+            "MSI per-vector masking flag should match profile"
+        );
+
+        // MSI-X capability bytes match the profile fields.
+        assert_eq!(cfg.read(msix_off, 1) as u8, PCI_CAP_ID_MSIX);
+        assert_eq!(cfg.read(msix_off + 1, 1) as u8, 0);
+
+        let msix_ctrl = cfg.read(msix_off + 0x02, 2) as u16;
+        // Table size is encoded as N-1 in bits 0..=10.
+        assert_eq!(msix_ctrl & 0x07ff, 3);
+
+        let table = cfg.read(msix_off + 0x04, 4);
+        assert_eq!(table, 0x1230 | 2);
+        let pba = cfg.read(msix_off + 0x08, 4);
+        assert_eq!(pba, 0x1300 | 2);
+    }
 }

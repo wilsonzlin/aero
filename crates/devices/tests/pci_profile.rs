@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::*;
 use aero_devices::pci::PciBdf;
 
@@ -178,12 +179,14 @@ fn virtio_config_space_exposes_vendor_specific_capabilities() {
     assert_eq!(cap_ptr, 0x40);
 
     let caps = cfg.capability_list();
-    assert_eq!(caps.len(), 4);
-    assert!(caps.iter().all(|c| c.id == PCI_CAP_ID_VENDOR_SPECIFIC));
+    assert_eq!(caps.len(), 5);
+    assert!(caps[..4].iter().all(|c| c.id == PCI_CAP_ID_VENDOR_SPECIFIC));
+    assert_eq!(caps[4].id, PCI_CAP_ID_MSIX);
     assert_eq!(caps[0].offset, 0x40);
     assert_eq!(caps[1].offset, 0x50);
     assert_eq!(caps[2].offset, 0x64);
     assert_eq!(caps[3].offset, 0x74);
+    assert_eq!(caps[4].offset, 0x84);
 
     let payload = |cfg: &mut aero_devices::pci::PciConfigSpace, off: u16| -> Vec<u8> {
         (0..cfg.read(off + 2, 1) as u8)

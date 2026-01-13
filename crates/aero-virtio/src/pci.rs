@@ -1,7 +1,7 @@
 use crate::devices::VirtioDevice;
 use crate::memory::{read_u16_le, GuestMemory};
 use crate::queue::{PoppedDescriptorChain, VirtQueue, VirtQueueConfig};
-use aero_devices::pci::capabilities::VendorSpecificCapability;
+use aero_devices::pci::profile::{self, PciCapabilityProfile};
 use aero_devices::pci::{
     MsixCapability, PciBarDefinition, PciConfigSpace, PciInterruptPin, PciSubsystemIds,
 };
@@ -824,48 +824,27 @@ impl VirtioPciDevice {
 
         // Modern virtio-pci capabilities.
         if self.modern_enabled {
-            use aero_devices::pci::profile::{
-                VIRTIO_CAP_COMMON, VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY,
-            };
-
-            cfg.add_capability(Box::new(VendorSpecificCapability::new(
-                VIRTIO_CAP_COMMON.to_vec(),
-            )));
-            cfg.add_capability(Box::new(VendorSpecificCapability::new(
-                VIRTIO_CAP_NOTIFY.to_vec(),
-            )));
-            cfg.add_capability(Box::new(VendorSpecificCapability::new(
-                VIRTIO_CAP_ISR.to_vec(),
-            )));
-            cfg.add_capability(Box::new(VendorSpecificCapability::new(
-                VIRTIO_CAP_DEVICE.to_vec(),
-            )));
-
-            // MSI-X capability + table (optional in the Aero Win7 virtio contract).
-            //
-            // We expose one vector for config changes plus one vector per virtqueue.
-            // The table + PBA live inside BAR0 in an unused region after the device-specific config
-            // window.
-            const MSIX_TABLE_BAR0_OFFSET: u64 = 0x3100;
-            const MSIX_ENTRY_SIZE: u64 = 16;
-            let table_size = u16::try_from(self.queues.len().saturating_add(1)).unwrap_or(u16::MAX);
-            let table_bytes = u64::from(table_size).saturating_mul(MSIX_ENTRY_SIZE);
-            let pba_offset = align_up(MSIX_TABLE_BAR0_OFFSET.saturating_add(table_bytes), 8);
-            let pba_bytes = ((u64::from(table_size).saturating_add(63)) / 64).saturating_mul(8);
-            let msix_end = pba_offset.saturating_add(pba_bytes);
-            assert!(
-                msix_end <= self.bar0_size,
-                "virtio-pci BAR0 too small for MSI-X table: end=0x{msix_end:x} bar0_size=0x{:x}",
-                self.bar0_size
-            );
-
-            cfg.add_capability(Box::new(MsixCapability::new(
-                table_size,
-                0,
-                u32::try_from(MSIX_TABLE_BAR0_OFFSET).unwrap(),
-                0,
-                u32::try_from(pba_offset).unwrap(),
-            )));
+            let caps = [
+                PciCapabilityProfile::VendorSpecific {
+                    payload: &profile::VIRTIO_CAP_COMMON,
+                },
+                PciCapabilityProfile::VendorSpecific {
+                    payload: &profile::VIRTIO_CAP_NOTIFY,
+                },
+                PciCapabilityProfile::VendorSpecific {
+                    payload: &profile::VIRTIO_CAP_ISR,
+                },
+                PciCapabilityProfile::VendorSpecific {
+                    payload: &profile::VIRTIO_CAP_DEVICE,
+                },
+                // MSI-X capability + table (optional in the Aero Win7 virtio contract).
+                //
+                // We expose one vector for config changes plus one vector per virtqueue.
+                profile::virtio_msix_capability_profile(self.queues.len(), self.bar0_size),
+            ];
+            for cap in caps {
+                cap.add_to_config_space(&mut cfg);
+            }
         }
 
         self.config = cfg;

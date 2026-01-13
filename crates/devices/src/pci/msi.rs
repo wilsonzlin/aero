@@ -25,17 +25,30 @@ impl Default for MsiCapability {
 }
 
 impl MsiCapability {
-    pub fn new() -> Self {
+    /// Create a single-vector MSI capability.
+    ///
+    /// The returned capability is initially disabled and has zeroed message address/data.
+    ///
+    /// # Parameters
+    ///
+    /// - `is_64bit`: Whether the device supports 64-bit MSI message addresses.
+    /// - `per_vector_masking`: Whether the device implements the optional per-vector mask/pending
+    ///   registers.
+    pub fn new_with_config(is_64bit: bool, per_vector_masking: bool) -> Self {
         Self {
             offset: 0,
             enabled: false,
-            is_64bit: true,
-            per_vector_masking: true,
+            is_64bit,
+            per_vector_masking,
             message_address: 0,
             message_data: 0,
             mask_bits: 0,
             pending_bits: 0,
         }
+    }
+
+    pub fn new() -> Self {
+        Self::new_with_config(true, true)
     }
 
     pub fn enabled(&self) -> bool {
