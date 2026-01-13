@@ -4530,6 +4530,19 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--state is mutually exclusive with --selftest, --counters/--counters-json/--reset-counters, and other report/IOCTL tests.\n");
         return 2;
     }
+    if ((opt.get_log_mask || opt.have_set_log_mask) &&
+        (opt.selftest || opt.list_only || opt.query_state || opt.query_counters || opt.query_counters_json || opt.reset_counters ||
+         opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
+         opt.have_duration || opt.have_count ||
+         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
+         opt.ioctl_query_counters_short || opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report ||
+         opt.have_led_ioctl_set_output)) {
+        wprintf(L"--get-log-mask/--set-log-mask are mutually exclusive with other action/negative-test modes.\n");
+        return 2;
+    }
     if (opt.have_led_mask && opt.led_cycle) {
         wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --led-cycle are mutually exclusive.\n");
         return 2;
