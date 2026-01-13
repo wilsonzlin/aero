@@ -101,7 +101,16 @@ fn find_boot_catalog_lba(disk: &mut dyn BlockDevice) -> Result<u32, &'static str
         // Boot Record Volume Descriptor (ISO9660 type 0).
         let boot_system_id = &block[7..39];
         if boot_system_id != EL_TORITO_BOOT_SYSTEM_ID_SPACES {
-            continue;
+            // Some ISO authoring tools pad with NUL bytes rather than spaces; tolerate both while
+            // still requiring the canonical identifier prefix.
+            const EL_TORITO_ID: &[u8] = b"EL TORITO SPECIFICATION";
+            if !boot_system_id.starts_with(EL_TORITO_ID)
+                || boot_system_id[EL_TORITO_ID.len()..]
+                    .iter()
+                    .any(|&b| b != 0 && b != b' ')
+            {
+                continue;
+            }
         }
 
         // Boot Catalog LBA (little-endian u32 at offset 0x47).
@@ -353,6 +362,41 @@ mod tests {
         );
         let mut disk = InMemoryDisk::new(img);
 
+        let parsed = parse_boot_image(&mut disk).expect("parser should succeed");
+        assert_eq!(parsed.boot_catalog_lba, boot_catalog_lba);
+        assert_eq!(
+            parsed.image,
+            BootImageInfo {
+                boot_catalog_lba,
+                load_segment: 0x07C0,
+                sector_count: 4,
+                load_rba: boot_image_lba,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_boot_image_accepts_nul_padded_boot_system_id() {
+        let boot_catalog_lba = 20;
+        let boot_image_lba = 21;
+        let boot_image = [0xAB; ISO_BLOCK_BYTES];
+        let mut img = build_minimal_iso_no_emulation(
+            boot_catalog_lba,
+            boot_image_lba,
+            &boot_image,
+            0,
+            4,
+        );
+
+        // Patch the Boot Record Volume Descriptor (LBA17) boot system id to be NUL-padded rather
+        // than space-padded.
+        const EL_TORITO_ID: &[u8] = b"EL TORITO SPECIFICATION";
+        let mut nul_id = [0u8; 32];
+        nul_id[..EL_TORITO_ID.len()].copy_from_slice(EL_TORITO_ID);
+        let brvd_off = 17 * ISO_BLOCK_BYTES;
+        img[brvd_off + 7..brvd_off + 39].copy_from_slice(&nul_id);
+
+        let mut disk = InMemoryDisk::new(img);
         let parsed = parse_boot_image(&mut disk).expect("parser should succeed");
         assert_eq!(parsed.boot_catalog_lba, boot_catalog_lba);
         assert_eq!(

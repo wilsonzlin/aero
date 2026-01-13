@@ -380,7 +380,7 @@ fn int13_ext_read_cd_via_dispatch_interrupt_reads_2048_sector() {
     // Provide an interrupt frame so the dispatcher can merge return flags into the IRET image.
     install_interrupt_frame(&mut bus, &mut cpu, 0x0000, 0x0100);
 
-    bios.dispatch_interrupt(0x13, &mut cpu, &mut bus, &mut disk);
+    bios.dispatch_interrupt(0x13, &mut cpu, &mut bus, &mut disk, None);
 
     let flags = bus.read_u16(0x0104);
     assert_eq!(flags & 0x0001, 0, "CF should be cleared on success");
@@ -416,7 +416,7 @@ fn int13_ext_get_drive_params_cd_reports_2048_bytes_per_sector_via_dispatch_inte
     cpu.gpr[gpr::RSI] = 0x0600;
 
     install_interrupt_frame(&mut bus, &mut cpu, 0x0000, 0x0120);
-    bios.dispatch_interrupt(0x13, &mut cpu, &mut bus, &mut disk);
+    bios.dispatch_interrupt(0x13, &mut cpu, &mut bus, &mut disk, None);
 
     let flags = bus.read_u16(0x0124);
     assert_eq!(flags & 0x0001, 0, "CF should be cleared on success");

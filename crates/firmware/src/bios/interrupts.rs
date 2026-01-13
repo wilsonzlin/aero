@@ -2375,7 +2375,7 @@ mod tests {
         cpu.gpr[gpr::RAX] = 0x4B01;
         mem.write_u8(0x0500, 0x13);
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
