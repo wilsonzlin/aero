@@ -110,6 +110,12 @@ pub mod pc;
 pub use pc::{PcMachine, PcMachineConfig};
 
 /// Configuration for [`Machine`].
+///
+/// # Platform wiring vs firmware tables
+///
+/// [`MachineConfig::enable_pc_platform`] controls which device models are actually wired into the
+/// machine (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET). [`MachineConfig::enable_acpi`] controls whether the
+/// BIOS publishes ACPI tables describing that PC-like platform.
 #[derive(Debug, Clone)]
 pub struct MachineConfig {
     /// Guest RAM size in bytes.
@@ -122,7 +128,22 @@ pub struct MachineConfig {
     /// Whether to attach canonical PC platform devices (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET).
     ///
     /// This is currently opt-in to keep the default machine minimal and deterministic.
+    ///
+    /// Note: this controls *device wiring*; BIOS publication of ACPI tables is controlled
+    /// separately via [`MachineConfig::enable_acpi`].
     pub enable_pc_platform: bool,
+    /// Whether the BIOS should build and publish ACPI tables during POST.
+    ///
+    /// ACPI tables should only be published when they accurately describe the machine's platform
+    /// wiring (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET). In [`Machine`], that wiring is controlled by
+    /// [`MachineConfig::enable_pc_platform`], so callers typically want:
+    ///
+    /// - `enable_pc_platform=true` and `enable_acpi=true` for a PC-like machine, and
+    /// - `enable_pc_platform=false` and `enable_acpi=false` for a minimal legacy BIOS machine.
+    ///
+    /// Note: `Machine` only publishes ACPI tables when *both* `enable_pc_platform` and
+    /// `enable_acpi` are set.
+    pub enable_acpi: bool,
     /// Whether to attach an Intel ICH9 AHCI SATA controller at the canonical Windows 7 BDF
     /// (`aero_devices::pci::profile::SATA_AHCI_ICH9.bdf`, `00:02.0`).
     ///
@@ -224,6 +245,7 @@ impl Default for MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             cpu_count: 1,
             enable_pc_platform: false,
+            enable_acpi: false,
             enable_ahci: false,
             enable_nvme: false,
             enable_ide: false,
@@ -254,7 +276,7 @@ impl MachineConfig {
     ///
     /// Other devices are set to explicit, stable defaults to avoid drift:
     ///
-    /// - PC platform enabled (PIC/APIC/PIT/RTC/PCI/ACPI/HPET)
+    /// - PC platform enabled (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET) and ACPI tables published
     /// - 1 vCPU (current machine limitation)
     /// - serial (`COM1`) enabled
     /// - i8042 enabled (keyboard/mouse)
@@ -268,6 +290,7 @@ impl MachineConfig {
             ram_size_bytes,
             cpu_count: 1,
             enable_pc_platform: true,
+            enable_acpi: true,
             enable_ahci: true,
             enable_nvme: false,
             enable_ide: true,
@@ -2560,6 +2583,11 @@ impl Machine {
             .and_then(|b| b.l2_ring_stats())
     }
 
+    /// Return the guest physical address of the ACPI RSDP, if the BIOS published ACPI tables.
+    pub fn acpi_rsdp_addr(&self) -> Option<u64> {
+        self.bios.rsdp_addr()
+    }
+
     /// Debug/testing helper: read a single guest physical byte.
     pub fn read_physical_u8(&mut self, paddr: u64) -> u8 {
         self.mem.read_u8(paddr)
@@ -4788,6 +4816,10 @@ impl Machine {
 
         // Run firmware POST (in Rust) to initialize IVT/BDA, map BIOS stubs, and load the boot
         // sector into RAM.
+        //
+        // ACPI tables must only be published when they describe real machine wiring. Since the
+        // canonical PC platform devices are behind `enable_pc_platform`, gate ACPI publication on
+        // both flags.
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
         //
@@ -4801,6 +4833,7 @@ impl Machine {
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
             cpu_count: self.cfg.cpu_count,
+            enable_acpi: self.cfg.enable_pc_platform && self.cfg.enable_acpi,
             vbe_lfb_base: use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
             ..Default::default()
         });

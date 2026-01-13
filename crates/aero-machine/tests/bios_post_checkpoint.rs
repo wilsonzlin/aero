@@ -132,6 +132,8 @@ fn boots_mbr_and_writes_to_serial_integration() {
 fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 16 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_acpi: true,
         ..Default::default()
     })
     .unwrap();
@@ -146,7 +148,8 @@ fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
     assert_eq!(loaded[511], 0xAA);
 
     // ACPI RSDP should be written during POST when enabled.
-    let rsdp = m.read_physical_bytes(EBDA_BASE + 0x100, 36);
+    let rsdp_addr = m.acpi_rsdp_addr().expect("RSDP should be published");
+    let rsdp = m.read_physical_bytes(rsdp_addr, 36);
     assert_eq!(&rsdp[0..8], b"RSD PTR ");
     assert!(checksum_ok(&rsdp[..20]));
     assert!(checksum_ok(&rsdp));
