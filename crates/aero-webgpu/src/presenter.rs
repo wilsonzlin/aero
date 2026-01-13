@@ -983,6 +983,12 @@ mod tests {
             preferred_composite_alpha_mode(&modes),
             wgpu::CompositeAlphaMode::PostMultiplied
         );
+
+        let modes: [wgpu::CompositeAlphaMode; 0] = [];
+        assert_eq!(
+            preferred_composite_alpha_mode(&modes),
+            wgpu::CompositeAlphaMode::Opaque
+        );
     }
 
     #[test]
@@ -1034,6 +1040,13 @@ mod tests {
         assert_eq!(surface_format, wgpu::TextureFormat::Bgra8Unorm);
         assert_eq!(view_format, wgpu::TextureFormat::Bgra8UnormSrgb);
         assert_eq!(view_formats, vec![wgpu::TextureFormat::Bgra8UnormSrgb]);
+        assert!(!surface_format_requires_manual_srgb_encoding(view_format));
+
+        let formats = [wgpu::TextureFormat::Rgba8Unorm];
+        let (surface_format, view_format, view_formats) = preferred_surface_config(&formats, true);
+        assert_eq!(surface_format, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(view_format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        assert_eq!(view_formats, vec![wgpu::TextureFormat::Rgba8UnormSrgb]);
         assert!(!surface_format_requires_manual_srgb_encoding(view_format));
     }
 
