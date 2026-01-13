@@ -4,6 +4,20 @@ import type { IrqSink } from "../device_manager";
 import { EhciPciDevice, type EhciControllerBridgeLike } from "./ehci";
 
 describe("io/devices/ehci", () => {
+  it("uses the canonical PCI BDF (00:12.0) to match the Rust USB_EHCI_ICH9 profile", () => {
+    const bridge: EhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new EhciPciDevice({ bridge, irqSink });
+    expect(dev.bdf).toEqual({ bus: 0, device: 0x12, function: 0 });
+  });
+
   it("forwards mmioRead/mmioWrite to the underlying bridge and masks writes to access size", () => {
     const bridge: EhciControllerBridgeLike = {
       mmio_read: vi.fn(() => 0x1234_5678),
@@ -76,4 +90,3 @@ describe("io/devices/ehci", () => {
     expect(bridge.step_frames).toHaveBeenCalledWith(8);
   });
 });
-

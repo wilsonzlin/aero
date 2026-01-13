@@ -67,9 +67,9 @@ export class EhciPciDevice implements PciDevice, TickableDevice {
   readonly irqLine = EHCI_IRQ_LINE;
   readonly interruptPin = 0x01 as const; // INTA#
 
-  // The web runtime does not model the full chipset; pick a stable slot that does not overlap the
-  // other canonical devices.
-  readonly bdf = { bus: 0, device: 12, function: 0 };
+  // Keep the PCI address aligned with the canonical Rust profile:
+  // `aero_devices::pci::profile::USB_EHCI_ICH9` (00:12.0).
+  readonly bdf = { bus: 0, device: 0x12, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: EHCI_MMIO_BAR_SIZE }, null, null, null, null, null];
 
@@ -213,4 +213,3 @@ export class EhciPciDevice implements PciDevice, TickableDevice {
     else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
-
