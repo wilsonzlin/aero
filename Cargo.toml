@@ -34,6 +34,7 @@ members = [
     "crates/aero-l2-protocol",
     "crates/aero-udp-relay-protocol",
     "crates/aero-l2-proxy",
+    "crates/aero-tcp-mux-protocol",
     "crates/aero-net-stack",
     "crates/aero-storage",
     "crates/aero-storage-adapters",
