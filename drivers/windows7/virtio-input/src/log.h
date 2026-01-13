@@ -38,6 +38,12 @@
 // Registry value under the driver's "Parameters" key.
 #define VIOINPUT_REG_DIAGNOSTICS_MASK L"Parameters\\DiagnosticsMask"
 
+// Registry value name under the driver's "Parameters" key.
+// Controls whether pending statusq writes are dropped when the virtqueue is full.
+//  - 0 (default): keep the latest write pending until space is available
+//  - nonzero: drop the pending write if the queue is full at submission time
+#define VIOINPUT_REGVAL_STATUSQ_DROP_ON_FULL L"StatusQDropOnFull"
+
 // Diagnostic categories (bit mask).
 #define VIOINPUT_LOG_ERROR 0x00000001UL
 #define VIOINPUT_LOG_IOCTL 0x00000002UL

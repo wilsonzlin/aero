@@ -1013,6 +1013,47 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
             VirtioPciModernUninit(&deviceContext->PciDevice);
             return status;
         }
+
+        /*
+         * Optional debugging knob: allow dropping pending statusq writes when the queue is full.
+         *
+         * This is intentionally read during PrepareHardware so it can be set via:
+         *   HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\StatusQDropOnFull (DWORD)
+         */
+        {
+            WDFKEY paramsKey;
+            ULONG dropOnFullValue;
+            BOOLEAN dropOnFull;
+            UNICODE_STRING valueName;
+            NTSTATUS regStatus;
+
+            paramsKey = NULL;
+            dropOnFullValue = 0;
+            dropOnFull = FALSE;
+            RtlInitUnicodeString(&valueName, VIOINPUT_REGVAL_STATUSQ_DROP_ON_FULL);
+
+            regStatus = WdfDriverOpenParametersRegistryKey(
+                WdfDeviceGetDriver(Device),
+                KEY_READ,
+                WDF_NO_OBJECT_ATTRIBUTES,
+                &paramsKey);
+            if (NT_SUCCESS(regStatus)) {
+                regStatus = WdfRegistryQueryULong(paramsKey, &valueName, &dropOnFullValue);
+                WdfRegistryClose(paramsKey);
+                paramsKey = NULL;
+            }
+
+            // Default is "disabled" when the value is absent or cannot be queried.
+            dropOnFull = (NT_SUCCESS(regStatus) && dropOnFullValue != 0) ? TRUE : FALSE;
+            VirtioStatusQSetDropOnFull(deviceContext->StatusQ, dropOnFull);
+
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_VIRTQ,
+                "statusq DropOnFull=%s (StatusQDropOnFull=%lu query=%!STATUS!)\n",
+                dropOnFull ? "enabled" : "disabled",
+                dropOnFullValue,
+                regStatus);
+        }
     }
 
     status = VirtioPciInterruptsPrepareHardware(
