@@ -1258,7 +1258,13 @@ async function setupAudio() {
         sampleRate: requestedSampleRate,
         latencyHint: 'interactive'
     });
-    
+
+    // Optional diagnostics: some browsers expose output latency estimates.
+    // Aero surfaces these (when available) via `AudioOutputMetrics`:
+    //   - baseLatencySeconds (`AudioContext.baseLatency`)
+    //   - outputLatencySeconds (`AudioContext.outputLatency`)
+    // See: `web/src/platform/audio.ts` (`getMetrics`, `startAudioPerfSampling`).
+     
     await audioContext.audioWorklet.addModule('audio-worklet-processor.js');
     
     const sampleRate = audioContext.sampleRate;

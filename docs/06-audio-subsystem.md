@@ -466,6 +466,25 @@ Implementation references:
 - Producers should generally target a smaller steady-state fill level (tens of ms) and adapt if underruns occur:
   - `web/src/platform/audio.ts`: `createAdaptiveRingBufferTarget()`.
 
+### Web Audio latency introspection (baseLatency/outputLatency)
+
+Some browsers expose additional Web Audio latency diagnostics directly on the `AudioContext`:
+
+- `AudioContext.baseLatency` — the estimated base latency of the audio graph (seconds).
+- `AudioContext.outputLatency` — the estimated latency from the audio graph to the audio output device (seconds).
+
+These values are **browser/OS dependent** and may be missing. When present, they can help correlate:
+
+- “How much latency is inherent to the platform?” vs
+- “How much latency are we adding via ring-buffering / scheduling?”
+
+Aero exposes these (when available) via `AudioOutputMetrics`:
+
+- `baseLatencySeconds`
+- `outputLatencySeconds`
+
+and also emits them as trace counters (`audio.baseLatencySeconds` / `audio.outputLatencySeconds`) when `startAudioPerfSampling()` is enabled.
+
 ### Recommended defaults (demo mode vs VM mode)
 
 Audio tuning is inherently workload-dependent, but the following presets are good starting points:
