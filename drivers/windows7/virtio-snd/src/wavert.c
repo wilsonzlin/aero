@@ -133,6 +133,26 @@ static __forceinline VOID VirtIoSndWaveRtInterlockedOr(_Inout_ volatile LONG* Ta
     }
 }
 
+static __forceinline BOOLEAN VirtIoSndWaveRtShouldLogRareCounter(_In_ LONG Count)
+{
+    ULONG u;
+
+    /*
+     * Log the first few occurrences, then exponentially back off (powers of two).
+     * This keeps always-on error logging from spamming if the device floods XRUN
+     * notifications.
+     */
+    if (Count <= 4) {
+        return TRUE;
+    }
+    if (Count < 0) {
+        return TRUE;
+    }
+
+    u = (ULONG)Count;
+    return ((u & (u - 1u)) == 0u) ? TRUE : FALSE;
+}
+
 static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_AddRef(_In_ IMiniportWaveRT *This);
 static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWaveRT *This);
 
@@ -504,8 +524,8 @@ VirtIoSndWaveRtEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULON
         LONG n;
 
         n = InterlockedIncrement(&xrunLog);
-        if ((n & 0xFu) == 1) {
-            VIRTIOSND_TRACE_ERROR("wavert: eventq: PCM XRUN (stream=%lu)\n", Data);
+        if (VirtIoSndWaveRtShouldLogRareCounter(n)) {
+            VIRTIOSND_TRACE_ERROR("wavert: eventq: PCM XRUN (stream=%lu count=%ld)\n", Data, n);
         }
 
         VirtIoSndWaveRtSchedulePcmXrunRecovery(dx, Data);
