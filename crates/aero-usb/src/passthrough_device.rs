@@ -21,7 +21,13 @@ use crate::passthrough::{
     UsbHostAction, UsbHostCompletion, UsbInResult as HostUsbInResult,
     UsbOutResult as HostUsbOutResult, UsbPassthroughDevice,
 };
-use crate::{ControlResponse, SetupPacket, UsbDeviceModel};
+use crate::{ControlResponse, SetupPacket, UsbDeviceModel, UsbSpeed};
+
+#[derive(Debug)]
+struct WebUsbPassthroughState {
+    passthrough: UsbPassthroughDevice,
+    speed: UsbSpeed,
+}
 
 /// Shareable handle for a WebUSB passthrough USB device model.
 ///
@@ -29,31 +35,42 @@ use crate::{ControlResponse, SetupPacket, UsbDeviceModel};
 /// before attaching, the host integration layer can continue to drain queued actions and push
 /// completions.
 #[derive(Clone, Debug)]
-pub struct UsbWebUsbPassthroughDevice(Rc<RefCell<UsbPassthroughDevice>>);
+pub struct UsbWebUsbPassthroughDevice(Rc<RefCell<WebUsbPassthroughState>>);
 
 impl UsbWebUsbPassthroughDevice {
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(UsbPassthroughDevice::new())))
+        Self::new_with_speed(UsbSpeed::Full)
+    }
+
+    pub fn new_with_speed(speed: UsbSpeed) -> Self {
+        Self(Rc::new(RefCell::new(WebUsbPassthroughState {
+            passthrough: UsbPassthroughDevice::new(),
+            speed,
+        })))
+    }
+
+    pub fn set_speed(&self, speed: UsbSpeed) {
+        self.0.borrow_mut().speed = speed;
     }
 
     pub fn pop_action(&self) -> Option<UsbHostAction> {
-        self.0.borrow_mut().pop_action()
+        self.0.borrow_mut().passthrough.pop_action()
     }
 
     pub fn drain_actions(&self) -> Vec<UsbHostAction> {
-        self.0.borrow_mut().drain_actions()
+        self.0.borrow_mut().passthrough.drain_actions()
     }
 
     pub fn push_completion(&self, completion: UsbHostCompletion) {
-        self.0.borrow_mut().push_completion(completion);
+        self.0.borrow_mut().passthrough.push_completion(completion);
     }
 
     pub fn pending_summary(&self) -> PendingSummary {
-        self.0.borrow().pending_summary()
+        self.0.borrow().passthrough.pending_summary()
     }
 
     pub fn reset(&self) {
-        self.0.borrow_mut().reset();
+        self.0.borrow_mut().passthrough.reset();
     }
 
     /// Clears host-side WebUSB bookkeeping without changing guest-visible USB state.
@@ -63,7 +80,7 @@ impl UsbWebUsbPassthroughDevice {
     /// TD retries will re-emit host actions instead of deadlocking on a completion that will never
     /// arrive.
     pub fn reset_host_state_for_restore(&self) {
-        self.0.borrow_mut().reset();
+        self.0.borrow_mut().passthrough.reset();
     }
 
     fn to_host_setup(setup: SetupPacket) -> HostSetupPacket {
@@ -117,12 +134,16 @@ impl Default for UsbWebUsbPassthroughDevice {
 }
 
 impl UsbDeviceModel for UsbWebUsbPassthroughDevice {
+    fn speed(&self) -> UsbSpeed {
+        self.0.borrow().speed
+    }
+
     fn reset(&mut self) {
-        self.0.borrow_mut().reset();
+        self.0.borrow_mut().passthrough.reset();
     }
 
     fn cancel_control_transfer(&mut self) {
-        self.0.borrow_mut().cancel_control_transfer();
+        self.0.borrow_mut().passthrough.cancel_control_transfer();
     }
 
     fn handle_control_request(
@@ -133,24 +154,29 @@ impl UsbDeviceModel for UsbWebUsbPassthroughDevice {
         let resp = self
             .0
             .borrow_mut()
+            .passthrough
             .handle_control_request(Self::to_host_setup(setup), data_stage);
         Self::map_control_response(resp)
     }
 
     fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
-        let resp = self.0.borrow_mut().handle_in_transfer(ep, max_len);
+        let resp = self
+            .0
+            .borrow_mut()
+            .passthrough
+            .handle_in_transfer(ep, max_len);
         Self::map_in_result(resp, max_len)
     }
 
     fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
-        let resp = self.0.borrow_mut().handle_out_transfer(ep, data);
+        let resp = self.0.borrow_mut().passthrough.handle_out_transfer(ep, data);
         Self::map_out_result(resp)
     }
 }
 
 impl IoSnapshot for UsbWebUsbPassthroughDevice {
     const DEVICE_ID: [u8; 4] = *b"WUSB";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         // Backwards compatibility:
@@ -158,20 +184,24 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
         // - v1.1 stores both the minimal guest-visible state and a deterministic snapshot of the
         //   full host-action queues so WASM bridges can roundtrip snapshots without losing queued
         //   actions (host integrations may still want to clear host state after restore).
+        // - v1.2 stores the guest-visible bus speed.
         const TAG_PASSTHROUGH_V1_0: u16 = 1;
+        const TAG_SPEED: u16 = 2;
         const TAG_PASSTHROUGH: u16 = 4;
         const TAG_PASSTHROUGH_FULL: u16 = 5;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         let inner = self.0.borrow();
-        w.field_bytes(TAG_PASSTHROUGH_V1_0, inner.save_state());
-        w.field_bytes(TAG_PASSTHROUGH, inner.save_state());
-        w.field_bytes(TAG_PASSTHROUGH_FULL, inner.snapshot_save());
+        w.field_u8(TAG_SPEED, encode_speed(inner.speed));
+        w.field_bytes(TAG_PASSTHROUGH_V1_0, inner.passthrough.save_state());
+        w.field_bytes(TAG_PASSTHROUGH, inner.passthrough.save_state());
+        w.field_bytes(TAG_PASSTHROUGH_FULL, inner.passthrough.snapshot_save());
         w.finish()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_PASSTHROUGH_V1_0: u16 = 1;
+        const TAG_SPEED: u16 = 2;
         const TAG_PASSTHROUGH: u16 = 4;
         const TAG_PASSTHROUGH_FULL: u16 = 5;
 
@@ -179,18 +209,42 @@ impl IoSnapshot for UsbWebUsbPassthroughDevice {
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
 
         let mut inner = self.0.borrow_mut();
-        inner.reset();
+        inner.passthrough.reset();
+        inner.speed = UsbSpeed::Full;
+
+        if let Some(raw) = r.u8(TAG_SPEED)? {
+            inner.speed = decode_speed(raw)?;
+        }
 
         if let Some(buf) = r.bytes(TAG_PASSTHROUGH_FULL) {
-            inner.snapshot_load(buf)?;
+            inner.passthrough.snapshot_load(buf)?;
         } else if let Some(buf) = r
             .bytes(TAG_PASSTHROUGH)
             .or_else(|| r.bytes(TAG_PASSTHROUGH_V1_0))
         {
             // Minimal snapshot (next_id only).
-            inner.load_state(buf)?;
+            inner.passthrough.load_state(buf)?;
         }
 
         Ok(())
+    }
+}
+
+fn encode_speed(speed: UsbSpeed) -> u8 {
+    match speed {
+        UsbSpeed::Full => 0,
+        UsbSpeed::Low => 1,
+        UsbSpeed::High => 2,
+    }
+}
+
+fn decode_speed(val: u8) -> SnapshotResult<UsbSpeed> {
+    match val {
+        0 => Ok(UsbSpeed::Full),
+        1 => Ok(UsbSpeed::Low),
+        2 => Ok(UsbSpeed::High),
+        _ => Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+            "usb speed",
+        )),
     }
 }

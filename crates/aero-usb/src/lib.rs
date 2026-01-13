@@ -61,6 +61,8 @@ use core::fmt;
 /// USB bus speed (as seen by the root hub).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsbSpeed {
+    /// USB 2.0 high-speed (480Mbps).
+    High,
     Full,
     Low,
     /// USB 2.0 high-speed (480Mbps).
