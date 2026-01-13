@@ -723,6 +723,42 @@ pub fn decode_instruction(
                 src,
             })
         }
+        OPCODE_SWITCH => {
+            let selector = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::Switch { selector })
+        }
+        OPCODE_CASE => {
+            let op = decode_raw_operand(&mut r)?;
+            if op.ty != OPERAND_TYPE_IMMEDIATE32 || op.imm32.is_none() {
+                return Err(Sm4DecodeError {
+                    at_dword: r.base_at + r.pos.saturating_sub(1),
+                    kind: Sm4DecodeErrorKind::UnsupportedOperand(
+                        "case label must be an immediate32 operand",
+                    ),
+                });
+            }
+            let value = op
+                .imm32
+                .expect("checked imm32 is present for immediate32")
+                .get(0)
+                .copied()
+                .unwrap_or(0);
+            r.expect_eof()?;
+            Ok(Sm4Inst::Case { value })
+        }
+        OPCODE_DEFAULT => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Default)
+        }
+        OPCODE_ENDSWITCH => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::EndSwitch)
+        }
+        OPCODE_BREAK => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Break)
+        }
         OPCODE_RET => {
             r.expect_eof()?;
             Ok(Sm4Inst::Ret)
@@ -857,7 +893,10 @@ fn decode_store_raw(r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> 
     })
 }
 
-fn decode_ld_structured(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+fn decode_ld_structured(
+    saturate: bool,
+    r: &mut InstrReader<'_>,
+) -> Result<Sm4Inst, Sm4DecodeError> {
     let mut dst = decode_dst(r)?;
     dst.saturate = saturate;
     let index = decode_src(r)?;
@@ -1024,7 +1063,11 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
                     // Typed resources encode their dimensionality in an extra token. We only model
                     // `Texture2D` today; other dimensions are preserved as `Unknown` so later stages
                     // can decide whether they matter.
-                    let dim = if r.is_eof() { None } else { Some(r.read_u32()?) };
+                    let dim = if r.is_eof() {
+                        None
+                    } else {
+                        Some(r.read_u32()?)
+                    };
                     if dim == Some(2) {
                         return Ok(Sm4Decl::ResourceTexture2D { slot });
                     }

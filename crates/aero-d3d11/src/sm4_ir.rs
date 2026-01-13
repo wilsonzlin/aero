@@ -373,6 +373,28 @@ pub enum Sm4Inst {
     Cut {
         stream: u32,
     },
+    /// Structured `switch` statement.
+    ///
+    /// The SM4/SM5 token stream encodes structured control flow as a linear stream of opcodes
+    /// (`switch`, `case`, `default`, `endswitch`) that is later reconstructed into nested blocks by
+    /// the backend.
+    Switch {
+        /// Switch selector value (expected to be scalar).
+        selector: SrcOperand,
+    },
+    /// Case label inside a `switch`.
+    ///
+    /// The operand is encoded as an immediate 32-bit integer value.
+    Case {
+        /// Raw 32-bit case value.
+        value: u32,
+    },
+    /// Default label inside a `switch`.
+    Default,
+    /// End of structured `switch`.
+    EndSwitch,
+    /// Structured `break` instruction (break out of `loop`/`switch`).
+    Break,
     Ret,
 }
 

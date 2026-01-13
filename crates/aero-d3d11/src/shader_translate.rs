@@ -943,6 +943,8 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
+            Sm4Inst::Switch { selector } => scan_src_regs(selector, &mut scan_reg),
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Unknown { .. } | Sm4Inst::Ret => {}
         }
@@ -2014,6 +2016,10 @@ fn scan_resources(
                 validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(uav.slot);
             }
+            Sm4Inst::Switch { selector } => {
+                scan_src(selector)?;
+            }
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Ret => {}
@@ -2211,6 +2217,10 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
             }
+            Sm4Inst::Switch { selector } => {
+                scan_src_regs(selector, &mut scan_reg);
+            }
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Ret => {}
@@ -2269,7 +2279,140 @@ fn emit_instructions(
         If { has_else: bool },
     }
 
+    #[derive(Debug, Clone, Copy)]
+    enum SwitchLabel {
+        Case(i32),
+        Default,
+    }
+
+    #[derive(Debug, Default)]
+    struct SwitchFrame {
+        pending_labels: Vec<SwitchLabel>,
+        saw_default: bool,
+    }
+
+    #[derive(Debug, Default)]
+    struct CaseFrame {
+        last_was_break: bool,
+    }
+
+    #[derive(Debug)]
+    enum CfFrame {
+        Switch(SwitchFrame),
+        Case(CaseFrame),
+    }
+
     let mut blocks: Vec<BlockKind> = Vec::new();
+    let mut cf_stack: Vec<CfFrame> = Vec::new();
+
+    let emit_src_scalar_i32 = |src: &crate::sm4_ir::SrcOperand,
+                               inst_index: usize,
+                               opcode: &'static str|
+     -> Result<String, ShaderTranslateError> {
+        // Register values are modeled as `vec4<f32>`. Reconstruct an `i32` selector by choosing
+        // between numeric conversion and raw bitcast depending on whether the lane looks like an
+        // exact integer.
+        let vec_f = emit_src_vec4(src, inst_index, opcode, ctx)?;
+        let vec_i = emit_src_vec4_i32(src, inst_index, opcode, ctx)?;
+        let f = format!("({vec_f}).x");
+        let i = format!("({vec_i}).x");
+        Ok(format!("select({i}, i32({f}), ({f}) == floor({f}))"))
+    };
+
+    let fmt_case_values = |values: &[i32]| -> String {
+        values
+            .iter()
+            .map(|v| format!("{v}i"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let close_case_body = |w: &mut WgslWriter,
+                           cf_stack: &mut Vec<CfFrame>,
+                           fallthrough_to_next: bool|
+     -> Result<(), ShaderTranslateError> {
+        let Some(CfFrame::Case(case_frame)) = cf_stack.last() else {
+            return Ok(());
+        };
+        let last_was_break = case_frame.last_was_break;
+
+        if fallthrough_to_next && !last_was_break {
+            w.line("fallthrough;");
+        }
+
+        // Close the WGSL case block.
+        w.dedent();
+        w.line("}");
+        cf_stack.pop();
+        Ok(())
+    };
+
+    let flush_pending_labels =
+        |w: &mut WgslWriter, cf_stack: &mut Vec<CfFrame>, inst_index: usize| -> Result<(), ShaderTranslateError> {
+            let pending_labels = match cf_stack.last_mut() {
+                Some(CfFrame::Switch(sw)) => {
+                    if sw.pending_labels.is_empty() {
+                        // Inside a switch but not in a case block. Non-label instructions here are
+                        // invalid.
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "switch_body_without_case".to_owned(),
+                        });
+                    }
+                    std::mem::take(&mut sw.pending_labels)
+                }
+                _ => return Ok(()),
+            };
+
+            let mut case_values = Vec::<i32>::new();
+            let mut has_default = false;
+            for lbl in &pending_labels {
+                match *lbl {
+                    SwitchLabel::Case(v) => case_values.push(v),
+                    SwitchLabel::Default => has_default = true,
+                }
+            }
+
+            let last_label = *pending_labels.last().expect("pending_labels non-empty");
+
+            // If the label set contains a default label, we may need an extra fallthrough stub, since
+            // WGSL can't combine `default` with `case` selectors in a single clause.
+            match (has_default, last_label) {
+                (false, _) => {
+                    let selectors = fmt_case_values(&case_values);
+                    w.line(&format!("case {selectors}: {{"));
+                    w.indent();
+                    cf_stack.push(CfFrame::Case(CaseFrame::default()));
+                }
+                (true, SwitchLabel::Default) => {
+                    if !case_values.is_empty() {
+                        let selectors = fmt_case_values(&case_values);
+                        w.line(&format!("case {selectors}: {{"));
+                        w.indent();
+                        w.line("fallthrough;");
+                        w.dedent();
+                        w.line("}");
+                    }
+                    w.line("default: {");
+                    w.indent();
+                    cf_stack.push(CfFrame::Case(CaseFrame::default()));
+                }
+                (true, SwitchLabel::Case(_)) => {
+                    // Emit the default fallthrough stub first so it can reach the case body.
+                    w.line("default: {");
+                    w.indent();
+                    w.line("fallthrough;");
+                    w.dedent();
+                    w.line("}");
+                    let selectors = fmt_case_values(&case_values);
+                    w.line(&format!("case {selectors}: {{"));
+                    w.indent();
+                    cf_stack.push(CfFrame::Case(CaseFrame::default()));
+                }
+            }
+
+            Ok(())
+        };
 
     // Structured buffer access (`*_structured`) requires the element stride in bytes, which is
     // provided via `dcl_resource_structured` / `dcl_uav_structured`. Collect those declarations so
@@ -2289,6 +2432,85 @@ fn emit_instructions(
     }
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
+        match inst {
+            Sm4Inst::Case { value } => {
+                close_case_body(w, &mut cf_stack, true)?;
+
+                let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "case".to_owned(),
+                    });
+                };
+                sw.pending_labels.push(SwitchLabel::Case(*value as i32));
+                continue;
+            }
+            Sm4Inst::Default => {
+                close_case_body(w, &mut cf_stack, true)?;
+
+                let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "default".to_owned(),
+                    });
+                };
+                sw.saw_default = true;
+                sw.pending_labels.push(SwitchLabel::Default);
+                continue;
+            }
+            Sm4Inst::EndSwitch => {
+                // Close any open case body without an implicit fallthrough: reaching the end of a
+                // switch clause breaks out of the switch.
+                close_case_body(w, &mut cf_stack, false)?;
+
+                let Some(CfFrame::Switch(_)) = cf_stack.last() else {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "endswitch".to_owned(),
+                    });
+                };
+
+                let (pending_labels_nonempty, saw_default) = match cf_stack.last() {
+                    Some(CfFrame::Switch(sw)) => (!sw.pending_labels.is_empty(), sw.saw_default),
+                    _ => unreachable!("checked switch exists above"),
+                };
+
+                // If there are pending labels but no body, emit an empty clause.
+                if pending_labels_nonempty {
+                    flush_pending_labels(w, &mut cf_stack, inst_index)?;
+                    close_case_body(w, &mut cf_stack, false)?;
+                }
+
+                // WGSL `switch` allows omitting `default`, but we always emit one so that
+                // switch-without-default shaders stay structurally valid and match the HLSL
+                // semantics where a missing default is equivalent to an empty one.
+                if !saw_default {
+                    w.line("default: {");
+                    w.indent();
+                    w.dedent();
+                    w.line("}");
+                }
+
+                // Close the switch.
+                w.dedent();
+                w.line("}");
+                cf_stack.pop();
+                continue;
+            }
+            _ => {}
+        }
+
+        // Ensure any pending case labels are emitted before the first instruction of the clause
+        // body.
+        if matches!(cf_stack.last(), Some(CfFrame::Switch(_))) {
+            flush_pending_labels(w, &mut cf_stack, inst_index)?;
+        }
+
+        // Any regular statement resets the fallthrough detector.
+        if let Some(CfFrame::Case(case_frame)) = cf_stack.last_mut() {
+            case_frame.last_was_break = false;
+        }
+
         let maybe_saturate = |dst: &crate::sm4_ir::DstOperand, expr: String| {
             if dst.saturate {
                 format!("clamp(({expr}), vec4<f32>(0.0), vec4<f32>(1.0))")
@@ -2298,6 +2520,22 @@ fn emit_instructions(
         };
 
         match inst {
+            Sm4Inst::Switch { selector } => {
+                let selector = emit_src_scalar_i32(selector, inst_index, "switch")?;
+                w.line(&format!("switch({selector}) {{"));
+                w.indent();
+                cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
+            }
+            Sm4Inst::Break => {
+                let Some(CfFrame::Case(case_frame)) = cf_stack.last_mut() else {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "break".to_owned(),
+                    });
+                };
+                w.line("break;");
+                case_frame.last_was_break = true;
+            }
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
                 let cond_scalar = format!("({cond_vec}).x");
@@ -2849,8 +3087,12 @@ fn emit_instructions(
                 // DXBC `ret` returns from the current shader invocation. We only need to emit an
                 // explicit WGSL `return` when it appears inside a structured control-flow block;
                 // at top-level the translation already emits a stage-appropriate return sequence.
-                if blocks.is_empty() {
+                if blocks.is_empty() && cf_stack.is_empty() {
                     break;
+                }
+
+                if let Some(CfFrame::Case(case_frame)) = cf_stack.last_mut() {
+                    case_frame.last_was_break = true;
                 }
 
                 match ctx.stage {
@@ -2915,6 +3157,9 @@ fn emit_instructions(
                     }
                 }
             }
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => unreachable!(
+                "switch label instructions handled at top of loop"
+            ),
         }
     }
 
@@ -2922,6 +3167,12 @@ fn emit_instructions(
         return Err(ShaderTranslateError::UnsupportedInstruction {
             inst_index: module.instructions.len(),
             opcode: "unbalanced_if".to_owned(),
+        });
+    }
+    if !cf_stack.is_empty() {
+        return Err(ShaderTranslateError::UnsupportedInstruction {
+            inst_index: module.instructions.len(),
+            opcode: "unbalanced_switch".to_owned(),
         });
     }
     Ok(())

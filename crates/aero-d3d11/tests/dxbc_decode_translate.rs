@@ -573,6 +573,107 @@ fn decodes_and_translates_minimal_compute_shader_without_signatures() {
 }
 
 #[test]
+fn decodes_and_translates_switch_shader_from_dxbc() {
+    const DCL_INPUT: u32 = 0x100;
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_input v0.x
+    body.push(opcode_token(DCL_INPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // switch v0.x
+    let selector = reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XXXX);
+    body.push(opcode_token(OPCODE_SWITCH, 1 + selector.len() as u32));
+    body.extend_from_slice(&selector);
+
+    // case 0:
+    let case0 = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_CASE, 1 + case0.len() as u32));
+    body.extend_from_slice(&case0);
+    // mov o0, vec4(1,0,0,1)
+    let mov0_imm = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + mov0_imm.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&mov0_imm);
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    // case 1:
+    let case1 = imm32_scalar(1);
+    body.push(opcode_token(OPCODE_CASE, 1 + case1.len() as u32));
+    body.extend_from_slice(&case1);
+    // mov o0, vec4(0,1,0,1)
+    let mov1_imm = imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + mov1_imm.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&mov1_imm);
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    // default:
+    body.push(opcode_token(OPCODE_DEFAULT, 1));
+    // mov o0, vec4(0,0,1,1)
+    let movd_imm = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + movd_imm.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&movd_imm);
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    body.push(opcode_token(OPCODE_ENDSWITCH, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b0001)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(matches!(
+        module.instructions.first(),
+        Some(Sm4Inst::Switch { .. })
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(translated.wgsl.contains("switch("));
+    assert!(translated.wgsl.contains("case 0i"));
+    assert!(translated.wgsl.contains("default:"));
+}
+
+#[test]
 fn decodes_and_translates_if_else_endif() {
     let mut body = Vec::<u32>::new();
 

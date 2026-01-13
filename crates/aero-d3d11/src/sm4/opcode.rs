@@ -54,6 +54,19 @@ pub const OPCODE_IBFE: u32 = 0x69;
 /// Used for embedded comments, debug data, and immediate constant buffers.
 pub const OPCODE_CUSTOMDATA: u32 = 0x1f;
 
+// ---- Structured control flow ----
+
+/// `break` (structured break out of `loop`/`switch`).
+pub const OPCODE_BREAK: u32 = 0x2d;
+/// `switch` (structured switch statement).
+pub const OPCODE_SWITCH: u32 = 0x35;
+/// `case` (case label within a `switch`).
+pub const OPCODE_CASE: u32 = 0x36;
+/// `default` (default label within a `switch`).
+pub const OPCODE_DEFAULT: u32 = 0x37;
+/// `endswitch` (end of structured `switch` body).
+pub const OPCODE_ENDSWITCH: u32 = 0x38;
+
 pub const OPCODE_RET: u32 = 0x3e;
 
 // Geometry shader stream emission / cutting.
