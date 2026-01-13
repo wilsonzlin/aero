@@ -90,6 +90,9 @@ Most browsers require a **user gesture** to start audio output. Before expecting
 - In the UI, perform the user-gesture action that initializes **audio output** (AudioContext + AudioWorklet ring).
   - Some builds expose host-only demo buttons like **“Init audio output (test tone)”**. These are fine to satisfy autoplay policy,
     but they are **not** the guest Windows 7 audio path.
+  - If the UI exposes **“Init audio output (worker tone)”**, that button is typically the *right* one for VM runs: it creates the
+    AudioWorklet ring and attaches it to the worker audio device (HDA/virtio-snd). In **VM mode** the I/O worker becomes the producer,
+    so the ring carries **guest audio** (despite the “tone” label).
   - If you accidentally start a demo tone, stop it before proceeding (DevTools Console):
     ```js
     await globalThis.__aeroAudioOutput?.close?.();
