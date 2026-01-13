@@ -24,10 +24,6 @@ type DestinationPolicy interface {
 	AllowUDP(remoteIP net.IP, remotePort uint16) error
 }
 
-type SessionRelayStats struct {
-	OutboundSendQueueDrops uint64
-}
-
 // SessionRelay relays UDP datagrams between a WebRTC DataChannel and the public
 // network.
 //
@@ -95,12 +91,6 @@ func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy,
 	}()
 
 	return s
-}
-
-func (s *SessionRelay) Stats() SessionRelayStats {
-	return SessionRelayStats{
-		OutboundSendQueueDrops: s.queue.DropCount(),
-	}
 }
 
 // EnableWebRTCUDPMetrics configures the send queue drop hook used to track

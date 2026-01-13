@@ -2,7 +2,6 @@ package relay
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 // sendQueue is a byte-bounded FIFO queue.
@@ -19,8 +18,6 @@ type sendQueue struct {
 	frames   [][]byte
 	head     int
 
-	drops atomic.Uint64
-
 	onDrop func()
 }
 
@@ -36,16 +33,11 @@ func (q *sendQueue) SetOnDrop(fn func()) {
 	q.mu.Unlock()
 }
 
-func (q *sendQueue) DropCount() uint64 {
-	return q.drops.Load()
-}
-
 // Enqueue appends frame to the queue if it fits within the byte budget.
 // It never blocks.
 func (q *sendQueue) Enqueue(frame []byte) bool {
 	q.mu.Lock()
 	if q.closed || len(frame) > q.maxBytes || q.curBytes+len(frame) > q.maxBytes {
-		q.drops.Add(1)
 		onDrop := q.onDrop
 		q.mu.Unlock()
 		if onDrop != nil {
