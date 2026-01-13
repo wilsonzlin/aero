@@ -1,3 +1,5 @@
+#![cfg(feature = "dxbc-robust")]
+
 use std::fs;
 
 use aero_d3d9::dxbc::robust::{DxbcError, DxbcShader, FourCc, ShaderModel, ShaderType};

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
+#[cfg(feature = "dxbc-robust")]
 pub mod robust;
 
 #[derive(Debug, Error)]
