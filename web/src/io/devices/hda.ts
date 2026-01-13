@@ -93,6 +93,8 @@ const HDA_DEFAULT_OUTPUT_RATE_HZ = 48_000;
 // If the delta exceeds this, we advance by this amount and drop the remainder.
 const HDA_MAX_DELTA_MS = 100;
 
+const NS_PER_SEC = 1_000_000_000n;
+
 function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
   if (size === 2) return value & 0xffff;
@@ -135,9 +137,30 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
   #micRingBuffer: SharedArrayBuffer | null = null;
   #micSampleRateHz = 0;
 
+  // Observability for host/worker stalls: when `tick()` clamps large host deltas to
+  // `HDA_MAX_DELTA_MS`, we count how often that happens and how much audio time is
+  // dropped. These are u32 counters (wrapping) to match other perf/telemetry counters.
+  #tickClampEvents = 0;
+  #tickClampedFramesTotal = 0;
+  #tickDroppedFramesTotal = 0;
+
   constructor(opts: { bridge: HdaControllerBridgeLike; irqSink: IrqSink }) {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
+  }
+
+  getTickStats(): {
+    tickClampEvents: number;
+    tickClampedFramesTotal: number;
+    tickDroppedFramesTotal: number;
+  } {
+    // Avoid hot-path allocations: this object is only created when the caller
+    // explicitly requests stats (e.g. low-rate perf sampling).
+    return {
+      tickClampEvents: this.#tickClampEvents,
+      tickClampedFramesTotal: this.#tickClampedFramesTotal,
+      tickDroppedFramesTotal: this.#tickDroppedFramesTotal,
+    };
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
@@ -229,7 +252,21 @@ export class HdaPciDevice implements PciDevice, TickableDevice {
 
     let frames = 0;
     if (deltaNs > maxDeltaNs) {
+      // Record clamp stats before mutating the clock. The dropped frame estimate uses the same
+      // fixed-point math as `AudioFrameClock.advanceTo()`, but without advancing the clock.
+      const fracBefore = clock.fracNsTimesRate;
+      const srBig = BigInt(clock.sampleRateHz);
+      const framesWouldHaveElapsed = (fracBefore + deltaNs * srBig) / NS_PER_SEC;
+
       frames = clock.advanceTo(lastNs + maxDeltaNs);
+
+      this.#tickClampEvents = (this.#tickClampEvents + 1) >>> 0;
+      this.#tickClampedFramesTotal = (this.#tickClampedFramesTotal + (frames >>> 0)) >>> 0;
+
+      const dropped = framesWouldHaveElapsed - BigInt(frames);
+      const droppedU32 = Number((dropped > 0n ? dropped : 0n) & 0xffff_ffffn);
+      this.#tickDroppedFramesTotal = (this.#tickDroppedFramesTotal + droppedU32) >>> 0;
+
       // Drop the remaining time (do not "catch up" on the next tick).
       clock.lastTimeNs = nowNs;
       clock.fracNsTimesRate = 0n;

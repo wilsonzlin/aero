@@ -2700,6 +2700,10 @@ let audioOutTelemetryTimer: number | undefined = undefined;
 
 const AUDIO_OUT_TELEMETRY_INTERVAL_MS = 50;
 
+// Low-rate tick-clamp telemetry for HDA (worker stall observability).
+const HDA_TICK_TELEMETRY_INTERVAL_MS = 250;
+let hdaTickTelemetryNextMs = 0;
+
 function startAudioOutTelemetryTimer(): void {
   if (audioOutTelemetryTimer !== undefined) return;
   const timer = setInterval(() => {
@@ -2716,6 +2720,23 @@ function startAudioOutTelemetryTimer(): void {
   // server has started don't need to wait for the first interval tick.
   const now = typeof performance?.now === "function" ? performance.now() : Date.now();
   maybePublishAudioOutTelemetry(now);
+}
+
+function maybePublishHdaTickTelemetry(nowMs: number): void {
+  // `perf.counter()` is a no-op when tracing is disabled, but avoid the
+  // `HdaPciDevice.getTickStats()` allocation unless it's actually needed.
+  if (!perf.traceEnabled) return;
+  if (!Number.isFinite(nowMs)) return;
+
+  const hda = hdaDevice;
+  if (!hda) return;
+  if (hdaTickTelemetryNextMs !== 0 && nowMs < hdaTickTelemetryNextMs) return;
+  hdaTickTelemetryNextMs = nowMs + HDA_TICK_TELEMETRY_INTERVAL_MS;
+
+  const { tickClampEvents, tickClampedFramesTotal, tickDroppedFramesTotal } = hda.getTickStats();
+  perf.counter("audio.hda.tickClampEvents", tickClampEvents);
+  perf.counter("audio.hda.tickClampedFrames", tickClampedFramesTotal);
+  perf.counter("audio.hda.tickDroppedFrames", tickDroppedFramesTotal);
 }
 
 let perfWriter: PerfWriter | null = null;
@@ -4576,6 +4597,9 @@ function startIoIpcServer(): void {
           handleUsbDemoFailure("tick", err);
         }
       }
+
+      // Publish HDA tick clamp stats (worker stall observability).
+      maybePublishHdaTickTelemetry(nowMs);
 
       // Publish AudioWorklet-ring producer telemetry when the IO worker is acting
       // as the audio producer (guest HDA device in VM mode).

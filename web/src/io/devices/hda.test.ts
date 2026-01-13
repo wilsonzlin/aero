@@ -76,6 +76,12 @@ describe("io/devices/hda tick scheduling", () => {
     expect(bridge.step_frames).toHaveBeenCalledTimes(2);
     expect(bridge.step_frames).toHaveBeenNthCalledWith(1, 4_800);
     expect(bridge.step_frames).toHaveBeenNthCalledWith(2, 4_800);
+
+    const stats = dev.getTickStats();
+    expect(stats.tickClampEvents).toBe(1);
+    expect(stats.tickClampedFramesTotal).toBe(4_800);
+    // Dropped 400ms at 48kHz => 19,200 frames dropped.
+    expect(stats.tickDroppedFramesTotal).toBe(19_200);
   });
 });
 
