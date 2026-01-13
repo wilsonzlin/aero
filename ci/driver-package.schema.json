@@ -9,13 +9,13 @@
       "allOf": [
         {
           "not": {
-            "description": "Disallow absolute paths, drive-letter rooted paths, and UNC roots (paths must be relative to the driver directory).",
+            "description": "Disallow absolute paths, drive-letter rooted paths, and UNC roots (paths must be relative to the expected root directory).",
             "pattern": "^(?:[A-Za-z]:|[\\\\/])"
           }
         },
         {
           "not": {
-            "description": "Best-effort: disallow '..' segments (even if they would normalize back under the driver directory).",
+            "description": "Best-effort: disallow '..' segments (even if they would normalize back under the expected root directory).",
             "pattern": "(^|[\\\\/])\\.\\.([\\\\/]|$)"
           }
         }
@@ -53,16 +53,15 @@
     },
     "requiredBuildOutputFiles": {
       "type": "array",
-      "description": "Optional list of additional files (paths relative to the per-arch build output directory under out/drivers/<driver>/<arch>/) that must exist after building. CI will fail packaging if any listed path is missing. Intended for auxiliary build products that should ship alongside the driver (for example, in-guest debug utilities such as aerogpu_dbgctl.exe). Paths must be relative (no absolute paths; cannot escape the build output directory).",
+      "description": "Optional list of additional files (paths relative to the per-arch build output directory under out/drivers/<driver>/<arch>/) that must exist after building. CI will fail packaging if any listed path is missing. Intended for auxiliary build products that should ship alongside the driver (for example, in-guest debug utilities such as aerogpu_dbgctl.exe). Paths must be relative (no absolute paths / drive letters / UNC roots) and must not contain '..' segments.",
       "items": {
-        "type": "string",
-        "minLength": 1
+        "$ref": "#/$defs/driverRelativePath"
       },
       "uniqueItems": true
     },
     "additionalFiles": {
       "type": "array",
-      "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory. CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab). CI additionally validates that each path exists.",
+      "description": "Additional files (paths relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. Paths must be relative to the driver directory (no absolute paths / drive letters / UNC roots), must not contain '..' segments, and must resolve under the driver directory. CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab) and refuses likely secret/private key material (for example: .pfx, .pvk, .snk, .pem, .key). CI additionally validates that each path exists.",
       "items": {
         "allOf": [
           { "$ref": "#/$defs/driverRelativePath" },
@@ -70,6 +69,12 @@
             "not": {
               "description": "Disallow common binary extensions in additionalFiles (CI refuses these at packaging time).",
               "pattern": "\\.([sS][yY][sS]|[dD][lL][lL]|[eE][xX][eE]|[cC][aA][tT]|[mM][sS][iI]|[cC][aA][bB])$"
+            }
+          },
+          {
+            "not": {
+              "description": "Disallow likely secret/private key material in additionalFiles (CI refuses these at packaging time).",
+              "pattern": "\\.([pP][fF][xX]|[pP]12|[pP][vV][kK]|[sS][nN][kK]|[kK][eE][yY]|[pP][eE][mM]|[pP]8|[pP][pP][kK]|[jJ][kK][sS]|[kK][eE][yY][sS][tT][oO][rR][eE]|[kK][dD][bB][xX]|[gG][pP][gG]|[pP][gG][pP])$"
             }
           }
         ]
@@ -80,9 +85,10 @@
       "type": "array",
       "description": "Optional list of user-mode helper tool binaries (paths relative to the driver directory) to include in the staged driver package. This is the explicit opt-in mechanism for shipping .exe tools alongside the driver package without relaxing the additionalFiles non-binary policy. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).",
       "items": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^.+\\.[eE][xX][eE]$"
+        "allOf": [
+          { "$ref": "#/$defs/driverRelativePath" },
+          { "pattern": "^.+\\.[eE][xX][eE]$" }
+        ]
       },
       "uniqueItems": true
     },
