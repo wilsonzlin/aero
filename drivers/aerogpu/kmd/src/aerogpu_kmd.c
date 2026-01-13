@@ -7358,7 +7358,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
          * rows per plane.
          */
         if (heightIn != height * 2u) {
-            AeroGpuCursorDisable(adapter);
+            if (poweredOn) {
+                AeroGpuCursorDisable(adapter);
+            }
             {
                 KIRQL cursorIrql;
                 KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
