@@ -2,11 +2,14 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
+pub use super::trb::{Trb, TrbType};
+use super::trb::TRB_LEN;
+
 use crate::device::{UsbInResult, UsbOutResult};
 use crate::memory::MemoryBus;
 use crate::UsbDeviceModel;
 
-const TRB_SIZE: u64 = 16;
+const TRB_SIZE: u64 = TRB_LEN as u64;
 
 /// Maximum number of TRBs we'll inspect while skipping link TRBs at the start of a tick.
 ///
@@ -15,15 +18,6 @@ const MAX_LINK_SKIP: usize = 32;
 
 /// Maximum number of TRBs we'll consider part of a single TD (chain).
 const MAX_TD_TRBS: usize = 64;
-
-/// xHCI TRB type (TRBType field).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum TrbType {
-    Normal = 1,
-    Link = 6,
-    TransferEvent = 32,
-}
 
 /// xHCI transfer completion codes (Completion Code field).
 ///
@@ -39,73 +33,12 @@ pub enum CompletionCode {
     ShortPacket = 13,
 }
 
-/// Raw 16-byte TRB.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Trb {
-    pub dword0: u32,
-    pub dword1: u32,
-    pub dword2: u32,
-    pub dword3: u32,
-}
-
-impl Trb {
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        Self {
-            dword0: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-            dword1: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
-            dword2: u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
-            dword3: u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
-        }
-    }
-
-    pub fn to_bytes(self) -> [u8; 16] {
-        let mut out = [0u8; 16];
-        out[0..4].copy_from_slice(&self.dword0.to_le_bytes());
-        out[4..8].copy_from_slice(&self.dword1.to_le_bytes());
-        out[8..12].copy_from_slice(&self.dword2.to_le_bytes());
-        out[12..16].copy_from_slice(&self.dword3.to_le_bytes());
-        out
-    }
-
-    pub fn parameter(self) -> u64 {
-        (self.dword0 as u64) | ((self.dword1 as u64) << 32)
-    }
-
-    pub fn trb_type(self) -> u8 {
-        ((self.dword3 >> 10) & 0x3f) as u8
-    }
-
-    pub fn cycle(self) -> bool {
-        (self.dword3 & 0x1) != 0
-    }
-
-    pub fn chain(self) -> bool {
-        (self.dword3 & (1 << 4)) != 0
-    }
-
-    pub fn ioc(self) -> bool {
-        (self.dword3 & (1 << 5)) != 0
-    }
-
-    pub fn toggle_cycle(self) -> bool {
-        // Link TRB Toggle Cycle (TC) bit.
-        (self.dword3 & (1 << 1)) != 0
-    }
-
-    pub fn transfer_len(self) -> u32 {
-        // TRB Transfer Length field (17 bits).
-        self.dword2 & 0x1ffff
-    }
-}
-
 pub fn read_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64) -> Trb {
-    let mut bytes = [0u8; 16];
-    mem.read_bytes(paddr, &mut bytes);
-    Trb::from_bytes(bytes)
+    Trb::read_from(mem, paddr)
 }
 
 pub fn write_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64, trb: Trb) {
-    mem.write_bytes(paddr, &trb.to_bytes());
+    trb.write_to(mem, paddr);
 }
 
 /// A completion notification emitted by the transfer executor.
@@ -249,7 +182,7 @@ impl XhciTransferExecutor {
         }
 
         match trb.trb_type() {
-            t if t == TrbType::Normal as u8 => {
+            TrbType::Normal => {
                 let mut td = TdDescriptor {
                     buffers: Vec::new(),
                     total_len: 0,
@@ -273,7 +206,7 @@ impl XhciTransferExecutor {
                     }
                 }
             }
-            t if t == TrbType::Link as u8 => {
+            TrbType::Link => {
                 // If we land on a link TRB after a TD commit, skip it now.
                 let _ = self.skip_link_trbs(mem, ep);
             }
@@ -300,11 +233,11 @@ impl XhciTransferExecutor {
             if trb.cycle() != ep.ring.cycle {
                 return true;
             }
-            if trb.trb_type() != TrbType::Link as u8 {
+            if !matches!(trb.trb_type(), TrbType::Link) {
                 return true;
             }
 
-            let target = trb.parameter() & !0xF;
+            let target = trb.link_segment_ptr();
             if target == 0 {
                 ep.halted = true;
                 self.pending_events.push(TransferEvent {
@@ -315,7 +248,7 @@ impl XhciTransferExecutor {
                 });
                 return false;
             }
-            let toggle = trb.toggle_cycle();
+            let toggle = trb.link_toggle_cycle();
             ep.ring.dequeue_ptr = target;
             if toggle {
                 ep.ring.cycle = !ep.ring.cycle;
@@ -358,24 +291,24 @@ impl XhciTransferExecutor {
             }
 
             match trb.trb_type() {
-                t if t == TrbType::Link as u8 => {
+                TrbType::Link => {
                     // Link TRBs are not data buffers; follow them and keep gathering.
-                    let target = trb.parameter() & !0xF;
+                    let target = trb.link_segment_ptr();
                     if target == 0 {
                         return GatherTdResult::Fault { trb_ptr: ptr };
                     }
-                    let toggle = trb.toggle_cycle();
+                    let toggle = trb.link_toggle_cycle();
                     ptr = target;
                     if toggle {
                         cycle = !cycle;
                     }
                     continue;
                 }
-                t if t == TrbType::Normal as u8 => {
+                TrbType::Normal => {
                     let trb_ptr = ptr;
                     let len = trb.transfer_len();
                     td.buffers.push(BufferSegment {
-                        paddr: trb.parameter(),
+                        paddr: trb.parameter,
                         len,
                     });
                     td.total_len = td.total_len.saturating_add(len);

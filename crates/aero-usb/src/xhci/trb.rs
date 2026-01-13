@@ -30,6 +30,10 @@ impl Trb {
     pub const CONTROL_CYCLE_BIT: u32 = 1 << 0;
     /// Link TRB "toggle cycle" bit (TC) in the control dword.
     pub const CONTROL_LINK_TOGGLE_CYCLE: u32 = 1 << 1;
+    /// TRB chain bit (CH) in the control dword.
+    pub const CONTROL_CHAIN_BIT: u32 = 1 << 4;
+    /// TRB interrupt-on-completion bit (IOC) in the control dword.
+    pub const CONTROL_IOC_BIT: u32 = 1 << 5;
 
     /// TRB type field location in the control dword.
     pub const CONTROL_TRB_TYPE_SHIFT: u32 = 10;
@@ -46,6 +50,8 @@ impl Trb {
     /// Completion code in the status dword (bits 24..=31) for event TRBs.
     pub const STATUS_COMPLETION_CODE_SHIFT: u32 = 24;
     pub const STATUS_COMPLETION_CODE_MASK: u32 = 0xff << Self::STATUS_COMPLETION_CODE_SHIFT;
+    /// Transfer length field (bits 0..=16) for transfer TRBs (e.g. Normal TRB).
+    pub const STATUS_TRANSFER_LEN_MASK: u32 = 0x1ffff;
 
     #[inline]
     pub const fn new(parameter: u64, status: u32, control: u32) -> Self {
@@ -105,14 +111,14 @@ impl Trb {
     }
 
     #[inline]
-    pub fn read_from(mem: &mut impl MemoryBus, paddr: u64) -> Self {
+    pub fn read_from(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> Self {
         let mut buf = [0u8; TRB_LEN];
         mem.read_bytes(paddr, &mut buf);
         Self::from_bytes(buf)
     }
 
     #[inline]
-    pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
+    pub fn write_to(&self, mem: &mut (impl MemoryBus + ?Sized), paddr: u64) {
         mem.write_bytes(paddr, &self.to_bytes());
     }
 
@@ -186,6 +192,24 @@ impl Trb {
     #[inline]
     pub fn set_link_toggle_cycle(&mut self, on: bool) {
         self.control = (self.control & !Self::CONTROL_LINK_TOGGLE_CYCLE) | ((on as u32) << 1);
+    }
+
+    /// For transfer TRBs, returns whether the TRB is chained to the next TRB (CH bit).
+    #[inline]
+    pub const fn chain(&self) -> bool {
+        (self.control & Self::CONTROL_CHAIN_BIT) != 0
+    }
+
+    /// For transfer TRBs, returns whether the TRB should generate an event on completion (IOC bit).
+    #[inline]
+    pub const fn ioc(&self) -> bool {
+        (self.control & Self::CONTROL_IOC_BIT) != 0
+    }
+
+    /// For transfer TRBs, returns the Transfer Length field.
+    #[inline]
+    pub const fn transfer_len(&self) -> u32 {
+        self.status & Self::STATUS_TRANSFER_LEN_MASK
     }
 
     /// For event TRBs, returns the completion code field.

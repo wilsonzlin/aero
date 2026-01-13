@@ -34,13 +34,8 @@ fn make_link_trb(target: u64, cycle: bool, toggle_cycle: bool) -> Trb {
     if toggle_cycle {
         dword3 |= 1 << 1;
     }
-    dword3 |= (TrbType::Link as u32) << 10;
-    Trb {
-        dword0: target as u32,
-        dword1: (target >> 32) as u32,
-        dword2: 0,
-        dword3,
-    }
+    dword3 |= (u32::from(TrbType::Link.raw())) << 10;
+    Trb::from_dwords(target as u32, (target >> 32) as u32, 0, dword3)
 }
 
 fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, chain: bool) -> Trb {
@@ -51,13 +46,13 @@ fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, chain: bool) -> Trb {
     if chain {
         dword3 |= 1 << 4;
     }
-    dword3 |= (TrbType::Normal as u32) << 10;
-    Trb {
-        dword0: buf_ptr as u32,
-        dword1: (buf_ptr >> 32) as u32,
-        dword2: len & 0x1ffff,
+    dword3 |= (u32::from(TrbType::Normal.raw())) << 10;
+    Trb::from_dwords(
+        buf_ptr as u32,
+        (buf_ptr >> 32) as u32,
+        len & 0x1ffff,
         dword3,
-    }
+    )
 }
 
 #[test]
@@ -133,12 +128,7 @@ fn xhci_transfer_executor_halts_on_dequeue_ptr_overflow() {
 
     // Place an unsupported TRB at the last aligned address so advancing would overflow.
     let trb_addr = u64::MAX & !0x0f;
-    let trb = Trb {
-        dword0: 0,
-        dword1: 0,
-        dword2: 0,
-        dword3: 1, // cycle=1, type=0 (invalid/unsupported)
-    };
+    let trb = Trb::from_dwords(0, 0, 0, 1); // cycle=1, type=0 (invalid/unsupported)
     write_trb(&mut mem, trb_addr, trb);
 
     exec.add_endpoint(0x81, trb_addr);
