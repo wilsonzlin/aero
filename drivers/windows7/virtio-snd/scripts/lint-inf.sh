@@ -251,6 +251,18 @@ section_contains_norm \
 section_contains_norm \
   "$INF_CONTRACT" \
   'Version' \
+  'class=media' \
+  "inf/aero_virtio_snd.inf must declare: Class = MEDIA"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'Version' \
+  'classguid={4d36e96c-e325-11ce-bfc1-08002be10318}' \
+  "inf/aero_virtio_snd.inf must declare the MEDIA ClassGuid"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'Version' \
   'catalogfile=aero_virtio_snd.cat' \
   "inf/aero_virtio_snd.inf must declare: CatalogFile = aero_virtio_snd.cat"
 
