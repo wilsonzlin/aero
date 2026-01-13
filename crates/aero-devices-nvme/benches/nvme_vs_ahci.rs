@@ -4,13 +4,13 @@ fn main() {}
 #[cfg(not(target_arch = "wasm32"))]
 use aero_devices::irq::NoIrq;
 #[cfg(not(target_arch = "wasm32"))]
-use aero_devices_nvme::{DiskBackend, DiskError, DiskResult, NvmeController};
+use aero_devices_nvme::NvmeController;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_devices_storage::ahci::AhciController;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_devices_storage::ata::AtaDrive;
 #[cfg(not(target_arch = "wasm32"))]
-use aero_storage::{MemBackend, RawDisk};
+use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 #[cfg(not(target_arch = "wasm32"))]
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(not(target_arch = "wasm32"))]
@@ -91,81 +91,6 @@ fn bench_scatter_copy(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-struct VecDisk {
-    sector_size: u32,
-    data: Vec<u8>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl VecDisk {
-    fn new(total_sectors: u64) -> Self {
-        let sector_size = 512u32;
-        let len = usize::try_from(total_sectors * u64::from(sector_size)).expect("disk too large");
-        Self {
-            sector_size,
-            data: vec![0u8; len],
-        }
-    }
-
-    fn data_mut(&mut self) -> &mut [u8] {
-        &mut self.data
-    }
-
-    fn check(&self, lba: u64, bytes: usize) -> DiskResult<()> {
-        if !bytes.is_multiple_of(self.sector_size as usize) {
-            return Err(DiskError::UnalignedBuffer {
-                len: bytes,
-                sector_size: self.sector_size,
-            });
-        }
-        let sectors = (bytes / self.sector_size as usize) as u64;
-        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
-        let capacity = self.total_sectors();
-        if end > capacity {
-            return Err(DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: capacity,
-            });
-        }
-        Ok(())
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl DiskBackend for VecDisk {
-    fn sector_size(&self) -> u32 {
-        self.sector_size
-    }
-
-    fn total_sectors(&self) -> u64 {
-        (self.data.len() as u64) / u64::from(self.sector_size)
-    }
-
-    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()> {
-        self.check(lba, buffer.len())?;
-        let offset = usize::try_from(lba * u64::from(self.sector_size)).expect("offset too large");
-        buffer.copy_from_slice(&self.data[offset..offset + buffer.len()]);
-        Ok(())
-    }
-
-    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
-        self.check(lba, buffer.len())?;
-        let offset = usize::try_from(lba * u64::from(self.sector_size)).expect("offset too large");
-        self.data[offset..offset + buffer.len()].copy_from_slice(buffer);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> DiskResult<()> {
-        Ok(())
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn write_nvme_cmd(mem: &mut dyn MemoryBus, addr: u64, cmd: &[u8; 64]) {
     mem.write_physical(addr, cmd);
 }
@@ -197,10 +122,12 @@ fn bench_device_read_4k(c: &mut Criterion) {
 
     group.bench_function("nvme_read_4k", |b| {
         let mut mem = BenchMem::new(2 * 1024 * 1024);
-        let mut disk = VecDisk::new(16 * 1024);
-        for (i, byte) in disk.data_mut().iter_mut().enumerate() {
+        let sectors = 16u64 * 1024;
+        let mut disk_bytes = vec![0u8; (sectors as usize) * SECTOR_SIZE];
+        for (i, byte) in disk_bytes.iter_mut().enumerate() {
             *byte = (i as u8).wrapping_mul(31);
         }
+        let disk = RawDisk::open(MemBackend::from_vec(disk_bytes)).unwrap();
 
         let mut ctrl = NvmeController::new(Box::new(disk));
 
@@ -288,7 +215,7 @@ fn bench_device_read_4k(c: &mut Criterion) {
 
         let mut mem = BenchMem::new(2 * 1024 * 1024);
         let sectors = 16u64 * 1024;
-        let mut disk_bytes = vec![0u8; (sectors as usize) * aero_storage::SECTOR_SIZE];
+        let mut disk_bytes = vec![0u8; (sectors as usize) * SECTOR_SIZE];
         for (i, byte) in disk_bytes.iter_mut().enumerate() {
             *byte = (i as u8).wrapping_mul(31);
         }

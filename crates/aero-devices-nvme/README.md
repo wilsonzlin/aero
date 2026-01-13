@@ -20,35 +20,20 @@ This crate implements an NVMe controller with:
 
 The controller is intentionally implemented against two small traits:
 
-- `DiskBackend` (block storage backend)
-- `memory::MemoryBus` (guest physical memory DMA access)
+- [`aero_storage::VirtualDisk`] (block storage backend)
+- [`memory::MemoryBus`] (guest physical memory DMA access)
 
-Note: the repo-wide canonical synchronous disk trait is `aero_storage::VirtualDisk`; `DiskBackend`
-is an internal integration trait for the NVMe model. See:
+See:
 
 - [`docs/20-storage-trait-consolidation.md`](../../docs/20-storage-trait-consolidation.md)
 
-## Using `aero-storage` disks as the backend
+## Disk backend requirements
 
-Many Aero disk image formats are implemented in the [`aero-storage`](../aero-storage/) crate
-behind the [`aero_storage::VirtualDisk`] trait.
+NVMe LBAs are currently fixed at 512 bytes in this device model. Constructors validate that the
+disk capacity is a multiple of 512:
 
-To use an `aero-storage` disk with the NVMe controller without duplicating disk abstractions,
-wrap it with an adapter:
-
-- [`aero_devices_nvme::AeroStorageDiskAdapter`]: wraps a `Box<dyn aero_storage::VirtualDisk + Send>`
-  as an NVMe [`DiskBackend`]. This adapter performs explicit range/alignment checks so the NVMe
-  controller can surface `DiskError::OutOfRange` / `DiskError::UnalignedBuffer`.
-- [`aero_devices_nvme::NvmeDiskFromAeroStorage`]: a generic convenience wrapper for concrete
-  `aero_storage` disk types, primarily useful outside trait objects.
-
-For the common case where the disk is already behind a `Box<dyn aero_storage::VirtualDisk + Send>`,
-you can use [`aero_devices_nvme::from_virtual_disk`] (returns `DiskResult`) or construct a
-controller/device directly:
-
-Alternatively, use [`NvmeController::try_new_from_aero_storage`] /
-[`NvmePciDevice::try_new_from_aero_storage`] to construct a controller/device directly from an
-`aero-storage` disk.
+- [`NvmeController::try_new_from_virtual_disk`] / [`NvmePciDevice::try_new_from_virtual_disk`]
+- [`NvmeController::try_new_from_aero_storage`] / [`NvmePciDevice::try_new_from_aero_storage`]
 
 ## Reverse adapter: using an NVMe backend as an `aero-storage` disk
 

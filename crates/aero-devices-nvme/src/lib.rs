@@ -20,8 +20,8 @@
 //! - `WRITE ZEROES` materializes and writes a zero-filled buffer (bounded by
 //!   [`NVME_MAX_DMA_BYTES`]) so reads of the range return zeros.
 //! - `DSM deallocate` validates the range list and best-effort forwards discard/TRIM requests to the
-//!   backend (via [`DiskBackend::discard_sectors`]). Backends that cannot reclaim storage may treat
-//!   discard as a no-op success.
+//!   backend (via [`aero_storage::VirtualDisk::discard_range`]). Backends that cannot reclaim
+//!   storage may treat discard as a no-op success.
 //!
 //! Interrupts:
 //! - Legacy INTx is modelled via [`NvmeController::intx_level`].
@@ -48,31 +48,11 @@ use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
 use aero_platform::interrupts::msi::MsiTrigger;
-use aero_storage::DiskError as StorageDiskError;
-/// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
-/// `AeroSparseDisk`, `BlockCachedDisk`) to be used as an NVMe [`DiskBackend`].
-///
-/// NVMe is currently hard-coded to 512-byte sectors, and capacity is reported to the guest in
-/// whole 512-byte LBAs via [`DiskBackend::total_sectors`].
-///
-/// Prefer constructing backends via [`from_virtual_disk`] (or
-/// [`NvmeController::try_new_from_virtual_disk`]), which reject disks whose byte capacity is not a
-/// multiple of 512.
-pub use aero_storage_adapters::AeroVirtualDiskAsNvmeBackend as AeroStorageDiskAdapter;
+use aero_storage::VirtualDisk;
 use memory::{MemoryBus, MmioHandler};
-
-mod aero_storage_adapter;
-pub use aero_storage_adapter::NvmeDiskFromAeroStorage;
-
-mod nvme_as_aero_storage;
-/// Reverse adapter for layering `aero-storage` disk wrappers (cache/sparse/overlay/etc) on top of
-/// an existing NVMe [`DiskBackend`] implementation.
-///
-/// This is the inverse of [`from_virtual_disk`] / [`NvmeDiskFromAeroStorage`].
-pub use nvme_as_aero_storage::NvmeBackendAsAeroVirtualDisk;
-
 const PAGE_SIZE: usize = 4096;
 const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
+const NVME_LBA_SIZE: u64 = 512;
 // DoS guard: cap per-request DMA buffers. This should match the MDTS value we advertise in
 // Identify Controller (4MiB for 4KiB pages).
 const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
@@ -142,228 +122,37 @@ pub fn add_nvme_msix_capability(config: &mut PciConfigSpace) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiskError {
     Io,
-    OutOfRange {
-        lba: u64,
-        sectors: u64,
-        capacity_sectors: u64,
-    },
-    UnalignedBuffer {
-        len: usize,
-        sector_size: u32,
-    },
 }
 
 pub type DiskResult<T> = Result<T, DiskError>;
 
-/// Block storage abstraction used by the NVMe controller model.
+/// NVMe disk backend type.
 ///
-/// # Canonical trait note
+/// NVMe LBAs are currently fixed at 512 bytes.
 ///
-/// The repo-wide canonical synchronous disk trait is [`aero_storage::VirtualDisk`]. This NVMe
-/// crate keeps its own `DiskBackend` trait for now (custom error type + explicit sector methods),
-/// but most call sites should construct an NVMe backend from an `aero_storage` disk via
-/// [`from_virtual_disk`] / [`NvmeController::try_new_from_virtual_disk`].
-///
-/// If you need the reverse direction (treating an existing NVMe backend as an `aero-storage`
-/// [`aero_storage::VirtualDisk`] so you can layer disk wrappers on top), use
-/// [`NvmeBackendAsAeroVirtualDisk`].
-///
-/// See `docs/20-storage-trait-consolidation.md`.
-#[cfg(not(target_arch = "wasm32"))]
-pub trait DiskBackend: Send {
-    fn sector_size(&self) -> u32;
-    fn total_sectors(&self) -> u64;
-    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()>;
-    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()>;
-    fn flush(&mut self) -> DiskResult<()>;
-
-    /// Best-effort deallocation (discard/TRIM) of the given LBA range.
-    ///
-    /// Backends that cannot reclaim storage may implement this as a no-op success.
-    fn discard_sectors(&mut self, _lba: u64, _sectors: u64) -> DiskResult<()> {
-        Ok(())
-    }
-}
-
 /// wasm32 build: disk backends do not need to be `Send`.
 ///
 /// Browser disk handles (OPFS, JS-backed sparse formats, etc.) are often `!Send` because they wrap
-/// JS objects. Keeping this trait `!Send` allows the full-system wasm build to compile while still
-/// preventing accidental cross-thread use of non-`Send` backends.
-#[cfg(target_arch = "wasm32")]
-pub trait DiskBackend {
-    fn sector_size(&self) -> u32;
-    fn total_sectors(&self) -> u64;
-    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()>;
-    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()>;
-    fn flush(&mut self) -> DiskResult<()>;
-
-    fn discard_sectors(&mut self, _lba: u64, _sectors: u64) -> DiskResult<()> {
-        Ok(())
-    }
-}
-
-fn map_storage_error_to_nvme(err: StorageDiskError) -> DiskError {
-    // Keep this exhaustive so that adding new variants to `aero_storage::DiskError` forces disk
-    // adapter call sites to consider how those errors should be surfaced at the NVMe layer.
-    match err {
-        StorageDiskError::UnalignedLength { .. }
-        | StorageDiskError::OutOfBounds { .. }
-        | StorageDiskError::OffsetOverflow
-        | StorageDiskError::CorruptImage(_)
-        | StorageDiskError::Unsupported(_)
-        | StorageDiskError::InvalidSparseHeader(_)
-        | StorageDiskError::InvalidConfig(_)
-        | StorageDiskError::CorruptSparseImage(_)
-        | StorageDiskError::NotSupported(_)
-        | StorageDiskError::QuotaExceeded
-        | StorageDiskError::InUse
-        | StorageDiskError::InvalidState(_)
-        | StorageDiskError::BackendUnavailable
-        | StorageDiskError::Io(_) => DiskError::Io,
-    }
-}
-
-impl DiskBackend for AeroStorageDiskAdapter {
-    fn sector_size(&self) -> u32 {
-        AeroStorageDiskAdapter::SECTOR_SIZE
-    }
-
-    fn total_sectors(&self) -> u64 {
-        // If the disk capacity is not a multiple of 512, expose the largest full-sector span.
-        //
-        // Note: [`from_virtual_disk`] rejects such disks; this truncation is only relevant when
-        // constructing the adapter directly.
-        self.capacity_bytes() / u64::from(Self::sector_size(self))
-    }
-
-    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()> {
-        let sector_size = self.sector_size() as usize;
-        if !buffer.len().is_multiple_of(sector_size) {
-            return Err(DiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: self.sector_size(),
-            });
-        }
-        let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
-        let capacity = self.total_sectors();
-        if end_lba > capacity {
-            return Err(DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: capacity,
-            });
-        }
-
-        let offset = lba
-            .checked_mul(u64::from(self.sector_size()))
-            .ok_or(DiskError::Io)?;
-        // Any unexpected disk-layer error is surfaced as a generic I/O failure at the NVMe level
-        // (should be rare after the range/alignment pre-checks above).
-        self.disk_mut()
-            .read_at(offset, buffer)
-            .map_err(map_storage_error_to_nvme)
-    }
-
-    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()> {
-        let sector_size = self.sector_size() as usize;
-        if !buffer.len().is_multiple_of(sector_size) {
-            return Err(DiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: self.sector_size(),
-            });
-        }
-        let sectors = (buffer.len() / sector_size) as u64;
-        let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
-        let capacity = self.total_sectors();
-        if end_lba > capacity {
-            return Err(DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: capacity,
-            });
-        }
-
-        let offset = lba
-            .checked_mul(u64::from(self.sector_size()))
-            .ok_or(DiskError::Io)?;
-        self.disk_mut()
-            .write_at(offset, buffer)
-            .map_err(map_storage_error_to_nvme)
-    }
-
-    fn flush(&mut self) -> DiskResult<()> {
-        self.disk_mut().flush().map_err(map_storage_error_to_nvme)
-    }
-
-    fn discard_sectors(&mut self, lba: u64, sectors: u64) -> DiskResult<()> {
-        if sectors == 0 {
-            return Ok(());
-        }
-
-        let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
-            lba,
-            sectors,
-            capacity_sectors: self.total_sectors(),
-        })?;
-        let capacity = self.total_sectors();
-        if end_lba > capacity {
-            return Err(DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors: capacity,
-            });
-        }
-
-        let sector_size = u64::from(self.sector_size());
-        let offset = lba.checked_mul(sector_size).ok_or(DiskError::Io)?;
-        let len = sectors.checked_mul(sector_size).ok_or(DiskError::Io)?;
-
-        self.disk_mut()
-            .discard_range(offset, len)
-            .map_err(map_storage_error_to_nvme)
-    }
-}
-
-/// Convenience helper to wrap an [`aero_storage::VirtualDisk`] as an NVMe [`DiskBackend`].
-///
-/// Returns `Err(DiskError::Io)` if the disk capacity is not a multiple of 512 bytes (NVMe LBAs are
-/// currently fixed at 512 bytes in this device model).
+/// JS objects. Keeping this trait object `!Send` allows the full-system wasm build to compile
+/// while still preventing accidental cross-thread use of non-`Send` backends in native builds.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn from_virtual_disk(
-    d: Box<dyn aero_storage::VirtualDisk + Send>,
-) -> DiskResult<Box<dyn DiskBackend>> {
-    // NVMe currently reports capacity in whole 512-byte LBAs.
-    // Reject disks that cannot be represented losslessly.
-    if !d
-        .capacity_bytes()
-        .is_multiple_of(u64::from(AeroStorageDiskAdapter::SECTOR_SIZE))
-    {
-        return Err(DiskError::Io);
-    }
-    Ok(Box::new(AeroStorageDiskAdapter::new(d)))
-}
+pub type NvmeDisk = Box<dyn VirtualDisk + Send>;
 
 #[cfg(target_arch = "wasm32")]
-pub fn from_virtual_disk(
-    d: Box<dyn aero_storage::VirtualDisk>,
-) -> DiskResult<Box<dyn DiskBackend>> {
-    if !d
-        .capacity_bytes()
-        .is_multiple_of(u64::from(AeroStorageDiskAdapter::SECTOR_SIZE))
-    {
+pub type NvmeDisk = Box<dyn VirtualDisk>;
+
+/// Compatibility helper (deprecated): validate a disk is usable by this NVMe model.
+///
+/// NVMe LBAs are currently fixed at 512 bytes. This helper returns `Err(DiskError::Io)` if the
+/// disk capacity is not a multiple of 512 bytes.
+#[deprecated(
+    note = "NVMe now consumes `aero_storage::VirtualDisk` directly; construct with `NvmeController::try_new_from_virtual_disk` / `NvmePciDevice::try_new_from_virtual_disk` instead."
+)]
+pub fn from_virtual_disk(disk: NvmeDisk) -> DiskResult<NvmeDisk> {
+    if !disk.capacity_bytes().is_multiple_of(NVME_LBA_SIZE) {
         return Err(DiskError::Io);
     }
-    Ok(Box::new(AeroStorageDiskAdapter::new(d)))
+    Ok(disk)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -507,7 +296,7 @@ struct SubmissionQueue {
 
 /// NVMe controller state machine + BAR0 register space.
 pub struct NvmeController {
-    disk: Box<dyn DiskBackend>,
+    disk: NvmeDisk,
 
     // Registers (BAR0)
     cap: u64,
@@ -545,7 +334,7 @@ pub struct NvmeController {
 }
 
 impl NvmeController {
-    pub fn new(disk: Box<dyn DiskBackend>) -> Self {
+    pub fn new(disk: NvmeDisk) -> Self {
         let mqes: u64 = 127; // 128 entries max per queue, expressed as 0-based.
         let dstrd: u64 = 0; // 4-byte doorbell stride.
         let mpsmin: u64 = 0; // 2^(12 + 0) = 4KiB.
@@ -554,11 +343,15 @@ impl NvmeController {
         let cap =
             (mqes & 0xffff) | (css_nvm << 37) | (mpsmin << 48) | (mpsmax << 52) | (dstrd << 32);
 
+        debug_assert!(
+            disk.capacity_bytes().is_multiple_of(NVME_LBA_SIZE),
+            "nvme disk capacity must be a multiple of {NVME_LBA_SIZE} bytes"
+        );
+
         // Default to advertising/supporting the full bounded IO queue count. Real guests typically
         // issue SET FEATURES (Number of Queues) during init, but keeping the default generous
         // improves compatibility with simpler drivers and existing unit tests.
         let max_io_queues_0based = (NVME_MAX_IO_QUEUES as u16).saturating_sub(1);
-
         NvmeController {
             disk,
             cap,
@@ -617,13 +410,13 @@ impl NvmeController {
 
     /// Construct an NVMe controller from an [`aero_storage::VirtualDisk`].
     ///
-    /// This is a convenience wrapper around [`from_virtual_disk`] that returns an error if the
-    /// disk capacity is not a multiple of 512 bytes.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn try_new_from_virtual_disk(
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> DiskResult<Self> {
-        Ok(Self::new(from_virtual_disk(disk)?))
+    /// Returns an error if the disk capacity is not a multiple of 512 bytes (NVMe LBAs are
+    /// currently fixed at 512 bytes in this device model).
+    pub fn try_new_from_virtual_disk(disk: NvmeDisk) -> DiskResult<Self> {
+        if !disk.capacity_bytes().is_multiple_of(NVME_LBA_SIZE) {
+            return Err(DiskError::Io);
+        }
+        Ok(Self::new(disk))
     }
 
     /// Like [`NvmeController::try_new_from_virtual_disk`], but accepts any concrete
@@ -634,11 +427,6 @@ impl NvmeController {
         D: aero_storage::VirtualDisk + Send + 'static,
     {
         Self::try_new_from_virtual_disk(Box::new(disk))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn try_new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> DiskResult<Self> {
-        Ok(Self::new(from_virtual_disk(disk)?))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1402,14 +1190,12 @@ impl NvmeController {
         let slba = (cmd.cdw11 as u64) << 32 | cmd.cdw10 as u64;
         let nlb = (cmd.cdw12 & 0xffff) as u64;
         let sectors = nlb + 1;
-        let sector_size = self.disk.sector_size() as u64;
-        if sector_size == 0 {
-            return (NvmeStatus::INVALID_FIELD, 0);
-        }
+        let sector_size = NVME_LBA_SIZE;
+        let capacity_sectors = self.disk.capacity_bytes() / sector_size;
 
         if slba
             .checked_add(sectors)
-            .is_none_or(|end| end > self.disk.total_sectors())
+            .is_none_or(|end| end > capacity_sectors)
         {
             return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
         }
@@ -1449,14 +1235,12 @@ impl NvmeController {
         let slba = (cmd.cdw11 as u64) << 32 | cmd.cdw10 as u64;
         let nlb = (cmd.cdw12 & 0xffff) as u64;
         let sectors = nlb + 1;
-        let sector_size = self.disk.sector_size() as u64;
-        if sector_size == 0 {
-            return (NvmeStatus::INVALID_FIELD, 0);
-        }
+        let sector_size = NVME_LBA_SIZE;
+        let capacity_sectors = self.disk.capacity_bytes() / sector_size;
 
         if slba
             .checked_add(sectors)
-            .is_none_or(|end| end > self.disk.total_sectors())
+            .is_none_or(|end| end > capacity_sectors)
         {
             return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
         }
@@ -1508,14 +1292,12 @@ impl NvmeController {
         let slba = (cmd.cdw11 as u64) << 32 | cmd.cdw10 as u64;
         let nlb = (cmd.cdw12 & 0xffff) as u64;
         let sectors = nlb + 1;
-        let sector_size = self.disk.sector_size() as u64;
-        if sector_size == 0 {
-            return (NvmeStatus::INVALID_FIELD, 0);
-        }
+        let sector_size = NVME_LBA_SIZE;
+        let capacity_sectors = self.disk.capacity_bytes() / sector_size;
 
         if slba
             .checked_add(sectors)
-            .is_none_or(|end| end > self.disk.total_sectors())
+            .is_none_or(|end| end > capacity_sectors)
         {
             return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
         }
@@ -1606,11 +1388,7 @@ impl NvmeController {
             return (status, 0);
         }
 
-        let sector_size = self.disk.sector_size() as u64;
-        if sector_size == 0 {
-            return (NvmeStatus::INVALID_FIELD, 0);
-        }
-        let capacity = self.disk.total_sectors();
+        let capacity = self.disk.capacity_bytes() / NVME_LBA_SIZE;
         let mut parsed: Vec<(u64, u64)> = Vec::with_capacity(ranges as usize);
         let mut total_bytes: u64 = 0;
         for i in 0..ranges {
@@ -1629,7 +1407,7 @@ impl NvmeController {
                 return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
             }
 
-            let Some(bytes) = sectors.checked_mul(sector_size) else {
+            let Some(bytes) = sectors.checked_mul(NVME_LBA_SIZE) else {
                 return (NvmeStatus::INVALID_FIELD, 0);
             };
             total_bytes = match total_bytes.checked_add(bytes) {
@@ -1646,7 +1424,13 @@ impl NvmeController {
         // Best-effort: attempt to discard/deallocate on backends that support it, but ignore
         // failures (NVMe deallocate is advisory).
         for (slba, sectors) in parsed {
-            let _ = self.disk.discard_sectors(slba, sectors);
+            let Some(offset) = slba.checked_mul(NVME_LBA_SIZE) else {
+                continue;
+            };
+            let Some(len) = sectors.checked_mul(NVME_LBA_SIZE) else {
+                continue;
+            };
+            let _ = self.disk.discard_range(offset, len);
         }
 
         (NvmeStatus::SUCCESS, 0)
@@ -1745,7 +1529,7 @@ impl NvmeController {
             return data;
         }
 
-        let nsze = self.disk.total_sectors();
+        let nsze = self.disk.capacity_bytes() / NVME_LBA_SIZE;
         data[0..8].copy_from_slice(&nsze.to_le_bytes()); // NSZE
         data[8..16].copy_from_slice(&nsze.to_le_bytes()); // NCAP
         data[16..24].copy_from_slice(&nsze.to_le_bytes()); // NUSE
@@ -1760,8 +1544,7 @@ impl NvmeController {
         data[26] = 0;
 
         // LBAF0 at offset 128 (0x80): MS=0, LBADS=9 (512 bytes), RP=0
-        let sector_size = self.disk.sector_size().max(1);
-        data[128 + 2] = sector_size.trailing_zeros() as u8;
+        data[128 + 2] = 9;
 
         data
     }
@@ -2357,7 +2140,7 @@ pub struct NvmePciDevice {
 }
 
 impl NvmePciDevice {
-    pub fn new(disk: Box<dyn DiskBackend>) -> Self {
+    pub fn new(disk: NvmeDisk) -> Self {
         let controller = NvmeController::new(disk);
         let mut config = profile::NVME_CONTROLLER.build_config_space();
         config.set_bar_definition(
@@ -2376,13 +2159,13 @@ impl NvmePciDevice {
 
     /// Construct an NVMe PCI device from an [`aero_storage::VirtualDisk`].
     ///
-    /// This is a convenience wrapper around [`from_virtual_disk`] that returns an error if the
-    /// disk capacity is not a multiple of 512 bytes.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn try_new_from_virtual_disk(
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
-    ) -> DiskResult<Self> {
-        Ok(Self::new(from_virtual_disk(disk)?))
+    /// Returns an error if the disk capacity is not a multiple of 512 bytes (NVMe LBAs are
+    /// currently fixed at 512 bytes in this device model).
+    pub fn try_new_from_virtual_disk(disk: NvmeDisk) -> DiskResult<Self> {
+        if !disk.capacity_bytes().is_multiple_of(NVME_LBA_SIZE) {
+            return Err(DiskError::Io);
+        }
+        Ok(Self::new(disk))
     }
 
     /// Like [`NvmePciDevice::try_new_from_virtual_disk`], but accepts any concrete
@@ -2393,11 +2176,6 @@ impl NvmePciDevice {
         D: aero_storage::VirtualDisk + Send + 'static,
     {
         Self::try_new_from_virtual_disk(Box::new(disk))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn try_new_from_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> DiskResult<Self> {
-        Ok(Self::new(from_virtual_disk(disk)?))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -2544,28 +2322,28 @@ impl Default for NvmePciDevice {
         // Default to a small in-memory disk.
         #[derive(Clone)]
         struct EmptyDisk;
-        impl DiskBackend for EmptyDisk {
-            fn sector_size(&self) -> u32 {
-                512
-            }
-            fn total_sectors(&self) -> u64 {
+        impl VirtualDisk for EmptyDisk {
+            fn capacity_bytes(&self) -> u64 {
                 0
             }
-            fn read_sectors(&mut self, _lba: u64, _buffer: &mut [u8]) -> DiskResult<()> {
-                Err(DiskError::OutOfRange {
-                    lba: 0,
-                    sectors: 0,
-                    capacity_sectors: 0,
+
+            fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
+                Err(aero_storage::DiskError::OutOfBounds {
+                    offset,
+                    len: buf.len(),
+                    capacity: 0,
                 })
             }
-            fn write_sectors(&mut self, _lba: u64, _buffer: &[u8]) -> DiskResult<()> {
-                Err(DiskError::OutOfRange {
-                    lba: 0,
-                    sectors: 0,
-                    capacity_sectors: 0,
+
+            fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
+                Err(aero_storage::DiskError::OutOfBounds {
+                    offset,
+                    len: buf.len(),
+                    capacity: 0,
                 })
             }
-            fn flush(&mut self) -> DiskResult<()> {
+
+            fn flush(&mut self) -> aero_storage::Result<()> {
                 Ok(())
             }
         }
@@ -3069,7 +2847,7 @@ mod tests {
     #[test]
     fn pci_bar0_probe_and_program() {
         let disk = TestDisk::new(1024);
-        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut dev = NvmePciDevice::try_new_from_aero_storage(disk).unwrap();
 
         dev.config_mut().write(0x10, 4, 0xffff_ffff);
         let mask_lo = dev.config_mut().read(0x10, 4);
@@ -3094,7 +2872,7 @@ mod tests {
     #[test]
     fn registers_enable_sets_rdy() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         ctrl.mmio_write(0x0024, 4, 0x000f_000f); // 16/16 queues
         ctrl.mmio_write(0x0028, 8, 0x10000);
@@ -3107,7 +2885,7 @@ mod tests {
     #[test]
     fn enable_rejects_oversized_admin_queues() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // AQA fields are 0-based; request 129 entries for both SQ and CQ (larger than MQES=128).
         let too_large = (NVME_MAX_QUEUE_ENTRIES as u64) << 16 | (NVME_MAX_QUEUE_ENTRIES as u64);
@@ -3128,7 +2906,7 @@ mod tests {
     #[test]
     fn cap_can_be_read_as_two_dwords() {
         let disk = TestDisk::new(1024);
-        let ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         let cap64 = ctrl.mmio_read(0x0000, 8);
         let cap_lo = ctrl.mmio_read(0x0000, 4) as u32;
@@ -3140,7 +2918,7 @@ mod tests {
     #[test]
     fn mmio_read_size0_returns_zero() {
         let disk = TestDisk::new(1024);
-        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut dev = NvmePciDevice::try_new_from_aero_storage(disk).unwrap();
 
         assert_eq!(MmioHandler::read(&mut dev, 0x0000, 0), 0);
     }
@@ -3148,7 +2926,7 @@ mod tests {
     #[test]
     fn mmio_write_size0_is_noop() {
         let disk = TestDisk::new(1024);
-        let mut dev = NvmePciDevice::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut dev = NvmePciDevice::try_new_from_aero_storage(disk).unwrap();
         dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
 
         // Prepare a valid enable sequence, but attempt to flip CC.EN using a size-0 write.
@@ -3218,7 +2996,7 @@ mod tests {
     #[test]
     fn aqa_fields_map_to_admin_queue_sizes() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // ASQS = 8 entries, ACQS = 4 entries (both are 0-based in AQA).
         ctrl.mmio_write(0x0024, 4, (7u64 << 16) | 3);
@@ -3233,7 +3011,7 @@ mod tests {
     #[test]
     fn admin_identify_controller_supports_split_asq_acq_writes() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(1024 * 1024);
 
         let asq = 0x10000u64;
@@ -3274,7 +3052,7 @@ mod tests {
     #[test]
     fn admin_identify_controller_writes_data_and_completion() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(1024 * 1024);
 
         let asq = 0x10000;
@@ -3328,7 +3106,7 @@ mod tests {
     fn create_io_queues_and_rw_roundtrip() {
         let disk = TestDisk::new(1024);
         let disk_state = disk.clone();
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -3771,7 +3549,7 @@ mod tests {
     #[test]
     fn create_io_cq_count_is_capped() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // Create the maximum allowed number of IO completion queues.
         for qid in 1u16..=(NVME_MAX_IO_QUEUES as u16) {
@@ -3819,7 +3597,7 @@ mod tests {
     #[test]
     fn create_io_sq_count_is_capped() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // Create a CQ needed by IO SQs (CQID=1).
         let cq_cmd = NvmeCommand {
@@ -3885,7 +3663,7 @@ mod tests {
     #[test]
     fn create_io_queue_rejects_qsize_overflow_without_panicking() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // QSIZE is 0-based in CDW10[31:16]; 0xFFFF would overflow the u16 + 1 computation in debug
         // builds if not handled defensively.
@@ -3927,7 +3705,7 @@ mod tests {
     #[test]
     fn pending_sq_tail_map_is_capped() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // Enable controller so doorbells are accepted.
         ctrl.mmio_write(0x0024, 4, 0x000f_000f);
@@ -3962,7 +3740,7 @@ mod tests {
     #[test]
     fn load_state_rejects_excess_io_queues() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         let mut state = NvmeControllerState::default();
         let count = NVME_MAX_IO_QUEUES + 1;
@@ -4001,7 +3779,7 @@ mod tests {
     #[test]
     fn load_state_rejects_invalid_queue_sizes() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         let state = NvmeControllerState {
             cc: 1,
@@ -4034,7 +3812,7 @@ mod tests {
     #[test]
     fn load_state_rejects_missing_io_cq_for_sq() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         let state = NvmeControllerState {
             cc: 1,
@@ -4077,7 +3855,7 @@ mod tests {
     fn io_read_rejects_oversized_transfer() {
         // Enough sectors that the LBA range check passes for a large request.
         let disk = TestDisk::new(20_000);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(2 * 1024 * 1024);
 
         let asq = 0x10000;
@@ -4138,7 +3916,7 @@ mod tests {
     fn create_io_queues_and_rw_roundtrip_sparse_disk() {
         let disk = TestSparseDisk::new(1024);
         let disk_state = disk.clone();
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(2 * 1024 * 1024);
         let sector_size = 512usize;
 
@@ -4222,7 +4000,7 @@ mod tests {
     #[test]
     fn cq_phase_toggles_on_wrap() {
         let disk = TestDisk::new(1024);
-        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
         let mut mem = TestMem::new(2 * 1024 * 1024);
 
         let asq = 0x10000;

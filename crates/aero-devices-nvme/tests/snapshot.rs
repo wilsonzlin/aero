@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use aero_devices::pci::{
     msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability, PciDevice,
 };
-use aero_devices_nvme::{AeroStorageDiskAdapter, NvmePciDevice};
+use aero_devices_nvme::NvmePciDevice;
 use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
@@ -126,9 +126,7 @@ fn read_cqe(mem: &mut TestMem, addr: u64) -> CqEntry {
 #[test]
 fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let disk = SharedDisk::new(1024);
-    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     // Program some PCI config-space state so the snapshot exercises `PciConfigSpaceState`.
@@ -196,9 +194,7 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     let snap = dev.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 
@@ -248,9 +244,7 @@ fn snapshot_restore_replays_unprocessed_admin_sq_doorbell() {
     // taken between a doorbell write and the next processing step; ensure restore can still make
     // forward progress (i.e. we don't lose the doorbell).
     let disk = SharedDisk::new(1024);
-    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     // Enable bus mastering so the controller is permitted to DMA when `process()` runs.
@@ -282,9 +276,7 @@ fn snapshot_restore_replays_unprocessed_admin_sq_doorbell() {
     let snap = dev.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     restored.load_state(&snap).unwrap();
 
     let mut mem2 = mem_snap;
@@ -316,9 +308,7 @@ fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
     // This exercises that `NvmeController::load_state()` reconstructs `pending_sq_tail` for IO
     // queues (not just the admin queue).
     let disk = SharedDisk::new(1024);
-    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     // Enable bus mastering so the controller is permitted to DMA when `process()` runs.
@@ -385,9 +375,7 @@ fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
     let snap = dev.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     restored.load_state(&snap).unwrap();
 
     let mut mem2 = mem_snap;
@@ -412,9 +400,7 @@ fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
 #[test]
 fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let disk = SharedDisk::new(1024);
-    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     // Enable bus mastering so the controller is permitted to DMA when `process()` runs.
@@ -481,9 +467,7 @@ fn snapshot_restore_preserves_cq_phase_across_wrap() {
     let snap = dev.save_state();
     let mem_snap = mem.clone();
 
-    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     let mut mem2 = mem_snap;
     restored.load_state(&snap).unwrap();
 
@@ -517,9 +501,7 @@ fn snapshot_restore_accepts_legacy_nvmp_1_0_pci_payload() {
     // The `NvmePciDevice` snapshot format was historically `NVMP 1.0` with a bespoke PCI payload.
     // Keep a regression test to ensure we never break restore for existing snapshots.
     let disk = SharedDisk::new(1024);
-    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
 
     // Program some config-space state so the legacy PCI payload is non-trivial.
     dev.config_mut().write(0x04, 4, (0x1234u32 << 16) | 0x0006); // status + command
@@ -549,9 +531,7 @@ fn snapshot_restore_accepts_legacy_nvmp_1_0_pci_payload() {
     w.field_bytes(2, dev.controller.save_state());
     let legacy = w.finish();
 
-    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     restored.load_state(&legacy).unwrap();
 
     assert_eq!(
@@ -567,9 +547,7 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
     // - gates `irq_level()` when the bit is set, and
     // - preserves the bit across snapshot/restore.
     let disk = SharedDisk::new(1024);
-    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut dev = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     // Enable bus mastering so the controller is permitted to DMA and raise INTx for the pending IO
@@ -645,9 +623,7 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
 
     let snap = dev.save_state();
 
-    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored = NvmePciDevice::try_new_from_virtual_disk(Box::new(disk.clone())).unwrap();
     restored.load_state(&snap).unwrap();
 
     assert!(
@@ -702,9 +678,7 @@ fn snapshot_restore_preserves_msi_capability_programming() {
 fn snapshot_restore_preserves_msix_table_and_pba_state() {
     let disk = SharedDisk::new(1024);
 
-    let mut dev = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut dev = NvmePciDevice::new(Box::new(disk.clone()));
 
     // NVMe always exposes an MSI-X capability with a single table entry backed by BAR0.
     let msix_cap_off = dev
@@ -748,9 +722,7 @@ fn snapshot_restore_preserves_msix_table_and_pba_state() {
 
     let snap = dev.save_state();
 
-    let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
-        disk.clone(),
-    ))));
+    let mut restored = NvmePciDevice::new(Box::new(disk.clone()));
     restored.load_state(&snap).unwrap();
     let msix_cap_off2 = restored
         .config_mut()

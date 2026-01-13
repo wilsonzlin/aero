@@ -647,6 +647,10 @@ fn pc_platform_xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
     let ctrl = read_cfg_u16(&mut pc, bdf, msi_cap + 0x02);
     write_cfg_u16(&mut pc, bdf, msi_cap + 0x02, ctrl | 0x0001);
 
+    // MSI is delivered as a memory write, so the device must be allowed to bus-master.
+    let command = read_cfg_u16(&mut pc, bdf, 0x04);
+    write_cfg_u16(&mut pc, bdf, 0x04, command | (1 << 2));
+
     // Determine CAPLENGTH so we can locate the operational register block.
     let cap = pc.memory.read_u32(bar0_base);
     let caplength = (cap & 0xFF) as u64;

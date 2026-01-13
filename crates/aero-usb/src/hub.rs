@@ -1644,9 +1644,10 @@ impl UsbDeviceModel for UsbHubDevice {
         // If the upstream link is suspended and a downstream device requests remote wakeup,
         // propagate the resume event upstream.
         //
-        // Remote wakeup is a device-level feature; hubs should only forward a downstream wake event
-        // when the host has enabled DEVICE_REMOTE_WAKEUP on the hub itself.
-        if !self.upstream_suspended || !self.remote_wakeup_enabled {
+        // Note: this is driven by the downstream device's DEVICE_REMOTE_WAKEUP feature. Hosts do
+        // not necessarily enable DEVICE_REMOTE_WAKEUP on intermediate hubs, but real hardware still
+        // propagates the resume signal upstream.
+        if !self.upstream_suspended {
             return false;
         }
         for port in &mut self.ports {

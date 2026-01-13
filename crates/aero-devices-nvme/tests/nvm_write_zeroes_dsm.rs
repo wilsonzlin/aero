@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use aero_devices_nvme::{DiskBackend, NvmeController};
+use aero_devices_nvme::NvmeController;
+use aero_storage::{DiskError as StorageDiskError, Result as StorageResult, VirtualDisk};
 use memory::MemoryBus;
 
 const SECTOR_SIZE: usize = 512;
@@ -66,95 +67,80 @@ impl MemDisk {
     }
 }
 
-impl DiskBackend for MemDisk {
-    fn sector_size(&self) -> u32 {
-        SECTOR_SIZE as u32
-    }
-
-    fn total_sectors(&self) -> u64 {
+impl VirtualDisk for MemDisk {
+    fn capacity_bytes(&self) -> u64 {
         let guard = self.data.lock().unwrap();
-        (guard.len() / SECTOR_SIZE) as u64
+        guard.len() as u64
     }
 
-    fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> aero_devices_nvme::DiskResult<()> {
-        if !buffer.len().is_multiple_of(SECTOR_SIZE) {
-            return Err(aero_devices_nvme::DiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: SECTOR_SIZE as u32,
-            });
-        }
-        let offset = lba as usize * SECTOR_SIZE;
-        let end = offset + buffer.len();
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> StorageResult<()> {
+        let offset = usize::try_from(offset).map_err(|_| StorageDiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(buf.len())
+            .ok_or(StorageDiskError::OffsetOverflow)?;
         let guard = self.data.lock().unwrap();
         if end > guard.len() {
-            let capacity_sectors = (guard.len() / SECTOR_SIZE) as u64;
-            return Err(aero_devices_nvme::DiskError::OutOfRange {
-                lba,
-                sectors: (buffer.len() / SECTOR_SIZE) as u64,
-                capacity_sectors,
+            return Err(StorageDiskError::OutOfBounds {
+                offset: offset as u64,
+                len: buf.len(),
+                capacity: guard.len() as u64,
             });
         }
-        buffer.copy_from_slice(&guard[offset..end]);
+        buf.copy_from_slice(&guard[offset..end]);
         Ok(())
     }
 
-    fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> aero_devices_nvme::DiskResult<()> {
-        if !buffer.len().is_multiple_of(SECTOR_SIZE) {
-            return Err(aero_devices_nvme::DiskError::UnalignedBuffer {
-                len: buffer.len(),
-                sector_size: SECTOR_SIZE as u32,
-            });
-        }
-        let offset = lba as usize * SECTOR_SIZE;
-        let end = offset + buffer.len();
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> StorageResult<()> {
+        let offset = usize::try_from(offset).map_err(|_| StorageDiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(buf.len())
+            .ok_or(StorageDiskError::OffsetOverflow)?;
         let mut guard = self.data.lock().unwrap();
         if end > guard.len() {
-            let capacity_sectors = (guard.len() / SECTOR_SIZE) as u64;
-            return Err(aero_devices_nvme::DiskError::OutOfRange {
-                lba,
-                sectors: (buffer.len() / SECTOR_SIZE) as u64,
-                capacity_sectors,
+            return Err(StorageDiskError::OutOfBounds {
+                offset: offset as u64,
+                len: buf.len(),
+                capacity: guard.len() as u64,
             });
         }
-        guard[offset..end].copy_from_slice(buffer);
+        guard[offset..end].copy_from_slice(buf);
         Ok(())
     }
 
-    fn flush(&mut self) -> aero_devices_nvme::DiskResult<()> {
+    fn flush(&mut self) -> StorageResult<()> {
         Ok(())
     }
 
-    fn discard_sectors(&mut self, lba: u64, sectors: u64) -> aero_devices_nvme::DiskResult<()> {
-        if sectors == 0 {
+    fn discard_range(&mut self, offset: u64, len: u64) -> StorageResult<()> {
+        if len == 0 {
+            if offset > self.capacity_bytes() {
+                return Err(StorageDiskError::OutOfBounds {
+                    offset,
+                    len: 0,
+                    capacity: self.capacity_bytes(),
+                });
+            }
             return Ok(());
         }
 
-        let Some(offset_u64) = lba.checked_mul(SECTOR_SIZE as u64) else {
-            return Err(aero_devices_nvme::DiskError::Io);
-        };
-        let Some(len_u64) = sectors.checked_mul(SECTOR_SIZE as u64) else {
-            return Err(aero_devices_nvme::DiskError::Io);
-        };
-        let Ok(offset) = usize::try_from(offset_u64) else {
-            return Err(aero_devices_nvme::DiskError::Io);
-        };
-        let Ok(len) = usize::try_from(len_u64) else {
-            return Err(aero_devices_nvme::DiskError::Io);
-        };
-        let Some(end) = offset.checked_add(len) else {
-            return Err(aero_devices_nvme::DiskError::Io);
-        };
-
-        let mut guard = self.data.lock().unwrap();
-        let capacity_sectors = (guard.len() / SECTOR_SIZE) as u64;
-        if end > guard.len() {
-            return Err(aero_devices_nvme::DiskError::OutOfRange {
-                lba,
-                sectors,
-                capacity_sectors,
+        let end = offset.checked_add(len).ok_or(StorageDiskError::OffsetOverflow)?;
+        let cap = self.capacity_bytes();
+        if end > cap {
+            return Err(StorageDiskError::OutOfBounds {
+                offset,
+                len: usize::try_from(len).unwrap_or(usize::MAX),
+                capacity: cap,
             });
         }
-        guard[offset..end].fill(0);
+
+        let offset_usize = usize::try_from(offset).map_err(|_| StorageDiskError::OffsetOverflow)?;
+        let len_usize = usize::try_from(len).map_err(|_| StorageDiskError::OffsetOverflow)?;
+        let end_usize = offset_usize
+            .checked_add(len_usize)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
+
+        let mut guard = self.data.lock().unwrap();
+        guard[offset_usize..end_usize].fill(0);
         Ok(())
     }
 }

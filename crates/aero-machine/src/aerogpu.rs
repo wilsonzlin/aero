@@ -1285,8 +1285,8 @@ impl AeroGpuMmioDevice {
                     }
                     _ => {
                         // Treat arithmetic overflow as an out-of-bounds guest address. This is a
-                        // guest-controlled pointer, so record an error rather than silently
-                        // ignoring the ring reset side-effect.
+                        // guest-controlled pointer; record an error rather than silently ignoring
+                        // the ring reset side-effect.
                         self.record_error(pci::AerogpuErrorCode::Oob, 0);
                     }
                 }
