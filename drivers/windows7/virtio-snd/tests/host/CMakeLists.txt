@@ -86,6 +86,14 @@ add_executable(virtiosnd_jack_tests
 target_link_libraries(virtiosnd_jack_tests PRIVATE virtiosnd_host_shim)
 add_test(NAME virtiosnd_jack_tests COMMAND virtiosnd_jack_tests)
 
+add_executable(virtiosnd_eventq_tests
+    test_eventq.c
+    ${VIRTIOSND_SRC}/virtio_snd_proto.c
+)
+
+target_link_libraries(virtiosnd_eventq_tests PRIVATE virtiosnd_host_shim)
+add_test(NAME virtiosnd_eventq_tests COMMAND virtiosnd_eventq_tests)
+
 add_executable(virtiosnd_dma_stub_tests
     test_dma_stub.c
 )

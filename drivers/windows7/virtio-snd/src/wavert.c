@@ -695,9 +695,17 @@ VirtIoSndWaveRtPcmXrunWorkItem(_In_ PVOID Context)
 static VOID
 VirtIoSndWaveRtEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULONG Data)
 {
+    PVIRTIOSND_WAVERT_MINIPORT miniport;
     PVIRTIOSND_DEVICE_EXTENSION dx;
+    PVIRTIOSND_WAVERT_STREAM stream;
+    KIRQL miniportIrql;
 
-    dx = (PVIRTIOSND_DEVICE_EXTENSION)Context;
+    miniport = (PVIRTIOSND_WAVERT_MINIPORT)Context;
+    if (miniport == NULL) {
+        return;
+    }
+
+    dx = miniport->Dx;
     if (dx == NULL) {
         return;
     }
@@ -706,31 +714,78 @@ VirtIoSndWaveRtEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULON
         return;
     }
 
-    switch (Type) {
-    case VIRTIO_SND_EVT_PCM_XRUN: {
-        static volatile LONG xrunLog;
-        LONG n;
+    /*
+     * Only process PCM events (period-elapsed / XRUN). All other events are
+     * handled within the virtio interrupt path (e.g. topology jack updates).
+     */
+    if (Type != VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED && Type != VIRTIO_SND_EVT_PCM_XRUN) {
+        return;
+    }
 
-        n = InterlockedIncrement(&xrunLog);
-        if (VirtIoSndWaveRtShouldLogRareCounter(n)) {
-            VIRTIOSND_TRACE_ERROR("wavert: eventq: PCM XRUN (stream=%lu count=%ld)\n", Data, n);
+    stream = NULL;
+
+    KeAcquireSpinLock(&miniport->Lock, &miniportIrql);
+
+    if (Data == VIRTIO_SND_PLAYBACK_STREAM_ID) {
+        stream = miniport->RenderStream;
+    } else if (Data == VIRTIO_SND_CAPTURE_STREAM_ID) {
+        stream = miniport->CaptureStream;
+    }
+
+    if (stream != NULL) {
+        KIRQL streamIrql;
+
+        KeAcquireSpinLock(&stream->Lock, &streamIrql);
+
+        /*
+         * Only act on PCM events while the pin is running.
+         *
+         * If the stream is stopping (STOP/PAUSE transition, teardown), avoid
+         * queueing any additional work.
+         */
+        if (!stream->Stopping && stream->State == KSSTATE_RUN) {
+            if (Type == VIRTIO_SND_EVT_PCM_XRUN) {
+                static volatile LONG xrunLog;
+                LONG n;
+
+                n = InterlockedIncrement(&xrunLog);
+                if (VirtIoSndWaveRtShouldLogRareCounter(n)) {
+                    VIRTIOSND_TRACE_ERROR("wavert: eventq: PCM XRUN (stream=%lu count=%ld)\n", Data, n);
+                }
+
+                VirtIoSndWaveRtSchedulePcmXrunRecovery(dx, Data);
+
+                if (!stream->Capture) {
+                    /*
+                     * Playback underrun recovery:
+                     * realign the submission cursor to the current play position
+                     * so the next DPC tick can refill a lead of audio cleanly.
+                     */
+                    LARGE_INTEGER nowQpc;
+                    ULONGLONG linearFrames;
+                    ULONG ringBytes;
+
+                    nowQpc = KeQueryPerformanceCounter(NULL);
+                    VirtIoSndWaveRtGetPositionSnapshot(stream, (ULONGLONG)nowQpc.QuadPart, &linearFrames, &ringBytes, NULL);
+
+                    if (stream->PeriodBytes != 0 && stream->BufferSize != 0) {
+                        stream->SubmittedLinearPositionBytes = linearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
+                        stream->SubmittedRingPositionBytes = ringBytes;
+                    }
+                }
+            }
+
+            /*
+             * Use the event as an additional wake-up mechanism for the stream
+             * engine. Timer-based wakeups remain active as a fallback.
+             */
+            (VOID)KeInsertQueueDpc(&stream->TimerDpc, NULL, NULL);
         }
 
-        VirtIoSndWaveRtSchedulePcmXrunRecovery(dx, Data);
-        break;
+        KeReleaseSpinLock(&stream->Lock, streamIrql);
     }
-    case VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED:
-        /*
-         * Optional pacing signal.
-         *
-         * The WaveRT miniport keeps timer-based pacing to remain compatible with
-         * contract v1 devices that emit no events. Period-elapsed events are
-         * therefore treated as a no-op today.
-         */
-        break;
-    default:
-        break;
-    }
+
+    KeReleaseSpinLock(&miniport->Lock, miniportIrql);
 }
 #endif /* !defined(AERO_VIRTIO_SND_IOPORT_LEGACY) */
 
@@ -1460,6 +1515,33 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWav
     if (ref == 0) {
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
         VirtIoSndWaveRtMiniport_FreeDynamicDescription(miniport);
+        if (miniport->Dx != NULL) {
+            PVIRTIOSND_DEVICE_EXTENSION dx = miniport->Dx;
+            ULONG attempts;
+
+            /*
+             * Prevent any further eventq callbacks from referencing this miniport.
+             *
+             * Note: a callback may already be in-flight (loaded the function +
+             * context under the EventqLock). Best-effort wait for it to drain
+             * before freeing the miniport object.
+             */
+            VirtIoSndHwSetEventCallback(dx, NULL, NULL);
+
+            if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+                LARGE_INTEGER delay;
+
+                KeFlushQueuedDpcs();
+
+                delay.QuadPart = -(LONGLONG)(1 * 10 * 1000); /* 1ms */
+                for (attempts = 0; attempts < 200; ++attempts) {
+                    if (InterlockedCompareExchange(&dx->EventqCallbackInFlight, 0, 0) == 0) {
+                        break;
+                    }
+                    (void)KeDelayExecutionThread(KernelMode, FALSE, &delay);
+                }
+            }
+        }
 #endif
         VirtIoSndBackend_Destroy(miniport->Backend);
         miniport->Backend = NULL;
@@ -1516,8 +1598,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
              * period-elapsed) for robustness. Contract v1 does not emit events;
              * the miniport must remain correct without them.
              */
-            if (dx != NULL && dx->Started && !dx->Removed) {
-                VirtIoSndHwSetEventCallback(dx, VirtIoSndWaveRtEventqCallback, dx);
+            if (dx != NULL && !dx->Removed) {
+                VirtIoSndHwSetEventCallback(dx, VirtIoSndWaveRtEventqCallback, miniport);
             }
             (VOID)VirtIoSndWaveRtMiniport_BuildDynamicDescription(miniport);
 #endif

@@ -248,7 +248,7 @@ PCSTR VirtioSndEventTypeToString(_In_ ULONG virtio_event_type);
  * Note: The driver only uses a subset of formats; callers should treat FALSE as
  * "unknown/unsupported".
  */
-_Must_inspect_result_ __inline BOOLEAN VirtioSndPcmRateToHz(_In_ UCHAR Rate, _Out_ ULONG* RateHz)
+_Must_inspect_result_ static __forceinline BOOLEAN VirtioSndPcmRateToHz(_In_ UCHAR Rate, _Out_ ULONG* RateHz)
 {
     if (RateHz == NULL) {
         return FALSE;
@@ -309,7 +309,7 @@ _Must_inspect_result_ __inline BOOLEAN VirtioSndPcmRateToHz(_In_ UCHAR Rate, _Ou
  * For the purposes of this driver, "sample" means one channel worth of audio
  * (so a frame is `Channels * BytesPerSample`).
  */
-_Must_inspect_result_ __inline BOOLEAN VirtioSndPcmFormatToBytesPerSample(_In_ UCHAR Format, _Out_ USHORT* BytesPerSample)
+_Must_inspect_result_ static __forceinline BOOLEAN VirtioSndPcmFormatToBytesPerSample(_In_ UCHAR Format, _Out_ USHORT* BytesPerSample)
 {
     if (BytesPerSample == NULL) {
         return FALSE;
@@ -347,7 +347,7 @@ _Must_inspect_result_ __inline BOOLEAN VirtioSndPcmFormatToBytesPerSample(_In_ U
     }
 }
 
-_Must_inspect_result_ __inline BOOLEAN VirtioSndPcmFormatToBitsPerSample(_In_ UCHAR Format, _Out_ USHORT* BitsPerSample)
+_Must_inspect_result_ static __forceinline BOOLEAN VirtioSndPcmFormatToBitsPerSample(_In_ UCHAR Format, _Out_ USHORT* BitsPerSample)
 {
     USHORT bytes;
     if (BitsPerSample == NULL) {
