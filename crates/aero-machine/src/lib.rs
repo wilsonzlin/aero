@@ -1547,8 +1547,16 @@ struct VgaPciConfigDevice {
 impl VgaPciConfigDevice {
     fn new() -> Self {
         // Bochs/QEMU-compatible IDs for "Standard VGA".
-        let mut cfg = aero_devices::pci::PciConfigSpace::new(0x1234, 0x1111);
-        cfg.set_class_code(0x03, 0x00, 0x00, 0x00);
+        let mut cfg = aero_devices::pci::PciConfigSpace::new(
+            aero_gpu_vga::VGA_PCI_VENDOR_ID,
+            aero_gpu_vga::VGA_PCI_DEVICE_ID,
+        );
+        cfg.set_class_code(
+            aero_gpu_vga::VGA_PCI_CLASS_CODE,
+            aero_gpu_vga::VGA_PCI_SUBCLASS,
+            aero_gpu_vga::VGA_PCI_PROG_IF,
+            0x00,
+        );
 
         cfg.set_bar_definition(
             VGA_PCI_BAR_INDEX,
@@ -4399,8 +4407,9 @@ impl Machine {
             // VGA is a special legacy device whose MMIO window lives in the low 1MiB region. The
             // physical bus supports MMIO overlays on top of RAM, so mapping this window is safe
             // even when guest RAM is a dense `[0, ram_size_bytes)` range.
-            const VGA_LEGACY_MMIO_BASE: u64 = 0x000A_0000;
-            const VGA_LEGACY_MMIO_SIZE: u64 = 0x0002_0000; // 128KiB: A0000-BFFFF
+            const VGA_LEGACY_MMIO_BASE: u64 = aero_gpu_vga::VGA_LEGACY_MEM_START as u64;
+            const VGA_LEGACY_MMIO_SIZE: u64 =
+                (aero_gpu_vga::VGA_LEGACY_MEM_END - aero_gpu_vga::VGA_LEGACY_MEM_START + 1) as u64; // 128KiB: A0000-BFFFF
 
             // Shared device instances must remain stable across resets because MMIO mappings in the
             // physical memory bus persist. Reset device state in-place while keeping `Rc`
@@ -4427,8 +4436,8 @@ impl Machine {
 
             // Register VGA ports (attribute/sequencer/graphics/CRTC/DAC + Bochs VBE_DISPI).
             self.io.register_range(
-                0x03B0,
-                0x0030, // 0x3B0..0x3DF
+                aero_gpu_vga::VGA_LEGACY_IO_START,
+                aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
                 Box::new(VgaPortWindow { vga: vga.clone() }),
             );
             self.io
@@ -4571,7 +4580,11 @@ impl Machine {
                 // - VGA: 0x3B0..0x3DF (includes both mono and color decode ranges)
                 // - Bochs VBE: 0x01CE (index), 0x01CF (data)
                 self.io
-                    .register_range(0x3B0, 0x30, Box::new(VgaPortIo { dev: vga.clone() }));
+                    .register_range(
+                        aero_gpu_vga::VGA_LEGACY_IO_START,
+                        aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
+                        Box::new(VgaPortIo { dev: vga.clone() }),
+                    );
                 self.io.register_shared_range(0x01CE, 2, {
                     let vga = vga.clone();
                     move |_port| Box::new(VgaPortIo { dev: vga.clone() })
@@ -4580,11 +4593,15 @@ impl Machine {
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`). The SVGA linear framebuffer
                 // is routed via PCI BAR/MMIO when the PC platform is enabled, so do not map it
                 // directly here.
-                self.mem.map_mmio_once(0xA0000, 0x20000, {
+                let legacy_base = aero_gpu_vga::VGA_LEGACY_MEM_START as u64;
+                let legacy_len =
+                    (aero_gpu_vga::VGA_LEGACY_MEM_END - aero_gpu_vga::VGA_LEGACY_MEM_START + 1)
+                        as u64;
+                self.mem.map_mmio_once(legacy_base, legacy_len, {
                     let vga = vga.clone();
                     move || {
                         Box::new(VgaMmio {
-                            base: 0xA0000,
+                            base: legacy_base,
                             dev: vga,
                         })
                     }
@@ -6749,8 +6766,8 @@ impl snapshot::SnapshotTarget for Machine {
                         // Port mappings are part of machine wiring, not the snapshot payload, so
                         // install the default VGA port ranges now.
                         self.io.register_range(
-                            0x3B0,
-                            0x30,
+                            aero_gpu_vga::VGA_LEGACY_IO_START,
+                            aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
                             Box::new(VgaPortIo { dev: vga.clone() }),
                         );
                         self.io.register_shared_range(0x01CE, 2, {
@@ -6759,11 +6776,15 @@ impl snapshot::SnapshotTarget for Machine {
                         });
 
                         // MMIO mappings persist in the physical bus; install legacy + LFB.
-                        self.mem.map_mmio_once(0xA0000, 0x20000, {
+                        let legacy_base = aero_gpu_vga::VGA_LEGACY_MEM_START as u64;
+                        let legacy_len = (aero_gpu_vga::VGA_LEGACY_MEM_END
+                            - aero_gpu_vga::VGA_LEGACY_MEM_START
+                            + 1) as u64;
+                        self.mem.map_mmio_once(legacy_base, legacy_len, {
                             let vga = vga.clone();
                             move || {
                                 Box::new(VgaMmio {
-                                    base: 0xA0000,
+                                    base: legacy_base,
                                     dev: vga,
                                 })
                             }
@@ -7457,7 +7478,7 @@ mod tests {
         vga.borrow_mut().vram_mut()[0] = 0xAA;
 
         let mut mmio = VgaLegacyMmio {
-            base: 0xA0000,
+            base: aero_gpu_vga::VGA_LEGACY_MEM_START as u64,
             vga: vga.clone(),
         };
 

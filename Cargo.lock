@@ -1833,6 +1833,7 @@ dependencies = [
  "aero-edid",
  "aero-gpu",
  "aero-gpu-trace",
+ "aero-gpu-vga",
  "aero-io-snapshot",
  "aero-ipc",
  "aero-net-backend",

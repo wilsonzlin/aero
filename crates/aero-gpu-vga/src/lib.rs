@@ -36,6 +36,39 @@ use aero_io_snapshot::io::state::{
 /// QEMU/Bochs typically map the LFB at 0xE0000000.
 pub const SVGA_LFB_BASE: u32 = 0xE000_0000;
 
+// -----------------------------------------------------------------------------
+// Bochs/QEMU "Standard VGA" PCI identity + legacy decode ranges.
+// -----------------------------------------------------------------------------
+//
+// `aero-gpu-vga` is the canonical legacy VGA/VBE device model crate. Several other crates expose
+// this device behind different integration layers (e.g. the canonical `aero-machine` and the
+// standalone `emulator`), so these constants live here to avoid value drift.
+
+/// PCI vendor ID used by Bochs/QEMU for their "Standard VGA" device.
+pub const VGA_PCI_VENDOR_ID: u16 = 0x1234;
+/// PCI device ID used by Bochs/QEMU for their "Standard VGA" device.
+pub const VGA_PCI_DEVICE_ID: u16 = 0x1111;
+
+/// PCI base class code for a display controller (VGA-compatible).
+pub const VGA_PCI_CLASS_CODE: u8 = 0x03;
+/// PCI subclass for a VGA-compatible controller.
+pub const VGA_PCI_SUBCLASS: u8 = 0x00;
+/// PCI programming interface for the Bochs/QEMU VGA stub.
+pub const VGA_PCI_PROG_IF: u8 = 0x00;
+
+/// Full legacy VGA I/O decode range, including the mono + color CRTC aliasing ranges.
+pub const VGA_LEGACY_IO_START: u16 = 0x3B0;
+pub const VGA_LEGACY_IO_END: u16 = 0x3DF;
+
+/// Legacy VGA memory window covering the 128KiB aperture (`A0000-BFFFF`).
+pub const VGA_LEGACY_MEM_START: u32 = 0xA0000;
+pub const VGA_LEGACY_MEM_END: u32 = 0xBFFFF;
+
+/// Default Bochs VBE linear framebuffer base address (alias for [`SVGA_LFB_BASE`]).
+pub const DEFAULT_LFB_BASE: u32 = SVGA_LFB_BASE;
+/// Default Bochs VBE linear framebuffer size in bytes (alias for [`DEFAULT_VRAM_SIZE`]).
+pub const DEFAULT_LFB_SIZE: u32 = DEFAULT_VRAM_SIZE as u32;
+
 /// Size of VGA plane memory (64KiB).
 pub const VGA_PLANE_SIZE: usize = 64 * 1024;
 

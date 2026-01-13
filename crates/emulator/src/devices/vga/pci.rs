@@ -1,22 +1,11 @@
 use crate::devices::pci::{PciBar, PciConfigSpace, PciFunction};
 use std::any::Any;
 
-pub const VGA_PCI_VENDOR_ID: u16 = 0x1234;
-pub const VGA_PCI_DEVICE_ID: u16 = 0x1111;
-
-pub const VGA_PCI_CLASS_CODE: u8 = 0x03;
-pub const VGA_PCI_SUBCLASS: u8 = 0x00;
-pub const VGA_PCI_PROG_IF: u8 = 0x00;
-
-// Full legacy VGA decode range, including the mono+color CRTC aliasing ranges.
-pub const VGA_LEGACY_IO_START: u16 = 0x3B0;
-pub const VGA_LEGACY_IO_END: u16 = 0x3DF;
-
-pub const VGA_LEGACY_MEM_START: u32 = 0xA0000;
-pub const VGA_LEGACY_MEM_END: u32 = 0xBFFFF;
-
-pub const DEFAULT_LFB_BASE: u32 = 0xE000_0000;
-pub const DEFAULT_LFB_SIZE: u32 = 16 * 1024 * 1024;
+pub use aero_gpu_vga::{
+    DEFAULT_LFB_BASE, DEFAULT_LFB_SIZE, VGA_LEGACY_IO_END, VGA_LEGACY_IO_START, VGA_LEGACY_MEM_END,
+    VGA_LEGACY_MEM_START, VGA_PCI_CLASS_CODE, VGA_PCI_DEVICE_ID, VGA_PCI_PROG_IF, VGA_PCI_SUBCLASS,
+    VGA_PCI_VENDOR_ID,
+};
 
 pub struct VgaPciFunction {
     config: PciConfigSpace,

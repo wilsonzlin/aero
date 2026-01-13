@@ -33,6 +33,7 @@ aero-devices-input = { path = "../aero-devices-input" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-devices-nvme = { path = "../aero-devices-nvme", optional = true }
 aero-edid = { path = "../aero-edid" }
+aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }
