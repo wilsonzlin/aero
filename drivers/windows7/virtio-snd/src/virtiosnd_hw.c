@@ -1161,8 +1161,15 @@ NTSTATUS VirtIoSndStartHardware(
     if (Dx->InterruptDescPresent) {
         status = VirtIoSndIntxConnect(Dx);
         if (!NT_SUCCESS(status)) {
-            VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", (UINT)status);
-            goto fail;
+            if (Dx->AllowPollingOnly) {
+                VIRTIOSND_TRACE(
+                    "AllowPollingOnly=1: INTx connect failed (%!STATUS!) - continuing in polling-only mode\n",
+                    status);
+                status = STATUS_SUCCESS;
+            } else {
+                VIRTIOSND_TRACE_ERROR("failed to connect INTx: 0x%08X\n", (UINT)status);
+                goto fail;
+            }
         }
     } else if (Dx->AllowPollingOnly) {
         VIRTIOSND_TRACE("AllowPollingOnly=1: skipping INTx connect; relying on used-ring polling\n");
@@ -1175,6 +1182,20 @@ NTSTATUS VirtIoSndStartHardware(
         VIRTIOSND_TRACE_ERROR("INTx resource missing and AllowPollingOnly=0\n");
         status = STATUS_RESOURCE_TYPE_NOT_FOUND;
         goto fail;
+    }
+
+    /*
+     * If INTx was not connected, proactively disable per-queue interrupts so a
+     * device that still asserts INTx does not cause an interrupt storm in
+     * environments where the OS cannot route interrupts to this driver.
+     *
+     * Completion delivery is handled by used-ring polling instead.
+     */
+    if (Dx->AllowPollingOnly && Dx->Intx.InterruptObject == NULL) {
+        VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_EVENT]);
+        VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
+        VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_TX]);
+        VirtioSndQueueDisableInterrupts(&Dx->Queues[VIRTIOSND_QUEUE_RX]);
     }
 
     /* The device is now ready for normal operation. */
