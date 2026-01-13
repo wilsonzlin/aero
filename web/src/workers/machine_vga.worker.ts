@@ -42,8 +42,9 @@ type MachineVgaWorkerStartMessage = {
   /**
    * Request the canonical machine be constructed with AeroGPU enabled (and VGA disabled by default).
    *
-   * This is purely configuration plumbing; it assumes the AeroGPU device model exists behind the
-   * `enable_aerogpu` flag.
+   * Note: in `aero_machine` today, `enable_aerogpu` wires BAR1-backed VRAM plus minimal legacy VGA
+   * decode (legacy VGA window aliasing + permissive VGA ports), but it does not yet provide the
+   * full BAR0 WDDM/MMIO/ring protocol or VBE/scanout boot display.
    */
   enableAerogpu?: boolean;
   /**
