@@ -438,7 +438,10 @@ impl AhciController {
                     port.regs.sact = 0;
                     port.regs.is = 0;
                     port.regs.serr = 0;
-                    port.regs.ssts = 0;
+                    // Report a transient "device present but no communication" state if a drive is
+                    // attached. This better matches real hardware behaviour during COMRESET and
+                    // avoids guests interpreting the reset as a hot-unplug.
+                    port.regs.ssts = if port.present { 1 } else { 0 };
                     port.regs.sig = 0;
                     port.regs.tfd = if port.present {
                         u32::from(ATA_STATUS_BSY)
@@ -1226,7 +1229,8 @@ mod tests {
 
         // Assert COMRESET.
         ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 1);
-        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 0);
+        // DET=1 (device present, no communication) while COMRESET is asserted.
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 1);
         assert_ne!(
             ctl.read_u32(PORT_BASE + PORT_REG_TFD) & (ATA_STATUS_BSY as u32),
             0
