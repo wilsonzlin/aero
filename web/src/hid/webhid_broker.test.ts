@@ -77,6 +77,7 @@ class FakeHidDevice {
   readonly sendReport = vi.fn(async () => {});
   readonly sendFeatureReport = vi.fn(async () => {});
   readonly receiveFeatureReport = vi.fn(async () => new DataView(new ArrayBuffer(0)));
+  readonly receiveFeatureReport = vi.fn(async () => new DataView(new ArrayBuffer(0)));
 
   readonly #listeners = new Map<string, Set<DeviceListener>>();
 
@@ -830,6 +831,42 @@ describe("hid/WebHidBroker", () => {
     expect(device.sendReport).toHaveBeenCalledTimes(2);
     expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
     expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+    broker.destroy();
+  });
+
+  it("drains the output ring before enqueuing hid.getFeatureReport messages (preserves ring->featureReport order even without timer)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    device.receiveFeatureReport.mockImplementationOnce(async () => new DataView(new Uint8Array([9]).buffer));
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+    port.emit({ type: "hid.getFeatureReport", requestId: 1, deviceId: id, reportId: 2 });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.receiveFeatureReport).toHaveBeenCalledTimes(0);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(device.receiveFeatureReport).toHaveBeenCalledTimes(1);
+    expect(device.receiveFeatureReport).toHaveBeenCalledWith(2);
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult")).toBe(true);
 
     broker.destroy();
   });

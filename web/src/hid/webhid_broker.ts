@@ -967,6 +967,13 @@ export class WebHidBroker {
   }
 
   #handleGetFeatureReportRequest(msg: HidGetFeatureReportMessage, worker: MessagePort | Worker): void {
+    // Feature-report reads must be ordered relative to any output/feature report writes that may be
+    // pending in the SAB output ring. Drain the ring first so already-produced ring records are
+    // enqueued before this message, preserving guest report ordering across delivery paths.
+    if (this.#outputRing) {
+      this.#drainOutputRing();
+    }
+
     const deviceId = msg.deviceId >>> 0;
     const reportId = msg.reportId >>> 0;
     const base = {
