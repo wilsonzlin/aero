@@ -198,7 +198,15 @@ function Validate-DriverPackageManifest {
 
   Assert-JsonObject -Value $data -Context 'manifest root' -ManifestPath $ManifestPath
 
-  $allowedTopLevel = @('$schema', 'infFiles', 'wow64Files', 'additionalFiles', 'toolFiles', 'wdfCoInstaller')
+  $allowedTopLevel = @(
+    '$schema',
+    'infFiles',
+    'wow64Files',
+    'requiredBuildOutputFiles',
+    'additionalFiles',
+    'toolFiles',
+    'wdfCoInstaller'
+  )
   $unknownKeys = @()
   foreach ($prop in $data.PSObject.Properties) {
     if ($allowedTopLevel -cnotcontains $prop.Name) {
@@ -331,6 +339,31 @@ function Validate-DriverPackageManifest {
     }
   }
 
+  $requiredBuildOutputProp = $data.PSObject.Properties['requiredBuildOutputFiles']
+  if ($null -ne $requiredBuildOutputProp) {
+    Assert-JsonArray -Value $requiredBuildOutputProp.Value -Context 'requiredBuildOutputFiles' -ManifestPath $ManifestPath
+
+    $seen = @{}
+    $index = 0
+    foreach ($entry in $requiredBuildOutputProp.Value) {
+      $index++
+      Assert-JsonString -Value $entry -Context "requiredBuildOutputFiles[$index]" -ManifestPath $ManifestPath
+      $s = ([string]$entry).Trim()
+
+      if ($DriverRoot) {
+        Assert-PathIsRelativeAndUnderRoot -Root $DriverRoot -ChildPath $s -Context "requiredBuildOutputFiles[$index]" -ManifestPath $ManifestPath
+      } elseif ([System.IO.Path]::IsPathRooted($s)) {
+        throw "Invalid manifest '$ManifestPath': requiredBuildOutputFiles[$index] must be a relative path (got '$s')."
+      }
+
+      $key = $s.Replace('\', '/').ToLowerInvariant()
+      if ($seen.ContainsKey($key)) {
+        throw "Invalid manifest '$ManifestPath': requiredBuildOutputFiles contains a duplicate entry '$s'."
+      }
+      $seen[$key] = $true
+    }
+  }
+
   $toolProp = $data.PSObject.Properties['toolFiles']
   if ($null -ne $toolProp) {
     Assert-JsonArray -Value $toolProp.Value -Context 'toolFiles' -ManifestPath $ManifestPath
@@ -342,15 +375,14 @@ function Validate-DriverPackageManifest {
       Assert-JsonString -Value $entry -Context "toolFiles[$index]" -ManifestPath $ManifestPath
       $s = ([string]$entry).Trim()
 
+      if ([System.IO.Path]::GetExtension($s).ToLowerInvariant() -ne '.exe') {
+        throw "Invalid manifest '$ManifestPath': toolFiles[$index] '$s' must end with '.exe'."
+      }
+
       if ($DriverRoot) {
         Assert-PathIsRelativeAndUnderRoot -Root $DriverRoot -ChildPath $s -Context "toolFiles[$index]" -ManifestPath $ManifestPath
       } elseif ([System.IO.Path]::IsPathRooted($s)) {
         throw "Invalid manifest '$ManifestPath': toolFiles[$index] must be a relative path (got '$s')."
-      }
-
-      $ext = [System.IO.Path]::GetExtension($s).ToLowerInvariant()
-      if ($ext -ne '.exe') {
-        throw "Invalid manifest '$ManifestPath': toolFiles[$index] '$s' must end with '.exe'."
       }
 
       $key = $s.Replace('\', '/').ToLowerInvariant()
@@ -360,7 +392,6 @@ function Validate-DriverPackageManifest {
       $seen[$key] = $true
     }
   }
-
   $wdfProp = $data.PSObject.Properties['wdfCoInstaller']
   if ($null -ne $wdfProp) {
     Assert-JsonObject -Value $wdfProp.Value -Context 'wdfCoInstaller' -ManifestPath $ManifestPath
