@@ -843,7 +843,7 @@ fn dxbc_container_rejects_excessive_chunk_count() {
     use crate::shader_limits::MAX_D3D9_DXBC_CHUNK_COUNT;
 
     // Minimal DXBC header with an absurd chunk count. The parser must reject this without
-    // allocating `Vec` capacity based on the untrusted count.
+    // doing pathological work based on the untrusted count.
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"DXBC");
     bytes.extend_from_slice(&[0u8; 16]); // checksum
@@ -851,7 +851,7 @@ fn dxbc_container_rejects_excessive_chunk_count() {
     bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
     bytes.extend_from_slice(&(MAX_D3D9_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk count
 
-    let err = dxbc::Container::parse(&bytes).unwrap_err();
+    let err = dxbc::extract_shader_bytecode(&bytes).unwrap_err();
     assert!(
         matches!(err, dxbc::DxbcError::ChunkCountTooLarge { .. }),
         "{err:?}"
@@ -866,14 +866,14 @@ fn dxbc_container_does_not_panic_on_huge_chunk_offset() {
     bytes.extend_from_slice(b"DXBC");
     bytes.extend_from_slice(&[0u8; 16]); // checksum
     bytes.extend_from_slice(&1u32.to_le_bytes()); // unknown field
-    bytes.extend_from_slice(&36u32.to_le_bytes()); // total size (ignored by this parser)
+    bytes.extend_from_slice(&36u32.to_le_bytes()); // total size
     bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk count
     bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // chunk offset
 
-    let result = std::panic::catch_unwind(|| dxbc::Container::parse(&bytes));
-    assert!(result.is_ok(), "Container::parse panicked");
+    let result = std::panic::catch_unwind(|| dxbc::extract_shader_bytecode(&bytes));
+    assert!(result.is_ok(), "extract_shader_bytecode panicked");
     let err = result.unwrap().unwrap_err();
-    assert!(matches!(err, dxbc::DxbcError::ChunkOutOfBounds), "{err:?}");
+    assert!(matches!(err, dxbc::DxbcError::Shared(_)), "{err:?}");
 }
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
