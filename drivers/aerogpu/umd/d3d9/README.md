@@ -285,17 +285,22 @@ Supported FVF combinations (currently implemented):
 
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
-- `fixedfunc_fvf_supported()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1`
-- `ensure_fixedfunc_pipeline_locked()`
+- `fixedfunc_supported_fvf()` + `kSupportedFvfXyz{,rhw}Diffuse{,Tex1}`
+- `fixedfunc_fvf_supported()` (internal FVF decl path; used by some bring-up-only code paths like patch emulation)
+- `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
+- XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
 
-Not yet implemented (not rendered by the fixed-function fallback path; expected by some fixed-function apps):
+Not yet implemented (examples; expected by some fixed-function apps):
 
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE`
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+- Any FVF requiring fixed-function lighting/material (`D3DFVF_NORMAL`, `D3DFVF_SPECULAR`, etc)
+- Multiple texture coordinate sets (`D3DFVF_TEX2+`) or non-`float2` `TEXCOORD0` encodings
+- Stage-state-driven fixed-function emulation (texture stage state, WVP transforms, etc)
 
 Implementation notes (bring-up):
 
@@ -309,8 +314,9 @@ Implementation notes (bring-up):
 
 Limitations (bring-up):
 
-- Only `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` and `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1` are supported by the fixed-function fallback path (see `ensure_fixedfunc_pipeline_locked()` in `src/aerogpu_d3d9_driver.cpp`). Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping, but fixed-function draws will fail with `D3DERR_INVALIDCALL` if the active FVF is unsupported.
-- Untransformed `D3DFVF_XYZ*` fixed-function rendering (world/view/projection transforms) is not implemented yet.
+- The fixed-function fallback supports only the FVFs listed above (see `ensure_fixedfunc_pipeline_locked()` in `src/aerogpu_d3d9_driver.cpp`). Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping, but fixed-function draws will fail with `D3DERR_INVALIDCALL` if the active FVF is unsupported.
+- For `D3DFVF_XYZRHW*` FVFs, the UMD converts `POSITIONT` (screen-space `XYZRHW`) vertices to clip-space on the CPU (`convert_xyzrhw_to_clipspace_locked()`).
+- For `D3DFVF_XYZ*` FVFs, the built-in fixed-function shader path is currently **passthrough** (no world/view/projection transforms are applied). In other words, `XYZ` positions are treated as already in clip-space; transform state is cached for `Get*`/state blocks but is not consumed by the fixed-function shader path yet.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - The `TEX1` fixed-function path uses a fixed shader: sample `Texture(0)` and multiply by the per-vertex diffuse color (classic “modulate”). `D3DTSS_*` texture stage state is cached for `Get*`/state blocks but is not interpreted by the fixed-function shader path.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
