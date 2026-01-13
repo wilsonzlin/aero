@@ -181,6 +181,11 @@ pub fn wasm_start() {
     }
 }
 
+// Some browser-only APIs used by `aero-wasm` (notably OPFS sync access handles) are worker-only.
+// Configure wasm-bindgen tests for this crate to run in a worker when targeting wasm32.
+#[cfg(all(test, target_arch = "wasm32"))]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_worker);
+
 /// Placeholder API exported to JS. Both the threaded and single WASM variants
 /// are built from this crate and must expose an identical surface.
 #[wasm_bindgen]
@@ -3682,6 +3687,193 @@ impl Machine {
         arr.into()
     }
 
+    /// Reattach any disks/ISOs referenced by the most recent snapshot restore by treating the
+    /// `base_image`/`overlay_image` strings as OPFS paths.
+    ///
+    /// Snapshot restore intentionally drops storage controller host backends; callers can invoke
+    /// this helper after `Machine::restore_snapshot_from_opfs(...)` to reopen and attach all
+    /// restored media in one call (no JS-side `disk_id` switch/case).
+    ///
+    /// This consumes the restored overlay refs via `take_restored_disk_overlays`. If the machine
+    /// has not performed a snapshot restore (or the snapshot did not include a `DISKS` section),
+    /// this is a no-op.
+    ///
+    /// ## `disk_id` mapping
+    /// - `disk_id=0`: primary HDD (AHCI port 0 / canonical shared disk)
+    /// - `disk_id=1`: install media / CD-ROM (IDE secondary master ATAPI)
+    /// - `disk_id=2`: IDE primary master ATA disk
+    ///
+    /// ## Notes
+    /// - Empty `base_image` + `overlay_image` entries are treated as "nothing attached" and are
+    ///   skipped. (The snapshot format always emits entries for some canonical slots.)
+    /// - `disk_id=1` does not currently support overlays; a non-empty `overlay_image` is treated
+    ///   as an error.
+    ///
+    /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
+    /// a dedicated worker (not the main thread).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn reattach_restored_disks_from_opfs(&mut self) -> Result<(), JsValue> {
+        let Some(overlays) = self.inner.take_restored_disk_overlays() else {
+            return Ok(());
+        };
+
+        for disk in overlays.disks {
+            let disk_id = disk.disk_id;
+            let base_image = disk.base_image;
+            let overlay_image = disk.overlay_image;
+
+            // The snapshot format always emits entries for the canonical disks (e.g. `disk_id=0`
+            // and `disk_id=1`). Treat empty refs as "slot unused" instead of as an error.
+            if base_image.is_empty() {
+                if overlay_image.is_empty() {
+                    continue;
+                }
+                return Err(JsValue::from_str(&format!(
+                    "reattach_restored_disks_from_opfs: disk_id={disk_id} has empty base_image but non-empty overlay_image={overlay_image:?}"
+                )));
+            }
+
+            match disk_id {
+                aero_machine::Machine::DISK_ID_PRIMARY_HDD => {
+                    let base_backend = aero_opfs::OpfsByteStorage::open(&base_image, false)
+                        .await
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: failed to open OPFS base_image for disk_id=0 ({base_image:?}): {e}"
+                            ))
+                        })?;
+                    let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
+                        JsValue::from_str(&format!(
+                            "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=0 base_image={base_image:?}: {e}"
+                        ))
+                    })?;
+
+                    if overlay_image.is_empty() {
+                        self.inner
+                            .set_disk_backend(Box::new(base_disk))
+                            .map_err(|e| {
+                                JsValue::from_str(&format!(
+                                    "reattach_restored_disks_from_opfs: attach failed for disk_id=0 base_image={base_image:?}: {e}"
+                                ))
+                            })?;
+                        continue;
+                    }
+
+                    let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_image, false)
+                        .await
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: failed to open OPFS overlay_image for disk_id=0 ({overlay_image:?}): {e}"
+                            ))
+                        })?;
+                    let cow =
+                        aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: failed to open COW disk for disk_id=0 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
+                            ))
+                        })?;
+                    self.inner.set_disk_backend(Box::new(cow)).map_err(|e| {
+                        JsValue::from_str(&format!(
+                            "reattach_restored_disks_from_opfs: attach failed for disk_id=0 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
+                        ))
+                    })?;
+                }
+
+                aero_machine::Machine::DISK_ID_INSTALL_MEDIA => {
+                    if !overlay_image.is_empty() {
+                        return Err(JsValue::from_str(&format!(
+                            "reattach_restored_disks_from_opfs: disk_id=1 (install media) does not support overlay_image (got {overlay_image:?})"
+                        )));
+                    }
+
+                    // `OpfsBackend` is the OPFS VirtualDisk wrapper that supports `Send` in
+                    // single-threaded wasm builds (required by the ATAPI/ISO adapter).
+                    #[cfg(not(target_feature = "atomics"))]
+                    {
+                        let backend = aero_opfs::OpfsBackend::open_existing(&base_image)
+                            .await
+                            .map_err(|e| {
+                                JsValue::from_str(&format!(
+                                    "reattach_restored_disks_from_opfs: failed to open OPFS ISO for disk_id=1 ({base_image:?}): {e}"
+                                ))
+                            })?;
+                        let disk: Box<dyn aero_storage::VirtualDisk + Send> = Box::new(backend);
+                        let iso = aero_devices_storage::atapi::VirtualDiskIsoBackend::new(disk)
+                            .map_err(|e| {
+                                JsValue::from_str(&format!(
+                                    "reattach_restored_disks_from_opfs: failed to wrap ISO as ATAPI backend for disk_id=1 base_image={base_image:?}: {e}"
+                                ))
+                            })?;
+                        self.inner
+                            .attach_ide_secondary_master_atapi_backend_for_restore(Box::new(iso));
+                    }
+
+                    #[cfg(target_feature = "atomics")]
+                    {
+                        return Err(JsValue::from_str(
+                            "reattach_restored_disks_from_opfs: disk_id=1 (install media) is not supported in threaded WASM builds (atomics enabled); OPFS sync handles cannot be shared across wasm threads",
+                        ));
+                    }
+                }
+
+                aero_machine::Machine::DISK_ID_IDE_PRIMARY_MASTER => {
+                    let base_backend = aero_opfs::OpfsByteStorage::open(&base_image, false)
+                        .await
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: failed to open OPFS base_image for disk_id=2 ({base_image:?}): {e}"
+                            ))
+                        })?;
+                    let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
+                        JsValue::from_str(&format!(
+                            "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=2 base_image={base_image:?}: {e}"
+                        ))
+                    })?;
+
+                    if overlay_image.is_empty() {
+                        self.inner
+                            .attach_ide_primary_master_disk(Box::new(base_disk))
+                            .map_err(|e| {
+                                JsValue::from_str(&format!(
+                                    "reattach_restored_disks_from_opfs: attach failed for disk_id=2 base_image={base_image:?}: {e}"
+                                ))
+                            })?;
+                        continue;
+                    }
+
+                    let overlay_backend = aero_opfs::OpfsByteStorage::open(&overlay_image, false)
+                        .await
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: failed to open OPFS overlay_image for disk_id=2 ({overlay_image:?}): {e}"
+                            ))
+                        })?;
+                    let cow =
+                        aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: failed to open COW disk for disk_id=2 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
+                            ))
+                        })?;
+                    self.inner
+                        .attach_ide_primary_master_disk(Box::new(cow))
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: attach failed for disk_id=2 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
+                            ))
+                        })?;
+                }
+
+                other => {
+                    return Err(JsValue::from_str(&format!(
+                        "reattach_restored_disks_from_opfs: unknown disk_id {other} (base_image={base_image:?}, overlay_image={overlay_image:?})"
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
     // Snapshots (canonical machine)
     // -------------------------------------------------------------------------
@@ -4095,5 +4287,123 @@ mod machine_opfs_ide_primary_master_tests {
         m.attach_ide_primary_master_disk_opfs(create_path, true, size_bytes)
             .await
             .expect("attach_ide_primary_master_disk_opfs should succeed");
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod reattach_restored_disks_from_opfs_tests {
+    use super::*;
+
+    use aero_opfs::{DiskError, OpfsByteStorage};
+    use aero_snapshot::{DiskOverlayRef, DiskOverlayRefs, SnapshotTarget as _};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn unique_path(prefix: &str, ext: &str) -> String {
+        let now = js_sys::Date::now() as u64;
+        format!("tests/{prefix}-{now}.{ext}")
+    }
+
+    async fn create_raw_file(path: &str, size: u64) -> Result<(), DiskError> {
+        let mut storage = OpfsByteStorage::open(path, true).await?;
+        storage.set_len(size)?;
+        storage.write_at(0, &[0xA5, 0x5A, 0x01, 0x02])?;
+        storage.flush()?;
+        storage.close()?;
+        Ok(())
+    }
+
+    async fn create_sparse_overlay(path: &str, disk_size_bytes: u64) -> Result<(), DiskError> {
+        let storage = OpfsByteStorage::open(path, true).await?;
+        let mut disk = aero_storage::AeroSparseDisk::create(
+            storage,
+            aero_storage::AeroSparseConfig {
+                disk_size_bytes,
+                block_size_bytes: 512,
+            },
+        )?;
+        disk.flush()?;
+
+        let mut backend = disk.into_backend();
+        backend.close()?;
+        Ok(())
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn reattach_with_no_restored_overlays_is_ok() {
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+        m.reattach_restored_disks_from_opfs()
+            .await
+            .expect("reattach should be a no-op when no restore overlays exist");
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn reattach_restored_disks_from_opfs_attaches_when_opfs_available() {
+        // Creating OPFS sync access handles is worker-only and not universally available in all
+        // wasm-bindgen-test runtimes. Skip gracefully when unsupported.
+        let base0 = unique_path("reattach-base0", "img");
+        let overlay0 = unique_path("reattach-overlay0", "aerospar");
+        let base2 = unique_path("reattach-base2", "img");
+        let iso1 = unique_path("reattach-iso1", "iso");
+
+        let disk_size = 4096u64;
+
+        // Base disk for disk_id=0 (primary HDD).
+        match create_raw_file(&base0, disk_size).await {
+            Ok(()) => {}
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("create_raw_file({base0:?}) failed: {e:?}"),
+        }
+
+        // Sparse overlay for disk_id=0.
+        match create_sparse_overlay(&overlay0, disk_size).await {
+            Ok(()) => {}
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("create_sparse_overlay({overlay0:?}) failed: {e:?}"),
+        }
+
+        // Base disk for disk_id=2 (IDE primary master).
+        match create_raw_file(&base2, disk_size).await {
+            Ok(()) => {}
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("create_raw_file({base2:?}) failed: {e:?}"),
+        }
+
+        // ISO for disk_id=1 (install media). Must be a multiple of 2048 bytes.
+        match create_raw_file(&iso1, 2048).await {
+            Ok(()) => {}
+            Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+            Err(DiskError::QuotaExceeded) => return,
+            Err(e) => panic!("create_raw_file({iso1:?}) failed: {e:?}"),
+        }
+
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        // Simulate snapshot restore populating `restored_disk_overlays`.
+        m.inner.restore_disk_overlays(DiskOverlayRefs {
+            disks: vec![
+                DiskOverlayRef {
+                    disk_id: aero_machine::Machine::DISK_ID_PRIMARY_HDD,
+                    base_image: base0.clone(),
+                    overlay_image: overlay0.clone(),
+                },
+                DiskOverlayRef {
+                    disk_id: aero_machine::Machine::DISK_ID_INSTALL_MEDIA,
+                    base_image: iso1.clone(),
+                    overlay_image: String::new(),
+                },
+                DiskOverlayRef {
+                    disk_id: aero_machine::Machine::DISK_ID_IDE_PRIMARY_MASTER,
+                    base_image: base2.clone(),
+                    overlay_image: String::new(),
+                },
+            ],
+        });
+
+        m.reattach_restored_disks_from_opfs()
+            .await
+            .expect("reattach should succeed when referenced OPFS files exist");
     }
 }
