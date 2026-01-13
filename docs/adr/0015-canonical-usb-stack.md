@@ -31,8 +31,11 @@ It also clarifies how the legacy/native USB code fits into the repo going forwar
 
 For the in-browser runtime, the canonical stack is:
 
-- **USB device models + UHCI (Rust, deterministic, wasm32-friendly):** `crates/aero-usb`
-  - UHCI controller: `aero_usb::uhci::UhciController`
+- **USB device models + host controllers (Rust, deterministic, wasm32-friendly):** `crates/aero-usb`
+  - Primary controller for Windows 7 bring-up is UHCI (`aero_usb::uhci::UhciController`).
+  - EHCI (USB 2.0) and xHCI (USB 3.x) models also live in `crates/aero-usb` and are being brought up
+    incrementally (`aero_usb::ehci::EhciController`, `aero_usb::xhci::XhciController`).
+    - See controller docs: [`docs/usb-ehci.md`](../usb-ehci.md), [`docs/usb-xhci.md`](../usb-xhci.md).
   - Guest-visible USB device models (HID, hubs, passthrough wrappers): `aero_usb::*`
 - **WASM-facing exports (thin wrappers around `aero-usb`):** `crates/aero-wasm`
 - **Host integration (TypeScript):** `web/src/usb/*`
