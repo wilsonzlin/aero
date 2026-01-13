@@ -101,6 +101,16 @@ function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
     : new Uint8Array(data);
 }
 
+function isQuotaExceededError(err: unknown): boolean {
+  // Browser/file system quota failures typically surface as a DOMException named
+  // "QuotaExceededError".
+  return (
+    err instanceof DOMException &&
+    // Firefox uses a different name for the same condition.
+    (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED")
+  );
+}
+
 function signatureMatches(a: RemoteChunkCacheSignature | undefined, b: RemoteChunkCacheSignature): boolean {
   return (
     !!a &&
@@ -368,31 +378,36 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
     this.dirty = true;
   }
 
-  private async evictIfNeeded(): Promise<number[]> {
-    const evicted: number[] = [];
-    if (this.maxBytes === null) return evicted;
+  private findEvictionVictim(exclude: Set<number> | null = null): number | null {
+    let victim: number | null = null;
+    let victimAccess = Number.POSITIVE_INFINITY;
 
-    while (this.totalBytes > this.maxBytes) {
-      let victim: number | null = null;
-      let victimAccess = Number.POSITIVE_INFINITY;
-
-      const chunks = this.index.chunks;
-      for (const idxStr in chunks) {
-        if (!Object.prototype.hasOwnProperty.call(chunks, idxStr)) continue;
-        const meta = chunks[idxStr]!;
-        const idx = Number(idxStr);
-        if (!Number.isFinite(idx)) continue;
-        const access = meta.lastAccess;
-        if (access < victimAccess) {
-          victimAccess = access;
-          victim = idx;
-          continue;
-        }
-        if (access === victimAccess && victim !== null && idx < victim) {
-          victim = idx;
-        }
+    const chunks = this.index.chunks;
+    for (const idxStr in chunks) {
+      if (!Object.prototype.hasOwnProperty.call(chunks, idxStr)) continue;
+      const meta = chunks[idxStr]!;
+      const idx = Number(idxStr);
+      if (!Number.isFinite(idx)) continue;
+      if (exclude?.has(idx)) continue;
+      const access = meta.lastAccess;
+      if (access < victimAccess) {
+        victimAccess = access;
+        victim = idx;
+        continue;
       }
+      if (access === victimAccess && victim !== null && idx < victim) {
+        victim = idx;
+      }
+    }
 
+    return victim;
+  }
+
+  private async evictUntilTotalBytesAtMost(targetBytes: number, exclude: Set<number> | null = null): Promise<number[]> {
+    const evicted: number[] = [];
+
+    while (this.totalBytes > targetBytes) {
+      const victim = this.findEvictionVictim(exclude);
       if (victim === null) break;
 
       const victimKey = String(victim);
@@ -410,6 +425,11 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
     if (this.totalBytes < 0) this.totalBytes = 0;
 
     return evicted;
+  }
+
+  private async evictIfNeeded(): Promise<number[]> {
+    if (this.maxBytes === null) return [];
+    return await this.evictUntilTotalBytesAtMost(this.maxBytes);
   }
 
   private async deleteChunkFile(index: number): Promise<void> {
@@ -598,32 +618,50 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
         }
       }
 
-      const chunks = await this.getOrCreateChunksDir();
-      const handle = await chunks.getFileHandle(this.chunkFileName(index), { create: true });
       const bytes = toArrayBufferUint8(data);
+      const key = String(index);
+      const evicted: number[] = [];
 
-      // Prefer SyncAccessHandle writes when running inside a dedicated worker. This avoids building
-      // `File` objects and is noticeably faster for high-frequency chunk caching.
-      let sync: FileSystemSyncAccessHandle | null = null;
-      try {
-        sync = await createSyncAccessHandleInDedicatedWorker(handle);
-      } catch {
-        // Fall back to async writable stream (works on the main thread and in workers that
-        // don't support SyncAccessHandle).
-        sync = null;
+      // Pre-evict before writing to avoid temporarily exceeding both `maxBytes` and the
+      // browser quota.
+      const prev = this.index.chunks[key];
+      const prevByteLength = prev?.byteLength ?? 0;
+      const projectedTotalBytes = this.totalBytes - prevByteLength + data.byteLength;
+      if (this.maxBytes !== null && projectedTotalBytes > this.maxBytes) {
+        // Condition for the *current* totalBytes such that adding the new chunk results in a
+        // final size within maxBytes.
+        const targetTotalBytesBeforeWrite = this.maxBytes - data.byteLength + prevByteLength;
+        evicted.push(...(await this.evictUntilTotalBytesAtMost(targetTotalBytesBeforeWrite, new Set([index]))));
       }
-      if (sync) {
+
+      const writeChunk = async (): Promise<void> => {
+        const chunks = await this.getOrCreateChunksDir();
+        const handle = await chunks.getFileHandle(this.chunkFileName(index), { create: true });
+
+        // Prefer SyncAccessHandle writes when running inside a dedicated worker. This avoids building
+        // `File` objects and is noticeably faster for high-frequency chunk caching.
+        let sync: FileSystemSyncAccessHandle | null = null;
         try {
-          sync.truncate(bytes.byteLength);
-          const written = sync.write(bytes, { at: 0 });
-          if (written !== bytes.byteLength) {
-            throw new Error(`short cache write: expected=${bytes.byteLength} actual=${written}`);
-          }
-          sync.flush();
-        } finally {
-          sync.close();
+          sync = await createSyncAccessHandleInDedicatedWorker(handle);
+        } catch {
+          // Fall back to async writable stream (works on the main thread and in workers that
+          // don't support SyncAccessHandle).
+          sync = null;
         }
-      } else {
+        if (sync) {
+          try {
+            sync.truncate(bytes.byteLength);
+            const written = sync.write(bytes, { at: 0 });
+            if (written !== bytes.byteLength) {
+              throw new Error(`short cache write: expected=${bytes.byteLength} actual=${written}`);
+            }
+            sync.flush();
+          } finally {
+            sync.close();
+          }
+          return;
+        }
+
         const writable = await handle.createWritable({ keepExistingData: false });
         try {
           await writable.write(bytes);
@@ -636,18 +674,52 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           }
           throw err;
         }
+      };
+
+      try {
+        await writeChunk();
+      } catch (err) {
+        if (!isQuotaExceededError(err)) {
+          // Preserve the existing behavior for non-quota errors, but persist any eviction work
+          // we may have done above so index.json remains consistent with on-disk chunk files.
+          await this.persistIndexIfDirty();
+          throw err;
+        }
+
+        // QuotaExceededError: best-effort eviction + retry once. Caching should never be fatal.
+        //
+        // Remove any partially-written chunk file first; for new indices this prevents orphan
+        // files from being picked up later by reconcileWithFilesystem().
+        await this.deleteChunkFile(index);
+
+        // Best-effort: clear the cache to free as much space as possible before retrying.
+        evicted.push(...(await this.evictUntilTotalBytesAtMost(0)));
+
+        try {
+          await writeChunk();
+        } catch (err2) {
+          if (!isQuotaExceededError(err2)) {
+            await this.persistIndexIfDirty();
+            throw err2;
+          }
+
+          // Still out of quota after eviction: skip caching without failing the caller.
+          await this.deleteChunkFile(index);
+          await this.persistIndexIfDirty();
+          return { stored: false, evicted };
+        }
       }
 
-      const key = String(index);
-      const prev = this.index.chunks[key];
-      if (prev) {
-        this.totalBytes -= prev.byteLength;
+      // Update metadata only after a successful write.
+      const prevAfterWrite = this.index.chunks[key];
+      if (prevAfterWrite) {
+        this.totalBytes -= prevAfterWrite.byteLength;
       }
       this.index.chunks[key] = { byteLength: data.byteLength, lastAccess: 0 };
       this.totalBytes += data.byteLength;
       this.touch(index);
 
-      const evicted = await this.evictIfNeeded();
+      evicted.push(...(await this.evictIfNeeded()));
       await this.persistIndexIfDirty();
 
       return { stored: !!this.index.chunks[key], evicted };

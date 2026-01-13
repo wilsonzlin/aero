@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { OpfsLruChunkCache } from "./opfs_lru_chunk_cache";
-import { getDir, installMemoryOpfs, MemoryDirectoryHandle } from "../../test_utils/memory_opfs";
+import { getDir, installMemoryOpfs, MemoryDirectoryHandle, MemoryFileHandle } from "../../test_utils/memory_opfs";
 
 let restoreOpfs: (() => void) | null = null;
 
@@ -86,6 +86,126 @@ describe("OpfsLruChunkCache", () => {
     const stats = await cache.getStats();
     expect(stats.totalBytes).toBe(6);
     expect(stats.chunkCount).toBe(1);
+  });
+
+  it("pre-evicts before writes so maxBytes never transiently overflows", async () => {
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    const cacheKey = "test";
+    const chunkSize = 4;
+    const maxBytes = chunkSize;
+
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    let quotaExceededCount = 0;
+    (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = async function (
+      this: MemoryFileHandle,
+      options?: { keepExistingData?: boolean },
+    ) {
+      const inner = await originalCreateWritable.call(this, options);
+      const fileName = this.name;
+      if (!fileName.endsWith(".bin")) return inner;
+
+      let stagedBytes = 0;
+      return {
+        write: async (data: string | Uint8Array) => {
+          stagedBytes += typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+          return await (inner as unknown as { write: (data: string | Uint8Array) => Promise<void> }).write(data);
+        },
+        close: async () => {
+          const chunksDir = await getDir(root, ["aero", "disks", "remote-cache", cacheKey, "chunks"]);
+          let usedBytes = 0;
+          for await (const [name, handle] of chunksDir.entries()) {
+            if (handle.kind !== "file") continue;
+            if (!name.endsWith(".bin")) continue;
+            if (name === fileName) continue;
+            const file = await (handle as unknown as { getFile: () => Promise<{ size: number }> }).getFile();
+            usedBytes += file.size;
+          }
+          if (usedBytes + stagedBytes > maxBytes) {
+            quotaExceededCount += 1;
+            throw new DOMException("Quota exceeded", "QuotaExceededError");
+          }
+          return await (inner as unknown as { close: () => Promise<void> }).close();
+        },
+        abort: async (reason?: unknown) => {
+          return await (inner as unknown as { abort: (reason?: unknown) => Promise<void> }).abort(reason);
+        },
+      };
+    };
+
+    try {
+      const cache = await OpfsLruChunkCache.open({ cacheKey, chunkSize, maxBytes });
+      await expect(cache.putChunk(0, new Uint8Array(chunkSize).fill(0))).resolves.toMatchObject({ stored: true });
+      await expect(cache.putChunk(1, new Uint8Array(chunkSize).fill(1))).resolves.toMatchObject({ stored: true });
+      await expect(cache.putChunk(2, new Uint8Array(chunkSize).fill(2))).resolves.toMatchObject({ stored: true });
+
+      expect(quotaExceededCount).toBe(0);
+
+      const stats = await cache.getStats();
+      expect(stats.totalBytes).toBe(chunkSize);
+      expect(stats.chunkCount).toBe(1);
+
+      await expect(cache.getChunkIndices()).resolves.toEqual([2]);
+    } finally {
+      (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = originalCreateWritable;
+    }
+  });
+
+  it("treats QuotaExceededError writes as best-effort (non-fatal) and keeps index consistent", async () => {
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    const cacheKey = "test";
+    const cache = await OpfsLruChunkCache.open({ cacheKey, chunkSize: 4, maxBytes: 1024 });
+    await cache.putChunk(0, new Uint8Array([0, 0, 0, 0]));
+
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = async function (
+      this: MemoryFileHandle,
+      options?: { keepExistingData?: boolean },
+    ) {
+      const fileName = this.name;
+      if (fileName.endsWith(".bin")) {
+        return {
+          write: async () => {
+            throw new DOMException("Quota exceeded", "QuotaExceededError");
+          },
+          close: async () => undefined,
+          abort: async () => undefined,
+        };
+      }
+      return await originalCreateWritable.call(this, options);
+    };
+
+    let result: { stored: boolean; evicted: number[] } | null = null;
+    try {
+      result = await cache.putChunk(1, new Uint8Array([1, 1, 1, 1]));
+    } finally {
+      (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = originalCreateWritable;
+    }
+
+    expect(result).not.toBeNull();
+    expect(result!.stored).toBe(false);
+
+    // The cache may evict entries to try to make room, but it must not end up with a partially
+    // cached chunk or a corrupt index.
+    await expect(cache.getChunk(1, 4)).resolves.toBeNull();
+    await expect(cache.getChunkIndices()).resolves.not.toContain(1);
+
+    // Ensure the failed chunk did not leave an orphan file behind.
+    const chunksDir = await getDir(root, ["aero", "disks", "remote-cache", cacheKey, "chunks"]);
+    const chunkFiles: string[] = [];
+    for await (const [name, handle] of chunksDir.entries()) {
+      if (handle.kind === "file") chunkFiles.push(name);
+    }
+    expect(chunkFiles).not.toContain("1.bin");
+
+    // Caller can continue using the cache after a quota failure.
+    await expect(cache.putChunk(2, new Uint8Array([2, 2, 2, 2]))).resolves.toMatchObject({ stored: true });
+    await cache.flush();
+    const reopened = await OpfsLruChunkCache.open({ cacheKey, chunkSize: 4, maxBytes: 1024 });
+    await expect(reopened.getChunk(2, 4)).resolves.toEqual(new Uint8Array([2, 2, 2, 2]));
   });
 
   it("treats oversized index.json files as corrupt without attempting to read them", async () => {
