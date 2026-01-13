@@ -413,6 +413,20 @@ The relay requires that the backend negotiates `aero-l2-tunnel-v1` (strict).
 The forwarded `<credential>` is the same JWT or API key that authenticated the relay's signaling endpoints
 (`AUTH_MODE`). When `AUTH_MODE=none`, no credential is forwarded.
 
+### L2 bridge metrics
+
+The relay exposes internal event counters via `GET /metrics` as:
+
+`aero_webrtc_udp_relay_events_total{event="<name>"} <value>`
+
+For L2 tunnel bridging, the relevant counters include:
+
+- `l2_bridge_dials_total`, `l2_bridge_dial_errors_total`
+- `l2_bridge_messages_from_client_total`, `l2_bridge_messages_to_client_total`
+- `l2_bridge_bytes_from_client_total`, `l2_bridge_bytes_to_client_total`
+- `l2_bridge_dropped_oversized_total` (message exceeded `L2_MAX_MESSAGE_BYTES`)
+- `l2_bridge_dropped_rate_limited_total` (relay→client frame dropped by per-session DataChannel quota)
+
 ### Quota + rate limiting (env + flags)
 
 Per-session quotas and rate limits are enforced on the **data plane** (WebRTC DataChannel ↔ UDP):
