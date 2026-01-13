@@ -3,7 +3,7 @@ import "../../test/fake_indexeddb_auto.ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { clearIdb } from "./metadata";
-import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
+import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "./idb_remote_chunk_cache";
 
 const CHUNK_SIZE = 512 * 1024;
 
@@ -111,5 +111,32 @@ describe("IdbRemoteChunkCache", () => {
     const status = await cache2.getStatus();
     expect(status.bytesUsed).toBe(0);
     cache2.close();
+  });
+
+  it("wraps quota errors during open as IdbRemoteChunkCacheQuotaError", async () => {
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    (indexedDB as unknown as { open: typeof indexedDB.open }).open = ((..._args: any[]) => {
+      const req: any = { result: null, error: new DOMException("quota exceeded", "QuotaExceededError") };
+      queueMicrotask(() => req.onerror?.());
+      return req;
+    }) as any;
+
+    try {
+      await expect(
+        IdbRemoteChunkCache.open({
+          cacheKey: "k",
+          signature: {
+            imageId: "img",
+            version: "v1",
+            etag: "e1",
+            lastModified: null,
+            sizeBytes: 4 * CHUNK_SIZE,
+            chunkSize: CHUNK_SIZE,
+          },
+        }),
+      ).rejects.toBeInstanceOf(IdbRemoteChunkCacheQuotaError);
+    } finally {
+      (indexedDB as unknown as { open: typeof indexedDB.open }).open = originalOpen;
+    }
   });
 });

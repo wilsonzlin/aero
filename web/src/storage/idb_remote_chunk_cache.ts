@@ -207,7 +207,15 @@ export class IdbRemoteChunkCache {
       throw new Error(`maxCachedChunks must be a non-negative safe integer (got ${maxCachedChunks})`);
     }
 
-    const db = await openDiskManagerDb();
+    let db: IDBDatabase;
+    try {
+      db = await openDiskManagerDb();
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
+      }
+      throw err;
+    }
     const cache = new IdbRemoteChunkCache(db, opts.cacheKey, opts.signature, opts.cacheLimitBytes ?? null, maxCachedChunks);
     try {
       await cache.ensureCompatible();
