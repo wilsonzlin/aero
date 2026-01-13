@@ -35,5 +35,8 @@ In a finished package, this directory contains the driver package payload:
   INFs that match the same HWIDs.
 - **Keep `virtio-snd.inf.disabled` in sync:** the alias INF must remain **byte-for-byte identical** to
   `aero_virtio_snd.inf` in all functional content (everything from `[Version]` onward). Only the filename and the
-  leading comment/header block should differ. To verify, run (from the repo root):
-  - `python3 drivers/windows7/virtio-snd/scripts/check-inf-alias.py`
+  leading comment/header block should differ.
+  - Full package/INF invariants (recommended, from `drivers/windows7/virtio-snd/`):
+    - `./scripts/lint-inf.sh`
+  - Alias-only check (from the repo root):
+    - `python3 drivers/windows7/virtio-snd/scripts/check-inf-alias.py`

@@ -70,6 +70,13 @@ jobs:
       - name: Check Windows 7 virtio contract consistency (docs + INFs)
         run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
 
+      - name: Lint Win7 virtio-snd INF (contract v1 invariants)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd drivers/windows7/virtio-snd
+          ./scripts/lint-inf.sh
+
       - name: Unit tests (Win7 host harness wav verification)
         run: python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'test_*.py'
 
