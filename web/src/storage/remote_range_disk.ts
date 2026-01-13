@@ -912,7 +912,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       await this.invalidationPromise;
     }
     const generation = this.cacheGeneration;
-    const cache = this.ensureOpen();
+    this.ensureOpen();
     assertSectorAligned(buffer.byteLength, this.sectorSize);
     const offset = checkedOffset(lba, buffer.byteLength, this.sectorSize);
     if (offset + buffer.byteLength > this.capacityBytesValue) {
@@ -927,11 +927,37 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const startChunk = divFloor(offset, this.opts.chunkSize);
     const endChunk = divFloor(offset + buffer.byteLength - 1, this.opts.chunkSize);
 
-    const pending: Array<Promise<void>> = [];
-    for (let chunk = startChunk; chunk <= endChunk; chunk++) {
-      pending.push(this.ensureChunkCached(chunk));
+    // Avoid allocating a promise per spanned chunk: large reads (or buggy guests) can request
+    // extremely long ranges. Instead, cache a bounded window of chunks and advance as tasks
+    // complete, similar to `RemoteChunkedDisk.readSectors`.
+    const inflight = new Map<number, Promise<void>>();
+    let nextChunk = startChunk;
+    const maxInflight = this.opts.maxConcurrentFetches;
+
+    const launch = (chunkIndex: number): void => {
+      const task = this.ensureChunkCached(chunkIndex).finally(() => {
+        inflight.delete(chunkIndex);
+      });
+      inflight.set(chunkIndex, task);
+    };
+
+    while (nextChunk <= endChunk && inflight.size < maxInflight) {
+      launch(nextChunk);
+      nextChunk += 1;
     }
-    await Promise.all(pending);
+
+    while (inflight.size > 0) {
+      await Promise.race(inflight.values());
+      if (generation !== this.cacheGeneration) {
+        // Cache was invalidated while awaiting downloads; stop launching new chunk fetches.
+        // We'll drain the existing inflight work, then restart the read against the new cache.
+        continue;
+      }
+      while (nextChunk <= endChunk && inflight.size < maxInflight) {
+        launch(nextChunk);
+        nextChunk += 1;
+      }
+    }
 
     if (generation !== this.cacheGeneration) {
       // Cache was invalidated while awaiting downloads; restart the read against the new cache.

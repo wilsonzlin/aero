@@ -455,6 +455,142 @@ describe("RemoteRangeDisk", () => {
     await disk.close();
   });
 
+  it("limits inflight Range fetches and does not queue unbounded chunk tasks", async () => {
+    const chunkSize = 512;
+    const chunkCount = 100;
+    const data = makeTestData(chunkSize * chunkCount);
+
+    const maxConcurrentFetches = 4;
+
+    let inflightGets = 0;
+    let maxInflightGets = 0;
+    let rangeGets = 0;
+    const releaseQueue: Array<() => void> = [];
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+
+        inflightGets += 1;
+        if (inflightGets > maxInflightGets) maxInflightGets = inflightGets;
+
+        let resolve!: (resp: Response) => void;
+        let reject!: (err: unknown) => void;
+        const deferred = new Promise<Response>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+
+        const signal = init?.signal;
+        const onAbort = () => {
+          inflightGets -= 1;
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        if (signal) {
+          if (signal.aborted) {
+            onAbort();
+            return await deferred;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+
+        const resp = new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+
+        releaseQueue.push(() => {
+          if (signal) {
+            try {
+              signal.removeEventListener("abort", onAbort);
+            } catch {
+              // ignore
+            }
+          }
+          inflightGets -= 1;
+          resolve(resp);
+        });
+
+        return await deferred;
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "concurrency", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      maxConcurrentFetches,
+      maxRetries: 0,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+      fetchFn,
+    });
+
+    const buf = new Uint8Array(data.byteLength);
+    const readPromise = disk.readSectors(0, buf);
+
+    const start = Date.now();
+    while (inflightGets < maxConcurrentFetches) {
+      if (Date.now() - start > 5_000) {
+        throw new Error("timed out waiting for initial inflight Range requests");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    // Window size should limit the number of concurrent fetch calls.
+    expect(maxInflightGets).toBeLessThanOrEqual(maxConcurrentFetches);
+
+    // And it should avoid queuing up an unbounded number of tasks waiting on the fetch semaphore.
+    const semaphore = (disk as any).fetchSemaphore as any;
+    expect(semaphore.waiters.length).toBeLessThanOrEqual(maxConcurrentFetches);
+
+    // Release Range responses until the read finishes.
+    let done = false;
+    void readPromise.finally(() => {
+      done = true;
+    });
+    while (!done) {
+      const release = releaseQueue.shift();
+      if (release) {
+        release();
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    await readPromise;
+    expect(buf).toEqual(data);
+    expect(rangeGets).toBe(chunkCount);
+    await disk.close();
+  });
+
   it("rejects chunk sizes larger than 64MiB", async () => {
     const chunkSize = 128 * 1024 * 1024;
     await expect(
