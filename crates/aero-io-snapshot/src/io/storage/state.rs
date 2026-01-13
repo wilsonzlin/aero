@@ -1113,6 +1113,17 @@ pub struct NvmeControllerState {
     pub aqa: u32,
     pub asq: u64,
     pub acq: u64,
+    /// Number of Queues feature (FID=0x07): 0-based queue counts.
+    ///
+    /// The NVMe spec defines these as 0-based (i.e. 0 means 1 queue). We keep the encoded values
+    /// here (not the +1 decoded counts) so the state matches what GET/SET FEATURES expose to the
+    /// guest.
+    pub feature_num_io_sqs: u16,
+    pub feature_num_io_cqs: u16,
+    /// Interrupt Coalescing feature (FID=0x08): raw 16-bit value (THR/TIME fields).
+    pub feature_interrupt_coalescing: u16,
+    /// Volatile Write Cache feature (FID=0x06): enabled flag (CDW11 bit 0).
+    pub feature_volatile_write_cache: bool,
     pub admin_sq: Option<NvmeSubmissionQueueState>,
     pub admin_cq: Option<NvmeCompletionQueueState>,
     pub io_sqs: Vec<NvmeSubmissionQueueState>,
@@ -1123,7 +1134,7 @@ pub struct NvmeControllerState {
 
 impl IoSnapshot for NvmeControllerState {
     const DEVICE_ID: [u8; 4] = *b"NVME";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_REGS: u16 = 1;
@@ -1137,6 +1148,7 @@ impl IoSnapshot for NvmeControllerState {
         const TAG_IO_SQS: u16 = 7;
         const TAG_IO_CQS: u16 = 8;
         const TAG_INTX_LEVEL: u16 = 9;
+        const TAG_FEATURES: u16 = 10;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         let regs = Encoder::new()
@@ -1151,6 +1163,14 @@ impl IoSnapshot for NvmeControllerState {
             .u64(self.acq)
             .finish();
         w.field_bytes(TAG_REGS, regs);
+
+        let features = Encoder::new()
+            .u16(self.feature_num_io_sqs)
+            .u16(self.feature_num_io_cqs)
+            .u16(self.feature_interrupt_coalescing)
+            .bool(self.feature_volatile_write_cache)
+            .finish();
+        w.field_bytes(TAG_FEATURES, features);
 
         // Old admin queue encoding: base/size/head/tail for SQ and CQ.
         if let (Some(sq), Some(cq)) = (self.admin_sq.as_ref(), self.admin_cq.as_ref()) {
@@ -1271,6 +1291,7 @@ impl IoSnapshot for NvmeControllerState {
         const TAG_IO_SQS: u16 = 7;
         const TAG_IO_CQS: u16 = 8;
         const TAG_INTX_LEVEL: u16 = 9;
+        const TAG_FEATURES: u16 = 10;
 
         const MAX_IO_QUEUES: usize = 4096;
         const MAX_IN_FLIGHT_COMMANDS: usize = 262_144;
@@ -1289,6 +1310,22 @@ impl IoSnapshot for NvmeControllerState {
             self.aqa = d.u32()?;
             self.asq = d.u64()?;
             self.acq = d.u64()?;
+            d.finish()?;
+        }
+
+        // Reset feature state to a deterministic baseline before applying snapshot fields.
+        self.feature_num_io_sqs = 0;
+        self.feature_num_io_cqs = 0;
+        self.feature_interrupt_coalescing = 0;
+        self.feature_volatile_write_cache = false;
+
+        // Feature state (NVME 1.2+). For older snapshots these remain at their default values.
+        if let Some(buf) = r.bytes(TAG_FEATURES) {
+            let mut d = Decoder::new(buf);
+            self.feature_num_io_sqs = d.u16()?;
+            self.feature_num_io_cqs = d.u16()?;
+            self.feature_interrupt_coalescing = d.u16()?;
+            self.feature_volatile_write_cache = d.bool()?;
             d.finish()?;
         }
 

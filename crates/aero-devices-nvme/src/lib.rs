@@ -10,7 +10,7 @@
 //! - BAR0 register set (CAP/VS/CC/CSTS/AQA/ASQ/ACQ + doorbells)
 //! - Admin queues (submission/completion)
 //! - I/O queues (submission/completion)
-//! - Admin commands: IDENTIFY, CREATE IO SQ/CQ
+//! - Admin commands: IDENTIFY, CREATE/DELETE IO SQ/CQ, GET/SET FEATURES
 //! - NVM commands: READ, WRITE, FLUSH
 //! - PRP (PRP1/PRP2 + PRP lists)
 //! - Limited SGL support for READ/WRITE (Data Block + Segment/Last Segment chaining)
@@ -408,6 +408,13 @@ pub struct NvmeController {
     asq: u64,
     acq: u64,
 
+    // --- Admin command feature state ---
+    // The NVMe spec defines these as 0-based queue counts: 0 means 1 queue.
+    feature_num_io_sqs: u16,
+    feature_num_io_cqs: u16,
+    feature_interrupt_coalescing: u16,
+    feature_volatile_write_cache: bool,
+
     admin_sq: Option<SubmissionQueue>,
     admin_cq: Option<CompletionQueue>,
     io_sqs: HashMap<u16, SubmissionQueue>,
@@ -433,6 +440,11 @@ impl NvmeController {
         let cap =
             (mqes & 0xffff) | (css_nvm << 37) | (mpsmin << 48) | (mpsmax << 52) | (dstrd << 32);
 
+        // Default to advertising/supporting the full bounded IO queue count. Real guests typically
+        // issue SET FEATURES (Number of Queues) during init, but keeping the default generous
+        // improves compatibility with simpler drivers and existing unit tests.
+        let max_io_queues_0based = (NVME_MAX_IO_QUEUES as u16).saturating_sub(1);
+
         NvmeController {
             disk,
             cap,
@@ -443,6 +455,10 @@ impl NvmeController {
             aqa: 0,
             asq: 0,
             acq: 0,
+            feature_num_io_sqs: max_io_queues_0based,
+            feature_num_io_cqs: max_io_queues_0based,
+            feature_interrupt_coalescing: 0,
+            feature_volatile_write_cache: false,
             admin_sq: None,
             admin_cq: None,
             io_sqs: HashMap::new(),
@@ -470,6 +486,12 @@ impl NvmeController {
         self.aqa = 0;
         self.asq = 0;
         self.acq = 0;
+
+        let max_io_queues_0based = (NVME_MAX_IO_QUEUES as u16).saturating_sub(1);
+        self.feature_num_io_sqs = max_io_queues_0based;
+        self.feature_num_io_cqs = max_io_queues_0based;
+        self.feature_interrupt_coalescing = 0;
+        self.feature_volatile_write_cache = false;
 
         self.admin_sq = None;
         self.admin_cq = None;
@@ -973,9 +995,13 @@ impl NvmeController {
 
     fn execute_admin(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
         match cmd.opc {
+            0x00 => self.cmd_delete_io_sq(cmd),
+            0x04 => self.cmd_delete_io_cq(cmd),
+            0x09 => self.cmd_set_features(cmd),
+            0x0a => self.cmd_get_features(cmd),
             0x06 => {
-                // IDENTIFY transfers data. Some guests may use SGL even for admin commands, so
-                // accept both PRP and SGL data pointer formats here.
+                // IDENTIFY transfers data. Some guests use SGL even for admin commands, so accept
+                // both PRP and SGL data pointer formats here.
                 if cmd.psdt > 1 {
                     return (NvmeStatus::INVALID_FIELD, 0);
                 }
@@ -1020,6 +1046,10 @@ impl NvmeController {
 
         let qid = (cmd.cdw10 & 0xffff) as u16;
         if qid == 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        let max_qid = self.feature_num_io_cqs.saturating_add(1);
+        if qid > max_qid {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
         if self.io_cqs.contains_key(&qid) {
@@ -1067,6 +1097,10 @@ impl NvmeController {
         if qid == 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
+        let max_qid = self.feature_num_io_sqs.saturating_add(1);
+        if qid > max_qid {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
         if self.io_sqs.contains_key(&qid) {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
@@ -1102,6 +1136,120 @@ impl NvmeController {
             },
         );
         (NvmeStatus::SUCCESS, 0)
+    }
+
+    fn cmd_delete_io_sq(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
+        if cmd.psdt != 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        let qid = (cmd.cdw10 & 0xffff) as u16;
+        if qid == 0 {
+            return (NvmeStatus::INVALID_QID, 0);
+        }
+        if self.io_sqs.remove(&qid).is_none() {
+            return (NvmeStatus::INVALID_QID, 0);
+        }
+        // Clear any pending doorbell update so recreating the queue can't accidentally pick up an
+        // old tail value.
+        self.pending_sq_tail.remove(&qid);
+        (NvmeStatus::SUCCESS, 0)
+    }
+
+    fn cmd_delete_io_cq(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
+        if cmd.psdt != 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        let qid = (cmd.cdw10 & 0xffff) as u16;
+        if qid == 0 {
+            return (NvmeStatus::INVALID_QID, 0);
+        }
+        if !self.io_cqs.contains_key(&qid) {
+            return (NvmeStatus::INVALID_QID, 0);
+        }
+        // NVMe requires SQs to be deleted before the CQ they target.
+        if self.io_sqs.values().any(|sq| sq.cqid == qid) {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        self.io_cqs.remove(&qid);
+        self.refresh_intx_level();
+        (NvmeStatus::SUCCESS, 0)
+    }
+
+    fn cmd_get_features(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
+        if cmd.psdt != 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        let fid = (cmd.cdw10 & 0xff) as u8;
+        let sel = ((cmd.cdw10 >> 8) & 0x7) as u8;
+        // Support querying current and default values (SEL=0/1). For this minimal controller we
+        // treat them as identical.
+        if sel > 1 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+
+        match fid {
+            // Number of Queues: 0-based values (NSQR in [31:16], NCQR in [15:0]).
+            0x07 => (
+                NvmeStatus::SUCCESS,
+                (u32::from(self.feature_num_io_sqs) << 16) | u32::from(self.feature_num_io_cqs),
+            ),
+            // Interrupt Coalescing: return the raw 16-bit value in DW0.
+            0x08 => (NvmeStatus::SUCCESS, u32::from(self.feature_interrupt_coalescing)),
+            // Volatile Write Cache: bit 0.
+            0x06 => (
+                NvmeStatus::SUCCESS,
+                u32::from(self.feature_volatile_write_cache as u8),
+            ),
+            _ => (NvmeStatus::INVALID_FIELD, 0),
+        }
+    }
+
+    fn cmd_set_features(&mut self, cmd: NvmeCommand) -> (NvmeStatus, u32) {
+        if cmd.psdt != 0 {
+            return (NvmeStatus::INVALID_FIELD, 0);
+        }
+        let fid = (cmd.cdw10 & 0xff) as u8;
+        match fid {
+            // Number of Queues: request in CDW11, 0-based (value 0 means 1 queue).
+            0x07 => {
+                let req_cqs = (cmd.cdw11 & 0xffff) as u32 + 1;
+                let req_sqs = ((cmd.cdw11 >> 16) & 0xffff) as u32 + 1;
+                let max = NVME_MAX_IO_QUEUES as u32;
+                let alloc_cqs = req_cqs.min(max);
+                let alloc_sqs = req_sqs.min(max);
+
+                // Reject attempts to shrink below the highest existing queue ID. Guests should tear
+                // down queues before requesting fewer resources.
+                let required_cqs = self.io_cqs.keys().copied().max().unwrap_or(0) as u32;
+                let required_sqs = self.io_sqs.keys().copied().max().unwrap_or(0) as u32;
+                if alloc_cqs < required_cqs || alloc_sqs < required_sqs {
+                    return (NvmeStatus::INVALID_FIELD, 0);
+                }
+
+                self.feature_num_io_cqs = (alloc_cqs - 1) as u16;
+                self.feature_num_io_sqs = (alloc_sqs - 1) as u16;
+                let result =
+                    (u32::from(self.feature_num_io_sqs) << 16) | u32::from(self.feature_num_io_cqs);
+                (NvmeStatus::SUCCESS, result)
+            }
+            // Interrupt Coalescing: store raw value (DW11 bits 15:0).
+            0x08 => {
+                self.feature_interrupt_coalescing = (cmd.cdw11 & 0xffff) as u16;
+                (
+                    NvmeStatus::SUCCESS,
+                    u32::from(self.feature_interrupt_coalescing),
+                )
+            }
+            // Volatile Write Cache: enable flag in DW11 bit 0.
+            0x06 => {
+                self.feature_volatile_write_cache = (cmd.cdw11 & 1) != 0;
+                (
+                    NvmeStatus::SUCCESS,
+                    u32::from(self.feature_volatile_write_cache as u8),
+                )
+            }
+            _ => (NvmeStatus::INVALID_FIELD, 0),
+        }
     }
 
     fn cmd_read(&mut self, cmd: NvmeCommand, memory: &mut dyn MemoryBus) -> (NvmeStatus, u32) {
@@ -1272,6 +1420,10 @@ impl NvmeController {
         data[512] = 0x66; // SQE min/max = 2^6 = 64 bytes
         data[513] = 0x44; // CQE min/max = 2^4 = 16 bytes
 
+        // VWC (Volatile Write Cache) at offset 525 (0x20d): advertise support so guests that
+        // probe the feature via GET/SET FEATURES (FID=0x06) behave as expected.
+        data[525] = 0x1;
+
         // SGLS (SGL Support) at offset 536 (0x218).
         //
         // Advertise basic SGL support (Data Block + Segment descriptors). Higher-level features
@@ -1322,6 +1474,10 @@ impl IoSnapshot for NvmeController {
             aqa: self.aqa,
             asq: self.asq,
             acq: self.acq,
+            feature_num_io_sqs: self.feature_num_io_sqs,
+            feature_num_io_cqs: self.feature_num_io_cqs,
+            feature_interrupt_coalescing: self.feature_interrupt_coalescing,
+            feature_volatile_write_cache: self.feature_volatile_write_cache,
             admin_sq: self.admin_sq.as_ref().map(|sq| NvmeSubmissionQueueState {
                 qid: sq.id,
                 base: sq.base,
@@ -1380,6 +1536,13 @@ impl IoSnapshot for NvmeController {
         // `NvmeControllerState` decoder allows them for compatibility with other implementations).
         if state.io_sqs.len() > NVME_MAX_IO_QUEUES || state.io_cqs.len() > NVME_MAX_IO_QUEUES {
             return Err(SnapshotError::InvalidFieldEncoding("nvme io queue count"));
+        }
+
+        let max_io_queues_0based = (NVME_MAX_IO_QUEUES as u16).saturating_sub(1);
+        if state.feature_num_io_sqs > max_io_queues_0based || state.feature_num_io_cqs > max_io_queues_0based {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "nvme feature num queues",
+            ));
         }
         if state.csts & 1 != 0 && state.cc & 1 == 0 {
             return Err(SnapshotError::InvalidFieldEncoding(
@@ -1441,6 +1604,9 @@ impl IoSnapshot for NvmeController {
             if cq.qid == 0 {
                 return Err(SnapshotError::InvalidFieldEncoding("nvme io cq qid"));
             }
+            if cq.qid > max_io_queues_0based.saturating_add(1) {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme io cq qid"));
+            }
             if !io_cq_qids.insert(cq.qid) {
                 return Err(SnapshotError::InvalidFieldEncoding("nvme duplicate io cq"));
             }
@@ -1450,6 +1616,9 @@ impl IoSnapshot for NvmeController {
         let mut io_sq_qids = std::collections::HashSet::new();
         for sq in &state.io_sqs {
             if sq.qid == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("nvme io sq qid"));
+            }
+            if sq.qid > max_io_queues_0based.saturating_add(1) {
                 return Err(SnapshotError::InvalidFieldEncoding("nvme io sq qid"));
             }
             if !io_sq_qids.insert(sq.qid) {
@@ -1469,6 +1638,11 @@ impl IoSnapshot for NvmeController {
         self.aqa = state.aqa;
         self.asq = state.asq;
         self.acq = state.acq;
+
+        self.feature_num_io_sqs = state.feature_num_io_sqs;
+        self.feature_num_io_cqs = state.feature_num_io_cqs;
+        self.feature_interrupt_coalescing = state.feature_interrupt_coalescing;
+        self.feature_volatile_write_cache = state.feature_volatile_write_cache;
 
         self.admin_sq = state.admin_sq.map(|sq| SubmissionQueue {
             id: sq.qid,
@@ -1519,6 +1693,22 @@ impl IoSnapshot for NvmeController {
                 },
             );
         }
+
+        // Keep feature state coherent with the restored queue IDs. Older snapshots may not include
+        // feature state (or may include values that pre-date later queue creation); bump the
+        // reported limits so all restored queues remain representable.
+        if let Some(max_sq_qid) = self.io_sqs.keys().copied().max() {
+            self.feature_num_io_sqs = self
+                .feature_num_io_sqs
+                .max(max_sq_qid.saturating_sub(1));
+        }
+        if let Some(max_cq_qid) = self.io_cqs.keys().copied().max() {
+            self.feature_num_io_cqs = self
+                .feature_num_io_cqs
+                .max(max_cq_qid.saturating_sub(1));
+        }
+        self.feature_num_io_sqs = self.feature_num_io_sqs.min(max_io_queues_0based);
+        self.feature_num_io_cqs = self.feature_num_io_cqs.min(max_io_queues_0based);
 
         self.pending_sq_tail.clear();
         if self.csts & 1 != 0 {

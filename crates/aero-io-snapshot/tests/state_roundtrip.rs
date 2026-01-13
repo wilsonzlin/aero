@@ -351,6 +351,10 @@ fn nvme_state_roundtrip() {
         aqa: 0x77,
         asq: 0x8888,
         acq: 0x9999,
+        feature_num_io_sqs: 0x12,
+        feature_num_io_cqs: 0x34,
+        feature_interrupt_coalescing: 0x5678,
+        feature_volatile_write_cache: true,
         admin_sq: Some(NvmeSubmissionQueueState {
             qid: 0,
             base: 0x1000,
