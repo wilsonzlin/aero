@@ -62,7 +62,9 @@ if errorlevel 1 (
 )
 call :log "Aero Guest Tools uninstall starting..."
 call :log "Script dir: %SCRIPT_DIR%"
+call :log "System tools: %SYS32%"
 call :log "Logs: %LOG%"
+call :log_manifest
 
 call :require_admin || goto :fail
 call :load_config || goto :fail
@@ -154,6 +156,109 @@ if errorlevel 1 (
 )
 exit /b 0
 
+:log_manifest
+setlocal EnableDelayedExpansion
+
+rem Optional: record which Guest Tools build produced the media (if provided).
+set "MEDIA_ROOT="
+for %%I in ("%SCRIPT_DIR%..") do set "MEDIA_ROOT=%%~fI"
+set "MANIFEST=!MEDIA_ROOT!\manifest.json"
+if not exist "!MANIFEST!" set "MANIFEST=%SCRIPT_DIR%manifest.json"
+if not exist "!MANIFEST!" (
+  endlocal & (
+    rem Back-compat: without a manifest, assume test-signed behavior.
+    set "GT_MANIFEST="
+    set "GT_VERSION="
+    set "GT_BUILD_ID="
+    set "GT_SIGNING_POLICY=test"
+    set "GT_CERTS_REQUIRED=1"
+  ) & exit /b 0
+)
+
+set "GT_MANIFEST=!MANIFEST!"
+set "GT_VERSION="
+set "GT_BUILD_ID="
+set "GT_SIGNING_POLICY="
+set "GT_CERTS_REQUIRED="
+for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
+  set "KEY=%%A"
+  set "VAL=%%B"
+  set "KEY=!KEY: =!"
+  set "KEY=!KEY:"=!"
+  set "KEY=!KEY:{=!"
+  set "KEY=!KEY:}=!"
+  set "KEY=!KEY:,=!"
+
+  if /i "!KEY!"=="version" (
+    set "VAL=%%B"
+    for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+    if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+    set "VAL=!VAL:"=!"
+    set "GT_VERSION=!VAL!"
+  )
+  if /i "!KEY!"=="build_id" (
+    set "VAL=%%B"
+    for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+    if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+    set "VAL=!VAL:"=!"
+    set "GT_BUILD_ID=!VAL!"
+  )
+  if /i "!KEY!"=="signing_policy" (
+    set "VAL=%%B"
+    for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+    if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+    set "VAL=!VAL:"=!"
+    set "GT_SIGNING_POLICY=!VAL!"
+  )
+  if /i "!KEY!"=="certs_required" (
+    set "VAL=%%B"
+    for /f "tokens=* delims= " %%V in ("!VAL!") do set "VAL=%%V"
+    if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
+    set "VAL=!VAL:"=!"
+    set "GT_CERTS_REQUIRED=!VAL!"
+  )
+)
+
+rem Back-compat: old manifests don't include signing_policy/certs_required.
+if not defined GT_SIGNING_POLICY set "GT_SIGNING_POLICY=test"
+rem Normalize legacy signing_policy values to the current surface (test|production|none).
+if /i "!GT_SIGNING_POLICY!"=="testsigning" set "GT_SIGNING_POLICY=test"
+if /i "!GT_SIGNING_POLICY!"=="test-signing" set "GT_SIGNING_POLICY=test"
+if /i "!GT_SIGNING_POLICY!"=="nointegritychecks" set "GT_SIGNING_POLICY=none"
+if /i "!GT_SIGNING_POLICY!"=="prod" set "GT_SIGNING_POLICY=production"
+if /i "!GT_SIGNING_POLICY!"=="whql" set "GT_SIGNING_POLICY=production"
+if not defined GT_CERTS_REQUIRED (
+  if /i "!GT_SIGNING_POLICY!"=="test" (
+    set "GT_CERTS_REQUIRED=1"
+  ) else (
+    set "GT_CERTS_REQUIRED=0"
+  )
+)
+if /i "!GT_CERTS_REQUIRED!"=="true" set "GT_CERTS_REQUIRED=1"
+if /i "!GT_CERTS_REQUIRED!"=="false" set "GT_CERTS_REQUIRED=0"
+
+if defined GT_VERSION (
+  if defined GT_BUILD_ID (
+    call :log "Guest Tools manifest: version=!GT_VERSION!, build_id=!GT_BUILD_ID!"
+  ) else (
+    call :log "Guest Tools manifest: version=!GT_VERSION!"
+  )
+) else if defined GT_BUILD_ID (
+  call :log "Guest Tools manifest: build_id=!GT_BUILD_ID!"
+) else (
+  call :log "Guest Tools manifest found, but could not parse version/build_id: !MANIFEST!"
+)
+
+call :log "Guest Tools signing policy: !GT_SIGNING_POLICY! (certs_required=!GT_CERTS_REQUIRED!)"
+
+endlocal & (
+  set "GT_MANIFEST=%GT_MANIFEST%"
+  set "GT_VERSION=%GT_VERSION%"
+  set "GT_BUILD_ID=%GT_BUILD_ID%"
+  set "GT_SIGNING_POLICY=%GT_SIGNING_POLICY%"
+  set "GT_CERTS_REQUIRED=%GT_CERTS_REQUIRED%"
+) & exit /b 0
+
 :require_admin
 call :log "Checking for Administrator privileges..."
 "%SYS32%\fsutil.exe" dirty query %SYSTEMDRIVE% >nul 2>&1
@@ -175,40 +280,13 @@ exit /b 0
 
 :load_signing_policy
 set "SIGNING_POLICY=test"
-set "MANIFEST_FILE=%SCRIPT_DIR%manifest.json"
+if defined GT_SIGNING_POLICY set "SIGNING_POLICY=%GT_SIGNING_POLICY%"
 
-set "FOUND_POLICY="
-if exist "%MANIFEST_FILE%" (
-  for /f "usebackq tokens=4 delims=^"" %%P in (`findstr /i "signing_policy" "%MANIFEST_FILE%"`) do (
-    set "FOUND_POLICY=%%P"
-    goto :load_signing_policy_parsed
-  )
+if /i not "%SIGNING_POLICY%"=="test" if /i not "%SIGNING_POLICY%"=="production" if /i not "%SIGNING_POLICY%"=="none" (
+  call :log "WARNING: Unknown signing_policy=%SIGNING_POLICY% (defaulting to test)."
+  set "SIGNING_POLICY=test"
 )
 
-:load_signing_policy_parsed
-if exist "%MANIFEST_FILE%" (
-  if defined FOUND_POLICY (
-    rem Normalize legacy signing_policy values to the current surface (test|production|none).
-    set "SIGNING_POLICY="
-    if /i "!FOUND_POLICY!"=="test" set "SIGNING_POLICY=test"
-    if /i "!FOUND_POLICY!"=="production" set "SIGNING_POLICY=production"
-    if /i "!FOUND_POLICY!"=="none" set "SIGNING_POLICY=none"
-    rem Legacy aliases:
-    if /i "!FOUND_POLICY!"=="testsigning" set "SIGNING_POLICY=test"
-    if /i "!FOUND_POLICY!"=="test-signing" set "SIGNING_POLICY=test"
-    if /i "!FOUND_POLICY!"=="nointegritychecks" set "SIGNING_POLICY=none"
-    if /i "!FOUND_POLICY!"=="no-integrity-checks" set "SIGNING_POLICY=none"
-    if /i "!FOUND_POLICY!"=="prod" set "SIGNING_POLICY=production"
-    if /i "!FOUND_POLICY!"=="whql" set "SIGNING_POLICY=production"
-
-    if not defined SIGNING_POLICY (
-      call :log "WARNING: manifest.json has unknown signing_policy: !FOUND_POLICY! (defaulting to test)."
-      set "SIGNING_POLICY=test"
-    ) else (
-      call :log "Signing policy from manifest.json: !SIGNING_POLICY!"
-    )
-  )
-)
 call :log "Effective signing_policy: %SIGNING_POLICY%"
 exit /b 0
 
