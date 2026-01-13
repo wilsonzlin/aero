@@ -725,6 +725,11 @@ fn hpet_table_matches_device_model_base() {
     assert_eq!(&hpet[0..4], b"HPET");
     assert!(validate_table_checksum(hpet));
 
+    // HPET Base Address is a Generic Address Structure (GAS) starting at offset 40.
+    // The RegisterBitWidth byte lives at offset 41 (see ACPI spec / `acpi::structures::Hpet`).
+    assert_eq!(hpet[40], 0, "HPET GAS AddressSpaceId must be System Memory");
+    assert_eq!(hpet[41], 64, "HPET GAS RegisterBitWidth must be 64");
+
     // HPET GAS address is at offset 44 in the table (see `acpi::structures::Hpet`).
     let addr = u64::from_le_bytes(hpet[44..52].try_into().unwrap());
     assert_eq!(addr, HPET_MMIO_BASE);

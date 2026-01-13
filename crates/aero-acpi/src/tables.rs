@@ -695,7 +695,14 @@ fn build_hpet(cfg: &AcpiConfig) -> Vec<u8> {
     let block_id = hw_rev | comparators | counter_size | legacy_route | vendor;
     out.extend_from_slice(&block_id.to_le_bytes());
 
-    let gas = Gas::new_mmio(cfg.hpet_addr);
+    // ACPI spec: HPET Base Address is a System Memory Generic Address Structure
+    // with a 64-bit register width.
+    //
+    // Some OSes (notably Windows) expect `register_bit_width` to be populated
+    // (commonly 64 / 0x40). A zero width is non-standard and may lead to the
+    // HPET device being ignored.
+    let mut gas = Gas::new_mmio(cfg.hpet_addr);
+    gas.register_bit_width = 64;
     out.extend_from_slice(&gas.as_bytes());
 
     out.push(0); // HPET number

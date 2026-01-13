@@ -436,6 +436,19 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
         0
     );
     let hpet = mem.read(tables.addresses.hpet, hpet_hdr.length as usize);
+    // HPET Base Address is a Generic Address Structure (GAS) starting at offset 40:
+    //   40: AddressSpaceId
+    //   41: RegisterBitWidth
+    //   42: RegisterBitOffset
+    //   43: AccessSize
+    //   44..52: Address
+    assert_eq!(hpet[40], 0, "HPET GAS AddressSpaceId must be System Memory");
+    assert_eq!(
+        hpet[41], 64,
+        "HPET GAS RegisterBitWidth must be 64 (ACPI spec / Windows expectation)"
+    );
+    assert_eq!(hpet[42], 0, "HPET GAS RegisterBitOffset must be 0");
+    assert_eq!(hpet[43], 0, "HPET GAS AccessSize should be unspecified (0)");
     let hpet_gas_addr = read_u64_le(hpet, 44);
     assert_eq!(hpet_gas_addr, cfg.hpet_addr);
 
