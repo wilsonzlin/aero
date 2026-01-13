@@ -79,6 +79,54 @@ describe("InputCapture input batch buffer recycling", () => {
     });
   });
 
+  it("reuses recycled buffers even after the internal queue grows (larger byteLength buckets)", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: ArrayBuffer[] = [];
+      let capture: InputCapture;
+
+      const ioWorker = {
+        postMessage: (msg: any) => {
+          posted.push(msg.buffer);
+          expect(msg.recycle).toBe(true);
+          if (msg.recycle === true) {
+            (capture as any).handleWorkerMessage({
+              data: { type: "in:input-batch-recycle", buffer: msg.buffer },
+            } as unknown as MessageEvent<unknown>);
+          }
+        },
+      };
+
+      capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
+      (capture as any).hasFocus = true;
+
+      // Push enough events to trigger `InputEventQueue.grow()` from 128 -> 256 capacity.
+      for (let i = 0; i < 65; i++) {
+        (capture as any).handleKeyDown(keyDownEvent("KeyA", i));
+      }
+      capture.flushNow();
+
+      (capture as any).handleKeyDown(keyDownEvent("KeyB", 999));
+      capture.flushNow();
+
+      expect(posted).toHaveLength(2);
+
+      // Sanity: the grown queue should have a larger backing buffer than the default 128-event queue.
+      // Default: (2 + 128*4) * 4 = 2056 bytes; grown: (2 + 256*4) * 4 = 4104 bytes.
+      expect(posted[0].byteLength).toBeGreaterThan(2056);
+
+      // The second flush should still be able to reuse the recycled buffer of that larger size.
+      expect(posted[1]).toBe(posted[0]);
+      expect(posted[1].byteLength).toBe(posted[0].byteLength);
+    });
+  });
+
   it("does not cache buffers when recycleBuffers=false", () => {
     withStubbedDocument(() => {
       const canvas = {
