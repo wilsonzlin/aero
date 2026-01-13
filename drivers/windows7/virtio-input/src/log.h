@@ -67,9 +67,7 @@
  * IOCTL_VIOINPUT_RESET_COUNTERS:
  *   - METHOD_BUFFERED
  *   - FILE_WRITE_ACCESS
- *   - Resets all monotonic VIOINPUT_COUNTERS fields and max-depth values.
- *     Preserves the current depth fields (ReadReportQueueDepth/ReportRingDepth/
- *     PendingRingDepth/VirtioQueueDepth) and keeps Size/Version constant.
+ *   - Resets all VIOINPUT_COUNTERS fields except Size/Version.
  */
 #define IOCTL_VIOINPUT_QUERY_COUNTERS \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
