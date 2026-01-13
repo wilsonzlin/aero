@@ -6,6 +6,7 @@
     "driverRelativePath": {
       "type": "string",
       "minLength": 1,
+      "pattern": "\\S",
       "allOf": [
         {
           "not": {
@@ -74,7 +75,7 @@
           {
             "not": {
               "description": "Disallow likely secret/private key material in additionalFiles (CI refuses these at packaging time).",
-              "pattern": "\\.([pP][fF][xX]|[pP]12|[pP][vV][kK]|[sS][nN][kK]|[kK][eE][yY]|[pP][eE][mM]|[pP]8|[pP][pP][kK]|[jJ][kK][sS]|[kK][eE][yY][sS][tT][oO][rR][eE]|[kK][dD][bB][xX]|[gG][pP][gG]|[pP][gG][pP])$"
+              "pattern": "\\.([pP][fF][xX]|[pP]12|[pP][vV][kK]|[sS][nN][kK]|[kK][eE][yY]|[pP][eE][mM]|[pP]8|[pP][kK]8|[dD][eE][rR]|[cC][sS][rR]|[pP][pP][kK]|[jJ][kK][sS]|[kK][eE][yY][sS][tT][oO][rR][eE]|[kK][dD][bB][xX]|[gG][pP][gG]|[pP][gG][pP])$"
             }
           }
         ]
