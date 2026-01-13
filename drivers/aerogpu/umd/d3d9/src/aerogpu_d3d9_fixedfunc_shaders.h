@@ -114,11 +114,55 @@ static constexpr uint32_t kPsPassthroughColor[] = {
     0x0000FFFFu, // end
 };
 
-// ps_2_0:
+// PS_ColorOnly (ps_2_0):
+//   mov oC0, v0
+//   end
+static constexpr uint32_t kPsColorOnly[] = {
+    0xFFFF0200u, // ps_2_0
+    0x02000001u, // mov (2 operands)
+    0x000F0800u, // oC0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x0000FFFFu, // end
+};
+
+// PS_TextureOnly (ps_2_0):
+//   texld r0, t0, s0
+//   mov oC0, r0
+//   end
+static constexpr uint32_t kPsTextureOnly[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x02000001u, // mov (2 operands)
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// PS_ModulateTexDiffuse (ps_2_0):
 //   texld r0, t0, s0
 //   mul r0, r0, v0
 //   mov oC0, r0
 //   end
+static constexpr uint32_t kPsModulateTexDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov (2 operands)
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// Legacy name used by earlier bring-up code.
 static constexpr uint32_t kPsTexturedModulateVertexColor[] = {
     0xFFFF0200u, // ps_2_0
     0x03000042u, // texld (3 operands)

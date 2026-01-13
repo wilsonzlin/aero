@@ -12,6 +12,7 @@
 #include <condition_variable>
 
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_submit.h"
 #include "aerogpu_kmd_query.h"
 
@@ -197,6 +198,77 @@ size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
     offset += hdr->size_bytes;
   }
   return count;
+}
+
+const aerogpu_cmd_create_shader_dxbc* FindCreateShaderByHandle(
+    const uint8_t* buf,
+    size_t capacity,
+    aerogpu_handle_t handle) {
+  if (!buf || capacity < sizeof(aerogpu_cmd_stream_header) || handle == 0) {
+    return nullptr;
+  }
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return nullptr;
+  }
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_CREATE_SHADER_DXBC) {
+      if (hdr->size_bytes >= sizeof(aerogpu_cmd_create_shader_dxbc) && hdr->size_bytes <= stream_len - offset) {
+        const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+        if (cmd->shader_handle == handle) {
+          return cmd;
+        }
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return nullptr;
+}
+
+bool CheckLastBoundPixelShaderMatches(
+    const uint8_t* buf,
+    size_t capacity,
+    const void* expected_bytes,
+    size_t expected_size,
+    const char* what) {
+  if (!Check(buf != nullptr, "cmd buffer must be non-null")) {
+    return false;
+  }
+  if (!Check(expected_bytes != nullptr && expected_size != 0, "expected shader bytes must be non-null")) {
+    return false;
+  }
+
+  const CmdLoc bind = FindLastOpcode(buf, capacity, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, what)) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->ps != 0, "bind_shaders ps handle is non-zero")) {
+    return false;
+  }
+
+  const auto* create = FindCreateShaderByHandle(buf, capacity, bind_cmd->ps);
+  if (!Check(create != nullptr, "CREATE_SHADER_DXBC for bound ps is present")) {
+    return false;
+  }
+  if (!Check(create->stage == AEROGPU_SHADER_STAGE_PIXEL, "bound shader stage is PIXEL")) {
+    return false;
+  }
+  if (!Check(create->dxbc_size_bytes == expected_size, "pixel shader bytecode size matches")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(create) + sizeof(*create);
+  if (!Check(std::memcmp(payload, expected_bytes, expected_size) == 0, "pixel shader bytecode matches")) {
+    return false;
+  }
+  return true;
 }
 
 bool ValidateStream(const uint8_t* buf, size_t capacity) {
@@ -989,7 +1061,6 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
 
   constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
   constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
-
   // Expected enumeration order (matches `aerogpu_d3d9_caps.cpp`).
   constexpr uint32_t kExpectedBaseFormats[] = {
       22u, // D3DFMT_X8R8G8B8
@@ -1000,7 +1071,6 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       32u, // D3DFMT_A8B8G8R8
       75u, // D3DFMT_D24S8
   };
-
   constexpr uint32_t kExpectedBcFormats[] = {
       static_cast<uint32_t>(kD3dFmtDxt1), // D3DFMT_DXT1
       static_cast<uint32_t>(kD3dFmtDxt2), // D3DFMT_DXT2
@@ -1511,6 +1581,16 @@ bool TestCreateResourceComputesBcTexturePitchAndSize() {
   std::vector<uint8_t> dma(4096, 0);
   dev->cmd.set_span(dma.data(), dma.size());
   dev->cmd.reset();
+  struct CmdModeGuard {
+    Device* dev = nullptr;
+    ~CmdModeGuard() {
+      if (dev) {
+        // Cleanup destructors destroy resources/devices and may submit, so ensure
+        // we don't reference the span-backed command buffer after `dma` is freed.
+        dev->cmd.set_vector();
+      }
+    }
+  } cmd_guard{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = 0;
@@ -6605,6 +6685,463 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   }
   const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
   return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
+}
+
+bool TestFixedFuncPsSelectionNoTextureColorOpDisableUsesColorOnly() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "SetViewport must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Stage-state override: COLOROP=DISABLE. No texture bound -> should pick ColorOnly.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    constexpr uint32_t kD3dTssColorOp = 1u;
+    constexpr uint32_t kD3dTopDisable = 1u;
+    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopDisable;
+    dev->textures[0] = nullptr;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kWhite};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  return CheckLastBoundPixelShaderMatches(
+      buf,
+      len,
+      reinterpret_cast<const void*>(fixedfunc::kPsColorOnly),
+      sizeof(fixedfunc::kPsColorOnly),
+      "bind_shaders emitted");
+}
+
+bool TestFixedFuncPsSelectionTextureBoundDefaultModulateUsesModulate() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hTexture{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_texture = false;
+
+    ~Cleanup() {
+      if (has_texture && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hTexture);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "SetViewport must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Create and bind a small texture at stage0.
+  D3D9DDIARG_CREATERESOURCE create_tex{};
+  create_tex.type = 0;
+  create_tex.format = 22u; // D3DFMT_X8R8G8B8
+  create_tex.width = 2;
+  create_tex.height = 2;
+  create_tex.depth = 1;
+  create_tex.mip_levels = 1;
+  create_tex.usage = 0;
+  create_tex.pool = 0;
+  create_tex.size = 0;
+  create_tex.hResource.pDrvPrivate = nullptr;
+  create_tex.pSharedHandle = nullptr;
+  create_tex.pKmdAllocPrivateData = nullptr;
+  create_tex.KmdAllocPrivateDataSize = 0;
+  create_tex.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
+  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+    return false;
+  }
+  if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
+    return false;
+  }
+  cleanup.hTexture = create_tex.hResource;
+  cleanup.has_texture = true;
+
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, create_tex.hResource);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Explicitly set the default stage0 modulation state.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    constexpr uint32_t kD3dTssColorOp = 1u;
+    constexpr uint32_t kD3dTssColorArg1 = 2u;
+    constexpr uint32_t kD3dTssColorArg2 = 3u;
+    constexpr uint32_t kD3dTopModulate = 4u;
+    constexpr uint32_t kD3dTaDiffuse = 0u;
+    constexpr uint32_t kD3dTaTexture = 2u;
+    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
+    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 0.0f, 0.0f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 1.0f, 0.0f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kWhite, 0.5f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  return CheckLastBoundPixelShaderMatches(
+      buf,
+      len,
+      reinterpret_cast<const void*>(fixedfunc::kPsStage0ModulateTexture),
+      sizeof(fixedfunc::kPsStage0ModulateTexture),
+      "bind_shaders emitted");
+}
+
+bool TestFixedFuncPsSelectionTextureBoundSelectArg1TextureUsesTextureOnly() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hTexture{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_texture = false;
+
+    ~Cleanup() {
+      if (has_texture && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hTexture);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "SetViewport must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Create and bind a small texture at stage0.
+  D3D9DDIARG_CREATERESOURCE create_tex{};
+  create_tex.type = 0;
+  create_tex.format = 22u; // D3DFMT_X8R8G8B8
+  create_tex.width = 2;
+  create_tex.height = 2;
+  create_tex.depth = 1;
+  create_tex.mip_levels = 1;
+  create_tex.usage = 0;
+  create_tex.pool = 0;
+  create_tex.size = 0;
+  create_tex.hResource.pDrvPrivate = nullptr;
+  create_tex.pSharedHandle = nullptr;
+  create_tex.pKmdAllocPrivateData = nullptr;
+  create_tex.KmdAllocPrivateDataSize = 0;
+  create_tex.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_tex);
+  if (!Check(hr == S_OK, "CreateResource(texture)")) {
+    return false;
+  }
+  if (!Check(create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture) returned handle")) {
+    return false;
+  }
+  cleanup.hTexture = create_tex.hResource;
+  cleanup.has_texture = true;
+
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, create_tex.hResource);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Stage-state override: COLOROP=SELECTARG1, COLORARG1=TEXTURE.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    constexpr uint32_t kD3dTssColorOp = 1u;
+    constexpr uint32_t kD3dTssColorArg1 = 2u;
+    constexpr uint32_t kD3dTopSelectArg1 = 2u;
+    constexpr uint32_t kD3dTaTexture = 2u;
+    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg1;
+    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 0.0f, 0.0f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kWhite, 1.0f, 0.0f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kWhite, 0.5f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  return CheckLastBoundPixelShaderMatches(
+      buf,
+      len,
+      reinterpret_cast<const void*>(fixedfunc::kPsTextureOnly),
+      sizeof(fixedfunc::kPsTextureOnly),
+      "bind_shaders emitted");
 }
 
 bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
@@ -12367,6 +12904,9 @@ int main() {
   failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestFixedFuncPsSelectionNoTextureColorOpDisableUsesColorOnly();
+  failures += !aerogpu::TestFixedFuncPsSelectionTextureBoundDefaultModulateUsesModulate();
+  failures += !aerogpu::TestFixedFuncPsSelectionTextureBoundSelectArg1TextureUsesTextureOnly();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestDrawRectPatchReusesTessellationCache();
   failures += !aerogpu::TestDrawTriPatchReusesTessellationCache();

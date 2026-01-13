@@ -4309,18 +4309,6 @@ static bool emit_set_shader_constants_f_locked(
   return true;
 }
 
-static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float out[16]) {
-  for (int r = 0; r < 4; ++r) {
-    for (int c = 0; c < 4; ++c) {
-      out[r * 4 + c] =
-          a[r * 4 + 0] * b[0 * 4 + c] +
-          a[r * 4 + 1] * b[1 * 4 + c] +
-          a[r * 4 + 2] * b[2 * 4 + c] +
-          a[r * 4 + 3] * b[3 * 4 + c];
-    }
-  }
-}
-
 static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
   if (!dev) {
     return E_FAIL;
@@ -7763,6 +7751,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   const bool open_existing_shared = wants_shared && (*pCreateResource->pSharedHandle != nullptr);
   const uint32_t requested_mip_levels = d3d9_resource_mip_levels(*pCreateResource);
 
+  const uint32_t create_type_u32 = d3d9_resource_type(*pCreateResource);
   const uint32_t create_size_bytes = d3d9_resource_size(*pCreateResource);
   const uint32_t create_width = d3d9_resource_width(*pCreateResource);
   const uint32_t create_height = d3d9_resource_height(*pCreateResource);
@@ -7778,7 +7767,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     // D3D9 CreateTexture semantics: MipLevels=0 means "create the full mip chain".
     mip_levels = calc_full_mip_chain_levels_2d(create_width, create_height);
   }
-  if (wants_shared && requested_mip_levels != 1) {
+  if (wants_shared && (requested_mip_levels != 1 || create_depth != 1)) {
     // MVP: shared surfaces must be single-allocation (no mip chains/arrays).
     return trace.ret(D3DERR_INVALIDCALL);
   }
@@ -7792,7 +7781,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // reject depth>1 to avoid silently treating volume/cube resources as 2D arrays.
   if (create_size_bytes == 0 && create_depth > 1) {
     constexpr uint32_t kD3dRTypeTexture = 3u; // D3DRESOURCETYPE::D3DRTYPE_TEXTURE
-    if (d3d9_resource_type(*pCreateResource) != kD3dRTypeTexture) {
+    if (create_type_u32 != kD3dRTypeTexture) {
       return trace.ret(D3DERR_INVALIDCALL);
     }
   }
