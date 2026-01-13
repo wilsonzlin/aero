@@ -75,11 +75,14 @@ HKR,,FriendlyName,,%AeroVirtioSndLegacy.TopologyDesc%
 ; PortCls subdevice registration. PortCls creates KS filters named "Wave" and
 ; "Topology"; WDMAudio / KSProxy use these keys for per-filter metadata.
 [AeroVirtioSndLegacy.AddReg]
-HKR,,CLSID,,%KSProxy.CLSID%
+ HKR,,CLSID,,%KSProxy.CLSID%
  HKR,,FriendlyName,,%AeroVirtioSndLegacy.DeviceDesc%
  HKR,,DevLoader,,*ntkern
  HKR,,NTMPDriver,,virtiosnd_legacy.sys
- HKR,Parameters,ForceNullBackend,0x00010001,0
+; Optional bring-up flag (debug/dev only):
+;  - 0 (default): normal virtio backend (fail START_DEVICE on transport bring-up failure)
+;  - 1: force the silent null backend and allow START_DEVICE to succeed even when virtio transport bring-up fails
+  HKR,Parameters,ForceNullBackend,0x00010001,0
 ; Optional bring-up flag (debug/dev only):
 ;  - 0 (default): require INTx
 ;  - 1: allow START_DEVICE to succeed even when INTx cannot be discovered/connected,
