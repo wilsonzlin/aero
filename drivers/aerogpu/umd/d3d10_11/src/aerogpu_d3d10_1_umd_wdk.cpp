@@ -6008,9 +6008,6 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
     // D3D10.1 supports independent blend state per render target when
     // IndependentBlendEnable is TRUE. When it's FALSE, only RenderTarget[0]
     // is used and the remaining entries are ignored by the runtime.
-    //
-    // The AeroGPU protocol only supports a single global blend state, so we
-    // reject mismatched per-RT states only when independent blending is enabled.
     bool independent_blend = true;
     __if_exists(D3D10_1_DDI_BLEND_DESC::IndependentBlendEnable) {
       independent_blend = pDesc->IndependentBlendEnable ? true : false;
@@ -6019,7 +6016,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
 
     const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(
         rts, rt_count, pDesc->AlphaToCoverageEnable ? true : false, &base);
-    if (FAILED(hr)) {
+    if (FAILED(hr) && hr != E_NOTIMPL) {
       return hr;
     }
   }
@@ -6254,13 +6251,16 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
   if (!pDesc) {
     return S_OK;
   }
-
-  state->fill_mode = static_cast<uint32_t>(pDesc->FillMode);
-  state->cull_mode = static_cast<uint32_t>(pDesc->CullMode);
-  state->front_ccw = pDesc->FrontCounterClockwise ? 1u : 0u;
-  state->scissor_enable = pDesc->ScissorEnable ? 1u : 0u;
-  state->depth_bias = static_cast<int32_t>(pDesc->DepthBias);
-  state->depth_clip_enable = pDesc->DepthClipEnable ? 1u : 0u;
+  __if_exists(D3D10_DDI_RASTERIZER_DESC::FillMode) { state->fill_mode = static_cast<uint32_t>(pDesc->FillMode); }
+  __if_exists(D3D10_DDI_RASTERIZER_DESC::CullMode) { state->cull_mode = static_cast<uint32_t>(pDesc->CullMode); }
+  __if_exists(D3D10_DDI_RASTERIZER_DESC::FrontCounterClockwise) {
+    state->front_ccw = pDesc->FrontCounterClockwise ? 1u : 0u;
+  }
+  __if_exists(D3D10_DDI_RASTERIZER_DESC::ScissorEnable) { state->scissor_enable = pDesc->ScissorEnable ? 1u : 0u; }
+  __if_exists(D3D10_DDI_RASTERIZER_DESC::DepthBias) { state->depth_bias = static_cast<int32_t>(pDesc->DepthBias); }
+  __if_exists(D3D10_DDI_RASTERIZER_DESC::DepthClipEnable) {
+    state->depth_clip_enable = pDesc->DepthClipEnable ? 1u : 0u;
+  }
   return S_OK;
 }
 
@@ -6287,13 +6287,18 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
   if (!pDesc) {
     return S_OK;
   }
-
-  state->depth_enable = pDesc->DepthEnable ? 1u : 0u;
-  state->depth_write_mask = static_cast<uint32_t>(pDesc->DepthWriteMask);
-  state->depth_func = static_cast<uint32_t>(pDesc->DepthFunc);
-  state->stencil_enable = pDesc->StencilEnable ? 1u : 0u;
-  state->stencil_read_mask = static_cast<uint8_t>(pDesc->StencilReadMask);
-  state->stencil_write_mask = static_cast<uint8_t>(pDesc->StencilWriteMask);
+  __if_exists(D3D10_DDI_DEPTH_STENCIL_DESC::DepthEnable) { state->depth_enable = pDesc->DepthEnable ? 1u : 0u; }
+  __if_exists(D3D10_DDI_DEPTH_STENCIL_DESC::DepthWriteMask) {
+    state->depth_write_mask = static_cast<uint32_t>(pDesc->DepthWriteMask);
+  }
+  __if_exists(D3D10_DDI_DEPTH_STENCIL_DESC::DepthFunc) { state->depth_func = static_cast<uint32_t>(pDesc->DepthFunc); }
+  __if_exists(D3D10_DDI_DEPTH_STENCIL_DESC::StencilEnable) { state->stencil_enable = pDesc->StencilEnable ? 1u : 0u; }
+  __if_exists(D3D10_DDI_DEPTH_STENCIL_DESC::StencilReadMask) {
+    state->stencil_read_mask = static_cast<uint8_t>(pDesc->StencilReadMask);
+  }
+  __if_exists(D3D10_DDI_DEPTH_STENCIL_DESC::StencilWriteMask) {
+    state->stencil_write_mask = static_cast<uint8_t>(pDesc->StencilWriteMask);
+  }
   return S_OK;
 }
 
@@ -6907,7 +6912,6 @@ void AEROGPU_APIENTRY VsSetSamplers(D3D10DDI_HDEVICE hDevice,
                                hDevice.pDrvPrivate,
                                static_cast<unsigned>(start_slot),
                                static_cast<unsigned>(sampler_count));
-
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
     return;
@@ -6928,7 +6932,6 @@ void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
                                hDevice.pDrvPrivate,
                                static_cast<unsigned>(start_slot),
                                static_cast<unsigned>(sampler_count));
-
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
     return;
@@ -6937,7 +6940,6 @@ void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
   SetSamplersCommon(hDevice, AEROGPU_SHADER_STAGE_PIXEL, start_slot, sampler_count, phSamplers);
 }
-
 void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
     return;
@@ -7110,7 +7112,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bs_cmd->state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
   bs_cmd->state.sample_mask = 0xFFFFFFFFu;
 
-  // Depth-stencil state.
+  // Reset depth/stencil state to D3D10 defaults (depth enabled, write enabled, LESS, stencil disabled).
   auto* dss_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
   if (!dss_cmd) {
     set_error(dev, E_OUTOFMEMORY);
@@ -7125,7 +7127,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dss_cmd->state.reserved0[0] = 0;
   dss_cmd->state.reserved0[1] = 0;
 
-  // Rasterizer state.
+  // Reset rasterizer state to D3D10 defaults (solid, cull back, depth clip enabled).
   auto* rs_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
   if (!rs_cmd) {
     set_error(dev, E_OUTOFMEMORY);
