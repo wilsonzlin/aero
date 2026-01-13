@@ -1,5 +1,127 @@
 #include "virtio_statusq.h"
 
+#include <stddef.h>
+
+/* -------------------------------------------------------------------------- */
+/* Portable helpers (host-buildable unit tests)                                */
+/* -------------------------------------------------------------------------- */
+
+bool VirtioStatusQCookieToIndex(
+    const void* TxBase,
+    size_t TxStride,
+    uint16_t TxBufferCount,
+    const void* Cookie,
+    uint16_t* IndexOut)
+{
+    /*
+     * Use integer address arithmetic to remain robust even if the cookie is
+     * corrupted. uintptr_t is optional in older MSVC/WDK environments; use
+     * ULONG_PTR when available.
+     */
+#if defined(_WIN32)
+    ULONG_PTR base;
+    ULONG_PTR p;
+#else
+    uintptr_t base;
+    uintptr_t p;
+#endif
+    size_t off;
+    size_t idx;
+
+    if (TxBase == NULL || Cookie == NULL || IndexOut == NULL || TxStride == 0 || TxBufferCount == 0) {
+        return false;
+    }
+
+#if defined(_WIN32)
+    base = (ULONG_PTR)TxBase;
+    p = (ULONG_PTR)Cookie;
+#else
+    base = (uintptr_t)TxBase;
+    p = (uintptr_t)Cookie;
+#endif
+    if (p < base) {
+        return false;
+    }
+
+    off = (size_t)(p - base);
+    if ((off % TxStride) != 0) {
+        return false;
+    }
+
+    idx = off / TxStride;
+    if (idx >= (size_t)TxBufferCount) {
+        return false;
+    }
+
+    *IndexOut = (uint16_t)idx;
+    return true;
+}
+
+void VirtioStatusQCoalesceSimInit(VIOINPUT_STATUSQ_COALESCE_SIM* Sim, uint16_t Capacity, bool DropOnFull)
+{
+    if (Sim == NULL) {
+        return;
+    }
+    Sim->Capacity = Capacity;
+    Sim->FreeCount = Capacity;
+    Sim->DropOnFull = DropOnFull;
+    Sim->PendingValid = false;
+    Sim->PendingLedBitfield = 0;
+}
+
+bool VirtioStatusQCoalesceSimWrite(VIOINPUT_STATUSQ_COALESCE_SIM* Sim, uint8_t LedBitfield)
+{
+    if (Sim == NULL || Sim->Capacity == 0) {
+        return false;
+    }
+
+    Sim->PendingLedBitfield = LedBitfield;
+    Sim->PendingValid = true;
+
+    if (Sim->FreeCount == 0) {
+        if (Sim->DropOnFull) {
+            Sim->PendingValid = false;
+        }
+        return false;
+    }
+
+    /* Submit immediately. */
+    Sim->FreeCount--;
+    Sim->PendingValid = false;
+    return true;
+}
+
+bool VirtioStatusQCoalesceSimComplete(VIOINPUT_STATUSQ_COALESCE_SIM* Sim)
+{
+    bool submitted;
+
+    if (Sim == NULL || Sim->Capacity == 0) {
+        return false;
+    }
+
+    /* Return one buffer slot (completion). */
+    if (Sim->FreeCount < Sim->Capacity) {
+        Sim->FreeCount++;
+    }
+
+    submitted = false;
+    if (Sim->PendingValid) {
+        if (Sim->FreeCount == 0) {
+            if (Sim->DropOnFull) {
+                Sim->PendingValid = false;
+            }
+        } else {
+            Sim->FreeCount--;
+            Sim->PendingValid = false;
+            submitted = true;
+        }
+    }
+
+    return submitted;
+}
+
+#ifdef _WIN32
+
 #include "virtqueue_split.h"
 
 #include <ntddk.h>
@@ -8,9 +130,13 @@
 #include "virtio_input.h"
 #include "led_translate.h"
 
+#if defined(_MSC_VER)
 #define VIOINPUT_STATUSQ_POOL_TAG 'qSoV'
-
-enum { VIOINPUT_STATUSQ_EVENTS_PER_BUFFER = LED_TRANSLATE_EVENT_COUNT };
+#else
+#define VIOINPUT_STATUSQ_MAKE_POOL_TAG(a, b, c, d) \
+    ((ULONG)(((ULONG)(a) << 24) | ((ULONG)(b) << 16) | ((ULONG)(c) << 8) | ((ULONG)(d))))
+#define VIOINPUT_STATUSQ_POOL_TAG VIOINPUT_STATUSQ_MAKE_POOL_TAG('q', 'S', 'o', 'V')
+#endif
 
 typedef struct _VIRTIO_STATUSQ {
     WDFDEVICE Device;
@@ -30,6 +156,7 @@ typedef struct _VIRTIO_STATUSQ {
     UINT16 FreeCount;
     UINT16* NextFree;
 
+    WDFSPINLOCK Lock;
     BOOLEAN Active;
     BOOLEAN DropOnFull;
 
@@ -57,35 +184,18 @@ static __forceinline UINT64 VirtioStatusQTxBufPa(_In_ const VIRTIO_STATUSQ* Q, _
     return Q->TxPa + ((UINT64)Index * (UINT64)Q->TxBufferStride);
 }
 
-static __forceinline BOOLEAN VirtioStatusQCookieToIndex(_In_ const VIRTIO_STATUSQ* Q, _In_ PVOID Cookie, _Out_ UINT16* IndexOut)
+static __forceinline VOID VirtioStatusQLock(_Inout_ PVIRTIO_STATUSQ Q)
 {
-    PUCHAR base;
-    PUCHAR p;
-    SIZE_T off;
-    SIZE_T idx;
-
-    if (Q == NULL || Cookie == NULL || IndexOut == NULL || Q->TxVa == NULL || Q->TxBufferStride == 0) {
-        return FALSE;
+    if (Q != NULL && Q->Lock != NULL) {
+        WdfSpinLockAcquire(Q->Lock);
     }
+}
 
-    base = (PUCHAR)Q->TxVa;
-    p = (PUCHAR)Cookie;
-    if (p < base) {
-        return FALSE;
+static __forceinline VOID VirtioStatusQUnlock(_Inout_ PVIRTIO_STATUSQ Q)
+{
+    if (Q != NULL && Q->Lock != NULL) {
+        WdfSpinLockRelease(Q->Lock);
     }
-
-    off = (SIZE_T)(p - base);
-    if ((off % (SIZE_T)Q->TxBufferStride) != 0) {
-        return FALSE;
-    }
-
-    idx = off / (SIZE_T)Q->TxBufferStride;
-    if (idx >= Q->TxBufferCount) {
-        return FALSE;
-    }
-
-    *IndexOut = (UINT16)idx;
-    return TRUE;
 }
 
 static __forceinline VOID VirtioStatusQUpdateDepthCounter(_In_ PVIRTIO_STATUSQ Q)
@@ -136,12 +246,12 @@ static __forceinline VOID VirtioStatusQPushFreeTxBuffer(_Inout_ PVIRTIO_STATUSQ 
     Q->FreeCount++;
 }
 
-static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
+static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
 {
     UINT16 idx;
     PUCHAR bufVa;
     UINT64 bufPa;
-    ULONG eventCount;
+    size_t eventCount;
     UINT32 bytes;
     VIRTQ_SG sg;
     UINT16 head;
@@ -180,7 +290,7 @@ static NTSTATUS VirtioStatusQTrySubmitLocked(_Inout_ PVIRTIO_STATUSQ Q)
     bufVa = VirtioStatusQTxBufVa(Q, idx);
     bufPa = VirtioStatusQTxBufPa(Q, idx);
 
-    eventCount = (ULONG)led_translate_build_virtio_events(
+    eventCount = led_translate_build_virtio_events(
         (uint8_t)Q->PendingLedBitfield,
         (uint8_t)Q->KeyboardLedSupportedMask,
         (struct virtio_input_event_le*)bufVa);
@@ -286,8 +396,18 @@ VirtioStatusQInitialize(
 
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = Device;
+
+    status = WdfSpinLockCreate(&attributes, &q->Lock);
+    if (!NT_SUCCESS(status)) {
+        ExFreePoolWithTag(q->Vq, VIOINPUT_STATUSQ_POOL_TAG);
+        ExFreePoolWithTag(q->NextFree, VIOINPUT_STATUSQ_POOL_TAG);
+        ExFreePoolWithTag(q, VIOINPUT_STATUSQ_POOL_TAG);
+        return status;
+    }
+
     status = WdfCommonBufferCreate(DmaEnabler, ringBytes, &attributes, &q->RingCommonBuffer);
     if (!NT_SUCCESS(status)) {
+        WdfObjectDelete(q->Lock);
         ExFreePoolWithTag(q->Vq, VIOINPUT_STATUSQ_POOL_TAG);
         ExFreePoolWithTag(q->NextFree, VIOINPUT_STATUSQ_POOL_TAG);
         ExFreePoolWithTag(q, VIOINPUT_STATUSQ_POOL_TAG);
@@ -301,6 +421,7 @@ VirtioStatusQInitialize(
     status = VirtqSplitInit(q->Vq, QueueSize, FALSE, TRUE, ringVa, (UINT64)ringPa.QuadPart, 4, NULL, 0, 0, 0);
     if (!NT_SUCCESS(status)) {
         WdfObjectDelete(q->RingCommonBuffer);
+        WdfObjectDelete(q->Lock);
         ExFreePoolWithTag(q->Vq, VIOINPUT_STATUSQ_POOL_TAG);
         ExFreePoolWithTag(q->NextFree, VIOINPUT_STATUSQ_POOL_TAG);
         ExFreePoolWithTag(q, VIOINPUT_STATUSQ_POOL_TAG);
@@ -311,6 +432,7 @@ VirtioStatusQInitialize(
     status = WdfCommonBufferCreate(DmaEnabler, txBytes, &attributes, &q->TxCommonBuffer);
     if (!NT_SUCCESS(status)) {
         WdfObjectDelete(q->RingCommonBuffer);
+        WdfObjectDelete(q->Lock);
         ExFreePoolWithTag(q->Vq, VIOINPUT_STATUSQ_POOL_TAG);
         ExFreePoolWithTag(q->NextFree, VIOINPUT_STATUSQ_POOL_TAG);
         ExFreePoolWithTag(q, VIOINPUT_STATUSQ_POOL_TAG);
@@ -336,6 +458,11 @@ VirtioStatusQUninitialize(_In_ PVIRTIO_STATUSQ StatusQ)
     q = StatusQ;
     if (q == NULL) {
         return;
+    }
+
+    if (q->Lock != NULL) {
+        WdfObjectDelete(q->Lock);
+        q->Lock = NULL;
     }
 
     if (q->TxCommonBuffer != NULL) {
@@ -372,6 +499,8 @@ VirtioStatusQReset(_In_ PVIRTIO_STATUSQ StatusQ)
         return;
     }
 
+    VirtioStatusQLock(q);
+
     if (q->Vq != NULL) {
         VirtqSplitReset(q->Vq);
     }
@@ -388,6 +517,8 @@ VirtioStatusQReset(_In_ PVIRTIO_STATUSQ StatusQ)
     if (q->Device != NULL) {
         VirtioStatusQUpdateDepthCounter(q);
     }
+
+    VirtioStatusQUnlock(q);
 }
 
 VOID
@@ -425,10 +556,12 @@ VirtioStatusQSetActive(_In_ PVIRTIO_STATUSQ StatusQ, _In_ BOOLEAN Active)
         return;
     }
 
+    VirtioStatusQLock(StatusQ);
     StatusQ->Active = Active;
     if (!Active) {
         StatusQ->PendingValid = FALSE;
     }
+    VirtioStatusQUnlock(StatusQ);
 }
 
 VOID
@@ -438,7 +571,9 @@ VirtioStatusQSetDropOnFull(_In_ PVIRTIO_STATUSQ StatusQ, _In_ BOOLEAN DropOnFull
         return;
     }
 
+    VirtioStatusQLock(StatusQ);
     StatusQ->DropOnFull = DropOnFull;
+    VirtioStatusQUnlock(StatusQ);
 }
 
 VOID
@@ -448,7 +583,9 @@ VirtioStatusQSetKeyboardLedSupportedMask(_In_ PVIRTIO_STATUSQ StatusQ, _In_ UCHA
         return;
     }
 
-    StatusQ->KeyboardLedSupportedMask = LedSupportedMask;
+    VirtioStatusQLock(StatusQ);
+    StatusQ->KeyboardLedSupportedMask = (UCHAR)(LedSupportedMask & (UCHAR)VIOINPUT_STATUSQ_LED_MASK_ALL);
+    VirtioStatusQUnlock(StatusQ);
 }
 
 NTSTATUS
@@ -461,17 +598,19 @@ VirtioStatusQWriteKeyboardLedReport(_In_ PVIRTIO_STATUSQ StatusQ, _In_ UCHAR Led
     }
 
     devCtx = (StatusQ->Device != NULL) ? VirtioInputGetDeviceContext(StatusQ->Device) : NULL;
-
+    VirtioStatusQLock(StatusQ);
     if (!StatusQ->Active) {
+        VirtioStatusQUnlock(StatusQ);
         if (devCtx != NULL) {
             VioInputCounterInc(&devCtx->Counters.LedWritesDropped);
         }
         return STATUS_DEVICE_NOT_READY;
     }
-
     StatusQ->PendingLedBitfield = LedBitfield;
     StatusQ->PendingValid = TRUE;
-    return VirtioStatusQTrySubmitLocked(StatusQ);
+    NTSTATUS st = VirtioStatusQTrySubmit(StatusQ);
+    VirtioStatusQUnlock(StatusQ);
+    return st;
 }
 
 VOID
@@ -486,6 +625,8 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
     if (q == NULL || q->Vq == NULL) {
         return;
     }
+
+    VirtioStatusQLock(q);
 
     devCtx = (q->Device != NULL) ? VirtioInputGetDeviceContext(q->Device) : NULL;
 
@@ -512,15 +653,19 @@ VirtioStatusQProcessUsedBuffers(_In_ PVIRTIO_STATUSQ StatusQ)
 
         if (cookie != NULL) {
             UINT16 idx;
-            if (VirtioStatusQCookieToIndex(q, cookie, &idx)) {
+            if (VirtioStatusQCookieToIndex(q->TxVa, (size_t)q->TxBufferStride, q->TxBufferCount, cookie, &idx)) {
                 VirtioStatusQPushFreeTxBuffer(q, idx);
             } else {
                 VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq completion cookie invalid\n");
             }
         }
 
-        (VOID)VirtioStatusQTrySubmitLocked(q);
+        (VOID)VirtioStatusQTrySubmit(q);
     }
 
     VirtioStatusQUpdateDepthCounter(q);
+
+    VirtioStatusQUnlock(q);
 }
+
+#endif /* _WIN32 */

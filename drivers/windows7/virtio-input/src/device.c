@@ -1240,14 +1240,7 @@ VOID VirtioInputUpdateStatusQActiveState(_In_ PDEVICE_CONTEXT Ctx)
     }
 
     active = VirtioInputIsHidActive(Ctx) && (Ctx->DeviceKind == VioInputDeviceKindKeyboard);
-
-    if (Ctx->Interrupts.QueueLocks != NULL && Ctx->Interrupts.QueueCount > 1) {
-        WdfSpinLockAcquire(Ctx->Interrupts.QueueLocks[1]);
-        VirtioStatusQSetActive(Ctx->StatusQ, active);
-        WdfSpinLockRelease(Ctx->Interrupts.QueueLocks[1]);
-    } else {
-        VirtioStatusQSetActive(Ctx->StatusQ, active);
-    }
+    VirtioStatusQSetActive(Ctx->StatusQ, active);
 }
 
 NTSTATUS VirtioInputEvtDevicePrepareHardware(
@@ -2151,13 +2144,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 /* Keep a copy in the device context for debugging/telemetry. */
                 deviceContext->KeyboardLedSupportedBitmask = ledSupportedMask;
 
-                if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
-                    WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
-                    VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, ledSupportedMask);
-                    WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
-                } else {
-                    VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, ledSupportedMask);
-                }
+                VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, ledSupportedMask);
 
                 VIOINPUT_LOG(
                     VIOINPUT_LOG_VIRTQ,
@@ -2605,13 +2592,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         VirtqSplitReset(deviceContext->EventVq);
     }
 
-    if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
-        WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
-        VirtioStatusQReset(deviceContext->StatusQ);
-        WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
-    } else {
-        VirtioStatusQReset(deviceContext->StatusQ);
-    }
+    VirtioStatusQReset(deviceContext->StatusQ);
 
     status = VirtioPciSetupQueue(&deviceContext->PciDevice,
                                  0,
@@ -2759,13 +2740,7 @@ NTSTATUS VirtioInputEvtDeviceD0Exit(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVICE
         VirtqSplitReset(deviceContext->EventVq);
     }
 
-    if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
-        WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
-        VirtioStatusQReset(deviceContext->StatusQ);
-        WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
-    } else {
-        VirtioStatusQReset(deviceContext->StatusQ);
-    }
+    VirtioStatusQReset(deviceContext->StatusQ);
 
     return STATUS_SUCCESS;
 }
