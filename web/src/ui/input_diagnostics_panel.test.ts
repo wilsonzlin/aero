@@ -77,6 +77,12 @@ describe("mountInputDiagnosticsPanel", () => {
       syntheticUsbMouseConfigured: false,
       mouseButtonsMask: 0x1f,
       pressedKeyboardHidUsageCount: 2,
+      batchesReceived: 10,
+      batchesProcessed: 9,
+      batchesDropped: 1,
+      eventsProcessed: 123,
+      keyboardBackendSwitches: 4,
+      mouseBackendSwitches: 5,
     };
     panel.setSnapshot(snap1);
     expect((host as any).textContent).toContain("keyboard_backend=ps2");
@@ -85,6 +91,12 @@ describe("mountInputDiagnosticsPanel", () => {
     expect((host as any).textContent).toContain("synthetic_usb_keyboard.configured=yes");
     expect((host as any).textContent).toContain("mouse_buttons_mask=0x0000001f");
     expect((host as any).textContent).toContain("pressed_hid_usage_count=2");
+    expect((host as any).textContent).toContain("io.batches_received=10");
+    expect((host as any).textContent).toContain("io.batches_processed=9");
+    expect((host as any).textContent).toContain("io.batches_dropped=1");
+    expect((host as any).textContent).toContain("io.events_processed=123");
+    expect((host as any).textContent).toContain("io.keyboard_backend_switches=4");
+    expect((host as any).textContent).toContain("io.mouse_backend_switches=5");
 
     const snap2: InputDiagnosticsSnapshot = {
       ...snap1,
@@ -96,6 +108,12 @@ describe("mountInputDiagnosticsPanel", () => {
       syntheticUsbMouseConfigured: true,
       mouseButtonsMask: 0,
       pressedKeyboardHidUsageCount: 0,
+      batchesReceived: 42,
+      batchesProcessed: 42,
+      batchesDropped: 0,
+      eventsProcessed: 999,
+      keyboardBackendSwitches: 6,
+      mouseBackendSwitches: 7,
     };
     panel.setSnapshot(snap2);
     expect((host as any).textContent).toContain("keyboard_backend=virtio");
@@ -104,5 +122,11 @@ describe("mountInputDiagnosticsPanel", () => {
     expect((host as any).textContent).toContain("synthetic_usb_mouse.configured=yes");
     expect((host as any).textContent).toContain("mouse_buttons_mask=0x00000000");
     expect((host as any).textContent).toContain("pressed_hid_usage_count=0");
+    expect((host as any).textContent).toContain("io.batches_received=42");
+    expect((host as any).textContent).toContain("io.batches_processed=42");
+    expect((host as any).textContent).toContain("io.batches_dropped=0");
+    expect((host as any).textContent).toContain("io.events_processed=999");
+    expect((host as any).textContent).toContain("io.keyboard_backend_switches=6");
+    expect((host as any).textContent).toContain("io.mouse_backend_switches=7");
   });
 });

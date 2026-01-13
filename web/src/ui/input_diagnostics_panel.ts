@@ -9,6 +9,12 @@ export type InputDiagnosticsSnapshot = {
   syntheticUsbMouseConfigured: boolean;
   mouseButtonsMask: number;
   pressedKeyboardHidUsageCount: number;
+  batchesReceived: number;
+  batchesProcessed: number;
+  batchesDropped: number;
+  eventsProcessed: number;
+  keyboardBackendSwitches: number;
+  mouseBackendSwitches: number;
 };
 
 export type InputDiagnosticsPanelApi = {
@@ -56,6 +62,12 @@ export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { init
       `synthetic_usb_mouse.configured=${formatYesNo(snapshot.syntheticUsbMouseConfigured)}`,
       `mouse_buttons_mask=${formatHex32(snapshot.mouseButtonsMask)}`,
       `pressed_hid_usage_count=${snapshot.pressedKeyboardHidUsageCount >>> 0}`,
+      `io.batches_received=${snapshot.batchesReceived >>> 0}`,
+      `io.batches_processed=${snapshot.batchesProcessed >>> 0}`,
+      `io.batches_dropped=${snapshot.batchesDropped >>> 0}`,
+      `io.events_processed=${snapshot.eventsProcessed >>> 0}`,
+      `io.keyboard_backend_switches=${snapshot.keyboardBackendSwitches >>> 0}`,
+      `io.mouse_backend_switches=${snapshot.mouseBackendSwitches >>> 0}`,
     ].join("\n");
   };
 
