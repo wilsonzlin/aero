@@ -721,6 +721,26 @@ export class WorkerCoordinator {
     return Atomics.load(this.shared.status, StatusIndex.IoInputBatchCounter);
   }
 
+  getIoInputBatchReceivedCounter(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputBatchReceivedCounter);
+  }
+
+  getIoInputBatchDropCounter(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputBatchDropCounter);
+  }
+
+  getIoKeyboardBackendSwitchCounter(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoKeyboardBackendSwitchCounter);
+  }
+
+  getIoMouseBackendSwitchCounter(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoMouseBackendSwitchCounter);
+  }
+
   getIoInputEventCounter(): number {
     if (!this.shared) return 0;
     return Atomics.load(this.shared.status, StatusIndex.IoInputEventCounter);

@@ -5,12 +5,22 @@ import { runStorageBench } from "../bench/storage_bench";
 import { setBenchmark } from "../bench/store";
 import type { StorageBenchOpts, StorageBenchResult } from "../bench/storage_types";
 import { runWebGpuBench, type WebGpuBenchOptions, type WebGpuBenchResult } from "../bench/webgpu_bench";
+import { readIoInputTelemetry, type IoInputTelemetrySnapshot } from "./io_input_telemetry";
 
 type AeroGlobal = NonNullable<Window["aero"]> & {
   bench?: {
     runWebGpuBench?: (opts?: WebGpuBenchOptions) => Promise<WebGpuBenchResult>;
     runStorageBench?: (opts?: StorageBenchOpts) => Promise<StorageBenchResult>;
     runGuestCpuBench?: (opts: GuestCpuBenchOpts) => Promise<GuestCpuBenchRun>;
+  };
+  debug?: {
+    /**
+     * Read I/O worker input telemetry counters from a runtime status view.
+     *
+     * This is intentionally thin so E2E tests and developers can inspect input
+     * drops/backend switching without wiring a full VM harness.
+     */
+    readIoInputTelemetry?: (status: Int32Array) => IoInputTelemetrySnapshot;
   };
 };
 
@@ -32,6 +42,7 @@ export function installAeroGlobal(): void {
   }
   const aero = win.aero as AeroGlobal;
   aero.bench ??= {};
+  aero.debug ??= {};
 
   aero.bench.runWebGpuBench = async (opts?: WebGpuBenchOptions): Promise<WebGpuBenchResult> => {
     const result = await runWebGpuBench(opts);
@@ -81,6 +92,10 @@ export function installAeroGlobal(): void {
     return result;
   }
   aero.bench.runGuestCpuBench = runGuestCpuBenchGlobal;
+
+  aero.debug.readIoInputTelemetry = (status: Int32Array): IoInputTelemetrySnapshot => {
+    return readIoInputTelemetry(status);
+  };
 
   installAeroGlobals();
 }

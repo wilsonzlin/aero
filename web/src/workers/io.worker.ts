@@ -4341,6 +4341,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const buffer = msg.buffer;
       const recycle = (msg as { recycle?: unknown }).recycle === true;
 
+      // Low-overhead input pipeline telemetry (u32 wrap semantics).
+      if (status) Atomics.add(status, StatusIndex.IoInputBatchReceivedCounter, 1);
+
       // Snapshot pause must freeze device-side state so the snapshot contents are deterministic.
       // Queue input while paused and replay after `vm.snapshot.resume`.
       if (snapshotPaused) {
@@ -4349,6 +4352,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           queuedInputBatchBytes += buffer.byteLength;
         } else {
           // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
+          if (status) Atomics.add(status, StatusIndex.IoInputBatchDropCounter, 1);
           if (recycle) {
             ctx.postMessage({ type: "in:input-batch-recycle", buffer } satisfies InputBatchRecycleMessage, [buffer]);
           }
@@ -4802,13 +4806,19 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
     }
   }
 
-  keyboardInputBackend = chooseKeyboardInputBackend({
+  const prevBackend = keyboardInputBackend;
+  const nextBackend = chooseKeyboardInputBackend({
     current: keyboardInputBackend,
     keysHeld: pressedKeyboardHidUsageCount !== 0,
     virtioOk,
     usbOk,
     force,
   });
+  if (nextBackend !== prevBackend) {
+    // Low-overhead telemetry (u32 wrap semantics).
+    if (status) Atomics.add(status, StatusIndex.IoKeyboardBackendSwitchCounter, 1);
+  }
+  keyboardInputBackend = nextBackend;
 }
 
 function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
@@ -4849,6 +4859,11 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
       console.warn(message);
       pushEvent({ kind: "log", level: "warn", message });
     }
+  }
+
+  if (nextBackend !== prevBackend) {
+    // Low-overhead telemetry (u32 wrap semantics).
+    if (status) Atomics.add(status, StatusIndex.IoMouseBackendSwitchCounter, 1);
   }
 
   // Optional extra robustness: when we *do* switch backends, send a "buttons=0" update to the
