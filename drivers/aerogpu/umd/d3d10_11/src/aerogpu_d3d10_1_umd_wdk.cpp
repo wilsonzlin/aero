@@ -186,6 +186,12 @@ constexpr uint32_t kD3D10BindDepthStencil = 0x40;
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = 128;
 constexpr uint32_t kAeroGpuD3D10MaxSamplerSlots = 16;
+
+// D3D10-class IA supports 16 vertex buffer slots (D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT).
+// Some WDK header revisions omit the constant; provide a conservative fallback.
+#ifndef D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT
+#define D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT 16
+#endif
 constexpr uint32_t kMaxVertexBufferSlots = D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
@@ -3735,7 +3741,6 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     binding.stride_bytes = 0;
     binding.offset_bytes = 0;
     binding.reserved0 = 0;
-
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
                                                                              &binding,
                                                                              sizeof(binding));
@@ -6481,6 +6486,8 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
   if (start_slot > kMaxVertexBufferSlots) {
     set_error(dev, E_INVALIDARG);
     return;
@@ -6513,8 +6520,6 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
                                hDevice.pDrvPrivate,
                                start_slot,
                                bind_count);
-
-  std::lock_guard<std::mutex> lock(dev->mutex);
 
   std::array<aerogpu_vertex_buffer_binding, kMaxVertexBufferSlots> bindings{};
   for (UINT i = 0; i < bind_count; ++i) {
