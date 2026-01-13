@@ -3162,35 +3162,43 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
         return STATUS_INVALID_PARAMETER;
     }
 
+    DXGK_VIDPN_INTERFACE vidpn;
+    RtlZeroMemory(&vidpn, sizeof(vidpn));
     if (!adapter->DxgkInterface.DxgkCbQueryVidPnInterface) {
-        /* Keep legacy behavior if we can't introspect the VidPN. */
-        pIsSupportedVidPn->IsVidPnSupported = TRUE;
         return STATUS_SUCCESS;
     }
 
-    DXGK_VIDPN_INTERFACE vidpn;
-    RtlZeroMemory(&vidpn, sizeof(vidpn));
-    NTSTATUS status = adapter->DxgkInterface.DxgkCbQueryVidPnInterface(adapter->StartInfo.hDxgkHandle, pIsSupportedVidPn->hDesiredVidPn, &vidpn);
+    NTSTATUS status =
+        adapter->DxgkInterface.DxgkCbQueryVidPnInterface(adapter->StartInfo.hDxgkHandle, pIsSupportedVidPn->hDesiredVidPn, &vidpn);
     if (!NT_SUCCESS(status)) {
-        /* Keep legacy behavior on interface query failure. */
-        pIsSupportedVidPn->IsVidPnSupported = TRUE;
         return STATUS_SUCCESS;
     }
 
     if (!vidpn.pfnGetTopology || !vidpn.pfnGetTopologyInterface || !vidpn.pfnReleaseTopology || !vidpn.pfnGetSourceModeSet ||
-        !vidpn.pfnGetSourceModeSetInterface || !vidpn.pfnReleaseSourceModeSet) {
-        /* Can't validate; accept to avoid blocking mode set. */
-        pIsSupportedVidPn->IsVidPnSupported = TRUE;
+        !vidpn.pfnGetSourceModeSetInterface || !vidpn.pfnReleaseSourceModeSet || !vidpn.pfnGetTargetModeSet ||
+        !vidpn.pfnGetTargetModeSetInterface || !vidpn.pfnReleaseTargetModeSet) {
         return STATUS_SUCCESS;
     }
 
-    BOOLEAN supported = FALSE;
+    BOOLEAN supported = TRUE;
     D3DKMDT_HVIDPNTOPOLOGY hTopology = 0;
+    D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
+    D3DKMDT_HVIDPNTARGETMODESET hTargetModeSet = 0;
+    BOOLEAN havePinnedSourceDims = FALSE;
+    ULONG pinnedSourceW = 0;
+    ULONG pinnedSourceH = 0;
+    BOOLEAN havePinnedTargetDims = FALSE;
+    ULONG pinnedTargetW = 0;
+    ULONG pinnedTargetH = 0;
+
+    AEROGPU_DISPLAY_MODE sourceDims[16];
+    UINT sourceDimCount = 0;
+    AEROGPU_DISPLAY_MODE targetDims[16];
+    UINT targetDimCount = 0;
 
     status = vidpn.pfnGetTopology(pIsSupportedVidPn->hDesiredVidPn, &hTopology);
     if (!NT_SUCCESS(status) || !hTopology) {
-        /* If we cannot introspect the topology, keep legacy behavior and accept. */
-        supported = TRUE;
+        supported = FALSE;
         goto Cleanup;
     }
 
@@ -3198,28 +3206,27 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
     RtlZeroMemory(&topo, sizeof(topo));
     status = vidpn.pfnGetTopologyInterface(pIsSupportedVidPn->hDesiredVidPn, hTopology, &topo);
     if (!NT_SUCCESS(status) || !topo.pfnGetNumPaths || !topo.pfnAcquireFirstPathInfo || !topo.pfnReleasePathInfo) {
-        supported = TRUE;
+        supported = FALSE;
         goto Cleanup;
     }
 
     UINT numPaths = 0;
     status = topo.pfnGetNumPaths(hTopology, &numPaths);
     if (!NT_SUCCESS(status)) {
-        supported = TRUE;
+        supported = FALSE;
         goto Cleanup;
     }
     if (numPaths != 1) {
+        supported = FALSE;
         goto Cleanup;
     }
 
     const D3DKMDT_VIDPN_PRESENT_PATH* pathInfo = NULL;
     status = topo.pfnAcquireFirstPathInfo(hTopology, &pathInfo);
     if (!NT_SUCCESS(status) || !pathInfo) {
-        supported = TRUE;
+        supported = FALSE;
         goto Cleanup;
     }
-
-    supported = TRUE;
 
     /* Strict 1 source -> 1 target topology. */
     if (pathInfo->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID || pathInfo->VidPnTargetId != AEROGPU_VIDPN_TARGET_ID) {
@@ -3245,46 +3252,233 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
         goto Cleanup;
     }
 
-    /* Validate the pinned source mode (format + dimensions). */
-    D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
     status = vidpn.pfnGetSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, AEROGPU_VIDPN_SOURCE_ID, &hSourceModeSet);
     if (!NT_SUCCESS(status) || !hSourceModeSet) {
-        /* If we cannot inspect the mode set, keep legacy behavior and accept. */
-        supported = TRUE;
+        supported = FALSE;
         goto Cleanup;
     }
 
     DXGK_VIDPNSOURCEMODESET_INTERFACE sms;
     RtlZeroMemory(&sms, sizeof(sms));
     status = vidpn.pfnGetSourceModeSetInterface(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet, &sms);
-    if (!NT_SUCCESS(status) || !sms.pfnAcquirePinnedModeInfo || !sms.pfnReleaseModeInfo) {
-        vidpn.pfnReleaseSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet);
-        supported = TRUE;
-        goto Cleanup;
-    }
-
-    const D3DKMDT_VIDPN_SOURCE_MODE* pinned = NULL;
-    status = sms.pfnAcquirePinnedModeInfo(hSourceModeSet, &pinned);
-    if (!NT_SUCCESS(status) || !pinned) {
-        vidpn.pfnReleaseSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet);
-        /* If no pinned mode is present yet, treat the topology as supported. */
-        supported = TRUE;
-        goto Cleanup;
-    }
-
-    const ULONG width = pinned->Format.Graphics.PrimSurfSize.cx;
-    const ULONG height = pinned->Format.Graphics.PrimSurfSize.cy;
-    const D3DDDIFORMAT fmt = pinned->Format.Graphics.PixelFormat;
-
-    if (pinned->Type != D3DKMDT_RMT_GRAPHICS || !AeroGpuIsSupportedVidPnPixelFormat(fmt) ||
-        !AeroGpuIsSupportedVidPnModeDimensions(width, height)) {
+    if (!NT_SUCCESS(status) || !sms.pfnReleaseModeInfo) {
         supported = FALSE;
+        goto Cleanup;
     }
 
-    sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
-    vidpn.pfnReleaseSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet);
+    /* Validate the pinned source mode (format + dimensions), if present. */
+    if (sms.pfnAcquirePinnedModeInfo) {
+        const D3DKMDT_VIDPN_SOURCE_MODE* pinned = NULL;
+        status = sms.pfnAcquirePinnedModeInfo(hSourceModeSet, &pinned);
+        if (NT_SUCCESS(status) && pinned && pinned->Type == D3DKMDT_RMT_GRAPHICS) {
+            pinnedSourceW = pinned->Format.Graphics.PrimSurfSize.cx;
+            pinnedSourceH = pinned->Format.Graphics.PrimSurfSize.cy;
+            const D3DDDIFORMAT fmt = pinned->Format.Graphics.PixelFormat;
+
+            if (!AeroGpuIsSupportedVidPnPixelFormat(fmt) || !AeroGpuIsSupportedVidPnModeDimensions(pinnedSourceW, pinnedSourceH)) {
+                supported = FALSE;
+            } else {
+                havePinnedSourceDims = TRUE;
+                AeroGpuModeListAddUnique(sourceDims,
+                                         &sourceDimCount,
+                                         (UINT)(sizeof(sourceDims) / sizeof(sourceDims[0])),
+                                         pinnedSourceW,
+                                         pinnedSourceH);
+            }
+        }
+        if (pinned) {
+            sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
+        }
+    }
+
+    if (supported) {
+        /*
+         * If the source mode set contains mode entries, ensure they are all
+         * within our supported whitelist. This keeps IsSupportedVidPn aligned
+         * with EnumVidPnCofuncModality and avoids the OS selecting unsupported
+         * modes that happen to be present in a proposed VidPN.
+         */
+        if (sms.pfnAcquireFirstModeInfo && sms.pfnAcquireNextModeInfo) {
+            const D3DKMDT_VIDPN_SOURCE_MODE* mode = NULL;
+            status = sms.pfnAcquireFirstModeInfo(hSourceModeSet, &mode);
+            if (mode == NULL) {
+                supported = FALSE;
+            } else {
+                for (;;) {
+                    BOOLEAN ok = FALSE;
+                    if (mode->Type == D3DKMDT_RMT_GRAPHICS) {
+                        const ULONG w = mode->Format.Graphics.PrimSurfSize.cx;
+                        const ULONG h = mode->Format.Graphics.PrimSurfSize.cy;
+                        const D3DDDIFORMAT fmt = mode->Format.Graphics.PixelFormat;
+                        if (AeroGpuIsSupportedVidPnPixelFormat(fmt) && AeroGpuIsSupportedVidPnModeDimensions(w, h)) {
+                            ok = TRUE;
+                            AeroGpuModeListAddUnique(sourceDims,
+                                                     &sourceDimCount,
+                                                     (UINT)(sizeof(sourceDims) / sizeof(sourceDims[0])),
+                                                     w,
+                                                     h);
+                        }
+                    }
+
+                    const D3DKMDT_VIDPN_SOURCE_MODE* next = NULL;
+                    NTSTATUS stNext = sms.pfnAcquireNextModeInfo(hSourceModeSet, mode, &next);
+                    sms.pfnReleaseModeInfo(hSourceModeSet, mode);
+                    mode = next;
+
+                    if (!ok) {
+                        supported = FALSE;
+                        break;
+                    }
+
+                    if (mode == NULL) {
+                        /* End of enumeration. Some WDDM helpers return STATUS_GRAPHICS_NO_MORE_ELEMENTS here. */
+                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS) {
+                            supported = FALSE;
+                        }
+                        break;
+                    }
+
+                    if (stNext != STATUS_SUCCESS) {
+                        supported = FALSE;
+                        break;
+                    }
+                }
+            }
+        } else if (!havePinnedSourceDims) {
+            supported = FALSE;
+        }
+    }
+
+    if (!supported || sourceDimCount == 0) {
+        supported = FALSE;
+        goto Cleanup;
+    }
+
+    /* Validate target mode set (must be progressive and match supported dimensions). */
+    status = vidpn.pfnGetTargetModeSet(pIsSupportedVidPn->hDesiredVidPn, AEROGPU_VIDPN_TARGET_ID, &hTargetModeSet);
+    if (!NT_SUCCESS(status) || !hTargetModeSet) {
+        supported = FALSE;
+        goto Cleanup;
+    }
+
+    DXGK_VIDPNTARGETMODESET_INTERFACE tms;
+    RtlZeroMemory(&tms, sizeof(tms));
+    status = vidpn.pfnGetTargetModeSetInterface(pIsSupportedVidPn->hDesiredVidPn, hTargetModeSet, &tms);
+    if (!NT_SUCCESS(status) || !tms.pfnReleaseModeInfo) {
+        supported = FALSE;
+        goto Cleanup;
+    }
+
+    if (tms.pfnAcquirePinnedModeInfo) {
+        const D3DKMDT_VIDPN_TARGET_MODE* pinned = NULL;
+        status = tms.pfnAcquirePinnedModeInfo(hTargetModeSet, &pinned);
+        if (NT_SUCCESS(status) && pinned) {
+            pinnedTargetW = pinned->VideoSignalInfo.ActiveSize.cx;
+            pinnedTargetH = pinned->VideoSignalInfo.ActiveSize.cy;
+            const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = pinned->VideoSignalInfo.ScanLineOrdering;
+            if (!AeroGpuIsSupportedVidPnModeDimensions(pinnedTargetW, pinnedTargetH) ||
+                (order != D3DKMDT_VSSLO_PROGRESSIVE && order != D3DKMDT_VSSLO_UNINITIALIZED)) {
+                supported = FALSE;
+            } else {
+                havePinnedTargetDims = TRUE;
+                AeroGpuModeListAddUnique(targetDims,
+                                         &targetDimCount,
+                                         (UINT)(sizeof(targetDims) / sizeof(targetDims[0])),
+                                         pinnedTargetW,
+                                         pinnedTargetH);
+            }
+        }
+        if (pinned) {
+            tms.pfnReleaseModeInfo(hTargetModeSet, pinned);
+        }
+    }
+
+    if (supported) {
+        if (tms.pfnAcquireFirstModeInfo && tms.pfnAcquireNextModeInfo) {
+            const D3DKMDT_VIDPN_TARGET_MODE* mode = NULL;
+            status = tms.pfnAcquireFirstModeInfo(hTargetModeSet, &mode);
+            if (mode == NULL) {
+                supported = FALSE;
+            } else {
+                for (;;) {
+                    BOOLEAN ok = FALSE;
+                    const ULONG w = mode->VideoSignalInfo.ActiveSize.cx;
+                    const ULONG h = mode->VideoSignalInfo.ActiveSize.cy;
+                    const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = mode->VideoSignalInfo.ScanLineOrdering;
+                    if (AeroGpuIsSupportedVidPnModeDimensions(w, h) &&
+                        (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED)) {
+                        ok = TRUE;
+                        AeroGpuModeListAddUnique(targetDims,
+                                                 &targetDimCount,
+                                                 (UINT)(sizeof(targetDims) / sizeof(targetDims[0])),
+                                                 w,
+                                                 h);
+                    }
+
+                    const D3DKMDT_VIDPN_TARGET_MODE* next = NULL;
+                    NTSTATUS stNext = tms.pfnAcquireNextModeInfo(hTargetModeSet, mode, &next);
+                    tms.pfnReleaseModeInfo(hTargetModeSet, mode);
+                    mode = next;
+
+                    if (!ok) {
+                        supported = FALSE;
+                        break;
+                    }
+
+                    if (mode == NULL) {
+                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS) {
+                            supported = FALSE;
+                        }
+                        break;
+                    }
+
+                    if (stNext != STATUS_SUCCESS) {
+                        supported = FALSE;
+                        break;
+                    }
+                }
+            }
+        } else if (!havePinnedTargetDims) {
+            supported = FALSE;
+        }
+    }
+
+    if (!supported || targetDimCount == 0) {
+        supported = FALSE;
+        goto Cleanup;
+    }
+
+    if (havePinnedSourceDims && havePinnedTargetDims) {
+        if (pinnedSourceW != pinnedTargetW || pinnedSourceH != pinnedTargetH) {
+            supported = FALSE;
+            goto Cleanup;
+        }
+    }
+
+    /* Require at least one common mode between source and target sets. */
+    {
+        BOOLEAN haveCommon = FALSE;
+        for (UINT i = 0; i < sourceDimCount && !haveCommon; ++i) {
+            for (UINT j = 0; j < targetDimCount; ++j) {
+                if (sourceDims[i].Width == targetDims[j].Width && sourceDims[i].Height == targetDims[j].Height) {
+                    haveCommon = TRUE;
+                    break;
+                }
+            }
+        }
+        if (!haveCommon) {
+            supported = FALSE;
+            goto Cleanup;
+        }
+    }
 
 Cleanup:
+    if (hSourceModeSet) {
+        vidpn.pfnReleaseSourceModeSet(pIsSupportedVidPn->hDesiredVidPn, hSourceModeSet);
+    }
+    if (hTargetModeSet) {
+        vidpn.pfnReleaseTargetModeSet(pIsSupportedVidPn->hDesiredVidPn, hTargetModeSet);
+    }
     if (hTopology) {
         vidpn.pfnReleaseTopology(pIsSupportedVidPn->hDesiredVidPn, hTopology);
     }
