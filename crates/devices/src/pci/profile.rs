@@ -294,6 +294,14 @@ pub const AHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(
     false,
 )];
 
+/// Canonical capabilities exposed by the Intel ICH9 AHCI profile.
+///
+/// AHCI uses a single interrupt vector, so a single-vector MSI capability is sufficient.
+pub const AHCI_CAPS: [PciCapabilityProfile; 1] = [PciCapabilityProfile::Msi {
+    is_64bit: true,
+    per_vector_masking: true,
+}];
+
 pub const NVME_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
 
 pub const HDA_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 0x4000, false)];
@@ -516,7 +524,7 @@ pub const SATA_AHCI_ICH9: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &AHCI_BARS,
-    capabilities: &[],
+    capabilities: &AHCI_CAPS,
 };
 
 pub const NVME_CONTROLLER: PciDeviceProfile = PciDeviceProfile {

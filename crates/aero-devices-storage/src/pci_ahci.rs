@@ -73,9 +73,7 @@ impl AhciPciDevice {
     pub fn new(num_ports: usize) -> Self {
         let irq = AtomicIrqLine::default();
         let controller = AhciController::new(Box::new(irq.clone()), num_ports);
-        let mut config = profile::SATA_AHCI_ICH9.build_config_space();
-        // Expose an MSI capability so guests can opt into message-signaled interrupts.
-        config.add_capability(Box::new(MsiCapability::new()));
+        let config = profile::SATA_AHCI_ICH9.build_config_space();
         Self {
             config,
             controller,
