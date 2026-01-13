@@ -395,45 +395,6 @@ fn translate_ps(
     })
 }
 
-fn translate_cs(module: &Sm4Module) -> Result<ShaderTranslation, ShaderTranslateError> {
-    let io = IoMaps::empty();
-    let resources = scan_resources(module)?;
-
-    let reflection = ShaderReflection {
-        inputs: Vec::new(),
-        outputs: Vec::new(),
-        bindings: resources.bindings(ShaderStage::Compute),
-    };
-
-    let mut w = WgslWriter::new();
-
-    resources.emit_decls(&mut w, ShaderStage::Compute)?;
-
-    w.line("@compute @workgroup_size(1)");
-    w.line("fn cs_main() {");
-    w.indent();
-    if !module.instructions.is_empty() {
-        w.line("");
-    }
-    emit_temp_and_output_decls(&mut w, module, &io)?;
-
-    let ctx = EmitCtx {
-        stage: ShaderStage::Compute,
-        io: &io,
-        resources: &resources,
-    };
-    emit_instructions(&mut w, module, &ctx)?;
-
-    w.dedent();
-    w.line("}");
-
-    Ok(ShaderTranslation {
-        wgsl: w.finish(),
-        stage: ShaderStage::Compute,
-        reflection,
-    })
-}
-
 fn build_io_maps(
     module: &Sm4Module,
     isgn: &DxbcSignature,
@@ -773,6 +734,30 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
             }
+            Sm4Inst::LdRaw { dst: _, addr, .. } => scan_src_regs(addr, &mut scan_reg),
+            Sm4Inst::StoreRaw { addr, value, .. } => {
+                scan_src_regs(addr, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
+            }
+            Sm4Inst::LdStructured {
+                dst: _,
+                index,
+                offset,
+                ..
+            } => {
+                scan_src_regs(index, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+            }
+            Sm4Inst::StoreStructured {
+                index,
+                offset,
+                value,
+                ..
+            } => {
+                scan_src_regs(index, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(value, &mut scan_reg);
+            }
             Sm4Inst::Unknown { .. } | Sm4Inst::Ret => {}
         }
     }
@@ -894,21 +879,6 @@ struct IoMaps {
 }
 
 impl IoMaps {
-    fn empty() -> Self {
-        Self {
-            inputs: BTreeMap::new(),
-            outputs: BTreeMap::new(),
-            vs_input_fields: Vec::new(),
-            vs_input_fields_by_register: BTreeMap::new(),
-            vs_position_register: None,
-            ps_position_register: None,
-            ps_sv_target0_register: None,
-            vs_vertex_id_register: None,
-            vs_instance_id_register: None,
-            ps_front_facing_register: None,
-        }
-    }
-
     fn inputs_reflection(&self) -> Vec<IoParam> {
         self.inputs
             .values()

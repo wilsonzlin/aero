@@ -1,8 +1,8 @@
 use core::fmt;
 
 use crate::sm4_ir::{
-    DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl, Sm4Inst, Sm4Module,
-    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl, Sm4Inst,
+    Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -447,7 +447,7 @@ mod tests {
             tokens,
         };
 
-        let module = program.decode().expect("decode should succeed");
+        let module = super::decode_program(&program).expect("decode should succeed");
         assert!(matches!(module.instructions.as_slice(), [Sm4Inst::Ret]));
         assert!(
             module.decls.iter().any(|d| matches!(
@@ -556,6 +556,8 @@ fn decode_instruction(
         }
         OPCODE_SAMPLE | OPCODE_SAMPLE_L => decode_sample_like(opcode, saturate, &mut r),
         OPCODE_LD => decode_ld(saturate, &mut r),
+        OPCODE_LD_RAW => decode_ld_raw(saturate, &mut r),
+        OPCODE_STORE_RAW => decode_store_raw(&mut r),
         other => {
             // Structural fallback for sample/sample_l when opcode IDs differ.
             if let Some(sample) = try_decode_sample_like(saturate, inst_toks, at)? {
@@ -613,6 +615,36 @@ fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4Deco
 
     // Unsupported `ld` variant (e.g. with offsets); preserve as unknown.
     Ok(Sm4Inst::Unknown { opcode: OPCODE_LD })
+}
+
+fn decode_ld_raw(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let mut dst = decode_dst(r)?;
+    dst.saturate = saturate;
+    let addr = decode_src(r)?;
+    let buffer = decode_buffer_ref(r)?;
+    if !r.is_eof() {
+        return Ok(Sm4Inst::Unknown {
+            opcode: OPCODE_LD_RAW,
+        });
+    }
+    Ok(Sm4Inst::LdRaw { dst, addr, buffer })
+}
+
+fn decode_store_raw(r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let (uav, mask) = decode_uav_ref(r)?;
+    let addr = decode_src(r)?;
+    let value = decode_src(r)?;
+    if !r.is_eof() {
+        return Ok(Sm4Inst::Unknown {
+            opcode: OPCODE_STORE_RAW,
+        });
+    }
+    Ok(Sm4Inst::StoreRaw {
+        uav,
+        addr,
+        value,
+        mask,
+    })
 }
 
 fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4DecodeError> {
@@ -967,6 +999,24 @@ fn decode_texture_ref(r: &mut InstrReader<'_>) -> Result<TextureRef, Sm4DecodeEr
     Ok(TextureRef { slot })
 }
 
+fn decode_buffer_ref(r: &mut InstrReader<'_>) -> Result<BufferRef, Sm4DecodeError> {
+    let op = decode_raw_operand(r)?;
+    if op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("buffer operand cannot be immediate"),
+        });
+    }
+    if op.ty != OPERAND_TYPE_RESOURCE {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("expected resource operand"),
+        });
+    }
+    let slot = one_index(op.ty, &op.indices, r.base_at)?;
+    Ok(BufferRef { slot })
+}
+
 fn decode_sampler_ref(r: &mut InstrReader<'_>) -> Result<SamplerRef, Sm4DecodeError> {
     let op = decode_raw_operand(r)?;
     if op.imm32.is_some() {
@@ -983,6 +1033,28 @@ fn decode_sampler_ref(r: &mut InstrReader<'_>) -> Result<SamplerRef, Sm4DecodeEr
     }
     let slot = one_index(op.ty, &op.indices, r.base_at)?;
     Ok(SamplerRef { slot })
+}
+
+fn decode_uav_ref(r: &mut InstrReader<'_>) -> Result<(UavRef, WriteMask), Sm4DecodeError> {
+    let op = decode_raw_operand(r)?;
+    if op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("uav operand cannot be immediate"),
+        });
+    }
+    if op.ty != OPERAND_TYPE_UNORDERED_ACCESS_VIEW {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("expected uav operand"),
+        });
+    }
+    let slot = one_index(op.ty, &op.indices, r.base_at)?;
+    let mask = match op.selection_mode {
+        OPERAND_SEL_MASK => WriteMask((op.component_sel & 0xF) as u8),
+        _ => WriteMask::XYZW,
+    };
+    Ok((UavRef { slot }, mask))
 }
 
 fn one_index(ty: u32, indices: &[u32], at: usize) -> Result<u32, Sm4DecodeError> {

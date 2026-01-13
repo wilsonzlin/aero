@@ -189,6 +189,8 @@ pub enum Sm4Inst {
         lod: SrcOperand,
     },
     /// `ld_raw dst, addr, t#`
+    ///
+    /// `addr` is a byte offset into the raw buffer.
     LdRaw {
         dst: DstOperand,
         addr: SrcOperand,
@@ -322,11 +324,13 @@ pub struct SamplerRef {
     pub slot: u32,
 }
 
+/// A `t#` shader resource bound as a buffer (e.g. `ByteAddressBuffer` / SRV buffer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferRef {
     pub slot: u32,
 }
 
+/// A `u#` unordered access view (UAV) bound to the shader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UavRef {
     pub slot: u32,

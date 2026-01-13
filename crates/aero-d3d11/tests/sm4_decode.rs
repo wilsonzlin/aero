@@ -1,7 +1,7 @@
 use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
-    OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program,
-    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    BufferRef, OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module,
+    Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -67,6 +67,20 @@ fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
     vec![
         operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1, false),
         idx,
+    ]
+}
+
+fn uav_operand(slot: u32, mask: WriteMask) -> Vec<u32> {
+    vec![
+        operand_token(
+            OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+            0,
+            OPERAND_SEL_MASK,
+            mask.0 as u32,
+            1,
+            false,
+        ),
+        slot,
     ]
 }
 
@@ -970,23 +984,16 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
 }
 
 #[test]
-fn decodes_sm5_compute_thread_group_and_raw_uav_ops_as_unknown() {
+fn decodes_sm5_compute_thread_group_and_raw_uav_ops() {
     // Build a minimal compute shader that declares a thread-group size and uses raw load/store.
-    //
-    // The SM4/5 decoder does not model these operations yet, but it must be able to *skip* them
-    // without crashing so that later stages (e.g. reflection) can still run.
-    const DCL_THREAD_GROUP: u32 = 0x11f;
-    const LD_RAW: u32 = 0x53;
-    const STORE_RAW: u32 = 0x56;
-
     let mut body = Vec::<u32>::new();
 
     // dcl_thread_group 8, 8, 1
-    body.extend_from_slice(&[opcode_token(DCL_THREAD_GROUP, 4), 8, 8, 1]);
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 8, 8, 1]);
 
     // ld_raw r0, l(0), t0
     let addr = imm32_scalar(0);
-    let mut ld_raw = vec![opcode_token(LD_RAW, (1 + 2 + addr.len() + 2) as u32)];
+    let mut ld_raw = vec![opcode_token(OPCODE_LD_RAW, (1 + 2 + addr.len() + 2) as u32)];
     ld_raw.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
     ld_raw.extend_from_slice(&addr);
     ld_raw.extend_from_slice(&reg_src(
@@ -997,15 +1004,8 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops_as_unknown() {
     ));
     body.extend_from_slice(&ld_raw);
 
-    // store_raw u0, l(0), r0
-    // (Operand order isn't validated by the current decoder; the first operand is enough to
-    // exercise `OPERAND_TYPE_UNORDERED_ACCESS_VIEW`.)
-    let uav = reg_src(
-        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
-        &[0],
-        Swizzle::XYZW,
-        OperandModifier::None,
-    );
+    // store_raw u0.xyzw, l(0), r0
+    let uav = uav_operand(0, WriteMask::XYZW);
     let addr = imm32_scalar(0);
     let val = reg_src(
         OPERAND_TYPE_TEMP,
@@ -1014,7 +1014,7 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops_as_unknown() {
         OperandModifier::None,
     );
     let mut store_raw = vec![opcode_token(
-        STORE_RAW,
+        OPCODE_STORE_RAW,
         (1 + uav.len() + addr.len() + val.len()) as u32,
     )];
     store_raw.extend_from_slice(&uav);
@@ -1036,14 +1036,120 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops_as_unknown() {
     assert!(module
         .decls
         .iter()
-        .any(|d| matches!(d, Sm4Decl::Unknown { opcode } if *opcode == OPCODE_DCL_THREAD_GROUP)));
+        .any(|d| matches!(d, Sm4Decl::ThreadGroupSize { .. })
+            || matches!(d, Sm4Decl::Unknown { opcode } if *opcode == OPCODE_DCL_THREAD_GROUP)));
 
     assert!(module
         .instructions
         .iter()
-        .any(|i| matches!(i, Sm4Inst::Unknown { opcode } if *opcode == OPCODE_LD_RAW)));
+        .any(|i| matches!(i, Sm4Inst::LdRaw { .. })));
     assert!(module
         .instructions
         .iter()
-        .any(|i| matches!(i, Sm4Inst::Unknown { opcode } if *opcode == OPCODE_STORE_RAW)));
+        .any(|i| matches!(i, Sm4Inst::StoreRaw { .. })));
+}
+
+#[test]
+fn decodes_ld_raw() {
+    let mut body = Vec::<u32>::new();
+
+    // ld_raw r0, r1.x, t0
+    let addr = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let mut ld_raw = vec![opcode_token(OPCODE_LD_RAW, (1 + 2 + addr.len() + 2) as u32)];
+    ld_raw.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld_raw.extend_from_slice(&addr);
+    ld_raw.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ld_raw);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::LdRaw {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            addr: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            buffer: BufferRef { slot: 0 },
+        }
+    );
+}
+
+#[test]
+fn decodes_store_raw_with_mask() {
+    let mut body = Vec::<u32>::new();
+
+    // store_raw u0.xy, r0.x, r1
+    let addr = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let value = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let uav = uav_operand(0, WriteMask(0b0011));
+    let mut store_raw = vec![opcode_token(
+        OPCODE_STORE_RAW,
+        (1 + uav.len() + addr.len() + value.len()) as u32,
+    )];
+    store_raw.extend_from_slice(&uav);
+    store_raw.extend_from_slice(&addr);
+    store_raw.extend_from_slice(&value);
+    body.extend_from_slice(&store_raw);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::StoreRaw {
+            uav: UavRef { slot: 0 },
+            addr: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            value: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1,
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            mask: WriteMask(0b0011),
+        }
+    );
 }
