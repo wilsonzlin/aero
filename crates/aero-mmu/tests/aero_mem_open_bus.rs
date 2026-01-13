@@ -78,6 +78,7 @@ fn aero_mem_bus_bulk_reads_past_ram_end_are_open_bus() {
     let ram = Arc::new(aero_mem::PhysicalMemory::new(4096).unwrap());
     let mut bus = aero_mem::MemoryBus::new(ram);
 
-    // Make sure bulk operations behave like scalar operations when they cross the end of guest RAM.
+    // Make sure bulk operations behave like scalar operations when they cross the end of guest
+    // RAM.
     assert_cross_boundary_bulk_semantics(&mut bus, 0x1000);
- }
+}
