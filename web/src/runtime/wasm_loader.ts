@@ -1400,7 +1400,7 @@ export interface WasmApi {
         readonly last_tick_written_frames: number;
         readonly last_tick_dropped_frames: number;
         /**
-         * Optional helper available in newer demo builds.
+         * Added in newer WASM builds; older builds may not expose this.
          */
         set_sine_wave?(freqHz: number, gain: number): void;
         tick(frames: number): number;
