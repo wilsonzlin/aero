@@ -769,17 +769,6 @@ impl aero_audio::mem::MemoryAccess for HdaDmaMemory<'_> {
     }
 }
 
-#[derive(Default)]
-struct NoopVirtioInterruptSink;
-
-impl VirtioInterruptSink for NoopVirtioInterruptSink {
-    fn raise_legacy_irq(&mut self) {}
-
-    fn lower_legacy_irq(&mut self) {}
-
-    fn signal_msix(&mut self, _message: MsiMessage) {}
-}
-
 #[derive(Clone)]
 struct VirtioPlatformInterruptSink {
     interrupts: Rc<RefCell<PlatformInterrupts>>,
@@ -1963,13 +1952,9 @@ impl PcPlatform {
                 )
             });
 
-            let interrupts_sink: Box<dyn VirtioInterruptSink> = if config.enable_virtio_msix {
-                Box::new(VirtioPlatformInterruptSink {
-                    interrupts: interrupts.clone(),
-                })
-            } else {
-                Box::new(NoopVirtioInterruptSink)
-            };
+            let interrupts_sink: Box<dyn VirtioInterruptSink> = Box::new(VirtioPlatformInterruptSink {
+                interrupts: interrupts.clone(),
+            });
             let virtio_blk = Rc::new(RefCell::new(VirtioPciDevice::new(
                 Box::new(VirtioBlk::new(backend)),
                 interrupts_sink,
