@@ -2760,9 +2760,15 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
 
     const auto summary = SummarizeHidReportDescriptor(*report_desc);
     const bool has_keyboard = summary.keyboard_app_collections > 0;
-    const bool has_mouse = summary.mouse_app_collections > 0;
+    const bool has_mouse = summary.mouse_xy_relative_collections > 0;
     const bool has_tablet = summary.tablet_app_collections > 0;
-    if (has_keyboard && has_mouse) {
+    const bool has_unclassified_mouse_collections =
+        summary.mouse_app_collections > summary.mouse_xy_relative_collections;
+    const int kind_count = (has_keyboard ? 1 : 0) + (has_mouse ? 1 : 0) + (has_tablet ? 1 : 0);
+
+    if (has_unclassified_mouse_collections) {
+      out.unknown_devices++;
+    } else if (kind_count > 1) {
       out.ambiguous_devices++;
     } else if (has_keyboard) {
       out.keyboard_devices++;
@@ -2776,6 +2782,7 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     } else {
       out.unknown_devices++;
     }
+
     out.keyboard_collections += summary.keyboard_app_collections;
     out.mouse_collections += summary.mouse_app_collections;
     out.tablet_collections += summary.tablet_app_collections;
@@ -2914,7 +2921,7 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
     const bool has_relative_xy = summary.mouse_xy_relative_collections > 0;
     const bool has_absolute_xy = summary.mouse_xy_absolute_collections > 0;
 
-    if (has_keyboard && !has_mouse && out.keyboard_path.empty()) {
+    if (has_keyboard && !has_mouse && !has_tablet && out.keyboard_path.empty()) {
       out.keyboard_path = device_path;
       log.Logf("virtio-input-events: selected keyboard HID interface: %s", WideToUtf8(device_path).c_str());
     } else if (!has_keyboard) {
