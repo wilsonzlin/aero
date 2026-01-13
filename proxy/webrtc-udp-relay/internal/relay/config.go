@@ -12,13 +12,16 @@ import (
 type InboundFilterMode int
 
 const (
-	// InboundFilterAny behaves like a full-cone NAT: inbound packets are accepted
-	// from any remote endpoint.
-	InboundFilterAny InboundFilterMode = iota
 	// InboundFilterAddressAndPort behaves like a typical symmetric NAT: inbound
 	// packets are accepted only from remote endpoints that the guest has
 	// previously sent a packet to (address+port tuple).
-	InboundFilterAddressAndPort
+	//
+	// This is intentionally the zero value so that an empty relay.Config{}
+	// defaults to the safer mode.
+	InboundFilterAddressAndPort InboundFilterMode = iota
+	// InboundFilterAny behaves like a full-cone NAT: inbound packets are accepted
+	// from any remote endpoint.
+	InboundFilterAny
 )
 
 type Config struct {
@@ -126,6 +129,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.L2BackendAuthForwardMode == "" {
 		c.L2BackendAuthForwardMode = d.L2BackendAuthForwardMode
+	}
+	switch c.InboundFilterMode {
+	case InboundFilterAny, InboundFilterAddressAndPort:
+		// ok
+	default:
+		c.InboundFilterMode = d.InboundFilterMode
 	}
 	if c.RemoteAllowlistIdleTimeout <= 0 {
 		c.RemoteAllowlistIdleTimeout = c.UDPBindingIdleTimeout
