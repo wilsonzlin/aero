@@ -181,6 +181,8 @@ fn real_main() -> anyhow::Result<()> {
         // Preserve declaration/instruction splitting rules from the main decoder: `customdata`
         // blocks and `nop`s can appear anywhere and do not terminate the declaration section.
         if opcode == OPCODE_CUSTOMDATA {
+            // Custom-data blocks can technically carry extended opcode tokens; skip them to find
+            // the class DWORD.
             let mut class_pos = 1usize;
             let mut extended = (opcode_token & OPCODE_EXTENDED_BIT) != 0;
             while extended {
