@@ -260,7 +260,7 @@ impl StreamProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::audio::dsp::pcm::{PcmSampleFormat, PcmSpec};
+    use pcm::PcmSampleFormat;
 
     fn make_i16_pcm_bytes(frames: usize, channels: usize) -> Vec<u8> {
         let mut state = 0x1234_5678u32;
@@ -315,6 +315,14 @@ mod tests {
         out_all
     }
 
+    fn f32s_to_le_bytes(samples: &[f32]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(samples.len() * 4);
+        for &s in samples {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        bytes
+    }
+
     #[test]
     fn stream_processor_chunked_equals_single_shot() {
         let frames = 1024usize;
@@ -344,5 +352,89 @@ mod tests {
                 "StreamProcessor output differs across chunk boundaries (output_channels={output_channels})"
             );
         }
+    }
+
+    #[test]
+    fn stream_processor_process_none_decodes_only() {
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 2,
+            sample_rate: 48_000,
+        };
+        let mut p = StreamProcessor::new(input, 48_000, 2, ResamplerKind::Linear).unwrap();
+
+        let samples = [0.25f32, -0.5, 0.25, -0.5];
+        let bytes = f32s_to_le_bytes(&samples);
+        let mut out = Vec::new();
+        p.process(&bytes, &mut out).unwrap();
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn stream_processor_process_remix_only() {
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 3,
+            sample_rate: 48_000,
+        };
+        let mut p = StreamProcessor::new(input, 48_000, 2, ResamplerKind::Linear).unwrap();
+
+        // Two identical frames: [L, R, C]
+        let samples = [1.0f32, 2.0, 4.0, 1.0, 2.0, 4.0];
+        let bytes = f32s_to_le_bytes(&samples);
+        let mut out = Vec::new();
+        p.process(&bytes, &mut out).unwrap();
+        assert_eq!(out, vec![3.0, 4.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn stream_processor_process_resample_only() {
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 2,
+            sample_rate: 44_100,
+        };
+        let mut p = StreamProcessor::new(input, 48_000, 2, ResamplerKind::Linear).unwrap();
+
+        // Two identical frames.
+        let samples = [0.5f32, -0.25, 0.5, -0.25];
+        let bytes = f32s_to_le_bytes(&samples);
+        let mut out = Vec::new();
+        p.process(&bytes, &mut out).unwrap();
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn stream_processor_process_resample_then_remix() {
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 1,
+            sample_rate: 44_100,
+        };
+        let mut p = StreamProcessor::new(input, 48_000, 2, ResamplerKind::Linear).unwrap();
+
+        // Two identical mono frames.
+        let samples = [0.25f32, 0.25];
+        let bytes = f32s_to_le_bytes(&samples);
+        let mut out = Vec::new();
+        p.process(&bytes, &mut out).unwrap();
+        assert_eq!(out, vec![0.25, 0.25, 0.25, 0.25]);
+    }
+
+    #[test]
+    fn stream_processor_process_remix_then_resample() {
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 3,
+            sample_rate: 44_100,
+        };
+        let mut p = StreamProcessor::new(input, 48_000, 2, ResamplerKind::Linear).unwrap();
+
+        // Two identical frames: [L, R, C]
+        let samples = [1.0f32, 2.0, 4.0, 1.0, 2.0, 4.0];
+        let bytes = f32s_to_le_bytes(&samples);
+        let mut out = Vec::new();
+        p.process(&bytes, &mut out).unwrap();
+        assert_eq!(out, vec![3.0, 4.0, 3.0, 4.0]);
     }
 }
