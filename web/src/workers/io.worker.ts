@@ -4852,9 +4852,12 @@ function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIp
         } else {
           const buf = await client.read(disk.handle, range.lba, range.byteLength);
           buf.set(view, range.offset);
-          perfIoReadBytes += buf.byteLength;
+          const ioBytes = buf.byteLength;
+          perfIoReadBytes += ioBytes;
           await client.write(disk.handle, range.lba, buf);
-          perfIoWriteBytes += buf.byteLength;
+          // `RuntimeDiskClient.write` may transfer/detach `buf` when it is backed by a standalone
+          // ArrayBuffer. Capture size before calling write() so perf counters remain correct.
+          perfIoWriteBytes += ioBytes;
         }
       }
       return { ok: true, bytes: length };
