@@ -283,6 +283,15 @@ Related diagnostics knobs (not latency controls, but useful when tuning):
   without `outputChannelCount` when needed for compatibility.
 - Always treat `audioOutput.context.sampleRate` as authoritative (Safari/iOS may ignore the requested sample rate).
 
+#### Quick tuning summary
+
+| Knob | Default | Primary trade-off | When to change |
+|------|---------|-------------------|----------------|
+| `startupPrefillFrames` | `512` | higher value ⇒ more startup robustness, more time-to-first-sound | VM mode / slow-starting producers |
+| `discardOnResume` | `true` | `true` ⇒ drops buffered audio across suspend/resume to keep latency bounded | Almost always keep `true` for interactive UX |
+| `ringBufferFrames` | ~200ms capacity (derived from actual sample rate) | larger ring ⇒ fewer underruns, higher worst-case latency | VM mode / IO-worker stalls |
+| `latencyHint` | `"interactive"` | `"playback"`/`"balanced"` can increase buffering and stability | if underruns persist even with larger rings |
+
 ---
 
 ## Capture: microphone ring
