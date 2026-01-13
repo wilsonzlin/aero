@@ -34,7 +34,7 @@ function keyDownEvent(code: string, timeStamp: number): KeyboardEvent {
   } as unknown as KeyboardEvent;
 }
 
-describe("InputCapture input batch buffer recycling", () => {
+describe("InputCapture buffer recycling", () => {
   it("reuses ArrayBuffers returned by the worker when recycleBuffers=true", () => {
     withStubbedDocument(() => {
       const canvas = {
@@ -186,6 +186,82 @@ describe("InputCapture input batch buffer recycling", () => {
 
       expect(posted).toHaveLength(2);
       expect(posted[1]).not.toBe(posted[0]);
+    });
+  });
+  it("caps distinct recycled buffer sizes so buckets do not grow unbounded", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
+      for (let i = 0; i < 100; i++) {
+        handleWorkerMessage({
+          data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(1024 + i) },
+        });
+      }
+
+      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      expect(buckets.size).toBeLessThanOrEqual(8);
+    });
+  });
+
+  it("caps the number of buffers stored per bucket", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
+      const size = 2048;
+      for (let i = 0; i < 50; i++) {
+        handleWorkerMessage({
+          data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(size) },
+        });
+      }
+
+      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      const bucket = buckets.get(size);
+      expect(bucket).toBeDefined();
+      expect(bucket).toHaveLength(4);
+    });
+  });
+
+  it("ignores invalid recycle messages", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+      const ioWorker = { postMessage: () => {} };
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+
+      const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
+      handleWorkerMessage({ data: null });
+      handleWorkerMessage({ data: { type: "not-a-recycle", buffer: new ArrayBuffer(16) } });
+      handleWorkerMessage({ data: { type: "in:input-batch-recycle" } });
+      handleWorkerMessage({ data: { type: "in:input-batch-recycle", buffer: new Uint8Array(16) } });
+      // Oversized buffers should be ignored to avoid storing unexpectedly large allocations.
+      handleWorkerMessage({
+        data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(5 * 1024 * 1024) },
+      });
+      // Detached / empty buffers should not be stored.
+      handleWorkerMessage({ data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(0) } });
+
+      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      expect(buckets.size).toBe(0);
     });
   });
 });

@@ -103,6 +103,10 @@ export interface InputCaptureOptions {
   touchTapToClick?: boolean;
 }
 
+const MAX_RECYCLED_BUFFER_BYTES = 4 * 1024 * 1024;
+const MAX_RECYCLED_BUCKET_SIZES = 8;
+const MAX_RECYCLED_BUFFERS_PER_BUCKET = 4;
+
 export class InputCapture {
   private readonly queue: InputEventQueue;
   private readonly pointerLock: PointerLock;
@@ -144,12 +148,32 @@ export class InputCapture {
       return;
     }
     const size = data.buffer.byteLength;
+    if (size === 0 || size > MAX_RECYCLED_BUFFER_BYTES) {
+      return;
+    }
+
     const bucket = this.recycledBuffersBySize.get(size);
     if (bucket) {
+      if (bucket.length >= MAX_RECYCLED_BUFFERS_PER_BUCKET) {
+        return;
+      }
       bucket.push(data.buffer);
-    } else {
-      this.recycledBuffersBySize.set(size, [data.buffer]);
+      return;
     }
+
+    if (this.recycledBuffersBySize.size >= MAX_RECYCLED_BUCKET_SIZES) {
+      // Drop the oldest bucket (and all its buffers) to keep memory bounded.
+      const oldest = this.recycledBuffersBySize.keys().next();
+      if (!oldest.done) {
+        this.recycledBuffersBySize.delete(oldest.value);
+      }
+    }
+
+    if (this.recycledBuffersBySize.size >= MAX_RECYCLED_BUCKET_SIZES) {
+      // Still full (e.g. limit is 0); drop the buffer.
+      return;
+    }
+    this.recycledBuffersBySize.set(size, [data.buffer]);
   };
 
   private flushTimer: number | null = null;
@@ -1029,9 +1053,17 @@ export class InputCapture {
   private takeRecycledBuffer(byteLength: number): ArrayBuffer {
     if (this.recycleBuffers) {
       const bucket = this.recycledBuffersBySize.get(byteLength);
-      const buf = bucket?.pop();
-      if (buf) {
-        return buf;
+      while (bucket && bucket.length > 0) {
+        const buf = bucket.pop();
+        if (buf && buf.byteLength === byteLength) {
+          if (bucket.length === 0) {
+            this.recycledBuffersBySize.delete(byteLength);
+          }
+          return buf;
+        }
+      }
+      if (bucket && bucket.length === 0) {
+        this.recycledBuffersBySize.delete(byteLength);
       }
     }
     return new ArrayBuffer(byteLength);
