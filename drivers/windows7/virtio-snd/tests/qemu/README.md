@@ -60,6 +60,27 @@ Optional (but recommended for headless hosts):
 - A QEMU audio backend that does not require host audio hardware.
   - Recommended: `-audiodev wav,...` (captures guest audio to a host `.wav` file).
 
+## Quick start: helper script
+
+This directory includes a small helper script that builds a QEMU command line for you:
+
+`drivers/windows7/virtio-snd/tests/qemu/run-virtio-snd.sh`
+
+It probes your QEMU binary for virtio-snd device properties and enables the strict
+contract-v1 identity (`disable-legacy=on,x-pci-revision=0x01`) when supported.
+If the properties are missing, it falls back to QEMU’s default/transitional identity
+and prints instructions to use the legacy INF (`aero-virtio-snd-legacy.inf`).
+
+Examples (from repo root):
+
+```bash
+# x64 (default), capture guest playback to ./virtio-snd-x64.wav:
+bash drivers/windows7/virtio-snd/tests/qemu/run-virtio-snd.sh --disk win7-x64.qcow2
+
+# Print the final QEMU command line without running it:
+bash drivers/windows7/virtio-snd/tests/qemu/run-virtio-snd.sh --print --arch x86
+```
+
 ## Identify the virtio-snd device name in your QEMU build
 
 QEMU device naming can vary by version/build. Always confirm what your QEMU binary calls the device:
