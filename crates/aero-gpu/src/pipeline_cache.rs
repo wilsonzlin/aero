@@ -10,6 +10,7 @@ use crate::error::GpuError;
 use crate::pipeline_key::{
     hash_wgsl, ComputePipelineKey, RenderPipelineKey, ShaderHash, ShaderModuleKey, ShaderStage,
 };
+use crate::passthrough_vs::PassthroughVertexShaderKey;
 use crate::stats::PipelineCacheStats;
 use crate::GpuCapabilities;
 
@@ -301,6 +302,24 @@ impl PipelineCache {
             .get(&ShaderModuleKey { hash, stage })
             .expect("just inserted shader module; this is only None if it was immediately evicted");
         (hash, entry.module.as_ref())
+    }
+
+    /// Get or create a generated passthrough vertex shader module for the given output signature.
+    ///
+    /// The shader WGSL is generated deterministically from `signature`, hashed via [`hash_wgsl`],
+    /// and cached in the same shader-module cache as application-provided shaders.
+    pub fn get_or_create_passthrough_vertex_shader(
+        &mut self,
+        device: &wgpu::Device,
+        signature: &PassthroughVertexShaderKey,
+    ) -> (ShaderHash, &wgpu::ShaderModule) {
+        let wgsl = signature.wgsl();
+        self.get_or_create_shader_module(
+            device,
+            ShaderStage::Vertex,
+            &wgsl,
+            Some("aero-gpu passthrough vertex shader"),
+        )
     }
 
     fn get_cached_shader_module_arc(

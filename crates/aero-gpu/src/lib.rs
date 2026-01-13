@@ -31,6 +31,7 @@ mod tile_diff;
 pub mod frame_source;
 mod protocol;
 mod recovery;
+pub mod passthrough_vs;
 pub mod shader_lib;
 mod surface;
 mod time;

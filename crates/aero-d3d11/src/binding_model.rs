@@ -62,3 +62,11 @@ pub const MAX_SAMPLER_SLOTS: u32 = 16;
 /// future SM5 translation/execution can map `u#` registers without colliding with other resource
 /// spaces.
 pub const MAX_UAV_SLOTS: u32 = 8;
+
+/// Reserved bind group index for internal emulation buffers (expanded geometry, indirect args,
+/// counters, etc).
+///
+/// This is intentionally outside the stage-scoped groups used for D3D shader resources so internal
+/// pipelines (vertex pulling, expanded draws, etc) can bind their own buffers without colliding
+/// with app-declared bindings.
+pub const BIND_GROUP_INTERNAL_EMULATION: u32 = 4;

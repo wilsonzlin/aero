@@ -5,6 +5,7 @@ use aero_gpu::bindings::bind_group_cache::{BindGroupCache, BufferId, TextureView
 use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
 use aero_gpu::bindings::samplers::SamplerCache;
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
+use aero_gpu::passthrough_vs::PassthroughVertexShaderKey;
 use aero_gpu::pipeline_key::{
     ColorTargetKey, RenderPipelineKey, ShaderHash, ShaderStage, VertexAttributeKey,
     VertexBufferLayoutKey,
@@ -753,6 +754,35 @@ impl AerogpuCmdRuntime {
         })
     }
 
+    /// Draw using an expanded-geometry vertex buffer and a generated passthrough vertex shader.
+    ///
+    /// This bypasses the currently bound vertex shader + input layout and instead treats
+    /// `expanded_vertex_buffer` as a tightly-packed vertex buffer containing:
+    ///
+    /// - `vec4<f32>` clip-space position
+    /// - one `vec4<f32>` for each `@location(N)` varying declared by the currently-bound pixel
+    ///   shader (in ascending location order)
+    ///
+    /// The pixel shader is taken from `self.state.ps`.
+    pub fn draw_expanded_passthrough(
+        &mut self,
+        expanded_vertex_buffer: AerogpuHandle,
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
+    ) -> Result<()> {
+        self.draw_expanded_passthrough_internal(
+            expanded_vertex_buffer,
+            DrawKind::NonIndexed {
+                vertex_count,
+                instance_count,
+                first_vertex,
+                first_instance,
+            },
+        )
+    }
+
     fn draw_internal(&mut self, kind: DrawKind) -> Result<()> {
         let vs_handle = self
             .state
@@ -1166,6 +1196,329 @@ impl AerogpuCmdRuntime {
         drop(pass);
         self.queue.submit([encoder.finish()]);
 
+        Ok(())
+    }
+
+    fn draw_expanded_passthrough_internal(
+        &mut self,
+        expanded_vertex_buffer: AerogpuHandle,
+        kind: DrawKind,
+    ) -> Result<()> {
+        let ps_handle = self
+            .state
+            .ps
+            .ok_or_else(|| anyhow!("draw_expanded_passthrough without a bound PS"))?;
+
+        let ps = self
+            .resources
+            .shaders
+            .get(&ps_handle)
+            .ok_or_else(|| anyhow!("unknown PS handle {ps_handle}"))?;
+        if ps.stage != ShaderStage::Fragment {
+            bail!("shader {ps_handle} is not a pixel/fragment shader");
+        }
+
+        // Determine the PS varying locations we must output. This is driven by the `PsIn` struct's
+        // declared `@location(N)` members (builtins like `@builtin(position)` are excluded).
+        let ps_locations = super::wgsl_link::locations_in_struct(&ps.wgsl, "PsIn")?;
+        let signature = PassthroughVertexShaderKey::from_locations(ps_locations.iter().copied());
+
+        // Validate against WebGPU vertex attribute limits. The expanded buffer uses one vertex
+        // attribute per vec4, plus one for position.
+        let required_vertex_attributes = 1u32 + signature.locations().len() as u32;
+        let max_vertex_attributes = self.device.limits().max_vertex_attributes;
+        if required_vertex_attributes > max_vertex_attributes {
+            bail!(
+                "expanded draw requires {required_vertex_attributes} vertex attributes (pos + {} varyings), but device limit max_vertex_attributes={max_vertex_attributes}",
+                signature.locations().len()
+            );
+        }
+
+        // Register the generated passthrough VS into the shared PipelineCache shader-module cache.
+        let (vs_hash, _module) = self
+            .pipelines
+            .get_or_create_passthrough_vertex_shader(&self.device, &signature);
+
+        let expanded_layout = signature.expanded_vertex_layout();
+        let vertex_buffer_keys = vec![expanded_layout.key()];
+
+        let (color_attachments, color_target_keys, color_size) =
+            build_color_attachments(&self.resources, &self.state)?;
+
+        let (depth_attachment, depth_target_key, depth_state, depth_size) =
+            build_depth_attachment(&self.resources, &self.state)?;
+
+        let target_size = color_size
+            .or(depth_size)
+            .ok_or_else(|| anyhow!("draw without bound render targets"))?;
+
+        let primitive_topology = map_topology(self.state.primitive_topology)?;
+        let cull_mode = self.state.rasterizer_state.cull_mode;
+        let front_face = self.state.rasterizer_state.front_face;
+        let scissor_enabled = self.state.rasterizer_state.scissor_enable;
+
+        let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            [(&[] as &[crate::Binding]), ps.reflection.bindings.as_slice()],
+        )?;
+        let reflection_bindings::PipelineBindingsInfo {
+            layout_key,
+            group_layouts,
+            group_bindings,
+        } = pipeline_bindings;
+
+        let pipeline_layout = {
+            let device = &self.device;
+            let cache = &mut self.pipeline_layout_cache;
+            cache.get_or_create_with(&layout_key, || {
+                let layout_refs: Vec<&wgpu::BindGroupLayout> =
+                    group_layouts.iter().map(|l| l.layout.as_ref()).collect();
+                Arc::new(
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 aerogpu expanded pipeline layout"),
+                        bind_group_layouts: &layout_refs,
+                        push_constant_ranges: &[],
+                    }),
+                )
+            })
+        };
+
+        // WebGPU requires that the fragment shader's `@location(N)` outputs line up with the render
+        // pipeline's `ColorTargetState` array. D3D discards writes to unbound RTVs instead.
+        //
+        // To emulate D3D, trim fragment outputs to the set of currently bound render target slots.
+        let mut keep_output_locations = BTreeSet::new();
+        for (slot, handle) in self.state.render_targets.colors.iter().enumerate() {
+            if handle.is_some() {
+                keep_output_locations.insert(slot as u32);
+            }
+        }
+
+        let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl.as_str());
+        let declared_outputs =
+            super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
+        let missing_outputs: BTreeSet<u32> = declared_outputs
+            .difference(&keep_output_locations)
+            .copied()
+            .collect();
+        if !missing_outputs.is_empty() {
+            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                linked_ps_wgsl.as_ref(),
+                &keep_output_locations,
+            ));
+        }
+
+        let linked_ps_hash = if linked_ps_wgsl.as_ref() == ps.wgsl.as_str() {
+            ps.hash
+        } else {
+            let (hash, _module) = self.pipelines.get_or_create_shader_module(
+                &self.device,
+                ShaderStage::Fragment,
+                linked_ps_wgsl.as_ref(),
+                Some("aero-d3d11 aerogpu linked fragment shader"),
+            );
+            hash
+        };
+
+        let key = RenderPipelineKey {
+            vertex_shader: vs_hash,
+            fragment_shader: linked_ps_hash,
+            color_targets: color_target_keys,
+            depth_stencil: depth_target_key,
+            primitive_topology,
+            cull_mode,
+            front_face,
+            vertex_buffers: vertex_buffer_keys,
+            sample_count: 1,
+            layout: layout_key,
+        };
+
+        let blend = self.state.blend_state;
+        let mut color_target_states: Vec<Option<wgpu::ColorTargetState>> = Vec::new();
+        for ct in &key.color_targets {
+            let Some(ct) = ct else {
+                color_target_states.push(None);
+                continue;
+            };
+            color_target_states.push(Some(wgpu::ColorTargetState {
+                format: ct.format,
+                blend: blend.blend,
+                write_mask: ct.write_mask,
+            }));
+        }
+
+        let depth_stencil_state = depth_state.clone();
+        let expanded_layout_for_pipeline = expanded_layout.clone();
+
+        let pipeline = self.pipelines.get_or_create_render_pipeline(
+            &self.device,
+            key,
+            move |device, vs_module, fs_module| {
+                let pipeline_layout = pipeline_layout.as_ref();
+
+                let vertex_buffers = [expanded_layout_for_pipeline.as_wgpu()];
+
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("aero-d3d11 aerogpu expanded render pipeline"),
+                    layout: Some(pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: vs_module,
+                        entry_point: "vs_main",
+                        buffers: &vertex_buffers,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: fs_module,
+                        entry_point: "fs_main",
+                        targets: &color_target_states,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: primitive_topology,
+                        front_face,
+                        cull_mode,
+                        ..Default::default()
+                    },
+                    depth_stencil: depth_stencil_state,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    multiview: None,
+                })
+            },
+        )?;
+
+        let mut bind_groups: Vec<Arc<wgpu::BindGroup>> = Vec::with_capacity(group_layouts.len());
+        for (group_index, (layout, bindings)) in
+            group_layouts.iter().zip(group_bindings.iter()).enumerate()
+        {
+            let stage_state = match group_index as u32 {
+                0 => Some(&self.state.bindings.vs),
+                1 => Some(&self.state.bindings.ps),
+                _ => None,
+            };
+            let provider = RuntimeBindGroupProvider {
+                resources: &self.resources,
+                stage_state,
+                dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
+                dummy_texture_view: &self.dummy_texture_view,
+                default_sampler: &self.default_sampler,
+            };
+            bind_groups.push(reflection_bindings::build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                layout,
+                bindings,
+                &provider,
+            )?);
+        }
+
+        let expanded_vb = self
+            .resources
+            .buffers
+            .get(&expanded_vertex_buffer)
+            .ok_or_else(|| anyhow!("unknown expanded vertex buffer {expanded_vertex_buffer}"))?;
+
+        // Encode the draw.
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 aerogpu expanded draw encoder"),
+            });
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("aero-d3d11 aerogpu expanded draw pass"),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment: depth_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(pipeline);
+        for (group_index, bind_group) in bind_groups.iter().enumerate() {
+            pass.set_bind_group(group_index as u32, bind_group.as_ref(), &[]);
+        }
+
+        // Viewport/scissor are dynamic state; apply on every draw.
+        let default_viewport = Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: target_size.0 as f32,
+            height: target_size.1 as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let mut viewport = self.state.viewport.unwrap_or(default_viewport);
+        if !viewport.x.is_finite()
+            || !viewport.y.is_finite()
+            || !viewport.width.is_finite()
+            || !viewport.height.is_finite()
+            || !viewport.min_depth.is_finite()
+            || !viewport.max_depth.is_finite()
+        {
+            viewport = default_viewport;
+        }
+
+        let max_w = target_size.0 as f32;
+        let max_h = target_size.1 as f32;
+        let left = viewport.x.max(0.0);
+        let top = viewport.y.max(0.0);
+        let right = (viewport.x + viewport.width).max(0.0).min(max_w);
+        let bottom = (viewport.y + viewport.height).max(0.0).min(max_h);
+        let width = (right - left).max(0.0);
+        let height = (bottom - top).max(0.0);
+
+        if width > 0.0 && height > 0.0 {
+            let mut min_depth = viewport.min_depth.clamp(0.0, 1.0);
+            let mut max_depth = viewport.max_depth.clamp(0.0, 1.0);
+            if min_depth > max_depth {
+                std::mem::swap(&mut min_depth, &mut max_depth);
+            }
+            pass.set_viewport(left, top, width, height, min_depth, max_depth);
+        }
+
+        if scissor_enabled {
+            let scissor = self.state.scissor.unwrap_or(ScissorRect {
+                x: 0,
+                y: 0,
+                width: target_size.0,
+                height: target_size.1,
+            });
+            let x = scissor.x.min(target_size.0);
+            let y = scissor.y.min(target_size.1);
+            let width = scissor.width.min(target_size.0.saturating_sub(x));
+            let height = scissor.height.min(target_size.1.saturating_sub(y));
+            if width > 0 && height > 0 {
+                pass.set_scissor_rect(x, y, width, height);
+            } else {
+                pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
+            }
+        } else {
+            pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
+        }
+
+        pass.set_vertex_buffer(0, expanded_vb.buffer.slice(..));
+
+        match kind {
+            DrawKind::NonIndexed {
+                vertex_count,
+                instance_count,
+                first_vertex,
+                first_instance,
+            } => pass.draw(
+                first_vertex..first_vertex + vertex_count,
+                first_instance..first_instance + instance_count,
+            ),
+            DrawKind::Indexed { .. } => {
+                bail!("draw_expanded_passthrough does not support indexed draws yet");
+            }
+        }
+
+        drop(pass);
+        self.queue.submit([encoder.finish()]);
         Ok(())
     }
 
