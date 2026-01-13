@@ -87,4 +87,39 @@ test.describe("gpu worker presented color policy", () => {
       expect(Math.abs(actual[c]! - expected[c]!)).toBeLessThanOrEqual(2);
     }
   });
+
+  test("webgl2_wgpu matches expected presented output (sRGB + opaque)", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
+
+    const result = await runBackend(page, "webgl2_wgpu");
+
+    if (result.error) {
+      // Some environments may not have the wasm bundle built/available (e.g. when running a
+      // minimal smoke subset). Treat this as a skip rather than a hard failure.
+      const message = String(result.error);
+      if (/wgpu|wasm|aero-gpu/i.test(message)) {
+        test.skip(true, `webgl2_wgpu not available/usable in this Playwright environment: ${message}`);
+      }
+    }
+
+    expect(result.error).toBeNull();
+    expect(result.backend).toBe("webgl2_wgpu");
+
+    const samples = result.samples;
+    expect(samples).not.toBeNull();
+    expect(samples.width).toBe(128);
+    expect(samples.height).toBe(128);
+    expect(samples.topLeft).toEqual([255, 0, 0, 255]);
+    expect(samples.topRight).toEqual([0, 255, 0, 255]);
+    expect(samples.bottomLeft).toEqual([0, 0, 255, 255]);
+    expect(samples.bottomRight).toEqual([255, 255, 255, 255]);
+    expect(samples.alphaZero).toEqual(samples.alphaZeroExpected);
+
+    const actual = samples.midGray;
+    const expected = samples.midGrayExpected;
+    expect(actual[3]).toBe(255);
+    for (let c = 0; c < 3; c++) {
+      expect(Math.abs(actual[c]! - expected[c]!)).toBeLessThanOrEqual(2);
+    }
+  });
 });

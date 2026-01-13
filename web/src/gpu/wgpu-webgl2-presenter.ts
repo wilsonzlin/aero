@@ -16,6 +16,8 @@ import type { DirtyRect } from '../ipc/shared-layout';
 export class WgpuWebGl2Presenter implements Presenter {
   public readonly backend = 'webgl2_wgpu' as const;
 
+  private canvas: OffscreenCanvas | null = null;
+  private gl: WebGL2RenderingContext | null = null;
   private opts: PresenterInitOptions = {};
   private srcWidth = 0;
   private srcHeight = 0;
@@ -29,6 +31,8 @@ export class WgpuWebGl2Presenter implements Presenter {
     this.srcWidth = width;
     this.srcHeight = height;
     this.dpr = dpr || 1;
+    this.canvas = canvas;
+    this.gl = null;
 
     await initAeroGpuWasm();
     this.hasDirtyRectPresent = has_present_rgba8888_dirty_rects();
@@ -53,6 +57,15 @@ export class WgpuWebGl2Presenter implements Presenter {
       });
     } catch (err) {
       throw new PresenterError('wgpu_init_failed', 'Failed to initialize wgpu WebGL2 presenter', err);
+    }
+
+    // Best-effort: obtain the underlying WebGL2 context so we can implement a debug-only
+    // presented-output readback via readPixels(). If this fails, `screenshotPresented()`
+    // will still attempt to retrieve the context lazily.
+    try {
+      this.gl = canvas.getContext('webgl2') as WebGL2RenderingContext | null;
+    } catch {
+      this.gl = null;
     }
 
     this.initialized = true;
@@ -174,6 +187,59 @@ export class WgpuWebGl2Presenter implements Presenter {
     }
   }
 
+  /**
+   * Debug-only: read back the *presented* canvas pixels (RGBA8, top-left origin).
+   *
+   * This is intentionally distinct from `screenshot()`, which returns the deterministic
+   * source framebuffer bytes from the wasm module.
+   */
+  public async screenshotPresented(): Promise<PresenterScreenshot> {
+    if (!this.initialized || !this.canvas) {
+      throw new PresenterError('not_initialized', 'WgpuWebGl2Presenter.screenshotPresented() called before init()');
+    }
+
+    const canvas = this.canvas;
+    const gl = this.gl ?? (canvas.getContext('webgl2') as WebGL2RenderingContext | null);
+    if (!gl) {
+      throw new PresenterError('webgl2_unavailable', 'Failed to access the WebGL2 context for presented screenshot readback');
+    }
+    this.gl = gl;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    if (w <= 0 || h <= 0) {
+      throw new PresenterError('invalid_size', `canvas has invalid size ${w}x${h}`);
+    }
+
+    // Ensure rendering is complete before readback (best-effort; this is debug-only).
+    try {
+      gl.finish();
+    } catch {
+      // Ignore.
+    }
+
+    const raw = new Uint8Array(w * h * 4);
+
+    const prevPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT) as number;
+    try {
+      gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+    } finally {
+      // Restore state to avoid surprising the wasm/wgpu rendering pipeline.
+      gl.pixelStorei(gl.PACK_ALIGNMENT, prevPackAlignment);
+    }
+
+    // WebGL readPixels returns bottom-to-top rows; normalize to a top-left origin.
+    const rowBytes = w * 4;
+    const out = new Uint8Array(raw.length);
+    for (let y = 0; y < h; y += 1) {
+      const src = (h - 1 - y) * rowBytes;
+      out.set(raw.subarray(src, src + rowBytes), y * rowBytes);
+    }
+
+    return { width: w, height: h, pixels: out.buffer as ArrayBuffer };
+  }
+
   public destroy(): void {
     if (!this.initialized) return;
     try {
@@ -182,6 +248,8 @@ export class WgpuWebGl2Presenter implements Presenter {
       // Ignore; best-effort cleanup.
     } finally {
       this.initialized = false;
+      this.canvas = null;
+      this.gl = null;
     }
   }
 
