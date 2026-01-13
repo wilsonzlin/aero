@@ -1754,3 +1754,45 @@ fn stats_counts_tlb_miss_then_hit_and_page_walk() {
     assert_eq!(s2.dtlb_misses, 1);
     assert_eq!(s2.page_walks, 1);
 }
+
+#[cfg(feature = "stats")]
+#[test]
+fn stats_counts_tlb_flushes_and_invalidations() {
+    let mut mmu = Mmu::new();
+
+    mmu.reset_stats();
+    mmu.set_cr0(CR0_PG);
+    assert_eq!(mmu.stats().unwrap().tlb_flush_all, 1);
+
+    mmu.reset_stats();
+    mmu.set_cr3(0x1000);
+    assert_eq!(mmu.stats().unwrap().tlb_flush_all, 1);
+
+    // With CR4.PGE set, CR3 reload should flush only non-global entries.
+    mmu.set_cr4(CR4_PGE);
+    mmu.reset_stats();
+    mmu.set_cr3(0x2000);
+    let s = mmu.stats().unwrap();
+    assert_eq!(s.tlb_flush_non_global, 1);
+    assert_eq!(s.tlb_flush_all, 0);
+
+    // With PCIDE enabled, CR3 reload should flush only the target PCID (unless no-flush is set).
+    mmu.set_cr4(CR4_PAE | CR4_PCIDE);
+    mmu.reset_stats();
+    mmu.set_cr3(0x3000 | 1);
+    assert_eq!(mmu.stats().unwrap().tlb_flush_pcid, 1);
+
+    mmu.reset_stats();
+    mmu.set_cr3(0x3000 | 2 | (1u64 << 63));
+    assert_eq!(mmu.stats().unwrap().tlb_flush_pcid, 0);
+
+    mmu.reset_stats();
+    mmu.invlpg(0x1234);
+    assert_eq!(mmu.stats().unwrap().tlb_invlpg, 1);
+
+    mmu.reset_stats();
+    mmu.invpcid(0, InvpcidType::AllIncludingGlobal);
+    let s = mmu.stats().unwrap();
+    assert_eq!(s.tlb_invpcid, 1);
+    assert_eq!(s.tlb_flush_all, 1);
+}

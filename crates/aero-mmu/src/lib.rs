@@ -414,6 +414,23 @@ pub struct MmuStats {
     /// Page-table walks performed due to TLB misses.
     #[cfg(feature = "stats")]
     pub page_walks: u64,
+
+    /// TLB flushes of all entries (e.g. due to control register changes, INVPCID all-context).
+    #[cfg(feature = "stats")]
+    pub tlb_flush_all: u64,
+    /// TLB flushes of non-global entries.
+    #[cfg(feature = "stats")]
+    pub tlb_flush_non_global: u64,
+    /// TLB flushes of entries for a given PCID.
+    #[cfg(feature = "stats")]
+    pub tlb_flush_pcid: u64,
+
+    /// INVLPG operations performed.
+    #[cfg(feature = "stats")]
+    pub tlb_invlpg: u64,
+    /// INVPCID operations performed.
+    #[cfg(feature = "stats")]
+    pub tlb_invpcid: u64,
 }
 
 /// x86 MMU with a software TLB.
@@ -505,6 +522,10 @@ impl Mmu {
         assert!((1..=52).contains(&bits), "max_phys_bits must be 1..=52");
         if self.max_phys_bits != bits {
             self.max_phys_bits = bits;
+            #[cfg(feature = "stats")]
+            {
+                self.stats.tlb_flush_all = self.stats.tlb_flush_all.wrapping_add(1);
+            }
             self.tlb.flush_all();
         }
     }
@@ -514,18 +535,35 @@ impl Mmu {
         self.cr0 = value;
         let new_pg = self.cr0 & CR0_PG != 0;
         if old_pg != new_pg {
+            #[cfg(feature = "stats")]
+            {
+                self.stats.tlb_flush_all = self.stats.tlb_flush_all.wrapping_add(1);
+            }
             self.tlb.flush_all();
         }
     }
 
     pub fn set_cr3(&mut self, value: u64) {
         self.cr3 = value;
-        self.tlb.on_cr3_write(
-            self.cr4_pge(),
-            self.pcid_enabled(),
-            self.current_pcid(),
-            self.cr3_no_flush(),
-        );
+        let pge = self.cr4_pge();
+        let pcid_enabled = self.pcid_enabled();
+        let new_pcid = self.current_pcid();
+        let no_flush = self.cr3_no_flush();
+
+        #[cfg(feature = "stats")]
+        {
+            if pcid_enabled {
+                if !no_flush {
+                    self.stats.tlb_flush_pcid = self.stats.tlb_flush_pcid.wrapping_add(1);
+                }
+            } else if pge {
+                self.stats.tlb_flush_non_global = self.stats.tlb_flush_non_global.wrapping_add(1);
+            } else {
+                self.stats.tlb_flush_all = self.stats.tlb_flush_all.wrapping_add(1);
+            }
+        }
+
+        self.tlb.on_cr3_write(pge, pcid_enabled, new_pcid, no_flush);
     }
 
     pub fn set_cr4(&mut self, value: u64) {
@@ -534,6 +572,10 @@ impl Mmu {
         let new_relevant = self.cr4 & (CR4_PAE | CR4_PSE | CR4_PGE | CR4_PCIDE);
         if old_relevant != new_relevant {
             // These bits affect translation semantics and/or TLB global behaviour.
+            #[cfg(feature = "stats")]
+            {
+                self.stats.tlb_flush_all = self.stats.tlb_flush_all.wrapping_add(1);
+            }
             self.tlb.flush_all();
         }
     }
@@ -543,12 +585,20 @@ impl Mmu {
         self.efer = value;
         let new_relevant = self.efer & (EFER_LME | EFER_NXE);
         if old_relevant != new_relevant {
+            #[cfg(feature = "stats")]
+            {
+                self.stats.tlb_flush_all = self.stats.tlb_flush_all.wrapping_add(1);
+            }
             self.tlb.flush_all();
         }
     }
 
     /// INVLPG.
     pub fn invlpg(&mut self, vaddr: u64) {
+        #[cfg(feature = "stats")]
+        {
+            self.stats.tlb_invlpg = self.stats.tlb_invlpg.wrapping_add(1);
+        }
         if self.pcid_enabled() {
             // In PCID mode, INVLPG invalidates the current PCID's translation and
             // any global translation for the address. Other PCIDs are unaffected.
@@ -562,6 +612,23 @@ impl Mmu {
     /// Optional extension point for INVPCID (not all invalidation types are
     /// required by the project yet).
     pub fn invpcid(&mut self, pcid: u16, kind: InvpcidType) {
+        #[cfg(feature = "stats")]
+        {
+            self.stats.tlb_invpcid = self.stats.tlb_invpcid.wrapping_add(1);
+            match kind {
+                InvpcidType::IndividualAddress(_) => {}
+                InvpcidType::SingleContext => {
+                    self.stats.tlb_flush_pcid = self.stats.tlb_flush_pcid.wrapping_add(1);
+                }
+                InvpcidType::AllIncludingGlobal => {
+                    self.stats.tlb_flush_all = self.stats.tlb_flush_all.wrapping_add(1);
+                }
+                InvpcidType::AllExcludingGlobal => {
+                    self.stats.tlb_flush_non_global =
+                        self.stats.tlb_flush_non_global.wrapping_add(1);
+                }
+            }
+        }
         self.tlb.invpcid(pcid, kind);
     }
 
