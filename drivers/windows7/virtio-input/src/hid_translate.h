@@ -15,7 +15,7 @@
  *       Byte 3..8: Up to 6 concurrent key usages
  *   - ReportID 2: Mouse
  *       Byte 0: ReportID = 0x02
- *       Byte 1: Buttons bitmask (bit0=left, bit1=right, bit2=middle, ...)
+ *       Byte 1: Buttons bitmask (bit0=Button1/left .. bit7=Button8)
  *       Byte 2: X (int8)
  *       Byte 3: Y (int8)
  *       Byte 4: Wheel (int8)
@@ -231,6 +231,9 @@ enum virtio_input_key_code {
   VIRTIO_INPUT_BTN_MIDDLE = 274,
   VIRTIO_INPUT_BTN_SIDE = 275,
   VIRTIO_INPUT_BTN_EXTRA = 276,
+  VIRTIO_INPUT_BTN_FORWARD = 277,
+  VIRTIO_INPUT_BTN_BACK = 278,
+  VIRTIO_INPUT_BTN_TASK = 279,
 };
 
 /* HID report IDs used by this driver. */

@@ -363,6 +363,9 @@ enum {
   HID_TRANSLATE_MOUSE_BUTTON_MIDDLE = 1u << 2,
   HID_TRANSLATE_MOUSE_BUTTON_SIDE = 1u << 3,
   HID_TRANSLATE_MOUSE_BUTTON_EXTRA = 1u << 4,
+  HID_TRANSLATE_MOUSE_BUTTON_FORWARD = 1u << 5,
+  HID_TRANSLATE_MOUSE_BUTTON_BACK = 1u << 6,
+  HID_TRANSLATE_MOUSE_BUTTON_TASK = 1u << 7,
 };
 
 static bool hid_translate_mouse_update_button(struct hid_translate *t, uint8_t bit, bool pressed) {
@@ -512,6 +515,21 @@ void hid_translate_handle_event(struct hid_translate *t, const struct virtio_inp
       break;
     case VIRTIO_INPUT_BTN_EXTRA:
       if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_EXTRA, pressed)) {
+        t->mouse_dirty = true;
+      }
+      break;
+    case VIRTIO_INPUT_BTN_FORWARD:
+      if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_FORWARD, pressed)) {
+        t->mouse_dirty = true;
+      }
+      break;
+    case VIRTIO_INPUT_BTN_BACK:
+      if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_BACK, pressed)) {
+        t->mouse_dirty = true;
+      }
+      break;
+    case VIRTIO_INPUT_BTN_TASK:
+      if (hid_translate_mouse_update_button(t, HID_TRANSLATE_MOUSE_BUTTON_TASK, pressed)) {
         t->mouse_dirty = true;
       }
       break;
