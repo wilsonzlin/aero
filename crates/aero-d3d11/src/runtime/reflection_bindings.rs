@@ -11,7 +11,8 @@ use anyhow::{bail, Result};
 
 use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    BIND_GROUP_INTERNAL_EMULATION, D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS,
+    MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 
 /// The AeroGPU D3D11 binding model uses stage-scoped bind groups:
@@ -20,9 +21,10 @@ use crate::binding_model::{
 /// - `@group(2)` = compute shader resources
 /// - `@group(3)` = D3D11 extended stage resources (GS/HS/DS; executed via compute emulation)
 ///
-/// Callers can override the maximum group index via
-/// [`build_pipeline_bindings_info_with_max_group`].
-const DEFAULT_MAX_BIND_GROUP_INDEX: u32 = 3;
+/// These groups are reserved for guest-translated shaders. Internal/emulation
+/// pipelines may opt into additional bind groups beyond this range, but guest
+/// shaders must remain constrained to `0..=MAX_GUEST_BIND_GROUP_INDEX`.
+const MAX_GUEST_BIND_GROUP_INDEX: u32 = BIND_GROUP_INTERNAL_EMULATION - 1;
 pub(super) const UNIFORM_BINDING_SIZE_ALIGN: u64 = 16;
 const STORAGE_BINDING_SIZE_ALIGN: u64 = 4;
 
@@ -57,6 +59,32 @@ fn dummy_storage_buffer_slice_size(max_binding_size: u64) -> Option<u64> {
     (size != 0).then_some(size)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) enum ShaderBindingSet<'a> {
+    /// Bindings derived from guest-translated shaders (DXBC → WGSL).
+    ///
+    /// These are validated strictly and may only use `@group(0..=MAX_GUEST_BIND_GROUP_INDEX)`.
+    Guest(&'a [crate::Binding]),
+    /// Bindings defined by internal/emulation WGSL shaders.
+    ///
+    /// These are only accepted when the caller opts into allowing internal bind
+    /// groups via [`BindGroupIndexValidation`].
+    #[allow(dead_code)]
+    Internal(&'a [crate::Binding]),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum BindGroupIndexValidation {
+    /// Allow only the stage-scoped guest bind groups `@group(0..=MAX_GUEST_BIND_GROUP_INDEX)`.
+    GuestShaders,
+    /// Allow internal/emulation bindings to use bind groups up to (and including)
+    /// `max_internal_bind_group_index`.
+    ///
+    /// Guest shader bindings are still limited to `@group(0..=MAX_GUEST_BIND_GROUP_INDEX)`.
+    #[allow(dead_code)]
+    GuestAndInternal { max_internal_bind_group_index: u32 },
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct PipelineBindingsInfo {
     pub layout_key: PipelineLayoutKey,
@@ -68,37 +96,44 @@ pub(super) fn build_pipeline_bindings_info<'a, I>(
     device: &wgpu::Device,
     bind_group_layout_cache: &mut BindGroupLayoutCache,
     shader_bindings: I,
+    bind_group_validation: BindGroupIndexValidation,
 ) -> Result<PipelineBindingsInfo>
 where
-    I: IntoIterator<Item = &'a [crate::Binding]>,
-{
-    build_pipeline_bindings_info_with_max_group(
-        device,
-        bind_group_layout_cache,
-        DEFAULT_MAX_BIND_GROUP_INDEX,
-        shader_bindings,
-    )
-}
-
-pub(super) fn build_pipeline_bindings_info_with_max_group<'a, I>(
-    device: &wgpu::Device,
-    bind_group_layout_cache: &mut BindGroupLayoutCache,
-    max_bind_group_index: u32,
-    shader_bindings: I,
-) -> Result<PipelineBindingsInfo>
-where
-    I: IntoIterator<Item = &'a [crate::Binding]>,
+    I: IntoIterator<Item = ShaderBindingSet<'a>>,
 {
     let max_uniform_binding_size = device.limits().max_uniform_buffer_binding_size as u64;
 
+    let max_internal_bind_group_index = match bind_group_validation {
+        BindGroupIndexValidation::GuestShaders => None,
+        BindGroupIndexValidation::GuestAndInternal {
+            max_internal_bind_group_index,
+        } => {
+            if max_internal_bind_group_index < MAX_GUEST_BIND_GROUP_INDEX {
+                bail!(
+                        "BindGroupIndexValidation::GuestAndInternal max_internal_bind_group_index must be >= {MAX_GUEST_BIND_GROUP_INDEX} (got {max_internal_bind_group_index})"
+                    );
+            }
+            Some(max_internal_bind_group_index)
+        }
+    };
+
     let mut groups: BTreeMap<u32, BTreeMap<u32, crate::Binding>> = BTreeMap::new();
     for shader in shader_bindings {
-        for binding in shader {
-            if binding.group > max_bind_group_index {
+        let (shader_kind, max_group, bindings) = match shader {
+            ShaderBindingSet::Guest(bindings) => ("guest", MAX_GUEST_BIND_GROUP_INDEX, bindings),
+            ShaderBindingSet::Internal(bindings) => {
+                let Some(max_internal) = max_internal_bind_group_index else {
+                    bail!("internal bind groups are disabled; caller must opt into BindGroupIndexValidation::GuestAndInternal");
+                };
+                ("internal", max_internal, bindings)
+            }
+        };
+
+        for binding in bindings {
+            if binding.group > max_group {
                 bail!(
-                    "binding @group({}) is out of range for AeroGPU D3D11 binding model (max {})",
+                    "{shader_kind} binding @group({}) is out of range for AeroGPU D3D11 binding model (max {max_group})",
                     binding.group,
-                    max_bind_group_index
                 );
             }
 
@@ -528,7 +563,8 @@ mod tests {
         eprintln!("skipping {test_name}: {reason}");
     }
 
-    async fn new_device_queue_for_tests() -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
+    async fn new_device_queue_for_tests(
+    ) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -667,13 +703,21 @@ mod tests {
             let info_a = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [vs.as_slice(), ps.as_slice()],
+                [
+                    ShaderBindingSet::Guest(vs.as_slice()),
+                    ShaderBindingSet::Guest(ps.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .unwrap();
             let info_b = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [ps.as_slice(), vs.as_slice()],
+                [
+                    ShaderBindingSet::Guest(ps.as_slice()),
+                    ShaderBindingSet::Guest(vs.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .unwrap();
 
@@ -719,7 +763,11 @@ mod tests {
             let info = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [vs.as_slice(), ps.as_slice()],
+                [
+                    ShaderBindingSet::Guest(vs.as_slice()),
+                    ShaderBindingSet::Guest(ps.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .unwrap();
 
@@ -755,7 +803,11 @@ mod tests {
             let info = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [empty.as_slice(), cs.as_slice()],
+                [
+                    ShaderBindingSet::Guest(empty.as_slice()),
+                    ShaderBindingSet::Guest(cs.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .unwrap();
 
@@ -813,7 +865,11 @@ mod tests {
             let info = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [empty.as_slice(), gs.as_slice()],
+                [
+                    ShaderBindingSet::Guest(empty.as_slice()),
+                    ShaderBindingSet::Guest(gs.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .unwrap();
 
@@ -848,7 +904,7 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_bindings_info_with_max_group_does_not_allocate_unused_groups() {
+    fn pipeline_bindings_info_does_not_allocate_unused_groups() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
             {
@@ -874,11 +930,14 @@ mod tests {
                 kind: crate::BindingKind::Texture2D { slot: 0 },
             }];
 
-            let info = build_pipeline_bindings_info_with_max_group(
+            let info = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                DEFAULT_MAX_BIND_GROUP_INDEX,
-                [vs.as_slice(), ps.as_slice()],
+                [
+                    ShaderBindingSet::Guest(vs.as_slice()),
+                    ShaderBindingSet::Guest(ps.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .unwrap();
 
@@ -930,7 +989,11 @@ mod tests {
             let err = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [a.as_slice(), b.as_slice()],
+                [
+                    ShaderBindingSet::Guest(a.as_slice()),
+                    ShaderBindingSet::Guest(b.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .unwrap_err()
             .to_string();
@@ -961,18 +1024,130 @@ mod tests {
             let mut layout_cache = BindGroupLayoutCache::new();
 
             let bindings = vec![crate::Binding {
-                group: DEFAULT_MAX_BIND_GROUP_INDEX + 1,
+                group: MAX_GUEST_BIND_GROUP_INDEX + 1,
                 binding: BINDING_BASE_TEXTURE,
                 visibility: wgpu::ShaderStages::VERTEX,
                 kind: crate::BindingKind::Texture2D { slot: 0 },
             }];
 
-            let err =
-                build_pipeline_bindings_info(device, &mut layout_cache, [bindings.as_slice()])
-                    .unwrap_err()
-                    .to_string();
+            let err = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [ShaderBindingSet::Guest(bindings.as_slice())],
+                BindGroupIndexValidation::GuestShaders,
+            )
+            .unwrap_err()
+            .to_string();
             assert!(
                 err.contains("out of range") && err.contains("binding model"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn pipeline_bindings_info_allows_internal_bind_group_4() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let guest = vec![crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+            let internal = vec![crate::Binding {
+                group: BIND_GROUP_INTERNAL_EMULATION,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let info = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [
+                    ShaderBindingSet::Guest(guest.as_slice()),
+                    ShaderBindingSet::Internal(internal.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                },
+            )
+            .unwrap();
+
+            let internal_group_idx = BIND_GROUP_INTERNAL_EMULATION as usize;
+            assert_eq!(
+                info.group_bindings.len(),
+                internal_group_idx + 1
+            );
+            assert_eq!(info.group_bindings[0].len(), 1);
+            for g in 1..internal_group_idx {
+                assert!(info.group_bindings[g].is_empty());
+            }
+            assert_eq!(info.group_bindings[internal_group_idx].len(), 1);
+            assert_eq!(
+                info.group_bindings[internal_group_idx][0].group,
+                BIND_GROUP_INTERNAL_EMULATION
+            );
+
+            assert_eq!(info.group_layouts.len(), internal_group_idx + 1);
+            assert_eq!(info.layout_key.bind_group_layout_hashes.len(), internal_group_idx + 1);
+            for (hash, layout) in info
+                .layout_key
+                .bind_group_layout_hashes
+                .iter()
+                .copied()
+                .zip(&info.group_layouts)
+            {
+                assert_eq!(hash, layout.hash);
+            }
+        });
+    }
+
+    #[test]
+    fn pipeline_bindings_info_guest_bindings_remain_stage_scoped_with_internal_groups_enabled() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            let guest = vec![crate::Binding {
+                group: BIND_GROUP_INTERNAL_EMULATION,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::VERTEX,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let err = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [ShaderBindingSet::Guest(guest.as_slice())],
+                BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                },
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(
+                err.contains("guest binding") && err.contains("out of range"),
                 "unexpected error: {err}"
             );
         });
@@ -1011,10 +1186,14 @@ mod tests {
                 kind: crate::BindingKind::ConstantBuffer { slot: 0, reg_count },
             }];
 
-            let err =
-                build_pipeline_bindings_info(device, &mut layout_cache, [bindings.as_slice()])
-                    .unwrap_err()
-                    .to_string();
+            let err = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [ShaderBindingSet::Guest(bindings.as_slice())],
+                BindGroupIndexValidation::GuestShaders,
+            )
+            .unwrap_err()
+            .to_string();
 
             assert!(
                 err.contains("exceeds device limit"),
@@ -1067,7 +1246,11 @@ mod tests {
             let info = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [vs_bindings.as_slice(), gs_bindings.as_slice()],
+                [
+                    ShaderBindingSet::Guest(vs_bindings.as_slice()),
+                    ShaderBindingSet::Guest(gs_bindings.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .expect("build pipeline bindings info");
             assert_eq!(
@@ -2711,7 +2894,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let info = build_pipeline_bindings_info(
                 device,
                 &mut bind_group_layout_cache,
-                [bindings_a.as_slice(), bindings_b.as_slice()],
+                [
+                    ShaderBindingSet::Guest(bindings_a.as_slice()),
+                    ShaderBindingSet::Guest(bindings_b.as_slice()),
+                ],
+                BindGroupIndexValidation::GuestShaders,
             )
             .expect("bindings should merge");
             assert_eq!(info.group_layouts.len(), 1);
@@ -2911,7 +3098,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let pipeline_bindings = build_pipeline_bindings_info(
                 &device,
                 &mut layout_cache,
-                [translation.reflection.bindings.as_slice()],
+                [ShaderBindingSet::Guest(
+                    translation.reflection.bindings.as_slice(),
+                )],
+                BindGroupIndexValidation::GuestShaders,
             )
             .expect("build_pipeline_bindings_info");
             assert_eq!(

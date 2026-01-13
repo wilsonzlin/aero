@@ -2951,7 +2951,10 @@ impl AerogpuD3d11Executor {
         let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
-            [ps.reflection.bindings.as_slice()],
+            [reflection_bindings::ShaderBindingSet::Guest(
+                ps.reflection.bindings.as_slice(),
+            )],
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
         )?;
         let layout_key = std::mem::replace(
             &mut pipeline_bindings.layout_key,
@@ -3975,9 +3978,10 @@ impl AerogpuD3d11Executor {
             &self.device,
             &mut self.bind_group_layout_cache,
             [
-                vs.reflection.bindings.as_slice(),
-                ps.reflection.bindings.as_slice(),
+                reflection_bindings::ShaderBindingSet::Guest(vs.reflection.bindings.as_slice()),
+                reflection_bindings::ShaderBindingSet::Guest(ps.reflection.bindings.as_slice()),
             ],
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
         )?;
 
         // `PipelineLayoutKey` is used both for pipeline-layout caching and as part of the pipeline
@@ -9766,7 +9770,10 @@ impl AerogpuD3d11Executor {
         let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
-            [cs.reflection.bindings.as_slice()],
+            [reflection_bindings::ShaderBindingSet::Guest(
+                cs.reflection.bindings.as_slice(),
+            )],
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
         )?;
 
         // `PipelineLayoutKey` is used both for pipeline-layout caching and as part of the pipeline

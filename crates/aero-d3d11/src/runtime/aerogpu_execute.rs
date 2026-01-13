@@ -951,9 +951,10 @@ impl AerogpuCmdRuntime {
             &self.device,
             &mut self.bind_group_layout_cache,
             [
-                vs.reflection.bindings.as_slice(),
-                ps.reflection.bindings.as_slice(),
+                reflection_bindings::ShaderBindingSet::Guest(vs.reflection.bindings.as_slice()),
+                reflection_bindings::ShaderBindingSet::Guest(ps.reflection.bindings.as_slice()),
             ],
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
         )?;
         let reflection_bindings::PipelineBindingsInfo {
             layout_key,
@@ -1396,7 +1397,11 @@ impl AerogpuCmdRuntime {
         let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
-            [(&[] as &[crate::Binding]), ps.reflection.bindings.as_slice()],
+            [
+                reflection_bindings::ShaderBindingSet::Guest(&[] as &[crate::Binding]),
+                reflection_bindings::ShaderBindingSet::Guest(ps.reflection.bindings.as_slice()),
+            ],
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
         )?;
         let reflection_bindings::PipelineBindingsInfo {
             layout_key,
