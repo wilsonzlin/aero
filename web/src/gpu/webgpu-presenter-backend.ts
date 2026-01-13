@@ -654,6 +654,12 @@ export class WebGpuPresenterBackend implements Presenter {
         const key = `${errorName}:${msg}`;
         if (this.seenUncapturedErrorKeys.has(key)) return;
         this.seenUncapturedErrorKeys.add(key);
+        // Defensive bound: if the error stream is producing unique messages (e.g. with IDs),
+        // don't let the set grow without limit.
+        if (this.seenUncapturedErrorKeys.size > 128) {
+          this.seenUncapturedErrorKeys.clear();
+          this.seenUncapturedErrorKeys.add(key);
+        }
 
         const details: Record<string, unknown> = {
           name: errorName || undefined,
