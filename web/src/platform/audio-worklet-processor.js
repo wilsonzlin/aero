@@ -7,6 +7,16 @@ import {
   framesAvailableClamped,
 } from "./audio_worklet_ring_layout.js";
 
+function nowMs() {
+  // AudioWorkletGlobalScope exposes `currentTime` (seconds) / `currentFrame` (frames). When
+  // running under Node-based tests, fall back to `performance.now()` / `Date.now()`.
+  // eslint-disable-next-line no-undef
+  const ct = typeof currentTime === "number" && Number.isFinite(currentTime) ? currentTime : null;
+  if (ct !== null) return ct * 1000;
+  if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
+  return Date.now();
+}
+
 // Atomically add missing frames to the underrun counter. The counter is a u32
 // that wraps naturally at 2^32.
 export function addUnderrunFrames(header, missingFrames) {
@@ -185,22 +195,13 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
       if (this._sendUnderrunMessages) {
         this._pendingUnderrunFrames = (this._pendingUnderrunFrames + (missing >>> 0)) >>> 0;
 
-        const nowMs = (() => {
-          // AudioWorkletGlobalScope exposes `currentTime` (seconds) / `currentFrame` (frames). When
-          // running under Node-based tests, fall back to `performance.now()` / `Date.now()`.
-          // eslint-disable-next-line no-undef
-          const ct = typeof currentTime === "number" && Number.isFinite(currentTime) ? currentTime : null;
-          if (ct !== null) return ct * 1000;
-          if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
-          return Date.now();
-        })();
-
+        const now = nowMs();
         const last = this._lastUnderrunMessageTimeMs;
         const intervalMs = this._underrunMessageIntervalMs;
-        const canSend = last === null || !Number.isFinite(last) || nowMs - last >= intervalMs || nowMs < last;
+        const canSend = last === null || !Number.isFinite(last) || now - last >= intervalMs || now < last;
 
         if (canSend) {
-          this._lastUnderrunMessageTimeMs = nowMs;
+          this._lastUnderrunMessageTimeMs = now;
           const added = this._pendingUnderrunFrames >>> 0;
           this._pendingUnderrunFrames = 0;
           try {
@@ -225,22 +226,13 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
     // Note: this check intentionally only runs on non-underrun callbacks (framesToRead ==
     // framesNeeded) to avoid redundant time computations in persistent underrun scenarios.
     if (this._sendUnderrunMessages && this._pendingUnderrunFrames !== 0 && framesToRead === framesNeeded) {
-      const nowMs = (() => {
-        // AudioWorkletGlobalScope exposes `currentTime` (seconds) / `currentFrame` (frames). When
-        // running under Node-based tests, fall back to `performance.now()` / `Date.now()`.
-        // eslint-disable-next-line no-undef
-        const ct = typeof currentTime === "number" && Number.isFinite(currentTime) ? currentTime : null;
-        if (ct !== null) return ct * 1000;
-        if (typeof globalThis.performance?.now === "function") return globalThis.performance.now();
-        return Date.now();
-      })();
-
+      const now = nowMs();
       const last = this._lastUnderrunMessageTimeMs;
       const intervalMs = this._underrunMessageIntervalMs;
-      const canSend = last === null || !Number.isFinite(last) || nowMs - last >= intervalMs || nowMs < last;
+      const canSend = last === null || !Number.isFinite(last) || now - last >= intervalMs || now < last;
 
       if (canSend) {
-        this._lastUnderrunMessageTimeMs = nowMs;
+        this._lastUnderrunMessageTimeMs = now;
         const added = this._pendingUnderrunFrames >>> 0;
         this._pendingUnderrunFrames = 0;
         const total = Atomics.load(this._header, UNDERRUN_COUNT_INDEX) >>> 0;
