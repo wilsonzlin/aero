@@ -43,15 +43,18 @@ fn aerogpu_cmd_accepts_geometry_shader_stage_ex_plumbing() {
             }
         };
 
-        // A minimal DXBC container that parses as a geometry shader (program type 2).
+        // A minimal DXBC container that parses as a geometry shader (program type 2). Even though
+        // the AeroGPU protocol can carry GS objects/bindings, the WebGPU-backed executor currently
+        // ignores non-{VS,PS,CS} stages. Ensure we accept-and-ignore the payload rather than
+        // failing with a stage-mismatch error.
         let gs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(2))]);
 
         let mut writer = AerogpuCmdWriter::new();
-        // Encode GS creation and binding updates using the "stage_ex" ABI extension so we exercise
-        // the extended-stage plumbing even on older hosts.
+        // Create the GS via the `stage_ex` ABI extension and bind it via the append-only
+        // `BIND_SHADERS` extension.
         writer.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Geometry, &gs_dxbc);
-        // Ensure geometry-stage bindings are accepted (even though WebGPU has no GS stage).
-        writer.bind_shaders_with_gs(0, 1, 0, 0);
+        writer.bind_shaders_ex(0, 0, 0, 1, 0, 0);
+        // Ensure geometry-stage bindings are accepted.
         writer.set_texture_ex(AerogpuShaderStageEx::Geometry, 0, 0);
         writer.set_shader_constants_f_ex(AerogpuShaderStageEx::Geometry, 0, &[1.0, 2.0, 3.0, 4.0]);
         let stream = writer.finish();

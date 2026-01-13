@@ -372,6 +372,41 @@ export function resolveShaderStageWithEx(shaderStage: number, reserved0: number)
       return { kind: "Unknown", shaderStage: shaderStage >>> 0, stageEx: reserved0 >>> 0 };
   }
 }
+
+/**
+ * Resolve a legacy `AerogpuShaderStage` plus optional `stage_ex` encoding (`reserved0`) into an extended stage.
+ *
+ * Encoding rules (mirrors `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+ * - If `shaderStage` is Vertex, Pixel, or Geometry, `reserved0` MUST be 0.
+ * - If `shaderStage` is Compute:
+ *   - `reserved0 == 0` means legacy compute stage (no stage_ex specified).
+ *   - `reserved0 != 0` is interpreted as `AerogpuShaderStageEx` (DXBC program type ID).
+ *
+ * Returns `null` if the pair violates the encoding rules.
+ *
+ * Note: `AerogpuShaderStageEx` is intentionally non-zero-only, so Pixel cannot be represented here
+ * (DXBC program type 0 conflicts with the legacy compute encoding). Use `resolveShaderStageWithEx`
+ * if you need a representation that includes Pixel.
+ */
+export function decodeShaderStageEx(shaderStage: number, reserved0: number): AerogpuShaderStageEx | null {
+  if (shaderStage === AerogpuShaderStage.Vertex) return reserved0 === 0 ? AerogpuShaderStageEx.Vertex : null;
+  if (shaderStage === AerogpuShaderStage.Pixel) return null;
+  if (shaderStage === AerogpuShaderStage.Geometry) return reserved0 === 0 ? AerogpuShaderStageEx.Geometry : null;
+  if (shaderStage === AerogpuShaderStage.Compute) {
+    if (reserved0 === 0) return AerogpuShaderStageEx.Compute;
+    switch (reserved0 >>> 0) {
+      case AerogpuShaderStageEx.Vertex:
+      case AerogpuShaderStageEx.Geometry:
+      case AerogpuShaderStageEx.Hull:
+      case AerogpuShaderStageEx.Domain:
+      case AerogpuShaderStageEx.Compute:
+        return reserved0 as AerogpuShaderStageEx;
+      default:
+        return null;
+    }
+  }
+  return null;
+}
 export const AerogpuIndexFormat = {
   Uint16: 0,
   Uint32: 1,
