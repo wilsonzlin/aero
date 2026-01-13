@@ -874,9 +874,11 @@ mod tests {
         assert_eq!(apic.get_pending_vector(), Some(0x80));
         assert!(apic.is_pending(0x80));
 
-        // Register a notifier and ensure it is preserved by reset.
+        // Register notifiers and ensure they are preserved by reset.
         apic.register_eoi_notifier(Arc::new(|_| {}));
+        apic.register_icr_notifier(Arc::new(|_| {}));
         assert_eq!(apic.eoi_notifiers.lock().unwrap().len(), 1);
+        assert_eq!(apic.icr_notifiers.lock().unwrap().len(), 1);
 
         apic.reset_state(0x3);
 
@@ -906,6 +908,7 @@ mod tests {
 
         // Notifiers are not cleared by reset.
         assert_eq!(apic.eoi_notifiers.lock().unwrap().len(), 1);
+        assert_eq!(apic.icr_notifiers.lock().unwrap().len(), 1);
     }
 
     #[test]
