@@ -32,7 +32,7 @@ int main() {
     trace.ret(S_OK);
   }
 
-  // Subsequent stubbed calls should not trigger additional dumps (dump is one-shot).
+  // Subsequent stub-tagged calls should not trigger additional dumps (dump is one-shot).
   {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::TraceTestStub, 0xdef, 0, 0, 0);
     trace.ret(S_OK);
