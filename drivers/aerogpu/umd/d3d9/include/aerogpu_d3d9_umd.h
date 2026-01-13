@@ -116,6 +116,12 @@ typedef struct _LUID {
 #ifndef D3DERR_NOTAVAILABLE
   #define D3DERR_NOTAVAILABLE ((HRESULT)0x8876086AL)
 #endif
+#ifndef D3DERR_DEVICELOST
+  // D3DERR_DEVICELOST (0x88760868). Returned to signal a device-lost/hung state
+  // (e.g. WDDM submission failures). Keep a local definition so portable builds
+  // don't require d3d9.h.
+  #define D3DERR_DEVICELOST ((HRESULT)0x88760868L)
+#endif
 #ifndef D3DERR_INVALIDCALL
   #define D3DERR_INVALIDCALL ((HRESULT)0x8876086CUL)
 #endif

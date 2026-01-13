@@ -307,6 +307,11 @@ constexpr int32_t kMaxGpuThreadPriority = 7;
 // D3DERR_INVALIDCALL (0x8876086C) is returned by the UMD for invalid arguments.
 constexpr HRESULT kD3DErrInvalidCall = static_cast<HRESULT>(0x8876086CL);
 
+// D3DERR_DEVICELOST (0x88760868) is returned by the UMD/DDI when the device is
+// considered lost/hung (e.g. a WDDM submission callback failed). Keep a local
+// definition so the file doesn't depend on d3d9.h.
+constexpr HRESULT kD3dErrDeviceLost = static_cast<HRESULT>(0x88760868L);
+
 // S_PRESENT_OCCLUDED (0x08760868) is returned by CheckDeviceState/PresentEx when
 // the target window is occluded/minimized. Prefer the SDK macro when available
 // but provide a fallback so repo builds don't need d3d9.h.
@@ -425,6 +430,60 @@ constexpr uint32_t kMaxFrameLatencyMax = 16;
 // Bounded wait for PresentEx throttling. This must be finite to avoid hangs in
 // DWM/PresentEx call sites if the GPU stops making forward progress.
 constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
+
+enum class WddmSubmitCallbackKind : uint32_t {
+  None = 0,
+  SubmitCommandCb = 1,
+  RenderCb = 2,
+  PresentCb = 3,
+};
+
+const char* wddm_submit_callback_kind_name(WddmSubmitCallbackKind kind) {
+  switch (kind) {
+    case WddmSubmitCallbackKind::SubmitCommandCb:
+      return "SubmitCommandCb";
+    case WddmSubmitCallbackKind::RenderCb:
+      return "RenderCb";
+    case WddmSubmitCallbackKind::PresentCb:
+      return "PresentCb";
+    default:
+      return "None";
+  }
+}
+
+inline bool device_is_lost(const Device* dev) {
+  return dev && dev->device_lost.load(std::memory_order_acquire);
+}
+
+inline HRESULT device_lost_override(Device* dev, HRESULT hr) {
+  return device_is_lost(dev) ? kD3dErrDeviceLost : hr;
+}
+
+void mark_device_lost_from_submit(Device* dev, HRESULT hr, bool is_present, WddmSubmitCallbackKind cb_kind) {
+  if (!dev) {
+    return;
+  }
+
+  bool expected = false;
+  if (!dev->device_lost.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  dev->device_lost_hr.store(static_cast<int32_t>(hr), std::memory_order_release);
+  dev->device_lost_reason.store(
+      static_cast<uint32_t>(is_present ? DeviceLostReason::WddmSubmitPresent : DeviceLostReason::WddmSubmitRender),
+      std::memory_order_release);
+
+  const unsigned hr_code = static_cast<unsigned>(hr);
+  const char* kind_name = wddm_submit_callback_kind_name(cb_kind);
+  const char* submit_name = is_present ? "present" : "render";
+  if (!dev->device_lost_logged.exchange(true, std::memory_order_acq_rel)) {
+    aerogpu::logf("aerogpu-d3d9: device lost: %s submit via %s failed hr=0x%08x\n",
+                  submit_name,
+                  kind_name,
+                  hr_code);
+  }
+}
 
 // Some WDDM/D3D9 callback structs may not expose `SubmissionFenceId`/`NewFenceValue`
 // depending on the WDK header vintage. When the runtime does not provide a
@@ -3315,6 +3374,9 @@ bool ensure_cmd_space(Device* dev, size_t bytes_needed) {
   if (!dev->adapter) {
     return false;
   }
+  if (device_is_lost(dev)) {
+    return false;
+  }
 
 #if defined(_WIN32)
   if (dev->wddm_context.hContext != 0) {
@@ -3335,6 +3397,9 @@ bool ensure_cmd_space(Device* dev, size_t bytes_needed) {
   // If the current submission is non-empty, flush it and retry.
   if (!dev->cmd.empty()) {
     (void)submit(dev);
+    if (device_is_lost(dev)) {
+      return false;
+    }
   }
 
 #if defined(_WIN32)
@@ -3369,6 +3434,9 @@ HeaderT* append_with_payload_locked(Device* dev, uint32_t opcode, const void* pa
 HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write) {
   if (!dev || !res) {
     return E_INVALIDARG;
+  }
+  if (device_is_lost(dev)) {
+    return kD3dErrDeviceLost;
   }
 
   // Only track allocations when running on the WDDM path. Repo/compat builds
@@ -3425,6 +3493,9 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
   if (ref.status == AllocRefStatus::kNeedFlush) {
     // Split the submission and retry.
     (void)submit(dev);
+    if (device_is_lost(dev)) {
+      return kD3dErrDeviceLost;
+    }
 
     if (write) {
       ref = dev->alloc_list_tracker.track_render_target_write(
@@ -3452,6 +3523,9 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
 HRESULT track_draw_state_locked(Device* dev) {
   if (!dev) {
     return E_INVALIDARG;
+  }
+  if (device_is_lost(dev)) {
+    return kD3dErrDeviceLost;
   }
 
   if (dev->wddm_context.hContext == 0) {
@@ -6567,6 +6641,23 @@ uint64_t submit(Device* dev, bool is_present) {
   if (!adapter) {
     return 0;
   }
+  if (device_is_lost(dev)) {
+    // Device is lost: discard any queued work and keep returning the last known
+    // good fence. Key DDIs will translate the lost state into a stable HRESULT
+    // (D3DERR_DEVICELOST) rather than returning fence==0 and pretending the GPU
+    // made forward progress.
+    //
+    // Callers must hold `Device::mutex`.
+#if defined(_WIN32)
+    if (dev->wddm_context.buffers_need_deallocate) {
+      wddm_deallocate_active_buffers(dev);
+    }
+#endif
+    dev->cmd.rewind();
+    dev->alloc_list_tracker.reset();
+    dev->wddm_context.reset_submission_buffers();
+    return dev->last_submission_fence;
+  }
 
   if (dev->cmd.empty()) {
     // Even if there's nothing to submit, callers may use submit() as a "split"
@@ -6619,8 +6710,9 @@ uint64_t submit(Device* dev, bool is_present) {
       const uint32_t submit_priv_size = dev->wddm_context.DmaBufferPrivateDataSize;
 
       HRESULT submit_hr = E_NOTIMPL;
-      enum class SubmitCbKind { kNone, kSubmitCommandCb, kRenderCb, kPresentCb };
-      SubmitCbKind submit_kind = SubmitCbKind::kNone;
+      // Tracks the last attempted submission callback (and therefore the
+      // callback that returned `submit_hr`).
+      WddmSubmitCallbackKind submit_kind = WddmSubmitCallbackKind::None;
       const uint32_t cmd_len = static_cast<uint32_t>(cmd_bytes);
       // Win7 D3D9 runtimes expose several possible submission callbacks. Prefer
       // Render/Present so dxgkrnl routes through DxgkDdiRender/DxgkDdiPresent and
@@ -6630,11 +6722,9 @@ uint64_t submit(Device* dev, bool is_present) {
         if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
           if (dev->wddm_callbacks.pfnPresentCb) {
             submission_fence = 0;
+            submit_kind = WddmSubmitCallbackKind::PresentCb;
             submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnPresentCb, cmd_len, /*is_present=*/true,
                                                &submission_fence);
-            if (SUCCEEDED(submit_hr)) {
-              submit_kind = SubmitCbKind::kPresentCb;
-            }
           }
         }
 
@@ -6648,11 +6738,9 @@ uint64_t submit(Device* dev, bool is_present) {
                 // args). Prefer that path over SubmitCommandCb so the KMD can
                 // attach a MetaHandle in DxgkDdiPresent.
                 submission_fence = 0;
+                submit_kind = WddmSubmitCallbackKind::RenderCb;
                 submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
                                                    &submission_fence);
-                if (SUCCEEDED(submit_hr)) {
-                  submit_kind = SubmitCbKind::kRenderCb;
-                }
               }
             }
           }
@@ -6665,11 +6753,9 @@ uint64_t submit(Device* dev, bool is_present) {
           if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnSubmitCommandCb) {
               submission_fence = 0;
+              submit_kind = WddmSubmitCallbackKind::SubmitCommandCb;
               submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/true,
                                                  &submission_fence);
-              if (SUCCEEDED(submit_hr)) {
-                submit_kind = SubmitCbKind::kSubmitCommandCb;
-              }
             }
           }
         }
@@ -6684,11 +6770,9 @@ uint64_t submit(Device* dev, bool is_present) {
               using RenderCbT = decltype(dev->wddm_callbacks.pfnRenderCb);
               if constexpr (!submit_callback_can_signal_present<RenderCbT>()) {
                 submission_fence = 0;
+                submit_kind = WddmSubmitCallbackKind::RenderCb;
                 submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/true,
                                                    &submission_fence);
-                if (SUCCEEDED(submit_hr)) {
-                  submit_kind = SubmitCbKind::kRenderCb;
-                }
               }
             }
           }
@@ -6697,11 +6781,9 @@ uint64_t submit(Device* dev, bool is_present) {
         if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
           if (dev->wddm_callbacks.pfnRenderCb) {
             submission_fence = 0;
+            submit_kind = WddmSubmitCallbackKind::RenderCb;
             submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/false,
                                                &submission_fence);
-            if (SUCCEEDED(submit_hr)) {
-              submit_kind = SubmitCbKind::kRenderCb;
-            }
           }
         }
 
@@ -6712,18 +6794,16 @@ uint64_t submit(Device* dev, bool is_present) {
           if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
             if (dev->wddm_callbacks.pfnSubmitCommandCb) {
               submission_fence = 0;
+              submit_kind = WddmSubmitCallbackKind::SubmitCommandCb;
               submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/false,
                                                  &submission_fence);
-              if (SUCCEEDED(submit_hr)) {
-                submit_kind = SubmitCbKind::kSubmitCommandCb;
-              }
             }
           }
         }
       }
 
       if (SUCCEEDED(submit_hr)) {
-        if (needs_allocation_table && submit_kind != SubmitCbKind::kSubmitCommandCb && submit_priv_ptr &&
+        if (needs_allocation_table && submit_kind != WddmSubmitCallbackKind::SubmitCommandCb && submit_priv_ptr &&
             submit_priv_size >= AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES) {
           AEROGPU_DMA_PRIV priv{};
           std::memcpy(&priv, submit_priv_ptr, sizeof(priv));
@@ -6755,7 +6835,7 @@ uint64_t submit(Device* dev, bool is_present) {
           // fails (best-effort; prevents leaking callback-owned buffers).
           wddm_deallocate_active_buffers(dev);
         }
-        logf("aerogpu-d3d9: submit callbacks failed hr=0x%08x\n", static_cast<unsigned>(submit_hr));
+        mark_device_lost_from_submit(dev, submit_hr, is_present, submit_kind);
       }
     } else {
       logf("aerogpu-d3d9: submit command buffer too large (cmd=%llu cap=%u)\n",
@@ -6764,6 +6844,15 @@ uint64_t submit(Device* dev, bool is_present) {
     }
   }
 #endif
+
+  // If submission failed and the device was marked as lost, stop here. Do not
+  // update fence state or stamp queries with fence==0.
+  if (device_is_lost(dev)) {
+    dev->cmd.rewind();
+    dev->alloc_list_tracker.reset();
+    dev->wddm_context.reset_submission_buffers();
+    return dev->last_submission_fence;
+  }
 
   uint64_t fence = 0;
   // Fence value associated with this specific submission (as returned by the
@@ -6881,6 +6970,9 @@ HRESULT flush_locked(Device* dev) {
   if (!dev) {
     return S_OK;
   }
+  if (device_is_lost(dev)) {
+    return kD3dErrDeviceLost;
+  }
   if (dev->cmd.empty()) {
     // If we have pending EVENT queries waiting for a submission fence, allow
     // this flush call to "resolve" them without forcing an empty DMA buffer to
@@ -6888,6 +6980,9 @@ HRESULT flush_locked(Device* dev) {
     // `last_submission_fence`.
     if (!dev->pending_event_queries.empty()) {
       (void)submit(dev);
+      if (device_is_lost(dev)) {
+        return kD3dErrDeviceLost;
+      }
     }
     return S_OK;
   }
@@ -6896,7 +6991,7 @@ HRESULT flush_locked(Device* dev) {
   const size_t flush_bytes = align_up(sizeof(aerogpu_cmd_flush), 4);
   if (dev->cmd.bytes_remaining() < flush_bytes) {
     submit(dev);
-    return S_OK;
+    return device_lost_override(dev, S_OK);
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_flush>(dev, AEROGPU_CMD_FLUSH);
@@ -6905,7 +7000,7 @@ HRESULT flush_locked(Device* dev) {
     cmd->reserved1 = 0;
   }
   submit(dev);
-  return S_OK;
+  return device_lost_override(dev, S_OK);
 }
 
 HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
@@ -9368,6 +9463,10 @@ HRESULT AEROGPU_D3D9_CALL device_check_device_state(
                       0);
   if (!hDevice.pDrvPrivate) {
     return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
   }
   if (hwnd_is_occluded(hWnd)) {
     return trace.ret(kSPresentOccluded);
@@ -16247,6 +16346,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
   }
@@ -16357,7 +16459,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     }
 
     if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, ss.stride_bytes)) {
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
 
     hr = ensure_fixedfunc_pipeline_locked(dev);
@@ -16369,7 +16471,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     const uint32_t topology = d3d9_prim_to_topology(type);
     if (!emit_set_topology_locked(dev, topology)) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
 
     // Ensure the command buffer has space before we track allocations; tracking
@@ -16377,7 +16479,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     // after tracking or the allocation list would be out of sync.
     if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
     hr = track_draw_state_locked(dev);
     if (FAILED(hr)) {
@@ -16388,7 +16490,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
     if (!cmd) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
     cmd->vertex_count = vertex_count;
     cmd->instance_count = 1;
@@ -16396,7 +16498,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     cmd->first_instance = 0;
 
     if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
     return S_OK;
   }
@@ -16411,19 +16513,19 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
                             align_up(sizeof(aerogpu_cmd_draw), 4);
   if (!ensure_cmd_space(dev, draw_bytes)) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
 
   // Ensure the command buffer has space before we track allocations; tracking
   // may force a submission split, and command-buffer splits must not occur
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   HRESULT hr = track_draw_state_locked(dev);
@@ -16433,7 +16535,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!cmd) {
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
   cmd->vertex_count = vertex_count_from_primitive(type, primitive_count);
   cmd->instance_count = 1;
@@ -16457,18 +16559,23 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   if (!hDevice.pDrvPrivate) {
     return trace.ret(E_INVALIDARG);
   }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
   }
   if (!pVertexData || stride_bytes == 0) {
     return trace.ret(E_INVALIDARG);
   }
-
-  auto* dev = as_device(hDevice);
-  if (!dev) {
-    return trace.ret(E_INVALIDARG);
-  }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
 
   const bool fixedfunc_active =
       fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
@@ -16517,7 +16624,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   }
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, stride_bytes)) {
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
 
   if (fixedfunc_active) {
@@ -16531,7 +16638,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
 
   // Ensure the command buffer has space before we track allocations; tracking
@@ -16539,7 +16646,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
   hr = track_draw_state_locked(dev);
   if (FAILED(hr)) {
@@ -16550,7 +16657,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!cmd) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
   cmd->vertex_count = vertex_count;
   cmd->instance_count = 1;
@@ -16558,7 +16665,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   cmd->first_instance = 0;
 
   if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
   return trace.ret(S_OK);
 }
@@ -16586,6 +16693,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive_up(
                       pc_stride);
   if (!hDevice.pDrvPrivate) {
     return trace.ret(E_INVALIDARG);
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return trace.ret(E_INVALIDARG);
+  }
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
   }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
@@ -16616,18 +16730,23 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   if (!hDevice.pDrvPrivate || !pDraw) {
     return E_INVALIDARG;
   }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (device_is_lost(dev)) {
+    return kD3dErrDeviceLost;
+  }
   if (pDraw->PrimitiveCount == 0) {
     return S_OK;
   }
   if (!pDraw->pVertexStreamZeroData || pDraw->VertexStreamZeroStride == 0) {
     return E_INVALIDARG;
   }
-
-  auto* dev = as_device(hDevice);
-  if (!dev) {
-    return E_INVALIDARG;
-  }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return kD3dErrDeviceLost;
+  }
 
   const bool fixedfunc_active =
       fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
@@ -16676,7 +16795,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   }
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->VertexStreamZeroStride)) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   if (fixedfunc_active) {
@@ -16690,7 +16809,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   // Ensure the command buffer has space before we track allocations; tracking
@@ -16698,7 +16817,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   hr = track_draw_state_locked(dev);
@@ -16710,7 +16829,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!cmd) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
   cmd->vertex_count = vertex_count;
   cmd->instance_count = 1;
@@ -16718,7 +16837,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   cmd->first_instance = 0;
 
   if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
   return S_OK;
 }
@@ -16729,18 +16848,23 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   if (!hDevice.pDrvPrivate || !pDraw) {
     return E_INVALIDARG;
   }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (device_is_lost(dev)) {
+    return kD3dErrDeviceLost;
+  }
   if (pDraw->PrimitiveCount == 0) {
     return S_OK;
   }
   if (!pDraw->pVertexStreamZeroData || pDraw->VertexStreamZeroStride == 0 || !pDraw->pIndexData) {
     return E_INVALIDARG;
   }
-
-  auto* dev = as_device(hDevice);
-  if (!dev) {
-    return E_INVALIDARG;
-  }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return kD3dErrDeviceLost;
+  }
 
   const bool fixedfunc_active =
       fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs && !dev->user_ps;
@@ -16813,7 +16937,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   }
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->VertexStreamZeroStride)) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   dev->index_buffer = dev->up_index_buffer;
@@ -16826,7 +16950,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     dev->index_buffer = saved_ib;
     dev->index_format = saved_fmt;
     dev->index_offset_bytes = saved_offset;
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
   ib_cmd->buffer = dev->up_index_buffer ? dev->up_index_buffer->handle : 0;
   ib_cmd->format = d3d9_index_format_to_aerogpu(pDraw->IndexDataFormat);
@@ -16866,7 +16990,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
       restore->offset_bytes = saved_offset;
       restore->reserved0 = 0;
     }
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   // Ensure the command buffer has space before we track allocations; tracking
@@ -16885,7 +17009,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
       restore->offset_bytes = saved_offset;
       restore->reserved0 = 0;
     }
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   hr = track_draw_state_locked(dev);
@@ -16919,7 +17043,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
       restore->offset_bytes = saved_offset;
       restore->reserved0 = 0;
     }
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
   cmd->index_count = index_count;
   cmd->instance_count = 1;
@@ -16929,7 +17053,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
 
   // Restore stream source 0.
   if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   // Restore index buffer binding.
@@ -16938,7 +17062,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   dev->index_offset_bytes = saved_offset;
   auto* restore_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
   if (!restore_cmd) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
   restore_cmd->buffer = saved_ib ? saved_ib->handle : 0;
   restore_cmd->format = d3d9_index_format_to_aerogpu(saved_fmt);
@@ -16967,6 +17091,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
   }
@@ -17159,7 +17286,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       try {
         expanded.resize(static_cast<size_t>(expanded_bytes_u64));
       } catch (...) {
-        return E_OUTOFMEMORY;
+        return device_lost_override(dev, E_OUTOFMEMORY);
       }
 
       float vp_x = 0.0f;
@@ -17223,7 +17350,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     }
 
     if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, ss.stride_bytes)) {
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
 
     hr = ensure_fixedfunc_pipeline_locked(dev);
@@ -17235,7 +17362,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     const uint32_t topology = d3d9_prim_to_topology(type);
     if (!emit_set_topology_locked(dev, topology)) {
       (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
 
     // Ensure the command buffer has space before we track allocations; tracking
@@ -17243,7 +17370,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     // after tracking or the allocation list would be out of sync.
     if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
       (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
     hr = track_draw_state_locked(dev);
     if (FAILED(hr)) {
@@ -17254,7 +17381,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
     if (!cmd) {
       (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
     cmd->vertex_count = index_count;
     cmd->instance_count = 1;
@@ -17262,7 +17389,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     cmd->first_instance = 0;
 
     if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
-      return E_OUTOFMEMORY;
+      return device_lost_override(dev, E_OUTOFMEMORY);
     }
     return S_OK;
   }
@@ -17277,19 +17404,19 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
                             align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
   if (!ensure_cmd_space(dev, draw_bytes)) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
 
   // Ensure the command buffer has space before we track allocations; tracking
   // may force a submission split, and command-buffer splits must not occur
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
-    return E_OUTOFMEMORY;
+    return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   HRESULT hr = track_draw_state_locked(dev);
@@ -17299,7 +17426,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
   if (!cmd) {
-    return trace.ret(E_OUTOFMEMORY);
+    return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
   cmd->index_count = index_count_from_primitive(type, primitive_count);
   cmd->instance_count = 1;
@@ -17323,6 +17450,9 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
   }
 
   auto* dev = as_device(hDevice);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
   const D3DDDI_HRESOURCE src_handle = d3d9_present_src(*pPresentEx);
   const uint32_t sync_interval = d3d9_present_sync_interval(*pPresentEx);
   const uint32_t present_flags = d3d9_present_flags(*pPresentEx);
@@ -17350,6 +17480,9 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       // advance D3D9Ex present statistics (GetPresentStats/GetLastPresentCount).
       retire_completed_presents_locked(dev);
       (void)submit(dev, /*is_present=*/false);
+      if (device_is_lost(dev)) {
+        return trace.ret(kD3dErrDeviceLost);
+      }
 
       dev->present_count++;
       present_count = dev->present_count;
@@ -17376,6 +17509,9 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       // Present submission. This ensures the KMD/emulator observes distinct
       // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
       (void)submit(dev, /*is_present=*/false);
+      if (device_is_lost(dev)) {
+        return trace.ret(kD3dErrDeviceLost);
+      }
 
       // Track the present source allocation so the KMD can resolve the backing
       // `alloc_id` via the per-submit allocation table even though we keep the
@@ -17384,7 +17520,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       // Ensure command space before tracking: tracking may split/submit and must
       // not occur after command-buffer overflow handling.
       if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_present_ex), 4))) {
-        return trace.ret(E_OUTOFMEMORY);
+        return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
       }
       if (auto* src_res = as_resource(src_handle)) {
         const HRESULT track_hr = track_resource_allocation_locked(dev, src_res, /*write=*/false);
@@ -17395,7 +17531,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
       auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
       if (!cmd) {
-        return trace.ret(E_OUTOFMEMORY);
+        return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
       }
       cmd->scanout_id = 0;
       bool vsync = (sync_interval != 0) && (sync_interval != kD3dPresentIntervalImmediate);
@@ -17408,6 +17544,9 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       cmd->reserved0 = 0;
 
       const uint64_t submit_fence = submit(dev, /*is_present=*/true);
+      if (device_is_lost(dev)) {
+        return trace.ret(kD3dErrDeviceLost);
+      }
       const uint64_t present_fence = submit_fence;
       if (present_fence) {
         dev->inflight_present_fences.push_back(present_fence);
@@ -17682,6 +17821,9 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       }
     }
   }
+  if (device_is_lost(dev)) {
+    present_hr = kD3dErrDeviceLost;
+  }
 
   const HRESULT trace_hr = trace.ret(present_hr);
   trace.maybe_dump_on_present(present_count);
@@ -17702,6 +17844,9 @@ HRESULT AEROGPU_D3D9_CALL device_present(
   }
 
   auto* dev = as_device(hDevice);
+  if (device_is_lost(dev)) {
+    return trace.ret(kD3dErrDeviceLost);
+  }
   const D3DDDI_HRESOURCE src_handle = d3d9_present_src(*pPresent);
   const uint32_t sync_interval = d3d9_present_sync_interval(*pPresent);
   const uint32_t present_flags = d3d9_present_flags(*pPresent);
@@ -17734,6 +17879,9 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     if (occluded) {
       retire_completed_presents_locked(dev);
       (void)submit(dev, /*is_present=*/false);
+      if (device_is_lost(dev)) {
+        return trace.ret(kD3dErrDeviceLost);
+      }
 
       dev->present_count++;
       present_count = dev->present_count;
@@ -17769,11 +17917,14 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     // Present submission. This ensures the KMD/emulator observes distinct
     // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
     (void)submit(dev, /*is_present=*/false);
+    if (device_is_lost(dev)) {
+      return trace.ret(kD3dErrDeviceLost);
+    }
 
     // Track the present source allocation so the KMD can resolve it when the
     // Present callback hands the DMA buffer to the kernel.
     if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_present_ex), 4))) {
-      return trace.ret(E_OUTOFMEMORY);
+      return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
     }
     if (auto* src_res = as_resource(src_handle)) {
       const HRESULT track_hr = track_resource_allocation_locked(dev, src_res, /*write=*/false);
@@ -17784,7 +17935,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
     if (!cmd) {
-      return trace.ret(E_OUTOFMEMORY);
+      return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
     }
     cmd->scanout_id = 0;
     bool vsync = (sync_interval != 0) && (sync_interval != kD3dPresentIntervalImmediate);
@@ -17796,6 +17947,9 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     cmd->reserved0 = 0;
 
     const uint64_t submit_fence = submit(dev, /*is_present=*/true);
+    if (device_is_lost(dev)) {
+      return trace.ret(kD3dErrDeviceLost);
+    }
     const uint64_t present_fence = submit_fence;
     if (present_fence) {
       dev->inflight_present_fences.push_back(present_fence);
@@ -18498,6 +18652,14 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     return trace.ret(E_INVALIDARG);
   }
   auto* dev = as_device(hDevice);
+  const uint32_t data_size = d3d9_query_data_size(*pGetQueryData);
+  const uint32_t flags = d3d9_present_flags(*pGetQueryData);
+  if (device_is_lost(dev)) {
+    if (pGetQueryData->pData && data_size != 0) {
+      std::memset(pGetQueryData->pData, 0, data_size);
+    }
+    return trace.ret(kD3dErrDeviceLost);
+  }
   auto* q = as_query(pGetQueryData->hQuery);
   if (!q) {
     return trace.ret(E_INVALIDARG);
@@ -18507,8 +18669,6 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     return trace.ret(E_FAIL);
   }
   Adapter* adapter = dev->adapter;
-  const uint32_t data_size = d3d9_query_data_size(*pGetQueryData);
-  const uint32_t flags = d3d9_present_flags(*pGetQueryData);
 
   const bool event_known = adapter->event_query_type_known.load(std::memory_order_acquire);
   const uint32_t event_type = adapter->event_query_type.load(std::memory_order_relaxed);
@@ -18556,7 +18716,13 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
       // polling.
       std::unique_lock<std::mutex> dev_lock(dev->mutex, std::try_to_lock);
       if (dev_lock.owns_lock()) {
-        (void)flush_locked(dev);
+        const HRESULT flush_hr = flush_locked(dev);
+        if (flush_hr == kD3dErrDeviceLost || device_is_lost(dev)) {
+          if (need_data && pGetQueryData->pData && data_size != 0) {
+            std::memset(pGetQueryData->pData, 0, data_size);
+          }
+          return trace.ret(kD3dErrDeviceLost);
+        }
       }
     }
     if (!q->submitted.load(std::memory_order_acquire)) {
@@ -18574,7 +18740,13 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     // we skip the flush attempt and fall back to polling.
     std::unique_lock<std::mutex> dev_lock(dev->mutex, std::try_to_lock);
     if (dev_lock.owns_lock()) {
-      (void)flush_locked(dev);
+      const HRESULT flush_hr = flush_locked(dev);
+      if (flush_hr == kD3dErrDeviceLost || device_is_lost(dev)) {
+        if (need_data && pGetQueryData->pData && data_size != 0) {
+          std::memset(pGetQueryData->pData, 0, data_size);
+        }
+        return trace.ret(kD3dErrDeviceLost);
+      }
     }
     fence_value = q->fence_value.load(std::memory_order_acquire);
     wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);

@@ -28,6 +28,17 @@ enum class ResourceKind : uint32_t {
   Texture2D = 3,
 };
 
+// Device-lost reason code (best-effort diagnostic). Once the device enters a
+// lost state, key DDIs return a stable device-lost HRESULT (D3DERR_DEVICELOST)
+// and command submission stops.
+enum class DeviceLostReason : uint32_t {
+  None = 0,
+  // WDDM submission callback failure for a render submission.
+  WddmSubmitRender = 1,
+  // WDDM submission callback failure for a present submission.
+  WddmSubmitPresent = 2,
+};
+
 inline uint32_t bytes_per_pixel(D3DDDIFORMAT d3d9_format) {
   // Conservative: handle the formats DWM/typical D3D9 samples use.
   // For unknown formats we assume 4 bytes to avoid undersizing.
@@ -597,6 +608,18 @@ struct Device {
 
   Adapter* adapter = nullptr;
   std::mutex mutex;
+
+  // Device-lost tracking (sticky).
+  //
+  // In WDDM builds, if the runtime submission callback (Render/Present/SubmitCommand)
+  // fails, the UMD marks the device as lost so DWM/apps observe a stable failure
+  // code instead of spinning on fence==0 / "trivially complete" queries.
+  std::atomic<bool> device_lost{false};
+  // HRESULT returned by the failing submission callback.
+  std::atomic<int32_t> device_lost_hr{S_OK};
+  std::atomic<uint32_t> device_lost_reason{static_cast<uint32_t>(DeviceLostReason::None)};
+  // Log guard so the "device lost" transition is emitted once per device.
+  std::atomic<bool> device_lost_logged{false};
 
   // Active state-block recording session (BeginStateBlock -> EndStateBlock).
   // When non-null, state-setting DDIs record the subset of state they touch

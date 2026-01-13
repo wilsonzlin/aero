@@ -59,6 +59,33 @@ set_target_properties(aerogpu_d3d9_draw_requires_shaders_tests PROPERTIES
 
 add_test(NAME aerogpu_d3d9_draw_requires_shaders_tests COMMAND aerogpu_d3d9_draw_requires_shaders_tests)
 
+add_executable(aerogpu_device_lost_tests
+    device_lost_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_blit.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_caps.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_driver.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_kmd_query.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_log.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc_list.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_context.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/dllmain.cpp
+)
+
+target_include_directories(aerogpu_device_lost_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+    ${CMAKE_CURRENT_LIST_DIR}/../../../protocol
+)
+
+set_target_properties(aerogpu_device_lost_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_device_lost_tests COMMAND aerogpu_device_lost_tests)
+
 add_executable(aerogpu_process_vertices_tests
     process_vertices_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_blit.cpp
