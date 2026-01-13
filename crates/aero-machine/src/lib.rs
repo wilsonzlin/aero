@@ -12,11 +12,13 @@
 
 mod guest_time;
 mod shared_disk;
+mod shared_iso_disk;
 pub mod virtual_time;
 mod vcpu_init;
 
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
+pub use shared_iso_disk::SharedIsoDisk;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -58,7 +60,7 @@ use aero_devices::usb::uhci::UhciPciDevice;
 pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
-use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend, VirtualDiskIsoBackend};
+use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
@@ -2112,6 +2114,8 @@ pub struct Machine {
     uhci_ns_remainder: u64,
     bios: Bios,
     disk: SharedDisk,
+    install_media: Option<SharedIsoDisk>,
+    boot_drive: u8,
     /// Whether the machine should automatically keep its canonical [`SharedDisk`] attached to the
     /// canonical AHCI boot slot (port 0).
     ///
@@ -2252,6 +2256,8 @@ impl Machine {
             uhci_ns_remainder: 0,
             bios: Bios::new(BiosConfig::default()),
             disk: SharedDisk::from_bytes(Vec::new()).expect("empty disk is valid"),
+            install_media: None,
+            boot_drive: 0x80,
             ahci_port0_auto_attach_shared_disk: true,
             virtio_blk_auto_attach_shared_disk: true,
             network_backend: None,
@@ -2357,6 +2363,14 @@ impl Machine {
     /// configuration (or if firmware POST has not run yet).
     pub fn smbios_eps_addr(&self) -> Option<u32> {
         self.bios.smbios_eps_addr()
+    }
+
+    /// Select the BIOS boot drive number exposed in `DL` when transferring control to the boot
+    /// sector.
+    ///
+    /// Defaults to `0x80` (first hard disk) to preserve existing tests and behavior.
+    pub fn set_boot_drive(&mut self, boot_drive: u8) {
+        self.boot_drive = boot_drive;
     }
 
     /// Replace the attached disk image.
@@ -3149,8 +3163,25 @@ impl Machine {
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> std::io::Result<()> {
-        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
+        let shared = SharedIsoDisk::new(disk)?;
+        self.install_media = Some(shared.clone());
+        self.attach_ide_secondary_master_atapi(AtapiCdrom::new(Some(Box::new(shared))));
         Ok(())
+    }
+
+    /// Detach/eject any ISO currently attached to the IDE secondary master ATAPI device.
+    pub fn detach_ide_secondary_master_iso(&mut self) {
+        self.install_media = None;
+        let Some(ide) = &self.ide else {
+            return;
+        };
+
+        // Model a media eject but keep the ATAPI CD-ROM device present.
+        let mut dev = AtapiCdrom::new(None);
+        dev.eject_media();
+        ide.borrow_mut()
+            .controller
+            .attach_secondary_master_atapi(dev);
     }
 
     /// Re-attach a disk image as an ISO backend to the IDE secondary master ATAPI device without
@@ -3167,7 +3198,9 @@ impl Machine {
         if self.ide.is_none() {
             return Ok(());
         }
-        let backend = Box::new(VirtualDiskIsoBackend::new(disk)?);
+        let shared = SharedIsoDisk::new(disk)?;
+        self.install_media = Some(shared.clone());
+        let backend: Box<dyn IsoBackend> = Box::new(shared);
         self.attach_ide_secondary_master_atapi_backend_for_restore(backend);
         Ok(())
     }
@@ -4831,6 +4864,7 @@ impl Machine {
         // helpers like `int 0x10, ax=0x4F02` to scribble over PCI device BARs).
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
+            boot_drive: self.boot_drive,
             cpu_count: self.cfg.cpu_count,
             enable_acpi: self.cfg.enable_pc_platform && self.cfg.enable_acpi,
             vbe_lfb_base: use_legacy_vga.then_some(aero_gpu_vga::SVGA_LFB_BASE),
