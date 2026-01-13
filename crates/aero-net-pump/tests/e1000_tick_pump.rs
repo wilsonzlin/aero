@@ -123,11 +123,17 @@ fn tick_e1000_respects_tx_budget_and_drains_tx_to_backend() {
     // Budget only allows draining one TX frame per tick.
     let counts = tick_e1000_with_counts(&mut dev, &mut dma, &mut backend, 1, 0);
     assert_eq!(counts.tx_frames, 1);
+    assert_eq!(counts.tx_bytes, pkt0.len());
+    assert_eq!(counts.rx_frames, 0);
+    assert_eq!(counts.rx_bytes, 0);
     assert_eq!(backend.drain_tx_frames(), vec![pkt0.clone()]);
 
     // Next tick drains the second frame (still queued in the NIC).
     let counts = tick_e1000_with_counts(&mut dev, &mut dma, &mut backend, 1, 0);
     assert_eq!(counts.tx_frames, 1);
+    assert_eq!(counts.tx_bytes, pkt1.len());
+    assert_eq!(counts.rx_frames, 0);
+    assert_eq!(counts.rx_bytes, 0);
     assert_eq!(backend.drain_tx_frames(), vec![pkt1.clone()]);
 }
 
@@ -161,6 +167,9 @@ fn tick_e1000_filters_invalid_rx_frames_and_flushes_to_guest_memory() {
 
     let counts = tick_e1000_with_counts(&mut dev, &mut dma, &mut backend, 0, 64);
     assert_eq!(counts.rx_frames, 1);
+    assert_eq!(counts.rx_bytes, valid.len());
+    assert_eq!(counts.tx_frames, 0);
+    assert_eq!(counts.tx_bytes, 0);
 
     assert_eq!(dma.read_vec(0x3000, valid.len()), valid);
 }

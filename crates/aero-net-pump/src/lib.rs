@@ -44,17 +44,24 @@ use memory::MemoryBus;
 /// Default frame budget for each direction per [`E1000Pump::poll`] call.
 pub const DEFAULT_MAX_FRAMES_PER_POLL: usize = 256;
 
-/// Number of frames pumped in each direction during a tick/poll.
+/// Frame/byte throughput pumped in each direction during a tick/poll.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PumpCounts {
     /// Guest → host frames forwarded to the backend via [`NetworkBackend::transmit`].
     pub tx_frames: usize,
+    /// Guest → host bytes forwarded to the backend via [`NetworkBackend::transmit`].
+    pub tx_bytes: usize,
     /// Host → guest frames fetched from the backend via [`NetworkBackend::poll_receive`] and
     /// queued into the NIC.
     ///
     /// Frames that are too small/large for the E1000 model are dropped and are **not** counted.
     pub rx_frames: usize,
+    /// Host → guest bytes fetched from the backend via [`NetworkBackend::poll_receive`] and queued
+    /// into the NIC.
+    ///
+    /// Frames that are too small/large for the E1000 model are dropped and are **not** counted.
+    pub rx_bytes: usize,
 }
 
 /// Configuration-only pump helper for integration layers that *borrow* the NIC and backend.
@@ -147,7 +154,7 @@ pub fn tick_e1000<B: NetworkBackend + ?Sized>(
     );
 }
 
-/// Like [`tick_e1000`], but returns the number of frames processed in each direction.
+/// Like [`tick_e1000`], but returns the number of frames/bytes processed in each direction.
 pub fn tick_e1000_with_counts<B: NetworkBackend + ?Sized>(
     nic: &mut E1000Device,
     mem: &mut dyn MemoryBus,
@@ -165,8 +172,10 @@ pub fn tick_e1000_with_counts<B: NetworkBackend + ?Sized>(
         let Some(frame) = nic.pop_tx_frame() else {
             break;
         };
+        let len = frame.len();
         backend.transmit(frame);
         counts.tx_frames += 1;
+        counts.tx_bytes += len;
     }
 
     // Step 3: inject host RX frames.
@@ -174,16 +183,17 @@ pub fn tick_e1000_with_counts<B: NetworkBackend + ?Sized>(
         let Some(frame) = backend.poll_receive() else {
             break;
         };
+        let len = frame.len();
         // `E1000Device::enqueue_rx_frame` already drops invalid frames, but we
         // pre-filter here so `PumpCounts::rx_frames` accurately reflects frames
         // actually queued into the NIC.
-        if frame.len() < aero_net_e1000::MIN_L2_FRAME_LEN
-            || frame.len() > aero_net_e1000::MAX_L2_FRAME_LEN
+        if len < aero_net_e1000::MIN_L2_FRAME_LEN || len > aero_net_e1000::MAX_L2_FRAME_LEN
         {
             continue;
         }
         nic.enqueue_rx_frame(frame);
         counts.rx_frames += 1;
+        counts.rx_bytes += len;
     }
 
     // Step 4: flush injected RX frames into guest buffers.
@@ -239,7 +249,7 @@ impl<B: NetworkBackend> E1000Pump<B> {
         );
     }
 
-    /// Run one pump iteration and return the number of frames processed in each direction.
+    /// Run one pump iteration and return the number of frames/bytes processed in each direction.
     pub fn poll_with_counts(&mut self, mem: &mut dyn MemoryBus) -> PumpCounts {
         tick_e1000_with_counts(
             &mut self.nic,
@@ -445,7 +455,9 @@ mod tests {
             counts0,
             PumpCounts {
                 tx_frames: 1,
+                tx_bytes: tx_frame.len(),
                 rx_frames: 1,
+                rx_bytes: rx_frame.len(),
             }
         );
         assert_eq!(pump.backend_mut().drain_tx_frames(), vec![tx_frame]);
@@ -457,7 +469,9 @@ mod tests {
             counts1,
             PumpCounts {
                 tx_frames: 0,
+                tx_bytes: 0,
                 rx_frames: 0,
+                rx_bytes: 0,
             }
         );
     }
@@ -540,7 +554,9 @@ mod tests {
             counts0,
             PumpCounts {
                 tx_frames: 1,
+                tx_bytes: tx0.len(),
                 rx_frames: 1,
+                rx_bytes: rx0.len(),
             }
         );
         assert_eq!(backend.drain_tx_frames(), vec![tx0.clone()]);
@@ -551,7 +567,9 @@ mod tests {
             counts1,
             PumpCounts {
                 tx_frames: 1,
+                tx_bytes: tx1.len(),
                 rx_frames: 1,
+                rx_bytes: rx1.len(),
             }
         );
         assert_eq!(backend.drain_tx_frames(), vec![tx1]);
@@ -705,7 +723,9 @@ mod tests {
             counts,
             PumpCounts {
                 tx_frames: 0,
+                tx_bytes: 0,
                 rx_frames: 1,
+                rx_bytes: valid.len(),
             }
         );
         assert!(backend.rx.is_empty());
@@ -754,7 +774,9 @@ mod tests {
             counts,
             PumpCounts {
                 tx_frames: 0,
+                tx_bytes: 0,
                 rx_frames: 5,
+                rx_bytes: 5 * frame.len(),
             }
         );
 
@@ -842,7 +864,9 @@ mod tests {
             counts0,
             PumpCounts {
                 tx_frames: 0,
+                tx_bytes: 0,
                 rx_frames: 1,
+                rx_bytes: frame.len(),
             }
         );
         assert_eq!(backend.poll_receive(), None);
@@ -856,7 +880,9 @@ mod tests {
             counts1,
             PumpCounts {
                 tx_frames: 0,
+                tx_bytes: 0,
                 rx_frames: 0,
+                rx_bytes: 0,
             }
         );
         assert_eq!(mem.read_vec(0x3000, frame.len()), frame);
@@ -891,7 +917,9 @@ mod tests {
             counts0,
             PumpCounts {
                 tx_frames: 0,
+                tx_bytes: 0,
                 rx_frames: 0,
+                rx_bytes: 0,
             }
         );
 
@@ -905,7 +933,9 @@ mod tests {
             counts1,
             PumpCounts {
                 tx_frames: 1,
+                tx_bytes: frame.len(),
                 rx_frames: 0,
+                rx_bytes: 0,
             }
         );
         assert_eq!(backend.drain_tx_frames(), vec![frame]);
@@ -954,7 +984,9 @@ mod tests {
             counts,
             PumpCounts {
                 tx_frames: 0,
+                tx_bytes: 0,
                 rx_frames: 0,
+                rx_bytes: 0,
             }
         );
 
@@ -1268,6 +1300,11 @@ mod tests {
         let counts0 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 16, 16);
         assert_eq!(counts0.tx_frames, 1, "expected 1 guest TX frame to backend");
         assert_eq!(
+            counts0.tx_bytes,
+            discover_frame.len(),
+            "expected tx_bytes to match DHCPDISCOVER frame length"
+        );
+        assert_eq!(
             counts0.rx_frames, 2,
             "expected 2 backend RX frames (broadcast + unicast DHCP OFFER)"
         );
@@ -1366,6 +1403,11 @@ mod tests {
         assert!(
             rx1_len > 0,
             "RX desc 1 should have non-zero length after DMA (got {rx1_len})"
+        );
+        assert_eq!(
+            counts0.rx_bytes,
+            rx0_len as usize + rx1_len as usize,
+            "expected rx_bytes to match total DHCP OFFER bytes delivered"
         );
         assert_eq!(
             rx0_status & DD_EOP,
@@ -1525,6 +1567,11 @@ mod tests {
         let counts1 = tick_e1000_with_counts(&mut nic, &mut mem, &mut backend, 16, 16);
         assert_eq!(counts1.tx_frames, 1, "expected 1 guest TX frame to backend");
         assert_eq!(
+            counts1.tx_bytes,
+            request_frame.len(),
+            "expected tx_bytes to match DHCPREQUEST frame length"
+        );
+        assert_eq!(
             counts1.rx_frames, 2,
             "expected 2 backend RX frames (broadcast + unicast DHCP ACK)"
         );
@@ -1658,6 +1705,11 @@ mod tests {
         assert!(
             rx3_len > 0,
             "RX desc 3 should have non-zero length after DMA (got {rx3_len})"
+        );
+        assert_eq!(
+            counts1.rx_bytes,
+            rx2_len as usize + rx3_len as usize,
+            "expected rx_bytes to match total DHCP ACK bytes delivered"
         );
         assert_eq!(
             rx2_status & DD_EOP,
