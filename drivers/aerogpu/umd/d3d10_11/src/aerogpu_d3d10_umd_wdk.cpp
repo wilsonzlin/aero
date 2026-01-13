@@ -5989,8 +5989,19 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
 
-  // Reset blend state to the D3D10 default (disabled, write RGBA). Without this,
-  // a previous SetBlendState call would persist across ClearState.
+  // Reset fixed-function state to D3D10 defaults. Without this, a previous
+  // Set*State call would persist across ClearState.
+  dev->current_dss = nullptr;
+  dev->current_stencil_ref = 0;
+  dev->current_rs = nullptr;
+  dev->current_bs = nullptr;
+  dev->current_blend_factor[0] = 1.0f;
+  dev->current_blend_factor[1] = 1.0f;
+  dev->current_blend_factor[2] = 1.0f;
+  dev->current_blend_factor[3] = 1.0f;
+  dev->current_sample_mask = 0xFFFFFFFFu;
+
+  // Blend state.
   auto* bs_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
   if (!bs_cmd) {
     SetError(hDevice, E_OUTOFMEMORY);
@@ -6012,6 +6023,34 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bs_cmd->state.blend_constant_rgba_f32[2] = f32_bits(1.0f);
   bs_cmd->state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
   bs_cmd->state.sample_mask = 0xFFFFFFFFu;
+
+  // Depth-stencil state.
+  auto* dss_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!dss_cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  dss_cmd->state.depth_enable = 1u;
+  dss_cmd->state.depth_write_enable = 1u;
+  dss_cmd->state.depth_func = AEROGPU_COMPARE_LESS;
+  dss_cmd->state.stencil_enable = 0u;
+  dss_cmd->state.stencil_read_mask = 0xFF;
+  dss_cmd->state.stencil_write_mask = 0xFF;
+  dss_cmd->state.reserved0[0] = 0;
+  dss_cmd->state.reserved0[1] = 0;
+
+  // Rasterizer state.
+  auto* rs_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!rs_cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  rs_cmd->state.fill_mode = AEROGPU_FILL_SOLID;
+  rs_cmd->state.cull_mode = AEROGPU_CULL_BACK;
+  rs_cmd->state.front_ccw = 0;
+  rs_cmd->state.scissor_enable = 0;
+  rs_cmd->state.depth_bias = 0;
+  rs_cmd->state.flags = AEROGPU_RASTERIZER_FLAG_NONE;
 }
 
 void APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice, UINT startSlot, UINT numViews, const D3D10DDI_HSHADERRESOURCEVIEW* phViews) {
