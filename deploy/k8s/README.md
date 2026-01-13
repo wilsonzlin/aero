@@ -44,6 +44,18 @@ If you override the L2 tunnel payload limits (`AERO_L2_MAX_FRAME_PAYLOAD` / `AER
 configure `l2Tunnel.maxFramePayloadBytes` / `l2Tunnel.maxControlPayloadBytes` so both `aero-l2-proxy` (enforcement)
 and `aero-gateway` (advertising via `POST /session` `limits.l2`) stay in sync.
 
+For debugging, `aero-l2-proxy` can optionally write per-tunnel PCAPNG capture files. Configure via chart values:
+
+```yaml
+l2Proxy:
+  capture:
+    dir: /tmp/aero-l2-captures
+    maxBytes: 67108864        # 64 MiB per capture file (0 disables the cap)
+    flushIntervalMs: 1000     # 0 disables periodic flushing (capture is flushed on close)
+```
+
+> Privacy warning: captures contain raw network traffic and may include sensitive user data. Treat capture files as secrets and avoid enabling capture on internet-exposed production deployments unless you have an explicit retention/privacy plan.
+
 If you manage your Ingress separately, the equivalent nginx Ingress path addition looks like:
 
 ```yaml
