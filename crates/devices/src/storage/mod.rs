@@ -1,6 +1,11 @@
 use std::io;
 
-use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
+/// Adapter allowing [`aero_storage::VirtualDisk`] implementations (e.g. `RawDisk`,
+/// `AeroSparseDisk`, `BlockCachedDisk`) to be used as a `aero-devices` [`DiskBackend`].
+///
+/// Prefer constructing disks at wiring boundaries as `aero_storage::VirtualDisk` and adapting as
+/// needed using this wrapper (mirrors `aero_devices_nvme::AeroStorageDiskAdapter`).
+pub use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend as AeroStorageDiskAdapter;
 
 /// Byte-addressed disk backend used by `aero-devices` device models (e.g. virtio-blk).
 ///
@@ -15,7 +20,7 @@ use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend;
 /// - a byte-addressed interface at the device boundary
 ///
 /// Prefer passing `Box<dyn aero_storage::VirtualDisk>` through high-level wiring and adapt as
-/// needed using [`aero_storage_adapters::AeroVirtualDiskAsDeviceBackend`].
+/// needed using [`AeroStorageDiskAdapter`].
 ///
 /// See `docs/20-storage-trait-consolidation.md`.
 pub trait DiskBackend: Send {
@@ -31,7 +36,7 @@ pub trait DiskBackend: Send {
     fn flush(&mut self) -> io::Result<()>;
 }
 
-impl DiskBackend for AeroVirtualDiskAsDeviceBackend {
+impl DiskBackend for AeroStorageDiskAdapter {
     fn len(&self) -> u64 {
         self.capacity_bytes()
     }
@@ -45,7 +50,7 @@ impl DiskBackend for AeroVirtualDiskAsDeviceBackend {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        AeroVirtualDiskAsDeviceBackend::flush(self)
+        AeroStorageDiskAdapter::flush(self)
     }
 }
 
@@ -68,7 +73,7 @@ impl DeviceBackendAsAeroVirtualDisk {
 
     fn map_backend_io_error(&self, err: io::Error) -> aero_storage::DiskError {
         // Prefer preserving the original `aero_storage::DiskError` when a backend (often an
-        // adapter such as `AeroVirtualDiskAsDeviceBackend`) stored it inside `io::Error`.
+        // adapter such as `AeroStorageDiskAdapter`) stored it inside `io::Error`.
         //
         // This keeps cross-crate error handling consistent and ensures that higher layers can
         // observe semantic failures like quota exhaustion or "backend in use".
@@ -154,15 +159,52 @@ impl VirtualDrive {
     /// This is a convenience for the common case where the disk is already stored behind a
     /// trait object (`Box<dyn VirtualDisk>`). The adapter enforces 512-byte alignment and
     /// bounds checks at the device boundary.
+    ///
+    /// Note: this constructor assumes the disk capacity is a multiple of 512 bytes. Prefer
+    /// [`VirtualDrive::try_new_from_aero_virtual_disk`] when accepting arbitrary disks.
     pub fn new_from_aero_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Self {
-        Self::new(512, Box::new(AeroVirtualDiskAsDeviceBackend::new(disk)))
+        Self::new(512, Box::new(AeroStorageDiskAdapter::new(disk)))
     }
 
+    /// Like [`VirtualDrive::new_from_aero_virtual_disk`], but returns an error if the disk capacity
+    /// is not a multiple of 512 bytes.
+    pub fn try_new_from_aero_virtual_disk(
+        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+    ) -> io::Result<Self> {
+        if !disk
+            .capacity_bytes()
+            .is_multiple_of(AeroStorageDiskAdapter::SECTOR_SIZE)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "disk capacity {} is not a multiple of {} bytes",
+                    disk.capacity_bytes(),
+                    AeroStorageDiskAdapter::SECTOR_SIZE
+                ),
+            ));
+        }
+        Ok(Self::new(512, Box::new(AeroStorageDiskAdapter::new(disk))))
+    }
+
+    /// Convenience helper to wrap any concrete [`aero_storage::VirtualDisk`] as a [`VirtualDrive`].
+    ///
+    /// Note: this constructor assumes the disk capacity is a multiple of 512 bytes. Prefer
+    /// [`VirtualDrive::try_new_from_aero_storage`] when accepting arbitrary disks.
     pub fn new_from_aero_storage<D>(disk: D) -> Self
     where
         D: aero_storage::VirtualDisk + Send + 'static,
     {
         Self::new_from_aero_virtual_disk(Box::new(disk))
+    }
+
+    /// Like [`VirtualDrive::new_from_aero_storage`], but returns an error if the disk capacity is
+    /// not a multiple of 512 bytes.
+    pub fn try_new_from_aero_storage<D>(disk: D) -> io::Result<Self>
+    where
+        D: aero_storage::VirtualDisk + Send + 'static,
+    {
+        Self::try_new_from_aero_virtual_disk(Box::new(disk))
     }
 
     pub fn sector_size(&self) -> u32 {
@@ -202,7 +244,7 @@ impl std::fmt::Debug for VirtualDrive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_storage::VirtualDisk;
+    use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 
     struct VecBackend {
         data: Vec<u8>,
@@ -409,5 +451,20 @@ mod tests {
 
         let err = disk.flush().unwrap_err();
         assert!(matches!(err, aero_storage::DiskError::BackendUnavailable));
+    }
+
+    #[test]
+    fn try_new_from_aero_virtual_disk_rejects_unaligned_capacity() {
+        let disk = RawDisk::create(MemBackend::new(), 513).unwrap();
+        let err = VirtualDrive::try_new_from_aero_virtual_disk(Box::new(disk)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn try_new_from_aero_virtual_disk_accepts_aligned_capacity() {
+        let capacity = 2 * SECTOR_SIZE as u64;
+        let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let drive = VirtualDrive::try_new_from_aero_virtual_disk(Box::new(disk)).unwrap();
+        assert_eq!(drive.capacity_sectors(), 2);
     }
 }
