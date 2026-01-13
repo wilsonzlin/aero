@@ -13,6 +13,7 @@
     "scripts/check-inf-alias.py",
     "scripts/lint-inf.sh",
     "scripts/run-host-tests.sh",
+    "scripts/run-host-tests.ps1",
     "tests/host/README.md",
     "tests/offline-install/README.md",
     "tests/qemu/README.md",
