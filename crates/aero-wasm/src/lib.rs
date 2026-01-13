@@ -3373,6 +3373,7 @@ pub enum MouseButtons {
 #[wasm_bindgen]
 pub struct Machine {
     inner: aero_machine::Machine,
+    cpu_count: u8,
     // Tracks the last injected mouse button state (low 5 bits = DOM `MouseEvent.buttons`).
     //
     // This exists solely to support the ergonomic JS-side `inject_mouse_buttons_mask` API without
@@ -3455,10 +3456,12 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
 #[wasm_bindgen]
 impl Machine {
     fn new_with_native_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
+        let cpu_count = cfg.cpu_count;
         let inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
             inner,
+            cpu_count,
             mouse_buttons: 0,
             mouse_buttons_known: true,
         })
@@ -3467,6 +3470,16 @@ impl Machine {
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
         let cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        Self::new_with_native_config(cfg)
+    }
+
+    /// Construct a canonical machine with an explicit vCPU count (SMP).
+    ///
+    /// This is a constructor-like alternative to `new(ram_size_bytes)` that lets JS opt into SMP
+    /// once `aero_machine::Machine` supports `cpu_count > 1`.
+    pub fn new_with_cpu_count(ram_size_bytes: u32, cpu_count: u8) -> Result<Self, JsValue> {
+        let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        cfg.cpu_count = cpu_count;
         Self::new_with_native_config(cfg)
     }
 
@@ -3488,6 +3501,11 @@ impl Machine {
         cfg.enable_aerogpu = enable_aerogpu;
         cfg.enable_vga = enable_vga.unwrap_or(!enable_aerogpu);
         Self::new_with_native_config(cfg)
+    }
+
+    /// Number of vCPUs configured for this machine.
+    pub fn cpu_count(&self) -> u32 {
+        self.cpu_count as u32
     }
 
     pub fn reset(&mut self) {
