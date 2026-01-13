@@ -1143,6 +1143,34 @@ fn protocol_accepts_trailing_bytes_after_stream_size_bytes() {
 }
 
 #[test]
+fn protocol_accepts_extended_bind_shaders_packet() {
+    let stream = build_stream(|out| {
+        // BIND_SHADERS with append-only extension and trailing bytes.
+        emit_packet(out, AeroGpuOpcode::BindShaders as u32, |out| {
+            push_u32(out, 1); // vs
+            push_u32(out, 2); // ps
+            push_u32(out, 3); // cs
+            push_u32(out, 0xAABB_CCDD); // reserved0
+            // Extended fields: gs/hs/ds
+            push_u32(out, 4); // gs
+            push_u32(out, 5); // hs
+            push_u32(out, 6); // ds
+            // Forward-compatible trailing extension (ignored).
+            push_u32(out, 0xDEAD_BEEF);
+        });
+    });
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 1);
+    match &parsed.cmds[0] {
+        AeroGpuCmd::BindShaders { vs, ps, cs } => {
+            assert_eq!((*vs, *ps, *cs), (1, 2, 3));
+        }
+        other => panic!("expected BindShaders cmd, got {other:?}"),
+    }
+}
+
+#[test]
 fn rejects_unknown_major_abi_version() {
     let bad_major = AEROGPU_ABI_MAJOR + 1;
     let abi_version = (bad_major << 16) | AEROGPU_ABI_MINOR;

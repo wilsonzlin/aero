@@ -1282,10 +1282,33 @@ pub fn decode_cmd_stream_listing(
                             " scanout_id={scanout_id} flags=0x{flags:08X} d3d9_present_flags=0x{d3d9_present_flags:08X}"
                         );
                     }
+                    AerogpuCmdOpcode::BindShaders => {
+                        let (cmd, ex) = pkt
+                            .decode_bind_shaders_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        // Avoid taking references to packed fields.
+                        let vs = cmd.vs;
+                        let ps = cmd.ps;
+                        let cs = cmd.cs;
+                        let reserved0 = cmd.reserved0;
+                        let _ = write!(
+                            line,
+                            " vs={vs} ps={ps} cs={cs} reserved0=0x{reserved0:08X}"
+                        );
+                        if let Some(ex) = ex {
+                            let gs = ex.gs;
+                            let hs = ex.hs;
+                            let ds = ex.ds;
+                            let _ = write!(line, " gs={gs} hs={hs} ds={ds}");
+                        }
+                    }
 
                     AerogpuCmdOpcode::Flush
                     | AerogpuCmdOpcode::DestroyShader
-                    | AerogpuCmdOpcode::BindShaders
                     | AerogpuCmdOpcode::SetShaderConstantsF
                     | AerogpuCmdOpcode::DestroyInputLayout
                     | AerogpuCmdOpcode::SetInputLayout
