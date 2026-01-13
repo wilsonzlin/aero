@@ -5131,6 +5131,107 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   return Check(c0 == kGreen, "XYZRHW->clip: diffuse color preserved");
 }
 
+bool TestUnsupportedFvfDrawPrimitiveUpRejectsWithoutShaders() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // Set an unsupported FVF (anything other than the fixed-function variants
+  // implemented by the UMD).
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_SPECULAR (0x80).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0xC4u);
+  if (!Check(hr == S_OK, "SetFVF(unsupported)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float w;
+  };
+
+  Vertex verts[3]{};
+  verts[0] = {0.0f, 0.0f, 0.0f, 1.0f};
+  verts[1] = {1.0f, 0.0f, 0.0f, 1.0f};
+  verts[2] = {0.0f, 1.0f, 0.0f, 1.0f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP returns D3DERR_INVALIDCALL for unsupported fixed-function FVF")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 0, "unsupported fixed-function draw emits no DRAW packet")) {
+    return false;
+  }
+  return Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) == 0, "unsupported fixed-function draw emits no DRAW_INDEXED packet");
+}
+
 bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -10499,6 +10600,7 @@ int main() {
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestUnsupportedFvfDrawPrimitiveUpRejectsWithoutShaders();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
