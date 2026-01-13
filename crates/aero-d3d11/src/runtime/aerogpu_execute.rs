@@ -465,7 +465,7 @@ impl AerogpuCmdRuntime {
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
         let (wgsl, reflection, vs_input_signature) = if signature_driven {
-            let module = program.decode().context("decode SM4/5 token stream")?;
+            let module = crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
             let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
                 .context("translate WGSL")?;
 

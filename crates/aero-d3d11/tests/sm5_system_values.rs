@@ -1,4 +1,4 @@
-use aero_d3d11::sm4::opcode::*;
+use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, Builtin, DxbcFile, DxbcSignatureParameter,
     FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst, Sm4Module,
@@ -226,7 +226,7 @@ fn translates_vertex_id_and_instance_id_builtins() {
 
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse");
     assert_eq!(program.stage, ShaderStage::Vertex);
-    let module = program.decode().expect("SM5 decode");
+    let module = decode_program(&program).expect("SM5 decode");
 
     let signatures = parse_signatures(&dxbc).expect("signature parse");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");

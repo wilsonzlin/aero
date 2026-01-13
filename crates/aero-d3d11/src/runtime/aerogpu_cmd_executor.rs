@@ -5620,7 +5620,8 @@ impl AerogpuD3d11Executor {
 
         let vs_input_signature = if stage == ShaderStage::Vertex {
             if signature_driven {
-                let module = program.decode().context("decode SM4/5 token stream")?;
+                let module =
+                    crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
                 extract_vs_input_signature_unique_locations(&signatures, &module)
                     .context("extract VS input signature")?
             } else {
@@ -8796,7 +8797,7 @@ fn try_translate_sm4_signature_driven(
     program: &Sm4Program,
     signatures: &crate::ShaderSignatures,
 ) -> Result<ShaderTranslation> {
-    let module = program.decode().context("decode SM4/5 token stream")?;
+    let module = crate::sm4::decode_program(program).context("decode SM4/5 token stream")?;
     translate_sm4_module_to_wgsl(dxbc, &module, signatures)
         .context("signature-driven SM4/5 translation")
 }

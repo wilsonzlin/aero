@@ -1,6 +1,6 @@
 use std::fs;
 
-use aero_d3d11::sm4::opcode::OPCODE_ADD;
+use aero_d3d11::sm4::{decode_program, opcode::OPCODE_ADD};
 use aero_d3d11::{
     parse_signatures, translate_sm4_to_wgsl, translate_sm4_to_wgsl_bootstrap, BindingKind,
     DxbcFile, FourCC, RegFile, ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind,
@@ -38,7 +38,7 @@ fn parses_and_translates_sm4_vs_passthrough_fixture() {
 
     // Ensure the token stream is decodable by the real SM4 decoder (not just the bootstrap MOV/RET
     // parser in `wgsl.rs`).
-    let module = program.decode().expect("SM4 decode failed");
+    let module = decode_program(&program).expect("SM4 decode failed");
     assert_eq!(module.instructions.len(), 3);
     assert!(matches!(
         &module.instructions[0],
@@ -78,7 +78,7 @@ fn parses_and_translates_sm4_ps_passthrough_fixture() {
     assert_eq!(program.stage, ShaderStage::Pixel);
     assert_eq!(program.model.major, 4);
 
-    let module = program.decode().expect("SM4 decode failed");
+    let module = decode_program(&program).expect("SM4 decode failed");
     assert_eq!(module.instructions.len(), 2);
     assert!(matches!(
         &module.instructions[0],
@@ -119,7 +119,7 @@ fn parses_and_translates_sm4_ps_add_fixture() {
 
     // This pixel shader includes an `add_sat` instruction so it cannot be translated by the legacy
     // bootstrap (mov/ret-only) path.
-    let module = program.decode().expect("SM4 decode failed");
+    let module = decode_program(&program).expect("SM4 decode failed");
     assert!(
         module.instructions.iter().any(|i| matches!(
             i,
@@ -152,7 +152,7 @@ fn parses_and_translates_sm4_vs_matrix_fixture() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
     assert_eq!(program.stage, ShaderStage::Vertex);
 
-    let module = program.decode().expect("SM4 decode failed");
+    let module = decode_program(&program).expect("SM4 decode failed");
     assert!(
         module.decls.iter().any(|d| matches!(
             d,
@@ -199,7 +199,7 @@ fn parses_and_translates_sm4_ps_sample_fixture() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
     assert_eq!(program.stage, ShaderStage::Pixel);
 
-    let module = program.decode().expect("SM4 decode failed");
+    let module = decode_program(&program).expect("SM4 decode failed");
     assert!(
         module
             .instructions
@@ -237,7 +237,7 @@ fn parses_and_translates_sm4_ps_ld_fixture() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
     assert_eq!(program.stage, ShaderStage::Pixel);
 
-    let module = program.decode().expect("SM4 decode failed");
+    let module = decode_program(&program).expect("SM4 decode failed");
     assert!(
         module
             .instructions

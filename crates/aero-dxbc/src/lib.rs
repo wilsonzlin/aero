@@ -15,7 +15,7 @@ mod error;
 mod fourcc;
 /// Parsers for DXBC signature chunks (`ISGN`, `OSGN`, `PSGN`, ...).
 pub mod signature;
-/// SM4/SM5 token stream parsing for shader bytecode chunks (`SHDR` / `SHEX`).
+/// Parsers for SM4/SM5 shader bytecode chunks (`SHDR`/`SHEX`).
 pub mod sm4;
 
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
@@ -24,3 +24,4 @@ pub use crate::fourcc::FourCC;
 pub use crate::signature::{
     parse_signature_chunk, parse_signature_chunk_with_fourcc, SignatureChunk, SignatureEntry,
 };
+pub use crate::sm4::{decode_version_token, ShaderModel, ShaderStage, Sm4Error, Sm4Program, Sm5Program};

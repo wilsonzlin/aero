@@ -371,7 +371,7 @@ impl AerogpuResourceManager {
             });
 
         let reflection = if stage == AerogpuShaderStage::Vertex && signature_driven {
-            let module = program.decode().context("decode SM4/5 token stream")?;
+            let module = crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
             ShaderReflection {
                 vs_input_signature: extract_vs_input_signature_unique_locations(
                     &signatures,
@@ -713,7 +713,7 @@ fn try_translate_sm4_signature_driven(
     program: &Sm4Program,
     signatures: &crate::ShaderSignatures,
 ) -> Result<String> {
-    let module = program.decode().context("decode SM4/5 token stream")?;
+    let module = crate::sm4::decode_program(program).context("decode SM4/5 token stream")?;
     let translated = translate_sm4_module_to_wgsl(dxbc, &module, signatures)
         .context("signature-driven SM4/5 translation")?;
     Ok(translated.wgsl)

@@ -58,6 +58,12 @@ pub struct Sm4Program {
     pub tokens: Vec<u32>,
 }
 
+/// A parsed SM5 program token stream.
+///
+/// SM5 uses the same token encoding as SM4, but is typically stored in the
+/// `SHEX` chunk rather than `SHDR`.
+pub type Sm5Program = Sm4Program;
+
 impl Sm4Program {
     /// Parses a DXBC container from raw bytes and extracts the first SM4/SM5 shader program found.
     pub fn parse_from_dxbc_bytes(bytes: &[u8]) -> Result<Self, Sm4Error> {

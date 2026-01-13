@@ -1,4 +1,4 @@
-use aero_d3d11::sm4::opcode::*;
+use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program,
     SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
@@ -385,7 +385,7 @@ fn decodes_arithmetic_and_skips_decls() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     let f = |v: f32| v.to_bits();
     let mut add_dst = dst(RegFile::Temp, 1, WriteMask::XYZW);
@@ -514,7 +514,7 @@ fn does_not_misclassify_unknown_instruction_as_decl() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert_eq!(module.decls.len(), 1);
     assert_eq!(module.instructions.len(), 3);
@@ -549,7 +549,7 @@ fn skips_nop_without_ending_decl_section() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert_eq!(module.decls.len(), 1);
     assert_eq!(module.instructions.len(), 2);
@@ -584,7 +584,7 @@ fn skips_customdata_comment_without_ending_decl_section() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     // Custom-data blocks are non-executable and should not end the declaration section; they are
     // preserved as metadata declarations.
@@ -656,7 +656,7 @@ fn decodes_sample_and_sample_l() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert!(module
         .instructions
@@ -719,7 +719,7 @@ fn decodes_sample_via_structural_fallback() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert_eq!(module.decls, vec![Sm4Decl::Unknown { opcode: DCL_DUMMY }]);
     assert!(matches!(module.instructions[0], Sm4Inst::Sample { .. }));
@@ -752,7 +752,7 @@ fn does_not_misclassify_scalar_resource_op_as_ld() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert!(matches!(
         module.instructions[0],
@@ -792,7 +792,7 @@ fn decodes_ld_texture_load() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert_eq!(
         module.instructions[0],
@@ -844,7 +844,7 @@ fn decodes_ld_via_structural_fallback() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert_eq!(module.decls, vec![Sm4Decl::Unknown { opcode: DCL_DUMMY }]);
     assert_eq!(
@@ -896,7 +896,7 @@ fn decodes_ld_with_explicit_lod_operand() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert_eq!(
         module.instructions[0],
@@ -949,7 +949,7 @@ fn does_not_decode_ld_with_offset_like_trailing_operand_as_explicit_lod() {
     let tokens = make_sm5_program_tokens(0, &body);
     let program =
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
-    let module = program.decode().expect("decode");
+    let module = decode_program(&program).expect("decode");
 
     assert!(matches!(
         module.instructions[0],

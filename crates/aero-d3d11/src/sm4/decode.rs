@@ -255,7 +255,7 @@ mod tests {
             tokens,
         };
 
-        let module = program.decode().expect("decode should succeed");
+        let module = super::decode_program(&program).expect("decode should succeed");
         assert_eq!(module.instructions.len(), 2);
         assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
         assert!(matches!(module.instructions[1], Sm4Inst::Ret));

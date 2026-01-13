@@ -1,4 +1,4 @@
-use aero_d3d11::sm4::opcode::*;
+use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignature,
     DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel,
@@ -348,7 +348,7 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
 
-    let module = program.decode().expect("SM4 decode");
+    let module = decode_program(&program).expect("SM4 decode");
     assert_eq!(module.instructions.len(), 3);
     assert!(module
         .decls
@@ -463,7 +463,7 @@ fn decodes_and_translates_ld_shader_from_dxbc() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
 
-    let module = program.decode().expect("SM4 decode");
+    let module = decode_program(&program).expect("SM4 decode");
     assert_eq!(module.instructions.len(), 3);
     assert!(module
         .decls
