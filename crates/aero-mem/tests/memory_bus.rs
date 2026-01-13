@@ -374,3 +374,52 @@ fn dma_bulk_write_rejects_rom_without_partial_write() {
     ram.read_bytes(0x2FFC, &mut buf);
     assert_eq!(buf, [0xAA; 4]);
 }
+
+#[test]
+fn is_ram_only_range_pure_ram_is_true() {
+    let ram = make_ram(0x1000);
+    let bus = MemoryBus::new(ram);
+
+    assert!(bus.is_ram_only_range(0x100, 0x80).unwrap());
+}
+
+#[test]
+fn is_ram_only_range_overlapping_mmio_is_false() {
+    let ram = make_ram(0x1000);
+    let mut bus = MemoryBus::new(ram);
+
+    bus.register_mmio(0x200..0x300, Arc::new(CountingMmio::default()))
+        .unwrap();
+
+    assert!(!bus.is_ram_only_range(0x1f0, 0x40).unwrap());
+}
+
+#[test]
+fn is_ram_only_range_overlapping_rom_is_false() {
+    let ram = make_ram(0x1000);
+    let mut bus = MemoryBus::new(ram);
+
+    bus.register_rom(0x400, Arc::from([0u8; 0x100])).unwrap();
+
+    assert!(!bus.is_ram_only_range(0x3f0, 0x40).unwrap());
+}
+
+#[test]
+fn is_ram_only_range_past_ram_end_is_false() {
+    let ram = make_ram(0x1000);
+    let bus = MemoryBus::new(ram);
+
+    assert!(!bus.is_ram_only_range(0xff0, 0x40).unwrap());
+}
+
+#[test]
+fn is_ram_only_range_overflow_errors() {
+    let ram = make_ram(0x1000);
+    let bus = MemoryBus::new(ram);
+
+    let err = bus.is_ram_only_range(u64::MAX - 1, 2).unwrap_err();
+    assert!(matches!(
+        err,
+        aero_mem::MemoryBusError::AddressOverflow { .. }
+    ));
+}

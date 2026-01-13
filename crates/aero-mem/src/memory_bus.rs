@@ -217,6 +217,40 @@ impl MemoryBus {
         &self.ram
     }
 
+    /// Returns `true` if the physical address range is entirely backed by RAM
+    /// and does not overlap any registered MMIO/ROM overlay.
+    ///
+    /// This helper is intended for JIT-visible fast paths that can directly
+    /// access guest RAM when it is safe to do so.
+    #[inline]
+    pub fn is_ram_only_range(&self, addr: u64, len: usize) -> Result<bool, MemoryBusError> {
+        if len == 0 {
+            return Ok(true);
+        }
+
+        let end = Self::checked_end(addr, len)?;
+        if end > self.ram.len() {
+            return Ok(false);
+        }
+
+        Ok(self.overlapping_overlay(addr, end).is_none())
+    }
+
+    /// Returns `true` if the physical address range overlaps any registered
+    /// MMIO/ROM overlay.
+    ///
+    /// This is a cheaper classification helper than attempting a read/write and
+    /// inspecting the resulting error.
+    #[inline]
+    pub fn overlaps_overlay(&self, addr: u64, len: usize) -> Result<bool, MemoryBusError> {
+        if len == 0 {
+            return Ok(false);
+        }
+
+        let end = Self::checked_end(addr, len)?;
+        Ok(self.overlapping_overlay(addr, end).is_some())
+    }
+
     #[inline]
     fn checked_end(addr: u64, len: usize) -> Result<u64, MemoryBusError> {
         addr.checked_add(len as u64)
