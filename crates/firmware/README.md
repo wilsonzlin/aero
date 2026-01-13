@@ -74,6 +74,12 @@ fixture after AML changes:
 cargo xtask fixtures
 ```
 
+To verify the fixture is up to date without modifying it:
+
+```bash
+cargo run -p firmware --bin gen_dsdt --locked -- --check
+```
+
 The `dsdt.aml` fixture is validated in CI in two ways:
 
 - `scripts/validate-acpi.sh` decompiles and recompiles the checked-in AML tables using ACPICA `iasl`.
