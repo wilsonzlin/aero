@@ -14884,7 +14884,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
   }
 
   DeviceStateStream& ss = dev->streams[0];
-  if (!ss.vb || ss.stride_bytes < 20) {
+  const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
+  if (!ss.vb || ss.stride_bytes < min_stride) {
     return trace.ret(E_FAIL);
   }
 
@@ -15148,7 +15149,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
   }
 
   DeviceStateStream& ss = dev->streams[0];
-  if (!ss.vb || ss.stride_bytes < 20) {
+  const uint32_t min_stride = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1) ? 28u : 20u;
+  if (!ss.vb || ss.stride_bytes < min_stride) {
     return trace.ret(E_FAIL);
   }
 
