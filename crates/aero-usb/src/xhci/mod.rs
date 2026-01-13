@@ -15,7 +15,9 @@ pub mod regs;
 pub mod ring;
 pub mod trb;
 
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 
 /// Stub xHCI controller model.
 ///
@@ -46,4 +48,3 @@ impl IoSnapshot for XhciController {
         Ok(())
     }
 }
-
