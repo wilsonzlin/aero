@@ -1089,6 +1089,9 @@ impl AerogpuD3d11Executor {
         for stage in [
             ShaderStage::Vertex,
             ShaderStage::Pixel,
+            ShaderStage::Geometry,
+            ShaderStage::Hull,
+            ShaderStage::Domain,
             ShaderStage::Compute,
         ] {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1109,6 +1112,9 @@ impl AerogpuD3d11Executor {
         for stage in [
             ShaderStage::Vertex,
             ShaderStage::Pixel,
+            ShaderStage::Geometry,
+            ShaderStage::Hull,
+            ShaderStage::Domain,
             ShaderStage::Compute,
         ] {
             bindings.stage_mut(stage).set_constant_buffer(
@@ -1297,6 +1303,9 @@ impl AerogpuD3d11Executor {
         for stage in [
             ShaderStage::Vertex,
             ShaderStage::Pixel,
+            ShaderStage::Geometry,
+            ShaderStage::Hull,
+            ShaderStage::Domain,
             ShaderStage::Compute,
         ] {
             self.bindings.stage_mut(stage).set_constant_buffer(
@@ -4307,23 +4316,18 @@ impl AerogpuD3d11Executor {
                     break;
                 }
                 let stage_raw = read_u32_le(cmd_bytes, 8)?;
-                if stage_raw == AerogpuShaderStage::Geometry as u32 {
-                    // Geometry shader stage is accepted by the protocol but ignored by the WebGPU
-                    // executor (no GS stage in WebGPU). Do not treat it as a pass boundary.
-                    //
-                    // Note: invalid shader stage values still terminate the pass so the outer
-                    // executor can handle them as errors.
-                } else {
-                    let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
-                        break;
-                    };
+                let stage_ex = read_u32_le(cmd_bytes, 20)?;
+                let Some(stage) =
+                    ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
+                else {
+                    break;
+                };
                 let legacy_id = legacy_constants_buffer_id(stage);
                 let stage_index = stage.as_bind_group_index() as usize;
                 if (stage_index < legacy_constants_used.len() && legacy_constants_used[stage_index])
                     || self.encoder_used_buffers.contains(&legacy_id)
                 {
                     break;
-                }
                 }
             }
 
@@ -5183,27 +5187,27 @@ impl AerogpuD3d11Executor {
                     }
                     let data = &cmd_bytes[24..24 + byte_len];
 
-                    if stage_raw == AerogpuShaderStage::Geometry as u32 {
-                        // Geometry-stage constants are accepted but ignored; WebGPU has no GS stage.
-                    } else {
-                        let stage = ShaderStage::from_aerogpu_u32(stage_raw).ok_or_else(|| {
-                            anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw}")
+                    let stage_ex = read_u32_le(cmd_bytes, 20)?;
+                    let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
+                            )
                         })?;
-                        let dst = self
-                            .legacy_constants
-                            .get(&stage)
-                            .expect("legacy constants buffer exists for every stage");
+                    let dst = self
+                        .legacy_constants
+                        .get(&stage)
+                        .expect("legacy constants buffer exists for every stage");
 
-                        let offset_bytes = start_register as u64 * 16;
-                        let end = offset_bytes + byte_len as u64;
-                        if end > LEGACY_CONSTANTS_SIZE_BYTES {
-                            bail!(
-                                "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
-                            );
-                        }
-
-                        self.queue.write_buffer(dst, offset_bytes, data);
+                    let offset_bytes = start_register as u64 * 16;
+                    let end = offset_bytes + byte_len as u64;
+                    if end > LEGACY_CONSTANTS_SIZE_BYTES {
+                        bail!(
+                            "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
+                        );
                     }
+
+                    self.queue.write_buffer(dst, offset_bytes, data);
                 }
                 OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes)?,
                 OPCODE_SET_RASTERIZER_STATE => {
@@ -7642,6 +7646,7 @@ impl AerogpuD3d11Executor {
         let stage_raw = read_u32_le(cmd_bytes, 8)?;
         let start_register = read_u32_le(cmd_bytes, 12)?;
         let vec4_count = read_u32_le(cmd_bytes, 16)? as usize;
+        let stage_ex = read_u32_le(cmd_bytes, 20)?;
         let byte_len = vec4_count
             .checked_mul(16)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: byte_len overflow"))?;
@@ -7655,12 +7660,10 @@ impl AerogpuD3d11Executor {
         }
         let data = &cmd_bytes[24..24 + byte_len];
 
-        if stage_raw == AerogpuShaderStage::Geometry as u32 {
-            // Geometry-stage constants are accepted but ignored; WebGPU has no GS stage.
-            return Ok(());
-        }
-        let stage = ShaderStage::from_aerogpu_u32(stage_raw)
-            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw}"))?;
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
+                anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+            })?;
         let dst = self
             .legacy_constants
             .get(&stage)
@@ -12505,6 +12508,68 @@ mod tests {
                 .expect("SET_SHADER_CONSTANTS_F should succeed");
 
             assert!(exec.encoder_has_commands);
+        });
+    }
+
+    #[test]
+    fn set_shader_constants_f_geometry_stage_updates_legacy_constants_tracking() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            assert!(
+                exec.legacy_constants.contains_key(&ShaderStage::Geometry),
+                "executor should allocate a legacy constants buffer for geometry stage"
+            );
+
+            let expected_cb0 = BoundConstantBuffer {
+                buffer: legacy_constants_buffer_id(ShaderStage::Geometry),
+                offset: 0,
+                size: None,
+            };
+            assert_eq!(
+                exec.bindings
+                    .stage(ShaderStage::Geometry)
+                    .constant_buffer(0),
+                Some(expected_cb0),
+                "geometry stage should default CB0 to legacy constants buffer"
+            );
+            assert!(
+                !exec.bindings.stage(ShaderStage::Geometry).is_dirty(),
+                "geometry stage bindings should not be dirty after initialization"
+            );
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test geometry shader constants"),
+                });
+
+            let vec4_count = 1u32;
+            let size_bytes = (24 + 16) as u32;
+            let mut cmd_bytes = Vec::with_capacity(size_bytes as usize);
+            cmd_bytes
+                .extend_from_slice(&(AerogpuCmdOpcode::SetShaderConstantsF as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
+            cmd_bytes.extend_from_slice(&2u32.to_le_bytes()); // stage = compute (extended via stage_ex)
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_register
+            cmd_bytes.extend_from_slice(&vec4_count.to_le_bytes());
+            cmd_bytes.extend_from_slice(&2u32.to_le_bytes()); // reserved0/stage_ex = geometry
+            cmd_bytes.extend_from_slice(&[0xCDu8; 16]); // vec4 data
+            assert_eq!(cmd_bytes.len(), size_bytes as usize);
+
+            exec.exec_set_shader_constants_f(&mut encoder, &cmd_bytes)
+                .expect("SET_SHADER_CONSTANTS_F (geometry) should succeed");
+
+            assert!(
+                exec.encoder_used_buffers
+                    .contains(&legacy_constants_buffer_id(ShaderStage::Geometry)),
+                "SET_SHADER_CONSTANTS_F should mark geometry legacy constants as used by the encoder"
+            );
         });
     }
 
