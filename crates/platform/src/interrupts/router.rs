@@ -180,6 +180,11 @@ impl PlatformInterrupts {
         Self::new_with_cpu_count(1)
     }
 
+    /// Create a new interrupt routing complex with `cpu_count` LAPICs (APIC IDs `0..cpu_count`).
+    ///
+    /// The current platform interrupt router is still largely BSP-centric (e.g. IOAPIC routing and
+    /// `InterruptController` delivery default to LAPIC0), but we keep the full LAPIC set so SMP
+    /// machine configurations can construct a stable topology.
     pub fn new_with_cpu_count(cpu_count: u8) -> Self {
         let cpu_count = cpu_count.max(1);
         let mut isa_irq_to_gsi = [0u32; 16];
@@ -256,8 +261,9 @@ impl PlatformInterrupts {
         // Preserve the shared IRQ line generation counter so existing `PlatformIrqLine` handles
         // observe the reset and invalidate their cached level.
         let gen = self.irq_line_generation.clone();
-        let cpu_count = u8::try_from(self.lapics.len()).unwrap_or(u8::MAX).max(1);
         gen.fetch_add(1, Ordering::SeqCst);
+
+        let cpu_count = u8::try_from(self.lapics.len()).unwrap_or(u8::MAX).max(1);
         *self = Self::new_with_cpu_count(cpu_count);
         self.irq_line_generation = gen;
     }
@@ -1141,5 +1147,19 @@ mod tests {
             assert_eq!(lapic_read_u32(lapic, 0x310), cpu_u32 << 24);
             assert!(lapic.is_pending((0x40 + cpu_u32) as u8));
         }
+    }
+
+    #[test]
+    fn reset_preserves_lapic_count_and_ids_in_smp_mode() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(4);
+        assert_eq!(ints.lapics.len(), 4);
+        let initial_ids: Vec<u8> = ints.lapics.iter().map(|lapic| lapic.apic_id()).collect();
+        assert_eq!(initial_ids, vec![0, 1, 2, 3]);
+
+        ints.reset();
+
+        assert_eq!(ints.lapics.len(), 4);
+        let reset_ids: Vec<u8> = ints.lapics.iter().map(|lapic| lapic.apic_id()).collect();
+        assert_eq!(reset_ids, vec![0, 1, 2, 3]);
     }
 }

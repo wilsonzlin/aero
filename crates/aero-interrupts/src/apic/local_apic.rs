@@ -421,7 +421,6 @@ impl LocalApic {
     pub fn reset_state(&self, apic_id: u8) {
         *self.state.lock().unwrap() = LapicState::new(apic_id);
     }
-
     pub fn apic_id(&self) -> u8 {
         self.state.lock().unwrap().id
     }
