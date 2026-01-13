@@ -350,6 +350,10 @@ uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
 
 uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   switch (dxgi_format) {
+    case kDxgiFormatB5G6R5Unorm:
+      return AEROGPU_FORMAT_B5G6R5_UNORM;
+    case kDxgiFormatB5G5R5A1Unorm:
+      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
     case kDxgiFormatB8G8R8A8Unorm:
     case kDxgiFormatB8G8R8A8Typeless:
       return AEROGPU_FORMAT_B8G8R8A8_UNORM;
