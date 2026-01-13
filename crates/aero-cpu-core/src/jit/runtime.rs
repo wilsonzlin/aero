@@ -74,7 +74,34 @@ pub struct PageVersionTracker {
 }
 
 impl PageVersionTracker {
+    /// Hard cap on the number of tracked 4KiB pages in [`Self::versions`].
+    ///
+    /// The table is dense and grows on-demand when guest writes are observed. Without a cap, a
+    /// hostile/buggy caller could pass an absurd guest physical address (e.g. `u64::MAX`) to
+    /// [`Self::bump_write`] and force `Vec::resize()` to attempt allocating terabytes.
+    ///
+    /// `4_194_304` pages = 16GiB of guest-physical address space, and requires at most 16MiB of host
+    /// memory for the version table (`u32` per page). This comfortably covers realistic guests
+    /// while remaining safe for CI / memory-limited sandboxes.
+    pub const MAX_TRACKED_PAGES: usize = 4_194_304;
+
+    /// Maximum number of page-version entries returned by [`Self::snapshot`].
+    ///
+    /// A snapshot is stored in every compiled block's metadata. Even though `byte_len` is a `u32`,
+    /// an absurd value could otherwise result in allocating and copying a multi-megabyte
+    /// `Vec<PageVersionSnapshot>` per block. Basic blocks are expected to span *very* few pages, so
+    /// capping snapshots keeps metadata bounded.
+    ///
+    /// If the requested code span covers more than `MAX_SNAPSHOT_PAGES`, the snapshot is truncated
+    /// to the first `MAX_SNAPSHOT_PAGES` pages starting at `code_paddr`. Such an incomplete
+    /// snapshot cannot safely validate self-modifying code; [`JitRuntime`] treats blocks whose
+    /// snapshot does not cover the full `byte_len` span as stale and rejects them.
+    pub const MAX_SNAPSHOT_PAGES: usize = 4096;
+
     pub fn version(&self, page: u64) -> u32 {
+        if page >= Self::MAX_TRACKED_PAGES as u64 {
+            return 0;
+        }
         let Ok(idx) = usize::try_from(page) else {
             return 0;
         };
@@ -86,6 +113,9 @@ impl PageVersionTracker {
     /// This is primarily used by unit tests and tooling; normal execution should use
     /// [`Self::bump_write`].
     pub fn set_version(&mut self, page: u64, version: u32) {
+        if page >= Self::MAX_TRACKED_PAGES as u64 {
+            return;
+        }
         let Ok(idx) = usize::try_from(page) else {
             return;
         };
@@ -104,9 +134,16 @@ impl PageVersionTracker {
         let end = paddr.saturating_add(len as u64 - 1);
         let end_page = end >> PAGE_SHIFT;
 
-        let Ok(end_idx) = usize::try_from(end_page) else {
+        let max_page = (Self::MAX_TRACKED_PAGES as u64).saturating_sub(1);
+        if start_page > max_page {
             return;
         };
+        let clamped_end_page = end_page.min(max_page);
+
+        let Ok(end_idx) = usize::try_from(clamped_end_page) else {
+            return;
+        };
+
         if self.versions.len() <= end_idx {
             self.versions.resize(end_idx + 1, 0);
         }
@@ -125,12 +162,29 @@ impl PageVersionTracker {
         let end = code_paddr.saturating_add(byte_len as u64 - 1);
         let end_page = end >> PAGE_SHIFT;
 
-        (start_page..=end_page)
-            .map(|page| PageVersionSnapshot {
+        let page_count = end_page
+            .saturating_sub(start_page)
+            .saturating_add(1);
+        let max_pages = Self::MAX_SNAPSHOT_PAGES as u64;
+        let clamped_pages = page_count.min(max_pages);
+        let clamped_end_page = start_page.saturating_add(clamped_pages - 1);
+
+        let mut out = Vec::with_capacity(clamped_pages as usize);
+        for page in start_page..=clamped_end_page {
+            out.push(PageVersionSnapshot {
                 page,
                 version: self.version(page),
-            })
-            .collect()
+            });
+        }
+        out
+    }
+
+    /// Number of entries currently allocated in the dense page-version table.
+    ///
+    /// This is primarily intended for tests and tooling; the version table grows on-demand up to
+    /// [`Self::MAX_TRACKED_PAGES`].
+    pub fn versions_len(&self) -> usize {
+        self.versions.len()
     }
 }
 
@@ -186,6 +240,13 @@ where
 
     pub fn hotness(&self, entry_rip: u64) -> u32 {
         self.profile.counter(entry_rip)
+    }
+
+    /// Access the runtime's guest-physical page version tracker.
+    ///
+    /// This is primarily intended for debugging and unit tests.
+    pub fn page_versions(&self) -> &PageVersionTracker {
+        &self.page_versions
     }
 
     pub fn on_guest_write(&mut self, paddr: u64, len: usize) {
@@ -331,6 +392,32 @@ where
     }
 
     fn is_block_valid(&self, handle: &CompiledBlockHandle) -> bool {
+        // An empty snapshot means "no page-version validation". Some unit tests and embedders
+        // intentionally omit metadata for synthetic blocks.
+        if handle.meta.page_versions.is_empty() {
+            return true;
+        }
+
+        // If the snapshot does not cover the full code span (e.g. because [`PageVersionTracker`]
+        // clamped it), we conservatively treat the block as stale. Otherwise we'd risk executing a
+        // block whose code pages are not fully validated against self-modifying writes.
+        let expected_pages = if handle.meta.byte_len == 0 {
+            0u64
+        } else {
+            let start_page = handle.meta.code_paddr >> PAGE_SHIFT;
+            let end = handle
+                .meta
+                .code_paddr
+                .saturating_add(handle.meta.byte_len as u64 - 1);
+            let end_page = end >> PAGE_SHIFT;
+            end_page
+                .saturating_sub(start_page)
+                .saturating_add(1)
+        };
+        if expected_pages > handle.meta.page_versions.len() as u64 {
+            return false;
+        }
+
         for snapshot in &handle.meta.page_versions {
             if self.page_versions.version(snapshot.page) != snapshot.version {
                 return false;
