@@ -1641,6 +1641,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--virtio-net-vectors",
+        "--virtio-net-msix-vectors",
         type=int,
         default=None,
         metavar="N",
@@ -1648,6 +1649,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--virtio-blk-vectors",
+        "--virtio-blk-msix-vectors",
         type=int,
         default=None,
         metavar="N",
@@ -1655,6 +1657,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--virtio-snd-vectors",
+        "--virtio-snd-msix-vectors",
         type=int,
         default=None,
         metavar="N",
@@ -1662,6 +1665,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--virtio-input-vectors",
+        "--virtio-input-msix-vectors",
         type=int,
         default=None,
         metavar="N",

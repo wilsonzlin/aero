@@ -69,15 +69,31 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
-### Forcing virtio MSI-X vector count (multi-vector MSI-X)
+### Forcing / limiting virtio MSI-X vector count (QEMU `vectors=`)
 
-To intentionally exercise the Aero virtio drivers' **multi-vector MSI-X** paths, the harness can request a specific
-MSI-X table size from QEMU by appending `,vectors=N` to each virtio-pci device it creates:
+To deterministically exercise the Aero virtio drivers' **multi-vector MSI-X** paths *and* fallback behavior when fewer
+messages are available (vector starvation), the harness can request a specific MSI-X table size from QEMU by appending
+`,vectors=N` to virtio-pci devices it creates.
+
+Global (applies to all virtio devices created by the harness):
 
 - PowerShell (global): `-VirtioMsixVectors N`
 - PowerShell (per device): `-VirtioNetVectors N`, `-VirtioBlkVectors N`, `-VirtioInputVectors N`, `-VirtioSndVectors N`
 - Python (global): `--virtio-msix-vectors N`
 - Python (per device): `--virtio-net-vectors N`, `--virtio-blk-vectors N`, `--virtio-input-vectors N`, `--virtio-snd-vectors N`
+
+Per-device overrides (take precedence over the global value):
+
+- PowerShell:
+  - `-VirtioNetMsixVectors N`
+  - `-VirtioBlkMsixVectors N`
+  - `-VirtioInputMsixVectors N`
+  - `-VirtioSndMsixVectors N` (only relevant when `-WithVirtioSnd` is enabled)
+- Python:
+  - `--virtio-net-msix-vectors N`
+  - `--virtio-blk-msix-vectors N`
+  - `--virtio-input-msix-vectors N`
+  - `--virtio-snd-msix-vectors N` (only relevant when `--with-virtio-snd` is enabled)
 
 Notes:
 
@@ -97,6 +113,31 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -Snapshot `
   -VirtioMsixVectors 4 `
   -TimeoutSeconds 600
+```
+
+Example (vector starvation; force “all on vector0” by limiting each device to 1 vector):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -Snapshot `
+  -VirtioNetMsixVectors 1 `
+  -VirtioBlkMsixVectors 1 `
+  -VirtioInputMsixVectors 1 `
+  -TimeoutSeconds 600
+```
+
+Example (Python; provide enough vectors for per-queue MSI-X on virtio-net, and separate config/queue on virtio-blk):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --virtio-net-msix-vectors 4 \
+  --virtio-blk-msix-vectors 2 \
+  --timeout-seconds 600
 ```
 
 ### Requiring MSI-X to be enabled (host-side QMP check)

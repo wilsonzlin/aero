@@ -59,15 +59,19 @@ param(
   #
   # These knobs are best-effort: QEMU must support the `vectors` device property for the target device.
   [Parameter(Mandatory = $false)]
+  [Alias("VirtioNetMsixVectors")]
   [int]$VirtioNetVectors = 0,
 
   [Parameter(Mandatory = $false)]
+  [Alias("VirtioBlkMsixVectors")]
   [int]$VirtioBlkVectors = 0,
 
   [Parameter(Mandatory = $false)]
+  [Alias("VirtioSndMsixVectors")]
   [int]$VirtioSndVectors = 0,
 
   [Parameter(Mandatory = $false)]
+  [Alias("VirtioInputMsixVectors")]
   [int]$VirtioInputVectors = 0,
 
   # If set, inject deterministic keyboard/mouse events via QMP (`input-send-event`) and require the guest
