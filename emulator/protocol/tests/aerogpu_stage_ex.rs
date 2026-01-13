@@ -1,0 +1,218 @@
+use core::mem::{offset_of, size_of};
+
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    decode_cmd_hdr_le, decode_stage_ex, encode_stage_ex, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers,
+    AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdStreamHeader,
+    AerogpuConstantBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+};
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+
+#[test]
+fn stage_ex_encode_decode_roundtrip() {
+    let all = [
+        AerogpuShaderStageEx::Pixel,
+        AerogpuShaderStageEx::Vertex,
+        AerogpuShaderStageEx::Geometry,
+        AerogpuShaderStageEx::Hull,
+        AerogpuShaderStageEx::Domain,
+        AerogpuShaderStageEx::Compute,
+    ];
+
+    for stage_ex in all {
+        let (shader_stage, reserved0) = encode_stage_ex(stage_ex);
+        assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+        assert_eq!(decode_stage_ex(shader_stage, reserved0), Some(stage_ex));
+    }
+
+    // Non-compute legacy stage never uses stage_ex.
+    assert_eq!(
+        decode_stage_ex(
+            AerogpuShaderStage::Vertex as u32,
+            AerogpuShaderStageEx::Geometry as u32
+        ),
+        None
+    );
+}
+
+#[test]
+fn cmd_writer_legacy_bindings_write_reserved0_zero() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_texture(AerogpuShaderStage::Pixel, 0, 99);
+    w.set_samplers(AerogpuShaderStage::Vertex, 2, &[10, 11]);
+    w.set_constant_buffers(
+        AerogpuShaderStage::Pixel,
+        0,
+        &[AerogpuConstantBufferBinding {
+            buffer: 123,
+            offset_bytes: 0,
+            size_bytes: 64,
+            reserved0: 0,
+        }],
+    );
+    w.set_shader_constants_f(AerogpuShaderStage::Vertex, 0, &[1.0, 2.0, 3.0, 4.0]);
+
+    let buf = w.finish();
+    let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    // SET_TEXTURE
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetTexture as u32);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdSetTexture, reserved0)
+                ..cursor + offset_of!(AerogpuCmdSetTexture, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+    cursor += size_bytes as usize;
+
+    // SET_SAMPLERS
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetSamplers as u32);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdSetSamplers, reserved0)
+                ..cursor + offset_of!(AerogpuCmdSetSamplers, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+    cursor += size_bytes as usize;
+
+    // SET_CONSTANT_BUFFERS
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetConstantBuffers as u32);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdSetConstantBuffers, reserved0)
+                ..cursor + offset_of!(AerogpuCmdSetConstantBuffers, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+    cursor += size_bytes as usize;
+
+    // SET_SHADER_CONSTANTS_F
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsF as u32);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdSetShaderConstantsF, reserved0)
+                ..cursor + offset_of!(AerogpuCmdSetShaderConstantsF, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+    cursor += size_bytes as usize;
+
+    assert_eq!(cursor, buf.len());
+}
+
+#[test]
+fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_texture_ex(AerogpuShaderStageEx::Geometry, 3, 44);
+    w.set_samplers_ex(AerogpuShaderStageEx::Hull, 0, &[1, 2, 3]);
+    w.set_constant_buffers_ex(
+        AerogpuShaderStageEx::Domain,
+        1,
+        &[AerogpuConstantBufferBinding {
+            buffer: 7,
+            offset_bytes: 0,
+            size_bytes: 16,
+            reserved0: 0,
+        }],
+    );
+    w.set_shader_constants_f_ex(AerogpuShaderStageEx::Compute, 0, &[1.0, 2.0, 3.0, 4.0]);
+
+    let buf = w.finish();
+    let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    // SET_TEXTURE (stage_ex)
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetTexture as u32);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[cursor + offset_of!(AerogpuCmdSetTexture, shader_stage)
+                ..cursor + offset_of!(AerogpuCmdSetTexture, shader_stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Compute as u32
+    );
+    let reserved0 = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetTexture, reserved0)
+            ..cursor + offset_of!(AerogpuCmdSetTexture, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0), Some(AerogpuShaderStageEx::Geometry));
+    cursor += size_bytes as usize;
+
+    // SET_SAMPLERS (stage_ex)
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetSamplers as u32);
+    let reserved0 = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetSamplers, reserved0)
+            ..cursor + offset_of!(AerogpuCmdSetSamplers, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0), Some(AerogpuShaderStageEx::Hull));
+    cursor += size_bytes as usize;
+
+    // SET_CONSTANT_BUFFERS (stage_ex)
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetConstantBuffers as u32);
+    let reserved0 = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetConstantBuffers, reserved0)
+            ..cursor + offset_of!(AerogpuCmdSetConstantBuffers, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(decode_stage_ex(AerogpuShaderStage::Compute as u32, reserved0), Some(AerogpuShaderStageEx::Domain));
+    cursor += size_bytes as usize;
+
+    // SET_SHADER_CONSTANTS_F (stage_ex)
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsF as u32);
+    assert_eq!(size_bytes as usize, size_of::<AerogpuCmdSetShaderConstantsF>() + 16);
+    let stage = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetShaderConstantsF, stage)
+            ..cursor + offset_of!(AerogpuCmdSetShaderConstantsF, stage) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(stage, AerogpuShaderStage::Compute as u32);
+    let reserved0 = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetShaderConstantsF, reserved0)
+            ..cursor + offset_of!(AerogpuCmdSetShaderConstantsF, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(decode_stage_ex(stage, reserved0), Some(AerogpuShaderStageEx::Compute));
+    cursor += size_bytes as usize;
+
+    assert_eq!(cursor, buf.len());
+}

@@ -155,6 +155,74 @@ pub enum AerogpuShaderStage {
     Compute = 2,
 }
 
+/// Extended shader stage used by the "stage_ex" ABI extension.
+///
+/// This matches the DXBC/D3D10+ `D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE` values:
+/// - 0 = Pixel
+/// - 1 = Vertex
+/// - 2 = Geometry
+/// - 3 = Hull
+/// - 4 = Domain
+/// - 5 = Compute
+///
+/// It intentionally does **not** match `AerogpuShaderStage` (legacy AeroGPU stage enum).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuShaderStageEx {
+    Pixel = 0,
+    Vertex = 1,
+    Geometry = 2,
+    Hull = 3,
+    Domain = 4,
+    Compute = 5,
+}
+
+impl AerogpuShaderStageEx {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Pixel),
+            1 => Some(Self::Vertex),
+            2 => Some(Self::Geometry),
+            3 => Some(Self::Hull),
+            4 => Some(Self::Domain),
+            5 => Some(Self::Compute),
+            _ => None,
+        }
+    }
+
+    /// Convert from a DXBC program type value (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`).
+    ///
+    /// This is currently identical to `from_u32`, but exists to make callsites self-documenting.
+    pub const fn from_dxbc_program_type(v: u32) -> Option<Self> {
+        Self::from_u32(v)
+    }
+
+    pub const fn to_dxbc_program_type(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Decode the extended shader stage ("stage_ex") from a `(shader_stage, reserved0)` pair.
+///
+/// The "stage_ex" ABI extension overloads the `reserved0` field of certain binding commands
+/// (e.g. `SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`) to carry an extended shader stage.
+/// The overload is only active when the legacy `shader_stage` field equals
+/// `AEROGPU_SHADER_STAGE_COMPUTE`.
+pub fn decode_stage_ex(shader_stage: u32, reserved0: u32) -> Option<AerogpuShaderStageEx> {
+    if shader_stage == AerogpuShaderStage::Compute as u32 {
+        AerogpuShaderStageEx::from_u32(reserved0)
+    } else {
+        None
+    }
+}
+
+/// Encode the extended shader stage ("stage_ex") into `(shader_stage, reserved0)`.
+///
+/// The returned `shader_stage` is always `AEROGPU_SHADER_STAGE_COMPUTE`.
+pub fn encode_stage_ex(stage_ex: AerogpuShaderStageEx) -> (u32, u32) {
+    (AerogpuShaderStage::Compute as u32, stage_ex as u32)
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuIndexFormat {
