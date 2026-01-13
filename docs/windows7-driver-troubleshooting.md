@@ -99,12 +99,18 @@ If `cmd.bin.alloc_table.bin` exists, decode the full submission:
 cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc cmd.bin.alloc_table.bin
 ```
 
-### 3) Optional: list opcodes directly (if implemented)
+### 3) Optional: list opcodes directly (`decode-cmd-stream`)
 
-If your `aero-gpu-trace-replay` build includes an opcode listing subcommand, you can also decode just the cmd stream:
+You can also decode just the cmd stream to get a stable per-packet opcode listing:
 
 ```bash
 cargo run -p aero-gpu-trace-replay -- decode-cmd-stream cmd.bin
+```
+
+Tip: pass `--strict` to fail on unknown opcodes instead of printing them as `Unknown`:
+
+```bash
+cargo run -p aero-gpu-trace-replay -- decode-cmd-stream --strict cmd.bin
 ```
 
 ## Finding device Hardware IDs

@@ -302,6 +302,8 @@ Additional WDDM queries (do not use the escape channel):
 - If `D3DKMTOpenAdapterFromHdc` or `D3DKMTEscape` cannot be resolved from `gdi32.dll`, the OS is too old or the environment is not WDDM-capable.
 - If `D3DKMTEscape` returns an error, ensure the AeroGPU driver is installed and exposes the required escapes.
 - If `--wait-vblank` times out, the process may skip `D3DKMTCloseAdapter` to avoid deadlocking on broken vblank implementations.
+- For the cmd-stream dump + decode workflow used to debug hangs/incorrect rendering without attaching WinDbg, see:
+  - [`docs/windows7-driver-troubleshooting.md` (dumping the last submission)](../../../../docs/windows7-driver-troubleshooting.md#dumping-the-last-aerogpu-submission-cmd-stream-and-alloc-table)
 
 ## Not implemented (intentional)
 
