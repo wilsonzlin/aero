@@ -137,6 +137,25 @@ impl<P, R> Tier1Compiler<P, R> {
         self.wasm_options.inline_tlb_stores = inline_tlb_stores;
         self
     }
+
+    /// Configure whether inline-TLB mode is allowed to take the cross-page (4KiB boundary-crossing)
+    /// RAM fast-path for wide unaligned loads/stores.
+    #[must_use]
+    pub fn with_inline_tlb_cross_page_fastpath(
+        mut self,
+        inline_tlb_cross_page_fastpath: bool,
+    ) -> Self {
+        self.wasm_options.inline_tlb_cross_page_fastpath = inline_tlb_cross_page_fastpath;
+        self
+    }
+
+    /// Configure whether inline-TLB mode treats non-RAM translations as MMIO exits (`jit_exit_mmio`)
+    /// or falls back to the imported slow memory helpers.
+    #[must_use]
+    pub fn with_inline_tlb_mmio_exit(mut self, inline_tlb_mmio_exit: bool) -> Self {
+        self.wasm_options.inline_tlb_mmio_exit = inline_tlb_mmio_exit;
+        self
+    }
 }
 
 impl<P, R> Tier1Compiler<P, R>
