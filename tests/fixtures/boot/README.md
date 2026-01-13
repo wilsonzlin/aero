@@ -24,6 +24,9 @@ cargo xtask fixtures
 
 CI re-runs this command and fails if it produces any diff (determinism check).
 
+Note: `cargo xtask fixtures` also regenerates other tiny, deterministic firmware
+fixtures outside this directory (e.g. `assets/bios.bin`, `crates/firmware/acpi/dsdt.aml`).
+
 ## Fixture: `boot_vga_serial`
 
 The `boot_vga_serial` boot sector:
@@ -31,4 +34,3 @@ The `boot_vga_serial` boot sector:
 - writes `AERO!` (attribute `0x1F`) to the start of the VGA text buffer at
   physical address `0xB8000`
 - writes `AERO!\r\n` to COM1 (`0x3F8`) using `out dx, al`
-

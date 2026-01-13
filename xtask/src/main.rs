@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
+
 mod cmd_snapshot;
 mod cmd_test_all;
 mod cmd_wasm;
@@ -57,7 +59,7 @@ Usage:
   cargo xtask web dev|build|preview
 
 Commands:
-  fixtures   Generate tiny, deterministic test fixtures under `tests/fixtures/`.
+  fixtures   Generate tiny, deterministic in-repo fixtures (boot sectors + firmware blobs).
   snapshot   Inspect/validate an `aero-snapshot` file without loading multi-GB RAM payloads.
   test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright).
   wasm       Build the Rust→WASM packages used by the web app.
@@ -95,6 +97,18 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     // Tiny "disk image" (8 sectors / 4KiB) whose first sector is the boot sector.
     let disk_img = disk_image_with_fill(&boot_sector, 8)?;
     ensure_file(&out_dir.join("boot_vga_serial_8s.img"), &disk_img, check)?;
+
+    // Firmware fixtures (kept in-repo; must remain small and deterministic).
+    //
+    // ACPI DSDT.
+    let cfg = AcpiConfig::default();
+    let placement = AcpiPlacement::default();
+    let acpi_tables = AcpiTables::build(&cfg, placement);
+    ensure_file(&root.join("crates/firmware/acpi/dsdt.aml"), &acpi_tables.dsdt, check)?;
+
+    // BIOS ROM image.
+    let bios_rom = firmware::bios::build_bios_rom();
+    ensure_file(&root.join("assets/bios.bin"), &bios_rom, check)?;
 
     Ok(())
 }
