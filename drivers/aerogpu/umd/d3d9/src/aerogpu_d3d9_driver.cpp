@@ -2672,11 +2672,15 @@ static bool SupportsBcFormats(const Device* dev) {
 }
 
 static bool is_supported_backbuffer_format(D3DDDIFORMAT fmt) {
-  // Keep swapchain backbuffer formats conservative: only advertise/accept the
-  // 32-bit color formats used by DWM and typical D3D9Ex apps.
+  // Keep swapchain backbuffer formats conservative: only advertise/accept common
+  // 32-bit formats plus packed 16-bit RGB formats that are supported end-to-end
+  // by the AeroGPU protocol/host.
   switch (static_cast<uint32_t>(fmt)) {
     case 21u: // D3DFMT_A8R8G8B8
     case 22u: // D3DFMT_X8R8G8B8
+    case 23u: // D3DFMT_R5G6B5
+    case 24u: // D3DFMT_X1R5G5B5
+    case 25u: // D3DFMT_A1R5G5B5
     case 32u: // D3DFMT_A8B8G8R8
       return true;
     default:
@@ -8141,12 +8145,11 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   }
 
   // AeroGPU only supports 2D textures/surfaces (CREATE_TEXTURE2D) plus buffers.
-  // Reject volume / 3D resources up front so we never silently mis-create them as
-  // 2D textures.
+  // Portable build heuristic:
+  // - Interpret `depth > 1` as array layers for 2D textures.
+  // - Reject true 3D/volume/cube resources up front so we never silently
+  //   mis-create them as 2D arrays.
 #if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
-  // Portable build heuristic: allow array textures by interpreting depth>1 for
-  // D3DRTYPE_TEXTURE as an array layer count. For other non-buffer resources,
-  // reject depth>1 to avoid silently treating volume/cube resources as 2D arrays.
   if (create_size_bytes == 0) {
     // D3DRESOURCETYPE numeric values (from d3d9types.h). Keep local constants so
     // portable builds don't require the Windows SDK/WDK.
@@ -8200,7 +8203,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // Keep format support conservative and consistent with GetCaps() format ops.
   // In particular:
   // - Do not accept render-target usage for formats that are only supported as
-  //   textures (e.g. 16-bit formats and BC formats).
+  //   textures (e.g. BC formats).
   // - Only accept depth/stencil usage for formats the host executor supports.
   if ((res->usage & kD3DUsageRenderTarget) && !is_supported_backbuffer_format(res->format)) {
     return trace.ret(D3DERR_INVALIDCALL);
@@ -8266,13 +8269,17 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
     // Enforce deterministic format/usage combinations.
     //
-    // The AeroGPU D3D9 UMD only exposes render-target support for the common 32-bit
-    // color formats. 16-bit RGB formats are supported for texture sampling only.
+    // The AeroGPU D3D9 UMD exposes render-target support for the common 32-bit and
+    // packed 16-bit RGB formats.
     if (wants_rt) {
       switch (fmt) {
         // D3DFMT_A8R8G8B8 / D3DFMT_X8R8G8B8 / D3DFMT_A8B8G8R8
         case 21u:
         case 22u:
+        // D3DFMT_R5G6B5 / D3DFMT_X1R5G5B5 / D3DFMT_A1R5G5B5
+        case 23u:
+        case 24u:
+        case 25u:
         case 32u:
           break;
         default:

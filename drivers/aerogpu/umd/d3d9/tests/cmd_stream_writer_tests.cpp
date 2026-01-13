@@ -1268,20 +1268,13 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
     }
     formats.push_back(payload.format);
 
-    uint32_t expected_ops = 0;
-    if (payload.format == 75u) {
-      expected_ops = kD3DUsageDepthStencil;
-    } else if (payload.format == 23u || payload.format == 24u || payload.format == 25u) {
-      // 16-bit formats are texture-only for now.
+    uint32_t expected_ops = (payload.format == 75u) ? kD3DUsageDepthStencil : kD3DUsageRenderTarget;
+    if (payload.format == static_cast<uint32_t>(kD3dFmtDxt1) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt2) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt3) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt4) ||
+        payload.format == static_cast<uint32_t>(kD3dFmtDxt5)) {
       expected_ops = 0;
-    } else if (payload.format == static_cast<uint32_t>(kD3dFmtDxt1) ||
-               payload.format == static_cast<uint32_t>(kD3dFmtDxt2) ||
-               payload.format == static_cast<uint32_t>(kD3dFmtDxt3) ||
-               payload.format == static_cast<uint32_t>(kD3dFmtDxt4) ||
-               payload.format == static_cast<uint32_t>(kD3dFmtDxt5)) {
-      expected_ops = 0;
-    } else {
-      expected_ops = kD3DUsageRenderTarget;
     }
     if (!Check(payload.ops == expected_ops, "format ops mask matches expected usage")) {
       return false;
@@ -1457,7 +1450,7 @@ bool TestAdapterMultisampleQualityLevels() {
   }
 
   // Texture-only formats should not report multisample quality levels.
-  payload.format = 23u; // D3DFMT_R5G6B5 (supported, but not renderable)
+  payload.format = static_cast<uint32_t>(kD3dFmtDxt1); // D3DFMT_DXT1 (supported, but not renderable)
   payload.multisample_type = 0;
   payload.quality_levels = 0xCDCDCDCDu;
   hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
@@ -1752,7 +1745,7 @@ bool TestCreateResourceRejectsNon2dDepth() {
                         "failed CreateResource must not emit CREATE_TEXTURE2D");
 
   // Make cleanup safe: switch back to vector mode so subsequent destroy calls
-  // can't touch the span-backed command buffer after it goes out of scope.
+  // don't reference the span-backed command buffer after it is freed.
   dev->cmd.set_vector();
   return ok;
 }
@@ -1897,7 +1890,8 @@ bool TestCreateResourceComputesBcTexturePitchAndSize() {
   const bool ok = Check(cmd->mip_levels == 3u, "CREATE_TEXTURE2D mip_levels");
 
   // Make cleanup safe: switch back to vector mode so subsequent destroy calls
-  // can't touch the span-backed command buffer after it goes out of scope.
+  // don't reference the span-backed buffer after it is freed, and can't fail due
+  // to span-buffer capacity constraints.
   dev->cmd.set_vector();
   return ok;
 }
