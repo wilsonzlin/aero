@@ -8,6 +8,16 @@ import { WebHidPassthroughManager } from "./webhid_passthrough";
 
 type Listener = (event: unknown) => void;
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 class FakeHidDevice {
   opened = false;
   readonly vendorId = 0x1234;
@@ -153,6 +163,8 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       data: new Uint8Array([4, 5]).buffer,
     });
 
+    await new Promise((r) => setTimeout(r, 0));
+
     expect(device.sendReport).toHaveBeenCalledTimes(1);
     expect(device.sendReport.mock.calls[0]![0]).toBe(3);
     expect(Array.from(bufferSourceToBytes(device.sendReport.mock.calls[0]![1]))).toEqual([1, 2, 3]);
@@ -170,6 +182,47 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     device.dispatchInputReport(2, new DataView(new Uint8Array([10]).buffer));
     const forwarded = target.posted.filter((p) => p.message.type === "hid:inputReport");
     expect(forwarded).toHaveLength(1);
+  });
+
+  it("executes hid:sendReport sequentially per device", async () => {
+    const device = new FakeHidDevice();
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target });
+
+    await manager.attachKnownDevice(device as unknown as HIDDevice);
+    const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+    const deviceId = attach.deviceId as string;
+
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+
+    manager.handleWorkerMessage({
+      type: "hid:sendReport",
+      deviceId,
+      reportType: "output",
+      reportId: 1,
+      data: new Uint8Array([1]).buffer,
+    });
+
+    manager.handleWorkerMessage({
+      type: "hid:sendReport",
+      deviceId,
+      reportType: "output",
+      reportId: 2,
+      data: new Uint8Array([2]).buffer,
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+    expect(Array.from(bufferSourceToBytes(device.sendReport.mock.calls[0]![1]))).toEqual([1]);
+    expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+    expect(Array.from(bufferSourceToBytes(device.sendReport.mock.calls[1]![1]))).toEqual([2]);
   });
 
   it("writes inputreport events into the configured SAB ring instead of posting hid:inputReport messages", async () => {
