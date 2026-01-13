@@ -98,6 +98,20 @@ fn enable_uhci_requires_enable_pc_platform() {
 }
 
 #[test]
+fn enable_aerogpu_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_aerogpu: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::AeroGpuRequiresPcPlatform)
+    ));
+}
+
+#[test]
 fn enable_virtio_net_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,

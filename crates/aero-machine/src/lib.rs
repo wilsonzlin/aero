@@ -190,6 +190,14 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_uhci: bool,
+    /// Whether to expose the canonical AeroGPU PCI identity at `00:07.0`
+    /// (`aero_devices::pci::profile::AEROGPU.bdf`, `VID:DID = A3A0:0001`).
+    ///
+    /// This is currently a **config-space only** placeholder: BARs are enumerated and assigned by
+    /// firmware/BIOS POST, but no MMIO BAR handler is wired yet.
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_aerogpu: bool,
     /// Whether to attach the legacy VGA/VBE device model.
     ///
     /// This is the transitional standalone VGA/VBE path used for BIOS/boot display and VGA-focused
@@ -268,6 +276,7 @@ impl Default for MachineConfig {
             enable_ide: false,
             enable_virtio_blk: false,
             enable_uhci: false,
+            enable_aerogpu: false,
             enable_vga: true,
             enable_aerogpu: false,
             enable_serial: true,
@@ -313,6 +322,7 @@ impl MachineConfig {
             enable_ide: true,
             enable_virtio_blk: false,
             enable_uhci: false,
+            enable_aerogpu: false,
             enable_vga: true,
             enable_aerogpu: false,
             enable_serial: true,
@@ -444,6 +454,7 @@ pub enum MachineError {
     IdeRequiresPcPlatform,
     VirtioBlkRequiresPcPlatform,
     UhciRequiresPcPlatform,
+    AeroGpuRequiresPcPlatform,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
     AerogpuRequiresPcPlatform,
@@ -480,6 +491,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::UhciRequiresPcPlatform => {
                 write!(f, "enable_uhci requires enable_pc_platform=true")
+            }
+            MachineError::AeroGpuRequiresPcPlatform => {
+                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::E1000RequiresPcPlatform => {
                 write!(f, "enable_e1000 requires enable_pc_platform=true")
@@ -1082,6 +1096,36 @@ impl NvmePciConfigDevice {
 }
 
 impl PciDevice for NvmePciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct AeroGpuPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AeroGpuPciConfigDevice {
+    fn new() -> Self {
+        let cfg = aero_devices::pci::profile::AEROGPU.build_config_space();
+        // Guardrail: AeroGPU BAR0 is defined as a 64KiB MMIO window in the canonical profile.
+        debug_assert_eq!(
+            cfg.bar_definition(0),
+            Some(PciBarDefinition::Mmio32 {
+                size: 64 * 1024,
+                prefetchable: false,
+            }),
+            "unexpected AeroGPU BAR0 definition (expected 64KiB MMIO32)"
+        );
+        Self { cfg }
+    }
+}
+
+impl PciDevice for AeroGpuPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.cfg
     }
@@ -2475,6 +2519,9 @@ impl Machine {
         }
         if cfg.enable_uhci && !cfg.enable_pc_platform {
             return Err(MachineError::UhciRequiresPcPlatform);
+        }
+        if cfg.enable_aerogpu && !cfg.enable_pc_platform {
+            return Err(MachineError::AeroGpuRequiresPcPlatform);
         }
         if cfg.enable_e1000 && !cfg.enable_pc_platform {
             return Err(MachineError::E1000RequiresPcPlatform);
@@ -4826,6 +4873,13 @@ impl Machine {
                     .borrow_mut()
                     .bus_mut()
                     .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
+            }
+            if self.cfg.enable_aerogpu {
+                // Canonical AeroGPU PCI identity (config-space only stub for now).
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
             }
 
             // PCI INTx router.
