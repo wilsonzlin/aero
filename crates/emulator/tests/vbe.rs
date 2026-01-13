@@ -110,6 +110,22 @@ fn setting_mode_enables_lfb_mapping_and_updates_resolution() {
 }
 
 #[test]
+fn setting_mode_1280x720_enables_lfb_mapping_and_updates_resolution() {
+    let (mut bus, vga) = new_bus_with_vga();
+
+    // Write before LFB enabled should be ignored.
+    bus.write_u32(VBE_LFB_BASE as u64, 0x11223344);
+    assert_eq!(bus.read_u32(VBE_LFB_BASE as u64), 0);
+
+    vga.borrow_mut().set_mode(0x160 | 0x4000).unwrap();
+    assert!(vga.borrow().is_lfb_enabled());
+    assert_eq!(vga.borrow().resolution(), Some((1280, 720)));
+
+    bus.write_u32(VBE_LFB_BASE as u64, 0x11223344);
+    assert_eq!(bus.read_u32(VBE_LFB_BASE as u64), 0x11223344);
+}
+
+#[test]
 fn lfb_pixel_write_visible_after_render() {
     let (mut bus, vga) = new_bus_with_vga();
     vga.borrow_mut().set_mode(0x118 | 0x4000).unwrap();
