@@ -437,4 +437,78 @@ mod tests {
         p.process(&bytes, &mut out).unwrap();
         assert_eq!(out, vec![3.0, 4.0, 3.0, 4.0]);
     }
+
+    #[test]
+    fn stream_processor_flush_clears_output_when_no_resampler() {
+        // PipelineOrder::None.
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 2,
+            sample_rate: 1,
+        };
+        let mut sp = StreamProcessor::new(input, 1, 2, ResamplerKind::Linear).unwrap();
+        let mut out = vec![1.0f32, 2.0, 3.0];
+        sp.flush(&mut out).unwrap();
+        assert!(out.is_empty());
+
+        // PipelineOrder::RemixOnly.
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 2,
+            sample_rate: 1,
+        };
+        let mut sp = StreamProcessor::new(input, 1, 1, ResamplerKind::Linear).unwrap();
+        let mut out = vec![1.0f32, 2.0, 3.0];
+        sp.flush(&mut out).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn stream_processor_flush_produces_deterministic_tail_samples() {
+        // Choose tiny sample rates so the linear resampler step is exactly 0.5, making the
+        // tail length deterministic for a short constant-valued input.
+        let input_frames = [0.25f32, 0.25];
+        let input_bytes = f32s_to_le_bytes(&input_frames);
+
+        // PipelineOrder::ResampleOnly (no remix).
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 1,
+            sample_rate: 1,
+        };
+        let mut sp = StreamProcessor::new(input, 2, 1, ResamplerKind::Linear).unwrap();
+        let mut out = Vec::new();
+        sp.process(&input_bytes, &mut out).unwrap();
+        assert_eq!(out, vec![0.25, 0.25, 0.25]);
+        sp.flush(&mut out).unwrap();
+        assert_eq!(out, vec![0.25]);
+
+        // PipelineOrder::ResampleThenRemix (upmix in flush).
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 1,
+            sample_rate: 1,
+        };
+        let mut sp = StreamProcessor::new(input, 2, 2, ResamplerKind::Linear).unwrap();
+        let mut out = Vec::new();
+        sp.process(&input_bytes, &mut out).unwrap();
+        assert_eq!(out, vec![0.25, 0.25, 0.25, 0.25, 0.25, 0.25]);
+        sp.flush(&mut out).unwrap();
+        assert_eq!(out, vec![0.25, 0.25]);
+
+        // PipelineOrder::RemixThenResample (downmix before flush).
+        let input = PcmSpec {
+            format: PcmSampleFormat::F32,
+            channels: 2,
+            sample_rate: 1,
+        };
+        let stereo_frames = [0.25f32, 0.25, 0.25, 0.25];
+        let stereo_bytes = f32s_to_le_bytes(&stereo_frames);
+        let mut sp = StreamProcessor::new(input, 2, 1, ResamplerKind::Linear).unwrap();
+        let mut out = Vec::new();
+        sp.process(&stereo_bytes, &mut out).unwrap();
+        assert_eq!(out, vec![0.25, 0.25, 0.25]);
+        sp.flush(&mut out).unwrap();
+        assert_eq!(out, vec![0.25]);
+    }
 }
