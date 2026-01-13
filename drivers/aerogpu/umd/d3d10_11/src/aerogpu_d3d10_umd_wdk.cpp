@@ -4523,13 +4523,18 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       }
 
       HRESULT copy_hr = S_OK;
+      uint32_t wddm_pitch = 0;
+      __if_exists(D3DDDICB_LOCK::Pitch) {
+        wddm_pitch = lock_args.Pitch;
+      }
+      if (!ValidateWddmTexturePitch(res, wddm_pitch)) {
+        copy_hr = E_FAIL;
+        goto UnlockBox;
+      }
       uint32_t dst_pitch = dst_layout.row_pitch_bytes;
       __if_exists(D3DDDICB_LOCK::Pitch) {
-        if (lock_args.Pitch &&
-            dst_subresource_u64 == 0 &&
-            res->mip_levels == 1 &&
-            res->array_size == 1) {
-          dst_pitch = lock_args.Pitch;
+        if (wddm_pitch && dst_layout.mip_level == 0) {
+          dst_pitch = wddm_pitch;
         }
       }
       if (dst_pitch < row_bytes) {
