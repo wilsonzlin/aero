@@ -394,9 +394,12 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
       return false;
     }
 
+    const unsigned long long row_bytes = (unsigned long long)expected_w * 4ull;
     const bool match =
         (q.cached_enable != 0) && (q.mmio_enable != 0) && (q.cached_width == expected_w) &&
-        (q.cached_height == expected_h) && (q.mmio_width == expected_w) && (q.mmio_height == expected_h);
+        (q.cached_height == expected_h) && (q.mmio_width == expected_w) && (q.mmio_height == expected_h) &&
+        (q.mmio_fb_gpa != 0) && (q.cached_pitch_bytes != 0) && (q.mmio_pitch_bytes != 0) &&
+        (q.cached_pitch_bytes == q.mmio_pitch_bytes) && ((unsigned long long)q.cached_pitch_bytes >= row_bytes);
     if (match) {
       if (out_last) {
         *out_last = q;
@@ -420,14 +423,18 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
     *out_status = last_status;
   }
   if (err) {
-    *err = aerogpu_test::FormatString("scanout did not match within %lu ms (want=%lux%lu cached=%lux%lu mmio=%lux%lu)",
+    *err = aerogpu_test::FormatString(
+        "scanout did not match within %lu ms (want=%lux%lu cached=%lux%lu pitch=%lu mmio=%lux%lu pitch=%lu fb_gpa=0x%I64X)",
                                       (unsigned long)timeout_ms,
                                       (unsigned long)expected_w,
                                       (unsigned long)expected_h,
                                       (unsigned long)last.cached_width,
                                       (unsigned long)last.cached_height,
+                                      (unsigned long)last.cached_pitch_bytes,
                                       (unsigned long)last.mmio_width,
-                                      (unsigned long)last.mmio_height);
+                                      (unsigned long)last.mmio_height,
+                                      (unsigned long)last.mmio_pitch_bytes,
+                                      (unsigned long long)last.mmio_fb_gpa);
   }
   return false;
 }
