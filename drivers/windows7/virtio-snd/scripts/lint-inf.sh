@@ -229,6 +229,25 @@ section_contains_norm \
   'addinterface=%kscategory_capture%' \
   "inf/aero_virtio_snd.inf must AddInterface for KSCATEGORY_CAPTURE"
 
+note "checking MSI interrupt management registrations..."
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_Install.NT.HW' \
+  'addreg=aerovirtiosnd_interruptmanagement_addreg' \
+  "inf/aero_virtio_snd.inf must configure interrupt management via [AeroVirtioSnd_Install.NT.HW]"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_InterruptManagement_AddReg' \
+  'msisupported,0x00010001,1' \
+  "inf/aero_virtio_snd.inf must set MSISupported=1 under Interrupt Management"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd_InterruptManagement_AddReg' \
+  'messagenumberlimit,0x00010001,8' \
+  "inf/aero_virtio_snd.inf must set MessageNumberLimit=8 under Interrupt Management"
+
 section_contains_norm \
   "$INF_CONTRACT" \
   'Version' \
