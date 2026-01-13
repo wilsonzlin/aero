@@ -8,6 +8,7 @@ use wasm_bindgen::prelude::*;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
+use aero_usb::UsbWebUsbPassthroughDevice;
 use aero_usb::hid::passthrough::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
 use aero_usb::hub::{UsbHub, UsbHubDevice};
@@ -16,7 +17,6 @@ use aero_usb::passthrough::{
     UsbHostCompletionOut,
 };
 use aero_usb::uhci::UhciController;
-use aero_usb::{MemoryBus, UsbWebUsbPassthroughDevice};
 
 const DEFAULT_IO_BASE: u16 = 0x5000;
 const DEFAULT_IRQ_LINE: u8 = 11;
@@ -35,156 +35,40 @@ fn js_error(message: &str) -> JsValue {
     js_sys::Error::new(message).into()
 }
 
-struct LinearGuestMemory {
+fn new_guest_memory_bus(
     guest_base: u32,
-    ram_bytes: u64,
-}
+    guest_size: u32,
+) -> Result<crate::guest_memory_bus::GuestMemoryBus, JsValue> {
+    let pages = core::arch::wasm32::memory_size(0) as u64;
+    let mem_bytes = pages.saturating_mul(64 * 1024);
 
-impl LinearGuestMemory {
-    fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        let pages = core::arch::wasm32::memory_size(0) as u64;
-        let mem_bytes = pages.saturating_mul(64 * 1024);
+    // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
+    //
+    // For parity with other wasm-bindgen APIs, accept `guest_size == 0` as a "use the remainder
+    // of linear memory" sentinel.
+    let guest_size_u64 = if guest_size == 0 {
+        mem_bytes.saturating_sub(guest_base as u64)
+    } else {
+        u64::from(guest_size)
+    }
+    .min(crate::guest_layout::PCI_MMIO_BASE);
 
-        // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
-        //
-        // For parity with other wasm-bindgen APIs, accept `guest_size == 0` as a "use the remainder
-        // of linear memory" sentinel.
-        let guest_size_u64 = if guest_size == 0 {
-            mem_bytes.saturating_sub(guest_base as u64)
-        } else {
-            u64::from(guest_size)
-        }
-        .min(crate::guest_layout::PCI_MMIO_BASE);
+    let end = (guest_base as u64).checked_add(guest_size_u64).ok_or_else(|| {
+        js_error(&format!(
+            "Guest RAM region out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=overflow wasm_mem_bytes=0x{mem_bytes:x}"
+        ))
+    })?;
 
-        let end = guest_base as u64 + guest_size_u64;
-        if end > mem_bytes {
-            return Err(js_error(&format!(
-                "Guest RAM region out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=0x{end:x} wasm_mem_bytes=0x{mem_bytes:x}"
-            )));
-        }
-
-        Ok(Self {
-            guest_base,
-            ram_bytes: guest_size_u64,
-        })
+    if end > mem_bytes {
+        return Err(js_error(&format!(
+            "Guest RAM region out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=0x{end:x} wasm_mem_bytes=0x{mem_bytes:x}"
+        )));
     }
 
-    #[inline]
-    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
-        let end = ram_offset.checked_add(len as u64)?;
-        if end > self.ram_bytes {
-            return None;
-        }
-        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
-        u32::try_from(linear).ok().map(|v| v as *const u8)
-    }
-
-    #[inline]
-    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
-        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
-    }
-}
-
-impl MemoryBus for LinearGuestMemory {
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if buf.is_empty() {
-            return;
-        }
-
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.ram_bytes,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
-                        buf[off..].fill(0);
-                        return;
-                    };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
-                    // RAM size.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    buf[off..off + len].fill(0xFF);
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    buf[off..off + len].fill(0);
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => {
-                    buf[off..].fill(0);
-                    return;
-                }
-            };
-        }
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        if buf.is_empty() {
-            return;
-        }
-
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.ram_bytes,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
-                        return;
-                    };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
-                    // RAM size.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    // Open bus: writes are ignored.
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    // Preserve existing semantics: out-of-range writes are ignored.
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => return,
-            };
-        }
-    }
+    Ok(crate::guest_memory_bus::GuestMemoryBus::new(
+        guest_base,
+        guest_size_u64,
+    ))
 }
 
 fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) -> bool {
@@ -245,7 +129,7 @@ struct ExternalHubState {
 #[wasm_bindgen]
 pub struct UhciRuntime {
     ctrl: UhciController,
-    mem: LinearGuestMemory,
+    mem: crate::guest_memory_bus::GuestMemoryBus,
     io_base: u16,
     irq_line: u8,
 
@@ -317,7 +201,7 @@ impl UhciRuntime {
 
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        let mem = LinearGuestMemory::new(guest_base, guest_size)?;
+        let mem = new_guest_memory_bus(guest_base, guest_size)?;
         Ok(Self {
             ctrl: UhciController::new(),
             mem,

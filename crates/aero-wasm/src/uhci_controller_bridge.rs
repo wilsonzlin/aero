@@ -39,129 +39,6 @@ fn wasm_memory_byte_len() -> u64 {
     pages.saturating_mul(64 * 1024)
 }
 
-#[derive(Clone, Copy)]
-struct WasmGuestMemory {
-    guest_base: u32,
-    ram_bytes: u64,
-}
-
-impl WasmGuestMemory {
-    #[inline]
-    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
-        let end = ram_offset.checked_add(len as u64)?;
-        if end > self.ram_bytes {
-            return None;
-        }
-        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
-        u32::try_from(linear).ok().map(|v| v as *const u8)
-    }
-
-    #[inline]
-    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
-        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
-    }
-}
-
-impl MemoryBus for WasmGuestMemory {
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if buf.is_empty() {
-            return;
-        }
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.ram_bytes,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
-                        buf[off..].fill(0);
-                        return;
-                    };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
-                    // RAM size.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    buf[off..off + len].fill(0xFF);
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    buf[off..off + len].fill(0);
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => {
-                    buf[off..].fill(0);
-                    return;
-                }
-            };
-        }
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        if buf.is_empty() {
-            return;
-        }
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.ram_bytes,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
-                        return;
-                    };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against the configured guest
-                    // RAM size.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    // Open bus: writes are ignored.
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    // Preserve existing semantics: out-of-range writes are ignored.
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => return,
-            };
-        }
-    }
-}
-
 struct NoDmaMemory;
 
 impl MemoryBus for NoDmaMemory {
@@ -343,10 +220,8 @@ impl UhciControllerBridge {
         // state, but it must not be able to read or write guest memory for the schedule.
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
-            let mut mem = WasmGuestMemory {
-                guest_base: self.guest_base,
-                ram_bytes: self.guest_size,
-            };
+            let mut mem =
+                crate::guest_memory_bus::GuestMemoryBus::new(self.guest_base, self.guest_size);
             for _ in 0..frames {
                 self.ctrl.tick_1ms(&mut mem);
             }

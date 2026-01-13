@@ -8,6 +8,9 @@ pub mod guest_cpu_bench;
 #[cfg(any(target_arch = "wasm32", test))]
 mod guest_phys;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod guest_memory_bus;
+
 // Re-export Aero IPC SharedArrayBuffer ring helpers so the generated `aero-wasm`
 // wasm-pack package exposes them to JS (both threaded + single builds).
 #[cfg(target_arch = "wasm32")]

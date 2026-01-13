@@ -21,146 +21,6 @@ const ROOT_PORT_WEBUSB: usize = 1;
 // Must match `web/src/usb/uhci_external_hub.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
 const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 
-/// Guest memory accessor backed by the module's wasm linear memory.
-///
-/// Guest physical address 0 maps to `guest_base` inside the linear memory (see `guest_ram_layout()`
-/// in `aero-wasm`).
-#[derive(Debug, Clone, Copy)]
-struct WasmGuestMemory {
-    guest_base: u32,
-    guest_size: u64,
-}
-
-impl WasmGuestMemory {
-    fn new(guest_base: u32) -> Self {
-        let pages = core::arch::wasm32::memory_size(0) as u64;
-        let mem_bytes = pages.saturating_mul(64 * 1024);
-        let guest_size = mem_bytes
-            .saturating_sub(guest_base as u64)
-            .min(crate::guest_layout::PCI_MMIO_BASE);
-        Self {
-            guest_base,
-            guest_size,
-        }
-    }
-
-    #[inline]
-    fn linear_ptr(&self, ram_offset: u64, len: usize) -> Option<*const u8> {
-        let end = ram_offset.checked_add(len as u64)?;
-        if end > self.guest_size {
-            return None;
-        }
-        let linear = (self.guest_base as u64).checked_add(ram_offset)?;
-        u32::try_from(linear).ok().map(|v| v as *const u8)
-    }
-
-    #[inline]
-    fn linear_ptr_mut(&self, ram_offset: u64, len: usize) -> Option<*mut u8> {
-        Some(self.linear_ptr(ram_offset, len)? as *mut u8)
-    }
-}
-
-impl MemoryBus for WasmGuestMemory {
-    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
-        if buf.is_empty() {
-            return;
-        };
-
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.guest_size,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr(ram_offset, len) else {
-                        buf[off..].fill(0);
-                        return;
-                    };
-
-                    // SAFETY: `translate_guest_paddr_chunk` + `linear_ptr` validate the range.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    buf[off..off + len].fill(0xFF);
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    buf[off..off + len].fill(0);
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => {
-                    buf[off..].fill(0);
-                    return;
-                }
-            };
-        }
-    }
-
-    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
-        if buf.is_empty() {
-            return;
-        }
-
-        let mut cur_paddr = paddr;
-        let mut off = 0usize;
-
-        while off < buf.len() {
-            let remaining = buf.len() - off;
-            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
-                self.guest_size,
-                cur_paddr,
-                remaining,
-            );
-            let chunk_len = match chunk {
-                crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
-                    let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
-                        return;
-                    };
-                    // SAFETY: `translate_guest_paddr_chunk` + `linear_ptr_mut` validate the range.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
-                    }
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::Hole { len } => {
-                    // Open bus: writes are ignored.
-                    len
-                }
-                crate::guest_phys::GuestRamChunk::OutOfBounds { len } => {
-                    // Preserve existing semantics: ignore out-of-range writes.
-                    len
-                }
-            };
-
-            if chunk_len == 0 {
-                break;
-            }
-            off += chunk_len;
-            cur_paddr = match cur_paddr.checked_add(chunk_len as u64) {
-                Some(v) => v,
-                None => return,
-            };
-        }
-    }
-}
-
 struct NoDmaMemory;
 
 impl MemoryBus for NoDmaMemory {
@@ -244,7 +104,12 @@ impl WebUsbUhciBridge {
         // internal frame counter and root hub state (port reset timing, remote wake, etc).
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
-            let mut mem = WasmGuestMemory::new(self.guest_base);
+            let pages = core::arch::wasm32::memory_size(0) as u64;
+            let mem_bytes = pages.saturating_mul(64 * 1024);
+            let guest_size = mem_bytes
+                .saturating_sub(self.guest_base as u64)
+                .min(crate::guest_layout::PCI_MMIO_BASE);
+            let mut mem = crate::guest_memory_bus::GuestMemoryBus::new(self.guest_base, guest_size);
             for _ in 0..frames {
                 self.controller.tick_1ms(&mut mem);
             }
