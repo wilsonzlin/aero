@@ -380,3 +380,68 @@ fn malformed_absurd_regular_instruction_length_errors() {
         }
     );
 }
+
+#[test]
+fn malformed_unknown_opcode_with_operands_errors() {
+    // Unknown opcode with a non-zero operand length. Ensure we still surface the UnknownOpcode
+    // error (and don't panic while reading the operand tokens).
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0200_7777, // unknown opcode 0x7777, len=2
+        0x800F_0000, // r0 (arbitrary operand)
+        0x90E4_0000, // v0 (arbitrary operand)
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::UnknownOpcode {
+            opcode: 0x7777,
+            specific: 0,
+            at_token: 1,
+        }
+    );
+}
+
+#[test]
+fn malformed_invalid_dcl_register_encoding_errors() {
+    // dcl_* instruction with an invalid dst register encoding.
+    let invalid_reg_token = 0xF00F_1800;
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0200_001F, // dcl (len=2)
+        0x8000_0000, // usage token (position)
+        invalid_reg_token,
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidRegisterEncoding {
+            token: invalid_reg_token,
+            at_token: 3,
+        }
+    );
+}
+
+#[test]
+fn malformed_invalid_predicate_register_encoding_errors() {
+    // Predicated instruction with an invalid predicate register encoding.
+    let invalid_pred_token = 0xF000_1800;
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x1300_0001, // mov (len=3) + predicated flag
+        invalid_pred_token,
+        0x800F_0000, // r0
+        0x90E4_0000, // v0
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidRegisterEncoding {
+            token: invalid_pred_token,
+            at_token: 2,
+        }
+    );
+}
