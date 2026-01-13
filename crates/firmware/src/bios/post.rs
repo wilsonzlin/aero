@@ -203,13 +203,13 @@ impl Bios {
         let entry = parsed.image;
         let start_lba = u64::from(entry.load_rba)
             .checked_mul(4)
-            .ok_or("El Torito boot image load past end-of-image")?;
+            .ok_or("boot image read error")?;
         let count = u64::from(entry.sector_count);
         let dst = (u64::from(entry.load_segment)) << 4;
         for i in 0..count {
             let mut buf = [0u8; 512];
             disk.read_sector(start_lba + i, &mut buf)
-                .map_err(|_| "Disk read error")?;
+                .map_err(|_| "boot image read error")?;
             bus.write_physical(dst + i * 512, &buf);
         }
 

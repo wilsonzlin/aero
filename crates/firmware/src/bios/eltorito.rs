@@ -5,6 +5,13 @@
 
 use super::{BlockDevice, DiskError};
 
+// Error strings are intentionally stable: they are surfaced via `Bios::tty_output()` when POST
+// fails, and unit tests (and humans) rely on them for debugging.
+const ERR_NO_BOOT_RECORD: &str = "no boot record volume descriptor found";
+const ERR_INVALID_CATALOG: &str = "invalid boot catalog validation entry";
+const ERR_NO_BOOTABLE_ENTRY: &str = "no bootable initial/default entry";
+const ERR_READ: &str = "boot image read error";
+
 const ISO9660_STANDARD_IDENTIFIER: &[u8; 5] = b"CD001";
 const ISO9660_VERSION: u8 = 1;
 
@@ -71,12 +78,12 @@ pub(super) fn parse_boot_image(disk: &mut dyn BlockDevice) -> Result<ParsedBootI
     // we do not attempt out-of-range reads on corrupt catalogs.
     let start_lba_512 = u64::from(image.load_rba)
         .checked_mul(BIOS_SECTORS_PER_ISO_BLOCK)
-        .ok_or("El Torito boot image load past end-of-image")?;
+        .ok_or(ERR_READ)?;
     let end_lba_512 = start_lba_512
         .checked_add(u64::from(image.sector_count))
-        .ok_or("El Torito boot image load past end-of-image")?;
+        .ok_or(ERR_READ)?;
     if end_lba_512 > disk.size_in_sectors() {
-        return Err("El Torito boot image load past end-of-image");
+        return Err(ERR_READ);
     }
 
     Ok(ParsedBootImage {
@@ -137,7 +144,7 @@ fn find_boot_catalog_lba(disk: &mut dyn BlockDevice) -> Result<u32, &'static str
         return Ok(u32::from_le_bytes(lba_bytes));
     }
 
-    Err("Missing El Torito boot record")
+    Err(ERR_NO_BOOT_RECORD)
 }
 
 fn parse_boot_catalog(
@@ -157,7 +164,7 @@ fn parse_boot_catalog(
     let mut catalog = vec![0u8; (blocks_to_read as usize) * ISO_BLOCK_BYTES];
     for i in 0..blocks_to_read {
         let mut block = [0u8; ISO_BLOCK_BYTES];
-        read_iso_block(disk, boot_catalog_lba + i, &mut block).map_err(|_| "Disk read error")?;
+        read_iso_block(disk, boot_catalog_lba + i, &mut block).map_err(|_| ERR_READ)?;
         let start = (i as usize) * ISO_BLOCK_BYTES;
         catalog[start..start + ISO_BLOCK_BYTES].copy_from_slice(&block);
     }
@@ -197,18 +204,18 @@ fn parse_boot_catalog(
         }
     }
 
-    Err("El Torito boot catalog contains no bootable BIOS no-emulation entry")
+    Err(ERR_NO_BOOTABLE_ENTRY)
 }
 
 fn validate_catalog_validation_entry(entry: &[u8]) -> Result<(), &'static str> {
     if entry.len() != 32 {
-        return Err("Invalid El Torito boot catalog");
+        return Err(ERR_INVALID_CATALOG);
     }
     if entry[0] != 0x01 {
-        return Err("Invalid El Torito boot catalog");
+        return Err(ERR_INVALID_CATALOG);
     }
     if entry[0x1E] != 0x55 || entry[0x1F] != 0xAA {
-        return Err("Invalid El Torito boot catalog");
+        return Err(ERR_INVALID_CATALOG);
     }
 
     // Checksum over 16-bit words must sum to 0.
@@ -217,7 +224,7 @@ fn validate_catalog_validation_entry(entry: &[u8]) -> Result<(), &'static str> {
         sum = sum.wrapping_add(u16::from_le_bytes([chunk[0], chunk[1]]));
     }
     if sum != 0 {
-        return Err("Invalid El Torito boot catalog checksum");
+        return Err(ERR_INVALID_CATALOG);
     }
 
     Ok(())
@@ -225,17 +232,17 @@ fn validate_catalog_validation_entry(entry: &[u8]) -> Result<(), &'static str> {
 
 fn parse_boot_entry(entry: &[u8], boot_catalog_lba: u32) -> Result<BootImageInfo, &'static str> {
     if entry.len() != 32 {
-        return Err("Invalid El Torito boot catalog");
+        return Err(ERR_INVALID_CATALOG);
     }
 
     let boot_indicator = entry[0];
     if boot_indicator != 0x88 {
-        return Err("El Torito boot image is not bootable");
+        return Err(ERR_NO_BOOTABLE_ENTRY);
     }
 
     let media_type = entry[1];
     if media_type != 0 {
-        return Err("Unsupported El Torito boot media type");
+        return Err(ERR_NO_BOOTABLE_ENTRY);
     }
 
     // Boot entry format (El Torito spec):
@@ -475,7 +482,10 @@ mod tests {
     fn bios_post_loads_eltorito_boot_image_and_sets_entry_state() {
         let boot_catalog_lba = 20;
         let boot_image_lba = 21;
-        let boot_image = [0x5A; ISO_BLOCK_BYTES];
+        let mut boot_image = [0x5A; ISO_BLOCK_BYTES];
+        // Include a traditional 0x55AA signature so tests can sanity-check the first 512 bytes.
+        boot_image[510] = 0x55;
+        boot_image[511] = 0xAA;
         let img = build_minimal_iso_no_emulation(
             boot_catalog_lba,
             boot_image_lba,
@@ -497,7 +507,7 @@ mod tests {
 
         let load_addr = (0x07C0u64) << 4;
         let loaded = mem.read_bytes(load_addr, ISO_BLOCK_BYTES);
-        assert_eq!(loaded, vec![0x5A; ISO_BLOCK_BYTES]);
+        assert_eq!(loaded, boot_image.to_vec());
 
         assert_eq!(cpu.segments.cs.selector, 0x07C0);
         assert_eq!(cpu.rip(), 0);
@@ -517,6 +527,144 @@ mod tests {
         assert_eq!(info.boot_image_lba, Some(boot_image_lba));
         assert_eq!(info.load_segment, Some(0x07C0));
         assert_eq!(info.sector_count, Some(4));
+    }
+
+    #[test]
+    fn bios_post_respects_eltorito_non_default_load_segment() {
+        let boot_catalog_lba = 20;
+        let boot_image_lba = 21;
+        let mut boot_image = [0xC3; ISO_BLOCK_BYTES];
+        boot_image[510] = 0x55;
+        boot_image[511] = 0xAA;
+        let img = build_minimal_iso_no_emulation(
+            boot_catalog_lba,
+            boot_image_lba,
+            &boot_image,
+            0x2000,
+            4,
+        );
+
+        let mut bios = Bios::new(BiosConfig {
+            memory_size_bytes: 16 * 1024 * 1024,
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
+        let mut disk = InMemoryDisk::new(img);
+
+        bios.post(&mut cpu, &mut mem, &mut disk);
+
+        let load_addr = (0x2000u64) << 4;
+        let loaded = mem.read_bytes(load_addr, ISO_BLOCK_BYTES);
+        assert_eq!(loaded, boot_image.to_vec());
+
+        assert_eq!(cpu.segments.cs.selector, 0x2000);
+        assert_eq!(cpu.rip(), 0);
+        assert_eq!(cpu.gpr[gpr::RDX] as u8, 0xE0);
+
+        let info = bios
+            .el_torito_boot_info
+            .expect("El Torito boot should populate cached boot metadata");
+        assert_eq!(info.load_segment, Some(0x2000));
+    }
+
+    #[test]
+    fn el_torito_boot_failures_report_specific_messages() {
+        fn run(img: Vec<u8>) -> String {
+            let mut bios = Bios::new(BiosConfig {
+                boot_drive: 0xE0,
+                ..BiosConfig::default()
+            });
+            let mut cpu = CpuState::new(CpuMode::Real);
+            let mut mem = TestMemory::new(16 * 1024 * 1024);
+            let mut disk = InMemoryDisk::new(img);
+
+            bios.post(&mut cpu, &mut mem, &mut disk);
+            assert!(cpu.halted, "boot should fail");
+            String::from_utf8_lossy(bios.tty_output()).trim().to_string()
+        }
+
+        // 1) Missing boot record volume descriptor.
+        let mut img = vec![0u8; 32 * ISO_BLOCK_BYTES];
+        let mut pvd = [0u8; ISO_BLOCK_BYTES];
+        pvd[0] = 0x01;
+        pvd[1..6].copy_from_slice(ISO9660_STANDARD_IDENTIFIER);
+        pvd[6] = ISO9660_VERSION;
+        write_iso_block(&mut img, 16, &pvd);
+        let mut term = [0u8; ISO_BLOCK_BYTES];
+        term[0] = 0xFF;
+        term[1..6].copy_from_slice(ISO9660_STANDARD_IDENTIFIER);
+        term[6] = ISO9660_VERSION;
+        write_iso_block(&mut img, 17, &term);
+        assert_eq!(run(img), ERR_NO_BOOT_RECORD);
+
+        // 2) Invalid boot catalog validation entry.
+        let boot_catalog_lba = 20;
+        let boot_image_lba = 21;
+        let boot_image = [0x11; ISO_BLOCK_BYTES];
+        let mut img = build_minimal_iso_no_emulation(
+            boot_catalog_lba,
+            boot_image_lba,
+            &boot_image,
+            0,
+            4,
+        );
+        // Corrupt the header id so validation fails.
+        let off = boot_catalog_lba as usize * ISO_BLOCK_BYTES;
+        img[off] = 0x02;
+        assert_eq!(run(img), ERR_INVALID_CATALOG);
+
+        // 3) No bootable initial/default entry.
+        let mut img = build_minimal_iso_no_emulation(
+            boot_catalog_lba,
+            boot_image_lba,
+            &boot_image,
+            0,
+            4,
+        );
+        let off = boot_catalog_lba as usize * ISO_BLOCK_BYTES;
+        // Clear the initial entry (boot indicator 0).
+        img[off + 32] = 0x00;
+        assert_eq!(run(img), ERR_NO_BOOTABLE_ENTRY);
+
+        // 4) Boot image read error (catalog points past end-of-image).
+        let mut img = vec![0u8; 32 * ISO_BLOCK_BYTES];
+        // Minimal volume descriptor set with boot record.
+        write_iso_block(&mut img, 16, &pvd);
+        let mut brvd = [0u8; ISO_BLOCK_BYTES];
+        brvd[0] = 0x00;
+        brvd[1..6].copy_from_slice(ISO9660_STANDARD_IDENTIFIER);
+        brvd[6] = ISO9660_VERSION;
+        brvd[7..39].copy_from_slice(&EL_TORITO_BOOT_SYSTEM_ID_SPACES);
+        brvd[0x47..0x4B].copy_from_slice(&boot_catalog_lba.to_le_bytes());
+        write_iso_block(&mut img, 17, &brvd);
+        write_iso_block(&mut img, 18, &term);
+
+        let mut catalog = [0u8; ISO_BLOCK_BYTES];
+        // Valid validation entry.
+        let mut validation = [0u8; 32];
+        validation[0] = 0x01;
+        validation[0x1E] = 0x55;
+        validation[0x1F] = 0xAA;
+        let mut sum: u16 = 0;
+        for chunk in validation.chunks_exact(2) {
+            sum = sum.wrapping_add(u16::from_le_bytes([chunk[0], chunk[1]]));
+        }
+        let checksum = (0u16).wrapping_sub(sum);
+        validation[0x1C..0x1E].copy_from_slice(&checksum.to_le_bytes());
+        catalog[0..32].copy_from_slice(&validation);
+
+        // Bootable no-emulation entry pointing well past the end of the disk.
+        let mut entry = [0u8; 32];
+        entry[0] = 0x88;
+        entry[1] = 0x00;
+        entry[6..8].copy_from_slice(&4u16.to_le_bytes());
+        entry[8..12].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        catalog[32..64].copy_from_slice(&entry);
+        write_iso_block(&mut img, boot_catalog_lba as usize, &catalog);
+
+        assert_eq!(run(img), ERR_READ);
     }
 
     #[test]
