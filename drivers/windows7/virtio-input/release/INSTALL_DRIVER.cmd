@@ -49,6 +49,9 @@ if not "%RC%"=="0" (
   echo Tips:
   echo   - Run from an elevated Command Prompt (Run as administrator).
   echo   - If the package is test-signed, run INSTALL_CERT.cmd first.
+  echo   - Windows 7 x64 test-signed drivers also require Test Signing mode:
+  echo       bcdedit /set testsigning on
+  echo     then reboot.
   exit /b %RC%
 )
 

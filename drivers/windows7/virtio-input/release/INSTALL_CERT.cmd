@@ -63,6 +63,10 @@ echo OK: Certificate installed.
 echo.
 echo Next: run INSTALL_DRIVER.cmd to install the driver package.
 echo.
+echo Note: Windows 7 x64 test-signed drivers also require Test Signing mode:
+echo   bcdedit /set testsigning on
+echo then reboot.
+echo.
 
 endlocal
 exit /b 0
