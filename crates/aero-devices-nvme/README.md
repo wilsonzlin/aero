@@ -52,8 +52,12 @@ Alternatively, use [`NvmeController::try_new_from_aero_storage`] /
 
 ## Interrupts
 
-Only legacy INTx signalling is modelled (`NvmeController::intx_level`). MSI/MSI-X is not yet
-implemented; this is sufficient for functional testing but may limit peak performance.
+- Legacy INTx signalling is modelled via `NvmeController::intx_level`.
+- The PCI wrapper (`NvmePciDevice`) also supports a single-vector MSI capability. When the guest
+  enables MSI and the platform attaches an `aero_platform::interrupts::msi::MsiTrigger` sink via
+  `NvmePciDevice::set_msi_target`, NVMe completions trigger MSI deliveries instead of asserting
+  INTx.
+- MSI-X is not currently implemented.
 
 ## Best-effort semantics
 
