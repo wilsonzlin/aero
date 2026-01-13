@@ -100,14 +100,15 @@ pub fn build_bios_rom() -> Vec<u8> {
 
     // VGA font table (INT 10h AH=11h AL=30h).
     //
-    // We provide a simple 8x16 bitmap font derived from `font8x8`'s BASIC font table by duplicating
-    // each 8x8 scanline twice. This is not a full CP437 font, but it is sufficient for ASCII text
-    // consumers that retrieve the font via BIOS calls.
-    let font_8x16 = build_font8x16();
+    // DOS-era software commonly retrieves the ROM font and expects the CP437 "line graphics" range
+    // (0xB3..=0xDF) to be populated with box drawing/block glyphs. Our VGA text renderer has a
+    // CP437-compatible built-in font; the BIOS ROM needs to expose similar glyphs via INT 10h so
+    // guests that query the font table can render boot-time UIs without blank characters.
+    let font_8x16 = build_font8x16_cp437();
     write_stub(&mut rom, VGA_FONT_8X16_OFFSET, &font_8x16);
 
     // IVT vector 0x1F also historically points at an 8x8 graphics character table.
-    let font_8x8 = build_font8x8();
+    let font_8x8 = build_font8x8_cp437();
     write_stub(&mut rom, VGA_FONT_8X8_OFFSET, &font_8x8);
 
     // Optional ROM signature (harmless and convenient for identification).
@@ -123,128 +124,189 @@ fn write_stub(rom: &mut [u8], offset: u16, stub: &[u8]) {
     rom[off..end].copy_from_slice(stub);
 }
 
-fn build_font8x16() -> [u8; 256 * 16] {
+fn build_font8x16_cp437() -> [u8; 256 * 16] {
     // Generate the 8x16 font by vertically scaling the 8x8 table (duplicate each scanline).
     //
     // VGA BIOS INT 10h AH=11h AL=30h returns a pointer to this 8x16 table, and DOS-era software
     // often indexes it using CP437 codepoints (including the box-drawing range).
-    let font8 = build_font8x8();
+    let font8 = build_font8x8_cp437();
     let mut font16 = [0u8; 256 * 16];
-    for ch in 0usize..=0xFF {
-        let src = ch * 8;
-        let dst = ch * 16;
-        for row in 0..8 {
-            let bits = font8[src + row];
-            font16[dst + row * 2] = bits;
-            font16[dst + row * 2 + 1] = bits;
+
+    for ch in 0u16..=0xFF {
+        let base8 = usize::from(ch as u8) * 8;
+        let base16 = usize::from(ch as u8) * 16;
+        for row in 0usize..8 {
+            let bits = font8[base8 + row];
+            font16[base16 + row * 2] = bits;
+            font16[base16 + row * 2 + 1] = bits;
         }
     }
+
     font16
 }
 
-fn build_font8x8() -> [u8; 256 * 8] {
+fn build_font8x8_cp437() -> [u8; 256 * 8] {
     let mut font = [0u8; 256 * 8];
-    for ch in 0u8..=0xFF {
-        let mut glyph8 = BASIC_FONTS.get(ch as char).unwrap_or([0u8; 8]);
 
-        // DOS-era consumers retrieve the VGA font table via BIOS calls and then index it using
-        // CP437 bytes. The `font8x8` table is indexed by Unicode scalar values, so we override a
-        // small CP437 subset (notably the box drawing range) to improve compatibility.
-        if let Some(override_glyph) = cp437_override_glyph(ch) {
-            glyph8 = override_glyph;
-        }
-
-        let base = usize::from(ch) * 8;
+    // Preserve the original 0x00..=0x7F glyphs.
+    for ch in 0u16..=0x7F {
+        let glyph8 = BASIC_FONTS.get((ch as u8) as char).unwrap_or([0u8; 8]);
+        let base = usize::from(ch as u8) * 8;
         font[base..base + 8].copy_from_slice(&glyph8);
     }
+
+    set_glyph8(&mut font, 0xB0, glyph_shade_light()); // ░
+    set_glyph8(&mut font, 0xB1, glyph_shade_medium()); // ▒
+    set_glyph8(&mut font, 0xB2, glyph_shade_dark()); // ▓
+
+    // Single-line box drawing.
+    set_glyph8(&mut font, 0xB3, glyph_box_single(true, true, false, false)); // │
+    set_glyph8(&mut font, 0xB4, glyph_box_single(true, true, true, false)); // ┤
+    set_glyph8(&mut font, 0xBF, glyph_box_single(false, true, true, false)); // ┐
+    set_glyph8(&mut font, 0xC0, glyph_box_single(true, false, false, true)); // └
+    set_glyph8(&mut font, 0xC1, glyph_box_single(true, false, true, true)); // ┴
+    set_glyph8(&mut font, 0xC2, glyph_box_single(false, true, true, true)); // ┬
+    set_glyph8(&mut font, 0xC3, glyph_box_single(true, true, false, true)); // ├
+    set_glyph8(&mut font, 0xC4, glyph_box_single(false, false, true, true)); // ─
+    set_glyph8(&mut font, 0xC5, glyph_box_single(true, true, true, true)); // ┼
+    set_glyph8(&mut font, 0xD9, glyph_box_single(true, false, true, false)); // ┘
+    set_glyph8(&mut font, 0xDA, glyph_box_single(false, true, false, true)); // ┌
+
+    // Double-line/mixed box drawing (approximated).
+    set_glyph8(&mut font, 0xB5, glyph_box_single(true, true, true, false)); // ╡
+    set_glyph8(&mut font, 0xB6, glyph_box_single(true, true, true, false)); // ╢
+    set_glyph8(&mut font, 0xB7, glyph_box_single(false, true, true, false)); // ╖
+    set_glyph8(&mut font, 0xB8, glyph_box_single(false, true, true, false)); // ╕
+    set_glyph8(&mut font, 0xB9, glyph_box_single(true, true, true, false)); // ╣
+    set_glyph8(&mut font, 0xBA, glyph_box_double_vertical()); // ║
+    set_glyph8(&mut font, 0xBB, glyph_box_single(false, true, true, false)); // ╗
+    set_glyph8(&mut font, 0xBC, glyph_box_single(true, false, true, false)); // ╝
+    set_glyph8(&mut font, 0xBD, glyph_box_single(true, false, true, false)); // ╜
+    set_glyph8(&mut font, 0xBE, glyph_box_single(true, false, true, false)); // ╛
+
+    set_glyph8(&mut font, 0xC6, glyph_box_single(true, true, false, true)); // ╞
+    set_glyph8(&mut font, 0xC7, glyph_box_single(true, true, false, true)); // ╟
+    set_glyph8(&mut font, 0xC8, glyph_box_single(true, false, false, true)); // ╚
+    set_glyph8(&mut font, 0xC9, glyph_box_single(false, true, false, true)); // ╔
+    set_glyph8(&mut font, 0xCA, glyph_box_single(true, false, true, true)); // ╩
+    set_glyph8(&mut font, 0xCB, glyph_box_single(false, true, true, true)); // ╦
+    set_glyph8(&mut font, 0xCC, glyph_box_single(true, true, false, true)); // ╠
+    set_glyph8(&mut font, 0xCD, glyph_box_single(false, false, true, true)); // ═
+    set_glyph8(&mut font, 0xCE, glyph_box_single(true, true, true, true)); // ╬
+    set_glyph8(&mut font, 0xCF, glyph_box_single(true, false, true, true)); // ╧
+    set_glyph8(&mut font, 0xD0, glyph_box_single(true, false, true, true)); // ╨
+    set_glyph8(&mut font, 0xD1, glyph_box_single(false, true, true, true)); // ╤
+    set_glyph8(&mut font, 0xD2, glyph_box_single(false, true, true, true)); // ╥
+    set_glyph8(&mut font, 0xD3, glyph_box_single(true, false, false, true)); // ╙
+    set_glyph8(&mut font, 0xD4, glyph_box_single(true, false, false, true)); // ╘
+    set_glyph8(&mut font, 0xD5, glyph_box_single(false, true, false, true)); // ╒
+    set_glyph8(&mut font, 0xD6, glyph_box_single(false, true, false, true)); // ╓
+    set_glyph8(&mut font, 0xD7, glyph_box_single(true, true, true, true)); // ╫
+    set_glyph8(&mut font, 0xD8, glyph_box_single(true, true, true, true)); // ╪
+
+    // Block elements.
+    set_glyph8(&mut font, 0xDB, [0xFF; 8]); // █
+    set_glyph8(&mut font, 0xDC, glyph_block_lower_half()); // ▄
+    set_glyph8(&mut font, 0xDD, glyph_block_left_half()); // ▌
+    set_glyph8(&mut font, 0xDE, glyph_block_right_half()); // ▐
+    set_glyph8(&mut font, 0xDF, glyph_block_upper_half()); // ▀
+
     font
 }
 
-fn cp437_override_glyph(ch: u8) -> Option<[u8; 8]> {
-    // Minimal CP437 box-drawing / block-element overrides.
-    //
-    // The glyph art is intentionally simple: single-line and double-line box drawing characters are
-    // rendered using the same centered strokes. The goal is to avoid blank glyphs for common DOS UI
-    // characters rather than perfectly reproduce VGA ROM font aesthetics.
-    match ch {
-        // Light box drawing.
-        0xB3 => Some(box_draw_glyph(true, true, false, false)),  // │
-        0xB4 => Some(box_draw_glyph(true, true, true, false)),   // ┤
-        0xBF => Some(box_draw_glyph(false, true, true, false)),  // ┐
-        0xC0 => Some(box_draw_glyph(true, false, false, true)),  // └
-        0xC1 => Some(box_draw_glyph(true, false, true, true)),   // ┴
-        0xC2 => Some(box_draw_glyph(false, true, true, true)),   // ┬
-        0xC3 => Some(box_draw_glyph(true, true, false, true)),   // ├
-        0xC4 => Some(box_draw_glyph(false, false, true, true)),  // ─
-        0xC5 => Some(box_draw_glyph(true, true, true, true)),    // ┼
-
-        // Double-line and mixed box drawing. Rendered with the same simple strokes.
-        0xC6 => Some(box_draw_glyph(true, true, false, true)),   // ╞
-        0xC7 => Some(box_draw_glyph(true, true, false, true)),   // ╟
-        0xC8 => Some(box_draw_glyph(true, false, false, true)),  // ╚
-        0xC9 => Some(box_draw_glyph(false, true, false, true)),  // ╔
-        0xCA => Some(box_draw_glyph(true, false, true, true)),   // ╩
-        0xCB => Some(box_draw_glyph(false, true, true, true)),   // ╦
-        0xCC => Some(box_draw_glyph(true, true, false, true)),   // ╠
-        0xCD => Some(box_draw_glyph(false, false, true, true)),  // ═
-        0xCE => Some(box_draw_glyph(true, true, true, true)),    // ╬
-        0xCF => Some(box_draw_glyph(true, false, true, true)),   // ╧
-        0xD0 => Some(box_draw_glyph(true, false, true, true)),   // ╨
-        0xD1 => Some(box_draw_glyph(false, true, true, true)),   // ╤
-        0xD2 => Some(box_draw_glyph(false, true, true, true)),   // ╥
-        0xD3 => Some(box_draw_glyph(true, false, false, true)),  // ╙
-        0xD4 => Some(box_draw_glyph(true, false, false, true)),  // ╘
-        0xD5 => Some(box_draw_glyph(false, true, false, true)),  // ╒
-        0xD6 => Some(box_draw_glyph(false, true, false, true)),  // ╓
-        0xD7 => Some(box_draw_glyph(true, true, true, true)),    // ╫
-        0xD8 => Some(box_draw_glyph(true, true, true, true)),    // ╪
-        0xD9 => Some(box_draw_glyph(true, false, true, false)),  // ┘
-        0xDA => Some(box_draw_glyph(false, true, false, true)),  // ┌
-
-        // Block elements.
-        0xDB => Some([0xFF; 8]), // █
-        0xDC => Some([0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]), // ▄
-        0xDD => Some([0xF0; 8]), // ▌
-        0xDE => Some([0x0F; 8]), // ▐
-        0xDF => Some([0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]), // ▀
-        _ => None,
-    }
+fn set_glyph8(font: &mut [u8; 256 * 8], ch: u8, glyph: [u8; 8]) {
+    let base = usize::from(ch) * 8;
+    font[base..base + 8].copy_from_slice(&glyph);
 }
 
-fn box_draw_glyph(up: bool, down: bool, left: bool, right: bool) -> [u8; 8] {
-    // 8x8 glyph coordinates:
-    // - Rows are top-to-bottom.
-    // - Bits are MSB->LSB (left-to-right).
-    //
-    // We draw a 2-pixel-wide centered vertical stroke and a 1-pixel-high horizontal stroke,
-    // positioned so that the derived 8x16 font (each row duplicated) yields a 2-pixel-high
-    // horizontal line.
-    const V_BITS: u8 = 0x18; // columns 3 and 4
-    const H_ROW: usize = 3;
+fn glyph_box_single(up: bool, down: bool, left: bool, right: bool) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let h_row = 3usize;
+    let v_col = 3usize;
+    let v_bit = 1u8 << (7 - v_col);
+    let left_mask = 0xFFu8 << (7 - v_col);
+    let right_mask = 0xFFu8 >> v_col;
 
-    const H_LEFT: u8 = 0xF8; // columns 0..4
-    const H_RIGHT: u8 = 0x1F; // columns 3..7
-    const H_FULL: u8 = 0xFF;
-
-    let mut glyph = [0u8; 8];
-
-    if up || down {
-        let start = if up { 0 } else { H_ROW };
-        let end = if down { 7 } else { H_ROW };
-        for row in start..=end {
-            glyph[row] |= V_BITS;
+    for y in 0usize..8 {
+        let mut row = 0u8;
+        if (up && y <= h_row) || (down && y >= h_row) {
+            row |= v_bit;
         }
+        if y == h_row {
+            if left {
+                row |= left_mask;
+            }
+            if right {
+                row |= right_mask;
+            }
+        }
+        out[y] = row;
     }
 
-    if left || right {
-        let bits = match (left, right) {
-            (true, true) => H_FULL,
-            (true, false) => H_LEFT,
-            (false, true) => H_RIGHT,
-            (false, false) => 0,
-        };
-        glyph[H_ROW] |= bits;
-    }
+    out
+}
 
-    glyph
+fn glyph_box_double_vertical() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    let v_bits = 0x18u8; // bits 4 and 3
+    for row in &mut out {
+        *row = v_bits;
+    }
+    out
+}
+
+fn glyph_block_upper_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for row in &mut out[..4] {
+        *row = 0xFF;
+    }
+    out
+}
+
+fn glyph_block_lower_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for row in &mut out[4..] {
+        *row = 0xFF;
+    }
+    out
+}
+
+fn glyph_block_left_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for row in &mut out {
+        *row = 0xF0; // left 4 pixels
+    }
+    out
+}
+
+fn glyph_block_right_half() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for row in &mut out {
+        *row = 0x0F; // right 4 pixels
+    }
+    out
+}
+
+fn glyph_shade_light() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for (y, row) in out.iter_mut().enumerate() {
+        *row = if (y & 1) == 0 { 0x00 } else { 0x55 };
+    }
+    out
+}
+
+fn glyph_shade_medium() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for (y, row) in out.iter_mut().enumerate() {
+        *row = if (y & 1) == 0 { 0x55 } else { 0xAA };
+    }
+    out
+}
+
+fn glyph_shade_dark() -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for (y, row) in out.iter_mut().enumerate() {
+        *row = if (y & 1) == 0 { 0xFF } else { 0xAA };
+    }
+    out
 }

@@ -1170,7 +1170,6 @@ impl VgaDevice {
             // VGA register files are exposed as adjacent index/data port pairs. Multi-byte port
             // accesses (e.g. `inw`/`outw` on the index port) are handled by `PortIO::port_read`
             // reading consecutive bytes.
-
             // Sequencer.
             0x3C4 => self.sequencer_index,
             0x3C5 => self.read_sequencer_reg(self.sequencer_index),
@@ -1223,7 +1222,6 @@ impl VgaDevice {
             // VGA register files are exposed as adjacent index/data port pairs. Multi-byte port
             // accesses (e.g. `outw dx, ax` on the index port) are handled by `PortIO::port_write`
             // splitting the word into consecutive byte writes.
-
             // Sequencer.
             0x3C4 => self.sequencer_index = val,
             0x3C5 => {
