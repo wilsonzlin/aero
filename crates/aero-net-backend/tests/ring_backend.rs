@@ -197,6 +197,7 @@ fn ring_backend_transmit_counts_push_and_drop_reasons() {
             rx_dropped_oversize_bytes: 0,
             rx_corrupt: 0,
             rx_broken: false,
+            ..Default::default()
         }
     );
 
@@ -242,6 +243,7 @@ fn ring_backend_poll_receive_drops_oversize_frames_with_bounded_work() {
                 * 10,
             rx_corrupt: 0,
             rx_broken: false,
+            ..Default::default()
         }
     );
     assert_eq!(
