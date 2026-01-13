@@ -4,8 +4,8 @@ use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_IF};
 
 use super::{
     eltorito, ivt, pci::PciConfigSpace, rom, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus,
-    BlockDevice, ElToritoBootInfo, ElToritoBootMediaType, BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT,
-    EBDA_BASE,
+    BlockDevice, CdromDevice, DiskError, ElToritoBootInfo, ElToritoBootMediaType, BIOS_ALIAS_BASE,
+    BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
 };
 use crate::smbios::{SmbiosConfig, SmbiosTables};
 
@@ -15,6 +15,7 @@ impl Bios {
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
+        cdrom: Option<&mut dyn CdromDevice>,
         pci: Option<&mut dyn PciConfigSpace>,
     ) {
         // Reset transient POST state.
@@ -57,6 +58,12 @@ impl Bios {
 
         // 2) BDA/EBDA: reserve a 4KiB EBDA page below 1MiB and advertise base memory size.
         ivt::init_bda(bus, self.config.boot_drive);
+        // If a CD-ROM device is attached *in addition to* the primary HDD `disk` (via
+        // `post_with_cdrom`), ensure we still advertise HDD0 in the BDA even when the configured
+        // boot drive is a CD-ROM (0xE0..=0xEF).
+        if (0xE0..=0xEF).contains(&self.config.boot_drive) && cdrom.is_some() {
+            bus.write_u8(super::BDA_BASE + 0x75, 1);
+        }
         self.init(bus);
         // Initialize VGA text mode state (mode 03h) so software querying BDA/INT 10h gets sane
         // defaults without needing to explicitly set a mode first.
@@ -117,7 +124,7 @@ impl Bios {
         cpu.rflags |= RFLAGS_IF;
 
         // 9) Boot: load sector 0 to 0x7C00 and jump.
-        if let Err(msg) = self.boot(cpu, bus, disk) {
+        if let Err(msg) = self.boot(cpu, bus, disk, cdrom) {
             self.bios_panic(cpu, bus, msg);
         }
     }
@@ -167,8 +174,19 @@ impl Bios {
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
+        cdrom: Option<&mut dyn CdromDevice>,
     ) -> Result<(), &'static str> {
-        let (entry_cs, entry_ip) = self.boot_from_configured_device(cpu, bus, disk)?;
+        let boot_drive = self.config.boot_drive;
+        let (entry_cs, entry_ip) = if (0xE0..=0xEF).contains(&boot_drive) {
+            if let Some(cdrom) = cdrom {
+                let mut cd_disk = CdromAsBlockDevice::new(cdrom);
+                self.boot_from_configured_device(cpu, bus, &mut cd_disk)
+            } else {
+                self.boot_from_configured_device(cpu, bus, disk)
+            }
+        } else {
+            self.boot_from_configured_device(cpu, bus, disk)
+        }?;
 
         // Transfer control to the loaded boot image.
         set_real_mode_seg(&mut cpu.segments.cs, entry_cs);
@@ -230,6 +248,74 @@ impl Bios {
         Ok((entry.load_segment, 0x0000))
     }
 
+    pub(super) fn boot_eltorito_int19(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+    ) -> Result<(), &'static str> {
+        // INT 19h returns via the ROM-stub IRET, so we must construct an IRET frame that jumps to
+        // the El Torito boot image entrypoint.
+        const STACK_AFTER_IRET: u16 = 0x7C00;
+        const STACK_BEFORE_IRET: u16 = STACK_AFTER_IRET.wrapping_sub(6);
+
+        let parsed = eltorito::parse_boot_image(disk)?;
+        let entry = parsed.image;
+
+        // Refresh El Torito boot metadata so callers probing INT 13h AH=4Bh after a soft reboot see
+        // a consistent view of the active boot image.
+        self.el_torito_boot_info = Some(ElToritoBootInfo {
+            media_type: ElToritoBootMediaType::NoEmulation,
+            boot_drive: self.config.boot_drive,
+            controller_index: 0,
+            boot_catalog_lba: Some(parsed.boot_catalog_lba),
+            boot_image_lba: Some(entry.load_rba),
+            load_segment: Some(entry.load_segment),
+            sector_count: Some(entry.sector_count),
+        });
+
+        let start_lba = u64::from(entry.load_rba)
+            .checked_mul(4)
+            .ok_or("El Torito boot image load past end-of-image")?;
+        let count = u64::from(entry.sector_count);
+        let end_lba = start_lba
+            .checked_add(count)
+            .ok_or("El Torito boot image load past end-of-image")?;
+        if end_lba > disk.size_in_sectors() {
+            return Err("El Torito boot image load past end-of-image");
+        }
+
+        let dst = (u64::from(entry.load_segment)) << 4;
+        for i in 0..count {
+            let mut buf = [0u8; 512];
+            disk.read_sector(start_lba + i, &mut buf)
+                .map_err(|_| "Disk read error")?;
+            bus.write_physical(dst + i * 512, &buf);
+        }
+
+        // Register setup per BIOS conventions.
+        cpu.gpr[gpr::RAX] = 0;
+        cpu.gpr[gpr::RBX] = 0;
+        cpu.gpr[gpr::RCX] = 0;
+        cpu.gpr[gpr::RDX] = self.config.boot_drive as u64; // DL
+        cpu.gpr[gpr::RSI] = 0;
+        cpu.gpr[gpr::RDI] = 0;
+        cpu.gpr[gpr::RBP] = 0;
+
+        set_real_mode_seg(&mut cpu.segments.ss, 0x0000);
+        cpu.gpr[gpr::RSP] = STACK_BEFORE_IRET as u64;
+
+        set_real_mode_seg(&mut cpu.segments.ds, 0x0000);
+        set_real_mode_seg(&mut cpu.segments.es, 0x0000);
+
+        let frame_base = cpu.apply_a20(cpu.segments.ss.base.wrapping_add(STACK_BEFORE_IRET as u64));
+        bus.write_u16(frame_base, 0x0000); // IP
+        bus.write_u16(frame_base + 2, entry.load_segment); // CS
+        bus.write_u16(frame_base + 4, 0x0202); // IF=1 + reserved bit 1
+
+        Ok(())
+    }
+
     fn bios_diag(&mut self, bus: &mut dyn BiosBus, msg: &str) {
         // Record the message in the TTY buffer for programmatic inspection.
         self.push_tty_bytes(msg.as_bytes());
@@ -274,6 +360,48 @@ impl Bios {
             super::render_message_to_vga_text_line0(bus, msg);
         }));
         cpu.halted = true;
+    }
+}
+
+/// Adapter that presents a 2048-byte-sector [`CdromDevice`] as a 512-byte-sector [`BlockDevice`]
+/// by splitting each ISO block into 4 BIOS sectors.
+///
+/// This is used so the existing El Torito + INT 13h CD paths (which operate on 512-byte BIOS
+/// sectors) can be driven by a real ISO image without loading it into memory.
+struct CdromAsBlockDevice<'a> {
+    cdrom: &'a mut dyn CdromDevice,
+    cached_lba: Option<u64>,
+    cached: [u8; 2048],
+}
+
+impl<'a> CdromAsBlockDevice<'a> {
+    fn new(cdrom: &'a mut dyn CdromDevice) -> Self {
+        Self {
+            cdrom,
+            cached_lba: None,
+            cached: [0u8; 2048],
+        }
+    }
+}
+
+impl BlockDevice for CdromAsBlockDevice<'_> {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+        let iso_lba = lba / 4;
+        let sub = (lba % 4) as usize;
+        if iso_lba >= self.cdrom.size_in_sectors() {
+            return Err(DiskError::OutOfRange);
+        }
+        if self.cached_lba != Some(iso_lba) {
+            self.cdrom.read_sector(iso_lba, &mut self.cached)?;
+            self.cached_lba = Some(iso_lba);
+        }
+        let start = sub * 512;
+        buf.copy_from_slice(&self.cached[start..start + 512]);
+        Ok(())
+    }
+
+    fn size_in_sectors(&self) -> u64 {
+        self.cdrom.size_in_sectors().saturating_mul(4)
     }
 }
 

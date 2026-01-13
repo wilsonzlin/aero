@@ -792,7 +792,7 @@ mod tests {
         let mut disk = CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
 
         let err = parse_boot_image(&mut disk).unwrap_err();
-        assert_eq!(err, "Missing El Torito boot record");
+        assert_eq!(err, ERR_NO_BOOT_RECORD);
         assert_eq!(disk.reads, cap_reads);
     }
 
@@ -823,7 +823,7 @@ mod tests {
         let mut disk = CountingDisk::new(img, cap_reads + (BIOS_SECTORS_PER_ISO_BLOCK as usize) * 2);
 
         let err = parse_boot_image(&mut disk).unwrap_err();
-        assert_eq!(err, "Missing El Torito boot record");
+        assert_eq!(err, ERR_NO_BOOT_RECORD);
         assert_eq!(disk.reads, cap_reads);
     }
 }

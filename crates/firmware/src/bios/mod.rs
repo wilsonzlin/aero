@@ -195,6 +195,9 @@ pub(super) struct ElToritoBootInfo {
     pub(super) sector_count: Option<u16>,
 }
 
+/// ISO9660 / ATAPI CD-ROM sector size used by El Torito and INT 13h CD extensions.
+pub const CDROM_SECTOR_SIZE: usize = 2048;
+
 /// Minimal 512-byte-sector read interface used by the legacy BIOS INT 13h implementation.
 ///
 /// # Canonical trait note
@@ -221,7 +224,11 @@ pub trait BlockDevice {
 /// Keeping this as a separate trait makes the sector size contract explicit and prevents
 /// accidental mixing of 512-byte disk semantics with 2048-byte CD-ROM semantics.
 pub trait CdromDevice {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 2048]) -> Result<(), DiskError>;
+    fn read_sector(
+        &mut self,
+        lba: u64,
+        buf: &mut [u8; CDROM_SECTOR_SIZE],
+    ) -> Result<(), DiskError>;
 
     /// Total number of 2048-byte sectors addressable via `LBA` in [`CdromDevice::read_sector`].
     fn size_in_sectors(&self) -> u64;
@@ -273,8 +280,8 @@ pub struct InMemoryCdrom {
 
 impl InMemoryCdrom {
     pub fn new(mut data: Vec<u8>) -> Self {
-        if !data.len().is_multiple_of(2048) {
-            let new_len = (data.len() + 2047) & !2047;
+        if !data.len().is_multiple_of(CDROM_SECTOR_SIZE) {
+            let new_len = (data.len() + (CDROM_SECTOR_SIZE - 1)) & !(CDROM_SECTOR_SIZE - 1);
             data.resize(new_len, 0);
         }
         Self { data }
@@ -282,9 +289,17 @@ impl InMemoryCdrom {
 }
 
 impl CdromDevice for InMemoryCdrom {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 2048]) -> Result<(), DiskError> {
-        let start = lba.checked_mul(2048).ok_or(DiskError::OutOfRange)? as usize;
-        let end = start.checked_add(2048).ok_or(DiskError::OutOfRange)?;
+    fn read_sector(
+        &mut self,
+        lba: u64,
+        buf: &mut [u8; CDROM_SECTOR_SIZE],
+    ) -> Result<(), DiskError> {
+        let start = lba
+            .checked_mul(CDROM_SECTOR_SIZE as u64)
+            .ok_or(DiskError::OutOfRange)? as usize;
+        let end = start
+            .checked_add(CDROM_SECTOR_SIZE)
+            .ok_or(DiskError::OutOfRange)?;
         if end > self.data.len() {
             return Err(DiskError::OutOfRange);
         }
@@ -293,7 +308,7 @@ impl CdromDevice for InMemoryCdrom {
     }
 
     fn size_in_sectors(&self) -> u64 {
-        (self.data.len() / 2048) as u64
+        (self.data.len() / CDROM_SECTOR_SIZE) as u64
     }
 }
 
@@ -650,7 +665,7 @@ impl Bios {
     }
 
     pub fn post(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
-        self.post_with_pci(cpu, bus, disk, None);
+        self.post_with_pci_and_cdrom(cpu, bus, disk, None, None);
     }
 
     pub fn post_with_pci(
@@ -660,7 +675,28 @@ impl Bios {
         disk: &mut dyn BlockDevice,
         pci: Option<&mut dyn PciConfigSpace>,
     ) {
-        self.post_impl(cpu, bus, disk, pci);
+        self.post_with_pci_and_cdrom(cpu, bus, disk, None, pci);
+    }
+
+    pub fn post_with_cdrom(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+        cdrom: &mut dyn CdromDevice,
+    ) {
+        self.post_with_pci_and_cdrom(cpu, bus, disk, Some(cdrom), None);
+    }
+
+    pub fn post_with_pci_and_cdrom(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+        cdrom: Option<&mut dyn CdromDevice>,
+        pci: Option<&mut dyn PciConfigSpace>,
+    ) {
+        self.post_impl(cpu, bus, disk, cdrom, pci);
     }
 
     pub fn dispatch_interrupt(
@@ -672,6 +708,17 @@ impl Bios {
         cdrom: Option<&mut dyn CdromDevice>,
     ) {
         interrupts::dispatch_interrupt(self, vector, cpu, bus, disk, cdrom);
+    }
+
+    pub fn dispatch_interrupt_with_cdrom(
+        &mut self,
+        vector: u8,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+        cdrom: Option<&mut dyn CdromDevice>,
+    ) {
+        interrupts::dispatch_interrupt_with_cdrom(self, vector, cpu, bus, disk, cdrom);
     }
 
     pub fn set_acpi_builder(&mut self, builder: Box<dyn AcpiBuilder>) {

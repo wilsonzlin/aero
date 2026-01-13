@@ -783,6 +783,7 @@ impl PlatformInterrupts {
             lapic.inject_fixed_interrupt(vector);
         }
     }
+
     /// Reset a specific LAPIC's internal state back to its power-on baseline.
     ///
     /// This is used by machine-level INIT IPI delivery to reset the target vCPU's local APIC.

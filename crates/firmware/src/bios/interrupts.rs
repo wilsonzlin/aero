@@ -4,9 +4,10 @@ use aero_cpu_core::state::{
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    CdromDevice, ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_HEAD_OFFSET,
-    BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SEGMENT, DISKETTE_PARAM_TABLE_OFFSET,
-    EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET, KEYBOARD_QUEUE_CAPACITY,
+    CdromDevice, DiskError, ElToritoBootMediaType, CDROM_SECTOR_SIZE, BDA_BASE,
+    BDA_KEYBOARD_BUF_HEAD_OFFSET, BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SEGMENT,
+    DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET,
+    KEYBOARD_QUEUE_CAPACITY,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
@@ -24,7 +25,60 @@ pub struct E820Entry {
     pub extended_attributes: u32,
 }
 
+/// Adapter that presents a 2048-byte-sector [`CdromDevice`] as a 512-byte-sector [`BlockDevice`]
+/// by splitting each ISO block into 4 BIOS sectors.
+///
+/// This mirrors the El Torito + INT 13h CD logic, which operates on 512-byte sectors internally
+/// while exposing 2048-byte-sector LBAs to the guest for CD drives.
+struct CdromAsBlockDevice<'a> {
+    cdrom: &'a mut dyn CdromDevice,
+    cached_lba: Option<u64>,
+    cached: [u8; CDROM_SECTOR_SIZE],
+}
+
+impl<'a> CdromAsBlockDevice<'a> {
+    fn new(cdrom: &'a mut dyn CdromDevice) -> Self {
+        Self {
+            cdrom,
+            cached_lba: None,
+            cached: [0u8; CDROM_SECTOR_SIZE],
+        }
+    }
+}
+
+impl BlockDevice for CdromAsBlockDevice<'_> {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), DiskError> {
+        let iso_lba = lba / 4;
+        let sub = (lba % 4) as usize;
+        if iso_lba >= self.cdrom.size_in_sectors() {
+            return Err(DiskError::OutOfRange);
+        }
+        if self.cached_lba != Some(iso_lba) {
+            self.cdrom.read_sector(iso_lba, &mut self.cached)?;
+            self.cached_lba = Some(iso_lba);
+        }
+        let start = sub * 512;
+        buf.copy_from_slice(&self.cached[start..start + 512]);
+        Ok(())
+    }
+
+    fn size_in_sectors(&self) -> u64 {
+        self.cdrom.size_in_sectors().saturating_mul(4)
+    }
+}
+
 pub fn dispatch_interrupt(
+    bios: &mut Bios,
+    vector: u8,
+    cpu: &mut CpuState,
+    bus: &mut dyn BiosBus,
+    disk: &mut dyn BlockDevice,
+    cdrom: Option<&mut dyn CdromDevice>,
+) {
+    dispatch_interrupt_with_cdrom(bios, vector, cpu, bus, disk, cdrom);
+}
+
+pub fn dispatch_interrupt_with_cdrom(
     bios: &mut Bios,
     vector: u8,
     cpu: &mut CpuState,
@@ -54,8 +108,8 @@ pub fn dispatch_interrupt(
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
         0x17 => handle_int17(cpu, bus),
-        0x18 => handle_int18(bios, cpu, bus, disk),
-        0x19 => handle_int19(bios, cpu, bus, disk),
+        0x18 => handle_int18(bios, cpu, bus, disk, cdrom),
+        0x19 => handle_int19(bios, cpu, bus, disk, cdrom),
         0x1A => handle_int1a(bios, cpu, bus),
         _ => {
             // Safe default: do nothing and return.
@@ -239,11 +293,12 @@ fn handle_int18(
     cpu: &mut CpuState,
     bus: &mut dyn BiosBus,
     disk: &mut dyn BlockDevice,
+    cdrom: Option<&mut dyn CdromDevice>,
 ) {
     // ROM BASIC / boot failure fallback.
     //
     // When no ROM BASIC is present, many BIOSes chain INT 18h to INT 19h to retry boot.
-    handle_int19(bios, cpu, bus, disk);
+    handle_int19(bios, cpu, bus, disk, cdrom);
 }
 
 fn handle_int19(
@@ -251,6 +306,7 @@ fn handle_int19(
     cpu: &mut CpuState,
     bus: &mut dyn BiosBus,
     disk: &mut dyn BlockDevice,
+    cdrom: Option<&mut dyn CdromDevice>,
 ) {
     // Bootstrap loader.
     //
@@ -268,7 +324,19 @@ fn handle_int19(
 
     // Load the configured boot device (MBR or El Torito CD) into RAM and initialize registers,
     // matching POST's boot conventions.
-    let (entry_cs, entry_ip) = match bios.boot_from_configured_device(cpu, bus, disk) {
+    let boot_drive = bios.config.boot_drive;
+    let boot_result = if (0xE0..=0xEF).contains(&boot_drive) {
+        if let Some(cdrom) = cdrom {
+            let mut cd_disk = CdromAsBlockDevice::new(cdrom);
+            bios.boot_from_configured_device(cpu, bus, &mut cd_disk)
+        } else {
+            bios.boot_from_configured_device(cpu, bus, disk)
+        }
+    } else {
+        bios.boot_from_configured_device(cpu, bus, disk)
+    };
+
+    let (entry_cs, entry_ip) = match boot_result {
         Ok(v) => v,
         Err(msg) => {
             bios.bios_panic(cpu, bus, msg);
@@ -3625,7 +3693,7 @@ mod tests {
         let mut disk = InMemoryDisk::from_boot_sector(sector);
         let mut mem = TestMemory::new(2 * 1024 * 1024);
 
-        handle_int19(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int19(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert!(!cpu.halted);
         assert_eq!(cpu.rflags & FLAG_CF, 0);
@@ -3660,7 +3728,7 @@ mod tests {
         let mut disk = InMemoryDisk::from_boot_sector(sector);
         let mut mem = TestMemory::new(2 * 1024 * 1024);
 
-        handle_int18(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int18(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert!(!cpu.halted);
         assert_eq!(cpu.gpr[gpr::RSP] as u16, 0x7BFA);
