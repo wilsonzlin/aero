@@ -369,10 +369,6 @@ uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
     case kDxgiFormatR8G8B8A8UnormSrgb:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
-    case kDxgiFormatB5G6R5Unorm:
-      return AEROGPU_FORMAT_B5G6R5_UNORM;
-    case kDxgiFormatB5G5R5A1Unorm:
-      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
     case kDxgiFormatBc1Typeless:
     case kDxgiFormatBc1Unorm:
       return AEROGPU_FORMAT_BC1_RGBA_UNORM;
@@ -1059,8 +1055,16 @@ struct AeroGpuDevice {
 
 
   // Cached state.
-  AeroGpuResource* current_rtv = nullptr;
-  AeroGpuResource* current_dsv = nullptr;
+  //
+  // D3D10/10.1 supports multiple simultaneous render targets (MRT). Track the full RTV array so
+  // SetRenderTargets can faithfully bind >1 slot and so hazard resolution (SRV<->RTV aliasing)
+  // can operate on all bound slots.
+  uint32_t current_rtv_count = 0;
+  aerogpu_handle_t current_rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
+  AeroGpuResource* current_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
+
+  aerogpu_handle_t current_dsv = 0;
+  AeroGpuResource* current_dsv_res = nullptr;
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_input_layout = 0;
@@ -1149,8 +1153,10 @@ void track_current_state_allocs_for_submit_locked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
   }
-  track_resource_alloc_for_submit_locked(dev, dev->current_rtv);
-  track_resource_alloc_for_submit_locked(dev, dev->current_dsv);
+  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    track_resource_alloc_for_submit_locked(dev, dev->current_rtv_resources[i]);
+  }
+  track_resource_alloc_for_submit_locked(dev, dev->current_dsv_res);
   track_alloc_for_submit_locked(dev, dev->current_vb_alloc);
   track_alloc_for_submit_locked(dev, dev->current_ib_alloc);
 
@@ -1384,33 +1390,128 @@ bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevi
 
 bool emit_set_render_targets_locked(AeroGpuDevice* dev);
 
-bool set_render_targets_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpuResource* rtv_res, AeroGpuResource* dsv_res) {
+bool unbind_resource_from_outputs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, aerogpu_handle_t resource) {
+  if (!dev || resource == 0) {
+    return true;
+  }
+
+  bool changed = false;
+  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (dev->current_rtvs[i] == resource) {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+      changed = true;
+    }
+  }
+  if (dev->current_dsv == resource) {
+    dev->current_dsv = 0;
+    dev->current_dsv_res = nullptr;
+    changed = true;
+  }
+
+  if (!changed) {
+    return true;
+  }
+  if (!emit_set_render_targets_locked(dev)) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+    return false;
+  }
+  return true;
+}
+
+bool set_render_targets_locked(AeroGpuDevice* dev,
+                               D3D10DDI_HDEVICE hDevice,
+                               uint32_t rtv_count,
+                               AeroGpuResource* const* rtv_resources,
+                               AeroGpuResource* dsv_res) {
   if (!dev) {
     return false;
   }
 
-  const aerogpu_handle_t rtv_handle = rtv_res ? rtv_res->handle : 0;
+  const uint32_t count = std::min<uint32_t>(rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+
+  aerogpu_handle_t new_rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
+  AeroGpuResource* new_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
+  for (uint32_t i = 0; i < count; ++i) {
+    AeroGpuResource* res = rtv_resources ? rtv_resources[i] : nullptr;
+    new_rtv_resources[i] = res;
+    new_rtvs[i] = res ? res->handle : 0;
+  }
+
   const aerogpu_handle_t dsv_handle = dsv_res ? dsv_res->handle : 0;
-  if (!unbind_resource_from_srvs_locked(dev, hDevice, rtv_handle)) {
-    return false;
+
+  // D3D10/11 hazard rule: resources bound for output cannot simultaneously be bound as SRVs.
+  for (uint32_t i = 0; i < count; ++i) {
+    const aerogpu_handle_t handle = new_rtvs[i];
+    if (!handle) {
+      continue;
+    }
+    // Avoid redundant scans when the same resource appears multiple times.
+    bool seen = false;
+    for (uint32_t j = 0; j < i; ++j) {
+      if (new_rtvs[j] == handle) {
+        seen = true;
+        break;
+      }
+    }
+    if (seen) {
+      continue;
+    }
+    if (!unbind_resource_from_srvs_locked(dev, hDevice, handle)) {
+      return false;
+    }
   }
-  if (dsv_handle != rtv_handle && !unbind_resource_from_srvs_locked(dev, hDevice, dsv_handle)) {
-    return false;
+  if (dsv_handle) {
+    bool dsv_seen = false;
+    for (uint32_t i = 0; i < count; ++i) {
+      if (new_rtvs[i] == dsv_handle) {
+        dsv_seen = true;
+        break;
+      }
+    }
+    if (!dsv_seen && !unbind_resource_from_srvs_locked(dev, hDevice, dsv_handle)) {
+      return false;
+    }
   }
 
-  AeroGpuResource* prev_rtv = dev->current_rtv;
-  AeroGpuResource* prev_dsv = dev->current_dsv;
+  const uint32_t prev_count = dev->current_rtv_count;
+  aerogpu_handle_t prev_rtvs[AEROGPU_MAX_RENDER_TARGETS];
+  AeroGpuResource* prev_rtv_resources[AEROGPU_MAX_RENDER_TARGETS];
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    prev_rtvs[i] = dev->current_rtvs[i];
+    prev_rtv_resources[i] = dev->current_rtv_resources[i];
+  }
+  const aerogpu_handle_t prev_dsv = dev->current_dsv;
+  AeroGpuResource* prev_dsv_res = dev->current_dsv_res;
 
-  dev->current_rtv = rtv_res;
-  dev->current_dsv = dsv_res;
+  dev->current_rtv_count = count;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (i < count) {
+      dev->current_rtvs[i] = new_rtvs[i];
+      dev->current_rtv_resources[i] = new_rtv_resources[i];
+    } else {
+      dev->current_rtvs[i] = 0;
+      dev->current_rtv_resources[i] = nullptr;
+    }
+  }
+  dev->current_dsv = dsv_handle;
+  dev->current_dsv_res = dsv_res;
+
   if (!emit_set_render_targets_locked(dev)) {
-    dev->current_rtv = prev_rtv;
+    dev->current_rtv_count = prev_count;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+      dev->current_rtvs[i] = prev_rtvs[i];
+      dev->current_rtv_resources[i] = prev_rtv_resources[i];
+    }
     dev->current_dsv = prev_dsv;
+    dev->current_dsv_res = prev_dsv_res;
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return false;
   }
 
-  track_resource_alloc_for_submit_locked(dev, rtv_res);
+  for (uint32_t i = 0; i < count; ++i) {
+    track_resource_alloc_for_submit_locked(dev, new_rtv_resources[i]);
+  }
   track_resource_alloc_for_submit_locked(dev, dsv_res);
   return true;
 }
@@ -1534,19 +1635,29 @@ bool emit_set_render_targets_locked(AeroGpuDevice* dev) {
     return false;
   }
 
-  const aerogpu_handle_t rtv_handle = dev->current_rtv ? dev->current_rtv->handle : 0;
-  const aerogpu_handle_t dsv_handle = dev->current_dsv ? dev->current_dsv->handle : 0;
+  // Keep cached handles in sync with the resource pointers. This matters for
+  // RotateResourceIdentities, which swaps the underlying handle identity while
+  // keeping the same Resource* pointers live in the runtime.
+  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    dev->current_rtvs[i] = dev->current_rtv_resources[i] ? dev->current_rtv_resources[i]->handle : 0;
+  }
+  for (uint32_t i = dev->current_rtv_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    dev->current_rtvs[i] = 0;
+  }
+  dev->current_dsv = dev->current_dsv_res ? dev->current_dsv_res->handle : 0;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!cmd) {
     return false;
   }
-  cmd->color_count = 1;
-  cmd->depth_stencil = dsv_handle;
+  cmd->color_count = dev->current_rtv_count;
+  cmd->depth_stencil = dev->current_dsv;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     cmd->colors[i] = 0;
   }
-  cmd->colors[0] = rtv_handle;
+  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    cmd->colors[i] = dev->current_rtvs[i];
+  }
   return true;
 }
 
@@ -2013,6 +2124,30 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     return;
   }
 
+  // Ensure the device state does not retain dangling pointers after the
+  // resource is destroyed (portable build does not have runtime-managed
+  // refcounting to prevent this).
+  const aerogpu_handle_t handle = res->handle;
+  bool rt_changed = false;
+  for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (dev->current_rtv_resources[i] == res || dev->current_rtvs[i] == handle) {
+      dev->current_rtv_resources[i] = nullptr;
+      dev->current_rtvs[i] = 0;
+      rt_changed = true;
+    }
+  }
+  if (dev->current_dsv_res == res || dev->current_dsv == handle) {
+    dev->current_dsv_res = nullptr;
+    dev->current_dsv = 0;
+    rt_changed = true;
+  }
+  if (rt_changed && !emit_set_render_targets_locked(dev)) {
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  }
+  if (handle && !unbind_resource_from_srvs_locked(dev, hDevice, handle)) {
+    // Best-effort: keep going with destroy, but surface the error.
+    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  }
 
   if (res->handle != kInvalidHandle) {
     // NOTE: For now we emit DESTROY_RESOURCE for both original resources and
@@ -4293,13 +4428,15 @@ void AEROGPU_APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTH
 }
 
 void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
-                                       D3D10DDI_HRENDERTARGETVIEW hRtv,
+                                       uint32_t num_views,
+                                       const D3D10DDI_HRENDERTARGETVIEW* ph_views,
                                        D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
   AEROGPU_D3D10_11_LOG_CALL();
-  AEROGPU_D3D10_TRACEF_VERBOSE("SetRenderTargets hDevice=%p hRtv=%p hDsv=%p",
-                               hDevice.pDrvPrivate,
-                               hRtv.pDrvPrivate,
-                               hDsv.pDrvPrivate);
+  AEROGPU_D3D10_TRACEF_VERBOSE("SetRenderTargets hDevice=%p num_views=%u rtv0=%p hDsv=%p",
+                                hDevice.pDrvPrivate,
+                                static_cast<unsigned>(num_views),
+                                (ph_views && num_views) ? ph_views[0].pDrvPrivate : nullptr,
+                                hDsv.pDrvPrivate);
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -4310,16 +4447,25 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  AeroGpuResource* rtv_res = nullptr;
-  AeroGpuResource* dsv_res = nullptr;
-  if (hRtv.pDrvPrivate) {
-    rtv_res = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv)->resource;
+  if (num_views != 0 && !ph_views) {
+    ReportDeviceErrorLocked(dev, hDevice, E_INVALIDARG);
+    return;
   }
+
+  const uint32_t count = std::min<uint32_t>(num_views, AEROGPU_MAX_RENDER_TARGETS);
+  AeroGpuResource* rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
+  for (uint32_t i = 0; i < count; ++i) {
+    if (ph_views && ph_views[i].pDrvPrivate) {
+      rtvs[i] = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(ph_views[i])->resource;
+    }
+  }
+
+  AeroGpuResource* dsv_res = nullptr;
   if (hDsv.pDrvPrivate) {
     dsv_res = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->resource;
   }
 
-  if (!set_render_targets_locked(dev, hDevice, rtv_res, dsv_res)) {
+  if (!set_render_targets_locked(dev, hDevice, count, (count ? rtvs : nullptr), dsv_res)) {
     return;
   }
 }
@@ -4827,23 +4973,16 @@ void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     count = kMaxShaderResourceSlots - start_slot;
   }
 
-  AeroGpuResource* new_rtv = dev->current_rtv;
-  AeroGpuResource* new_dsv = dev->current_dsv;
+  // D3D10/11 hazard rule: resources bound as SRVs cannot simultaneously be bound
+  // as render targets / depth-stencil outputs. Unbind any aliased outputs before
+  // installing the SRVs.
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_handle_t tex = 0;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
       tex = view ? view->texture : 0;
     }
-    if (tex && new_rtv && tex == new_rtv->handle) {
-      new_rtv = nullptr;
-    }
-    if (tex && new_dsv && tex == new_dsv->handle) {
-      new_dsv = nullptr;
-    }
-  }
-  if (new_rtv != dev->current_rtv || new_dsv != dev->current_dsv) {
-    if (!set_render_targets_locked(dev, hDevice, new_rtv, new_dsv)) {
+    if (tex && !unbind_resource_from_outputs_locked(dev, hDevice, tex)) {
       return;
     }
   }
@@ -4890,23 +5029,16 @@ void AEROGPU_APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice,
     count = kMaxShaderResourceSlots - start_slot;
   }
 
-  AeroGpuResource* new_rtv = dev->current_rtv;
-  AeroGpuResource* new_dsv = dev->current_dsv;
+  // D3D10/11 hazard rule: resources bound as SRVs cannot simultaneously be bound
+  // as render targets / depth-stencil outputs. Unbind any aliased outputs before
+  // installing the SRVs.
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_handle_t tex = 0;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
       tex = view ? view->texture : 0;
     }
-    if (tex && new_rtv && tex == new_rtv->handle) {
-      new_rtv = nullptr;
-    }
-    if (tex && new_dsv && tex == new_dsv->handle) {
-      new_dsv = nullptr;
-    }
-  }
-  if (new_rtv != dev->current_rtv || new_dsv != dev->current_dsv) {
-    if (!set_render_targets_locked(dev, hDevice, new_rtv, new_dsv)) {
+    if (tex && !unbind_resource_from_outputs_locked(dev, hDevice, tex)) {
       return;
     }
   }
@@ -5325,8 +5457,17 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
   // command so the next frame targets the new backbuffer identity.
   bool needs_rebind = false;
   for (AeroGpuResource* r : resources) {
-    if (dev->current_rtv == r || dev->current_dsv == r) {
+    if (dev->current_dsv_res == r) {
       needs_rebind = true;
+      break;
+    }
+    for (uint32_t slot = 0; slot < dev->current_rtv_count && slot < AEROGPU_MAX_RENDER_TARGETS; ++slot) {
+      if (dev->current_rtv_resources[slot] == r) {
+        needs_rebind = true;
+        break;
+      }
+    }
+    if (needs_rebind) {
       break;
     }
   }

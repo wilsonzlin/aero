@@ -147,10 +147,6 @@ inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
       return AEROGPU_FORMAT_R8G8B8A8_UNORM;
     case kDxgiFormatR8G8B8A8UnormSrgb:
       return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
-    case kDxgiFormatB5G6R5Unorm:
-      return AEROGPU_FORMAT_B5G6R5_UNORM;
-    case kDxgiFormatB5G5R5A1Unorm:
-      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
     case kDxgiFormatBc1Typeless:
     case kDxgiFormatBc1Unorm:
       return AEROGPU_FORMAT_BC1_RGBA_UNORM;

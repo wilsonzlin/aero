@@ -1,0 +1,354 @@
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+#include "aerogpu_d3d10_11_umd.h"
+#include "aerogpu_cmd.h"
+
+namespace {
+
+constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
+
+// D3D11_BIND_* subset (numeric values from d3d11.h).
+constexpr uint32_t kD3D11BindRenderTarget = 0x20;
+
+bool Check(bool cond, const char* msg) {
+  if (!cond) {
+    std::fprintf(stderr, "FAIL: %s\n", msg);
+    return false;
+  }
+  return true;
+}
+
+struct CmdLoc {
+  const aerogpu_cmd_hdr* hdr = nullptr;
+  size_t offset = 0;
+};
+
+bool ValidateStream(const uint8_t* buf, size_t len) {
+  if (!Check(buf != nullptr, "stream buffer must be non-null")) {
+    return false;
+  }
+  if (!Check(len >= sizeof(aerogpu_cmd_stream_header), "stream must contain header")) {
+    return false;
+  }
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
+  if (!Check(stream->magic == AEROGPU_CMD_STREAM_MAGIC, "stream magic")) {
+    return false;
+  }
+  if (!Check(stream->abi_version == AEROGPU_ABI_VERSION_U32, "stream abi_version")) {
+    return false;
+  }
+  if (!Check(stream->flags == AEROGPU_CMD_STREAM_FLAG_NONE, "stream flags")) {
+    return false;
+  }
+  if (!Check(stream->size_bytes >= sizeof(aerogpu_cmd_stream_header), "stream size_bytes >= header")) {
+    return false;
+  }
+  if (!Check(stream->size_bytes <= len, "stream size_bytes within buffer")) {
+    return false;
+  }
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = static_cast<size_t>(stream->size_bytes);
+  while (offset < stream_len) {
+    if (!Check(stream_len - offset >= sizeof(aerogpu_cmd_hdr), "packet header fits")) {
+      return false;
+    }
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (!Check(hdr->size_bytes >= sizeof(aerogpu_cmd_hdr), "packet size >= header")) {
+      return false;
+    }
+    if (!Check((hdr->size_bytes & 3u) == 0, "packet size 4-byte aligned")) {
+      return false;
+    }
+    if (!Check(hdr->size_bytes <= stream_len - offset, "packet within stream")) {
+      return false;
+    }
+    offset += hdr->size_bytes;
+  }
+  return Check(offset == stream_len, "parser consumed stream");
+}
+
+CmdLoc FindLastOpcode(const uint8_t* buf, size_t len, uint32_t opcode) {
+  CmdLoc loc{};
+  if (!buf || len < sizeof(aerogpu_cmd_stream_header)) {
+    return loc;
+  }
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
+  const size_t stream_len = (stream->size_bytes >= sizeof(aerogpu_cmd_stream_header) && stream->size_bytes <= len)
+                                ? static_cast<size_t>(stream->size_bytes)
+                                : len;
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == opcode) {
+      loc.hdr = hdr;
+      loc.offset = offset;
+    }
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_hdr) || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return loc;
+}
+
+std::vector<aerogpu_handle_t> CollectCreateTexture2DHandles(const uint8_t* buf, size_t len) {
+  std::vector<aerogpu_handle_t> handles;
+  if (!buf || len < sizeof(aerogpu_cmd_stream_header)) {
+    return handles;
+  }
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
+  const size_t stream_len = (stream->size_bytes >= sizeof(aerogpu_cmd_stream_header) && stream->size_bytes <= len)
+                                ? static_cast<size_t>(stream->size_bytes)
+                                : len;
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_CREATE_TEXTURE2D) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(hdr);
+      handles.push_back(cmd->texture_handle);
+    }
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_hdr) || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return handles;
+}
+
+struct Harness {
+  std::vector<uint8_t> last_stream;
+  std::vector<HRESULT> errors;
+
+  static HRESULT AEROGPU_APIENTRY SubmitCmdStream(void* user,
+                                                  const void* cmd_stream,
+                                                  uint32_t cmd_stream_size_bytes,
+                                                  const AEROGPU_WDDM_ALLOCATION_HANDLE*,
+                                                  uint32_t,
+                                                  uint64_t* out_fence) {
+    if (!user || !cmd_stream || cmd_stream_size_bytes < sizeof(aerogpu_cmd_stream_header)) {
+      return E_INVALIDARG;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    const auto* bytes = reinterpret_cast<const uint8_t*>(cmd_stream);
+    h->last_stream.assign(bytes, bytes + cmd_stream_size_bytes);
+    if (out_fence) {
+      *out_fence = 0;
+    }
+    return S_OK;
+  }
+
+  static void AEROGPU_APIENTRY SetError(void* user, HRESULT hr) {
+    if (!user) {
+      return;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    h->errors.push_back(hr);
+  }
+};
+
+struct TestDevice {
+  D3D10DDI_ADAPTERFUNCS adapter_funcs{};
+  AEROGPU_D3D10_11_DEVICEFUNCS device_funcs{};
+  AEROGPU_D3D10_11_DEVICECALLBACKS callbacks{};
+  Harness harness;
+
+  D3D10DDI_HADAPTER hAdapter{};
+  D3D10DDI_HDEVICE hDevice{};
+  std::vector<uint8_t> device_mem;
+};
+
+struct TestResource {
+  D3D10DDI_HRESOURCE hResource{};
+  std::vector<uint8_t> storage;
+};
+
+struct TestRtv {
+  D3D10DDI_HRENDERTARGETVIEW hRtv{};
+  std::vector<uint8_t> storage;
+};
+
+bool CreateDevice(TestDevice* out) {
+  if (!out) {
+    return false;
+  }
+  out->callbacks.pUserContext = &out->harness;
+  out->callbacks.pfnSubmitCmdStream = &Harness::SubmitCmdStream;
+  out->callbacks.pfnSetError = &Harness::SetError;
+
+  D3D10DDIARG_OPENADAPTER open{};
+  open.pAdapterFuncs = &out->adapter_funcs;
+  HRESULT hr = OpenAdapter10(&open);
+  if (!Check(hr == S_OK, "OpenAdapter10")) {
+    return false;
+  }
+  out->hAdapter = open.hAdapter;
+
+  D3D10DDIARG_CREATEDEVICE create{};
+  create.hDevice.pDrvPrivate = nullptr;
+  const SIZE_T dev_size = out->adapter_funcs.pfnCalcPrivateDeviceSize(out->hAdapter, &create);
+  if (!Check(dev_size >= sizeof(void*), "CalcPrivateDeviceSize returned non-trivial size")) {
+    return false;
+  }
+  out->device_mem.assign(static_cast<size_t>(dev_size), 0);
+  create.hDevice.pDrvPrivate = out->device_mem.data();
+  create.pDeviceFuncs = &out->device_funcs;
+  create.pDeviceCallbacks = &out->callbacks;
+
+  hr = out->adapter_funcs.pfnCreateDevice(out->hAdapter, &create);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  out->hDevice = create.hDevice;
+  return true;
+}
+
+bool CreateRenderTargetTexture2D(TestDevice* dev, uint32_t width, uint32_t height, TestResource* out) {
+  if (!dev || !out) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATERESOURCE desc{};
+  desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
+  desc.BindFlags = kD3D11BindRenderTarget;
+  desc.MiscFlags = 0;
+  desc.Usage = AEROGPU_D3D11_USAGE_DEFAULT;
+  desc.CPUAccessFlags = 0;
+  desc.Width = width;
+  desc.Height = height;
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = kDxgiFormatB8G8R8A8Unorm;
+  desc.pInitialData = nullptr;
+  desc.InitialDataCount = 0;
+  desc.SampleDescCount = 1;
+  desc.SampleDescQuality = 0;
+  desc.ResourceFlags = 0;
+
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateResourceSize(dev->hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned non-trivial size")) {
+    return false;
+  }
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hResource.pDrvPrivate = out->storage.data();
+
+  const HRESULT hr = dev->device_funcs.pfnCreateResource(dev->hDevice, &desc, out->hResource);
+  return Check(hr == S_OK, "CreateResource(tex2d render target)");
+}
+
+bool CreateRTV(TestDevice* dev, const TestResource* res, TestRtv* out) {
+  if (!dev || !res || !out) {
+    return false;
+  }
+  AEROGPU_DDIARG_CREATERENDERTARGETVIEW desc{};
+  desc.hResource = res->hResource;
+
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateRTVSize(dev->hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateRTVSize returned non-trivial size")) {
+    return false;
+  }
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hRtv.pDrvPrivate = out->storage.data();
+
+  const HRESULT hr = dev->device_funcs.pfnCreateRTV(dev->hDevice, &desc, out->hRtv);
+  return Check(hr == S_OK, "CreateRTV");
+}
+
+bool TestSetRenderTargetsEncodesMrtAndClamps() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  // Create more than the protocol max so we can validate clamping to
+  // AEROGPU_MAX_RENDER_TARGETS.
+  constexpr uint32_t kRequestedRtvs = AEROGPU_MAX_RENDER_TARGETS + 1;
+  std::vector<TestResource> textures(kRequestedRtvs);
+  std::vector<TestRtv> rtvs(kRequestedRtvs);
+
+  for (uint32_t i = 0; i < kRequestedRtvs; ++i) {
+    if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &textures[i])) {
+      return false;
+    }
+    if (!CreateRTV(&dev, &textures[i], &rtvs[i])) {
+      return false;
+    }
+  }
+
+  std::vector<D3D10DDI_HRENDERTARGETVIEW> rtv_handles;
+  rtv_handles.reserve(kRequestedRtvs);
+  for (const auto& r : rtvs) {
+    rtv_handles.push_back(r.hRtv);
+  }
+
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice,
+                                       kRequestedRtvs,
+                                       rtv_handles.data(),
+                                       null_dsv);
+
+  const HRESULT flush_hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(flush_hr == S_OK, "Flush")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured")) {
+    return false;
+  }
+  const uint8_t* buf = dev.harness.last_stream.data();
+  const size_t len = dev.harness.last_stream.size();
+  if (!ValidateStream(buf, len)) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created = CollectCreateTexture2DHandles(buf, len);
+  if (!Check(created.size() >= kRequestedRtvs, "captured CREATE_TEXTURE2D handles")) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+
+  if (!Check(set_rt->color_count == AEROGPU_MAX_RENDER_TARGETS, "SET_RENDER_TARGETS color_count clamped to 8")) {
+    return false;
+  }
+  if (!Check(set_rt->depth_stencil == 0, "SET_RENDER_TARGETS depth_stencil == 0")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == created[i], "SET_RENDER_TARGETS colors[i] matches created texture handle")) {
+      return false;
+    }
+  }
+
+  for (uint32_t i = 0; i < kRequestedRtvs; ++i) {
+    dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtvs[i].hRtv);
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, textures[i].hResource);
+  }
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+} // namespace
+
+int main() {
+  bool ok = true;
+  ok &= TestSetRenderTargetsEncodesMrtAndClamps();
+  if (!ok) {
+    return 1;
+  }
+  std::fprintf(stderr, "PASS: aerogpu_d3d10_11_mrt_tests\n");
+  return 0;
+}
+

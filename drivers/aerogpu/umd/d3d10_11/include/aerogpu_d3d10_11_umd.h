@@ -626,8 +626,11 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CREATEDEPTHSTENCILSTATE)(D3D10D
                                                                           D3D10DDI_HDEPTHSTENCILSTATE);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_DESTROYDEPTHSTENCILSTATE)(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE);
 
+// Mirrors the Win7 D3D10 DDI `pfnSetRenderTargets` shape: an array of RTVs plus a DSV.
+// `num_views` is clamped by the UMD to `AEROGPU_MAX_RENDER_TARGETS` (8).
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SETRENDERTARGETS)(D3D10DDI_HDEVICE,
-                                                                 D3D10DDI_HRENDERTARGETVIEW,
+                                                                 uint32_t num_views,
+                                                                 const D3D10DDI_HRENDERTARGETVIEW* ph_views,
                                                                  D3D10DDI_HDEPTHSTENCILVIEW);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARRTV)(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW, const float[4]);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_CLEARDSV)(D3D10DDI_HDEVICE,
