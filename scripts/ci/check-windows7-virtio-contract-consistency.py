@@ -410,6 +410,44 @@ def parse_inf_model_entries(path: Path) -> list[InfModelEntry]:
     return entries
 
 
+def parse_inf_string_keys(path: Path) -> set[str]:
+    """
+    Extract the set of keys defined in the INF's [Strings] section.
+
+    This is intentionally a minimal parser: it is only used for CI drift checks
+    (we just need to know whether a %Token% referenced by a model line is
+    actually defined).
+    """
+
+    text = read_text(path)
+    keys: set[str] = set()
+    current_section: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(";"):
+            continue
+        if ";" in line:
+            line = line.split(";", 1)[0].rstrip()
+            if not line:
+                continue
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
+        if m:
+            current_section = m.group("section").strip()
+            continue
+        if current_section is None:
+            continue
+        if not current_section.lower().startswith("strings"):
+            continue
+        if "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key:
+            keys.add(key.lower())
+    return keys
+
+
 _PCI_HARDWARE_ID_RE = re.compile(r"^PCI\\VEN_(?P<ven>[0-9A-Fa-f]{4})&DEV_(?P<dev>[0-9A-Fa-f]{4})")
 
 
@@ -2377,6 +2415,7 @@ def main() -> None:
         # DeviceDesc strings for each function so they appear separately in Device Manager.
         if device_name == "virtio-input":
             model_entries = parse_inf_model_entries(inf_path)
+            string_keys = parse_inf_string_keys(inf_path)
             by_section: dict[str, list[InfModelEntry]] = {}
             for e in model_entries:
                 by_section.setdefault(e.section.lower(), []).append(e)
@@ -2459,6 +2498,18 @@ def main() -> None:
                             [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
                         )
                     )
+
+                for entry in (kb_entry, ms_entry, fb_entry):
+                    desc = entry.device_desc.strip()
+                    if desc.startswith("%") and desc.endswith("%") and len(desc) > 2:
+                        token = desc[1:-1].strip()
+                        if token and token.lower() not in string_keys:
+                            errors.append(
+                                format_error(
+                                    f"{inf_path.as_posix()}: model entry references undefined [Strings] token {desc!r}:",
+                                    [entry.raw_line],
+                                )
+                            )
 
     if errors:
         print("\n\n".join(errors), file=sys.stderr)
