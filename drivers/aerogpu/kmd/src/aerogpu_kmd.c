@@ -2816,6 +2816,17 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         }
 
         /*
+         * Disable OS-level interrupt delivery while restoring device state so
+         * we don't race ISR/DPC paths with partially-restored MMIO bookkeeping.
+         *
+         * StopDevice performs a full unregister; SetPowerState is a lighter
+         * weight transition that keeps the ISR registered.
+         */
+        if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbDisableInterrupt) {
+            adapter->DxgkInterface.DxgkCbDisableInterrupt(adapter->StartInfo.hDxgkHandle);
+        }
+
+        /*
          * Disable IRQs before resetting ring state to avoid racing ISR/DPC paths
          * with partially-restored bookkeeping.
          */
@@ -3041,6 +3052,11 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
         }
 
+        /* Re-enable OS-level interrupt delivery now that state is restored. */
+        if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbEnableInterrupt) {
+            adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
+        }
+
         return STATUS_SUCCESS;
     }
 
@@ -3049,6 +3065,11 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
 
     if (!adapter->Bar0) {
         return STATUS_SUCCESS;
+    }
+
+    /* Disable OS-level interrupt delivery first to minimize ISR races during teardown. */
+    if (adapter->InterruptRegistered && adapter->DxgkInterface.DxgkCbDisableInterrupt) {
+        adapter->DxgkInterface.DxgkCbDisableInterrupt(adapter->StartInfo.hDxgkHandle);
     }
 
     /*
