@@ -485,6 +485,39 @@ func TestICEEndpoint_TURNRESTInjectsCredentials(t *testing.T) {
 	}
 }
 
+func TestICEEndpoint_NoStoreOnInternalError(t *testing.T) {
+	// Use an intentionally invalid TURN REST config (TTLSeconds=0) to force the
+	// /webrtc/ice handler down its internal error path. Even though this config
+	// is rejected by config.Load in production, the endpoint still must set
+	// no-store headers for *any* error response.
+	cfg := config.Config{
+		ListenAddr:      "127.0.0.1:0",
+		LogFormat:       config.LogFormatText,
+		LogLevel:        slog.LevelInfo,
+		ShutdownTimeout: 2 * time.Second,
+		Mode:            config.ModeDev,
+		AuthMode:        config.AuthModeNone,
+		TURNREST: config.TurnRESTConfig{
+			SharedSecret:   "shared-secret",
+			TTLSeconds:     0, // invalid: must be >0
+			UsernamePrefix: "aero",
+		},
+	}
+
+	baseURL := startTestServer(t, cfg, nil)
+
+	resp, err := http.Get(baseURL + "/webrtc/ice")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.StatusCode)
+	}
+	assertICENoStoreHeaders(t, resp)
+}
+
 func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:0",
@@ -692,6 +725,17 @@ func TestReadyzFailsOnInvalidICEConfig(t *testing.T) {
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", resp.StatusCode)
 	}
+
+	// /webrtc/ice should also fail with a 503 (and must still be non-cacheable).
+	resp2, err := http.Get(baseURL + "/webrtc/ice")
+	if err != nil {
+		t.Fatalf("get /webrtc/ice: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected /webrtc/ice 503, got %d", resp2.StatusCode)
+	}
+	assertICENoStoreHeaders(t, resp2)
 }
 
 func TestRequestIDMiddleware(t *testing.T) {

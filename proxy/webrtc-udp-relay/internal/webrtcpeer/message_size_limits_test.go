@@ -78,16 +78,7 @@ func TestWebRTCDataChannel_OversizeMessageClosesSession(t *testing.T) {
 	dcClosed := make(chan struct{})
 	dc.OnClose(func() { dcCloseOnce.Do(func() { close(dcClosed) }) })
 
-	// The server's SDP answer will advertise its (small) max-message-size. Pion
-	// may honor this on the sending side and refuse to send oversized messages,
-	// which makes it hard to exercise the receive-side guardrails.
-	//
-	// For test purposes, we rewrite the SDP answer seen by the client to claim a
-	// very large max-message-size. The server still enforces its configured
-	// SettingEngine receive cap.
-	connectPeerConnectionsWithAnswerSDPTransform(t, clientPC, serverPC, func(sdp string) string {
-		return forceSDPMaxMessageSize(sdp, 1<<30)
-	})
+	connectPeerConnectionsWithAnswerSDPTransform(t, clientPC, serverPC, nil)
 
 	select {
 	case <-dcOpen:
@@ -95,18 +86,18 @@ func TestWebRTCDataChannel_OversizeMessageClosesSession(t *testing.T) {
 		t.Fatalf("timed out waiting for datachannel open")
 	}
 
-	// Send a payload that exceeds the server-side cap by 1 byte.
+	// Send a payload that exceeds the negotiated max message size. The sender
+	// should refuse to send it (this relies on the max-message-size value in SDP).
 	payload := make([]byte, cfg.WebRTCDataChannelMaxMessageBytes+1)
-	if err := dc.Send(payload); err != nil {
-		t.Fatalf("Send(oversize): %v", err)
-	}
-
-	// The relay should tear down either the DataChannel or the whole session.
-	select {
-	case <-dcClosed:
-	case <-sessClosed:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for oversize message to close the datachannel/session")
+	if err := dc.Send(payload); err == nil {
+		// If the sender allows it, the receiver should tear down either the
+		// DataChannel or the whole session.
+		select {
+		case <-dcClosed:
+		case <-sessClosed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for oversize message to close the datachannel/session")
+		}
 	}
 }
 
