@@ -118,6 +118,28 @@ fn decode_relative_constant_addressing() {
 }
 
 #[test]
+fn decode_mova_pixel_shader_dest_is_addr() {
+    // ps_3_0 mova a0.x, c0
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        opcode_token(46, 2),
+        dst_token(3, 0, 0x1),      // a0.x (regtype 3)
+        src_token(2, 0, 0xE4, 0),  // c0
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let mova = &shader.instructions[0];
+    assert_eq!(mova.opcode, Opcode::Mova);
+    let dst = match &mova.operands[0] {
+        Operand::Dst(dst) => dst,
+        _ => panic!("expected dst operand"),
+    };
+    assert_eq!(dst.reg.file, RegisterFile::Addr);
+    assert_eq!(dst.reg.index, 0);
+}
+
+#[test]
 fn decode_predicated_instruction() {
     // add (p0) r0, r0, c0
     let pred_token = src_token(19, 0, 0x00, 0); // p0.x

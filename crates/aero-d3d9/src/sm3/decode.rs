@@ -734,7 +734,7 @@ fn decode_operands_and_extras(
                 });
             }
         }
-        Opcode::Mov | Opcode::Mova | Opcode::Rcp | Opcode::Rsq | Opcode::Exp | Opcode::Log => {
+        Opcode::Mov | Opcode::Rcp | Opcode::Rsq | Opcode::Exp | Opcode::Log => {
             parse_fixed_operands(
                 opcode,
                 stage,
@@ -743,6 +743,29 @@ fn decode_operands_and_extras(
                 &[OperandKind::Dst, OperandKind::Src],
                 &mut operands,
             )?;
+        }
+        Opcode::Mova => {
+            // mova: dst, src
+            //
+            // Address registers share the same underlying register type encoding as `t#` (type 3)
+            // in pixel shaders. When used as the destination of `mova`, type 3 must be interpreted
+            // as an address register (`a#`) even for pixel shaders.
+            let (dst, dst_consumed) = decode_dst_operand_mova(operand_tokens, 0, stage, major)?;
+            operands.push(Operand::Dst(dst));
+            let (src, src_consumed) =
+                decode_src_operand(operand_tokens, dst_consumed, stage, major)?;
+            operands.push(Operand::Src(src));
+            if dst_consumed + src_consumed != operand_tokens.len() {
+                return Err(DecodeError {
+                    token_index: dst_consumed + src_consumed,
+                    message: format!(
+                        "opcode {} decoded {} operand tokens but instruction has {}",
+                        opcode.name(),
+                        dst_consumed + src_consumed,
+                        operand_tokens.len()
+                    ),
+                });
+            }
         }
         Opcode::Frc => {
             parse_fixed_operands(
@@ -1144,6 +1167,36 @@ fn decode_dst_operand(
 
     let (reg, reg_consumed) =
         decode_register_ref(tokens, start, stage, major, RegDecodeContext::Dst)?;
+    let mut mask = ((token & WRITEMASK_MASK) >> WRITEMASK_SHIFT) as u8;
+    if mask == 0 {
+        mask = 0xF;
+    }
+    Ok((
+        DstOperand {
+            reg,
+            mask: WriteMask(mask),
+        },
+        reg_consumed,
+    ))
+}
+
+fn decode_dst_operand_mova(
+    tokens: &[u32],
+    start: usize,
+    stage: ShaderStage,
+    major: u8,
+) -> Result<(DstOperand, usize), DecodeError> {
+    let token = *tokens.get(start).ok_or_else(|| DecodeError {
+        token_index: start,
+        message: "unexpected end of operand tokens".to_owned(),
+    })?;
+
+    // Decode the destination register as an address register even for pixel shaders.
+    // Using `RegDecodeContext::Relative` forces register type 3 -> `Addr` regardless of stage and
+    // also rejects invalid nested relative addressing on the destination operand.
+    let (reg, reg_consumed) =
+        decode_register_ref(tokens, start, stage, major, RegDecodeContext::Relative)?;
+
     let mut mask = ((token & WRITEMASK_MASK) >> WRITEMASK_SHIFT) as u8;
     if mask == 0 {
         mask = 0xF;
