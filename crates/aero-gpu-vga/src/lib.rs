@@ -733,8 +733,9 @@ impl VgaDevice {
                 let fg_dac = self.attribute_palette_lookup(fg);
                 let bg_dac = self.attribute_palette_lookup(bg);
 
-                let fg_px = rgb_to_rgba_u32(self.dac[fg_dac as usize]);
-                let bg_px = rgb_to_rgba_u32(self.dac[bg_dac as usize]);
+                // Apply the PEL mask (0x3C6) to the final DAC index like real VGA hardware.
+                let fg_px = rgb_to_rgba_u32(self.dac[(fg_dac & self.pel_mask) as usize]);
+                let bg_px = rgb_to_rgba_u32(self.dac[(bg_dac & self.pel_mask) as usize]);
 
                 for y in 0..cell_h {
                     let glyph_row = self.font_row_8x16(ch, y as u8);
@@ -859,7 +860,8 @@ impl VgaDevice {
                     let v = (b >> bit) & 1;
                     color |= v << plane;
                 }
-                let dac_idx = self.attribute_palette_lookup(color);
+                // Apply the PEL mask (0x3C6) to the final DAC index.
+                let dac_idx = self.attribute_palette_lookup(color) & self.pel_mask;
                 self.back[y * width_usize + x] = rgb_to_rgba_u32(self.dac[dac_idx as usize]);
             }
         }
@@ -1588,6 +1590,28 @@ mod tests {
         dev.present();
         assert_eq!(dev.get_resolution(), (720, 400));
         assert_eq!(framebuffer_hash(&dev), 0x5cfe440e33546065);
+    }
+
+    #[test]
+    fn pel_mask_applies_to_text_mode_palette_lookup() {
+        let mut dev = VgaDevice::new();
+        dev.set_text_mode_80x25();
+        // Disable cursor for deterministic output.
+        dev.crtc[0x0A] = 0x20;
+
+        // Put a blank cell with a non-black background at the top-left.
+        let base = 0xB8000u32;
+        dev.mem_write_u8(base, b' ');
+        dev.mem_write_u8(base + 1, 0x1F); // bg=1 (blue), fg=15 (white)
+
+        dev.present();
+        // With the default palette, DAC index 1 is blue.
+        assert_eq!(dev.get_framebuffer()[0], 0xFFAA_0000);
+
+        // Mask all indices down to 0, forcing both fg/bg to use DAC entry 0 (black).
+        dev.port_write(0x3C6, 1, 0x00);
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], 0xFF00_0000);
     }
 
     #[test]
