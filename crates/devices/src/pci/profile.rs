@@ -251,6 +251,14 @@ pub const PCI_DEVICE_ID_INTEL_PIIX3_IDE: u16 = 0x7010;
 pub const PCI_DEVICE_ID_INTEL_PIIX3_UHCI: u16 = 0x7020;
 pub const PCI_DEVICE_ID_INTEL_PIIX3_ISA: u16 = 0x7000;
 pub const PCI_DEVICE_ID_INTEL_ICH9_AHCI: u16 = 0x2922;
+/// Intel 82801I (ICH9 family) USB2 Enhanced Host Controller (EHCI).
+///
+/// Windows 7 includes an inbox EHCI driver (`usbehci.sys`) that binds to the EHCI programming
+/// interface (class 0x0c0320); using an ICH9 family device ID keeps PCI enumeration consistent with
+/// common Q35/ICH9 virtual machines.
+///
+/// Reference: `lspci` on QEMU `q35` commonly reports `8086:293a` for the first ICH9 EHCI function.
+pub const PCI_DEVICE_ID_INTEL_ICH9_EHCI: u16 = 0x293a;
 pub const PCI_DEVICE_ID_INTEL_ICH6_HDA: u16 = 0x2668;
 pub const PCI_DEVICE_ID_INTEL_E1000_82540EM: u16 = 0x100e;
 pub const PCI_DEVICE_ID_REALTEK_RTL8139: u16 = 0x8139;
@@ -275,6 +283,17 @@ pub const IDE_BARS: [PciBarProfile; 5] = [
 ];
 
 pub const UHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::io(4, 32)];
+
+/// MMIO BAR window for the canonical EHCI controller.
+///
+/// EHCI exposes:
+/// - capability registers (CAPLENGTH + HCCPARAMS + etc.)
+/// - operational registers (USBCMD/USBSTS/...)
+/// - per-port registers
+///
+/// The architectural register set is small (< 0x100 bytes for typical controllers), but we reserve
+/// a full 4KiB page so BAR alignment and probing behavior match real hardware.
+pub const EHCI_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 0x1000, false)];
 
 /// PCI BAR index used for the AHCI ABAR MMIO window on the Intel ICH9 profile.
 pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
@@ -512,6 +531,24 @@ pub const USB_UHCI_PIIX3: PciDeviceProfile = PciDeviceProfile {
     capabilities: &[],
 };
 
+pub const USB_EHCI_ICH9: PciDeviceProfile = PciDeviceProfile {
+    name: "ich9-ehci",
+    // Use a dedicated device number so it does not collide with other canonical functions and can
+    // be moved independently of the PIIX3 multifunction slot used for legacy UHCI.
+    bdf: PciBdf::new(0, 0x12, 0),
+    vendor_id: PCI_VENDOR_ID_INTEL,
+    device_id: PCI_DEVICE_ID_INTEL_ICH9_EHCI,
+    subsystem_vendor_id: 0,
+    subsystem_id: 0,
+    revision_id: 0,
+    // Serial bus / USB / EHCI.
+    class: PciClassCode::new(0x0c, 0x03, 0x20),
+    header_type: 0x00,
+    interrupt_pin: Some(PciInterruptPin::IntA),
+    bars: &EHCI_BARS,
+    capabilities: &[],
+};
+
 pub const SATA_AHCI_ICH9: PciDeviceProfile = PciDeviceProfile {
     name: "ich9-ahci",
     bdf: PciBdf::new(0, 2, 0),
@@ -709,6 +746,7 @@ pub const CANONICAL_IO_DEVICES: &[PciDeviceProfile] = &[
     ISA_PIIX3,
     IDE_PIIX3,
     USB_UHCI_PIIX3,
+    USB_EHCI_ICH9,
     SATA_AHCI_ICH9,
     NVME_CONTROLLER,
     HDA_ICH6,
@@ -731,6 +769,11 @@ pub fn build_canonical_io_bus() -> PciBus {
             bus.add_device(
                 profile.bdf,
                 Box::new(crate::usb::uhci::UhciPciDevice::default()),
+            );
+        } else if profile.bdf == USB_EHCI_ICH9.bdf {
+            bus.add_device(
+                profile.bdf,
+                Box::new(crate::usb::ehci::EhciPciDevice::default()),
             );
         } else {
             bus.add_device(profile.bdf, Box::new(ProfiledPciDevice::new(*profile)));
@@ -844,5 +887,20 @@ mod tests {
         assert_eq!(table, 0x1230 | 2);
         let pba = cfg.read(msix_off + 0x08, 4);
         assert_eq!(pba, 0x1300 | 2);
+    }
+
+    #[test]
+    fn ehci_profile_class_and_bar_layout() {
+        assert_eq!(
+            USB_EHCI_ICH9.class.as_u32(),
+            0x0c0320,
+            "EHCI class code must be 0x0c0320"
+        );
+        assert_eq!(USB_EHCI_ICH9.bars, &EHCI_BARS);
+        assert_eq!(EHCI_BARS.len(), 1);
+        assert_eq!(EHCI_BARS[0].index, 0);
+        assert_eq!(EHCI_BARS[0].kind, PciBarKind::Mem32);
+        assert_eq!(EHCI_BARS[0].size, 0x1000);
+        assert!(!EHCI_BARS[0].prefetchable);
     }
 }

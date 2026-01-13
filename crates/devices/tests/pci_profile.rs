@@ -19,6 +19,10 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(USB_UHCI_PIIX3.device_id, 0x7020);
     assert_eq!(USB_UHCI_PIIX3.class.as_u32(), 0x0c0300);
 
+    assert_eq!(USB_EHCI_ICH9.vendor_id, 0x8086);
+    assert_eq!(USB_EHCI_ICH9.device_id, 0x293a);
+    assert_eq!(USB_EHCI_ICH9.class.as_u32(), 0x0c0320);
+
     assert_eq!(SATA_AHCI_ICH9.vendor_id, 0x8086);
     assert_eq!(SATA_AHCI_ICH9.device_id, 0x2922);
     assert_eq!(SATA_AHCI_ICH9.class.as_u32(), 0x010601);
