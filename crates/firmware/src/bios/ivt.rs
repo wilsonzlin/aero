@@ -109,7 +109,14 @@ pub fn init_bda(bus: &mut dyn BiosBus, boot_drive: u8) {
         BDA_KEYBOARD_BUF_END,
     );
 
-    // Number of hard disks installed (used by some bootloaders/DOS utilities).
+    // Number of fixed disks installed (BDA 0x40:0x75).
+    //
+    // Historically this field counts BIOS "fixed disks" (drive numbers 0x80..), and is used by
+    // some bootloaders / DOS utilities to enumerate HDDs.
+    //
+    // The El Torito spec reserves drive numbers 0xE0..0xEF for CD-ROM boot devices. Those should
+    // *not* contribute to the fixed-disk count, otherwise guests may believe there are dozens of
+    // hard disks (e.g. DL=0xE0 => 97).
     //
     // This BIOS currently models exactly one boot device (backed by the single [`BlockDevice`]
     // passed to POST/interrupt handlers). Reflect that in the BDA:
@@ -184,6 +191,15 @@ mod tests {
         // 0x0223 = 0x0222 + diskette-present bit.
         assert_eq!(mem.read_u16(BDA_BASE + BDA_EQUIPMENT_WORD_OFFSET), 0x0223);
         // A floppy-only system should not advertise any fixed disks.
+        assert_eq!(mem.read_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET), 0);
+    }
+
+    #[test]
+    fn init_bda_does_not_count_cd_boot_drive_as_fixed_disk() {
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        init_bda(&mut mem, 0xE0);
+
+        // El Torito "no emulation" CD boot drive numbers must not inflate the fixed disk count.
         assert_eq!(mem.read_u8(BDA_BASE + BDA_HARD_DISK_COUNT_OFFSET), 0);
     }
 }
