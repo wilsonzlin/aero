@@ -49,7 +49,7 @@ require_not_contains_norm_all() {
   file="$1"
   needle="$2"
   msg="$3"
-  if normalize_all "$file" | grep -Fq "$needle"; then
+  if normalize_all "$file" | grep -Fq -- "$needle"; then
     fail "$msg"
   fi
 }
