@@ -2790,7 +2790,12 @@ static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float 
 }
 
 // Fixed-function fallback shader constant register ranges.
-// The WVP matrix is uploaded as 4 float4 registers (row-major).
+//
+// Note: D3D9 transform matrices are stored in row-major order (D3DMATRIX) and
+// fixed-function math uses row-vectors (v * WVP). The fixed-function vertex shader
+// uses `dp4 oPos.{x,y,z,w}, v0, c{0,1,2,3}` which computes dot(v, cN), so the
+// driver uploads the *columns* of the row-major WVP matrix into c0..c3 (i.e. the
+// transpose of the row-major matrix).
 constexpr uint32_t kFixedfuncMatrixStartRegister = 0u;
 constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
 
@@ -4322,11 +4327,19 @@ static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
   d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0], dev->transform_matrices[kD3dTransformView], world_view);
   d3d9_mul_mat4_row_major(world_view, dev->transform_matrices[kD3dTransformProjection], wvp);
 
+  // Upload WVP as column vectors (transpose of row-major).
+  float wvp_cols[16] = {};
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      wvp_cols[c * 4 + r] = wvp[r * 4 + c];
+    }
+  }
+
   if (!emit_set_shader_constants_f_locked(dev,
-                                         kD3d9ShaderStageVs,
-                                         kFixedfuncMatrixStartRegister,
-                                         wvp,
-                                         kFixedfuncMatrixVec4Count)) {
+                                          kD3d9ShaderStageVs,
+                                          kFixedfuncMatrixStartRegister,
+                                          wvp_cols,
+                                          kFixedfuncMatrixVec4Count)) {
     return E_OUTOFMEMORY;
   }
 

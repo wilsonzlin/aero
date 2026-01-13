@@ -64,7 +64,8 @@ static constexpr uint32_t kVsPassthroughPosColorTex1[] = {
 //
 // This shader is used by fixed-function emulation for:
 //   D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1
-// where the UMD uploads `world_view_proj` into c0..c3.
+// where the UMD uploads the *columns* of the row-major `world_view_proj` matrix
+// into c0..c3 (i.e. transpose for `dp4(v, cN)` row-vector multiplication).
 static constexpr uint32_t kVsWvpPosColorTex0[] = {
     0xFFFE0200u, // vs_2_0
 

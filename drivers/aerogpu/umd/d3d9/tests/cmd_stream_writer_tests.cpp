@@ -6142,6 +6142,10 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     dev->transform_matrices[256][0] = 2.0f;
     dev->transform_matrices[256][5] = 3.0f;
     dev->transform_matrices[256][10] = 4.0f;
+    // Add translation (D3D9 uses row-major matrices with translation in the last row).
+    dev->transform_matrices[256][12] = 5.0f;
+    dev->transform_matrices[256][13] = 6.0f;
+    dev->transform_matrices[256][14] = 7.0f;
 
     dev->fixedfunc_matrix_dirty = true;
   }
@@ -6212,6 +6216,16 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
   if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
+    return false;
+  }
+  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c0.w/c1.w/c2.w.
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w")) {
     return false;
   }
 
