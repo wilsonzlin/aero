@@ -10,6 +10,7 @@ use std::fmt;
 use std::io::{Read, Seek};
 
 pub mod alloc_table_dump;
+pub mod cmd_stream_decode;
 pub mod submit_decode;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -822,9 +823,12 @@ fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
         AerogpuCmdOpcode::DestroySampler => "DestroySampler",
         AerogpuCmdOpcode::SetSamplers => "SetSamplers",
         AerogpuCmdOpcode::SetConstantBuffers => "SetConstantBuffers",
+        AerogpuCmdOpcode::SetShaderResourceBuffers => "SetShaderResourceBuffers",
+        AerogpuCmdOpcode::SetUnorderedAccessBuffers => "SetUnorderedAccessBuffers",
         AerogpuCmdOpcode::Clear => "Clear",
         AerogpuCmdOpcode::Draw => "Draw",
         AerogpuCmdOpcode::DrawIndexed => "DrawIndexed",
+        AerogpuCmdOpcode::Dispatch => "Dispatch",
         AerogpuCmdOpcode::Present => "Present",
         AerogpuCmdOpcode::PresentEx => "PresentEx",
         AerogpuCmdOpcode::ExportSharedSurface => "ExportSharedSurface",
@@ -1298,6 +1302,9 @@ pub fn decode_cmd_stream_listing(
                     | AerogpuCmdOpcode::DestroySampler
                     | AerogpuCmdOpcode::SetSamplers
                     | AerogpuCmdOpcode::SetConstantBuffers
+                    | AerogpuCmdOpcode::SetShaderResourceBuffers
+                    | AerogpuCmdOpcode::SetUnorderedAccessBuffers
+                    | AerogpuCmdOpcode::Dispatch
                     | AerogpuCmdOpcode::ExportSharedSurface
                     | AerogpuCmdOpcode::ImportSharedSurface
                     | AerogpuCmdOpcode::ReleaseSharedSurface => {

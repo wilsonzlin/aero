@@ -2,6 +2,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdOpcode, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 fn push_u32_le(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -135,3 +136,20 @@ fn strict_mode_fails_on_unknown_opcode() {
     assert!(msg.contains("0x000000B0"));
 }
 
+#[test]
+fn decodes_cmd_stream_built_by_writer() {
+    let mut w = AerogpuCmdWriter::new();
+    w.create_buffer(1, 0, 4, 0, 0);
+    w.set_viewport(0.0, 0.0, 64.0, 64.0, 0.0, 1.0);
+    w.draw(3, 1, 0, 0);
+    w.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+    let bytes = w.finish();
+
+    let listing =
+        aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false).expect("decode cmd stream");
+
+    assert!(listing.contains("CreateBuffer"), "{listing}");
+    assert!(listing.contains("SetViewport"), "{listing}");
+    assert!(listing.contains("Draw"), "{listing}");
+    assert!(listing.contains("Present"), "{listing}");
+}

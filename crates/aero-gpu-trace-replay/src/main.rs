@@ -29,6 +29,10 @@ enum Command {
         /// Fail on unknown opcodes (default is forward-compatible and prints UNKNOWN).
         #[arg(long)]
         strict: bool,
+
+        /// Emit JSON instead of human-readable text (stable schema for automation).
+        #[arg(long)]
+        json: bool,
     },
 
     /// Decode a raw alloc table dump (from `alloc_table_gpa`) and print entries.
@@ -59,7 +63,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::DecodeCmdStream { path, strict }) => decode_cmd_stream_cmd(path, strict),
+        Some(Command::DecodeCmdStream { path, strict, json }) => {
+            decode_cmd_stream_cmd(path, strict, json)
+        }
         Some(Command::DecodeAllocTable { path }) => decode_alloc_table_cmd(path),
         Some(Command::DecodeSubmit { cmd, alloc }) => decode_submit_cmd(cmd, alloc),
         Some(Command::ReplayTrace { path }) => replay_trace_cmd(path),
@@ -67,8 +73,18 @@ fn main() -> Result<()> {
     }
 }
 
-fn decode_cmd_stream_cmd(path: PathBuf, strict: bool) -> Result<()> {
+fn decode_cmd_stream_cmd(path: PathBuf, strict: bool, json: bool) -> Result<()> {
     let bytes = fs::read(&path).with_context(|| format!("read cmd stream {}", path.display()))?;
+    if json {
+        let listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+            &bytes,
+            aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+        )
+        .with_context(|| format!("decode cmd stream {}", path.display()))?;
+        print!("{listing}");
+        return Ok(());
+    }
+
     let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, strict)
         .with_context(|| format!("decode cmd stream {}", path.display()))?;
     print!("{listing}");

@@ -9,5 +9,6 @@ aero-gpu-trace = { path = "../aero-gpu-trace" }
 aero-protocol = { path = "../../emulator/protocol" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.10"
 thiserror = { workspace = true }
