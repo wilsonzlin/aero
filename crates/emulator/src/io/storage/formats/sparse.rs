@@ -20,6 +20,10 @@ pub enum SparseDisk<S> {
 }
 
 impl<S: ByteStorage> SparseDisk<S> {
+    /// Create a new sparse disk image in the current `AEROSPAR` format.
+    ///
+    /// Note: this does **not** create legacy `AEROSPRS` images; that format is supported only for
+    /// opening/migrating older images.
     pub fn create(
         storage: S,
         sector_size: u32,
@@ -34,6 +38,8 @@ impl<S: ByteStorage> SparseDisk<S> {
         )?))
     }
 
+    /// Open a sparse disk image, auto-selecting between `AEROSPAR` and legacy `AEROSPRS` based on
+    /// the magic header.
     pub fn open(mut storage: S) -> DiskResult<Self> {
         let len = storage.len()?;
         if len < 8 {

@@ -1,4 +1,7 @@
 pub mod aerospar;
+/// Legacy sparse disk format (`AEROSPRS`) kept for backward compatibility and migration.
+///
+/// New sparse images should use the canonical `AEROSPAR` format in `crates/aero-storage`.
 pub mod aerosprs;
 pub mod qcow2;
 pub mod raw;
