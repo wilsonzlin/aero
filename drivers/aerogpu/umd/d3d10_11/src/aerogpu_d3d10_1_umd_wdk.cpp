@@ -7308,23 +7308,21 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     }
     if (dst_pitch < row_bytes) {
       copy_hr = E_INVALIDARG;
-      goto UnlockBox;
-    }
-
-    uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
-    for (uint32_t y = 0; y < copy_height_blocks; ++y) {
-      const size_t dst_off =
-          static_cast<size_t>(block_top + y) * dst_pitch +
-          static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
-      const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
-      std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
-      if (!pArgs->pDstBox && full_row_update && dst_pitch > row_bytes) {
-        const size_t dst_row_start = static_cast<size_t>(block_top + y) * dst_pitch;
-        std::memset(dst_alloc_base + dst_row_start + row_bytes, 0, dst_pitch - row_bytes);
+    } else {
+      uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
+      for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+        const size_t dst_off =
+            static_cast<size_t>(block_top + y) * dst_pitch +
+            static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
+        const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
+        std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
+        if (!pArgs->pDstBox && full_row_update && dst_pitch > row_bytes) {
+          const size_t dst_row_start = static_cast<size_t>(block_top + y) * dst_pitch;
+          std::memset(dst_alloc_base + dst_row_start + row_bytes, 0, dst_pitch - row_bytes);
+        }
       }
     }
 
-  UnlockBox:
     D3DDDICB_UNLOCK unlock_args = {};
     unlock_args.hAllocation = lock_args.hAllocation;
     InitUnlockForWrite(&unlock_args);

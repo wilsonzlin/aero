@@ -4365,38 +4365,35 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
 
       HRESULT copy_hr = S_OK;
       uint32_t wddm_pitch = 0;
-      __if_exists(D3DDDICB_LOCK::Pitch) {
-        wddm_pitch = lock_args.Pitch;
-      }
+      __if_exists(D3DDDICB_LOCK::Pitch) { wddm_pitch = lock_args.Pitch; }
+
+      uint32_t dst_pitch = dst_layout.row_pitch_bytes;
       if (!ValidateWddmTexturePitch(res, wddm_pitch)) {
         copy_hr = E_FAIL;
-        goto UnlockBox;
-      }
-      uint32_t dst_pitch = dst_layout.row_pitch_bytes;
-      __if_exists(D3DDDICB_LOCK::Pitch) {
-        if (wddm_pitch && dst_layout.mip_level == 0) {
-          dst_pitch = wddm_pitch;
+      } else {
+        __if_exists(D3DDDICB_LOCK::Pitch) {
+          if (wddm_pitch && dst_layout.mip_level == 0) {
+            dst_pitch = wddm_pitch;
+          }
         }
-      }
-      if (dst_pitch < row_bytes) {
-        copy_hr = E_INVALIDARG;
-        goto UnlockBox;
-      }
-
-      uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
-      for (uint32_t y = 0; y < copy_height_blocks; ++y) {
-        const size_t dst_off =
-            static_cast<size_t>(block_top + y) * dst_pitch +
-            static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
-        const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
-        std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
-        if (!pUpdate->pDstBox && full_row_update && dst_pitch > row_bytes) {
-          const size_t dst_row_start = static_cast<size_t>(block_top + y) * dst_pitch;
-          std::memset(dst_alloc_base + dst_row_start + row_bytes, 0, dst_pitch - row_bytes);
+        if (dst_pitch < row_bytes) {
+          copy_hr = E_INVALIDARG;
+        } else {
+          uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
+          for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+            const size_t dst_off =
+                static_cast<size_t>(block_top + y) * dst_pitch +
+                static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
+            const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
+            std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
+            if (!pUpdate->pDstBox && full_row_update && dst_pitch > row_bytes) {
+              const size_t dst_row_start = static_cast<size_t>(block_top + y) * dst_pitch;
+              std::memset(dst_alloc_base + dst_row_start + row_bytes, 0, dst_pitch - row_bytes);
+            }
+          }
         }
       }
 
-    UnlockBox:
       D3DDDICB_UNLOCK unlock_args = {};
       unlock_args.hAllocation = lock_args.hAllocation;
       __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
