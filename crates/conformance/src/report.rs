@@ -159,6 +159,7 @@ pub fn format_failure(
         "conformance mismatch (case {}): {} (coverage_key={})",
         case.case_idx, template.name, template.coverage_key
     );
+    let _ = writeln!(&mut out, "kind: {failure_kind}");
     let _ = writeln!(&mut out, "template_kind: {:?}", template.kind);
     let _ = writeln!(&mut out, "bytes: {byte_hex}");
     let _ = writeln!(&mut out, "effective_rip: {effective_rip:#x}");
@@ -170,6 +171,36 @@ pub fn format_failure(
         );
     } else {
         let _ = writeln!(&mut out, "mem_base: {mem_base:#x}");
+    }
+    let _ = writeln!(&mut out, "flags_mask: {:#x}", template.flags_mask);
+    let mem_end = mem_base.wrapping_add(case.memory.len() as u64);
+    let _ = writeln!(
+        &mut out,
+        "memory_range: [{mem_base:#x}..{mem_end:#x}) (len={} bytes)",
+        case.memory.len()
+    );
+    if let Some(code_off) = effective_rip.checked_sub(mem_base) {
+        if let Ok(code_off) = usize::try_from(code_off) {
+            let _ = writeln!(&mut out, "rip_offset: 0x{code_off:x}");
+            if let Some(bytes_at_rip) = case.memory.get(code_off..code_off + bytes.len()) {
+                let bytes_at_rip = bytes_at_rip
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let _ = writeln!(&mut out, "bytes@rip: {bytes_at_rip}");
+            }
+        }
+    }
+    if let Some(rdi_off) = case.init.rdi.checked_sub(mem_base) {
+        if let Ok(rdi_off) = usize::try_from(rdi_off) {
+            let in_range = rdi_off < case.memory.len();
+            let _ = writeln!(
+                &mut out,
+                "rdi_offset: 0x{rdi_off:x}{}",
+                if in_range { "" } else { " (out of range)" }
+            );
+        }
     }
     if let Some(decoded) = decoded {
         let _ = writeln!(&mut out, "iced-x86: {decoded}");

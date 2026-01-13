@@ -158,7 +158,12 @@ pub fn run(
             if let Some(report_path) = report_path {
                 let _ = report.write_json(report_path);
             }
-            return Err(message);
+            let isolate_setting = if isolate { 1 } else { 0 };
+            let repro = format!(
+                "repro:\n  AERO_CONFORMANCE_REFERENCE_ISOLATE={isolate_setting} \\\n  AERO_CONFORMANCE_CASES={cases} \\\n  AERO_CONFORMANCE_SEED={seed:#x} \\\n  AERO_CONFORMANCE_FILTER=key:{} \\\n  cargo test -p conformance --locked instruction_conformance\n",
+                template.coverage_key
+            );
+            return Err(format!("{repro}\n{message}"));
         }
     }
 
