@@ -83,7 +83,12 @@ impl XhciPciDevice {
         let irq = AtomicIrqLine::default();
 
         // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions, class code, and
-        // MSI capability layout match other platform integrations.
+        // capabilities stay consistent across runtimes.
+        //
+        // Keep this in sync with:
+        // - `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`),
+        // - `web/src/io/devices/xhci.ts` (web runtime wrapper), and
+        // - `docs/usb-xhci.md` (guest-facing contract).
         let mut config = profile::USB_XHCI_QEMU.build_config_space();
 
         // Backwards compatibility: older profiles may omit MSI. Ensure we always expose at least a
@@ -512,8 +517,7 @@ mod tests {
     use aero_io_snapshot::io::state::IoSnapshot;
     use crate::pci::config::PciClassCode;
     use crate::pci::msi::PCI_CAP_ID_MSI;
-    use crate::pci::profile::{PCI_DEVICE_ID_QEMU_XHCI, PCI_VENDOR_ID_REDHAT_QEMU};
-    use crate::pci::{PciBarDefinition, PciDevice};
+    use crate::pci::{profile, PciBarDefinition, PciDevice};
     use memory::MmioHandler;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -552,26 +556,20 @@ mod tests {
     #[test]
     fn config_matches_profile() {
         let dev = XhciPciDevice::default();
+        let prof = profile::USB_XHCI_QEMU;
 
         let id = dev.config.vendor_device_id();
-        assert_eq!(
-            id.vendor_id, PCI_VENDOR_ID_REDHAT_QEMU,
-            "xHCI should use the Red Hat/QEMU vendor ID"
-        );
-        assert_eq!(
-            id.device_id, PCI_DEVICE_ID_QEMU_XHCI,
-            "xHCI should use the QEMU xHCI device ID"
-        );
+        assert_eq!(id.vendor_id, prof.vendor_id);
+        assert_eq!(id.device_id, prof.device_id);
 
         assert_eq!(
             dev.config.class_code(),
             PciClassCode {
-                class: 0x0c,
-                subclass: 0x03,
-                prog_if: 0x30,
-                revision_id: 0x01,
-            },
-            "xHCI class code must be 0x0c0330 (xHCI) with a stable revision ID"
+                class: prof.class.base_class,
+                subclass: prof.class.sub_class,
+                prog_if: prof.class.prog_if,
+                revision_id: prof.revision_id,
+            }
         );
 
         assert_eq!(
@@ -580,6 +578,11 @@ mod tests {
                 size: XhciPciDevice::MMIO_BAR_SIZE,
                 prefetchable: false,
             })
+        );
+        assert_eq!(
+            u64::from(XhciPciDevice::MMIO_BAR_SIZE),
+            profile::XHCI_MMIO_BAR_SIZE,
+            "xHCI BAR0 size must match the canonical PCI profile"
         );
     }
 
