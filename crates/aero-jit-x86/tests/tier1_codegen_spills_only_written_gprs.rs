@@ -3,6 +3,8 @@ use std::collections::{BTreeSet, HashSet};
 use aero_jit_x86::abi;
 use aero_jit_x86::tier1::ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::Tier1WasmCodegen;
+#[cfg(feature = "tier1-inline-tlb")]
+use aero_jit_x86::tier1::Tier1WasmOptions;
 use aero_types::{FlagSet, Gpr, Width};
 
 fn collect_gpr_load_store_offsets(wasm: &[u8]) -> (BTreeSet<u64>, BTreeSet<u64>) {
@@ -10,24 +12,47 @@ fn collect_gpr_load_store_offsets(wasm: &[u8]) -> (BTreeSet<u64>, BTreeSet<u64>)
     let mut loads: BTreeSet<u64> = BTreeSet::new();
     let mut stores: BTreeSet<u64> = BTreeSet::new();
 
+    #[derive(Clone, Copy)]
+    enum PrevOp {
+        LocalGet(u32),
+        Other,
+    }
+
     for payload in wasmparser::Parser::new(0).parse_all(wasm) {
         let payload = payload.unwrap();
         if let wasmparser::Payload::CodeSectionEntry(body) = payload {
             let mut ops = body.get_operators_reader().unwrap();
+            let mut prev0 = PrevOp::Other;
+            let mut prev1 = PrevOp::Other;
             while !ops.eof() {
-                match ops.read().unwrap() {
+                let op = ops.read().unwrap();
+                match op {
                     wasmparser::Operator::I64Load { memarg } => {
-                        if gpr_offsets.contains(&memarg.offset) {
+                        // Only count CpuState GPR loads (base pointer is cpu_ptr local 0). This
+                        // avoids false positives from inline-TLB structures that also use offsets
+                        // 0/8/etc.
+                        if gpr_offsets.contains(&memarg.offset)
+                            && matches!(prev0, PrevOp::LocalGet(0))
+                        {
                             loads.insert(memarg.offset);
                         }
                     }
                     wasmparser::Operator::I64Store { memarg } => {
-                        if gpr_offsets.contains(&memarg.offset) {
+                        if gpr_offsets.contains(&memarg.offset)
+                            && matches!(prev1, PrevOp::LocalGet(0))
+                        {
                             stores.insert(memarg.offset);
                         }
                     }
                     _ => {}
                 }
+
+                let cur = match op {
+                    wasmparser::Operator::LocalGet { local_index } => PrevOp::LocalGet(local_index),
+                    _ => PrevOp::Other,
+                };
+                prev1 = prev0;
+                prev0 = cur;
             }
         }
     }
@@ -206,4 +231,43 @@ fn tier1_codegen_16bit_write_forces_load() {
     let (loads, stores) = collect_gpr_load_store_offsets(&wasm);
     assert_eq!(loads, BTreeSet::from([rax_off]));
     assert_eq!(stores, BTreeSet::from([rax_off]));
+}
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
+fn tier1_codegen_early_exit_loads_regs_spilled_after_inline_tlb_exit_point() {
+    let entry = 0x1000u64;
+
+    // Blocks using the inline-TLB fast path can exit early on MMIO. If a GPR is spilled but its
+    // first write is after an instruction that may exit, Tier-1 must still load the initial value
+    // so the epilogue doesn't clobber the architectural register with the default zero local.
+    let mut b = IrBuilder::new(entry);
+    let addr = b.const_int(Width::W64, 0xF000);
+    let _ = b.load(Width::W32, addr);
+
+    let v = b.const_int(Width::W64, 0x1234);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rbx,
+            width: Width::W64,
+            high8: false,
+        },
+        v,
+    );
+
+    let block = b.finish(IrTerminator::Jump { target: entry + 1 });
+    block.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    let rbx_off = abi::CPU_GPR_OFF[Gpr::Rbx.as_u8() as usize] as u64;
+    let (loads, stores) = collect_gpr_load_store_offsets(&wasm);
+    assert_eq!(loads, BTreeSet::from([rbx_off]));
+    assert_eq!(stores, BTreeSet::from([rbx_off]));
 }
