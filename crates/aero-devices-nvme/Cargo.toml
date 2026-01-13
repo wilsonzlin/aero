@@ -13,7 +13,7 @@ aero-storage-adapters = { path = "../aero-storage-adapters" }
 memory = { path = "../memory" }
 
 [dev-dependencies]
-emulator = { path = "../emulator" }
+aero-devices-storage = { path = "../aero-devices-storage" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = "0.5"
