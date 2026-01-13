@@ -216,6 +216,7 @@ Where to look:
   - `underrunCount` (or `underrunFrames`)
   - `overrunCount` (or `overrunFrames`)
   - `sampleRate`
+  - (Optional) `baseLatencySeconds` / `outputLatencySeconds` (if exposed by the browser)
 
 If no UI exists, use DevTools Console to read the standard ring header (layout is documented in `docs/06-audio-subsystem.md`):
 
@@ -329,6 +330,7 @@ Collect:
 Collect:
 
 - Audio ring metrics: buffer level + underrun/overrun counters + `AudioContext.state` + `sampleRate`.
+- (Optional) `baseLatencySeconds` / `outputLatencySeconds` from `out.getMetrics()` (if exposed by the browser); useful for comparing real host playback latency across platforms.
 - If available: runtime/worker “producer” counters (how full the emulator-to-worklet ring is from the producer’s point of view).
 - If available: guest HDA stream debug (`LPIB`, `CBL`, position buffer).
 - Browser console logs (preserve timestamps; include `[cpu]`/`[io]` worker logs if present).
@@ -391,6 +393,7 @@ When reporting a Win7 audio regression, include (at minimum):
   - Driver Provider on the audio function device (expected: `Microsoft`)
 - **Runtime metrics/logs**
   - Ring buffer counters (buffer level + underruns + overruns)
+  - (Optional) `baseLatencySeconds` / `outputLatencySeconds` from `out.getMetrics()` (if available)
   - Browser console log output during the repro (including worker-prefixed logs like `[cpu]`, `[io]` if present)
   - If tracing is available, a **trace export** taken during the repro (Perf HUD → Trace Start/Stop → Trace JSON)
     - See: [`docs/16-perf-tracing.md`](../16-perf-tracing.md)
