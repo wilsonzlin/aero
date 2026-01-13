@@ -162,11 +162,18 @@ Outputs:
 
 ### 3) Build AeroGPU dbgctl (required for CI-style packaging)
 
-Some driver packages (notably `drivers/aerogpu`) include auxiliary tooling that is pulled into the staged package via the driver’s `ci-package.json` manifest (see `toolFiles`).
+Some driver packages (notably `drivers/aerogpu`) ship auxiliary tooling alongside the driver package (for example, `aerogpu_dbgctl.exe`).
 
-`ci/make-catalogs.ps1` expects the dbgctl binary to exist at:
+These tools should be treated as build outputs: build them, then copy them into `out/drivers/<driver>/<arch>/...` so `ci/make-catalogs.ps1` will stage them into `out/packages/**`. Drivers that require such tools can enforce their presence via `requiredBuildOutputFiles` in `ci-package.json`.
+
+`ci/build-aerogpu-dbgctl.ps1` verifies the dbgctl build output at:
 
 - `drivers/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
+
+and (when `out/drivers/aerogpu/<arch>/` exists, i.e. after `ci/build-drivers.ps1`) copies it into:
+
+- `out/drivers/aerogpu/x86/tools/aerogpu_dbgctl.exe`
+- `out/drivers/aerogpu/x64/tools/aerogpu_dbgctl.exe`
 
 Build it before catalog generation:
 
