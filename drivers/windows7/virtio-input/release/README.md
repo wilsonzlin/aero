@@ -82,6 +82,8 @@ powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-input/scripts/p
 - file size matches
 - SHA-256 hash matches
 
+If the zip contains `SHA256SUMS`, the script also verifies that it covers every file (excluding itself) and that every hash matches.
+
 It also validates `schemaVersion == 1`, `driver.id == aero-virtio-input`, and `driver.targetOs == win7`.
 
 ```powershell

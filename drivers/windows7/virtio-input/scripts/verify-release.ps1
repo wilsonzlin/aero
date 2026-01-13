@@ -11,6 +11,11 @@ entry in manifest.files verifies:
   - File size matches
   - SHA-256 hash matches
 
+If a `SHA256SUMS` file is present, it is also validated:
+  - Every listed file exists and its hash matches
+  - `manifest.json` is covered
+  - Every extracted file (except `SHA256SUMS` itself) is listed
+
 Also validates basic identity fields:
   - schemaVersion == 1
   - driver.id == aero-virtio-input
