@@ -1,4 +1,4 @@
-# WebUSB passthrough (browser → guest UHCI) architecture
+# WebUSB passthrough (browser → guest USB controller) architecture
 
 This document describes the **USB passthrough** path where a *real* USB device
 is exposed to the guest OS using **WebUSB** in the browser.
@@ -9,7 +9,9 @@ is exposed to the guest OS using **WebUSB** in the browser.
 
 The goal is to keep three moving parts coherent and spec-aligned:
 
-- **UHCI** emulation (guest USB host controller; synchronous, TD-driven)
+- **Guest USB host controller emulation**:
+  - **UHCI** (USB 1.1 full-speed; synchronous, TD-driven)
+  - **EHCI/xHCI** (USB 2.0 high-speed; planned for passthrough)
 - **Rust device model** (`UsbPassthroughDevice`; runs inside WASM/worker)
 - **TypeScript WebUSB broker/executor** (runs where WebUSB is available; usually main thread)
 
@@ -524,18 +526,18 @@ Implementation note: in `aero-usb`, `Nak` is a first-class “retry later” out
 
 ---
 
-## Speed and descriptor handling (UHCI full-speed view)
+## Speed and descriptor handling (UHCI vs EHCI/xHCI)
 
-### Constraint: UHCI is full-speed
+### UHCI mode: guest is full-speed
 
-For the passthrough MVP, assume the guest controller is **UHCI** and therefore operates
-as a **full-speed** host from the guest’s perspective.
+When the passthrough device is attached to a guest **UHCI** controller, the guest sees it
+as a **full-speed** device.
 
 This creates a mismatch when the physical device is high-speed (USB 2.0) on the real
 machine: we must present a **full-speed-compatible configuration** to the guest so it
 chooses correct max packet sizes and intervals.
 
-### Using `OTHER_SPEED_CONFIGURATION` to synthesize a full-speed configuration
+### UHCI-only fixup: `OTHER_SPEED_CONFIGURATION` → `CONFIGURATION`
 
 USB 2.0 devices can expose an `OTHER_SPEED_CONFIGURATION` descriptor that describes how
 they would look at the *other* speed:
@@ -557,7 +559,8 @@ Approach:
 Practical implications:
 
 - Devices that are **high-speed-only** without a usable other-speed configuration are not
-  good candidates for UHCI passthrough; they likely require EHCI/xHCI emulation.
+  good candidates for UHCI passthrough; they should be attached via **EHCI/xHCI** so the
+  guest can enumerate them at high-speed.
 - Even for high-speed devices, sending smaller full-speed-sized transfers via WebUSB is
   typically valid (it is legal to transfer less than max packet size), but correctness
   depends on descriptors matching what the guest believes.
@@ -565,6 +568,26 @@ Practical implications:
 In this repo, the production WebUSB executor performs this as a best-effort fixup inside
 `executeWebUsbControlIn` (`web/src/usb/webusb_backend.ts`; see `shouldTranslateConfigurationDescriptor`
 and `rewriteOtherSpeedConfigAsConfig`).
+
+⚠️ This translation is **UHCI/full-speed-only**. When a passthrough device is attached to a
+guest **EHCI/xHCI** controller (high-speed view), the host executor must **not**:
+
+- attempt to fetch `OTHER_SPEED_CONFIGURATION`, or
+- rewrite an `OTHER_SPEED_CONFIGURATION` descriptor into a `CONFIGURATION` descriptor.
+
+In EHCI/xHCI mode the guest expects the device’s **high-speed** descriptors as-is, and any
+UHCI-oriented fixups would produce incorrect endpoint packet sizes/intervals.
+
+### EHCI/xHCI mode: guest is high-speed (planned)
+
+Once EHCI/xHCI passthrough is implemented (see [ADR 0015](./adr/0015-canonical-usb-stack.md) for the
+canonical stack selection), the intended behavior is:
+
+- The guest enumerates the physical device as **high-speed**.
+- The WebUSB executor should forward `GET_DESCRIPTOR(CONFIGURATION)` results without rewriting
+  descriptor types or attempting other-speed translation.
+- Devices that are **high-speed-only** should be attached via EHCI/xHCI rather than UHCI, since a
+  UHCI/full-speed view cannot represent them correctly.
 
 ---
 
