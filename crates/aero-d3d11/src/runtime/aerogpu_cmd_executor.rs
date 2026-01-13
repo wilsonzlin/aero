@@ -10678,6 +10678,44 @@ fn main() {
     }
 
     #[test]
+    fn compute_pipelines_can_be_deterministically_disabled_without_wgpu_calls() {
+        pollster::block_on(async {
+            let exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Simulate a backend without compute by forcing `supports_compute=false` at executor
+            // construction time. This should cause `PipelineCache::get_or_create_compute_pipeline`
+            // to return `GpuError::Unsupported(\"compute\")` without invoking the pipeline builder
+            // (and therefore without calling into wgpu compute APIs).
+            let AerogpuD3d11Executor {
+                device, queue, backend, ..
+            } = exec;
+            let mut exec = AerogpuD3d11Executor::new_with_supports_compute(
+                device, queue, backend, false,
+            );
+
+            let key = ComputePipelineKey {
+                shader: 0,
+                layout: PipelineLayoutKey::empty(),
+            };
+            let err = exec
+                .pipeline_cache
+                .get_or_create_compute_pipeline(&exec.device, key, |_device, _cs| {
+                    panic!(
+                        "compute pipeline builder invoked despite supports_compute=false; this would call wgpu compute APIs on unsupported backends"
+                    )
+                })
+                .unwrap_err();
+            assert_eq!(err, aero_gpu::GpuError::Unsupported("compute"));
+        });
+    }
+
+    #[test]
     fn aerogpu_format_is_x8_includes_srgb_variants() {
         assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_B8G8R8X8_UNORM));
         assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_R8G8B8X8_UNORM));
