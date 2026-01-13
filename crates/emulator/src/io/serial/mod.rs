@@ -1,3 +1,1 @@
-pub mod uart16550;
-
-pub use uart16550::{Uart16550, UartConfig};
+// Serial devices have been migrated to the canonical implementations in `aero-devices`.
