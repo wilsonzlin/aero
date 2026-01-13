@@ -109,6 +109,14 @@ fn spec_to_model_range(spec: ByteRangeSpec, len: u64) -> Option<(u64, u64)> {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        // These are integration tests (in `tests/`), so proptest's default
+        // `FileFailurePersistence::SourceParallel` can't reliably locate the crate root
+        // for storing regression files. Disable persistence to avoid noisy warnings.
+        failure_persistence: None,
+        .. ProptestConfig::default()
+    })]
+
     // Parser should never panic on arbitrary inputs.
     #[test]
     fn parse_never_panics(input in ".*") {
