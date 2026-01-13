@@ -193,6 +193,16 @@ aerogpu_add_win7_test(d3d9_mipmapped_texture_smoke
 )
 target_link_libraries(d3d9_mipmapped_texture_smoke PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9_fixedfunc_xyz_diffuse
+  d3d9_fixedfunc_xyz_diffuse/main.cpp
+)
+target_link_libraries(d3d9_fixedfunc_xyz_diffuse PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9_fixedfunc_xyz_diffuse_tex1
+  d3d9_fixedfunc_xyz_diffuse_tex1/main.cpp
+)
+target_link_libraries(d3d9_fixedfunc_xyz_diffuse_tex1 PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_fixedfunc_textured_triangle
   d3d9ex_fixedfunc_textured_triangle/main.cpp
 )

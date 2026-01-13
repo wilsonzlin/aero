@@ -286,6 +286,14 @@ static inline void PrintfStdout(const char* fmt, ...) {
   printf("\n");
 }
 
+static inline void FlushStdout() {
+  // Some Win7 guest environments buffer stdout aggressively when tests are run under wrappers or
+  // remote consoles. Provide an explicit flush helper so tests can ensure diagnostics are visible
+  // before exiting.
+  fflush(stdout);
+  fflush(stderr);
+}
+
 // Best-effort "last failure" capture for JSON reporting.
 //
 // Many Win7 validation tests still use `aerogpu_test::Fail()` directly (instead of
