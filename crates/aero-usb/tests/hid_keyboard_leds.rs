@@ -1,0 +1,99 @@
+use aero_io_snapshot::io::state::IoSnapshot;
+use aero_usb::device::AttachedUsbDevice;
+use aero_usb::hid::UsbHidKeyboardHandle;
+use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
+
+fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+    for _ in 0..16 {
+        match dev.handle_in(0, 0) {
+            UsbInResult::Data(data) => {
+                assert!(data.is_empty(), "expected ZLP for status stage");
+                return;
+            }
+            UsbInResult::Nak => continue,
+            UsbInResult::Stall => panic!("unexpected STALL during control transfer"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control transfer"),
+        }
+    }
+    panic!("timed out waiting for control transfer status stage");
+}
+
+fn control_out_data(dev: &mut AttachedUsbDevice, setup: SetupPacket, data: &[u8]) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+    assert_eq!(dev.handle_out(0, data), UsbOutResult::Ack);
+
+    // Status stage for control-OUT is an IN ZLP.
+    for _ in 0..16 {
+        match dev.handle_in(0, 0) {
+            UsbInResult::Data(resp) => {
+                assert!(resp.is_empty(), "expected ZLP for status stage");
+                return;
+            }
+            UsbInResult::Nak => continue,
+            UsbInResult::Stall => panic!("unexpected STALL during control transfer status stage"),
+            UsbInResult::Timeout => panic!("unexpected TIMEOUT during control transfer status stage"),
+        }
+    }
+    panic!("timed out waiting for control transfer status stage");
+}
+
+#[test]
+fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_them() {
+    let kb = UsbHidKeyboardHandle::new();
+    let mut dev = AttachedUsbDevice::new(Box::new(kb.clone()));
+
+    assert_eq!(kb.leds(), 0);
+
+    // Basic enumeration/configuration so the guest can send HID class requests.
+    control_no_data(
+        &mut dev,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 5,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut dev,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock | ScrollLock.
+    let leds = 0x07;
+    control_out_data(
+        &mut dev,
+        SetupPacket {
+            bm_request_type: 0x21,
+            b_request: 0x09,    // SET_REPORT
+            w_value: 2u16 << 8, // Output report, ID 0
+            w_index: 0,
+            w_length: 1,
+        },
+        &[leds],
+    );
+
+    assert_eq!(kb.leds(), leds);
+
+    // Snapshot both the device wrapper and the host-visible handle (pre-attached model case).
+    let dev_snapshot = dev.save_state();
+    let model_snapshot = kb.save_state();
+
+    let mut restored_kb = UsbHidKeyboardHandle::new();
+    restored_kb.load_state(&model_snapshot).unwrap();
+    assert_eq!(restored_kb.leds(), leds);
+
+    let mut restored_dev = AttachedUsbDevice::new(Box::new(restored_kb.clone()));
+    restored_dev.load_state(&dev_snapshot).unwrap();
+
+    assert_eq!(restored_kb.leds(), leds);
+}
+

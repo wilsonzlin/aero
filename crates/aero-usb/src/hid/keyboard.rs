@@ -86,6 +86,18 @@ impl UsbHidKeyboardHandle {
         self.0.borrow().configuration != 0
     }
 
+    /// Returns the current HID boot keyboard LED bitmask as last set by the guest OS.
+    ///
+    /// Bit assignments follow the standard HID LED usages used by the boot keyboard output report:
+    /// - bit 0: Num Lock
+    /// - bit 1: Caps Lock
+    /// - bit 2: Scroll Lock
+    /// - bit 3: Compose
+    /// - bit 4: Kana
+    pub fn leds(&self) -> u8 {
+        self.0.borrow().leds
+    }
+
     pub fn key_event(&self, usage: u8, pressed: bool) {
         self.0.borrow_mut().key_event(usage, pressed);
     }
@@ -285,6 +297,11 @@ impl UsbHidKeyboard {
             last_report: [0; 8],
             pending_reports: VecDeque::new(),
         }
+    }
+
+    /// Returns the current HID boot keyboard LED bitmask as last set by the guest OS.
+    pub fn leds(&self) -> u8 {
+        self.leds
     }
 
     pub fn key_event(&mut self, usage: u8, pressed: bool) {
