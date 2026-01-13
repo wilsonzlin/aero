@@ -76,8 +76,16 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
         patch_first_bind_shaders_set_dummy_gs(&mut stream, 0xCAFE_BABE);
 
         let mut guest_mem = VecGuestMemory::new(0);
-        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect("execute_cmd_stream should succeed");
+        if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
+            // Some adapters/backends (notably wgpu-GL/WebGL2 paths) do not support compute. The
+            // geometry-shader prepass currently uses a compute pipeline, so skip the test rather
+            // than failing non-deterministically inside wgpu.
+            if err.to_string().contains("Unsupported(\"compute\")") {
+                common::skip_or_panic(module_path!(), "compute unsupported");
+                return;
+            }
+            panic!("execute_cmd_stream failed: {err:#}");
+        }
         exec.poll_wait();
 
         let (width, height) = exec.texture_size(RT).expect("render target should exist");
