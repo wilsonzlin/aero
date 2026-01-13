@@ -94,7 +94,20 @@ function Ensure-EmptyDirectory {
 function Test-PrivateKeyExtension {
   param([Parameter(Mandatory = $true)][string] $ExtensionNoDotLower)
  
-  return $ExtensionNoDotLower -in @("pfx", "pvk", "snk", "key", "pem")
+  # Keep this list aligned with `aero_packager`'s `is_private_key_extension`.
+  #
+  # We refuse these at staging time (instead of relying on the packager) so CI/local packaging
+  # fails fast before any accidental secret material is copied into the staging tree.
+  return $ExtensionNoDotLower -in @(
+    # Common Windows signing key container formats.
+    "pfx", "p12", "pvk", "snk",
+    # Common PEM/DER private key encodings.
+    "key", "pem", "der",
+    # PKCS#8 private key encodings.
+    "p8", "pk8",
+    # Certificate signing requests may include key-related material and should never ship.
+    "csr"
+  )
 }
 
 function Test-DefaultExcludedToolsExtension {
@@ -103,9 +116,9 @@ function Test-DefaultExcludedToolsExtension {
   # Keep this list aligned with `aero_packager`'s `is_default_excluded_driver_extension`.
   return $ExtensionNoDotLower -in @(
     # Debug symbols.
-    "pdb", "ipdb", "iobj",
+    "pdb", "ipdb", "iobj", "dbg", "map", "cod",
     # Build metadata.
-    "obj", "lib", "exp", "ilk", "tlog", "log",
+    "obj", "lib", "exp", "ilk", "tlog", "log", "tmp", "lastbuildstate", "idb",
     # Source / project files.
     "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "idl", "inl", "rc", "s", "asm",
     "sln", "vcxproj", "props", "targets"
