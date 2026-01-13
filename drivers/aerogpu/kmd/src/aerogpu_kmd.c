@@ -6872,6 +6872,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_SUCCESS;
         }
 
+        const ULONGLONG startTime = KeQueryInterruptTime();
+        const ULONGLONG deadline = startTime + ((ULONGLONG)timeoutMs * 10000ull);
+
         /*
          * Submit a "no-op" entry using the current completed fence value so we
          * don't advance the device fence beyond what dxgkrnl has issued.
@@ -7035,8 +7038,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         /* Poll for ring head advancement. */
-        ULONGLONG start = KeQueryInterruptTime();
-        ULONGLONG deadline = start + ((ULONGLONG)timeoutMs * 10000ull);
         NTSTATUS testStatus = STATUS_TIMEOUT;
         while (KeQueryInterruptTime() < deadline) {
             ULONG headNow = (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader)
@@ -7052,12 +7053,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             KeDelayExecutionThread(KernelMode, FALSE, &interval);
         }
 
-        if (NT_SUCCESS(testStatus)) {
-            AeroGpuFreeContiguousNonCached(descVa, sizeof(aerogpu_legacy_submission_desc_header));
-            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
-            io->passed = 1;
-            io->error_code = AEROGPU_DBGCTL_SELFTEST_OK;
-        } else {
+        if (!NT_SUCCESS(testStatus)) {
             /*
              * The device did not consume the entry in time. Do not free the
              * descriptor/DMA buffer to avoid use-after-free if the device
@@ -7065,8 +7061,194 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              */
             io->passed = 0;
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT;
+            return STATUS_SUCCESS;
         }
 
+        AeroGpuFreeContiguousNonCached(descVa, sizeof(aerogpu_legacy_submission_desc_header));
+        AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
+
+        /*
+         * VBlank sanity (optional, gated by device feature bits).
+         *
+         * Only attempt to validate vblank tick forward progress when scanout is enabled.
+         */
+        if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_VBLANK) != 0) {
+            const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
+            if (!haveVblankRegs) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE;
+                return STATUS_SUCCESS;
+            }
+
+            BOOLEAN scanoutEnabled = FALSE;
+            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_ENABLE + sizeof(ULONG))) {
+                scanoutEnabled |= (AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE) != 0);
+            }
+            if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
+                scanoutEnabled |= (AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE) != 0);
+            }
+
+            if (scanoutEnabled) {
+                const ULONGLONG seq0 = AeroGpuReadRegU64HiLoHi(adapter,
+                                                              AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                              AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+                ULONGLONG seqNow = seq0;
+                while (KeQueryInterruptTime() < deadline) {
+                    LARGE_INTEGER interval;
+                    interval.QuadPart = -10000; /* 1ms */
+                    KeDelayExecutionThread(KernelMode, FALSE, &interval);
+
+                    seqNow = AeroGpuReadRegU64HiLoHi(adapter,
+                                                     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+                    if (seqNow != seq0) {
+                        break;
+                    }
+                }
+
+                if (seqNow == seq0) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK;
+                    return STATUS_SUCCESS;
+                }
+
+                /*
+                 * IRQ enable/ack sanity for vblank.
+                 *
+                 * To avoid racing with the normal ISR (which ACKs IRQ_STATUS quickly),
+                 * temporarily disable dxgkrnl interrupt delivery while we poke the
+                 * device IRQ registers.
+                 */
+                const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG));
+                if (!haveIrqRegs) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE;
+                    return STATUS_SUCCESS;
+                }
+
+                const BOOLEAN canDisableOsInterrupts = adapter->InterruptRegistered &&
+                                                      adapter->DxgkInterface.DxgkCbDisableInterrupt &&
+                                                      adapter->DxgkInterface.DxgkCbEnableInterrupt;
+                if (canDisableOsInterrupts) {
+                    ULONG savedEnableMask = 0;
+                    {
+                        KIRQL oldIrql;
+                        KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                        savedEnableMask = adapter->IrqEnableMask;
+                        KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                    }
+
+                    adapter->DxgkInterface.DxgkCbDisableInterrupt(adapter->StartInfo.hDxgkHandle);
+                    BOOLEAN ok = FALSE;
+
+                    /*
+                     * Ensure vblank is disabled and ACKed before we start, so we don't
+                     * inherit a stale pending bit.
+                     */
+                    {
+                        KIRQL oldIrql;
+                        KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                        const ULONG enable = savedEnableMask & ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                        adapter->IrqEnableMask = enable;
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                        KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                    }
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+
+                    /* Enable vblank IRQ generation and wait for the status bit to latch. */
+                    {
+                        KIRQL oldIrql;
+                        KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                        const ULONG enable = savedEnableMask | AEROGPU_IRQ_SCANOUT_VBLANK;
+                        adapter->IrqEnableMask = enable;
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                        KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                    }
+
+                    ULONG status = 0;
+                    while (KeQueryInterruptTime() < deadline) {
+                        status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+                        if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
+                            break;
+                        }
+                        LARGE_INTEGER interval;
+                        interval.QuadPart = -10000; /* 1ms */
+                        KeDelayExecutionThread(KernelMode, FALSE, &interval);
+                    }
+
+                    if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) == 0) {
+                        io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED;
+                    } else {
+                        /*
+                         * Disable the bit to avoid a new tick re-latching while we
+                         * validate ACK clears the status.
+                         */
+                        {
+                            KIRQL oldIrql;
+                            KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                            const ULONG enable = savedEnableMask & ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                            adapter->IrqEnableMask = enable;
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                            KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                        }
+
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                        status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+                        if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
+                            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED;
+                        } else {
+                            ok = TRUE;
+                        }
+                    }
+
+                    /* Restore IRQ enable mask to whatever dxgkrnl had configured. */
+                    {
+                        KIRQL oldIrql;
+                        KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
+                        adapter->IrqEnableMask = savedEnableMask;
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, savedEnableMask);
+                        KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
+                    }
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+
+                    adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
+
+                    if (!ok) {
+                        return STATUS_SUCCESS;
+                    }
+                }
+            }
+        }
+
+        /* Cursor sanity (optional, gated by device feature bits). */
+        if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0) {
+            const BOOLEAN haveCursorRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG));
+            if (!haveCursorRegs) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE;
+                return STATUS_SUCCESS;
+            }
+
+            const ULONG origX = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
+            const ULONG origY = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
+            const ULONG testX = origX ^ 1u;
+            const ULONG testY = origY ^ 1u;
+
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, testX);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, testY);
+            KeMemoryBarrier();
+
+            const ULONG readX = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
+            const ULONG readY = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
+
+            /* Restore the original position regardless of the readback result. */
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X, origX);
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, origY);
+
+            if (readX != testX || readY != testY) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH;
+                return STATUS_SUCCESS;
+            }
+        }
+
+        io->passed = 1;
+        io->error_code = AEROGPU_DBGCTL_SELFTEST_OK;
         return STATUS_SUCCESS;
     }
 
