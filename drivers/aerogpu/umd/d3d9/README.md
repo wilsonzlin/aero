@@ -426,6 +426,6 @@ Some bring-up entrypoints correspond primarily to **fixed-function** and legacy 
 In particular:
 
 - **Patch caps**: keep N-patch/patch caps conservative (e.g. avoid `D3DDEVCAPS_NPATCHES` /
-  `MaxNpatchTessellationLevel`) until the patch path is exercised end-to-end on Win7 and `ProcessVertices` is implemented.
+  `MaxNpatchTessellationLevel`) until the patch path is exercised end-to-end on Win7.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
   guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `SupportsBcFormats()`). 
