@@ -5054,7 +5054,8 @@ mod machine_opfs_disk_tests {
 
     fn unique_path(prefix: &str, ext: &str) -> String {
         let now = js_sys::Date::now() as u64;
-        format!("tests/{prefix}-{now}.{ext}")
+        let rand = (js_sys::Math::random() * 1_000_000.0) as u64;
+        format!("tests/{prefix}-{now:x}-{rand:x}.{ext}")
     }
 
     fn fill_deterministic(buf: &mut [u8], seed: u32) {
@@ -5436,7 +5437,8 @@ mod machine_opfs_ide_primary_master_tests {
 
     fn unique_path(prefix: &str) -> String {
         let now = js_sys::Date::now() as u64;
-        format!("tests/{prefix}-{now}.img")
+        let rand = (js_sys::Math::random() * 1_000_000.0) as u64;
+        format!("tests/{prefix}-{now:x}-{rand:x}.img")
     }
 
     #[wasm_bindgen_test(async)]
@@ -5525,7 +5527,8 @@ mod reattach_restored_disks_from_opfs_tests {
 
     fn unique_path(prefix: &str, ext: &str) -> String {
         let now = js_sys::Date::now() as u64;
-        format!("tests/{prefix}-{now}.{ext}")
+        let rand = (js_sys::Math::random() * 1_000_000.0) as u64;
+        format!("tests/{prefix}-{now:x}-{rand:x}.{ext}")
     }
 
     async fn create_raw_file(path: &str, size: u64) -> Result<(), DiskError> {
