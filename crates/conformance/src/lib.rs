@@ -63,7 +63,7 @@ pub enum Fault {
 pub fn run_from_env() -> Result<ConformanceReport, String> {
     let cases = std::env::var("AERO_CONFORMANCE_CASES")
         .ok()
-        .and_then(|v| v.parse::<usize>().ok())
+        .and_then(|v| parse_cases_env(&v))
         .unwrap_or(512);
     let seed = std::env::var("AERO_CONFORMANCE_SEED")
         .ok()
@@ -74,6 +74,16 @@ pub fn run_from_env() -> Result<ConformanceReport, String> {
 
     let report = run(cases, seed, report_path.as_deref())?;
     Ok(report)
+}
+
+fn parse_cases_env(input: &str) -> Option<usize> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let cleaned: String = trimmed.chars().filter(|c| *c != '_').collect();
+    cleaned.parse::<usize>().ok()
 }
 
 fn parse_seed_env(input: &str) -> Option<u64> {
@@ -369,5 +379,11 @@ mod tests {
         assert_eq!(parse_seed_env("0X10"), Some(16));
         assert_eq!(parse_seed_env("0x_10"), Some(16));
         assert_eq!(parse_seed_env("0x_52c6_71d9"), Some(0x52c6_71d9));
+    }
+
+    #[test]
+    fn cases_env_parses_underscores() {
+        assert_eq!(parse_cases_env("512"), Some(512));
+        assert_eq!(parse_cases_env("10_000"), Some(10000));
     }
 }
