@@ -32,7 +32,7 @@ This implementation started as “minimum viable triangle”, but it now include
   - Staging readback uses `AEROGPU_CMD_COPY_*` + `AEROGPU_COPY_FLAG_WRITEBACK_DST` when the host exposes `AEROGPU_FEATURE_TRANSFER` (ABI 1.1+)
 - Pipeline state **encoding** into the command stream (D3D11 DDI path):
   - `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
-- Windowed swapchain present (sync interval 0 vs non-zero) via `AEROGPU_CMD_PRESENT`
+- DXGI swapchain bring-up: `Present` + backbuffer identity rotation (`RotateResourceIdentities`), with presentation via `AEROGPU_CMD_PRESENT` (sync interval 0 vs non-zero)
 
 ### Still stubbed / known gaps (incl. protocol-limited)
 
