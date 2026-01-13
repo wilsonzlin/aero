@@ -993,6 +993,62 @@ static void test_set_queue_msix_vector_set_and_clear_two_queues(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_disable_msix_vectors_clears_config_and_queues(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 2;
+    sim.queues[0].queue_size = 8;
+    sim.queues[1].queue_size = 8;
+
+    /* Seed with non-default vector values so we can observe the reset-to-NO_VECTOR behaviour. */
+    sim.msix_config = 3;
+    sim.queues[0].queue_msix_vector = 11;
+    sim.queues[1].queue_msix_vector = 12;
+
+    /* Validate queue_select serialization expectations (Dev->CommonCfgLock). */
+    sim.enforce_queue_select_lock = 1;
+    sim.queue_select_lock = &dev.CommonCfgLock;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    sim.common_cfg_write_count = 0;
+    st = VirtioPciDisableMsixVectors(&dev, /*QueueCount=*/2);
+    assert(st == STATUS_SUCCESS);
+
+    assert(sim.msix_config == VIRTIO_PCI_MSI_NO_VECTOR);
+    assert(sim.queues[0].queue_msix_vector == VIRTIO_PCI_MSI_NO_VECTOR);
+    assert(sim.queues[1].queue_msix_vector == VIRTIO_PCI_MSI_NO_VECTOR);
+
+    /* msix_config + (queue_select, queue_msix_vector) for each queue. */
+    assert(sim.common_cfg_write_count == 5);
+    assert(sim.common_cfg_write_offsets[0] == 0x10); /* msix_config */
+    assert(sim.common_cfg_write_offsets[1] == 0x16); /* queue_select */
+    assert(sim.common_cfg_write_offsets[2] == 0x1A); /* queue_msix_vector */
+    assert(sim.common_cfg_write_offsets[3] == 0x16);
+    assert(sim.common_cfg_write_offsets[4] == 0x1A);
+
+    assert(sim.queue_select_lock_check_count != 0);
+    assert(sim.queue_select_lock_violation_count == 0);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_setup_queue_programs_addresses_and_enables(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -2667,6 +2723,7 @@ int main(void)
     test_set_config_msix_vector_set_and_clear();
     test_set_config_msix_vector_readback_mismatch_fails();
     test_set_queue_msix_vector_set_and_clear_two_queues();
+    test_disable_msix_vectors_clears_config_and_queues();
     test_setup_queue_programs_addresses_and_enables();
     test_setup_queue_write_order();
     test_setup_queue_is_per_queue();

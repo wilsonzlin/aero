@@ -1447,6 +1447,8 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
      * from continuing DMA while we tear down the queue.
      */
     if (devExt->Vdev.CommonCfg != NULL) {
+      /* Best-effort: clear virtio MSI-X vector routing before resetting/teardown. */
+      (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
       VirtioPciResetDevice(&devExt->Vdev);
     }
 
