@@ -290,6 +290,17 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
     return false;
   }
 
+  aerogpu_handle_t expected_input_layout = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->fvf_vertex_decl) {
+      expected_input_layout = dev->fvf_vertex_decl->handle;
+    }
+  }
+  if (!Check(expected_input_layout != 0, "SetFVF created internal input layout")) {
+    return false;
+  }
+
   const VertexXyzrhwDiffuse tri[3] = {
       {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFF0000u},
       {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
@@ -299,6 +310,17 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
       cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
   if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle)")) {
+    return false;
+  }
+
+  aerogpu_handle_t expected_vb = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->up_vertex_buffer) {
+      expected_vb = dev->up_vertex_buffer->handle;
+    }
+  }
+  if (!Check(expected_vb != 0, "DrawPrimitiveUP created scratch vertex buffer")) {
     return false;
   }
 
@@ -322,6 +344,75 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
     return false;
   }
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  // Validate shader creation includes both stages.
+  bool saw_vs = false;
+  bool saw_ps = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC)) {
+    const auto* cs = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+    if (cs->stage == AEROGPU_SHADER_STAGE_VERTEX) {
+      saw_vs = true;
+    } else if (cs->stage == AEROGPU_SHADER_STAGE_PIXEL) {
+      saw_ps = true;
+    }
+  }
+  if (!Check(saw_vs && saw_ps, "CREATE_SHADER_DXBC includes VS and PS stages")) {
+    return false;
+  }
+
+  // Validate the input layout being set matches the internal FVF declaration.
+  bool saw_expected_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_input_layout) {
+      saw_expected_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_expected_layout, "SET_INPUT_LAYOUT uses internal FVF layout handle")) {
+    return false;
+  }
+
+  // Validate at least one vertex buffer binding references the scratch UP buffer.
+  bool saw_expected_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->buffer_count == 0) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) +
+                        static_cast<size_t>(svb->buffer_count) * sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(svb) +
+                                                                                  sizeof(aerogpu_cmd_set_vertex_buffers));
+    for (uint32_t i = 0; i < svb->buffer_count; ++i) {
+      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuse)) {
+        saw_expected_vb = true;
+        break;
+      }
+    }
+    if (saw_expected_vb) {
+      break;
+    }
+  }
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer")) {
+    return false;
+  }
+
+  // Validate draw parameters (trianglelist => 3 vertices).
+  bool saw_draw3 = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_DRAW)) {
+    const auto* d = reinterpret_cast<const aerogpu_cmd_draw*>(hdr);
+    if (d->vertex_count == 3 && d->instance_count == 1) {
+      saw_draw3 = true;
+      break;
+    }
+  }
+  if (!Check(saw_draw3, "DRAW has expected vertex_count=3 instance_count=1")) {
     return false;
   }
 
@@ -355,6 +446,17 @@ bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
     return false;
   }
 
+  aerogpu_handle_t expected_input_layout = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->fvf_vertex_decl_tex1) {
+      expected_input_layout = dev->fvf_vertex_decl_tex1->handle;
+    }
+  }
+  if (!Check(expected_input_layout != 0, "SetFVF TEX1 created internal input layout")) {
+    return false;
+  }
+
   D3DDDI_HRESOURCE hTex{};
   if (!CreateDummyTexture(&cleanup, &hTex)) {
     return false;
@@ -381,6 +483,17 @@ bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
     return false;
   }
 
+  aerogpu_handle_t expected_vb = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->up_vertex_buffer) {
+      expected_vb = dev->up_vertex_buffer->handle;
+    }
+  }
+  if (!Check(expected_vb != 0, "DrawPrimitiveUP TEX1 created scratch vertex buffer")) {
+    return false;
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
@@ -404,6 +517,75 @@ bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
     return false;
   }
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  // Validate shader creation includes both stages.
+  bool saw_vs = false;
+  bool saw_ps = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC)) {
+    const auto* cs = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+    if (cs->stage == AEROGPU_SHADER_STAGE_VERTEX) {
+      saw_vs = true;
+    } else if (cs->stage == AEROGPU_SHADER_STAGE_PIXEL) {
+      saw_ps = true;
+    }
+  }
+  if (!Check(saw_vs && saw_ps, "CREATE_SHADER_DXBC includes VS and PS stages (TEX1)")) {
+    return false;
+  }
+
+  // Validate the input layout being set matches the internal FVF declaration.
+  bool saw_expected_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_input_layout) {
+      saw_expected_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_expected_layout, "SET_INPUT_LAYOUT uses internal TEX1 FVF layout handle")) {
+    return false;
+  }
+
+  // Validate at least one vertex buffer binding references the scratch UP buffer.
+  bool saw_expected_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->buffer_count == 0) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) +
+                        static_cast<size_t>(svb->buffer_count) * sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(svb) +
+                                                                                  sizeof(aerogpu_cmd_set_vertex_buffers));
+    for (uint32_t i = 0; i < svb->buffer_count; ++i) {
+      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuseTex1)) {
+        saw_expected_vb = true;
+        break;
+      }
+    }
+    if (saw_expected_vb) {
+      break;
+    }
+  }
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer (TEX1)")) {
+    return false;
+  }
+
+  // Validate draw parameters (trianglelist => 3 vertices).
+  bool saw_draw3 = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_DRAW)) {
+    const auto* d = reinterpret_cast<const aerogpu_cmd_draw*>(hdr);
+    if (d->vertex_count == 3 && d->instance_count == 1) {
+      saw_draw3 = true;
+      break;
+    }
+  }
+  if (!Check(saw_draw3, "DRAW has expected vertex_count=3 instance_count=1 (TEX1)")) {
     return false;
   }
 
@@ -512,6 +694,9 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
   if (!Check(last->vs != 0 && last->ps != 0, "rebind uses non-zero VS/PS")) {
+    return false;
+  }
+  if (!Check(first->vs == last->vs, "stage-state change does not require VS change")) {
     return false;
   }
   if (!Check(first->ps != last->ps, "stage-state change binds a different PS handle")) {
