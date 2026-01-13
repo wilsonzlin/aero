@@ -283,6 +283,11 @@ if ! echo "$webrtc_body" | grep -Eq '\"iceServers\"[[:space:]]*:'; then
   exit 1
 fi
 assert_header_exact "Content-Type" "application/json" "$webrtc_headers"
+# /webrtc/ice may contain TURN credentials (including TURN REST ephemeral creds),
+# so it must never be cached by browsers or intermediaries.
+assert_header_exact "Cache-Control" "no-store" "$webrtc_headers"
+assert_header_exact "Pragma" "no-cache" "$webrtc_headers"
+assert_header_exact "Expires" "0" "$webrtc_headers"
 
 # /tcp WebSocket upgrade check (requires session cookie).
 #
