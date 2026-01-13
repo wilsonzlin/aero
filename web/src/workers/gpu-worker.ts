@@ -2034,6 +2034,8 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
     let category = "Unknown";
     if (haystack.includes("outofmemory") || haystack.includes("out of memory")) {
       category = "OutOfMemory";
+    } else if (haystack.includes("device lost") || haystack.includes("devicelost")) {
+      category = "DeviceLost";
     } else if (haystack.includes("validation")) {
       category = "Validation";
     }
