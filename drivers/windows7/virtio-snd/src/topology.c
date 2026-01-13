@@ -158,21 +158,10 @@ static volatile LONG g_VirtIoSndTopoJackConnected[VIRTIOSND_JACK_ID_COUNT] = {1,
  * event list remains empty and state changes are still reflected via property
  * reads.
  */
-static LONG g_VirtIoSndTopoJackEventListsInitialized = 0;
-static LIST_ENTRY g_VirtIoSndTopoJackInfoChangeEventList[VIRTIOSND_JACK_ID_COUNT];
-
-static VOID VirtIoSndTopoInitJackEventLists(VOID)
-{
-    ULONG i;
-
-    if (InterlockedCompareExchange(&g_VirtIoSndTopoJackEventListsInitialized, 1, 0) != 0) {
-        return;
-    }
-
-    for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoJackInfoChangeEventList); ++i) {
-        InitializeListHead(&g_VirtIoSndTopoJackInfoChangeEventList[i]);
-    }
-}
+static LIST_ENTRY g_VirtIoSndTopoJackInfoChangeEventList[VIRTIOSND_JACK_ID_COUNT] = {
+    {&g_VirtIoSndTopoJackInfoChangeEventList[0], &g_VirtIoSndTopoJackInfoChangeEventList[0]},
+    {&g_VirtIoSndTopoJackInfoChangeEventList[1], &g_VirtIoSndTopoJackInfoChangeEventList[1]},
+};
 
 static VOID VirtIoSndTopoNotifyJackInfoChange(_In_ ULONG JackId)
 {
@@ -193,8 +182,6 @@ _Use_decl_annotations_
 VOID VirtIoSndTopology_ResetJackState(VOID)
 {
     ULONG i;
-
-    VirtIoSndTopoInitJackEventLists();
     for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected); ++i) {
         (VOID)InterlockedExchange(&g_VirtIoSndTopoJackConnected[i], 1);
     }
@@ -205,8 +192,6 @@ VOID VirtIoSndTopology_UpdateJackState(ULONG JackId, BOOLEAN IsConnected)
 {
     LONG v;
     LONG old;
-
-    VirtIoSndTopoInitJackEventLists();
 
     if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected)) {
         return;
@@ -741,8 +726,6 @@ VirtIoSndEvent_JackInfoChangeCommon(_In_ PPCEVENT_REQUEST EventRequest, _In_ ULO
     if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackInfoChangeEventList)) {
         return STATUS_INVALID_PARAMETER;
     }
-
-    VirtIoSndTopoInitJackEventLists();
 
     if (EventRequest->Verb & PCEVENT_VERB_SUPPORT) {
         /* Best-effort: PortCls will validate the event item metadata. */
