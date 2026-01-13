@@ -209,3 +209,166 @@ impl Rirb {
 fn write_u64(mem: &mut dyn MemoryBus, addr: u64, value: u64) {
     mem.write_physical(addr, &value.to_le_bytes());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memory::Bus;
+
+    const CAPS_MASK: u8 = RING_SIZE_CAP_2 | RING_SIZE_CAP_16 | RING_SIZE_CAP_256;
+
+    #[test]
+    fn corb_size_preserves_capability_bits_and_allows_selection_bits() {
+        let mut corb = Corb::new();
+
+        // All ring sizes are supported by the legacy model; the capability bits should always
+        // remain set, regardless of what the guest writes.
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+
+        // Attempt to clear everything (including capability bits) by writing 0.
+        corb.mmio_write(CorbReg::Size, 1, 0);
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+
+        // Selection bits are writable.
+        corb.mmio_write(CorbReg::Size, 1, 0x1);
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & 0x3, 0x1);
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+
+        corb.mmio_write(CorbReg::Size, 1, 0x2);
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & 0x3, 0x2);
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+
+        // High bits (including reserved bits) are RO; writing 0xff must not affect them.
+        corb.mmio_write(CorbReg::Size, 1, 0xff);
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & 0xFC, CAPS_MASK);
+        assert_eq!(corb.mmio_read(CorbReg::Size, 1) as u8 & 0x3, 0x3);
+    }
+
+    #[test]
+    fn corb_wp_and_rp_are_masked_to_selected_ring_size() {
+        let mut corb = Corb::new();
+
+        // 2 entries (mask 0x1)
+        corb.mmio_write(CorbReg::Size, 1, 0x0);
+        corb.mmio_write(CorbReg::Wp, 2, 0xFFFF);
+        assert_eq!(corb.wp, 1);
+        corb.mmio_write(CorbReg::Rp, 2, 0x7FFF);
+        assert_eq!(corb.rp, 1);
+
+        // 16 entries (mask 0xF)
+        corb.mmio_write(CorbReg::Size, 1, 0x1);
+        corb.mmio_write(CorbReg::Wp, 2, 0xFFFF);
+        assert_eq!(corb.wp, 0xF);
+        corb.mmio_write(CorbReg::Rp, 2, 0x7FFF);
+        assert_eq!(corb.rp, 0xF);
+
+        // 256 entries (mask 0xFF)
+        corb.mmio_write(CorbReg::Size, 1, 0x2);
+        corb.mmio_write(CorbReg::Wp, 2, 0xFFFF);
+        assert_eq!(corb.wp, 0xFF);
+        corb.mmio_write(CorbReg::Rp, 2, 0x7FFF);
+        assert_eq!(corb.rp, 0xFF);
+    }
+
+    #[test]
+    fn corb_rp_reset_bit_clears_read_pointer() {
+        let mut corb = Corb::new();
+        corb.mmio_write(CorbReg::Size, 1, 0x1); // 16 entries
+
+        corb.mmio_write(CorbReg::Rp, 2, 0x5);
+        assert_eq!(corb.rp, 0x5);
+
+        // Setting bit 15 is a write-only reset request.
+        corb.mmio_write(CorbReg::Rp, 2, 0x8000 | 0x5);
+        assert_eq!(corb.rp, 0);
+    }
+
+    #[test]
+    fn rirb_size_preserves_capability_bits_and_allows_selection_bits() {
+        let mut rirb = Rirb::new();
+
+        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+
+        rirb.mmio_write(RirbReg::Size, 1, 0);
+        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+
+        rirb.mmio_write(RirbReg::Size, 1, 0x1);
+        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & 0x3, 0x1);
+        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & CAPS_MASK, CAPS_MASK);
+
+        rirb.mmio_write(RirbReg::Size, 1, 0xff);
+        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & 0xFC, CAPS_MASK);
+        assert_eq!(rirb.mmio_read(RirbReg::Size, 1) as u8 & 0x3, 0x3);
+    }
+
+    #[test]
+    fn rirb_wp_reset_clears_wp_and_responses_since_irq() {
+        let mut mem = Bus::new(0x10_000);
+        let mut rirb = Rirb::new();
+
+        rirb.mmio_write(RirbReg::Lbase, 4, 0x1000);
+        rirb.mmio_write(RirbReg::Ubase, 4, 0);
+        rirb.mmio_write(RirbReg::Size, 1, 0x0); // 2 entries
+
+        let mut intsts = 0u32;
+        rirb.push_response(
+            &mut mem,
+            HdaVerbResponse { data: 0, ext: 0 },
+            &mut intsts,
+        );
+        assert_eq!(rirb.wp, 1);
+        assert_eq!(rirb.responses_since_irq, 1);
+
+        // Writes without bit 15 set are ignored.
+        rirb.mmio_write(RirbReg::Wp, 2, 0x0000);
+        assert_eq!(rirb.wp, 1);
+        assert_eq!(rirb.responses_since_irq, 1);
+
+        // Writes with bit 15 set reset the WP and associated response counter.
+        rirb.mmio_write(RirbReg::Wp, 2, 0x8000);
+        assert_eq!(rirb.wp, 0);
+        assert_eq!(rirb.responses_since_irq, 0);
+    }
+
+    #[test]
+    fn rirb_interrupt_threshold_sets_rintfl_and_controller_intsts() {
+        let mut mem = Bus::new(0x10_000);
+        let mut rirb = Rirb::new();
+
+        rirb.mmio_write(RirbReg::Lbase, 4, 0x2000);
+        rirb.mmio_write(RirbReg::Ubase, 4, 0);
+        rirb.mmio_write(RirbReg::Size, 1, 0x1); // 16 entries
+
+        let threshold = 3u16;
+        rirb.mmio_write(RirbReg::RintCnt, 2, threshold as u64);
+        rirb.mmio_write(RirbReg::Ctl, 1, RIRBCTL_INTCTL as u64);
+
+        let mut intsts = 0u32;
+        for i in 0..(threshold - 1) {
+            rirb.push_response(
+                &mut mem,
+                HdaVerbResponse {
+                    data: i as u32,
+                    ext: 0,
+                },
+                &mut intsts,
+            );
+            assert_eq!(intsts & INTSTS_CIS, 0);
+            assert_eq!(rirb.sts & 0x01, 0);
+            assert_eq!(rirb.responses_since_irq, i + 1);
+        }
+
+        // The Nth response triggers an interrupt.
+        rirb.push_response(
+            &mut mem,
+            HdaVerbResponse {
+                data: 0xDEAD_BEEF,
+                ext: 0,
+            },
+            &mut intsts,
+        );
+        assert_eq!(intsts & INTSTS_CIS, INTSTS_CIS);
+        assert_eq!(rirb.sts & 0x01, 0x01);
+        assert_eq!(rirb.responses_since_irq, 0);
+    }
+}
