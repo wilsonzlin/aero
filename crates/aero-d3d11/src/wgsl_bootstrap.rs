@@ -6,7 +6,7 @@
 //! It supports only a tiny subset of SM4/SM5:
 //! - `mov` between input/output registers
 //! - `ret`
-//! - ignores `nop` and comment custom-data blocks
+//! - ignores `nop` and non-executable `customdata` blocks
 //!
 //! New code should prefer [`crate::shader_translate`] + a proper SM4/SM5 IR
 //! decoder.
@@ -230,21 +230,17 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
         // - executable instructions: < 0x100
         // - declarations: >= 0x100
         const DECL_OPCODE_MIN: u32 = 0x100;
-        const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
 
         match opcode {
             OPCODE_NOP => {
                 // Ignore.
             }
             OPCODE_CUSTOMDATA => {
-                // Ignore comment blocks; other custom-data classes are not supported by the
-                // bootstrap translator because they can affect shader semantics (e.g. immediate
-                // constant buffers).
-                if inst_tokens.get(1).copied() == Some(CUSTOMDATA_CLASS_COMMENT) {
-                    // Ignore.
-                } else {
-                    return Err(WgslBootstrapError::UnsupportedInstruction { opcode });
-                }
+                // `customdata` blocks are non-executable and can appear in both the declaration
+                // section and within the instruction stream (comments, debug data, etc.). The
+                // bootstrap translator does not interpret the payload; it simply skips the block
+                // so embedded metadata does not prevent decoding the actual instructions we
+                // support.
             }
             OPCODE_MOV => {
                 let mut cursor = 1usize;

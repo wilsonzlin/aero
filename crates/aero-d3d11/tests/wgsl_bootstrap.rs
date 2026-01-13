@@ -77,12 +77,17 @@ fn bootstrap_errors_on_unsupported_instruction() {
 }
 
 #[test]
-fn bootstrap_ignores_nop_and_customdata_comment() {
+fn bootstrap_ignores_nop_and_customdata_blocks() {
     let body = [
         opcode_token(OPCODE_NOP, 1),
         // customdata comment block: opcode + class token.
         opcode_token(OPCODE_CUSTOMDATA, 2),
         0,
+        // non-comment customdata block (e.g. debug data): opcode + class token + payload.
+        opcode_token(OPCODE_CUSTOMDATA, 4),
+        1,
+        0x1234_5678,
+        0x9abc_def0,
         // mov o0, v1
         opcode_token(OPCODE_MOV, 5),
         operand_token(OPERAND_TYPE_OUTPUT),
