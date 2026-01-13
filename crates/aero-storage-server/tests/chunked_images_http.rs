@@ -99,6 +99,8 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
     );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
             .to_str()
@@ -140,11 +142,89 @@ async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
     );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
         expected_manifest.as_bytes().len().to_string()
     );
 
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_manifest_with_matching_if_none_match_returns_304() {
+    let (app, _dir, _expected_manifest) = setup_app(None).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers()[header::ETAG].to_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .header(header::IF_NONE_MATCH, etag.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_manifest_with_matching_if_modified_since_returns_304() {
+    let (app, _dir, _expected_manifest) = setup_app(None).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let last_modified = resp.headers()[header::LAST_MODIFIED]
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/manifest.json")
+                .header(header::IF_MODIFIED_SINCE, last_modified)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -553,6 +633,8 @@ async fn chunked_chunk_endpoint_has_expected_headers_and_body() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable, no-transform"
     );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
             .to_str()
@@ -594,8 +676,49 @@ async fn chunked_chunk_head_has_expected_headers_and_empty_body() {
         resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
         "identity"
     );
+    assert!(resp.headers().contains_key(header::ETAG));
+    assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
 
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_chunk_with_matching_if_none_match_returns_304() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/chunks/00000000.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers()[header::ETAG].to_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/chunks/00000000.bin")
+                .header(header::IF_NONE_MATCH, etag.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable, no-transform"
+    );
+    assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
