@@ -1101,14 +1101,19 @@ type "%OUT%" >>"%LOG%"
 set "RC=%ERRORLEVEL%"
 
 set "PUBLISHED="
-for /f "tokens=2 delims=:" %%A in ('findstr /i "Published name" "%OUT%"') do set "PUBLISHED=%%A"
+call :extract_first_pnputil_published_inf "%OUT%" PUBLISHED
+
+if defined PUBLISHED (
+  call :log "pnputil published name: !PUBLISHED!"
+) else (
+  call :log "pnputil published name: (none detected)"
+)
 
 rem pnputil on Windows 7 is not consistent about exit codes for idempotent "already imported" cases.
-rem Treat common "already" messages as success so setup.cmd is safe to run multiple times.
+rem Locale-independent handling: treat a non-zero exit code as success if pnputil still produced an OEM*.INF name.
 if not "%RC%"=="0" (
-  findstr /i /c:"already imported" /c:"already exists" /c:"already installed" /c:"already in the system" /c:"already in the driver store" "%OUT%" >nul 2>&1
-  if not errorlevel 1 (
-    call :log "pnputil reports the driver package is already present; continuing."
+  if defined PUBLISHED (
+    call :log "pnputil returned %RC%, but an OEM INF name was detected; treating as success."
     set "RC=0"
   )
 )
@@ -1121,7 +1126,6 @@ if not "%RC%"=="0" (
 )
 
 if defined PUBLISHED (
-  for /f "tokens=* delims= " %%B in ("!PUBLISHED!") do set "PUBLISHED=%%B"
   call :record_published_inf "!PUBLISHED!"
 )
 
@@ -1139,6 +1143,36 @@ if not "%RC%"=="0" (
 )
 
 exit /b 0
+
+:extract_first_pnputil_published_inf
+rem Extract the first published driver package name reported by pnputil by scanning for an
+rem OEM*.INF pattern. This is more robust than matching locale-specific "Published name"
+rem output strings.
+rem Usage: call :extract_first_pnputil_published_inf <output_file> <out_var_name>
+setlocal EnableDelayedExpansion
+set "OUT_FILE=%~1"
+set "MATCH="
+if not exist "!OUT_FILE!" (
+  endlocal & set "%~2=" & exit /b 0
+)
+
+set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "!PWSH!" set "PWSH=powershell.exe"
+set "AEROGT_PNPUTIL_OUT=!OUT_FILE!"
+
+rem We only need to extract an ASCII OEM*.INF identifier. Decode as ASCII and strip NULs so
+rem UTF-16LE/BE redirected output can still be searched without relying on locale strings.
+for /f "usebackq delims=" %%M in (`"!PWSH!" -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:AEROGT_PNPUTIL_OUT; try{ $bytes=[System.IO.File]::ReadAllBytes($p) }catch{ exit 1 }; $text=[System.Text.Encoding]::ASCII.GetString($bytes); $text=$text.Replace([char]0,''); $m=[regex]::Match($text,'(?i)oem[0-9]+\.inf'); if($m.Success){ $m.Value.Trim() }"`) do (
+  set "MATCH=%%M"
+  goto :extract_first_pnputil_published_inf_done
+)
+
+:extract_first_pnputil_published_inf_done
+if defined MATCH (
+  echo(!MATCH!| "%SYS32%\findstr.exe" /i /r /c:"^oem[0-9][0-9]*[.]inf$" >nul 2>&1
+  if errorlevel 1 set "MATCH="
+)
+endlocal & set "%~2=%MATCH%" & exit /b 0
 
 :record_published_inf
 set "PUB=%~1"
