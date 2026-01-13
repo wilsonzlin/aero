@@ -357,6 +357,12 @@ export class AeroIpcIoServer implements IrqSink {
         if (!cmd) continue;
         if (cmd.kind === "shutdown") return;
         this.#handleCommand(cmd);
+
+        const now = this.#nowMs();
+        if (now >= nextTickAt) {
+          this.#target.tick(now);
+          nextTickAt = now + this.#tickIntervalMs;
+        }
       }
 
       const now = this.#nowMs();
@@ -399,17 +405,23 @@ export class AeroIpcIoServer implements IrqSink {
         if (cmd.kind === "shutdown") return;
         this.#handleCommand(cmd);
 
+        const now = this.#nowMs();
+        if (now >= nextTickAt) {
+          this.#target.tick(now);
+          nextTickAt = now + this.#tickIntervalMs;
+        }
+
         drained++;
-         if (opts.yieldEveryNCommands && drained >= opts.yieldEveryNCommands) {
-           drained = 0;
-           // Yield to allow other tasks (e.g. worker `onmessage`) to run.
-           await new Promise((resolve) => {
-             const timer = setTimeout(resolve, 0);
-             (timer as unknown as { unref?: () => void }).unref?.();
-           });
-           if (opts.signal?.aborted) return;
-         }
-       }
+        if (opts.yieldEveryNCommands && drained >= opts.yieldEveryNCommands) {
+          drained = 0;
+          // Yield to allow other tasks (e.g. worker `onmessage`) to run.
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, 0);
+            (timer as unknown as { unref?: () => void }).unref?.();
+          });
+          if (opts.signal?.aborted) return;
+        }
+      }
 
       const now = this.#nowMs();
       if (now >= nextTickAt) {
