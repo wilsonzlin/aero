@@ -897,12 +897,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(index, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
             }
-            Sm4Inst::StoreStructured {
-                index,
-                offset,
-                value,
-                ..
-            } => {
+            Sm4Inst::StoreStructured { index, offset, value, .. } => {
                 scan_src_regs(index, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
