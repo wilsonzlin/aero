@@ -78,7 +78,8 @@ enables the same canonical controller set in the full-system `Machine` integrati
    expectations).
 4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), fall back to
    the primary HDD boot path and enter the HDD boot sector with **`DL=0x80`** (i.e. configure
-   `firmware::bios::BiosConfig::boot_drive = 0x80`).
+   `firmware::bios::BiosConfig::boot_drive = 0x80`, or in `aero_machine` call
+   `Machine::set_boot_drive(0x80)` and `Machine::reset()`).
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
 
 Implementation note (Rust): in `aero_machine`, `Machine::set_boot_drive(0xE0)` selects CD-first boot
