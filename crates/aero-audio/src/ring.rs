@@ -100,7 +100,11 @@ impl AudioRingBuffer {
             return;
         }
 
-        let free_frames = self.capacity_frames.saturating_sub(self.len_frames);
+        debug_assert!(
+            self.len_frames <= self.capacity_frames,
+            "ring buffer length must never exceed capacity"
+        );
+        let free_frames = self.capacity_frames - self.len_frames;
         let frames_to_write = frames.min(free_frames);
         let dropped = frames - frames_to_write;
         if dropped > 0 {
@@ -173,7 +177,9 @@ impl AudioRingBuffer {
             return;
         }
 
-        let out_len = frames.saturating_mul(CHANNELS);
+        // `frames` is clamped to `MAX_CAPACITY_FRAMES`, and this ring is fixed
+        // to stereo, so this cannot overflow `usize`.
+        let out_len = frames * CHANNELS;
         // `try_reserve_exact` reserves *additional* elements beyond the current
         // length. Avoid reserving `out_len` extra when the caller is reusing a
         // buffer that already has the right size.
