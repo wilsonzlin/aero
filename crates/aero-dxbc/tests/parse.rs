@@ -87,6 +87,59 @@ fn malformed_truncated_header_is_error() {
 }
 
 #[test]
+fn malformed_total_size_smaller_than_header_is_error() {
+    let mut bytes = build_dxbc(&[]);
+    // total_size field is at offset 24.
+    bytes[24..28].copy_from_slice(&(0u32).to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedHeader { .. }));
+    assert!(err.context().contains("total_size"));
+    assert!(err.context().contains("smaller than header"));
+}
+
+#[test]
+fn malformed_chunk_count_makes_offset_table_oob_is_error() {
+    // Declare a huge chunk_count but keep total_size minimal, ensuring the offset
+    // table end computation stays safe and is rejected.
+    let mut bytes = build_dxbc(&[]);
+    // Use the maximum accepted chunk count so we still exercise offset table
+    // bounds checks (values above this are rejected earlier).
+    bytes[28..32].copy_from_slice(&(4096u32).to_le_bytes()); // chunk_count
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk offset table") || err.context().contains("chunk_count"));
+}
+
+#[test]
+fn malformed_chunk_offset_points_into_header_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
+    // Overwrite the first chunk offset to point into the DXBC header.
+    let bad_off = 0u32;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("points into DXBC header"));
+}
+
+#[test]
+fn malformed_chunk_offset_points_into_offset_table_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
+    // Point the first chunk offset into the 4-byte chunk offset table itself.
+    // Use a misaligned offset to ensure we never assume 4-byte alignment.
+    let bad_off = 33u32;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("points into chunk offset table"));
+}
+
+#[test]
 fn malformed_chunk_offset_out_of_bounds_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     // Overwrite the first chunk offset to point outside the container.
@@ -138,4 +191,40 @@ fn rejects_excessive_chunk_count() {
         "unexpected error context: {}",
         err.context()
     );
+}
+
+#[test]
+fn malformed_chunk_size_extends_past_file_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3, 4])]);
+
+    // Find the chunk header and set the size so the payload would extend 1 byte
+    // past the end of the declared container.
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let chunk_offset =
+        u32::from_le_bytes(bytes[offset_table_pos..offset_table_pos + 4].try_into().unwrap())
+            as usize;
+    let data_start = chunk_offset + 8;
+    let bad_size = (bytes.len() - data_start + 1) as u32;
+    bytes[chunk_offset + 4..chunk_offset + 8].copy_from_slice(&bad_size.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("data"));
+    assert!(err.context().contains("outside total_size"));
+}
+
+#[test]
+fn malformed_chunk_offset_integer_wrap_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
+    // Set the chunk offset to a value that will overflow `offset + 8` on 32-bit
+    // platforms. On 64-bit platforms it is simply outside the container.
+    let bad_off = u32::MAX;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(
+        err,
+        DxbcError::MalformedOffsets { .. } | DxbcError::OutOfBounds { .. }
+    ));
 }

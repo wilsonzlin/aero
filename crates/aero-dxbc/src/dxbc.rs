@@ -152,6 +152,17 @@ impl<'a> DxbcFile<'a> {
                 ))
             })? as usize;
 
+            if chunk_offset < offset_table_end {
+                if chunk_offset < DXBC_HEADER_LEN {
+                    return Err(DxbcError::malformed_offsets(format!(
+                        "chunk {i} offset {chunk_offset} points into DXBC header (need >= {DXBC_HEADER_LEN})"
+                    )));
+                }
+                return Err(DxbcError::malformed_offsets(format!(
+                    "chunk {i} offset {chunk_offset} points into chunk offset table ({DXBC_HEADER_LEN}..{offset_table_end})"
+                )));
+            }
+
             let chunk_header_end = chunk_offset.checked_add(8).ok_or_else(|| {
                 DxbcError::malformed_offsets(format!(
                     "chunk {i} offset {chunk_offset} overflows when reading header"
