@@ -356,3 +356,67 @@ fn jwt_rejects_signature_that_decodes_to_wrong_length() {
 
     assert!(verify_hs256_jwt(&token, secret, 0).is_none());
 }
+
+#[test]
+fn session_token_accepts_long_secret_over_hmac_block_len() {
+    let secret = vec![b'x'; 100];
+    let now_ms = 0;
+
+    let payload = br#"{"v":1,"sid":"abc","exp":12345}"#;
+    let token = mint_session_token(payload, &secret);
+    let verified =
+        verify_gateway_session_token(&token, &secret, now_ms).expect("expected token to verify");
+    assert_eq!(verified.sid, "abc");
+    assert_eq!(verified.exp_unix, 12345);
+
+    assert!(
+        verify_gateway_session_token(&token, b"wrong-secret", now_ms).is_none(),
+        "expected signature mismatch to be rejected"
+    );
+}
+
+#[test]
+fn jwt_accepts_long_secret_over_hmac_block_len() {
+    let secret = vec![b'x'; 100];
+    let now_sec = 0;
+
+    let header = br#"{"alg":"HS256"}"#;
+    let payload = br#"{"sid":"abc","exp":12345,"iat":0}"#;
+    let token = mint_hs256_jwt(header, payload, &secret);
+    let claims = verify_hs256_jwt(&token, &secret, now_sec).expect("expected jwt to verify");
+    assert_eq!(claims.sid, "abc");
+    assert_eq!(claims.exp, 12345);
+    assert_eq!(claims.iat, 0);
+
+    assert!(
+        verify_hs256_jwt(&token, b"wrong-secret", now_sec).is_none(),
+        "expected signature mismatch to be rejected"
+    );
+}
+
+#[test]
+fn session_token_accepts_empty_secret() {
+    let secret = b"";
+    let now_ms = 0;
+
+    let payload = br#"{"v":1,"sid":"abc","exp":12345}"#;
+    let token = mint_session_token(payload, secret);
+    let verified =
+        verify_gateway_session_token(&token, secret, now_ms).expect("expected token to verify");
+    assert_eq!(verified.sid, "abc");
+    assert_eq!(verified.exp_unix, 12345);
+}
+
+#[test]
+fn jwt_accepts_empty_secret() {
+    let secret = b"";
+    let now_sec = 0;
+
+    let header = br#"{"alg":"HS256"}"#;
+    let payload = br#"{"sid":"abc","exp":12345,"iat":0}"#;
+    let token = mint_hs256_jwt(header, payload, secret);
+    let claims = verify_hs256_jwt(&token, secret, now_sec).expect("expected jwt to verify");
+    assert_eq!(claims.sid, "abc");
+    assert_eq!(claims.exp, 12345);
+    assert_eq!(claims.iat, 0);
+}
