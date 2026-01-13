@@ -76,6 +76,11 @@ function assertValidOpfsFileName(name: string, field: string): void {
 const IDB_REMOTE_CHUNK_MIN_BYTES = 512 * 1024;
 const IDB_REMOTE_CHUNK_MAX_BYTES = 8 * 1024 * 1024;
 
+// Keep in sync with `platform/remote_disk.ts` (RemoteStreamingDisk).
+const MAX_REMOTE_BLOCK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
+const MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS = 1024;
+const MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES = 512 * 1024 * 1024; // 512 MiB
+
 function assertValidIdbRemoteChunkSize(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${field} must be a positive safe integer`);
@@ -425,6 +430,57 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error("Remote disks are only supported when using the OPFS backend.");
       }
 
+      const rawBlockSizeBytes: unknown = msg.payload?.blockSizeBytes;
+      let blockSizeBytes: number | undefined;
+      if (rawBlockSizeBytes !== undefined) {
+        if (typeof rawBlockSizeBytes !== "number" || !Number.isSafeInteger(rawBlockSizeBytes) || rawBlockSizeBytes <= 0) {
+          throw new Error("blockSizeBytes must be a positive safe integer");
+        }
+        if (rawBlockSizeBytes % 512 !== 0) {
+          throw new Error("blockSizeBytes must be a multiple of 512");
+        }
+        if (rawBlockSizeBytes > MAX_REMOTE_BLOCK_SIZE_BYTES) {
+          throw new Error(`blockSizeBytes must be <= ${MAX_REMOTE_BLOCK_SIZE_BYTES} bytes (64 MiB)`);
+        }
+        blockSizeBytes = rawBlockSizeBytes;
+      }
+
+      const rawPrefetchSequentialBlocks: unknown = msg.payload?.prefetchSequentialBlocks;
+      let prefetchSequentialBlocks: number | undefined;
+      if (rawPrefetchSequentialBlocks !== undefined) {
+        if (
+          typeof rawPrefetchSequentialBlocks !== "number" ||
+          !Number.isSafeInteger(rawPrefetchSequentialBlocks) ||
+          rawPrefetchSequentialBlocks < 0
+        ) {
+          throw new Error("prefetchSequentialBlocks must be a non-negative safe integer");
+        }
+        if (rawPrefetchSequentialBlocks > MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS) {
+          throw new Error(`prefetchSequentialBlocks must be <= ${MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS}`);
+        }
+        const effectiveBlockSize = blockSizeBytes ?? RANGE_STREAM_CHUNK_SIZE;
+        const totalPrefetchBytes = BigInt(rawPrefetchSequentialBlocks) * BigInt(effectiveBlockSize);
+        if (totalPrefetchBytes > BigInt(MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES)) {
+          throw new Error(
+            `prefetchSequentialBlocks * blockSizeBytes must be <= ${MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES} bytes (512 MiB)`,
+          );
+        }
+        prefetchSequentialBlocks = rawPrefetchSequentialBlocks;
+      }
+
+      const rawCacheLimitBytes: unknown = msg.payload?.cacheLimitBytes;
+      let cacheLimitBytes: number | null | undefined;
+      if (rawCacheLimitBytes !== undefined) {
+        if (rawCacheLimitBytes === null) {
+          cacheLimitBytes = null;
+        } else {
+          if (typeof rawCacheLimitBytes !== "number" || !Number.isSafeInteger(rawCacheLimitBytes) || rawCacheLimitBytes < 0) {
+            throw new Error("cacheLimitBytes must be null or a non-negative safe integer");
+          }
+          cacheLimitBytes = rawCacheLimitBytes;
+        }
+      }
+
       const url = String(msg.payload?.url ?? "").trim();
       if (!url) throw new Error("Missing url");
 
@@ -476,9 +532,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         checksum: undefined,
         remote: {
           url,
-          blockSizeBytes: typeof msg.payload?.blockSizeBytes === "number" ? msg.payload.blockSizeBytes : undefined,
-          cacheLimitBytes: typeof msg.payload?.cacheLimitBytes === "number" || msg.payload?.cacheLimitBytes === null ? msg.payload.cacheLimitBytes : undefined,
-          prefetchSequentialBlocks: typeof msg.payload?.prefetchSequentialBlocks === "number" ? msg.payload.prefetchSequentialBlocks : undefined,
+          blockSizeBytes,
+          cacheLimitBytes,
+          prefetchSequentialBlocks,
         },
       };
 
