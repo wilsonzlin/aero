@@ -266,6 +266,7 @@ typedef struct OPTIONS {
     int led_via_hidd;
     int have_led_ioctl_set_output;
     int led_cycle;
+    int led_spam;
     int ioctl_bad_xfer_packet;
     int ioctl_bad_write_report;
     int ioctl_bad_read_xfer_packet;
@@ -295,6 +296,7 @@ typedef struct OPTIONS {
     DWORD duration_secs;
     DWORD count;
     DWORD set_log_mask;
+    DWORD led_spam_count;
     BYTE led_mask;
     BYTE led_ioctl_set_output_mask;
 } OPTIONS;
@@ -1291,7 +1293,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--list [--json]]\n");
     wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse] [--json]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
-    wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
+    wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-ioctl-set-output 0x07 | --led-cycle | --led-spam N] [--dump-desc]\n");
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
     wprintf(L"             [--state]\n");
@@ -1299,7 +1301,6 @@ static void print_usage(void)
     wprintf(L"             [--counters-json]\n");
     wprintf(L"             [--reset-counters]\n");
     wprintf(L"             [--get-log-mask | --set-log-mask 0xMASK]\n");
-    wprintf(L"             [--led-ioctl-set-output 0x07]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report |\n");
     wprintf(L"              --ioctl-bad-read-xfer-packet | --ioctl-bad-read-report]\n");
     wprintf(L"             [--ioctl-bad-set-output-xfer-packet | --ioctl-bad-set-output-report | --hidd-bad-set-output-report]\n");
@@ -1329,6 +1330,7 @@ static void print_usage(void)
     wprintf(L"  --led-ioctl-set-output 0xMASK\n");
     wprintf(L"                 Send keyboard LEDs using DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)\n");
     wprintf(L"  --led-cycle     Cycle keyboard LEDs to visually confirm write path\n");
+    wprintf(L"  --led-spam N    Rapidly send N keyboard LED output reports (alternating 0/on) to stress the write path\n");
     wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
     wprintf(L"  --dump-collection-desc\n");
     wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR\n");
@@ -2915,6 +2917,163 @@ static void cycle_keyboard_leds(const SELECTED_DEVICE *dev)
     }
 }
 
+static int spam_keyboard_leds(const SELECTED_DEVICE *dev, BYTE on_mask, DWORD count, int via_hidd, int via_ioctl_set_output)
+{
+    DWORD i;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    if (!(dev->desired_access & GENERIC_WRITE)) {
+        wprintf(L"LED spam requested, but device was opened read-only.\n");
+        return 0;
+    }
+    if (!dev->caps_valid || !(dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06)) {
+        wprintf(L"LED spam requested, but selected interface is not a keyboard collection.\n");
+        return 0;
+    }
+
+    if (count == 0) {
+        wprintf(L"LED spam count is 0; nothing to do.\n");
+        return 1;
+    }
+
+    if (on_mask == 0) {
+        // A nonzero mask makes it easier to see traffic in logs/counters even if the guest keyboard LEDs are not visible.
+        on_mask = 0x07;
+    }
+
+    if (via_ioctl_set_output) {
+        // Use the explicit IOCTL_HID_SET_OUTPUT_REPORT path (matches send_keyboard_led_report_ioctl_set_output).
+        typedef struct HID_XFER_PACKET_MIN {
+            PUCHAR reportBuffer;
+            ULONG reportBufferLen;
+            UCHAR reportId;
+        } HID_XFER_PACKET_MIN;
+
+        BYTE report[2];
+        ULONG_PTR inbuf[16];
+        HID_XFER_PACKET_MIN *pkt;
+        DWORD bytes;
+
+        ZeroMemory(inbuf, sizeof(inbuf));
+        pkt = (HID_XFER_PACKET_MIN *)inbuf;
+        pkt->reportId = 1;
+        pkt->reportBuffer = report;
+        pkt->reportBufferLen = (ULONG)sizeof(report);
+
+        report[0] = 1; // ReportID=1 (keyboard)
+
+        wprintf(L"Spamming keyboard LEDs via IOCTL_HID_SET_OUTPUT_REPORT: count=%lu onMask=0x%02X\n", count, on_mask);
+
+        for (i = 0; i < count; i++) {
+            const BYTE mask = (BYTE)((i & 1u) ? on_mask : 0);
+            BOOL ok;
+
+            report[1] = mask;
+            bytes = 0;
+            ok = DeviceIoControl(dev->handle, IOCTL_HID_SET_OUTPUT_REPORT, inbuf, (DWORD)sizeof(inbuf), NULL, 0, &bytes, NULL);
+            if (!ok) {
+                print_last_error_w(L"DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)");
+                return 0;
+            }
+        }
+
+        wprintf(L"LED spam complete\n");
+        return 1;
+    }
+
+    if (via_hidd) {
+        DWORD out_len;
+        BYTE *out_report;
+
+        out_len = dev->caps.OutputReportByteLength;
+        if (out_len == 0) {
+            out_len = 2;
+        }
+
+        out_report = (BYTE *)calloc(out_len, 1);
+        if (out_report == NULL) {
+            wprintf(L"Out of memory\n");
+            return 0;
+        }
+
+        if (out_len > 1) {
+            out_report[0] = 1;
+        }
+
+        wprintf(L"Spamming keyboard LEDs via HidD_SetOutputReport: count=%lu onMask=0x%02X\n", count, on_mask);
+
+        for (i = 0; i < count; i++) {
+            const BYTE mask = (BYTE)((i & 1u) ? on_mask : 0);
+            BOOL ok;
+
+            if (out_len == 1) {
+                out_report[0] = mask;
+            } else {
+                out_report[1] = mask;
+            }
+
+            ok = HidD_SetOutputReport(dev->handle, out_report, out_len);
+            if (!ok) {
+                print_last_error_w(L"HidD_SetOutputReport");
+                free(out_report);
+                return 0;
+            }
+        }
+
+        free(out_report);
+        wprintf(L"LED spam complete\n");
+        return 1;
+    }
+
+    {
+        DWORD out_len;
+        BYTE *out_report;
+
+        out_len = dev->caps.OutputReportByteLength;
+        if (out_len == 0) {
+            out_len = 2;
+        }
+
+        out_report = (BYTE *)calloc(out_len, 1);
+        if (out_report == NULL) {
+            wprintf(L"Out of memory\n");
+            return 0;
+        }
+
+        if (out_len > 1) {
+            out_report[0] = 1;
+        }
+
+        wprintf(L"Spamming keyboard LEDs via WriteFile(IOCTL_HID_WRITE_REPORT): count=%lu onMask=0x%02X\n", count, on_mask);
+
+        for (i = 0; i < count; i++) {
+            const BYTE mask = (BYTE)((i & 1u) ? on_mask : 0);
+            DWORD written;
+            BOOL ok;
+
+            if (out_len == 1) {
+                out_report[0] = mask;
+            } else {
+                out_report[1] = mask;
+            }
+
+            written = 0;
+            ok = WriteFile(dev->handle, out_report, out_len, &written, NULL);
+            if (!ok) {
+                print_last_error_w(L"WriteFile(IOCTL_HID_WRITE_REPORT)");
+                free(out_report);
+                return 0;
+            }
+        }
+
+        free(out_report);
+        wprintf(L"LED spam complete\n");
+        return 1;
+    }
+}
+
 static DWORD qpc_ticks_to_timeout_ms(LONGLONG ticks, LONGLONG freq)
 {
     ULONGLONG ms;
@@ -4166,6 +4325,16 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if ((wcscmp(argv[i], L"--led-spam") == 0) && i + 1 < argc) {
+            if (!parse_u32_dec(argv[i + 1], &opt.led_spam_count)) {
+                wprintf(L"Invalid LED spam count: %ls\n", argv[i + 1]);
+                return 2;
+            }
+            opt.led_spam = 1;
+            i++;
+            continue;
+        }
+
         wprintf(L"Unknown argument: %ls\n", argv[i]);
         print_usage();
         return 2;
@@ -4189,7 +4358,7 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.selftest &&
         (opt.query_state || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
-         opt.have_index || opt.have_led_mask || opt.led_cycle || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+         opt.have_index || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
          opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_set_output_xfer_packet ||
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
@@ -4202,9 +4371,9 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.query_state &&
         (opt.selftest || opt.query_counters || opt.query_counters_json || opt.reset_counters || opt.ioctl_query_counters_short ||
-         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.have_led_mask || opt.led_cycle || opt.dump_desc ||
-         opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet ||
-         opt.ioctl_bad_read_report ||
+         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.have_led_mask || opt.led_cycle || opt.led_spam ||
+         opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+         opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
          opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
          opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
@@ -4214,6 +4383,10 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.have_led_mask && opt.led_cycle) {
         wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --led-cycle are mutually exclusive.\n");
+        return 2;
+    }
+    if (opt.led_cycle && opt.led_spam) {
+        wprintf(L"--led-cycle and --led-spam are mutually exclusive.\n");
         return 2;
     }
     if (opt.have_led_mask && opt.ioctl_bad_write_report) {
@@ -4370,8 +4543,8 @@ int wmain(int argc, wchar_t **argv)
 
     if ((opt.query_counters || opt.reset_counters) &&
         (opt.query_state || opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.ioctl_query_counters_short ||
-         opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc || opt.ioctl_bad_xfer_packet ||
-         opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
+         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
          opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
          opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
@@ -4390,7 +4563,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.ioctl_get_input_report &&
-        (opt.query_counters || opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc ||
+        (opt.query_counters || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
          opt.hidd_get_input_report ||
          opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
@@ -4401,7 +4574,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.hidd_get_input_report &&
-        (opt.query_counters || opt.have_led_mask || opt.led_cycle || opt.dump_desc || opt.dump_collection_desc ||
+        (opt.query_counters || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
          opt.ioctl_get_input_report || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
          opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
@@ -4479,6 +4652,32 @@ int wmain(int argc, wchar_t **argv)
             return 1;
         }
         wprintf(L"virtio-input DiagnosticsMask: 0x%08lX\n", mask);
+        free_selected_device(&dev);
+        return 0;
+    }
+
+    if (opt.led_spam) {
+        BYTE on_mask;
+        int via_ioctl_set_output;
+        int via_hidd;
+
+        on_mask = 0x07;
+        via_ioctl_set_output = opt.have_led_ioctl_set_output ? 1 : 0;
+        via_hidd = opt.led_via_hidd ? 1 : 0;
+
+        if (opt.have_led_mask) {
+            if (via_ioctl_set_output) {
+                on_mask = opt.led_ioctl_set_output_mask;
+            } else {
+                on_mask = opt.led_mask;
+            }
+        }
+
+        if (!spam_keyboard_leds(&dev, on_mask, opt.led_spam_count, via_hidd, via_ioctl_set_output)) {
+            free_selected_device(&dev);
+            return 1;
+        }
+
         free_selected_device(&dev);
         return 0;
     }

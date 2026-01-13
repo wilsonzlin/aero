@@ -13,5 +13,5 @@ Currently:
     driver returns `STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` for version negotiation).
   - Includes optional negative tests that pass invalid METHOD_NEITHER pointers to validate driver hardening.
   - Useful for stressing the keyboard LED/statusq path when `StatusQDropOnFull` is enabled:
-    - `hidtest.exe --keyboard --led-cycle --count 10000`
+    - `hidtest.exe --keyboard --led-spam 10000`
     - `hidtest.exe --keyboard --counters` (watch `VirtioStatusDrops`)

@@ -30,6 +30,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
   - `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)` (explicit IOCTL test path)
+- Supports stress-testing the LED/statusq write path via `--led-spam N`.
 - Optionally queries/resets virtio-input driver diagnostics counters via:
   - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)`
   - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
@@ -296,7 +297,7 @@ When set to nonzero, pending LED writes are dropped instead of being held until
 the queue drains. You can enable it and then stress the write path with:
 
 ```bat
-hidtest.exe --keyboard --led-cycle --count 10000
+hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
 
