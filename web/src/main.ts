@@ -45,7 +45,7 @@ import { WorkerCoordinator } from "./runtime/coordinator";
 import { installNetTraceBackendOnAeroGlobal } from "./net/trace_backend";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
-import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
+import { IO_IPC_HID_IN_QUEUE_KIND, StatusIndex, type WorkerRole } from "./runtime/shared_layout";
 import { DiskManager } from "./storage/disk_manager";
 import type { DiskImageMetadata, MountConfig } from "./storage/metadata";
 import { OPFS_DISKS_PATH, OPFS_LEGACY_IMAGES_DIR } from "./storage/metadata";
@@ -65,6 +65,7 @@ import {
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./ipc/shared-layout";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
+import { mountInputDiagnosticsPanel, type InputDiagnosticsSnapshot } from "./ui/input_diagnostics_panel";
 import { installNetTraceUI } from "./net/trace_ui";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
@@ -79,6 +80,7 @@ import {
   type UsbPassthroughDemoRunMessage,
 } from "./usb/usb_passthrough_demo_runtime";
 import { isUsbSelectedMessage, type UsbHostAction, type UsbHostCompletion } from "./usb/usb_proxy_protocol";
+import { decodeInputBackendStatus } from "./input/input_backend_status";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -344,6 +346,9 @@ function render(): void {
   const app = document.getElementById("app");
   if (!app) throw new Error("Missing #app element");
 
+  const query = new URLSearchParams(location.search);
+  const showInputDiagnostics = query.get("input") === "1" || query.get("input") === "true";
+
   const report = detectPlatformFeatures();
   const missing = explainMissingRequirements(report);
 
@@ -353,7 +358,7 @@ function render(): void {
   const statusHost = el("div", { class: "panel" });
   mountStatusPanel(statusHost, configManager, workerCoordinator);
 
-  app.replaceChildren(
+  const nodes: Node[] = [
     el("h1", { text: "Aero Platform Capabilities" }),
     renderBuildInfoPanel(),
     settingsHost,
@@ -393,6 +398,7 @@ function render(): void {
     renderWebUsbPanel(report),
     renderWebUsbUhciHarnessPanel(report, wasmInitPromise),
     renderWebHidPassthroughPanel(),
+    ...(showInputDiagnostics ? [renderInputDiagnosticsPanel()] : []),
     renderInputPanel(),
     renderWebUsbBrokerPanel(),
     renderWebUsbPassthroughDemoWorkerPanel(),
@@ -401,7 +407,9 @@ function render(): void {
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
     renderMicrobenchPanel(),
-  );
+  ];
+
+  app.replaceChildren(...nodes);
 }
 
 function renderWebUsbDiagnosticsPanel(report: PlatformFeatureReport): HTMLElement {
@@ -3990,6 +3998,41 @@ function renderMicrobenchPanel(): HTMLElement {
     ),
     output,
   );
+}
+
+function renderInputDiagnosticsPanel(): HTMLElement {
+  const host = el("div", { class: "panel" });
+  const panel = mountInputDiagnosticsPanel(host);
+
+  const tick = (): void => {
+    const status = workerCoordinator.getStatusView();
+    if (!status) {
+      panel.setSnapshot(null);
+      return;
+    }
+
+    const keyboardBackend =
+      decodeInputBackendStatus(Atomics.load(status, StatusIndex.IoInputKeyboardBackend)) ?? "ps2";
+    const mouseBackend = decodeInputBackendStatus(Atomics.load(status, StatusIndex.IoInputMouseBackend)) ?? "ps2";
+
+    const snapshot: InputDiagnosticsSnapshot = {
+      keyboardBackend,
+      mouseBackend,
+      virtioKeyboardDriverOk: Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk) !== 0,
+      virtioMouseDriverOk: Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk) !== 0,
+      syntheticUsbKeyboardConfigured: Atomics.load(status, StatusIndex.IoInputUsbKeyboardOk) !== 0,
+      syntheticUsbMouseConfigured: Atomics.load(status, StatusIndex.IoInputUsbMouseOk) !== 0,
+      mouseButtonsMask: Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0,
+      pressedKeyboardHidUsageCount: Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0,
+    };
+    panel.setSnapshot(snapshot);
+  };
+
+  tick();
+  const timer = globalThis.setInterval(tick, 250);
+  (timer as unknown as { unref?: () => void }).unref?.();
+
+  return host;
 }
 
 function renderInputPanel(): HTMLElement {
