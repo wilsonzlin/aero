@@ -7978,6 +7978,455 @@ bool TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2() {
   return true;
 }
 
+bool TestOpenResourceDecodesD3D9SharedSurfaceDescAndComputesTightPitch() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->wddm_context.hContext == 0, "portable decode test expects no WDDM context")) {
+    return false;
+  }
+
+  // D3D9 shared-surface metadata: reserved0 carries an encoded D3D9 descriptor.
+  constexpr uint32_t kFormat = 22u; // D3DFMT_X8R8G8B8
+  constexpr uint32_t kWidth = 17u;
+  constexpr uint32_t kHeight = 9u;
+
+  aerogpu_wddm_alloc_priv priv{};
+  std::memset(&priv, 0, sizeof(priv));
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 0xCAFEu;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x0102030405060708ull;
+  priv.size_bytes = 0; // OpenResource should compute the tight size from desc.
+  priv.reserved0 = AEROGPU_WDDM_ALLOC_PRIV_DESC_PACK(kFormat, kWidth, kHeight);
+
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = 0; // reconstructed from reserved0 descriptor
+  open_res.width = 0;
+  open_res.height = 0;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(desc v1)")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned resource handle")) {
+    return false;
+  }
+
+  cleanup.hResource = open_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+
+  if (!Check(static_cast<uint32_t>(res->format) == kFormat, "format reconstructed from desc")) {
+    return false;
+  }
+  if (!Check(res->width == kWidth, "width reconstructed from desc")) {
+    return false;
+  }
+  if (!Check(res->height == kHeight, "height reconstructed from desc")) {
+    return false;
+  }
+
+  const uint32_t expected_row_pitch = kWidth * bytes_per_pixel(static_cast<D3DDDIFORMAT>(kFormat));
+  if (!Check(res->row_pitch == expected_row_pitch, "row_pitch computed from bytes_per_pixel (tight)")) {
+    return false;
+  }
+  const uint32_t expected_slice_pitch = expected_row_pitch * kHeight;
+  if (!Check(res->slice_pitch == expected_slice_pitch, "slice_pitch matches tight pitch*height")) {
+    return false;
+  }
+  return Check(res->size_bytes == expected_slice_pitch, "size_bytes matches tight slice_pitch");
+}
+
+bool TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2UsesRowPitchBytes() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->wddm_context.hContext == 0, "portable decode test expects no WDDM context")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+
+  struct Case {
+    uint32_t dxgi_format;
+    uint32_t expected_d3d9_format;
+    const char* name;
+  };
+
+  // DXGI_FORMAT numeric values from dxgiformat.h (duplicated locally so host
+  // tests do not require any DXGI headers).
+  constexpr uint32_t kDxgiFmtB8G8R8A8Unorm = 87u;
+  constexpr uint32_t kDxgiFmtB8G8R8X8Unorm = 88u;
+
+  const Case cases[] = {
+      {kDxgiFmtB8G8R8A8Unorm, 21u, "DXGI B8G8R8A8 -> D3D9 A8R8G8B8"},
+      {kDxgiFmtB8G8R8X8Unorm, 22u, "DXGI B8G8R8X8 -> D3D9 X8R8G8B8"},
+  };
+
+  for (const Case& tc : cases) {
+    constexpr uint32_t kWidth = 17u;
+    constexpr uint32_t kHeight = 9u;
+
+    const uint32_t tight_pitch = kWidth * bytes_per_pixel(static_cast<D3DDDIFORMAT>(tc.expected_d3d9_format));
+    const uint32_t row_pitch = tight_pitch + 64u;
+    const uint32_t slice_pitch = row_pitch * kHeight;
+    const uint32_t size_bytes = slice_pitch + 128u;
+
+    aerogpu_wddm_alloc_priv_v2 priv{};
+    std::memset(&priv, 0, sizeof(priv));
+    priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+    priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
+    priv.alloc_id = 0x1000u + tc.dxgi_format;
+    priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+    priv.share_token = 0x1111111111111111ull + static_cast<uint64_t>(tc.dxgi_format);
+    priv.size_bytes = size_bytes;
+    priv.reserved0 = 0; // no desc marker, no pitch hint; use priv2.row_pitch_bytes.
+    priv.kind = AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D;
+    priv.width = kWidth;
+    priv.height = kHeight;
+    priv.format = tc.dxgi_format;
+    priv.row_pitch_bytes = row_pitch;
+    priv.reserved1 = 0;
+
+    D3D9DDIARG_OPENRESOURCE open_res{};
+    open_res.pPrivateDriverData = &priv;
+    open_res.private_driver_data_size = sizeof(priv);
+    open_res.type = 0;
+    open_res.format = 0; // reconstructed from v2 DXGI format mapping
+    open_res.width = 0;
+    open_res.height = 0;
+    open_res.depth = 1;
+    open_res.mip_levels = 1;
+    open_res.usage = 0;
+    open_res.size = 0;
+    open_res.hResource.pDrvPrivate = nullptr;
+    open_res.wddm_hAllocation = 0;
+
+    hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+    if (!Check(hr == S_OK, tc.name)) {
+      return false;
+    }
+    if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned resource handle")) {
+      return false;
+    }
+
+    cleanup.resources.push_back(open_res.hResource);
+
+    auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(static_cast<uint32_t>(res->format) == tc.expected_d3d9_format, "DXGI format mapped to D3D9 format")) {
+      return false;
+    }
+    if (!Check(res->width == kWidth && res->height == kHeight, "width/height reconstructed from v2 metadata")) {
+      return false;
+    }
+    if (!Check(res->row_pitch == row_pitch, "row_pitch uses priv2.row_pitch_bytes")) {
+      return false;
+    }
+    if (!Check(res->slice_pitch == slice_pitch, "slice_pitch matches row_pitch*height")) {
+      return false;
+    }
+    if (!Check(res->size_bytes == size_bytes, "size_bytes uses alloc priv size when consistent")) {
+      return false;
+    }
+
+    // Verify Lock reports the reconstructed pitch.
+    D3D9DDIARG_LOCK lock{};
+    lock.hResource = open_res.hResource;
+    lock.offset_bytes = 0;
+    lock.size_bytes = 0;
+    lock.flags = 0;
+    D3DDDI_LOCKEDBOX locked{};
+    hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
+    if (!Check(hr == S_OK, "Lock(opened resource)")) {
+      return false;
+    }
+    if (!Check(locked.RowPitch == row_pitch, "Lock reports priv2.row_pitch_bytes")) {
+      return false;
+    }
+
+    D3D9DDIARG_UNLOCK unlock{};
+    unlock.hResource = open_res.hResource;
+    unlock.offset_bytes = 0;
+    unlock.size_bytes = 0;
+    hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+    if (!Check(hr == S_OK, "Unlock(opened resource)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestOpenResourceUsesReserved0PitchHintForUncompressedSingleMipSurface() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->wddm_context.hContext == 0, "portable decode test expects no WDDM context")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+
+  constexpr uint32_t kFormat = 21u; // D3DFMT_A8R8G8B8
+  constexpr uint32_t kWidth = 100u;
+  constexpr uint32_t kHeight = 3u;
+  constexpr uint32_t kPitchHint = 512u; // larger than tight pitch (100*4=400)
+
+  aerogpu_wddm_alloc_priv priv{};
+  std::memset(&priv, 0, sizeof(priv));
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 0xBEEFu;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x8877665544332211ull;
+  priv.size_bytes = 0;
+  priv.reserved0 = static_cast<uint64_t>(kPitchHint); // legacy reserved0 pitch encoding
+
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = kFormat;
+  open_res.width = kWidth;
+  open_res.height = kHeight;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(reserved0 pitch hint)")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned resource handle")) {
+    return false;
+  }
+
+  cleanup.hResource = open_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+
+  if (!Check(res->row_pitch == kPitchHint, "row_pitch uses reserved0 pitch hint")) {
+    return false;
+  }
+  if (!Check(res->slice_pitch == kPitchHint * kHeight, "slice_pitch matches pitch hint * height")) {
+    return false;
+  }
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = open_res.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX locked{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
+  if (!Check(hr == S_OK, "Lock(opened resource)")) {
+    return false;
+  }
+  if (!Check(locked.RowPitch == kPitchHint, "Lock reports pitch hint RowPitch")) {
+    return false;
+  }
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = open_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(opened resource)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -9168,6 +9617,9 @@ int main() {
   failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
   failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
   failures += !aerogpu::TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2();
+  failures += !aerogpu::TestOpenResourceDecodesD3D9SharedSurfaceDescAndComputesTightPitch();
+  failures += !aerogpu::TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2UsesRowPitchBytes();
+  failures += !aerogpu::TestOpenResourceUsesReserved0PitchHintForUncompressedSingleMipSurface();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
