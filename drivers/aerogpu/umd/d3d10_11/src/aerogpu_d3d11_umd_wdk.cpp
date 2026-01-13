@@ -3881,9 +3881,11 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
   auto* state = new (hState.pDrvPrivate) RasterizerState();
+  state->fill_mode = static_cast<uint32_t>(D3D11_FILL_SOLID);
   state->cull_mode = static_cast<uint32_t>(D3D11_CULL_BACK);
   state->front_ccw = 0u;
   state->scissor_enable = 0u;
+  state->depth_bias = 0;
   state->depth_clip_enable = 1u;
 
   if (!pDesc) {
@@ -3892,18 +3894,26 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState11(D3D11DDI_HDEVICE hDevice,
 
   bool filled = false;
   __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::CullMode) {
+    __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::FillMode) {
+      state->fill_mode = static_cast<uint32_t>(pDesc->FillMode);
+    }
     state->cull_mode = static_cast<uint32_t>(pDesc->CullMode);
     state->front_ccw = pDesc->FrontCounterClockwise ? 1u : 0u;
     state->scissor_enable = pDesc->ScissorEnable ? 1u : 0u;
+    __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::DepthBias) {
+      state->depth_bias = static_cast<int32_t>(pDesc->DepthBias);
+    }
     state->depth_clip_enable = pDesc->DepthClipEnable ? 1u : 0u;
     filled = true;
   }
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::RasterizerDesc) {
       const auto& desc = pDesc->RasterizerDesc;
+      state->fill_mode = static_cast<uint32_t>(desc.FillMode);
       state->cull_mode = static_cast<uint32_t>(desc.CullMode);
       state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
       state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+      state->depth_bias = static_cast<int32_t>(desc.DepthBias);
       state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
       filled = true;
     }
@@ -3911,9 +3921,11 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState11(D3D11DDI_HDEVICE hDevice,
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::Desc) {
       const auto& desc = pDesc->Desc;
+      state->fill_mode = static_cast<uint32_t>(desc.FillMode);
       state->cull_mode = static_cast<uint32_t>(desc.CullMode);
       state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
       state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+      state->depth_bias = static_cast<int32_t>(desc.DepthBias);
       state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
       filled = true;
     }
@@ -3922,13 +3934,23 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState11(D3D11DDI_HDEVICE hDevice,
     __if_exists(D3D11DDIARG_CREATERASTERIZERSTATE::pRasterizerDesc) {
       if (pDesc->pRasterizerDesc) {
         const auto& desc = *pDesc->pRasterizerDesc;
+        state->fill_mode = static_cast<uint32_t>(desc.FillMode);
         state->cull_mode = static_cast<uint32_t>(desc.CullMode);
         state->front_ccw = desc.FrontCounterClockwise ? 1u : 0u;
         state->scissor_enable = desc.ScissorEnable ? 1u : 0u;
+        state->depth_bias = static_cast<int32_t>(desc.DepthBias);
         state->depth_clip_enable = desc.DepthClipEnable ? 1u : 0u;
         filled = true;
       }
     }
+  }
+  switch (static_cast<D3D11_FILL_MODE>(state->fill_mode)) {
+    case D3D11_FILL_SOLID:
+    case D3D11_FILL_WIREFRAME:
+      break;
+    default:
+      state->~RasterizerState();
+      return E_NOTIMPL;
   }
   return S_OK;
 }
@@ -4810,14 +4832,18 @@ static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
     return;
   }
 
+  uint32_t fill_mode = static_cast<uint32_t>(D3D11_FILL_SOLID);
   uint32_t cull_mode = static_cast<uint32_t>(D3D11_CULL_BACK);
   uint32_t front_ccw = 0u;
   uint32_t scissor_enable = 0u;
+  int32_t depth_bias = 0;
   uint32_t depth_clip_enable = 1u;
   if (rs) {
+    fill_mode = rs->fill_mode;
     cull_mode = rs->cull_mode;
     front_ccw = rs->front_ccw;
     scissor_enable = rs->scissor_enable;
+    depth_bias = rs->depth_bias;
     depth_clip_enable = rs->depth_clip_enable;
   }
 
@@ -4828,10 +4854,27 @@ static void EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
   }
 
   cmd->state.fill_mode = AEROGPU_FILL_SOLID;
+  switch (static_cast<D3D11_FILL_MODE>(fill_mode)) {
+    case D3D11_FILL_SOLID:
+      cmd->state.fill_mode = AEROGPU_FILL_SOLID;
+      break;
+    case D3D11_FILL_WIREFRAME:
+      cmd->state.fill_mode = AEROGPU_FILL_WIREFRAME;
+      break;
+    default: {
+      static std::once_flag once;
+      std::call_once(once, [=] {
+        AEROGPU_D3D10_11_LOG("EmitRasterizerStateLocked: unsupported fill_mode=%u (falling back to SOLID)",
+                             (unsigned)fill_mode);
+      });
+      cmd->state.fill_mode = AEROGPU_FILL_SOLID;
+      break;
+    }
+  }
   cmd->state.cull_mode = D3D11CullModeToAerogpu(cull_mode);
   cmd->state.front_ccw = front_ccw ? 1u : 0u;
   cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
-  cmd->state.depth_bias = 0;
+  cmd->state.depth_bias = depth_bias;
   cmd->state.flags = depth_clip_enable ? AEROGPU_RASTERIZER_FLAG_NONE
                                        : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
 }

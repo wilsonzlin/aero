@@ -712,9 +712,12 @@ struct BlendState {
   uint32_t render_target_write_mask = 0xFu;
 };
 struct RasterizerState {
+  // Stored as raw numeric values so this header remains WDK-free.
+  uint32_t fill_mode = 0;
   uint32_t cull_mode = 0;
   uint32_t front_ccw = 0;
   uint32_t scissor_enable = 0;
+  int32_t depth_bias = 0;
   uint32_t depth_clip_enable = 1u;
 };
 struct DepthStencilState {

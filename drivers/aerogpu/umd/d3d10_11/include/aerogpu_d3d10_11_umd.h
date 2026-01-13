@@ -378,7 +378,16 @@ typedef struct AEROGPU_DDIARG_CREATEBLENDSTATE {
 } AEROGPU_DDIARG_CREATEBLENDSTATE;
 
 typedef struct AEROGPU_DDIARG_CREATERASTERIZERSTATE {
-  uint32_t dummy;
+  // D3D11_RASTERIZER_DESC subset (numeric values from d3d11.h).
+  //
+  // This struct is used by the portable build + host-side unit tests. The real
+  // Win7 WDK build uses the official D3D10/11 DDI structures instead.
+  uint32_t FillMode;
+  uint32_t CullMode;
+  uint32_t FrontCounterClockwise; // 0/1
+  int32_t DepthBias;
+  uint32_t ScissorEnable; // 0/1
+  uint32_t DepthClipEnable; // 0/1
 } AEROGPU_DDIARG_CREATERASTERIZERSTATE;
 
 typedef struct AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE {

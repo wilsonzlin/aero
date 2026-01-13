@@ -6573,6 +6573,74 @@ bool TestMapDoNotWaitRespectsFenceCompletion() {
   return true;
 }
 
+bool TestRasterizerStateWireframeDepthBiasEncodesCmd() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(rasterizer state)")) {
+    return false;
+  }
+
+  // D3D11 enum numeric values (stable across Windows versions).
+  constexpr uint32_t kD3D11FillWireframe = 2;
+  constexpr uint32_t kD3D11CullBack = 3;
+
+  AEROGPU_DDIARG_CREATERASTERIZERSTATE desc{};
+  desc.FillMode = kD3D11FillWireframe;
+  desc.CullMode = kD3D11CullBack;
+  desc.FrontCounterClockwise = 0;
+  desc.DepthBias = 1337;
+  desc.ScissorEnable = 0;
+  desc.DepthClipEnable = 0;
+
+  const SIZE_T rs_size = dev.device_funcs.pfnCalcPrivateRasterizerStateSize(dev.hDevice, &desc);
+  if (!Check(rs_size >= sizeof(uint32_t), "CalcPrivateRasterizerStateSize returned non-zero size")) {
+    return false;
+  }
+
+  std::vector<uint8_t> rs_mem(static_cast<size_t>(rs_size), 0);
+  D3D10DDI_HRASTERIZERSTATE rs{};
+  rs.pDrvPrivate = rs_mem.data();
+
+  HRESULT hr = dev.device_funcs.pfnCreateRasterizerState(dev.hDevice, &desc, rs);
+  if (!Check(hr == S_OK, "CreateRasterizerState")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnSetRasterizerState(dev.hDevice, rs);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetRasterizerState")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+  CmdLoc loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_RASTERIZER_STATE emitted")) {
+    return false;
+  }
+
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_rasterizer_state*>(stream + loc.offset);
+  if (!Check(cmd->state.fill_mode == AEROGPU_FILL_WIREFRAME, "fill_mode is WIREFRAME")) {
+    return false;
+  }
+  if (!Check(cmd->state.depth_bias == 1337, "depth_bias matches")) {
+    return false;
+  }
+  if (!Check((cmd->state.flags & AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE) != 0,
+             "DepthClipEnable=FALSE sets DEPTH_CLIP_DISABLE flag")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyRasterizerState(dev.hDevice, rs);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -6637,6 +6705,7 @@ int main() {
   ok &= TestGuestBackedCopyResourceTexture2DMipArrayReadback();
   ok &= TestBcTexture2DLayout();
   ok &= TestMapDoNotWaitRespectsFenceCompletion();
+  ok &= TestRasterizerStateWireframeDepthBiasEncodesCmd();
 
   if (!ok) {
     return 1;
