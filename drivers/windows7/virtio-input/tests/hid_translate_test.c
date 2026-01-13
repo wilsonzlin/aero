@@ -838,6 +838,28 @@ static void test_mouse_reports(void) {
   uint8_t expect6[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x49, 0x00, 0x00};
   expect_report(&cap, 0, expect5, sizeof(expect5));
   expect_report(&cap, 1, expect6, sizeof(expect6));
+
+  /* Large negative delta is split into multiple reports. */
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  send_rel(&t, VIRTIO_INPUT_REL_X, -200);
+  send_syn(&t);
+
+  assert(cap.count == 2);
+  uint8_t expect7[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x81, 0x00, 0x00};
+  uint8_t expect8[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0xB7, 0x00, 0x00};
+  expect_report(&cap, 0, expect7, sizeof(expect7));
+  expect_report(&cap, 1, expect8, sizeof(expect8));
+
+  /* Negative wheel delta is encoded as two's complement. */
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  send_rel(&t, VIRTIO_INPUT_REL_WHEEL, -1);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect9[HID_TRANSLATE_MOUSE_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_MOUSE, 0x00, 0x00, 0x00, 0xFF};
+  expect_report(&cap, 0, expect9, sizeof(expect9));
 }
 
 static void test_consumer_control_reports(void) {
