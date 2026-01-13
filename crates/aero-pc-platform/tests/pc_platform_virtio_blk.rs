@@ -1172,6 +1172,7 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
             }
             PCI_CAP_ID_MSIX => {
                 // MSI-X capability (table/PBA live in BAR0).
+                assert!(!saw_msix, "duplicate MSI-X capability in list");
                 saw_msix = true;
             }
             other => panic!("unexpected capability ID {other:#x} at {cap_ptr:#x}"),

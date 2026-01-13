@@ -115,8 +115,11 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     write_cfg_u32(&mut pc, bdf, 0x20, 0xFFFF_FFFF);
     assert_eq!(read_cfg_u32(&mut pc, bdf, 0x20), 0xFFFF_FFF1);
 
-    // Relocate to a new base within the platform's PCI I/O window.
-    let new_base: u16 = 0xD000;
+    // Relocate to a new base inside the ACPI-reported PCI I/O window.
+    //
+    // Regression: the runtime I/O router must cover the full `_CRS` windows so BAR relocation to
+    // high ports (e.g. 0xF000..0xFFFF) continues to decode.
+    let new_base: u16 = 0xF000;
     write_cfg_u32(&mut pc, bdf, 0x20, u32::from(new_base));
     assert_eq!(read_cfg_u32(&mut pc, bdf, 0x20), u32::from(new_base) | 0x01);
 

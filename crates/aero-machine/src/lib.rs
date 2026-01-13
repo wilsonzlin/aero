@@ -2407,8 +2407,10 @@ impl PciIoBarHandler for E1000PciIoBar {
     }
 }
 
+type SharedPciIoBarRouter = Rc<RefCell<PciIoBarRouter>>;
+
 struct PciIoBarWindow {
-    router: PciIoBarRouter,
+    router: SharedPciIoBarRouter,
 }
 
 impl PciIoBarWindow {
@@ -2430,6 +2432,7 @@ impl aero_platform::io::PortIoDevice for PciIoBarWindow {
             _ => return Self::read_all_ones(size),
         };
         self.router
+            .borrow_mut()
             .dispatch_read(port, size_usize)
             .unwrap_or_else(|| Self::read_all_ones(size))
     }
@@ -2439,7 +2442,10 @@ impl aero_platform::io::PortIoDevice for PciIoBarWindow {
             1 | 2 | 4 => size as usize,
             _ => return,
         };
-        let _ = self.router.dispatch_write(port, size_usize, value);
+        let _ = self
+            .router
+            .borrow_mut()
+            .dispatch_write(port, size_usize, value);
     }
 }
 
@@ -5218,12 +5224,14 @@ impl Machine {
                 //
                 // - VGA: 0x3B0..0x3DF (includes both mono and color decode ranges)
                 // - Bochs VBE: 0x01CE (index), 0x01CF (data)
-                self.io
-                    .register_range(
-                        aero_gpu_vga::VGA_LEGACY_IO_START,
-                        aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
-                        Box::new(VgaPortIo { dev: vga.clone() }),
-                    );
+                self.io.register_shared_range(
+                    aero_gpu_vga::VGA_LEGACY_IO_START,
+                    aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
+                    {
+                        let vga = vga.clone();
+                        move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                    },
+                );
                 self.io.register_shared_range(0x01CE, 2, {
                     let vga = vga.clone();
                     move |_port| Box::new(VgaPortIo { dev: vga.clone() })
@@ -5868,49 +5876,64 @@ impl Machine {
                 },
             );
 
-            // Register a dispatcher for the PCI I/O window used by `PciResourceAllocator`.
+            // Register dispatchers for the PCI I/O port windows advertised by ACPI (`PCI0._CRS`).
             //
-            // The router consults the live PCI config space on each access, so BAR programming and
-            // command register gating take effect immediately.
-            let io_base = u16::try_from(pci_allocator_cfg.io_base)
-                .expect("PCI IO window base must fit in u16");
-            let io_size = u16::try_from(pci_allocator_cfg.io_size)
-                .expect("PCI IO window size must fit in u16");
-            let mut io_router = PciIoBarRouter::new(pci_cfg.clone());
-            if let Some(ide) = ide.clone() {
-                let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
-                io_router.register_handler(
-                    bdf,
-                    4,
-                    IdeBusMasterBar {
-                        pci_cfg: pci_cfg.clone(),
-                        ide,
+            // `PciResourceAllocator` only uses a subset of these windows by default, but guests are
+            // free to reprogram PCI I/O BAR bases anywhere inside `_CRS`. Registering the router
+            // over the full windows ensures port I/O continues to decode correctly after BAR
+            // relocation.
+            //
+            // Q35-style windows:
+            // - `0x0000..0x0CF7` (len 0x0CF8)
+            // - `0x0D00..0xFFFF` (len 0xF300)
+            //
+            // The gap `0x0CF8..0x0CFF` is reserved for PCI config mechanism #1.
+            let io_router: SharedPciIoBarRouter =
+                Rc::new(RefCell::new(PciIoBarRouter::new(pci_cfg.clone())));
+            {
+                let mut router = io_router.borrow_mut();
+                if let Some(ide) = ide.clone() {
+                    let bdf = aero_devices::pci::profile::IDE_PIIX3.bdf;
+                    router.register_handler(
                         bdf,
-                    },
-                );
-            }
-            if let Some(uhci) = uhci.clone() {
-                let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
-                io_router.register_handler(
-                    bdf,
-                    UhciPciDevice::IO_BAR_INDEX,
-                    UhciIoBar {
-                        pci_cfg: pci_cfg.clone(),
-                        uhci,
+                        4,
+                        IdeBusMasterBar {
+                            pci_cfg: pci_cfg.clone(),
+                            ide,
+                            bdf,
+                        },
+                    );
+                }
+                if let Some(uhci) = uhci.clone() {
+                    let bdf = aero_devices::pci::profile::USB_UHCI_PIIX3.bdf;
+                    router.register_handler(
                         bdf,
-                    },
-                );
-            }
-            if let Some(e1000) = e1000.clone() {
-                io_router.register_handler(
-                    aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
-                    1,
-                    E1000PciIoBar { dev: e1000 },
-                );
+                        UhciPciDevice::IO_BAR_INDEX,
+                        UhciIoBar {
+                            pci_cfg: pci_cfg.clone(),
+                            uhci,
+                            bdf,
+                        },
+                    );
+                }
+                if let Some(e1000) = e1000.clone() {
+                    router.register_handler(
+                        aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                        1,
+                        E1000PciIoBar { dev: e1000 },
+                    );
+                }
             }
             self.io.register_range(
-                io_base,
-                io_size,
+                0x0000,
+                0x0CF8,
+                Box::new(PciIoBarWindow {
+                    router: io_router.clone(),
+                }),
+            );
+            self.io.register_range(
+                0x0D00,
+                0xF300,
                 Box::new(PciIoBarWindow { router: io_router }),
             );
 
@@ -7596,10 +7619,15 @@ impl snapshot::SnapshotTarget for Machine {
 
                         // Port mappings are part of machine wiring, not the snapshot payload, so
                         // install the default VGA port ranges now.
-                        self.io.register_range(
+                        self.io.register_shared_range(
                             aero_gpu_vga::VGA_LEGACY_IO_START,
-                            aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
-                            Box::new(VgaPortIo { dev: vga.clone() }),
+                            aero_gpu_vga::VGA_LEGACY_IO_END
+                                - aero_gpu_vga::VGA_LEGACY_IO_START
+                                + 1,
+                            {
+                                let vga = vga.clone();
+                                move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                            },
                         );
                         self.io.register_shared_range(0x01CE, 2, {
                             let vga = vga.clone();

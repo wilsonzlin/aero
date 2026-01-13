@@ -2188,16 +2188,28 @@ impl PcPlatform {
             )
             .unwrap();
 
-        // Register a dispatcher for the PCI I/O window used by `PciResourceAllocator`. It consults
-        // the live PCI bus state on each access, so BAR relocation is immediately reflected without
-        // requiring explicit I/O unmap/remap support.
-        let io_base = u16::try_from(pci_allocator_config.io_base)
-            .expect("PCI IO window base must fit in u16");
-        let io_size = u16::try_from(pci_allocator_config.io_size)
-            .expect("PCI IO window size must fit in u16");
+        // Register dispatchers for the PCI I/O port windows advertised by ACPI (`PCI0._CRS`).
+        //
+        // The allocator's default I/O window (`PciResourceAllocatorConfig::io_base/io_size`) is a
+        // *subset* of the ACPI-reported windows, but guests are allowed to reprogram PCI I/O BARs
+        // anywhere inside `_CRS`. Registering the router over the full windows ensures port I/O
+        // continues to decode correctly after BAR relocation.
+        //
+        // Q35-style windows:
+        // - `0x0000..0x0CF7` (len 0x0CF8)
+        // - `0x0D00..0xFFFF` (len 0xF300)
+        //
+        // The gap `0x0CF8..0x0CFF` is reserved for PCI config mechanism #1.
         io.register_range(
-            io_base,
-            io_size,
+            0x0000,
+            0x0CF8,
+            Box::new(PciIoBarRouterPort {
+                router: pci_io_router.clone(),
+            }),
+        );
+        io.register_range(
+            0x0D00,
+            0xF300,
             Box::new(PciIoBarRouterPort {
                 router: pci_io_router.clone(),
             }),
