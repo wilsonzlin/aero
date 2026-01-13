@@ -171,7 +171,7 @@ l2Proxy:
   capture:
     # When empty, capture is disabled.
     dir: ""
-    # Max bytes per capture file (`0` disables the cap).
+    # Max capture file size per tunnel session (includes PCAPNG overhead; `0` disables the cap).
     maxBytes: 67108864 # 64 MiB
     # Flush interval for capture writers (`0` disables periodic flushing; capture is flushed on close).
     flushIntervalMs: 1000

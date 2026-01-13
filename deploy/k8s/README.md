@@ -50,7 +50,7 @@ For debugging, `aero-l2-proxy` can optionally write per-tunnel PCAPNG capture fi
 l2Proxy:
   capture:
     dir: /tmp/aero-l2-captures
-    maxBytes: 67108864        # 64 MiB per capture file (0 disables the cap)
+    maxBytes: 67108864        # 64 MiB per capture file (includes PCAPNG overhead; 0 disables the cap)
     flushIntervalMs: 1000     # 0 disables periodic flushing (capture is flushed on close)
 ```
 

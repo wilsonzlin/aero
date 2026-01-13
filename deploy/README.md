@@ -216,7 +216,7 @@ cp deploy/.env.example deploy/.env
   - Note: capture files are written inside the container filesystem. To persist captures across container restarts,
     bind-mount a host directory (or use a named volume) and set `AERO_L2_CAPTURE_DIR` to the mounted path.
 - `AERO_L2_CAPTURE_MAX_BYTES` (default in compose: `67108864` / 64 MiB)
-  - Max bytes per capture file (`0` disables the cap).
+  - Max capture file size per tunnel session (includes PCAPNG overhead; `0` disables the cap).
 - `AERO_L2_CAPTURE_FLUSH_INTERVAL_MS` (default in compose: `1000`)
   - Flush interval for capture writers (`0` disables periodic flushing; capture is flushed on close). Larger values
     reduce disk I/O but may lose the last buffered packets if the process crashes.

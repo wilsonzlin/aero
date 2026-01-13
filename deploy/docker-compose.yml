@@ -221,7 +221,7 @@ services:
       # production deployments unless you have an explicit retention/privacy plan.
       AERO_L2_CAPTURE_DIR: ${AERO_L2_CAPTURE_DIR:-}
       # Safety knobs (applied when capture is enabled via AERO_L2_CAPTURE_DIR).
-      # - Max bytes per capture file (0 disables the cap).
+      # - Max capture file size per tunnel session (includes PCAPNG overhead; 0 disables the cap).
       AERO_L2_CAPTURE_MAX_BYTES: ${AERO_L2_CAPTURE_MAX_BYTES:-67108864} # 64 MiB
       # - Flush interval for capture writers (0 disables periodic flushing; capture is flushed on close).
       AERO_L2_CAPTURE_FLUSH_INTERVAL_MS: ${AERO_L2_CAPTURE_FLUSH_INTERVAL_MS:-1000}
