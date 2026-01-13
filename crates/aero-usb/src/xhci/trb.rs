@@ -11,9 +11,10 @@ use crate::MemoryBus;
 /// Size of a TRB in bytes.
 pub const TRB_LEN: usize = 16;
 
-/// xHCI completion codes (Command Completion Event TRB status field, bits 24..=31 of DW2).
+/// xHCI completion codes (Completion Code field in Event TRBs, bits 24..=31 of DW2).
 ///
-/// Values are defined by the xHCI specification.
+/// Values are defined by the xHCI specification and are shared across Command Completion and
+/// Transfer Event TRBs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CompletionCode {
@@ -35,6 +36,11 @@ pub enum CompletionCode {
 
 impl CompletionCode {
     pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    #[inline]
+    pub const fn raw(self) -> u8 {
         self as u8
     }
 }
@@ -88,6 +94,21 @@ impl Trb {
     pub const STATUS_COMPLETION_CODE_MASK: u32 = 0xff << Self::STATUS_COMPLETION_CODE_SHIFT;
     /// Transfer length field (bits 0..=16) for transfer TRBs (e.g. Normal TRB).
     pub const STATUS_TRANSFER_LEN_MASK: u32 = 0x1ffff;
+
+    /// Interrupt-on-completion (IOC) bit in the control dword.
+    ///
+    /// For transfer TRBs this requests a Transfer Event when the associated Transfer Descriptor
+    /// completes.
+    pub const CONTROL_IOC: u32 = 1 << 5;
+
+    /// Direction bit (DIR) used by DataStage/StatusStage TRBs.
+    ///
+    /// For DataStage TRBs: `1` indicates an IN stage (device-to-host).
+    /// For StatusStage TRBs: `1` indicates an IN status stage.
+    pub const CONTROL_DIR: u32 = 1 << 16;
+
+    /// Transfer TRB transfer-length field mask (bits 0..=16 of the status dword).
+    pub const STATUS_TRB_TRANSFER_LENGTH_MASK: u32 = 0x1ffff;
 
     #[inline]
     pub const fn new(parameter: u64, status: u32, control: u32) -> Self {

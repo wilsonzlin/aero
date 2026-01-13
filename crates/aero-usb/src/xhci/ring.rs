@@ -112,14 +112,59 @@ impl RingCursor {
                 trb,
             };
 
-            self.paddr = match self.paddr.checked_add(TRB_LEN as u64) {
-                Some(next) => next,
-                None => return RingPoll::Err(RingError::AddressOverflow),
-            };
+            if let Err(err) = self.consume() {
+                return RingPoll::Err(err);
+            }
 
             return RingPoll::Ready(item);
         }
 
         RingPoll::Err(RingError::StepBudgetExceeded)
+    }
+
+    /// Peek the next available TRB without consuming it.
+    ///
+    /// This behaves like [`RingCursor::poll`] except the cursor is left pointing at the returned
+    /// TRB. Link TRBs are still consumed transparently so the cursor never gets "stuck" on a Link
+    /// TRB across calls.
+    ///
+    /// This is useful for modelling NAK behaviour: when a transfer TRB would NAK, the host
+    /// controller must *not* advance its dequeue pointer past the TRB so it can be retried later.
+    pub fn peek<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
+        for _ in 0..step_budget {
+            let trb = Trb::read_from(mem, self.paddr);
+
+            if trb.cycle() != self.cycle {
+                return RingPoll::NotReady;
+            }
+
+            if matches!(trb.trb_type(), TrbType::Link) {
+                let next = trb.link_segment_ptr();
+                if next == 0 {
+                    return RingPoll::Err(RingError::InvalidLinkTarget);
+                }
+                self.paddr = next;
+                if trb.link_toggle_cycle() {
+                    self.cycle = !self.cycle;
+                }
+                continue;
+            }
+
+            return RingPoll::Ready(RingItem {
+                paddr: self.paddr,
+                trb,
+            });
+        }
+
+        RingPoll::Err(RingError::StepBudgetExceeded)
+    }
+
+    /// Consume the current TRB by advancing the dequeue pointer by one TRB.
+    pub fn consume(&mut self) -> Result<(), RingError> {
+        self.paddr = self
+            .paddr
+            .checked_add(TRB_LEN as u64)
+            .ok_or(RingError::AddressOverflow)?;
+        Ok(())
     }
 }

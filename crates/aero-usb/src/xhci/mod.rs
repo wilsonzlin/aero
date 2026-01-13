@@ -55,9 +55,9 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
-use crate::device::AttachedUsbDevice;
+use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use crate::hub::UsbHubDevice;
-use crate::{MemoryBus, UsbDeviceModel, UsbHubAttachError};
+use crate::{MemoryBus, SetupPacket, UsbDeviceModel, UsbHubAttachError};
 
 use self::port::XhciPort;
 use self::trb::{CompletionCode, Trb, TrbType};
@@ -70,6 +70,9 @@ use interrupter::InterrupterRegs;
 const DEFAULT_PORT_COUNT: u8 = 8;
 const MAX_PENDING_EVENTS: usize = 256;
 const COMPLETION_CODE_SUCCESS: u8 = 1;
+const MAX_TRBS_PER_TICK: usize = 256;
+const RING_STEP_BUDGET: usize = 64;
+const MAX_CONTROL_DATA_LEN: usize = 64 * 1024;
 
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
 pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
@@ -205,6 +208,58 @@ impl SlotState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ActiveEndpoint {
+    slot_id: u8,
+    endpoint_id: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ControlTdState {
+    data_expected: usize,
+    data_transferred: usize,
+    completion_code: CompletionCode,
+}
+
+impl Default for ControlTdState {
+    fn default() -> Self {
+        Self {
+            data_expected: 0,
+            data_transferred: 0,
+            completion_code: CompletionCode::Success,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EndpointOutcome {
+    trbs_consumed: usize,
+    keep_active: bool,
+}
+
+impl EndpointOutcome {
+    fn idle() -> Self {
+        Self {
+            trbs_consumed: 0,
+            keep_active: false,
+        }
+    }
+
+    fn keep(trbs_consumed: usize) -> Self {
+        Self {
+            trbs_consumed,
+            keep_active: true,
+        }
+    }
+
+    fn done(trbs_consumed: usize) -> Self {
+        Self {
+            trbs_consumed,
+            keep_active: false,
+        }
+    }
+}
+
 /// Minimal xHCI controller model.
 ///
 /// This is *not* a full xHCI implementation. It is sufficient to wire into a PCI/MMIO wrapper and
@@ -233,6 +288,10 @@ pub struct XhciController {
     // Host-side event buffering.
     pending_events: VecDeque<Trb>,
     dropped_event_trbs: u64,
+
+    // --- Endpoint transfer execution (subset) ---
+    active_endpoints: Vec<ActiveEndpoint>,
+    ep0_control_td: Vec<ControlTdState>,
 }
 
 impl fmt::Debug for XhciController {
@@ -249,6 +308,7 @@ impl fmt::Debug for XhciController {
             .field("pending_events", &self.pending_events.len())
             .field("dropped_event_trbs", &self.dropped_event_trbs)
             .field("interrupter0", &self.interrupter0)
+            .field("active_endpoints", &self.active_endpoints.len())
             .finish()
     }
 }
@@ -274,9 +334,10 @@ impl XhciController {
     pub fn with_port_count(port_count: u8) -> Self {
         assert!(port_count > 0, "xHCI controller must expose at least one port");
         const DEFAULT_MAX_SLOTS: usize = 32;
-        let slots = core::iter::repeat_with(SlotState::default)
+        let slots: Vec<SlotState> = core::iter::repeat_with(SlotState::default)
             .take(DEFAULT_MAX_SLOTS + 1)
             .collect();
+        let slot_count = slots.len();
         let mut ctrl = Self {
             port_count,
             ext_caps: Vec::new(),
@@ -291,6 +352,8 @@ impl XhciController {
             event_ring: EventRingProducer::default(),
             pending_events: VecDeque::new(),
             dropped_event_trbs: 0,
+            active_endpoints: Vec::new(),
+            ep0_control_td: vec![ControlTdState::default(); slot_count],
         };
 
         ctrl.rebuild_ext_caps();
@@ -924,6 +987,75 @@ impl XhciController {
         self.find_device_by_topology(root_port, &route)
     }
 
+    /// Configure the guest transfer ring for an endpoint.
+    ///
+    /// `endpoint_id` is the xHCI Device Context Index (DCI). Endpoint 0 uses DCI=1.
+    pub fn set_endpoint_ring(&mut self, slot_id: u8, endpoint_id: u8, dequeue_ptr: u64, cycle: bool) {
+        let idx = usize::from(slot_id);
+        let Some(slot) = self.slots.get_mut(idx) else {
+            return;
+        };
+        let endpoint_id = endpoint_id & 0x1f;
+        let Some(dci) = endpoint_id.checked_sub(1) else {
+            return;
+        };
+        let Some(entry) = slot.transfer_rings.get_mut(dci as usize) else {
+            return;
+        };
+        *entry = Some(RingCursor::new(dequeue_ptr, cycle));
+        if endpoint_id == 1 {
+            if let Some(state) = self.ep0_control_td.get_mut(idx) {
+                *state = ControlTdState::default();
+            }
+        }
+    }
+
+    /// Handle a device endpoint doorbell write.
+    ///
+    /// `target` corresponds to the doorbell register index (slot id). For non-zero targets, the
+    /// low 8 bits of `value` contain the endpoint ID (DCI).
+    pub fn write_doorbell(&mut self, target: u8, value: u32) {
+        if target == 0 {
+            // Doorbell 0 is the command ring; not modelled yet.
+            return;
+        }
+        let endpoint_id = (value & 0xff) as u8;
+        self.ring_doorbell(target, endpoint_id);
+    }
+
+    /// Ring a device endpoint doorbell.
+    ///
+    /// This marks the endpoint as active. [`XhciController::tick`] will process pending work.
+    pub fn ring_doorbell(&mut self, slot_id: u8, endpoint_id: u8) {
+        let endpoint_id = endpoint_id & 0x1f;
+        let entry = ActiveEndpoint {
+            slot_id,
+            endpoint_id,
+        };
+        if !self.active_endpoints.contains(&entry) {
+            self.active_endpoints.push(entry);
+        }
+    }
+
+    /// Process active endpoints.
+    ///
+    /// This is intentionally bounded to avoid guest-induced hangs (e.g. malformed transfer rings).
+    pub fn tick(&mut self, mem: &mut (impl MemoryBus + ?Sized)) {
+        let mut trb_budget = MAX_TRBS_PER_TICK;
+        let mut i = 0;
+        while i < self.active_endpoints.len() && trb_budget > 0 {
+            let ep = self.active_endpoints[i];
+            let outcome = self.process_endpoint(mem, ep.slot_id, ep.endpoint_id, trb_budget);
+            trb_budget = trb_budget.saturating_sub(outcome.trbs_consumed);
+
+            if outcome.keep_active {
+                i += 1;
+            } else {
+                self.active_endpoints.swap_remove(i);
+            }
+        }
+    }
+
     pub fn irq_level(&self) -> bool {
         // Preserve the skeleton's existing "DMA-on-RUN asserts EINT" behaviour while also exposing
         // a functional interrupter/event-ring driven interrupt condition.
@@ -1282,7 +1414,16 @@ impl XhciController {
 
         let merge = |cur: u32| (cur & !mask) | (value_shifted & mask);
 
+        let doorbell_base = u64::from(regs::DBOFF_VALUE);
+        let doorbell_end =
+            doorbell_base + u64::from(regs::doorbell::DOORBELL_STRIDE) * 256u64 /*max doorbells*/;
+
         match aligned {
+            off if off >= doorbell_base && off < doorbell_end => {
+                let target = ((off - doorbell_base) / 4) as u8;
+                let write_val = merge(0);
+                self.write_doorbell(target, write_val);
+            }
             regs::REG_USBCMD => {
                 let prev = self.usbcmd;
                 let next = merge(self.usbcmd);
@@ -1405,6 +1546,272 @@ impl XhciController {
         self.usbsts |= regs::USBSTS_EINT;
     }
 
+    fn process_endpoint(
+        &mut self,
+        mem: &mut (impl MemoryBus + ?Sized),
+        slot_id: u8,
+        endpoint_id: u8,
+        trb_budget: usize,
+    ) -> EndpointOutcome {
+        // Only control endpoint 0 (DCI=1) is modelled today.
+        if endpoint_id != 1 {
+            return EndpointOutcome::idle();
+        }
+
+        let slot_idx = usize::from(slot_id);
+        let Some(slot) = self.slots.get(slot_idx) else {
+            return EndpointOutcome::idle();
+        };
+        if !slot.enabled || !slot.device_attached {
+            return EndpointOutcome::idle();
+        }
+
+        let Some(mut ring) = slot.transfer_rings[0] else {
+            return EndpointOutcome::idle();
+        };
+
+        let mut control_td = self
+            .ep0_control_td
+            .get(slot_idx)
+            .copied()
+            .unwrap_or_default();
+
+        let mut events: Vec<Trb> = Vec::new();
+        let mut trbs_consumed = 0usize;
+        let mut keep_active = false;
+
+        {
+            let Some(device) = self.slot_device_mut(slot_id) else {
+                return EndpointOutcome::idle();
+            };
+
+            while trbs_consumed < trb_budget {
+                let item = match ring.peek(mem, RING_STEP_BUDGET) {
+                    RingPoll::Ready(item) => item,
+                    RingPoll::NotReady => {
+                        keep_active = false;
+                        break;
+                    }
+                    RingPoll::Err(_) => {
+                        keep_active = false;
+                        break;
+                    }
+                };
+
+                let trb = item.trb;
+                let trb_paddr = item.paddr;
+
+                match trb.trb_type() {
+                    TrbType::SetupStage => {
+                        control_td = ControlTdState::default();
+
+                        let setup_bytes = trb.parameter.to_le_bytes();
+                        let setup = SetupPacket::from_bytes(setup_bytes);
+
+                        let completion = match device.handle_setup(setup) {
+                            UsbOutResult::Ack => CompletionCode::Success,
+                            UsbOutResult::Nak => {
+                                keep_active = true;
+                                break;
+                            }
+                            UsbOutResult::Stall => CompletionCode::StallError,
+                            UsbOutResult::Timeout => CompletionCode::UsbTransactionError,
+                        };
+
+                        control_td.completion_code = completion;
+
+                        if ring.consume().is_err() {
+                            keep_active = false;
+                            break;
+                        }
+                        trbs_consumed += 1;
+
+                        if trb.ioc() || completion != CompletionCode::Success {
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                completion,
+                                0,
+                            ));
+                        }
+                    }
+                    TrbType::DataStage => {
+                        let requested_len = trb.transfer_len() as usize;
+                        if requested_len > MAX_CONTROL_DATA_LEN {
+                            let completion = CompletionCode::TrbError;
+                            if ring.consume().is_err() {
+                                keep_active = false;
+                                break;
+                            }
+                            trbs_consumed += 1;
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                completion,
+                                0,
+                            ));
+                            control_td = ControlTdState::default();
+                            keep_active = true;
+                            break;
+                        }
+
+                        let buf_ptr = trb.pointer();
+                        let dir_in = (trb.control & Trb::CONTROL_DIR) != 0;
+
+                        let (completion, transferred) = if dir_in {
+                            match device.handle_in(0, requested_len) {
+                                UsbInResult::Data(mut data) => {
+                                    if data.len() > requested_len {
+                                        data.truncate(requested_len);
+                                    }
+                                    mem.write_physical(buf_ptr, &data);
+                                    let transferred = data.len();
+                                    let completion = if transferred < requested_len {
+                                        CompletionCode::ShortPacket
+                                    } else {
+                                        CompletionCode::Success
+                                    };
+                                    (completion, transferred)
+                                }
+                                UsbInResult::Nak => {
+                                    keep_active = true;
+                                    break;
+                                }
+                                UsbInResult::Stall => (CompletionCode::StallError, 0),
+                                UsbInResult::Timeout => (CompletionCode::UsbTransactionError, 0),
+                            }
+                        } else {
+                            let mut buf = vec![0u8; requested_len];
+                            mem.read_physical(buf_ptr, &mut buf);
+                            match device.handle_out(0, &buf) {
+                                UsbOutResult::Ack => (CompletionCode::Success, requested_len),
+                                UsbOutResult::Nak => {
+                                    keep_active = true;
+                                    break;
+                                }
+                                UsbOutResult::Stall => (CompletionCode::StallError, 0),
+                                UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
+                            }
+                        };
+
+                        control_td.data_expected = requested_len;
+                        control_td.data_transferred = transferred;
+                        control_td.completion_code = completion;
+
+                        if ring.consume().is_err() {
+                            keep_active = false;
+                            break;
+                        }
+                        trbs_consumed += 1;
+
+                        // Short Packet is reported as the *TD completion* (StatusStage) in most
+                        // control-transfer flows. Only generate an event at the DataStage TRB when
+                        // explicitly requested via IOC, or when the transfer failed.
+                        if trb.ioc()
+                            || (completion != CompletionCode::Success
+                                && completion != CompletionCode::ShortPacket)
+                        {
+                            let residue = requested_len.saturating_sub(transferred);
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                completion,
+                                residue,
+                            ));
+                        }
+                    }
+                    TrbType::StatusStage => {
+                        let dir_in = (trb.control & Trb::CONTROL_DIR) != 0;
+
+                        let status_completion = if dir_in {
+                            match device.handle_in(0, 0) {
+                                UsbInResult::Data(data) => {
+                                    if !data.is_empty() {
+                                        CompletionCode::TrbError
+                                    } else {
+                                        CompletionCode::Success
+                                    }
+                                }
+                                UsbInResult::Nak => {
+                                    keep_active = true;
+                                    break;
+                                }
+                                UsbInResult::Stall => CompletionCode::StallError,
+                                UsbInResult::Timeout => CompletionCode::UsbTransactionError,
+                            }
+                        } else {
+                            match device.handle_out(0, &[]) {
+                                UsbOutResult::Ack => CompletionCode::Success,
+                                UsbOutResult::Nak => {
+                                    keep_active = true;
+                                    break;
+                                }
+                                UsbOutResult::Stall => CompletionCode::StallError,
+                                UsbOutResult::Timeout => CompletionCode::UsbTransactionError,
+                            }
+                        };
+
+                        let (completion, residue) = if status_completion == CompletionCode::Success {
+                            let residue = control_td
+                                .data_expected
+                                .saturating_sub(control_td.data_transferred);
+                            (control_td.completion_code, residue)
+                        } else {
+                            (status_completion, 0)
+                        };
+
+                        if ring.consume().is_err() {
+                            keep_active = false;
+                            break;
+                        }
+                        trbs_consumed += 1;
+
+                        if trb.ioc() || completion != CompletionCode::Success {
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                completion,
+                                residue,
+                            ));
+                        }
+
+                        // Reset TD bookkeeping at the end of the control transfer.
+                        control_td = ControlTdState::default();
+                    }
+                    // Unsupported transfer TRBs: consume and ignore so the ring continues.
+                    _ => {
+                        if ring.consume().is_err() {
+                            keep_active = false;
+                            break;
+                        }
+                        trbs_consumed += 1;
+                    }
+                }
+            }
+        }
+
+        // Persist the updated ring cursor + control TD bookkeeping.
+        if let Some(slot) = self.slots.get_mut(slot_idx) {
+            slot.transfer_rings[0] = Some(ring);
+        }
+        if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+            *state = control_td;
+        }
+        for ev in events {
+            self.post_event(ev);
+        }
+
+        if keep_active {
+            EndpointOutcome::keep(trbs_consumed)
+        } else {
+            EndpointOutcome::done(trbs_consumed)
+        }
+    }
+
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {
         // Read a dword from CRCR and surface an interrupt. The data itself is ignored; the goal is
         // to touch the memory bus when bus mastering is enabled so the emulator wrapper can gate
@@ -1413,6 +1820,25 @@ impl XhciController {
         mem.read_bytes(self.crcr, &mut buf);
         self.usbsts |= regs::USBSTS_EINT;
     }
+}
+
+fn make_transfer_event_trb(
+    slot_id: u8,
+    endpoint_id: u8,
+    completed_trb_ptr: u64,
+    completion_code: CompletionCode,
+    residue: usize,
+) -> Trb {
+    // xHCI reports *residual bytes* (not bytes transferred) in the Transfer Event's
+    // Transfer Length field.
+    let transfer_len = (residue as u32) & 0x00ff_ffff;
+    let status = transfer_len | ((u32::from(completion_code.raw())) << 24);
+
+    let mut ev = Trb::new(completed_trb_ptr & !0x0f, status, 0);
+    ev.set_trb_type(TrbType::TransferEvent);
+    ev.set_slot_id(slot_id);
+    ev.set_endpoint_id(endpoint_id);
+    ev
 }
 
 fn make_port_status_change_event_trb(port_id: u8) -> Trb {
