@@ -84,6 +84,53 @@ In all cases, DISM’s `/Driver:` should ultimately point at a folder (or file) 
 
 ---
 
+## Quick start (scripted)
+
+This directory includes a hardened DISM wrapper script:
+
+- `inject-driver.ps1` (PowerShell; preferred)
+- `inject-driver.cmd` (thin CMD wrapper that forwards args to the PowerShell script)
+
+The script supports both:
+
+- **WIM mode**: mount one selected `install.wim` index, inject the driver, verify, then unmount (commit by default)
+- **Offline directory mode**: inject + verify directly into a mounted/offline Windows directory (e.g. a VHD attached as a drive letter)
+
+Run from an **elevated** prompt.
+
+### Slipstream into `install.wim` (one index)
+
+```powershell
+# Example
+powershell -ExecutionPolicy Bypass -File inject-driver.ps1 `
+  -WimPath C:\win7\sources\install.wim `
+  -Index 1 `
+  -DriverDir C:\path\to\pkg\x64
+```
+
+Notes:
+
+- Use `-Commit:$false` to mount/inject/verify but **discard** changes at the end (dry run).
+- Use `-ForceUnsigned` only for test images. See [Driver signing / test signing warnings](#driver-signing--test-signing-warnings).
+
+### Inject into an offline Windows directory (mounted VHD/VHDX)
+
+```powershell
+# Example: W:\ is the offline Windows root and contains W:\Windows\
+powershell -ExecutionPolicy Bypass -File inject-driver.ps1 `
+  -OfflineDir W:\ `
+  -DriverDir C:\path\to\pkg\x64
+```
+
+If the script fails and DISM reports a stale mount, try:
+
+```bat
+dism /Get-MountedWimInfo
+dism /Cleanup-Wim
+```
+
+---
+
 ## Option A: Slipstream into Windows 7 install media (`install.wim`)
 
 ### 1) Identify which image index you will install
