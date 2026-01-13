@@ -347,6 +347,69 @@ def parse_inf_hardware_ids(path: Path) -> set[str]:
     return out
 
 
+@dataclass(frozen=True)
+class InfModelEntry:
+    section: str
+    device_desc: str
+    install_section: str
+    hardware_id: str
+    raw_line: str
+
+
+def parse_inf_model_entries(path: Path) -> list[InfModelEntry]:
+    """
+    Parse INF model entries of the form:
+
+        %Some.DeviceDesc% = Some_Install.Section, PCI\\VEN_....
+
+    We keep parsing intentionally lightweight and tolerant: this is only used for
+    contract drift/guardrail checks (not a full INF parser).
+    """
+
+    text = read_text(path)
+    entries: list[InfModelEntry] = []
+    current_section: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(";"):
+            continue
+        if ";" in line:
+            line = line.split(";", 1)[0].rstrip()
+            if not line:
+                continue
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
+        if m:
+            current_section = m.group("section").strip()
+            continue
+        if current_section is None:
+            continue
+        # We only care about "models" style entries that reference a PCI HWID.
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        hwid = parts[-1]
+        if not hwid.upper().startswith("PCI\\VEN_"):
+            continue
+        left = parts[0]
+        if "=" not in left:
+            continue
+        device_desc, install = (s.strip() for s in left.split("=", 1))
+        if not device_desc or not install:
+            continue
+        entries.append(
+            InfModelEntry(
+                section=current_section,
+                device_desc=device_desc,
+                install_section=install,
+                hardware_id=hwid,
+                raw_line=line,
+            )
+        )
+    return entries
+
+
 _PCI_HARDWARE_ID_RE = re.compile(r"^PCI\\VEN_(?P<ven>[0-9A-Fa-f]{4})&DEV_(?P<dev>[0-9A-Fa-f]{4})")
 
 
@@ -2308,6 +2371,94 @@ def main() -> None:
                     ],
                 )
             )
+
+        # virtio-input is exposed as two PCI functions (keyboard + mouse) but installs
+        # through the same INF + service. For debuggability, the INF should use distinct
+        # DeviceDesc strings for each function so they appear separately in Device Manager.
+        if device_name == "virtio-input":
+            model_entries = parse_inf_model_entries(inf_path)
+            by_section: dict[str, list[InfModelEntry]] = {}
+            for e in model_entries:
+                by_section.setdefault(e.section.lower(), []).append(e)
+
+            for section in ("Aero.NTx86", "Aero.NTamd64"):
+                sect_entries = by_section.get(section.lower(), [])
+                if not sect_entries:
+                    errors.append(f"{inf_path.as_posix()}: missing required models section [{section}] (expected virtio-input HWID bindings).")
+                    continue
+
+                contract_rev_tag = f"&REV_{contract_rev:02X}"
+
+                kb = [
+                    e
+                    for e in sect_entries
+                    if "SUBSYS_00101AF4" in e.hardware_id.upper() and contract_rev_tag in e.hardware_id.upper()
+                ]
+                ms = [
+                    e
+                    for e in sect_entries
+                    if "SUBSYS_00111AF4" in e.hardware_id.upper() and contract_rev_tag in e.hardware_id.upper()
+                ]
+                fb = [e for e in sect_entries if e.hardware_id.upper() == strict_hwid.upper()]
+
+                if len(kb) != 1:
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: expected exactly one keyboard model line in [{section}] (SUBSYS_00101AF4 + REV):",
+                            [e.raw_line for e in kb] if kb else ["(missing)"],
+                        )
+                    )
+                    continue
+                if len(ms) != 1:
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: expected exactly one mouse model line in [{section}] (SUBSYS_00111AF4 + REV):",
+                            [e.raw_line for e in ms] if ms else ["(missing)"],
+                        )
+                    )
+                    continue
+                if len(fb) != 1:
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: expected exactly one fallback model line in [{section}] ({strict_hwid}):",
+                            [e.raw_line for e in fb] if fb else ["(missing)"],
+                        )
+                    )
+                    continue
+
+                kb_entry, ms_entry, fb_entry = kb[0], ms[0], fb[0]
+
+                # All three should use the same install section so functionality doesn't change.
+                expected_install = kb_entry.install_section
+                if ms_entry.install_section != expected_install or fb_entry.install_section != expected_install:
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: virtio-input model lines in [{section}] must share the same install section:",
+                            [
+                                f"keyboard install: {kb_entry.install_section} ({kb_entry.raw_line})",
+                                f"mouse install: {ms_entry.install_section} ({ms_entry.raw_line})",
+                                f"fallback install: {fb_entry.install_section} ({fb_entry.raw_line})",
+                            ],
+                        )
+                    )
+
+                # Keyboard vs mouse must have distinct DeviceDesc strings so they appear distinctly in Device Manager.
+                if kb_entry.device_desc == ms_entry.device_desc:
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: virtio-input keyboard and mouse model lines in [{section}] must use distinct DeviceDesc strings:",
+                            [kb_entry.raw_line, ms_entry.raw_line],
+                        )
+                    )
+
+                # The fallback (no SUBSYS) should remain generic and not reuse the keyboard/mouse DeviceDesc.
+                if fb_entry.device_desc in (kb_entry.device_desc, ms_entry.device_desc):
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: virtio-input fallback model line in [{section}] must use a generic DeviceDesc (not the keyboard/mouse DeviceDesc):",
+                            [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
+                        )
+                    )
 
     if errors:
         print("\n\n".join(errors), file=sys.stderr)
