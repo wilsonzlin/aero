@@ -1300,6 +1300,45 @@ mod tests {
         }
     }
 
+    /// [`GuestMemory`] implementation that panics on any access.
+    ///
+    /// Used to ensure some rejection paths return before attempting to map guest buffers.
+    struct PanicGuestMemory;
+
+    impl GuestMemory for PanicGuestMemory {
+        fn len(&self) -> u64 {
+            0
+        }
+
+        fn read(&self, _addr: u64, _dst: &mut [u8]) -> Result<(), crate::memory::GuestMemoryError> {
+            panic!("unexpected GuestMemory::read")
+        }
+
+        fn write(
+            &mut self,
+            _addr: u64,
+            _src: &[u8],
+        ) -> Result<(), crate::memory::GuestMemoryError> {
+            panic!("unexpected GuestMemory::write")
+        }
+
+        fn get_slice(
+            &self,
+            _addr: u64,
+            _len: usize,
+        ) -> Result<&[u8], crate::memory::GuestMemoryError> {
+            panic!("unexpected GuestMemory::get_slice")
+        }
+
+        fn get_slice_mut(
+            &mut self,
+            _addr: u64,
+            _len: usize,
+        ) -> Result<&mut [u8], crate::memory::GuestMemoryError> {
+            panic!("unexpected GuestMemory::get_slice_mut")
+        }
+    }
+
     fn status(resp: &[u8]) -> u32 {
         u32::from_le_bytes(resp[0..4].try_into().unwrap())
     }
@@ -2044,6 +2083,42 @@ mod tests {
     }
 
     #[test]
+    fn tx_rejects_oversize_payload_without_mapping_guest_memory() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        // The chain is built from real guest RAM (needed for virtqueue parsing), but the TX handler
+        // is invoked with a GuestMemory impl that panics on any access. This ensures the oversize
+        // rejection path returns before calling `get_slice`.
+        let chain = {
+            let mut mem = GuestRam::new(0x10000);
+            let hdr_addr = 0x4000;
+            let payload_addr = 0x5000;
+            let resp_addr = 0x6000;
+            build_chain(
+                &mut mem,
+                desc_table,
+                avail,
+                used,
+                &[
+                    (hdr_addr, 8, false),
+                    (payload_addr, (MAX_PCM_XFER_BYTES + 1) as u32, false),
+                    (resp_addr, 8, true),
+                ],
+            )
+        };
+
+        let mut panic_mem = PanicGuestMemory;
+        let status = snd.handle_tx_chain(&mut panic_mem, &chain);
+        assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+        assert_eq!(snd.output_mut().available_frames(), 0);
+    }
+
+    #[test]
     fn tx_returns_io_err_when_playback_stream_is_not_running() {
         let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
         drive_playback_to_prepared(&mut snd);
@@ -2076,6 +2151,36 @@ mod tests {
             0,
             "non-running playback streams must not enqueue host audio"
         );
+    }
+
+    #[test]
+    fn tx_header_only_is_ok_and_enqueues_no_audio() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let hdr_addr = 0x4000;
+        let resp_addr = 0x5000;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        write_bytes(&mut mem, hdr_addr, &hdr);
+
+        let chain = build_chain(
+            &mut mem,
+            desc_table,
+            avail,
+            used,
+            &[(hdr_addr, 8, false), (resp_addr, 8, true)],
+        );
+
+        let status = snd.handle_tx_chain(&mut mem, &chain);
+        assert_eq!(status, VIRTIO_SND_S_OK);
+        assert_eq!(snd.output_mut().available_frames(), 0);
     }
 
     #[test]
