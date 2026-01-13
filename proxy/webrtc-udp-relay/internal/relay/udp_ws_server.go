@@ -161,6 +161,14 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer writeMu.Unlock()
 		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(wsUDPWriteWait))
 	})
+	// Serialize close handshake responses with the write mutex. The default close
+	// handler writes a close frame directly and can race with our concurrent
+	// writers (ping ticker, ready/error messages).
+	conn.SetCloseHandler(func(code int, text string) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, text), time.Now().Add(wsUDPWriteWait))
+	})
 
 	sendErrorAndClose := func(wsCloseCode int, code, message string) {
 		writeMu.Lock()

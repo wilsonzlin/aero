@@ -1000,6 +1000,14 @@ func (wss *wsSession) run() {
 		defer wss.writeMu.Unlock()
 		return wss.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(wsWriteWait))
 	})
+	// Ensure close handshake responses are also serialized with writeMu. The
+	// default close handler writes a close frame directly, which can race with our
+	// concurrent writers (ping ticker, signaling messages).
+	wss.conn.SetCloseHandler(func(code int, text string) error {
+		wss.writeMu.Lock()
+		defer wss.writeMu.Unlock()
+		return wss.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, text), time.Now().Add(wsWriteWait))
+	})
 
 	var haveOffer bool
 
