@@ -6,7 +6,9 @@ use aero_devices::apic::{IOAPIC_MMIO_BASE, LAPIC_MMIO_BASE};
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::PciIntxRouterConfig;
 use aero_devices::reset_ctrl::{RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
-use aero_pc_constants::PCIE_ECAM_BASE;
+use aero_pc_constants::{
+    PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_SIZE, PCIE_ECAM_START_BUS,
+};
 use firmware::acpi::{
     checksum8, find_rsdp_in_memory, parse_header, parse_rsdp_v2, parse_rsdt_entries,
     parse_xsdt_entries, validate_table_checksum, AcpiConfig, AcpiTables, DEFAULT_EBDA_BASE,
@@ -140,14 +142,19 @@ fn checksums_sum_to_zero() {
     assert_eq!(checksum8(&tables.rsdp[..RSDP_CHECKSUM_LEN_V1]), 0);
     assert_eq!(checksum8(&tables.rsdp[..RSDP_V2_SIZE]), 0);
 
-    for (name, bytes) in [
+    let mut table_list: Vec<(&str, &[u8])> = vec![
         ("DSDT", tables.dsdt.as_slice()),
         ("FADT", tables.fadt.as_slice()),
         ("MADT", tables.madt.as_slice()),
         ("HPET", tables.hpet.as_slice()),
         ("RSDT", tables.rsdt.as_slice()),
         ("XSDT", tables.xsdt.as_slice()),
-    ] {
+    ];
+    if let Some(mcfg) = tables.mcfg.as_deref() {
+        table_list.push(("MCFG", mcfg));
+    }
+
+    for (name, bytes) in table_list {
         assert!(
             validate_table_checksum(bytes),
             "{name} checksum did not sum to zero"
@@ -250,6 +257,9 @@ fn placement_is_aligned_and_non_overlapping() {
     ] {
         assert_eq!(addr % 16, 0, "{name} not 16-byte aligned");
     }
+    if let Some(addr) = tables.mcfg_addr {
+        assert_eq!(addr % 16, 0, "MCFG not 16-byte aligned");
+    }
     assert!(tables.rsdp_addr < 0x0010_0000, "RSDP must live below 1MiB");
 
     let low_ram_top = config
@@ -264,14 +274,18 @@ fn placement_is_aligned_and_non_overlapping() {
 
     // Tables must fit within their windows.
     let reclaim_end = tables.reclaim_base + tables.reclaim_size;
-    for (name, addr, len) in [
+    let mut reclaim_tables: Vec<(&str, u64, usize)> = vec![
         ("DSDT", tables.dsdt_addr, tables.dsdt.len()),
         ("FADT", tables.fadt_addr, tables.fadt.len()),
         ("MADT", tables.madt_addr, tables.madt.len()),
         ("HPET", tables.hpet_addr, tables.hpet.len()),
         ("RSDT", tables.rsdt_addr, tables.rsdt.len()),
         ("XSDT", tables.xsdt_addr, tables.xsdt.len()),
-    ] {
+    ];
+    if let (Some(addr), Some(bytes)) = (tables.mcfg_addr, tables.mcfg.as_ref()) {
+        reclaim_tables.push(("MCFG", addr, bytes.len()));
+    }
+    for (name, addr, len) in reclaim_tables {
         let end = addr + len as u64;
         assert!(
             addr >= tables.reclaim_base && end <= reclaim_end,
@@ -285,7 +299,7 @@ fn placement_is_aligned_and_non_overlapping() {
     );
 
     // Ensure the reclaimable tables don't overlap each other.
-    let mut ranges = [
+    let mut ranges = vec![
         ("DSDT", tables.dsdt_addr, tables.dsdt.len() as u64),
         ("FADT", tables.fadt_addr, tables.fadt.len() as u64),
         ("MADT", tables.madt_addr, tables.madt.len() as u64),
@@ -293,6 +307,9 @@ fn placement_is_aligned_and_non_overlapping() {
         ("RSDT", tables.rsdt_addr, tables.rsdt.len() as u64),
         ("XSDT", tables.xsdt_addr, tables.xsdt.len() as u64),
     ];
+    if let (Some(addr), Some(bytes)) = (tables.mcfg_addr, tables.mcfg.as_ref()) {
+        ranges.push(("MCFG", addr, bytes.len() as u64));
+    }
     ranges.sort_by_key(|(_, start, _)| *start);
     for win in ranges.windows(2) {
         let (left_name, left_start, left_len) = win[0];
@@ -312,18 +329,26 @@ fn rsdp_rsdt_xsdt_pointers_are_consistent() {
     assert_eq!(parsed.xsdt_address, tables.xsdt_addr);
 
     let rsdt_entries = parse_rsdt_entries(&tables.rsdt).expect("RSDT should parse");
+    let mcfg_addr = tables.mcfg_addr.expect("MCFG should be present") as u32;
     assert_eq!(
         rsdt_entries,
         vec![
             tables.fadt_addr as u32,
             tables.madt_addr as u32,
-            tables.hpet_addr as u32
+            tables.hpet_addr as u32,
+            mcfg_addr,
         ]
     );
     let xsdt_entries = parse_xsdt_entries(&tables.xsdt).expect("XSDT should parse");
+    let mcfg_addr64 = tables.mcfg_addr.expect("MCFG should be present");
     assert_eq!(
         xsdt_entries,
-        vec![tables.fadt_addr, tables.madt_addr, tables.hpet_addr]
+        vec![
+            tables.fadt_addr,
+            tables.madt_addr,
+            tables.hpet_addr,
+            mcfg_addr64
+        ]
     );
 
     // FADT pointers to DSDT and FACS.
@@ -492,6 +517,77 @@ fn dsdt_contains_pci_routing_and_resources() {
     assert_eq!(read_u32_le(aml, off + 10), expected_start);
     assert_eq!(read_u32_le(aml, off + 14), expected_end);
     assert_eq!(read_u32_le(aml, off + 22), expected_size);
+
+    // Ensure that the MMIO resources described in PCI0._CRS do not claim the ECAM window. The
+    // ECAM region is described separately via the MCFG table.
+    let ecam_start = PCIE_ECAM_BASE;
+    let ecam_end = ecam_start + PCIE_ECAM_SIZE;
+    assert!(
+        (expected_end as u64) < ecam_start || (expected_start as u64) >= ecam_end,
+        "PCI0._CRS MMIO window unexpectedly overlaps ECAM (mmio=0x{expected_start:x}..=0x{expected_end:x} ecam=0x{ecam_start:x}..0x{ecam_end:x})"
+    );
+}
+
+#[test]
+fn pci0_crs_splits_mmio_window_to_exclude_ecam_when_overlapping() {
+    // Force the PCI MMIO window to overlap the ECAM region so we exercise the split-window logic
+    // in the DSDT generator.
+    let mut config = AcpiConfig::new(2, 0x1_0000_0000);
+    config.pci_mmio_start = PCIE_ECAM_BASE - 0x1000_0000; // 0xA000_0000
+    let tables = AcpiTables::build(&config).expect("ACPI tables should build");
+
+    let dsdt = tables.dsdt.as_slice();
+    let aml = &dsdt[36..];
+
+    let ecam_start = PCIE_ECAM_BASE;
+    let ecam_end = ecam_start + PCIE_ECAM_SIZE;
+
+    let desc_prefix = [0x87, 0x17, 0x00, 0x00, 0x0D, 0x06];
+    let mut found_any = false;
+    for off in 0..aml.len().saturating_sub(desc_prefix.len()) {
+        if &aml[off..off + desc_prefix.len()] != desc_prefix {
+            continue;
+        }
+        found_any = true;
+
+        let start = read_u32_le(aml, off + 10) as u64;
+        let len = read_u32_le(aml, off + 22) as u64;
+        let end = start.saturating_add(len);
+
+        assert!(
+            end <= ecam_start || start >= ecam_end,
+            "PCI0._CRS MMIO descriptor overlaps ECAM (mmio=0x{start:x}..0x{end:x} ecam=0x{ecam_start:x}..0x{ecam_end:x})"
+        );
+    }
+    assert!(
+        found_any,
+        "expected to find at least one PCI0._CRS MMIO descriptor"
+    );
+}
+
+#[test]
+fn mcfg_table_describes_pcie_ecam() {
+    let tables = build_tables(2);
+    let mcfg = tables.mcfg.as_deref().expect("MCFG should be present");
+    assert_eq!(&mcfg[0..4], b"MCFG");
+    assert!(validate_table_checksum(mcfg));
+
+    let hdr = parse_header(mcfg).expect("MCFG header should parse");
+    assert_eq!(hdr.length as usize, mcfg.len(), "MCFG length mismatch");
+
+    assert!(
+        mcfg.len() >= 44 + 16,
+        "MCFG should contain at least one allocation entry"
+    );
+    let base = u64::from_le_bytes(mcfg[44..52].try_into().unwrap());
+    let segment = u16::from_le_bytes(mcfg[52..54].try_into().unwrap());
+    let start_bus = mcfg[54];
+    let end_bus = mcfg[55];
+
+    assert_eq!(base, 0xB000_0000);
+    assert_eq!(segment, PCIE_ECAM_SEGMENT);
+    assert_eq!(start_bus, PCIE_ECAM_START_BUS);
+    assert_eq!(end_bus, PCIE_ECAM_END_BUS);
 }
 
 #[test]
@@ -545,8 +641,8 @@ fn memory_scan_finds_rsdp_and_tables() {
 
     let rsdt_entries = parse_rsdt_entries(&rsdt).expect("RSDT entries");
     let xsdt_entries = parse_xsdt_entries(&xsdt).expect("XSDT entries");
-    assert_eq!(rsdt_entries.len(), 3);
-    assert_eq!(xsdt_entries.len(), 3);
+    assert_eq!(rsdt_entries.len(), 4);
+    assert_eq!(xsdt_entries.len(), 4);
 
     // Follow pointers and ensure we can read/validate the referenced tables.
     for addr in xsdt_entries {
@@ -554,7 +650,7 @@ fn memory_scan_finds_rsdp_and_tables() {
         assert!(validate_table_checksum(&table));
         let hdr = parse_header(&table).unwrap();
         assert!(
-            matches!(&hdr.signature, b"FACP" | b"APIC" | b"HPET"),
+            matches!(&hdr.signature, b"FACP" | b"APIC" | b"HPET" | b"MCFG"),
             "unexpected table signature {:?}",
             core::str::from_utf8(&hdr.signature).ok()
         );

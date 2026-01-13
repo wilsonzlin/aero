@@ -3,7 +3,9 @@ use crate::acpi::constants::{
     DEFAULT_EBDA_BASE, DEFAULT_PCI_MMIO_START,
 };
 use crate::acpi::structures::{RSDP_CHECKSUM_LEN_V1, RSDP_V2_SIZE};
-use aero_pc_constants::PCIE_ECAM_BASE;
+use aero_pc_constants::{
+    PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS,
+};
 use memory::{GuestMemory, GuestMemoryError};
 
 pub type PhysAddr = u64;
@@ -90,6 +92,7 @@ pub struct AcpiTables {
     pub fadt_addr: PhysAddr,
     pub madt_addr: PhysAddr,
     pub hpet_addr: PhysAddr,
+    pub mcfg_addr: Option<PhysAddr>,
     pub dsdt_addr: PhysAddr,
     pub facs_addr: PhysAddr,
 
@@ -100,6 +103,7 @@ pub struct AcpiTables {
     pub fadt: Vec<u8>,
     pub madt: Vec<u8>,
     pub hpet: Vec<u8>,
+    pub mcfg: Option<Vec<u8>>,
     pub dsdt: Vec<u8>,
     pub facs: Vec<u8>,
 }
@@ -162,6 +166,13 @@ impl AcpiTables {
             cpu_count: config.cpu_count,
             pci_mmio_base,
             pci_mmio_size,
+            // Enable PCIe-friendly config space access via MMCONFIG/ECAM.
+            //
+            // This must match the platform MMIO mapping (see `aero-pc-platform`).
+            pcie_ecam_base: PCIE_ECAM_BASE,
+            pcie_segment: PCIE_ECAM_SEGMENT,
+            pcie_start_bus: PCIE_ECAM_START_BUS,
+            pcie_end_bus: PCIE_ECAM_END_BUS,
             ..default_cfg
         };
 
@@ -177,14 +188,19 @@ impl AcpiTables {
 
         let reclaim_end = reclaim_base + config.reclaim_window_size;
         let mut reclaim_max_end = reclaim_base;
-        for &(_, addr, len) in &[
+        let mut reclaim_tables = vec![
             ("DSDT", tables.addresses.dsdt, tables.dsdt.len()),
             ("FADT", tables.addresses.fadt, tables.fadt.len()),
             ("MADT", tables.addresses.madt, tables.madt.len()),
             ("HPET", tables.addresses.hpet, tables.hpet.len()),
             ("RSDT", tables.addresses.rsdt, tables.rsdt.len()),
             ("XSDT", tables.addresses.xsdt, tables.xsdt.len()),
-        ] {
+        ];
+        if let (Some(addr), Some(bytes)) = (tables.addresses.mcfg, tables.mcfg.as_ref()) {
+            reclaim_tables.push(("MCFG", addr, bytes.len()));
+        }
+
+        for &(_, addr, len) in &reclaim_tables {
             let end = addr + len as u64;
             reclaim_max_end = reclaim_max_end.max(end);
             if addr < reclaim_base || end > reclaim_end {
@@ -224,6 +240,7 @@ impl AcpiTables {
             fadt_addr: tables.addresses.fadt,
             madt_addr: tables.addresses.madt,
             hpet_addr: tables.addresses.hpet,
+            mcfg_addr: tables.addresses.mcfg,
             dsdt_addr: tables.addresses.dsdt,
             facs_addr: tables.addresses.facs,
             rsdp,
@@ -232,6 +249,7 @@ impl AcpiTables {
             fadt: tables.fadt,
             madt: tables.madt,
             hpet: tables.hpet,
+            mcfg: tables.mcfg,
             dsdt: tables.dsdt,
             facs: tables.facs,
         })
@@ -257,6 +275,9 @@ impl AcpiTables {
         mem.write_from(self.fadt_addr, &self.fadt)?;
         mem.write_from(self.madt_addr, &self.madt)?;
         mem.write_from(self.hpet_addr, &self.hpet)?;
+        if let (Some(addr), Some(bytes)) = (self.mcfg_addr, self.mcfg.as_ref()) {
+            mem.write_from(addr, bytes)?;
+        }
         mem.write_from(self.rsdt_addr, &self.rsdt)?;
         mem.write_from(self.xsdt_addr, &self.xsdt)?;
         mem.write_from(self.rsdp_addr, &self.rsdp)?;
