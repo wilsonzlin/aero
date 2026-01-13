@@ -163,8 +163,12 @@ static LIST_ENTRY g_VirtIoSndTopoJackInfoChangeEventList[VIRTIOSND_JACK_ID_COUNT
     {&g_VirtIoSndTopoJackInfoChangeEventList[1], &g_VirtIoSndTopoJackInfoChangeEventList[1]},
 };
 
+static KSPIN_LOCK g_VirtIoSndTopoJackEventListLock = 0;
+
 static VOID VirtIoSndTopoNotifyJackInfoChange(_In_ ULONG JackId)
 {
+    KIRQL oldIrql;
+
     if (JackId >= RTL_NUMBER_OF(g_VirtIoSndTopoJackInfoChangeEventList)) {
         return;
     }
@@ -175,13 +179,16 @@ static VOID VirtIoSndTopoNotifyJackInfoChange(_In_ ULONG JackId)
      * IRQL: <= DISPATCH_LEVEL (called from the virtio INTx DPC and from the
      * WaveRT period DPC in polling-only mode).
      */
+    KeAcquireSpinLock(&g_VirtIoSndTopoJackEventListLock, &oldIrql);
     PcGenerateEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId]);
+    KeReleaseSpinLock(&g_VirtIoSndTopoJackEventListLock, oldIrql);
 }
 
 _Use_decl_annotations_
 VOID VirtIoSndTopology_ResetJackState(VOID)
 {
     ULONG i;
+    KeInitializeSpinLock(&g_VirtIoSndTopoJackEventListLock);
     for (i = 0; i < RTL_NUMBER_OF(g_VirtIoSndTopoJackConnected); ++i) {
         (VOID)InterlockedExchange(&g_VirtIoSndTopoJackConnected[i], 1);
     }
@@ -719,6 +726,9 @@ VirtIoSndProperty_JackContainerId(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 static NTSTATUS
 VirtIoSndEvent_JackInfoChangeCommon(_In_ PPCEVENT_REQUEST EventRequest, _In_ ULONG JackId)
 {
+    KIRQL oldIrql;
+    NTSTATUS status;
+
     if (EventRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -733,11 +743,17 @@ VirtIoSndEvent_JackInfoChangeCommon(_In_ PPCEVENT_REQUEST EventRequest, _In_ ULO
     }
 
     if (EventRequest->Verb & PCEVENT_VERB_ADD) {
-        return PcAddToEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId], EventRequest);
+        KeAcquireSpinLock(&g_VirtIoSndTopoJackEventListLock, &oldIrql);
+        status = PcAddToEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId], EventRequest);
+        KeReleaseSpinLock(&g_VirtIoSndTopoJackEventListLock, oldIrql);
+        return status;
     }
 
     if (EventRequest->Verb & PCEVENT_VERB_REMOVE) {
-        return PcRemoveFromEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId], EventRequest);
+        KeAcquireSpinLock(&g_VirtIoSndTopoJackEventListLock, &oldIrql);
+        status = PcRemoveFromEventList(&g_VirtIoSndTopoJackInfoChangeEventList[JackId], EventRequest);
+        KeReleaseSpinLock(&g_VirtIoSndTopoJackEventListLock, oldIrql);
+        return status;
     }
 
     return STATUS_INVALID_PARAMETER;
