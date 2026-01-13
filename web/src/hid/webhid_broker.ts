@@ -456,9 +456,13 @@ export class WebHidBroker {
 
   #handleRingFailure(reason: string, options: { notifyWorker?: boolean } = {}): void {
     // Avoid spamming `hid.ringDetach` if multiple callbacks notice the failure.
-    if (!this.#inputRing && !this.#outputRing && !this.#outputRingDrainTimer) return;
+    if (!this.#inputRing && !this.#outputRing && !this.#outputRingDrainTimer && !this.#inputReportRing) return;
 
     this.#detachRings();
+    // Disable the input-report SharedArrayBuffer ring as well so we fully fall back to postMessage.
+    // The SAB rings are an optimization and may be disabled at any time (e.g. on corruption).
+    this.#inputReportRing = null;
+    this.#status = null;
 
     const shouldNotify = options.notifyWorker !== false;
     const worker = this.#workerPort;

@@ -2162,9 +2162,12 @@ function attachHidRings(msg: HidRingAttachMessage): void {
 }
 
 function detachHidRings(reason: string, options: { notifyBroker?: boolean } = {}): void {
-  const hadRings = hidInputRing !== null || hidOutputRing !== null;
+  const hadRings = hidInputRing !== null || hidOutputRing !== null || hidProxyInputRing !== null;
   hidInputRing = null;
   hidOutputRing = null;
+  hidProxyInputRing = null;
+  hidProxyInputRingForwarded = 0;
+  hidProxyInputRingInvalid = 0;
   if (!hadRings) return;
 
   const shouldNotify = options.notifyBroker !== false;
@@ -3913,6 +3916,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       hidProxyInputRing = new RingBuffer(msg.sab, msg.offsetBytes);
       hidProxyInputRingForwarded = 0;
       hidProxyInputRingInvalid = 0;
+      hidRingDetachSent = false;
       return;
     }
 

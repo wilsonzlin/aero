@@ -421,6 +421,19 @@ describe("hid/WebHidBroker", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(device.sendReport).not.toHaveBeenCalled();
 
+    // After ring detach, input reports should fall back to per-message postMessage as well.
+    const before = port.posted.length;
+    device.dispatchInputReport(3, Uint8Array.of(5));
+    const input = port.posted
+      .slice(before)
+      .find((p) => (p.msg as { type?: unknown }).type === "hid.inputReport") as
+      | { msg: HidInputReportMessage; transfer?: Transferable[] }
+      | undefined;
+    expect(input).toBeTruthy();
+    expect(input!.msg.deviceId).toBe(id);
+    expect(input!.msg.reportId).toBe(3);
+    expect(Array.from(input!.msg.data)).toEqual([5]);
+
     broker.destroy();
   });
 
