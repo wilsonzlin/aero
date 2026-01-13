@@ -6,6 +6,8 @@ import type {
   DiskOpenSpec,
   OpenMode,
   OpenResult,
+  SharedArrayBufferRange,
+  SharedArrayBufferSlice,
   RuntimeDiskRequestMessage,
   RuntimeDiskResponseMessage,
 } from "./runtime_disk_protocol";
@@ -130,6 +132,10 @@ export class RuntimeDiskClient {
     return this.request<{ data: Uint8Array }>("read", { handle, lba, byteLength }).then((r) => r.data);
   }
 
+  readInto(handle: number, lba: number, byteLength: number, dest: SharedArrayBufferSlice): Promise<void> {
+    return this.request("readInto", { handle, lba, byteLength, dest }).then(() => undefined);
+  }
+
   write(handle: number, lba: number, data: Uint8Array): Promise<void> {
     // Transfer to avoid copying when possible.
     //
@@ -156,6 +162,10 @@ export class RuntimeDiskClient {
 
     const buf = data.slice();
     return this.request("write", { handle, lba, data: buf }, [buf.buffer]).then(() => undefined);
+  }
+
+  writeFrom(handle: number, lba: number, src: SharedArrayBufferRange): Promise<void> {
+    return this.request("writeFrom", { handle, lba, src }).then(() => undefined);
   }
 
   flush(handle: number): Promise<void> {

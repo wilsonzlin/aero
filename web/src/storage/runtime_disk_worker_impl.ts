@@ -1,7 +1,7 @@
 import { OpfsCowDisk } from "./opfs_cow";
 import { OpfsRawDisk } from "./opfs_raw";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
-import type { AsyncSectorDisk } from "./disk";
+import { assertSectorAligned, checkedOffset, type AsyncSectorDisk } from "./disk";
 import { IdbCowDisk } from "./idb_cow";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
@@ -95,6 +95,41 @@ function emptyIoTelemetry(): DiskIoTelemetry {
     lastWriteMs: null,
     lastFlushMs: null,
   };
+}
+
+function requireSafeNonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new Error(`invalid ${label}=${String(value)}`);
+  }
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`invalid ${label}=${String(value)}`);
+  }
+  return value;
+}
+
+function requireSharedArrayBuffer(value: unknown, label: string): SharedArrayBuffer {
+  if (!(value instanceof SharedArrayBuffer)) {
+    throw new Error(`invalid ${label} (expected SharedArrayBuffer)`);
+  }
+  return value;
+}
+
+function createSabView(
+  sab: unknown,
+  offsetBytes: unknown,
+  byteLength: number,
+  label: string,
+): { sab: SharedArrayBuffer; offsetBytes: number; view: Uint8Array } {
+  const shared = requireSharedArrayBuffer(sab, `${label}.sab`);
+  const off = requireSafeNonNegativeInteger(offsetBytes, `${label}.offsetBytes`);
+  const end = off + byteLength;
+  if (!Number.isSafeInteger(end)) {
+    throw new Error(`invalid ${label} (offset+length overflow)`);
+  }
+  if (end > shared.byteLength) {
+    throw new Error(`invalid ${label} (out of bounds)`);
+  }
+  return { sab: shared, offsetBytes: off, view: new Uint8Array(shared, off, byteLength) };
 }
 
 function stableImageIdFromUrl(url: string): string {
@@ -1176,6 +1211,36 @@ export class RuntimeDiskWorker {
         return;
       }
 
+      case "readInto": {
+        const { handle, lba } = msg.payload as any;
+        const entry = await this.requireDisk(handle);
+
+        const byteLength = requireSafeNonNegativeInteger((msg.payload as any).byteLength, "byteLength");
+        assertSectorAligned(byteLength, entry.disk.sectorSize);
+        checkedOffset(lba, byteLength, entry.disk.sectorSize);
+
+        const dest = (msg.payload as any).dest;
+        if (!dest || typeof dest !== "object") {
+          throw new Error("invalid dest");
+        }
+        const { view } = createSabView((dest as any).sab, (dest as any).offsetBytes, byteLength, "dest");
+
+        const start = performance.now();
+        entry.io.reads++;
+        entry.io.bytesRead += byteLength;
+        entry.io.inflightReads++;
+        try {
+          if (byteLength > 0) {
+            await entry.disk.readSectors(lba, view);
+          }
+        } finally {
+          entry.io.inflightReads--;
+          entry.io.lastReadMs = performance.now() - start;
+        }
+        this.postOk(msg.requestId, { ok: true });
+        return;
+      }
+
       case "write": {
         const { handle, lba, data } = msg.payload;
         const entry = await this.requireDisk(handle);
@@ -1186,6 +1251,37 @@ export class RuntimeDiskWorker {
         entry.io.inflightWrites++;
         try {
           await entry.disk.writeSectors(lba, data);
+        } finally {
+          entry.io.inflightWrites--;
+          entry.io.lastWriteMs = performance.now() - start;
+        }
+        this.postOk(msg.requestId, { ok: true });
+        return;
+      }
+
+      case "writeFrom": {
+        const { handle, lba } = msg.payload as any;
+        const entry = await this.requireDisk(handle);
+        if (entry.readOnly) throw new Error("disk is read-only");
+
+        const src = (msg.payload as any).src;
+        if (!src || typeof src !== "object") {
+          throw new Error("invalid src");
+        }
+        const byteLength = requireSafeNonNegativeInteger((src as any).byteLength, "src.byteLength");
+        assertSectorAligned(byteLength, entry.disk.sectorSize);
+        checkedOffset(lba, byteLength, entry.disk.sectorSize);
+
+        const { view } = createSabView((src as any).sab, (src as any).offsetBytes, byteLength, "src");
+
+        const start = performance.now();
+        entry.io.writes++;
+        entry.io.bytesWritten += byteLength;
+        entry.io.inflightWrites++;
+        try {
+          if (byteLength > 0) {
+            await entry.disk.writeSectors(lba, view);
+          }
         } finally {
           entry.io.inflightWrites--;
           entry.io.lastWriteMs = performance.now() - start;

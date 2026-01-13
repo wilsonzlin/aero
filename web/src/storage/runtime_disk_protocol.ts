@@ -75,6 +75,15 @@ export type OpenRequestPayload = {
   overlayBlockSizeBytes?: number;
 };
 
+export type SharedArrayBufferSlice = {
+  sab: SharedArrayBuffer;
+  offsetBytes: number;
+};
+
+export type SharedArrayBufferRange = SharedArrayBufferSlice & {
+  byteLength: number;
+};
+
 export type RuntimeDiskRequestMessage =
   | { type: "request"; requestId: number; op: "open"; payload: OpenRequestPayload }
   | { type: "request"; requestId: number; op: "openRemote"; payload: { url: string; options?: RemoteDiskOptions } }
@@ -88,7 +97,19 @@ export type RuntimeDiskRequestMessage =
   | { type: "request"; requestId: number; op: "flush"; payload: { handle: number } }
   | { type: "request"; requestId: number; op: "clearCache"; payload: { handle: number } }
   | { type: "request"; requestId: number; op: "read"; payload: { handle: number; lba: number; byteLength: number } }
+  | {
+      type: "request";
+      requestId: number;
+      op: "readInto";
+      payload: { handle: number; lba: number; byteLength: number; dest: SharedArrayBufferSlice };
+    }
   | { type: "request"; requestId: number; op: "write"; payload: { handle: number; lba: number; data: Uint8Array } }
+  | {
+      type: "request";
+      requestId: number;
+      op: "writeFrom";
+      payload: { handle: number; lba: number; src: SharedArrayBufferRange };
+    }
   | { type: "request"; requestId: number; op: "stats"; payload: { handle: number } }
   | { type: "request"; requestId: number; op: "prepareSnapshot"; payload: Record<string, never> }
   | { type: "request"; requestId: number; op: "restoreFromSnapshot"; payload: { state: Uint8Array } }

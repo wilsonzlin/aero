@@ -249,3 +249,46 @@ describe("RuntimeDiskClient error handling", () => {
     await expect(p).rejects.toThrow(/closed/);
   });
 });
+
+describe("RuntimeDiskClient zero-copy ops", () => {
+  it("serializes readInto() with SharedArrayBuffer dest and no transfer list", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const sab = new SharedArrayBuffer(16);
+    const p = client.readInto(3, 4, 8, { sab, offsetBytes: 2 });
+
+    expect(w.lastMessage.op).toBe("readInto");
+    expect(w.lastMessage.payload).toEqual({
+      handle: 3,
+      lba: 4,
+      byteLength: 8,
+      dest: { sab, offsetBytes: 2 },
+    });
+    expect(w.lastTransfer).toHaveLength(0);
+
+    w.emit({ type: "response", requestId: 1, ok: true, result: { ok: true } });
+    await p;
+    client.close();
+  });
+
+  it("serializes writeFrom() with SharedArrayBuffer src and no transfer list", async () => {
+    const w = new MockWorker();
+    const client = new RuntimeDiskClient(w as unknown as Worker);
+
+    const sab = new SharedArrayBuffer(16);
+    const p = client.writeFrom(7, 1, { sab, offsetBytes: 4, byteLength: 12 });
+
+    expect(w.lastMessage.op).toBe("writeFrom");
+    expect(w.lastMessage.payload).toEqual({
+      handle: 7,
+      lba: 1,
+      src: { sab, offsetBytes: 4, byteLength: 12 },
+    });
+    expect(w.lastTransfer).toHaveLength(0);
+
+    w.emit({ type: "response", requestId: 1, ok: true, result: { ok: true } });
+    await p;
+    client.close();
+  });
+});

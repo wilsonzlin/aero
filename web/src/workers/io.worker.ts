@@ -4755,14 +4755,24 @@ function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpc
     return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
   }
 
+  const aligned = range.offset === 0 && length % disk.sectorSize === 0;
   return queueDiskIoResult(async () => {
     const perfActive = isPerfActive();
     const t0 = perfActive ? performance.now() : 0;
     try {
       if (range.byteLength > 0) {
-        const data = await client.read(disk.handle, range.lba, range.byteLength);
-        view.set(data.subarray(range.offset, range.offset + length));
-        perfIoReadBytes += data.byteLength;
+        const guestBuf = view.buffer as unknown as ArrayBufferLike;
+        if (aligned && guestBuf instanceof SharedArrayBuffer) {
+          await client.readInto(disk.handle, range.lba, range.byteLength, {
+            sab: guestBuf,
+            offsetBytes: view.byteOffset,
+          });
+          perfIoReadBytes += range.byteLength;
+        } else {
+          const data = await client.read(disk.handle, range.lba, range.byteLength);
+          view.set(data.subarray(range.offset, range.offset + length));
+          perfIoReadBytes += data.byteLength;
+        }
       }
       return { ok: true, bytes: length };
     } catch {
@@ -4807,7 +4817,16 @@ function diskWrite(diskOffset: bigint, len: number, guestOffset: bigint): AeroIp
     try {
       if (range.byteLength > 0) {
         if (aligned) {
-          await client.write(disk.handle, range.lba, view);
+          const guestBuf = view.buffer as unknown as ArrayBufferLike;
+          if (guestBuf instanceof SharedArrayBuffer) {
+            await client.writeFrom(disk.handle, range.lba, {
+              sab: guestBuf,
+              offsetBytes: view.byteOffset,
+              byteLength: view.byteLength,
+            });
+          } else {
+            await client.write(disk.handle, range.lba, view);
+          }
           perfIoWriteBytes += length;
         } else {
           const buf = await client.read(disk.handle, range.lba, range.byteLength);
