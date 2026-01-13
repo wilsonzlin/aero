@@ -159,7 +159,7 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
   - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input|...` markers on stdout/COM1.
   - The selftest also emits a `virtio-input-irq|INFO|...` line indicating which interrupt mode Windows assigned:
     - `virtio-input-irq|INFO|mode=intx`
-    - `virtio-input-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
+    - `virtio-input-irq|INFO|mode=msi messages=<n>` (message-signaled interrupts; MSI/MSI-X)
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 ## Build
