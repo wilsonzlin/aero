@@ -97,17 +97,26 @@ fn expansion_scratch_grows_when_segment_is_full() {
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
             label: Some("expansion_scratch growth test"),
             frames_in_flight: 2,
-            per_frame_size: 512,
+            // Use a tiny size; the allocator will round this up to its required segment alignment.
+            per_frame_size: 1,
             ..ExpansionScratchDescriptor::default()
         });
 
-        // First allocation fits in the initial segment/buffer.
+        // First allocation initializes the allocator.
         let first = scratch.alloc_vertex_output(device, 16).unwrap();
         let initial_cap = scratch.per_frame_capacity().expect("allocator initialized");
 
-        // Second allocation does not fit once we account for storage-buffer alignment; this forces
-        // the allocator to grow by allocating a larger backing buffer and switching to it.
-        let second = scratch.alloc_vertex_output(device, 400).unwrap();
+        // Reset back to segment0 so we can fill it exactly.
+        scratch.begin_frame();
+        scratch.begin_frame();
+
+        // Allocate exactly the segment size, then allocate anything else. This must exhaust the
+        // segment regardless of the device's storage-buffer alignment.
+        let fill = scratch.alloc_metadata(device, initial_cap, 1).unwrap();
+        assert_eq!(fill.offset, 0);
+        assert_eq!(fill.size, initial_cap);
+
+        let second = scratch.alloc_vertex_output(device, 16).unwrap();
         let grown_cap = scratch.per_frame_capacity().expect("allocator initialized");
 
         assert!(
