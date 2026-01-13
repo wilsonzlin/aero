@@ -3120,4 +3120,57 @@ mod tests {
             .wgsl
             .contains("f32(input.global_invocation_id.z)"));
     }
+
+    #[test]
+    fn compute_uses_declared_thread_group_size_for_workgroup_size_attribute() {
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::ThreadGroupSize { x: 64, y: 2, z: 1 },
+                Sm4Decl::InputSiv {
+                    reg: 0,
+                    mask: WriteMask::XYZW,
+                    sys_value: D3D_NAME_DISPATCH_THREAD_ID,
+                },
+            ],
+            instructions: vec![Sm4Inst::Mov {
+                dst: crate::sm4_ir::DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: crate::sm4_ir::SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Input,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Ret],
+        };
+
+        let mut dxbc_bytes = Vec::new();
+        dxbc_bytes.extend_from_slice(b"DXBC");
+        dxbc_bytes.extend_from_slice(&[0u8; 16]);
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
+        dxbc_bytes.extend_from_slice(&(32u32).to_le_bytes());
+        dxbc_bytes.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(dxbc_bytes.len(), 32);
+
+        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+        let signatures = ShaderSignatures::default();
+        let translated =
+            translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated
+            .wgsl
+            .contains("@compute @workgroup_size(64, 2, 1)"));
+    }
 }

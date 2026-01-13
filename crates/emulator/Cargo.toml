@@ -30,6 +30,8 @@ aerogpu-legacy = []
 aero-usb = { path = "../aero-usb" }
 aero-devices = { path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
+aero-devices-storage = { path = "../aero-devices-storage", optional = true }
+aero-devices-nvme = { path = "../aero-devices-nvme", optional = true }
 aero-edid = { path = "../aero-edid" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
@@ -41,8 +43,6 @@ aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu = { path = "../aero-gpu", optional = true }
 aero-storage = { path = "../aero-storage" }
 aero-storage-adapters = { path = "../aero-storage-adapters" }
-aero-devices-storage = { path = "../aero-devices-storage", optional = true }
-aero-devices-nvme = { path = "../aero-devices-nvme", optional = true }
 anyhow = { version = "1", optional = true }
 font8x8 = "0.3"
 lru = "0.16"
