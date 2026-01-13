@@ -38,6 +38,11 @@ Supported fields:
   - WOW64 payloads are copied into the x64 package root; ensure the 32-bit DLL names do not collide with 64-bit build outputs (use distinct names such as a `_x64` suffix for 64-bit DLLs).
 - `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<driver>/`) and must resolve under it (no absolute paths; cannot escape the driver directory).
   - CI refuses to include common binary extensions via `additionalFiles` (currently: `.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`).
+- `toolFiles` (optional): list of user-mode helper tool binaries to include in staged packages (paths relative to the driver directory).
+  - Entries must have a `.exe` extension.
+  - Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).
+  - CI copies each tool into the staged package directory preserving the relative path.
+  - `.exe` is intentionally disallowed in `additionalFiles`; `toolFiles` is the explicit opt-in mechanism for shipping `.exe` alongside the driver.
 - `wdfCoInstaller` (optional): declare that this driver needs the WDF coinstaller and which KMDF version/DLL name.
   - If `dllName` is omitted, CI derives it from `kmdfVersion` (e.g. `1.11` → `WdfCoInstaller01011.dll`).
   - If provided, `dllName` must be a simple filename like `WdfCoInstaller01011.dll` (not a path).

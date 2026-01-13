@@ -218,6 +218,7 @@ function Read-DriverPackageManifest {
       Wow64Files = @()
       RequiredBuildOutputFiles = @()
       AdditionalFiles = @()
+      ToolFiles = @()
       WdfCoInstaller = $null
     }
   }
@@ -315,6 +316,17 @@ function Read-DriverPackageManifest {
     }
   }
 
+  $toolFiles = @()
+  if ($null -ne $data.toolFiles) {
+    foreach ($entry in @($data.toolFiles)) {
+      if ($null -eq $entry) { continue }
+      $s = ([string]$entry).Trim()
+      if ($s.Length -gt 0) {
+        $toolFiles += $s
+      }
+    }
+  }
+
   $wdf = $null
   if ($null -ne $data.wdfCoInstaller) {
     $kmdfVersion = [string]$data.wdfCoInstaller.kmdfVersion
@@ -346,6 +358,7 @@ function Read-DriverPackageManifest {
     Wow64Files = $wow64Files
     RequiredBuildOutputFiles = $requiredBuildOutFiles
     AdditionalFiles = $additional
+    ToolFiles = $toolFiles
     WdfCoInstaller = $wdf
   }
 }
@@ -666,6 +679,27 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       if ($ext -eq '.inf') {
         $stagedInfPaths += $dest
       }
+    }
+
+    foreach ($relPath in $manifest.ToolFiles) {
+      $ext = [IO.Path]::GetExtension($relPath)
+      if ($ext -ne '.exe') {
+        throw "Driver '$driverNameForLog' toolFiles entries must be .exe; refusing to include '$relPath'."
+      }
+
+      $src = Resolve-ChildPathUnderRoot -Root $driverSourceDir -ChildPath $relPath
+      if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+        throw "Driver '$driverNameForLog' requests tool file '$relPath' via '$($manifest.ManifestPath)', but it was not found: $src"
+      }
+
+      $dest = Resolve-ChildPathUnderRoot -Root $packageDir -ChildPath $relPath
+      $destDir = Split-Path -Parent $dest
+      if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+      }
+
+      Write-Host "     Including tool file: $relPath"
+      Copy-Item -LiteralPath $src -Destination $dest -Force
     }
 
     $existingWdf = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Filter 'WdfCoInstaller*.dll' -ErrorAction SilentlyContinue)

@@ -48,6 +48,16 @@
       },
       "uniqueItems": true
     },
+    "toolFiles": {
+      "type": "array",
+      "description": "Optional list of user-mode helper tool binaries (paths relative to the driver directory) to include in the staged driver package. This is the explicit opt-in mechanism for shipping .exe tools alongside the driver package without relaxing the additionalFiles non-binary policy. Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^.+\\.[eE][xX][eE]$"
+      },
+      "uniqueItems": true
+    },
     "wdfCoInstaller": {
       "type": "object",
       "description": "If present, this driver package requires a WDF coinstaller (WdfCoInstaller*.dll) for older systems. This file is a Microsoft WDK redistributable and is NOT included by default (see docs).",

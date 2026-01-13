@@ -61,8 +61,23 @@ Extra files (paths relative to the driver directory) to include in staged packag
 for **non-binary** assets like README/license text or helper scripts.
 
 - CI rejects binary-looking extensions here (`.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`) so
-  we don't accidentally commit or ship build outputs via `additionalFiles`.
+  we don't accidentally commit or ship build outputs via `additionalFiles`. If you need to
+  ship an actual user-mode tool binary (`.exe`) alongside the driver, use `toolFiles` instead.
 - Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).
+
+### `toolFiles` (optional)
+
+List of user-mode helper tool binaries to include in staged packages.
+
+- Entries must be paths (relative to the driver directory) to `.exe` files.
+- Paths must resolve under the driver directory (no absolute paths; cannot escape the driver directory).
+- CI copies each entry into `out/packages/<driver>/<arch>/` preserving the relative path.
+
+Example:
+
+```json
+{ "toolFiles": ["tools/foo/bin/bar.exe"] }
+```
 
 ### `wdfCoInstaller` (optional, opt-in)
 
