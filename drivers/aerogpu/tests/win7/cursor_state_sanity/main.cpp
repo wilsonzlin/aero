@@ -629,6 +629,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
     reporter.Fail("SetCursorPos(to window) failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
     goto cleanup;
   }
+  // Explicitly call SetCursor to trigger a pointer-shape update (some cursor paths only update the
+  // hardware pointer when the cursor is actively set, not just when the class cursor changes).
+  (void)SetCursor(custom_cursor);
   (void)SendMessage(hwnd, WM_SETCURSOR, (WPARAM)hwnd, (LPARAM)MAKELONG(HTCLIENT, WM_MOUSEMOVE));
 
   Sleep(50);
