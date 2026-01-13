@@ -15,6 +15,13 @@
 //! - PRP (PRP1/PRP2 + PRP lists)
 //! - Limited SGL support for READ/WRITE (Data Block + Segment/Last Segment chaining)
 //!
+//! ## Best-effort semantics
+//!
+//! - `WRITE ZEROES` materializes and writes a zero-filled buffer (bounded by
+//!   [`NVME_MAX_DMA_BYTES`]) so reads of the range return zeros.
+//! - `DSM deallocate` currently validates the range list and completes successfully but does not
+//!   attempt to reclaim backend storage (treats deallocate as a no-op).
+//!
 //! Interrupts:
 //! - Legacy INTx is modelled via [`NvmeController::intx_level`].
 //! - The PCI wrapper [`NvmePciDevice`] also supports a single-vector MSI capability; when the

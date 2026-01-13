@@ -55,6 +55,16 @@ Alternatively, use [`NvmeController::try_new_from_aero_storage`] /
 Only legacy INTx signalling is modelled (`NvmeController::intx_level`). MSI/MSI-X is not yet
 implemented; this is sufficient for functional testing but may limit peak performance.
 
+## Best-effort semantics
+
+Some storage maintenance commands depend on backend support that is not universally available
+(especially in wasm32/browser storage backends).
+
+- `WRITE ZEROES` is implemented by writing an actual zero-filled buffer to the backend (bounded by
+  the controller's `NVME_MAX_DMA_BYTES` limit).
+- `DSM deallocate` is currently treated as a validated no-op that returns `SUCCESS`. The range list
+  is parsed and LBA bounds are validated, but no backend "trim/discard" operation is performed.
+
 ## Windows 7 notes
 
 Windows 7 has no in-box NVMe driver. NVMe should be considered **experimental** for Win7
