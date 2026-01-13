@@ -25,6 +25,60 @@ VirtIoSndBackendVirtioFromContext(_In_ PVOID Context)
     return (PVIRTIOSND_BACKEND_VIRTIO)Context;
 }
 
+static __forceinline ULONG
+VirtIoSndBackendVirtioFrameBytesForStream(_In_ const PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG StreamId)
+{
+    USHORT bytesPerSample;
+    ULONG frameBytes;
+    VIRTIOSND_PCM_FORMAT selected;
+
+    if (Dx == NULL) {
+        return 0;
+    }
+
+    if (StreamId != VIRTIO_SND_PLAYBACK_STREAM_ID && StreamId != VIRTIO_SND_CAPTURE_STREAM_ID) {
+        return 0;
+    }
+
+    selected = Dx->Control.SelectedFormat[StreamId];
+
+    bytesPerSample = 0;
+    if (selected.Channels != 0 && VirtioSndPcmFormatToBytesPerSample(selected.Format, &bytesPerSample) && bytesPerSample != 0) {
+        frameBytes = (ULONG)selected.Channels * (ULONG)bytesPerSample;
+        if (frameBytes != 0) {
+            return frameBytes;
+        }
+    }
+
+    /* Fallback to Aero contract v1 fixed formats. */
+    return (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
+}
+
+static __forceinline ULONG
+VirtIoSndBackendVirtioCurrentTxFrameBytes(_In_ const PVIRTIOSND_DEVICE_EXTENSION Dx)
+{
+    ULONG frameBytes;
+
+    if (Dx == NULL) {
+        return VirtioSndTxFrameSizeBytes();
+    }
+
+    frameBytes = 0;
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) != 0) {
+        frameBytes = Dx->Tx.FrameBytes;
+    }
+
+    if (frameBytes == 0) {
+        frameBytes = VirtIoSndBackendVirtioFrameBytesForStream(Dx, VIRTIO_SND_PLAYBACK_STREAM_ID);
+    }
+
+    if (frameBytes == 0) {
+        frameBytes = VirtioSndTxFrameSizeBytes();
+    }
+
+    return frameBytes;
+}
+
 static NTSTATUS
 VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
 {
@@ -54,10 +108,16 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
 
     /*
      * virtio-snd uses byte counts, but the device requires PCM payloads to be
-     * frame-aligned. Clamp to S16_LE stereo framing (render / stream 0).
+     * frame-aligned. Clamp to the currently selected stream format.
      */
-    BufferBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
-    PeriodBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
+    {
+        ULONG frameBytes = VirtIoSndBackendVirtioFrameBytesForStream(dx, VIRTIO_SND_PLAYBACK_STREAM_ID);
+        if (frameBytes == 0) {
+            return STATUS_INVALID_DEVICE_STATE;
+        }
+        BufferBytes = (BufferBytes / frameBytes) * frameBytes;
+        PeriodBytes = (PeriodBytes / frameBytes) * frameBytes;
+    }
     if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -96,11 +156,20 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
      * so bring it up on the first SetParams and re-create it if the period size
      * changes.
      */
-    if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 && dx->Tx.MaxPeriodBytes != PeriodBytes) {
-        VirtIoSndUninitTxEngine(dx);
-    }
+    {
+        ULONG frameBytes;
+        frameBytes = VirtIoSndBackendVirtioFrameBytesForStream(dx, VIRTIO_SND_PLAYBACK_STREAM_ID);
+        if (frameBytes == 0) {
+            frameBytes = VIRTIOSND_BLOCK_ALIGN;
+        }
 
-    if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) == 0) {
+        if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 &&
+            (dx->Tx.MaxPeriodBytes != PeriodBytes || dx->Tx.FrameBytes != frameBytes)) {
+            VirtIoSndUninitTxEngine(dx);
+        }
+
+        if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) == 0) {
+
         qsz = dx->QueueSplit[VIRTIOSND_QUEUE_TX].QueueSize;
         txBuffers = 64;
         if (qsz != 0 && txBuffers > (ULONG)qsz / 2u) {
@@ -110,11 +179,12 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
             txBuffers = 1;
         }
 
-        status = VirtIoSndInitTxEngine(dx, PeriodBytes, txBuffers, TRUE);
+        status = VirtIoSndInitTxEngineEx(dx, frameBytes, PeriodBytes, txBuffers, TRUE);
         if (!NT_SUCCESS(status)) {
             VIRTIOSND_TRACE_ERROR("backend(virtio): Tx engine init failed: 0x%08X\n", (UINT)status);
             return status;
         }
+    }
     }
 
     ctx->RenderBufferBytes = BufferBytes;
@@ -283,7 +353,7 @@ VirtIoSndBackendVirtio_WritePeriod(
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    if ((totalBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+    if ((totalBytes % VirtIoSndBackendVirtioCurrentTxFrameBytes(dx)) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -404,7 +474,7 @@ VirtIoSndBackendVirtio_WritePeriodSg(
     if (totalBytes != (ULONGLONG)periodBytes) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    if ((totalBytes % (ULONGLONG)VirtioSndTxFrameSizeBytes()) != 0) {
+    if ((totalBytes % (ULONGLONG)VirtIoSndBackendVirtioCurrentTxFrameBytes(dx)) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -481,7 +551,7 @@ VirtIoSndBackendVirtio_WritePeriodCopy(
     if (totalBytes != periodBytes) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    if ((totalBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+    if ((totalBytes % VirtIoSndBackendVirtioCurrentTxFrameBytes(dx)) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -520,6 +590,7 @@ VirtIoSndBackendVirtio_SetParamsCapture(_In_ PVOID Context, _In_ ULONG BufferByt
     PVIRTIOSND_DEVICE_EXTENSION dx;
     NTSTATUS status;
     VIRTIOSND_STREAM_STATE streamState;
+    ULONG frameBytes;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
@@ -538,12 +609,14 @@ VirtIoSndBackendVirtio_SetParamsCapture(_In_ PVOID Context, _In_ ULONG BufferByt
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    /*
-     * Capture is fixed-format mono S16_LE, so buffer/period sizes must be aligned
-     * to 2-byte frames.
-     */
-    BufferBytes &= ~(VIRTIOSND_CAPTURE_BLOCK_ALIGN - 1u);
-    PeriodBytes &= ~(VIRTIOSND_CAPTURE_BLOCK_ALIGN - 1u);
+    frameBytes = VirtIoSndBackendVirtioFrameBytesForStream(dx, VIRTIO_SND_CAPTURE_STREAM_ID);
+    if (frameBytes == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    /* Capture payloads must be frame-aligned. */
+    BufferBytes = (BufferBytes / frameBytes) * frameBytes;
+    PeriodBytes = (PeriodBytes / frameBytes) * frameBytes;
     if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -580,8 +653,12 @@ VirtIoSndBackendVirtio_SetParamsCapture(_In_ PVOID Context, _In_ ULONG BufferByt
      * Initialize the RX engine for capture. Unlike the TX engine, RX request
      * contexts are not period-size dependent.
      */
+    if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) != 0 && dx->Rx.FrameBytes != frameBytes) {
+        VirtIoSndUninitRxEngine(dx);
+    }
+
     if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
-        status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
+        status = VirtIoSndInitRxEngineEx(dx, frameBytes, VIRTIOSND_QUEUE_SIZE_RXQ);
         if (!NT_SUCCESS(status)) {
             VIRTIOSND_TRACE_ERROR("backend(virtio): Rx engine init failed: 0x%08X\n", (UINT)status);
             return status;

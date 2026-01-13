@@ -2,8 +2,8 @@
 
 #include <ntddk.h>
 
-#include "adapter_context.h"
 #include "portcls_compat.h"
+#include "adapter_context.h"
 #include "topology.h"
 #include "trace.h"
 #include "virtiosnd_jack.h"
@@ -12,6 +12,8 @@
 #else
 #include "virtiosnd.h"
 #endif
+
+#define VIRTIOSND_TOPOLOGY_SIGNATURE 'poTV' /* 'VT' + 'op' (endianness depends on debugger display) */
 
 #ifndef KSAUDIO_SPEAKER_MONO
 // Some WDK environments may not define KSAUDIO_SPEAKER_MONO; it maps to FRONT_CENTER.
@@ -34,12 +36,26 @@
 
 typedef struct _VIRTIOSND_TOPOLOGY_MINIPORT {
     IMiniportTopology Interface;
+    ULONG Signature;
     LONG RefCount;
     VIRTIOSND_PORTCLS_DX Dx;
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    ULONG RenderChannelMask;
+    ULONG CaptureChannelMask;
+    UCHAR RenderChannelsMin;
+    UCHAR RenderChannelsMax;
+    UCHAR CaptureChannelsMin;
+    UCHAR CaptureChannelsMax;
+#endif
 } VIRTIOSND_TOPOLOGY_MINIPORT, *PVIRTIOSND_TOPOLOGY_MINIPORT;
 
 static ULONG STDMETHODCALLTYPE VirtIoSndTopologyMiniport_AddRef(_In_ IMiniportTopology *This);
 static ULONG STDMETHODCALLTYPE VirtIoSndTopologyMiniport_Release(_In_ IMiniportTopology *This);
+
+static PVIRTIOSND_TOPOLOGY_MINIPORT VirtIoSndTopoMiniportFromPropertyRequest(_In_opt_ PPCPROPERTY_REQUEST PropertyRequest);
+static BOOLEAN VirtIoSndTopoChannelMaskForChannels(_In_ USHORT Channels, _Out_ PULONG OutChannelMask);
+static BOOLEAN VirtIoSndTopoChannelsForChannelMask(_In_ ULONG ChannelMask, _Out_ PUSHORT OutChannels);
 
 static PVIRTIOSND_TOPOLOGY_MINIPORT
 VirtIoSndTopologyMiniportFromInterface(_In_ IMiniportTopology *Interface)
@@ -96,6 +112,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndTopologyMiniport_Init(
     _Outptr_opt_result_maybenull_ PSERVICEGROUP *ServiceGroup
     )
 {
+    PVIRTIOSND_TOPOLOGY_MINIPORT miniport;
     UNREFERENCED_PARAMETER(ResourceList);
     UNREFERENCED_PARAMETER(Port);
 
@@ -103,15 +120,71 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndTopologyMiniport_Init(
         *ServiceGroup = NULL;
     }
 
-    /*
-     * Cache the device extension pointer so jack properties can reflect
-     * virtio-snd eventq JACK notifications.
-     */
-    if (This != NULL) {
-        PVIRTIOSND_TOPOLOGY_MINIPORT miniport = VirtIoSndTopologyMiniportFromInterface(This);
-        if (miniport != NULL) {
-            miniport->Dx = VirtIoSndAdapterContext_Lookup(UnknownAdapter, NULL);
+    miniport = VirtIoSndTopologyMiniportFromInterface(This);
+    if (miniport != NULL) {
+        BOOLEAN forceNullBackend;
+        VIRTIOSND_PORTCLS_DX dx;
+
+        /*
+         * Cache the device extension pointer so jack properties can reflect
+         * virtio-snd eventq JACK notifications.
+         */
+        forceNullBackend = FALSE;
+        dx = VirtIoSndAdapterContext_Lookup(UnknownAdapter, &forceNullBackend);
+        miniport->Dx = dx;
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        {
+            ULONG mask;
+            USHORT channels;
+
+            miniport->RenderChannelsMin = VIRTIOSND_CHANNELS;
+            miniport->RenderChannelsMax = VIRTIOSND_CHANNELS;
+            miniport->CaptureChannelsMin = VIRTIOSND_CAPTURE_CHANNELS;
+            miniport->CaptureChannelsMax = VIRTIOSND_CAPTURE_CHANNELS;
+            miniport->RenderChannelMask = KSAUDIO_SPEAKER_STEREO;
+            miniport->CaptureChannelMask = KSAUDIO_SPEAKER_MONO;
+
+            if (!forceNullBackend && dx != NULL && InterlockedCompareExchange(&dx->Control.CapsValid, 0, 0) != 0) {
+                miniport->RenderChannelsMin = dx->Control.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMin;
+                miniport->RenderChannelsMax = dx->Control.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMax;
+                miniport->CaptureChannelsMin = dx->Control.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMin;
+                miniport->CaptureChannelsMax = dx->Control.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMax;
+
+                channels = 2;
+                if (channels < miniport->RenderChannelsMin || channels > miniport->RenderChannelsMax) {
+                    channels = (USHORT)miniport->RenderChannelsMax;
+                    if (channels > 8) {
+                        channels = 8;
+                    }
+                    if (channels < miniport->RenderChannelsMin) {
+                        channels = miniport->RenderChannelsMin;
+                    }
+                }
+
+                mask = 0;
+                if (VirtIoSndTopoChannelMaskForChannels(channels, &mask)) {
+                    miniport->RenderChannelMask = mask;
+                }
+
+                channels = 1;
+                if (channels < miniport->CaptureChannelsMin || channels > miniport->CaptureChannelsMax) {
+                    channels = (USHORT)miniport->CaptureChannelsMax;
+                    if (channels > 8) {
+                        channels = 8;
+                    }
+                    if (channels < miniport->CaptureChannelsMin) {
+                        channels = miniport->CaptureChannelsMin;
+                    }
+                }
+
+                mask = 0;
+                if (VirtIoSndTopoChannelMaskForChannels(channels, &mask)) {
+                    miniport->CaptureChannelMask = mask;
+                }
+            }
         }
+#endif
     }
 
     return STATUS_SUCCESS;
@@ -254,6 +327,104 @@ BOOLEAN VirtIoSndTopology_IsJackConnected(ULONG JackId)
     return (InterlockedCompareExchange(&g_VirtIoSndTopoJackConnected[JackId], 0, 0) != 0) ? TRUE : FALSE;
 }
 
+static PVIRTIOSND_TOPOLOGY_MINIPORT
+VirtIoSndTopoMiniportFromPropertyRequest(_In_opt_ PPCPROPERTY_REQUEST PropertyRequest)
+{
+    PVIRTIOSND_TOPOLOGY_MINIPORT miniport;
+
+    if (PropertyRequest == NULL) {
+        return NULL;
+    }
+
+    miniport = (PVIRTIOSND_TOPOLOGY_MINIPORT)PropertyRequest->MajorTarget;
+    if (miniport != NULL && miniport->Signature == VIRTIOSND_TOPOLOGY_SIGNATURE) {
+        return miniport;
+    }
+
+    miniport = (PVIRTIOSND_TOPOLOGY_MINIPORT)PropertyRequest->MinorTarget;
+    if (miniport != NULL && miniport->Signature == VIRTIOSND_TOPOLOGY_SIGNATURE) {
+        return miniport;
+    }
+
+    return NULL;
+}
+
+static BOOLEAN
+VirtIoSndTopoChannelMaskForChannels(_In_ USHORT Channels, _Out_ PULONG OutChannelMask)
+{
+    if (OutChannelMask == NULL) {
+        return FALSE;
+    }
+
+    switch (Channels) {
+    case 1:
+        *OutChannelMask = KSAUDIO_SPEAKER_MONO;
+        return TRUE;
+    case 2:
+        *OutChannelMask = KSAUDIO_SPEAKER_STEREO;
+        return TRUE;
+    case 3:
+        *OutChannelMask = KSAUDIO_SPEAKER_STEREO | SPEAKER_FRONT_CENTER;
+        return TRUE;
+    case 4:
+        *OutChannelMask = KSAUDIO_SPEAKER_QUAD;
+        return TRUE;
+    case 5:
+        *OutChannelMask = KSAUDIO_SPEAKER_QUAD | SPEAKER_FRONT_CENTER;
+        return TRUE;
+    case 6:
+        *OutChannelMask = KSAUDIO_SPEAKER_5POINT1;
+        return TRUE;
+    case 7:
+        *OutChannelMask = KSAUDIO_SPEAKER_5POINT1 | SPEAKER_BACK_CENTER;
+        return TRUE;
+    case 8:
+        *OutChannelMask = KSAUDIO_SPEAKER_7POINT1;
+        return TRUE;
+    default:
+        *OutChannelMask = 0;
+        return FALSE;
+    }
+}
+
+static BOOLEAN
+VirtIoSndTopoChannelsForChannelMask(_In_ ULONG ChannelMask, _Out_ PUSHORT OutChannels)
+{
+    if (OutChannels == NULL) {
+        return FALSE;
+    }
+
+    switch (ChannelMask) {
+    case KSAUDIO_SPEAKER_MONO:
+        *OutChannels = 1;
+        return TRUE;
+    case KSAUDIO_SPEAKER_STEREO:
+        *OutChannels = 2;
+        return TRUE;
+    case KSAUDIO_SPEAKER_STEREO | SPEAKER_FRONT_CENTER:
+        *OutChannels = 3;
+        return TRUE;
+    case KSAUDIO_SPEAKER_QUAD:
+        *OutChannels = 4;
+        return TRUE;
+    case KSAUDIO_SPEAKER_QUAD | SPEAKER_FRONT_CENTER:
+        *OutChannels = 5;
+        return TRUE;
+    case KSAUDIO_SPEAKER_5POINT1:
+        *OutChannels = 6;
+        return TRUE;
+    case KSAUDIO_SPEAKER_5POINT1 | SPEAKER_BACK_CENTER:
+        *OutChannels = 7;
+        return TRUE;
+    case KSAUDIO_SPEAKER_7POINT1:
+        *OutChannels = 8;
+        return TRUE;
+    default:
+        *OutChannels = 0;
+        return FALSE;
+    }
+}
+
 static BOOLEAN
 VirtIoSndTopoTryGetChannel(_In_ PPCPROPERTY_REQUEST PropertyRequest, _Out_ ULONG* OutChannel)
 {
@@ -287,9 +458,13 @@ VirtIoSndTopoTryGetChannel(_In_ PPCPROPERTY_REQUEST PropertyRequest, _Out_ ULONG
 static NTSTATUS
 VirtIoSndProperty_ChannelConfig(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 {
+    PVIRTIOSND_TOPOLOGY_MINIPORT miniport;
+
     if (PropertyRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    miniport = VirtIoSndTopoMiniportFromPropertyRequest(PropertyRequest);
 
     if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
         KSPROPERTY_DESCRIPTION *desc;
@@ -315,23 +490,44 @@ VirtIoSndProperty_ChannelConfig(_In_ PPCPROPERTY_REQUEST PropertyRequest)
             return STATUS_BUFFER_TOO_SMALL;
         }
 
-        *(PULONG)PropertyRequest->Value = KSAUDIO_SPEAKER_STEREO;
+        *(PULONG)PropertyRequest->Value =
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+            (miniport != NULL && miniport->RenderChannelMask != 0) ? miniport->RenderChannelMask :
+#endif
+            KSAUDIO_SPEAKER_STEREO;
         PropertyRequest->ValueSize = sizeof(ULONG);
         return STATUS_SUCCESS;
     }
 
     if (PropertyRequest->Verb & KSPROPERTY_TYPE_SET) {
         ULONG mask;
+        USHORT channels;
 
         if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(ULONG)) {
             return STATUS_INVALID_PARAMETER;
         }
 
         mask = *(const ULONG *)PropertyRequest->Value;
-        if (mask != KSAUDIO_SPEAKER_STEREO) {
+
+        channels = 0;
+        if (!VirtIoSndTopoChannelsForChannelMask(mask, &channels) || channels == 0) {
             return STATUS_INVALID_PARAMETER;
         }
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        if (miniport != NULL) {
+            if ((UCHAR)channels < miniport->RenderChannelsMin || (UCHAR)channels > miniport->RenderChannelsMax) {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            miniport->RenderChannelMask = mask;
+            return STATUS_SUCCESS;
+        }
+#endif
+
+        if (mask != KSAUDIO_SPEAKER_STEREO) {
+            return STATUS_INVALID_PARAMETER;
+        }
         return STATUS_SUCCESS;
     }
 
@@ -341,9 +537,13 @@ VirtIoSndProperty_ChannelConfig(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 static NTSTATUS
 VirtIoSndProperty_ChannelConfigMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 {
+    PVIRTIOSND_TOPOLOGY_MINIPORT miniport;
+
     if (PropertyRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    miniport = VirtIoSndTopoMiniportFromPropertyRequest(PropertyRequest);
 
     if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
         KSPROPERTY_DESCRIPTION *desc;
@@ -369,23 +569,44 @@ VirtIoSndProperty_ChannelConfigMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
             return STATUS_BUFFER_TOO_SMALL;
         }
 
-        *(PULONG)PropertyRequest->Value = KSAUDIO_SPEAKER_MONO;
+        *(PULONG)PropertyRequest->Value =
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+            (miniport != NULL && miniport->CaptureChannelMask != 0) ? miniport->CaptureChannelMask :
+#endif
+            KSAUDIO_SPEAKER_MONO;
         PropertyRequest->ValueSize = sizeof(ULONG);
         return STATUS_SUCCESS;
     }
 
     if (PropertyRequest->Verb & KSPROPERTY_TYPE_SET) {
         ULONG mask;
+        USHORT channels;
 
         if (PropertyRequest->Value == NULL || PropertyRequest->ValueSize < sizeof(ULONG)) {
             return STATUS_INVALID_PARAMETER;
         }
 
         mask = *(const ULONG *)PropertyRequest->Value;
-        if (mask != KSAUDIO_SPEAKER_MONO) {
+
+        channels = 0;
+        if (!VirtIoSndTopoChannelsForChannelMask(mask, &channels) || channels == 0) {
             return STATUS_INVALID_PARAMETER;
         }
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        if (miniport != NULL) {
+            if ((UCHAR)channels < miniport->CaptureChannelsMin || (UCHAR)channels > miniport->CaptureChannelsMax) {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            miniport->CaptureChannelMask = mask;
+            return STATUS_SUCCESS;
+        }
+#endif
+
+        if (mask != KSAUDIO_SPEAKER_MONO) {
+            return STATUS_INVALID_PARAMETER;
+        }
         return STATUS_SUCCESS;
     }
 
@@ -536,11 +757,14 @@ VirtIoSndProperty_JackDescription(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     ULONG required;
     KSMULTIPLE_ITEM *item;
     KSJACK_DESCRIPTION *jack;
+    PVIRTIOSND_TOPOLOGY_MINIPORT miniport;
     BOOLEAN connected;
 
     if (PropertyRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    miniport = VirtIoSndTopoMiniportFromPropertyRequest(PropertyRequest);
 
     if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
         KSPROPERTY_DESCRIPTION *desc;
@@ -575,7 +799,11 @@ VirtIoSndProperty_JackDescription(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 
     jack = (KSJACK_DESCRIPTION *)(item + 1);
     RtlZeroMemory(jack, sizeof(*jack));
-    jack->ChannelMapping = KSAUDIO_SPEAKER_STEREO;
+    jack->ChannelMapping =
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        (miniport != NULL && miniport->RenderChannelMask != 0) ? miniport->RenderChannelMask :
+#endif
+        KSAUDIO_SPEAKER_STEREO;
     connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_SPEAKER);
     jack->IsConnected = connected ? TRUE : FALSE;
 
@@ -589,11 +817,14 @@ VirtIoSndProperty_JackDescriptionMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
     ULONG required;
     KSMULTIPLE_ITEM *item;
     KSJACK_DESCRIPTION *jack;
+    PVIRTIOSND_TOPOLOGY_MINIPORT miniport;
     BOOLEAN connected;
 
     if (PropertyRequest == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    miniport = VirtIoSndTopoMiniportFromPropertyRequest(PropertyRequest);
 
     if (PropertyRequest->Verb & KSPROPERTY_TYPE_BASICSUPPORT) {
         KSPROPERTY_DESCRIPTION *desc;
@@ -628,7 +859,11 @@ VirtIoSndProperty_JackDescriptionMono(_In_ PPCPROPERTY_REQUEST PropertyRequest)
 
     jack = (KSJACK_DESCRIPTION *)(item + 1);
     RtlZeroMemory(jack, sizeof(*jack));
-    jack->ChannelMapping = KSAUDIO_SPEAKER_MONO;
+    jack->ChannelMapping =
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        (miniport != NULL && miniport->CaptureChannelMask != 0) ? miniport->CaptureChannelMask :
+#endif
+        KSAUDIO_SPEAKER_MONO;
     connected = VirtIoSndTopology_IsJackConnected(VIRTIOSND_JACK_ID_MICROPHONE);
     jack->IsConnected = connected ? TRUE : FALSE;
 
@@ -1018,6 +1253,7 @@ VirtIoSndMiniportTopology_Create(_Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
 
     RtlZeroMemory(miniport, sizeof(*miniport));
     miniport->Interface.lpVtbl = &g_VirtIoSndTopologyMiniportVtbl;
+    miniport->Signature = VIRTIOSND_TOPOLOGY_SIGNATURE;
     miniport->RefCount = 1;
 
     *OutUnknown = (PUNKNOWN)&miniport->Interface;

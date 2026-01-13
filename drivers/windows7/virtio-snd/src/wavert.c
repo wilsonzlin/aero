@@ -32,6 +32,28 @@
 
 typedef struct _VIRTIOSND_WAVERT_STREAM VIRTIOSND_WAVERT_STREAM, *PVIRTIOSND_WAVERT_STREAM;
 
+typedef struct _VIRTIOSND_WAVERT_STREAM_FORMAT {
+    USHORT Channels;
+    USHORT BitsPerSample;
+    ULONG SampleRate;
+    ULONG BlockAlign;
+    ULONG AvgBytesPerSec;
+    ULONG ChannelMask;
+    GUID SubFormat;
+    UCHAR VirtioFormat;
+    UCHAR VirtioRate;
+} VIRTIOSND_WAVERT_STREAM_FORMAT, *PVIRTIOSND_WAVERT_STREAM_FORMAT;
+
+typedef struct _VIRTIOSND_WAVERT_FORMAT_ENTRY {
+    /*
+     * KSDATARANGE_AUDIO must be the first member so KSDATARANGE pointers passed
+     * back from PortCls (MatchingDataRange) can be converted back to the owning
+     * format entry via CONTAINING_RECORD().
+     */
+    KSDATARANGE_AUDIO DataRange;
+    VIRTIOSND_WAVERT_STREAM_FORMAT Format;
+} VIRTIOSND_WAVERT_FORMAT_ENTRY, *PVIRTIOSND_WAVERT_FORMAT_ENTRY;
+
 typedef struct _VIRTIOSND_WAVERT_MINIPORT {
     IMiniportWaveRT Interface;
     LONG RefCount;
@@ -43,6 +65,24 @@ typedef struct _VIRTIOSND_WAVERT_MINIPORT {
     KSPIN_LOCK Lock;
     PVIRTIOSND_WAVERT_STREAM RenderStream;
     PVIRTIOSND_WAVERT_STREAM CaptureStream;
+
+    /*
+     * Dynamically generated filter descriptor and supported-format tables built
+     * from virtio-snd PCM_INFO.
+     *
+     * When unavailable (e.g. null backend / legacy build), the driver falls back
+     * to the static fixed-format descriptor.
+     */
+    PCFILTER_DESCRIPTOR FilterDescriptor;
+    PCPIN_DESCRIPTOR Pins;
+
+    PVIRTIOSND_WAVERT_FORMAT_ENTRY RenderFormats;
+    ULONG RenderFormatCount;
+    PKSDATARANGE* RenderDataRanges;
+
+    PVIRTIOSND_WAVERT_FORMAT_ENTRY CaptureFormats;
+    ULONG CaptureFormatCount;
+    PKSDATARANGE* CaptureDataRanges;
 } VIRTIOSND_WAVERT_MINIPORT, *PVIRTIOSND_WAVERT_MINIPORT;
 
 typedef struct _VIRTIOSND_WAVERT_STREAM {
@@ -53,6 +93,8 @@ typedef struct _VIRTIOSND_WAVERT_STREAM {
     KSSTATE State;
     BOOLEAN Capture;
     BOOLEAN HwPrepared;
+
+    VIRTIOSND_WAVERT_STREAM_FORMAT Format;
 
     KSPIN_LOCK Lock;
 
@@ -113,6 +155,9 @@ static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl;
 
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
 static EVT_VIRTIOSND_RX_COMPLETION VirtIoSndWaveRtRxCompletion;
+
+static VOID VirtIoSndWaveRtMiniport_FreeDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPORT Miniport);
+static NTSTATUS VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPORT Miniport);
 #endif
 
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
@@ -182,14 +227,69 @@ VirtIoSndWaveRtBackendBase(_In_ const VIRTIOSND_DMA_BUFFER* Buffer)
 }
 
 static BOOLEAN
-VirtIoSndWaveRt_IsFormatSupportedEx(_In_ const KSDATAFORMAT *DataFormat, _In_ BOOLEAN Capture)
+VirtIoSndWaveRtChannelMaskForChannels(_In_ USHORT Channels, _Out_ PULONG OutChannelMask)
+{
+    if (OutChannelMask == NULL) {
+        return FALSE;
+    }
+
+    switch (Channels) {
+    case 1:
+        *OutChannelMask = KSAUDIO_SPEAKER_MONO;
+        return TRUE;
+    case 2:
+        *OutChannelMask = KSAUDIO_SPEAKER_STEREO;
+        return TRUE;
+    case 3:
+        *OutChannelMask = KSAUDIO_SPEAKER_STEREO | SPEAKER_FRONT_CENTER;
+        return TRUE;
+    case 4:
+        *OutChannelMask = KSAUDIO_SPEAKER_QUAD;
+        return TRUE;
+    case 5:
+        *OutChannelMask = KSAUDIO_SPEAKER_QUAD | SPEAKER_FRONT_CENTER;
+        return TRUE;
+    case 6:
+        *OutChannelMask = KSAUDIO_SPEAKER_5POINT1;
+        return TRUE;
+    case 7:
+        *OutChannelMask = KSAUDIO_SPEAKER_5POINT1 | SPEAKER_BACK_CENTER;
+        return TRUE;
+    case 8:
+        *OutChannelMask = KSAUDIO_SPEAKER_7POINT1;
+        return TRUE;
+    default:
+        *OutChannelMask = 0;
+        return FALSE;
+    }
+}
+
+static BOOLEAN
+VirtIoSndWaveRt_IsFormatSupportedEx(
+    _In_opt_ const VIRTIOSND_WAVERT_MINIPORT* Miniport,
+    _In_ const KSDATAFORMAT *DataFormat,
+    _In_ BOOLEAN Capture,
+    _Out_opt_ PVIRTIOSND_WAVERT_STREAM_FORMAT OutFormat)
 {
     const KSDATAFORMAT_WAVEFORMATEXTENSIBLE *fmt;
     const WAVEFORMATEX *wfx;
-    USHORT expectedChannels;
-    USHORT expectedBlockAlign;
+    GUID subFormat;
+    USHORT channels;
+    USHORT bitsPerSample;
+    USHORT validBitsPerSample;
+    ULONG sampleRate;
+    ULONG expectedBlockAlign;
     ULONG expectedAvgBytesPerSec;
-    ULONG expectedChannelMask;
+    ULONG channelMask;
+    ULONG i;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    const VIRTIOSND_WAVERT_FORMAT_ENTRY* table;
+    ULONG tableCount;
+#endif
+
+    if (OutFormat != NULL) {
+        RtlZeroMemory(OutFormat, sizeof(*OutFormat));
+    }
 
     if (DataFormat == NULL) {
         return FALSE;
@@ -206,45 +306,130 @@ VirtIoSndWaveRt_IsFormatSupportedEx(_In_ const KSDATAFORMAT *DataFormat, _In_ BO
 
     wfx = &((const KSDATAFORMAT_WAVEFORMATEX *)DataFormat)->WaveFormatEx;
 
-    expectedChannels = Capture ? VIRTIOSND_CAPTURE_CHANNELS : VIRTIOSND_CHANNELS;
-    expectedBlockAlign = Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
-    expectedAvgBytesPerSec = Capture ? VIRTIOSND_CAPTURE_AVG_BYTES_PER_SEC : VIRTIOSND_AVG_BYTES_PER_SEC;
-    expectedChannelMask = Capture ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO;
-
-    if (wfx->nSamplesPerSec != VIRTIOSND_SAMPLE_RATE ||
-        wfx->nChannels != expectedChannels ||
-        wfx->wBitsPerSample != VIRTIOSND_BITS_PER_SAMPLE ||
-        wfx->nBlockAlign != expectedBlockAlign ||
-        wfx->nAvgBytesPerSec != expectedAvgBytesPerSec) {
-        return FALSE;
-    }
+    channels = wfx->nChannels;
+    bitsPerSample = wfx->wBitsPerSample;
+    validBitsPerSample = wfx->wBitsPerSample;
+    sampleRate = wfx->nSamplesPerSec;
+    subFormat = KSDATAFORMAT_SUBTYPE_PCM;
+    channelMask = 0;
 
     if (wfx->wFormatTag == WAVE_FORMAT_PCM) {
-        return TRUE;
-    }
+        subFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        if (!VirtIoSndWaveRtChannelMaskForChannels(channels, &channelMask)) {
+            return FALSE;
+        }
+    } else if (wfx->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) {
+        subFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+        if (!VirtIoSndWaveRtChannelMaskForChannels(channels, &channelMask)) {
+            return FALSE;
+        }
+    } else if (wfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        if (DataFormat->FormatSize < sizeof(KSDATAFORMAT_WAVEFORMATEXTENSIBLE)) {
+            return FALSE;
+        }
 
-    if (wfx->wFormatTag != WAVE_FORMAT_EXTENSIBLE) {
+        fmt = (const KSDATAFORMAT_WAVEFORMATEXTENSIBLE *)DataFormat;
+        subFormat = fmt->WaveFormatExt.SubFormat;
+        channelMask = fmt->WaveFormatExt.dwChannelMask;
+        validBitsPerSample = fmt->WaveFormatExt.Samples.wValidBitsPerSample;
+    } else {
         return FALSE;
     }
 
-    if (DataFormat->FormatSize < sizeof(KSDATAFORMAT_WAVEFORMATEXTENSIBLE)) {
+    if (channels == 0) {
         return FALSE;
     }
 
-    fmt = (const KSDATAFORMAT_WAVEFORMATEXTENSIBLE *)DataFormat;
-    if (!IsEqualGUID(&fmt->WaveFormatExt.SubFormat, &KSDATAFORMAT_SUBTYPE_PCM)) {
+    expectedBlockAlign = (ULONG)channels * ((ULONG)bitsPerSample / 8u);
+    expectedAvgBytesPerSec = sampleRate * expectedBlockAlign;
+
+    if ((ULONG)wfx->nBlockAlign != expectedBlockAlign || wfx->nAvgBytesPerSec != expectedAvgBytesPerSec) {
         return FALSE;
     }
 
-    if (fmt->WaveFormatExt.dwChannelMask != expectedChannelMask) {
+    if (validBitsPerSample != bitsPerSample) {
         return FALSE;
     }
 
-    if (fmt->WaveFormatExt.Samples.wValidBitsPerSample != VIRTIOSND_BITS_PER_SAMPLE) {
+#if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    UNREFERENCED_PARAMETER(Miniport);
+    UNREFERENCED_PARAMETER(i);
+
+    /* Legacy I/O-port build is fixed-format (contract v1). */
+    if (sampleRate != VIRTIOSND_SAMPLE_RATE ||
+        bitsPerSample != VIRTIOSND_BITS_PER_SAMPLE ||
+        channels != (Capture ? VIRTIOSND_CAPTURE_CHANNELS : VIRTIOSND_CHANNELS) ||
+        channelMask != (Capture ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO) ||
+        !IsEqualGUID(&subFormat, &KSDATAFORMAT_SUBTYPE_PCM)) {
         return FALSE;
+    }
+
+    if (OutFormat != NULL) {
+        OutFormat->Channels = channels;
+        OutFormat->BitsPerSample = bitsPerSample;
+        OutFormat->SampleRate = sampleRate;
+        OutFormat->BlockAlign = expectedBlockAlign;
+        OutFormat->AvgBytesPerSec = expectedAvgBytesPerSec;
+        OutFormat->ChannelMask = channelMask;
+        OutFormat->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        OutFormat->VirtioFormat = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+        OutFormat->VirtioRate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
     }
 
     return TRUE;
+#else
+    table = NULL;
+    tableCount = 0;
+    if (Miniport != NULL) {
+        if (Capture) {
+            table = Miniport->CaptureFormats;
+            tableCount = Miniport->CaptureFormatCount;
+        } else {
+            table = Miniport->RenderFormats;
+            tableCount = Miniport->RenderFormatCount;
+        }
+    }
+
+    if (table != NULL && tableCount != 0) {
+        for (i = 0; i < tableCount; ++i) {
+            const VIRTIOSND_WAVERT_STREAM_FORMAT* f = &table[i].Format;
+            if (f->Channels == channels &&
+                f->BitsPerSample == bitsPerSample &&
+                f->SampleRate == sampleRate &&
+                f->ChannelMask == channelMask &&
+                IsEqualGUID(&f->SubFormat, &subFormat)) {
+                if (OutFormat != NULL) {
+                    *OutFormat = *f;
+                }
+                return TRUE;
+            }
+        }
+        return FALSE;
+    }
+
+    /* Fallback to fixed contract v1 format. */
+    if (sampleRate != VIRTIOSND_SAMPLE_RATE ||
+        bitsPerSample != VIRTIOSND_BITS_PER_SAMPLE ||
+        channels != (Capture ? VIRTIOSND_CAPTURE_CHANNELS : VIRTIOSND_CHANNELS) ||
+        channelMask != (Capture ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO) ||
+        !IsEqualGUID(&subFormat, &KSDATAFORMAT_SUBTYPE_PCM)) {
+        return FALSE;
+    }
+
+    if (OutFormat != NULL) {
+        OutFormat->Channels = channels;
+        OutFormat->BitsPerSample = bitsPerSample;
+        OutFormat->SampleRate = sampleRate;
+        OutFormat->BlockAlign = expectedBlockAlign;
+        OutFormat->AvgBytesPerSec = expectedAvgBytesPerSec;
+        OutFormat->ChannelMask = channelMask;
+        OutFormat->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        OutFormat->VirtioFormat = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+        OutFormat->VirtioRate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+    }
+
+    return TRUE;
+#endif
 }
 
 static VOID
@@ -275,13 +460,16 @@ VirtIoSndWaveRtGetPositionSnapshot(
             deltaQpc = NowQpc - Stream->StartQpc;
         }
 
-        elapsedFrames = (deltaQpc * (ULONGLONG)VIRTIOSND_SAMPLE_RATE) / Stream->QpcFrequency;
+        elapsedFrames = (deltaQpc * (ULONGLONG)Stream->Format.SampleRate) / Stream->QpcFrequency;
         linearFrames = Stream->StartLinearFrames + elapsedFrames;
     }
 
     ringBytes = 0;
     if (Stream->BufferSize != 0) {
-        blockAlign = Stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
+        blockAlign = Stream->Format.BlockAlign;
+        if (blockAlign == 0) {
+            blockAlign = Stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
+        }
         ringBytes = (ULONG)((linearFrames * (ULONGLONG)blockAlign) % (ULONGLONG)Stream->BufferSize);
     }
 
@@ -799,7 +987,8 @@ VirtIoSndWaveRtDpcRoutine(
 
             stream->RxWriteOffsetBytes = (startOffsetBytes + periodBytes) % bufferSize;
 
-            blockAlign = stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
+            blockAlign = (stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign :
+                (stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN);
             periodFrames = (blockAlign != 0) ? ((ULONGLONG)periodBytes / (ULONGLONG)blockAlign) : 0;
             stream->FrozenLinearFrames += periodFrames;
             stream->FrozenQpc = qpcValue;
@@ -954,7 +1143,7 @@ VirtIoSndWaveRtDpcRoutine(
     qpcValue = (ULONGLONG)qpc.QuadPart;
 
     VirtIoSndWaveRtGetPositionSnapshot(stream, qpcValue, &linearFrames, &playOffsetBytes, NULL);
-    playLinearBytes = linearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
+    playLinearBytes = linearFrames * (ULONGLONG)((stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign : VIRTIOSND_BLOCK_ALIGN);
 
     stream->PacketCount += 1;
     VirtIoSndWaveRtUpdateRegisters(stream, playOffsetBytes, qpcValue);
@@ -1209,7 +1398,8 @@ VirtIoSndWaveRtRxCompletion(
 
         stream->RxWriteOffsetBytes = (pendingOffset + periodBytes) % bufferSize;
 
-        blockAlign = stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
+        blockAlign = (stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign :
+            (stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN);
         periodFrames = (blockAlign != 0) ? ((ULONGLONG)periodBytes / (ULONGLONG)blockAlign) : 0;
         stream->FrozenLinearFrames += periodFrames;
         stream->FrozenQpc = qpcValue;
@@ -1268,6 +1458,9 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Release(_In_ IMiniportWav
     PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
     LONG ref = InterlockedDecrement(&miniport->RefCount);
     if (ref == 0) {
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        VirtIoSndWaveRtMiniport_FreeDynamicDescription(miniport);
+#endif
         VirtIoSndBackend_Destroy(miniport->Backend);
         miniport->Backend = NULL;
         miniport->Dx = NULL;
@@ -1326,6 +1519,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
             if (dx != NULL && dx->Started && !dx->Removed) {
                 VirtIoSndHwSetEventCallback(dx, VirtIoSndWaveRtEventqCallback, dx);
             }
+            (VOID)VirtIoSndWaveRtMiniport_BuildDynamicDescription(miniport);
 #endif
             return STATUS_SUCCESS;
         }
@@ -1516,15 +1710,386 @@ static const PCFILTER_DESCRIPTOR g_VirtIoSndWaveRtFilterDescriptor = {
     g_VirtIoSndWaveRtCategories,
 };
 
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+static VOID
+VirtIoSndWaveRtMiniport_FreeDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPORT Miniport)
+{
+    if (Miniport == NULL) {
+        return;
+    }
+
+    if (Miniport->FilterDescriptor != NULL) {
+        ExFreePoolWithTag(Miniport->FilterDescriptor, VIRTIOSND_POOL_TAG);
+        Miniport->FilterDescriptor = NULL;
+    }
+    if (Miniport->Pins != NULL) {
+        ExFreePoolWithTag(Miniport->Pins, VIRTIOSND_POOL_TAG);
+        Miniport->Pins = NULL;
+    }
+
+    if (Miniport->RenderDataRanges != NULL) {
+        ExFreePoolWithTag(Miniport->RenderDataRanges, VIRTIOSND_POOL_TAG);
+        Miniport->RenderDataRanges = NULL;
+    }
+    if (Miniport->RenderFormats != NULL) {
+        ExFreePoolWithTag(Miniport->RenderFormats, VIRTIOSND_POOL_TAG);
+        Miniport->RenderFormats = NULL;
+    }
+    Miniport->RenderFormatCount = 0;
+
+    if (Miniport->CaptureDataRanges != NULL) {
+        ExFreePoolWithTag(Miniport->CaptureDataRanges, VIRTIOSND_POOL_TAG);
+        Miniport->CaptureDataRanges = NULL;
+    }
+    if (Miniport->CaptureFormats != NULL) {
+        ExFreePoolWithTag(Miniport->CaptureFormats, VIRTIOSND_POOL_TAG);
+        Miniport->CaptureFormats = NULL;
+    }
+    Miniport->CaptureFormatCount = 0;
+}
+
+static BOOLEAN
+VirtIoSndWaveRtMapVirtioFormatToKs(_In_ UCHAR VirtioFormat, _Out_ PUSHORT BitsPerSample, _Out_ GUID* SubFormat)
+{
+    if (BitsPerSample == NULL || SubFormat == NULL) {
+        return FALSE;
+    }
+
+    switch (VirtioFormat) {
+    case VIRTIO_SND_PCM_FMT_U8:
+        *BitsPerSample = 8u;
+        *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_S16:
+        *BitsPerSample = 16u;
+        *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_S24:
+        *BitsPerSample = 24u;
+        *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_S32:
+        *BitsPerSample = 32u;
+        *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_FLOAT:
+        *BitsPerSample = 32u;
+        *SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_FLOAT64:
+        *BitsPerSample = 64u;
+        *SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+        return TRUE;
+    default:
+        *BitsPerSample = 0;
+        *SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        return FALSE;
+    }
+}
+
+static NTSTATUS
+VirtIoSndWaveRtBuildFormatTableFromCaps(
+    _In_ const VIRTIOSND_PCM_CAPS* Caps,
+    _Outptr_result_maybenull_ PVIRTIOSND_WAVERT_FORMAT_ENTRY* OutFormats,
+    _Out_ PULONG OutFormatCount,
+    _Outptr_result_maybenull_ PKSDATARANGE** OutDataRanges)
+{
+    static const UCHAR kVirtioFormats[] = {
+        VIRTIO_SND_PCM_FMT_U8,
+        VIRTIO_SND_PCM_FMT_S16,
+        VIRTIO_SND_PCM_FMT_S24,
+        VIRTIO_SND_PCM_FMT_S32,
+        VIRTIO_SND_PCM_FMT_FLOAT,
+        VIRTIO_SND_PCM_FMT_FLOAT64,
+    };
+
+    ULONG fmtIdx;
+    ULONG rate;
+    ULONG channels;
+    ULONG channelsMin;
+    ULONG channelsMax;
+    ULONG count;
+    PVIRTIOSND_WAVERT_FORMAT_ENTRY formats;
+    PKSDATARANGE* ranges;
+    ULONG out;
+
+    if (OutFormats == NULL || OutFormatCount == NULL || OutDataRanges == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    *OutFormats = NULL;
+    *OutFormatCount = 0;
+    *OutDataRanges = NULL;
+
+    if (Caps == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    channelsMin = Caps->ChannelsMin;
+    channelsMax = Caps->ChannelsMax;
+    if (channelsMin == 0) {
+        channelsMin = 1;
+    }
+    if (channelsMax < channelsMin) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    if (channelsMin > 8) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    if (channelsMax > 8) {
+        channelsMax = 8;
+    }
+
+    count = 0;
+    for (fmtIdx = 0; fmtIdx < RTL_NUMBER_OF(kVirtioFormats); ++fmtIdx) {
+        const UCHAR vf = kVirtioFormats[fmtIdx];
+        USHORT bits;
+        GUID sub;
+
+        if ((Caps->Formats & VIRTIO_SND_PCM_FMT_MASK(vf)) == 0) {
+            continue;
+        }
+
+        bits = 0;
+        sub = KSDATAFORMAT_SUBTYPE_PCM;
+        if (!VirtIoSndWaveRtMapVirtioFormatToKs(vf, &bits, &sub) || bits == 0) {
+            continue;
+        }
+
+        for (rate = 0; rate < 64u; ++rate) {
+            ULONG rateHz;
+
+            if ((Caps->Rates & VIRTIO_SND_PCM_RATE_MASK(rate)) == 0) {
+                continue;
+            }
+
+            rateHz = 0;
+            if (!VirtioSndPcmRateToHz((UCHAR)rate, &rateHz) || rateHz == 0) {
+                continue;
+            }
+
+            for (channels = channelsMin; channels <= channelsMax; ++channels) {
+                count++;
+            }
+        }
+    }
+
+    if (count == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    formats = (PVIRTIOSND_WAVERT_FORMAT_ENTRY)ExAllocatePoolWithTag(NonPagedPool, sizeof(*formats) * (SIZE_T)count, VIRTIOSND_POOL_TAG);
+    if (formats == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    ranges = (PKSDATARANGE*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*ranges) * (SIZE_T)count, VIRTIOSND_POOL_TAG);
+    if (ranges == NULL) {
+        ExFreePoolWithTag(formats, VIRTIOSND_POOL_TAG);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    RtlZeroMemory(formats, sizeof(*formats) * (SIZE_T)count);
+    RtlZeroMemory(ranges, sizeof(*ranges) * (SIZE_T)count);
+
+    out = 0;
+    for (fmtIdx = 0; fmtIdx < RTL_NUMBER_OF(kVirtioFormats); ++fmtIdx) {
+        const UCHAR vf = kVirtioFormats[fmtIdx];
+        USHORT bits;
+        GUID sub;
+        USHORT bytesPerSample;
+
+        if ((Caps->Formats & VIRTIO_SND_PCM_FMT_MASK(vf)) == 0) {
+            continue;
+        }
+
+        bits = 0;
+        sub = KSDATAFORMAT_SUBTYPE_PCM;
+        if (!VirtIoSndWaveRtMapVirtioFormatToKs(vf, &bits, &sub) || bits == 0) {
+            continue;
+        }
+
+        bytesPerSample = 0;
+        if (!VirtioSndPcmFormatToBytesPerSample(vf, &bytesPerSample) || bytesPerSample == 0) {
+            continue;
+        }
+
+        for (rate = 0; rate < 64u; ++rate) {
+            ULONG rateHz;
+
+            if ((Caps->Rates & VIRTIO_SND_PCM_RATE_MASK(rate)) == 0) {
+                continue;
+            }
+
+            rateHz = 0;
+            if (!VirtioSndPcmRateToHz((UCHAR)rate, &rateHz) || rateHz == 0) {
+                continue;
+            }
+
+            for (channels = channelsMin; channels <= channelsMax; ++channels) {
+                ULONG channelMask;
+                ULONG blockAlign;
+                ULONG avgBytesPerSec;
+
+                if (out >= count) {
+                    /* Defensive: should never happen. */
+                    break;
+                }
+
+                channelMask = 0;
+                if (!VirtIoSndWaveRtChannelMaskForChannels((USHORT)channels, &channelMask)) {
+                    continue;
+                }
+
+                blockAlign = channels * (ULONG)bytesPerSample;
+                avgBytesPerSec = rateHz * blockAlign;
+
+                formats[out].Format.Channels = (USHORT)channels;
+                formats[out].Format.BitsPerSample = bits;
+                formats[out].Format.SampleRate = rateHz;
+                formats[out].Format.BlockAlign = blockAlign;
+                formats[out].Format.AvgBytesPerSec = avgBytesPerSec;
+                formats[out].Format.ChannelMask = channelMask;
+                formats[out].Format.SubFormat = sub;
+                formats[out].Format.VirtioFormat = vf;
+                formats[out].Format.VirtioRate = (UCHAR)rate;
+
+                formats[out].DataRange.DataRange.FormatSize = sizeof(KSDATARANGE_AUDIO);
+                formats[out].DataRange.DataRange.Flags = 0;
+                formats[out].DataRange.DataRange.SampleSize = 0;
+                formats[out].DataRange.DataRange.Reserved = 0;
+                formats[out].DataRange.DataRange.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
+                formats[out].DataRange.DataRange.SubFormat = sub;
+                formats[out].DataRange.DataRange.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
+                formats[out].DataRange.MaximumChannels = channels;
+                formats[out].DataRange.MinimumBitsPerSample = bits;
+                formats[out].DataRange.MaximumBitsPerSample = bits;
+                formats[out].DataRange.MinimumSampleFrequency = rateHz;
+                formats[out].DataRange.MaximumSampleFrequency = rateHz;
+
+                ranges[out] = (PKSDATARANGE)&formats[out].DataRange;
+                out++;
+            }
+        }
+    }
+
+    if (out == 0) {
+        ExFreePoolWithTag(ranges, VIRTIOSND_POOL_TAG);
+        ExFreePoolWithTag(formats, VIRTIOSND_POOL_TAG);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    *OutFormats = formats;
+    *OutFormatCount = out;
+    *OutDataRanges = ranges;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPORT Miniport)
+{
+    VIRTIOSND_PORTCLS_DX dx;
+    LONG capsValid;
+    NTSTATUS status;
+
+    if (Miniport == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Miniport->FilterDescriptor != NULL) {
+        return STATUS_SUCCESS;
+    }
+
+    dx = Miniport->Dx;
+    if (dx == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    capsValid = InterlockedCompareExchange(&dx->Control.CapsValid, 0, 0);
+    if (capsValid == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    status = VirtIoSndWaveRtBuildFormatTableFromCaps(
+        &dx->Control.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID],
+        &Miniport->RenderFormats,
+        &Miniport->RenderFormatCount,
+        &Miniport->RenderDataRanges);
+    if (!NT_SUCCESS(status)) {
+        goto Fail;
+    }
+
+    status = VirtIoSndWaveRtBuildFormatTableFromCaps(
+        &dx->Control.Caps[VIRTIO_SND_CAPTURE_STREAM_ID],
+        &Miniport->CaptureFormats,
+        &Miniport->CaptureFormatCount,
+        &Miniport->CaptureDataRanges);
+    if (!NT_SUCCESS(status)) {
+        goto Fail;
+    }
+
+    Miniport->Pins = (PCPIN_DESCRIPTOR)ExAllocatePoolWithTag(
+        NonPagedPool,
+        sizeof(PCPIN_DESCRIPTOR) * RTL_NUMBER_OF(g_VirtIoSndWaveRtPins),
+        VIRTIOSND_POOL_TAG);
+    if (Miniport->Pins == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Fail;
+    }
+    /*
+     * Avoid C99 compound literals: the Windows 7 WDK toolchain uses an older C
+     * compiler. Copy the baseline pin descriptors and then patch in the dynamic
+     * data ranges.
+     */
+    RtlCopyMemory(Miniport->Pins, g_VirtIoSndWaveRtPins, sizeof(g_VirtIoSndWaveRtPins));
+
+    Miniport->Pins[VIRTIOSND_WAVE_PIN_RENDER].KsPinDescriptor.DataRangesCount = Miniport->RenderFormatCount;
+    Miniport->Pins[VIRTIOSND_WAVE_PIN_RENDER].KsPinDescriptor.DataRanges = Miniport->RenderDataRanges;
+
+    Miniport->Pins[VIRTIOSND_WAVE_PIN_CAPTURE].KsPinDescriptor.DataRangesCount = Miniport->CaptureFormatCount;
+    Miniport->Pins[VIRTIOSND_WAVE_PIN_CAPTURE].KsPinDescriptor.DataRanges = Miniport->CaptureDataRanges;
+
+    Miniport->FilterDescriptor = (PCFILTER_DESCRIPTOR)ExAllocatePoolWithTag(NonPagedPool, sizeof(PCFILTER_DESCRIPTOR), VIRTIOSND_POOL_TAG);
+    if (Miniport->FilterDescriptor == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Fail;
+    }
+
+    *Miniport->FilterDescriptor = g_VirtIoSndWaveRtFilterDescriptor;
+    Miniport->FilterDescriptor->Pins = Miniport->Pins;
+
+    return STATUS_SUCCESS;
+
+Fail:
+    VirtIoSndWaveRtMiniport_FreeDynamicDescription(Miniport);
+    return status;
+}
+#endif /* !defined(AERO_VIRTIO_SND_IOPORT_LEGACY) */
+
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_GetDescription(
     _In_ IMiniportWaveRT *This,
     _Outptr_ PPCFILTER_DESCRIPTOR *OutFilterDescriptor
     )
 {
-    UNREFERENCED_PARAMETER(This);
+    PVIRTIOSND_WAVERT_MINIPORT miniport;
+
     if (OutFilterDescriptor == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    miniport = VirtIoSndWaveRtMiniportFromInterface(This);
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    if (miniport != NULL && miniport->UseVirtioBackend && miniport->Dx != NULL) {
+        (VOID)VirtIoSndWaveRtMiniport_BuildDynamicDescription(miniport);
+    }
+
+    if (miniport != NULL && miniport->FilterDescriptor != NULL) {
+        *OutFilterDescriptor = (PPCFILTER_DESCRIPTOR)miniport->FilterDescriptor;
+        return STATUS_SUCCESS;
+    }
+#endif
+
     *OutFilterDescriptor = (PPCFILTER_DESCRIPTOR)&g_VirtIoSndWaveRtFilterDescriptor;
     return STATUS_SUCCESS;
 }
@@ -1542,14 +2107,12 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
 {
     KSDATAFORMAT_WAVEFORMATEXTENSIBLE format;
     KSDATARANGE_AUDIO *requested;
-    USHORT expectedChannels;
-    USHORT expectedBlockAlign;
-    ULONG expectedAvgBytesPerSec;
-    ULONG expectedChannelMask;
+    const VIRTIOSND_WAVERT_STREAM_FORMAT* chosen;
+    VIRTIOSND_WAVERT_STREAM_FORMAT fixed;
+    PVIRTIOSND_WAVERT_MINIPORT miniport;
+    ULONG i;
 
-    UNREFERENCED_PARAMETER(This);
     UNREFERENCED_PARAMETER(Irp);
-    UNREFERENCED_PARAMETER(MatchingDataRange);
 
     if (DataRange == NULL || ResultantFormatLength == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -1564,45 +2127,88 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
     }
 
     if (!IsEqualGUID(&DataRange->MajorFormat, &KSDATAFORMAT_TYPE_AUDIO) ||
-        !IsEqualGUID(&DataRange->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM) ||
         !IsEqualGUID(&DataRange->Specifier, &KSDATAFORMAT_SPECIFIER_WAVEFORMATEX)) {
         return STATUS_NO_MATCH;
     }
 
-    expectedChannels = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_CHANNELS : VIRTIOSND_CHANNELS;
-    expectedBlockAlign = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
-    expectedAvgBytesPerSec =
-        (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_AVG_BYTES_PER_SEC : VIRTIOSND_AVG_BYTES_PER_SEC;
-    expectedChannelMask = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO;
-
     requested = (KSDATARANGE_AUDIO *)DataRange;
-    if (requested->MaximumChannels < expectedChannels ||
-        requested->MinimumBitsPerSample > VIRTIOSND_BITS_PER_SAMPLE ||
-        requested->MaximumBitsPerSample < VIRTIOSND_BITS_PER_SAMPLE ||
-        requested->MinimumSampleFrequency > VIRTIOSND_SAMPLE_RATE ||
-        requested->MaximumSampleFrequency < VIRTIOSND_SAMPLE_RATE) {
-        return STATUS_NO_MATCH;
+
+    chosen = NULL;
+    miniport = VirtIoSndWaveRtMiniportFromInterface(This);
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    if (miniport != NULL && MatchingDataRange != NULL) {
+        const VIRTIOSND_WAVERT_FORMAT_ENTRY* table;
+        ULONG tableCount;
+
+        table = NULL;
+        tableCount = 0;
+        if (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) {
+            table = miniport->CaptureFormats;
+            tableCount = miniport->CaptureFormatCount;
+        } else {
+            table = miniport->RenderFormats;
+            tableCount = miniport->RenderFormatCount;
+        }
+
+        for (i = 0; table != NULL && i < tableCount; ++i) {
+            if (MatchingDataRange == (PKSDATARANGE)&table[i].DataRange) {
+                chosen = &table[i].Format;
+                break;
+            }
+        }
+    }
+#endif
+
+    if (chosen == NULL) {
+        /*
+         * Fallback to fixed contract v1 formats.
+         *
+         * Note: Preserve the previous "range intersection" style check to avoid
+         * returning a format for clearly incompatible requests.
+         */
+        RtlZeroMemory(&fixed, sizeof(fixed));
+        fixed.Channels = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_CHANNELS : VIRTIOSND_CHANNELS;
+        fixed.BitsPerSample = VIRTIOSND_BITS_PER_SAMPLE;
+        fixed.SampleRate = VIRTIOSND_SAMPLE_RATE;
+        fixed.BlockAlign = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN;
+        fixed.AvgBytesPerSec =
+            (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? VIRTIOSND_CAPTURE_AVG_BYTES_PER_SEC : VIRTIOSND_AVG_BYTES_PER_SEC;
+        fixed.ChannelMask = (PinId == VIRTIOSND_WAVE_PIN_CAPTURE) ? KSAUDIO_SPEAKER_MONO : KSAUDIO_SPEAKER_STEREO;
+        fixed.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+        fixed.VirtioFormat = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+        fixed.VirtioRate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+
+        if (requested->MaximumChannels < fixed.Channels ||
+            requested->MinimumBitsPerSample > fixed.BitsPerSample ||
+            requested->MaximumBitsPerSample < fixed.BitsPerSample ||
+            requested->MinimumSampleFrequency > fixed.SampleRate ||
+            requested->MaximumSampleFrequency < fixed.SampleRate) {
+            return STATUS_NO_MATCH;
+        }
+
+        chosen = &fixed;
     }
 
     RtlZeroMemory(&format, sizeof(format));
 
     format.DataFormat.FormatSize = sizeof(format);
     format.DataFormat.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
-    format.DataFormat.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+    format.DataFormat.SubFormat = chosen->SubFormat;
     format.DataFormat.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
-    format.DataFormat.SampleSize = expectedBlockAlign;
+    format.DataFormat.SampleSize = chosen->BlockAlign;
 
     format.WaveFormatExt.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-    format.WaveFormatExt.Format.nChannels = expectedChannels;
-    format.WaveFormatExt.Format.nSamplesPerSec = VIRTIOSND_SAMPLE_RATE;
-    format.WaveFormatExt.Format.nAvgBytesPerSec = expectedAvgBytesPerSec;
-    format.WaveFormatExt.Format.nBlockAlign = expectedBlockAlign;
-    format.WaveFormatExt.Format.wBitsPerSample = VIRTIOSND_BITS_PER_SAMPLE;
+    format.WaveFormatExt.Format.nChannels = chosen->Channels;
+    format.WaveFormatExt.Format.nSamplesPerSec = chosen->SampleRate;
+    format.WaveFormatExt.Format.nAvgBytesPerSec = chosen->AvgBytesPerSec;
+    format.WaveFormatExt.Format.nBlockAlign = chosen->BlockAlign;
+    format.WaveFormatExt.Format.wBitsPerSample = chosen->BitsPerSample;
     format.WaveFormatExt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
 
-    format.WaveFormatExt.Samples.wValidBitsPerSample = VIRTIOSND_BITS_PER_SAMPLE;
-    format.WaveFormatExt.dwChannelMask = expectedChannelMask;
-    format.WaveFormatExt.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+    format.WaveFormatExt.Samples.wValidBitsPerSample = chosen->BitsPerSample;
+    format.WaveFormatExt.dwChannelMask = chosen->ChannelMask;
+    format.WaveFormatExt.SubFormat = chosen->SubFormat;
 
     if (OutputBufferLength < sizeof(format) || ResultantFormat == NULL) {
         *ResultantFormatLength = sizeof(format);
@@ -1629,6 +2235,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
     PVIRTIOSND_WAVERT_MINIPORT miniport = VirtIoSndWaveRtMiniportFromInterface(This);
     PVIRTIOSND_WAVERT_STREAM stream;
     KIRQL oldIrql;
+    VIRTIOSND_WAVERT_STREAM_FORMAT streamFormat;
+    ULONG bytesPerMs;
 
     UNREFERENCED_PARAMETER(OuterUnknown);
     UNREFERENCED_PARAMETER(PoolType);
@@ -1644,7 +2252,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!VirtIoSndWaveRt_IsFormatSupportedEx(DataFormat, Capture)) {
+    if (!VirtIoSndWaveRt_IsFormatSupportedEx(miniport, DataFormat, Capture, &streamFormat)) {
         return STATUS_NO_MATCH;
     }
 
@@ -1660,15 +2268,51 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
     stream->State = KSSTATE_STOP;
     stream->Capture = Capture;
     stream->HwPrepared = FALSE;
+    stream->Format = streamFormat;
     KeInitializeSpinLock(&stream->Lock);
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    /*
+     * Persist the selected format into the device control engine so subsequent
+     * SET_PARAMS uses the correct virtio-snd (channels/format/rate) tuple.
+     */
+    if (miniport != NULL && miniport->UseVirtioBackend && miniport->Dx != NULL && miniport->Dx->Started && !miniport->Dx->Removed) {
+        (VOID)VirtioSndCtrlSelectFormat(
+            &miniport->Dx->Control,
+            Capture ? VIRTIO_SND_CAPTURE_STREAM_ID : VIRTIO_SND_PLAYBACK_STREAM_ID,
+            (UCHAR)streamFormat.Channels,
+            streamFormat.VirtioFormat,
+            streamFormat.VirtioRate);
+    }
+#endif
 
     KeInitializeTimerEx(&stream->Timer, NotificationTimer);
     KeInitializeDpc(&stream->TimerDpc, VirtIoSndWaveRtDpcRoutine, stream);
     KeInitializeEvent(&stream->DpcIdleEvent, NotificationEvent, TRUE);
 
-    stream->PeriodBytes = Capture ? VIRTIOSND_CAPTURE_PERIOD_BYTES : VIRTIOSND_PERIOD_BYTES;
-    stream->PeriodMs =
-        stream->PeriodBytes / ((Capture ? VIRTIOSND_CAPTURE_AVG_BYTES_PER_SEC : VIRTIOSND_AVG_BYTES_PER_SEC) / 1000);
+    bytesPerMs = streamFormat.AvgBytesPerSec / 1000u;
+    if (bytesPerMs == 0) {
+        /* Defensive fallback for low/odd sample rates. */
+        bytesPerMs = streamFormat.BlockAlign;
+        if (bytesPerMs == 0) {
+            bytesPerMs = 1u;
+        }
+    }
+
+    /*
+     * Default to a ~10ms period. PortCls will reconfigure this once a cyclic
+     * buffer is allocated (AllocateBufferWithNotification).
+     */
+    stream->PeriodMs = 10u;
+    stream->PeriodBytes = bytesPerMs * stream->PeriodMs;
+    stream->PeriodBytes = (stream->PeriodBytes / streamFormat.BlockAlign) * streamFormat.BlockAlign;
+    if (stream->PeriodBytes == 0) {
+        stream->PeriodBytes = streamFormat.BlockAlign;
+    }
+    stream->PeriodMs = stream->PeriodBytes / bytesPerMs;
+    if (stream->PeriodMs == 0) {
+        stream->PeriodMs = 10u;
+    }
     stream->Period100ns = (ULONGLONG)stream->PeriodMs * 10u * 1000u;
     {
         LARGE_INTEGER qpcFreq;
@@ -1894,10 +2538,44 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetFormat(_In_ IMiniportWaveRTStream *This, _In_ PKSDATAFORMAT DataFormat)
 {
     PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
+    VIRTIOSND_WAVERT_STREAM_FORMAT fmt;
+    VIRTIOSND_PORTCLS_DX dx;
+    NTSTATUS status;
 
-    if (!VirtIoSndWaveRt_IsFormatSupportedEx(DataFormat, stream->Capture)) {
+    if (!VirtIoSndWaveRt_IsFormatSupportedEx(stream->Miniport, DataFormat, stream->Capture, &fmt)) {
         return STATUS_NO_MATCH;
     }
+
+    /*
+     * Cache the selected format for subsequent buffer sizing / position
+     * reporting.
+     */
+    {
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&stream->Lock, &oldIrql);
+        stream->Format = fmt;
+        KeReleaseSpinLock(&stream->Lock, oldIrql);
+    }
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
+    status = STATUS_SUCCESS;
+    if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
+        status = VirtioSndCtrlSelectFormat(
+            &dx->Control,
+            stream->Capture ? VIRTIO_SND_CAPTURE_STREAM_ID : VIRTIO_SND_PLAYBACK_STREAM_ID,
+            (UCHAR)fmt.Channels,
+            fmt.VirtioFormat,
+            fmt.VirtioRate);
+        if (!NT_SUCCESS(status)) {
+            return STATUS_NO_MATCH;
+        }
+    }
+#else
+    UNREFERENCED_PARAMETER(dx);
+    UNREFERENCED_PARAMETER(status);
+#endif
+
     return STATUS_SUCCESS;
 }
 
@@ -2151,8 +2829,14 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     if (stream->Miniport != NULL && stream->Miniport->UseVirtioBackend && dx != NULL && dx->Started && !dx->Removed) {
                         prepared = FALSE;
 
-                        if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
-                            status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
+                        {
+                            ULONG frameBytes = (stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign : VIRTIOSND_CAPTURE_BLOCK_ALIGN;
+                            if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) != 0 && dx->Rx.FrameBytes != frameBytes) {
+                                VirtIoSndUninitRxEngine(dx);
+                            }
+
+                            if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
+                                status = VirtIoSndInitRxEngineEx(dx, frameBytes, VIRTIOSND_QUEUE_SIZE_RXQ);
                             if (!NT_SUCCESS(status)) {
 #ifdef STATUS_ALREADY_INITIALIZED
                                 if (status != STATUS_ALREADY_INITIALIZED) {
@@ -2162,6 +2846,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                                 return status;
 #endif
                             }
+                        }
                         }
 
                         VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
@@ -2218,8 +2903,14 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
                         prepared = FALSE;
 
-                        if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
-                            status = VirtIoSndInitRxEngine(dx, VIRTIOSND_QUEUE_SIZE_RXQ);
+                        {
+                            ULONG frameBytes = (stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign : VIRTIOSND_CAPTURE_BLOCK_ALIGN;
+                            if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) != 0 && dx->Rx.FrameBytes != frameBytes) {
+                                VirtIoSndUninitRxEngine(dx);
+                            }
+
+                            if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) == 0) {
+                                status = VirtIoSndInitRxEngineEx(dx, frameBytes, VIRTIOSND_QUEUE_SIZE_RXQ);
                             if (!NT_SUCCESS(status)) {
 #ifdef STATUS_ALREADY_INITIALIZED
                                 if (status != STATUS_ALREADY_INITIALIZED) {
@@ -2229,6 +2920,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                                 return status;
 #endif
                             }
+                        }
                         }
 
                         VirtIoSndHwSetRxCompletionCallback(dx, VirtIoSndWaveRtRxCompletion, NULL);
@@ -2385,7 +3077,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
         elapsedFrames = 0;
         if (stream->QpcFrequency != 0) {
-            elapsedFrames = (deltaQpc * (ULONGLONG)VIRTIOSND_SAMPLE_RATE) / stream->QpcFrequency;
+            elapsedFrames = (deltaQpc * (ULONGLONG)stream->Format.SampleRate) / stream->QpcFrequency;
         }
 
         stream->FrozenLinearFrames = stream->StartLinearFrames + elapsedFrames;
@@ -2393,7 +3085,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
         ringBytes = 0;
         if (stream->BufferSize != 0) {
-            ringBytes = (ULONG)((stream->FrozenLinearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN) % (ULONGLONG)stream->BufferSize);
+            ULONG blockAlign = (stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign : VIRTIOSND_BLOCK_ALIGN;
+            ringBytes = (ULONG)((stream->FrozenLinearFrames * (ULONGLONG)blockAlign) % (ULONGLONG)stream->BufferSize);
         }
         VirtIoSndWaveRtUpdateRegisters(stream, ringBytes, nowQpcValue);
 
@@ -2521,12 +3214,14 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
         startLinearFrames = stream->StartLinearFrames;
         startOffsetBytes = 0;
         if (bufferSize != 0) {
-            startOffsetBytes = (ULONG)((startLinearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN) % (ULONGLONG)bufferSize);
+            ULONG blockAlign = (stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign : VIRTIOSND_BLOCK_ALIGN;
+            startOffsetBytes = (ULONG)((startLinearFrames * (ULONGLONG)blockAlign) % (ULONGLONG)bufferSize);
         }
 
         VirtIoSndWaveRtUpdateRegisters(stream, startOffsetBytes, nowQpcValue);
 
-        stream->SubmittedLinearPositionBytes = startLinearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN;
+        stream->SubmittedLinearPositionBytes =
+            startLinearFrames * (ULONGLONG)((stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign : VIRTIOSND_BLOCK_ALIGN);
         stream->SubmittedRingPositionBytes = startOffsetBytes;
 
         playLinearBytes = stream->SubmittedLinearPositionBytes;
@@ -2674,7 +3369,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetPosition(_In_ IMinipo
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
     VirtIoSndWaveRtGetPositionSnapshot(stream, (ULONGLONG)qpc.QuadPart, &linearFrames, NULL, NULL);
     KeReleaseSpinLock(&stream->Lock, oldIrql);
-    *Position = linearFrames * (ULONGLONG)(stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN);
+    *Position = linearFrames * (ULONGLONG)((stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign :
+        (stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN));
     return STATUS_SUCCESS;
 }
 
@@ -2751,7 +3447,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_GetCurrentPadding(_In_ I
         diff = (ULONG64)bufferBytes - play + write;
     }
 
-    *PaddingFrames = (ULONG)(diff / (stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN));
+    *PaddingFrames = (ULONG)(diff / (ULONG64)((stream->Format.BlockAlign != 0) ? stream->Format.BlockAlign :
+        (stream->Capture ? VIRTIOSND_CAPTURE_BLOCK_ALIGN : VIRTIOSND_BLOCK_ALIGN)));
     return STATUS_SUCCESS;
 }
 
@@ -2899,7 +3596,14 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     }
 #endif
 
-    bytesPerMs = (stream->Capture ? VIRTIOSND_CAPTURE_AVG_BYTES_PER_SEC : VIRTIOSND_AVG_BYTES_PER_SEC) / 1000;
+    bytesPerMs = stream->Format.AvgBytesPerSec / 1000u;
+    if (stream->Format.BlockAlign != 0) {
+        ULONG blockAlign = stream->Format.BlockAlign;
+        bytesPerMs = ((bytesPerMs + (blockAlign - 1u)) / blockAlign) * blockAlign;
+        if (bytesPerMs == 0) {
+            bytesPerMs = blockAlign;
+        }
+    }
     if (bytesPerMs == 0) {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -2918,8 +3622,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     size = RequestedBufferSize;
 
     /*
-     * Ensure the buffer is large enough for at least 1ms per notification.
-     * bytesPerMs is fixed-format and small, but keep the arithmetic defensive.
+     * Ensure the buffer is large enough for at least ~1ms per notification.
+     * bytesPerMs is derived from AvgBytesPerSec, but keep the arithmetic defensive.
      */
     if (bytesPerMs > MAXULONG / notifications) {
         return STATUS_INVALID_BUFFER_SIZE;

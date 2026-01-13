@@ -51,6 +51,23 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReq(
     _In_ ULONG PeriodBytes);
 
 /*
+ * Build a VIRTIO_SND_R_PCM_SET_PARAMS request for an explicitly selected
+ * (channels, format, rate) tuple.
+ *
+ * This is used by the WaveRT miniport format negotiation path. The legacy
+ * VirtioSndCtrlBuildPcmSetParamsReq() helper remains fixed-format for the Aero
+ * v1 contract and is used by unit tests.
+ */
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReqEx(
+    _Out_ VIRTIO_SND_PCM_SET_PARAMS_REQ* Req,
+    _In_ ULONG StreamId,
+    _In_ ULONG BufferBytes,
+    _In_ ULONG PeriodBytes,
+    _In_ UCHAR Channels,
+    _In_ UCHAR Format,
+    _In_ UCHAR Rate);
+
+/*
  * Build a simple PCM control request (PREPARE/START/STOP/RELEASE).
  */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSimpleReq(
@@ -61,4 +78,3 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmSimpleReq(
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-

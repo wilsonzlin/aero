@@ -49,6 +49,18 @@ _Use_decl_annotations_
 NTSTATUS
 VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VIRTIOSND_QUEUE* Queue, ULONG RequestCount)
 {
+    return VirtIoSndRxInitEx(Rx, DmaCtx, Queue, VirtioSndRxFrameSizeBytes(), RequestCount);
+}
+
+_Use_decl_annotations_
+NTSTATUS
+VirtIoSndRxInitEx(
+    VIRTIOSND_RX_ENGINE* Rx,
+    PVIRTIOSND_DMA_CONTEXT DmaCtx,
+    const VIRTIOSND_QUEUE* Queue,
+    ULONG FrameBytes,
+    ULONG RequestCount)
+{
     NTSTATUS status;
     ULONG count;
     ULONG i;
@@ -68,6 +80,9 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
         return STATUS_INVALID_PARAMETER;
     }
     if (DmaCtx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (FrameBytes == 0) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -93,6 +108,7 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
 
     Rx->Queue = Queue;
     Rx->DmaCtx = DmaCtx;
+    Rx->FrameBytes = FrameBytes;
     Rx->NextSequence = 1;
 
     Rx->Requests = (VIRTIOSND_RX_REQUEST*)ExAllocatePoolWithTag(NonPagedPool, sizeof(VIRTIOSND_RX_REQUEST) * (SIZE_T)count, VIRTIOSND_POOL_TAG);
@@ -221,8 +237,11 @@ VirtIoSndRxSubmitSg(VIRTIOSND_RX_ENGINE* Rx, const VIRTIOSND_RX_SEGMENT* Segment
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    if ((payloadBytes % VirtioSndRxFrameSizeBytes()) != 0) {
+    {
+        ULONG frameBytes = (Rx->FrameBytes != 0) ? Rx->FrameBytes : VirtioSndRxFrameSizeBytes();
+        if ((payloadBytes % frameBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
+    }
     }
 
     KeAcquireSpinLock(&Rx->Lock, &oldIrql);

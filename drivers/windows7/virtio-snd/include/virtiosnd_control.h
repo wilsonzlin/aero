@@ -39,6 +39,21 @@ typedef struct _VIRTIOSND_PCM_PARAMS {
     UCHAR Rate;
 } VIRTIOSND_PCM_PARAMS;
 
+typedef struct _VIRTIOSND_PCM_CAPS {
+    ULONGLONG Formats;
+    ULONGLONG Rates;
+    UCHAR ChannelsMin;
+    UCHAR ChannelsMax;
+    UCHAR Reserved[6];
+} VIRTIOSND_PCM_CAPS;
+
+typedef struct _VIRTIOSND_PCM_FORMAT {
+    UCHAR Channels;
+    UCHAR Format;
+    UCHAR Rate;
+    UCHAR Padding;
+} VIRTIOSND_PCM_FORMAT;
+
 typedef struct _VIRTIOSND_CONTROL_STATS {
     volatile LONG RequestsSent;
     volatile LONG RequestsCompleted;
@@ -75,6 +90,25 @@ typedef struct _VIRTIOSND_CONTROL {
      */
     VIRTIOSND_STREAM_STATE StreamState[2];
     VIRTIOSND_PCM_PARAMS Params[2];
+
+    /*
+     * Cached PCM_INFO capabilities (formats/rates/channel ranges) populated
+     * during START_DEVICE. This is used for WaveRT format enumeration and for
+     * validating stream format selections.
+     */
+    VIRTIOSND_PCM_CAPS Caps[2];
+    volatile LONG CapsValid;
+
+    /*
+     * Desired PCM parameters selected by the Windows audio stack (WaveRT
+     * KSDATAFORMAT selection). These are applied by the next SET_PARAMS for each
+     * stream.
+     *
+     * Defaults to the Aero v1 fixed formats (S16/48kHz, stereo render + mono
+     * capture) so existing call sites that do not explicitly select a format
+     * retain historical behavior.
+     */
+    VIRTIOSND_PCM_FORMAT SelectedFormat[2];
 
     VIRTIOSND_CONTROL_STATS Stats;
 } VIRTIOSND_CONTROL, *PVIRTIOSND_CONTROL;
@@ -147,6 +181,36 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlSendSync(
 /* IRQL: PASSIVE_LEVEL only. */
 _IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* Info);
+
+/*
+ * Query PCM_INFO for both stream 0 (playback) and stream 1 (capture).
+ *
+ * On success, caches the capabilities into Ctrl->Caps and sets Ctrl->CapsValid.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlPcmInfoAll(
+    _Inout_ VIRTIOSND_CONTROL* Ctrl,
+    _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo,
+    _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo);
+
+/*
+ * Update the desired stream format that will be used by the next SET_PARAMS for
+ * the specified stream.
+ *
+ * If Ctrl->CapsValid is set, the provided format is validated against the
+ * device-advertised PCM_INFO capabilities.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlSelectFormat(
+    _Inout_ VIRTIOSND_CONTROL* Ctrl,
+    _In_ ULONG StreamId,
+    _In_ UCHAR Channels,
+    _In_ UCHAR Format,
+    _In_ UCHAR Rate);
 
 /* IRQL: PASSIVE_LEVEL only. */
 _IRQL_requires_(PASSIVE_LEVEL)

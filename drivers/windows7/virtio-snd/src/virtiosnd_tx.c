@@ -47,6 +47,23 @@ VirtioSndTxInit(
     ULONG BufferCount,
     BOOLEAN SuppressInterrupts)
 {
+    NT_ASSERT(Tx != NULL);
+    NT_ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+
+    return VirtioSndTxInitEx(Tx, DmaCtx, Queue, VirtioSndTxFrameSizeBytes(), MaxPeriodBytes, BufferCount, SuppressInterrupts);
+}
+
+_Use_decl_annotations_
+NTSTATUS
+VirtioSndTxInitEx(
+    VIRTIOSND_TX_ENGINE* Tx,
+    PVIRTIOSND_DMA_CONTEXT DmaCtx,
+    const VIRTIOSND_QUEUE* Queue,
+    ULONG FrameBytes,
+    ULONG MaxPeriodBytes,
+    ULONG BufferCount,
+    BOOLEAN SuppressInterrupts)
+{
     NTSTATUS status;
     ULONG i;
     ULONG outBytes;
@@ -62,10 +79,13 @@ VirtioSndTxInit(
         Queue->Ops->PopUsed == NULL || Queue->Ops->Kick == NULL) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (FrameBytes == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
     if (MaxPeriodBytes == 0) {
         return STATUS_INVALID_PARAMETER;
     }
-    if ((MaxPeriodBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+    if ((MaxPeriodBytes % FrameBytes) != 0) {
         return STATUS_INVALID_PARAMETER;
     }
     if (MaxPeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
@@ -88,6 +108,7 @@ VirtioSndTxInit(
 
     Tx->Queue = Queue;
     Tx->DmaCtx = DmaCtx;
+    Tx->FrameBytes = FrameBytes;
 
     Tx->MaxPeriodBytes = MaxPeriodBytes;
     Tx->NextSequence = 1;
@@ -233,6 +254,7 @@ VirtioSndTxSubmitPeriod(
     BOOLEAN AllowSilenceFill)
 {
     ULONG totalPcmBytes;
+    ULONG frameBytes;
     KIRQL oldIrql;
     LIST_ENTRY* entry;
     VIRTIOSND_TX_BUFFER* buf;
@@ -260,7 +282,8 @@ VirtioSndTxSubmitPeriod(
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    if (totalPcmBytes > Tx->MaxPeriodBytes || (totalPcmBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+    frameBytes = (Tx->FrameBytes != 0) ? Tx->FrameBytes : VirtioSndTxFrameSizeBytes();
+    if (totalPcmBytes > Tx->MaxPeriodBytes || (totalPcmBytes % frameBytes) != 0) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
@@ -342,6 +365,7 @@ VirtioSndTxSubmitSg(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_TX_SEGMENT* Segment
 {
     ULONGLONG totalBytes;
     ULONG i;
+    ULONG frameBytes;
     KIRQL oldIrql;
     LIST_ENTRY* entry;
     VIRTIOSND_TX_BUFFER* buf;
@@ -379,7 +403,8 @@ VirtioSndTxSubmitSg(VIRTIOSND_TX_ENGINE* Tx, const VIRTIOSND_TX_SEGMENT* Segment
         return STATUS_INVALID_BUFFER_SIZE;
     }
 
-    if ((totalBytes % (ULONGLONG)VirtioSndTxFrameSizeBytes()) != 0) {
+    frameBytes = (Tx->FrameBytes != 0) ? Tx->FrameBytes : VirtioSndTxFrameSizeBytes();
+    if ((totalBytes % (ULONGLONG)frameBytes) != 0) {
         return STATUS_INVALID_PARAMETER;
     }
 

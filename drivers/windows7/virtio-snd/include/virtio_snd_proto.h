@@ -46,17 +46,54 @@
 #define VIRTIO_SND_S_NOT_SUPP 2u
 #define VIRTIO_SND_S_IO_ERR   3u
 
-/* Fixed stream formats implemented by the emulator (Aero contract v1). */
-#define VIRTIO_SND_PCM_FMT_S16     0x05u
-#define VIRTIO_SND_PCM_RATE_48000  0x07u
+/*
+ * PCM format/rate enumerations (virtio-snd spec).
+ *
+ * The Aero v1 device model only exposes S16/48kHz today, but the guest driver
+ * can negotiate additional formats when a device advertises them via PCM_INFO.
+ */
+#define VIRTIO_SND_PCM_FMT_IMA_ADPCM 0x00u
+#define VIRTIO_SND_PCM_FMT_MU_LAW    0x01u
+#define VIRTIO_SND_PCM_FMT_A_LAW     0x02u
+#define VIRTIO_SND_PCM_FMT_S8        0x03u
+#define VIRTIO_SND_PCM_FMT_U8        0x04u
+#define VIRTIO_SND_PCM_FMT_S16       0x05u
+#define VIRTIO_SND_PCM_FMT_U16       0x06u
+#define VIRTIO_SND_PCM_FMT_S24       0x07u
+#define VIRTIO_SND_PCM_FMT_U24       0x08u
+#define VIRTIO_SND_PCM_FMT_S32       0x09u
+#define VIRTIO_SND_PCM_FMT_U32       0x0Au
+#define VIRTIO_SND_PCM_FMT_FLOAT     0x0Bu
+#define VIRTIO_SND_PCM_FMT_FLOAT64   0x0Cu
+#define VIRTIO_SND_PCM_FMT_DSD_U8    0x0Du
+#define VIRTIO_SND_PCM_FMT_DSD_U16   0x0Eu
+#define VIRTIO_SND_PCM_FMT_DSD_U32   0x0Fu
+
+#define VIRTIO_SND_PCM_RATE_5512    0x00u
+#define VIRTIO_SND_PCM_RATE_8000    0x01u
+#define VIRTIO_SND_PCM_RATE_11025   0x02u
+#define VIRTIO_SND_PCM_RATE_16000   0x03u
+#define VIRTIO_SND_PCM_RATE_22050   0x04u
+#define VIRTIO_SND_PCM_RATE_32000   0x05u
+#define VIRTIO_SND_PCM_RATE_44100   0x06u
+#define VIRTIO_SND_PCM_RATE_48000   0x07u
+#define VIRTIO_SND_PCM_RATE_64000   0x08u
+#define VIRTIO_SND_PCM_RATE_88200   0x09u
+#define VIRTIO_SND_PCM_RATE_96000   0x0Au
+#define VIRTIO_SND_PCM_RATE_176400  0x0Bu
+#define VIRTIO_SND_PCM_RATE_192000  0x0Cu
+#define VIRTIO_SND_PCM_RATE_384000  0x0Du
 #define VIRTIO_SND_D_OUTPUT        0x00u
 #define VIRTIO_SND_D_INPUT         0x01u
 #define VIRTIO_SND_PLAYBACK_STREAM_ID 0u
 #define VIRTIO_SND_CAPTURE_STREAM_ID  1u
 
 /* PCM_INFO bitmask helpers (bits are indexed by the PCM_FMT/PCM_RATE values). */
-#define VIRTIO_SND_PCM_FMT_MASK_S16    (1ull << VIRTIO_SND_PCM_FMT_S16)
-#define VIRTIO_SND_PCM_RATE_MASK_48000 (1ull << VIRTIO_SND_PCM_RATE_48000)
+#define VIRTIO_SND_PCM_FMT_MASK(_fmt)  (1ull << (_fmt))
+#define VIRTIO_SND_PCM_RATE_MASK(_rate) (1ull << (_rate))
+
+#define VIRTIO_SND_PCM_FMT_MASK_S16     VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_S16)
+#define VIRTIO_SND_PCM_RATE_MASK_48000  VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_48000)
 
 #pragma pack(push, 1)
 
@@ -200,6 +237,129 @@ _Must_inspect_result_ NTSTATUS VirtioSndParseEvent(
     _Out_ VIRTIO_SND_EVENT_PARSED* OutEvent);
 
 PCSTR VirtioSndEventTypeToString(_In_ ULONG virtio_event_type);
+
+/*
+ * Format mapping helpers.
+ *
+ * These helpers provide a minimal mapping between virtio-snd PCM format/rate
+ * codes and their corresponding linear PCM properties so higher layers (WaveRT,
+ * buffer sizing, etc) can reason about frame sizes.
+ *
+ * Note: The driver only uses a subset of formats; callers should treat FALSE as
+ * "unknown/unsupported".
+ */
+_Must_inspect_result_ __inline BOOLEAN VirtioSndPcmRateToHz(_In_ UCHAR Rate, _Out_ ULONG* RateHz)
+{
+    if (RateHz == NULL) {
+        return FALSE;
+    }
+
+    switch (Rate) {
+    case VIRTIO_SND_PCM_RATE_5512:
+        *RateHz = 5512u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_8000:
+        *RateHz = 8000u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_11025:
+        *RateHz = 11025u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_16000:
+        *RateHz = 16000u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_22050:
+        *RateHz = 22050u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_32000:
+        *RateHz = 32000u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_44100:
+        *RateHz = 44100u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_48000:
+        *RateHz = 48000u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_64000:
+        *RateHz = 64000u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_88200:
+        *RateHz = 88200u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_96000:
+        *RateHz = 96000u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_176400:
+        *RateHz = 176400u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_192000:
+        *RateHz = 192000u;
+        return TRUE;
+    case VIRTIO_SND_PCM_RATE_384000:
+        *RateHz = 384000u;
+        return TRUE;
+    default:
+        *RateHz = 0;
+        return FALSE;
+    }
+}
+
+/*
+ * Map a virtio-snd PCM format code to a byte size for a single sample.
+ *
+ * For the purposes of this driver, "sample" means one channel worth of audio
+ * (so a frame is `Channels * BytesPerSample`).
+ */
+_Must_inspect_result_ __inline BOOLEAN VirtioSndPcmFormatToBytesPerSample(_In_ UCHAR Format, _Out_ USHORT* BytesPerSample)
+{
+    if (BytesPerSample == NULL) {
+        return FALSE;
+    }
+
+    switch (Format) {
+    case VIRTIO_SND_PCM_FMT_MU_LAW:
+    case VIRTIO_SND_PCM_FMT_A_LAW:
+    case VIRTIO_SND_PCM_FMT_S8:
+    case VIRTIO_SND_PCM_FMT_U8:
+    case VIRTIO_SND_PCM_FMT_DSD_U8:
+        *BytesPerSample = 1u;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_S16:
+    case VIRTIO_SND_PCM_FMT_U16:
+    case VIRTIO_SND_PCM_FMT_DSD_U16:
+        *BytesPerSample = 2u;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_S24:
+    case VIRTIO_SND_PCM_FMT_U24:
+        *BytesPerSample = 3u;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_S32:
+    case VIRTIO_SND_PCM_FMT_U32:
+    case VIRTIO_SND_PCM_FMT_FLOAT:
+    case VIRTIO_SND_PCM_FMT_DSD_U32:
+        *BytesPerSample = 4u;
+        return TRUE;
+    case VIRTIO_SND_PCM_FMT_FLOAT64:
+        *BytesPerSample = 8u;
+        return TRUE;
+    default:
+        *BytesPerSample = 0;
+        return FALSE;
+    }
+}
+
+_Must_inspect_result_ __inline BOOLEAN VirtioSndPcmFormatToBitsPerSample(_In_ UCHAR Format, _Out_ USHORT* BitsPerSample)
+{
+    USHORT bytes;
+    if (BitsPerSample == NULL) {
+        return FALSE;
+    }
+    if (!VirtioSndPcmFormatToBytesPerSample(Format, &bytes) || bytes == 0) {
+        *BitsPerSample = 0;
+        return FALSE;
+    }
+    *BitsPerSample = (USHORT)(bytes * 8u);
+    return TRUE;
+}
 
 #ifdef __cplusplus
 } // extern "C"

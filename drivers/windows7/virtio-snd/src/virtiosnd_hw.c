@@ -1524,6 +1524,12 @@ VirtIoSndHwDrainTxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx)
 _Use_decl_annotations_
 NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBytes, ULONG BufferCount, BOOLEAN SuppressInterrupts)
 {
+    return VirtIoSndInitTxEngineEx(Dx, VirtioSndTxFrameSizeBytes(), MaxPeriodBytes, BufferCount, SuppressInterrupts);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndInitTxEngineEx(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG FrameBytes, ULONG MaxPeriodBytes, ULONG BufferCount, BOOLEAN SuppressInterrupts)
+{
     NTSTATUS status;
 
     if (Dx == NULL) {
@@ -1546,7 +1552,7 @@ NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBy
 #endif
     }
 
-    status = VirtioSndTxInit(&Dx->Tx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_TX], MaxPeriodBytes, BufferCount, SuppressInterrupts);
+    status = VirtioSndTxInitEx(&Dx->Tx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_TX], FrameBytes, MaxPeriodBytes, BufferCount, SuppressInterrupts);
     if (NT_SUCCESS(status)) {
         InterlockedExchange(&Dx->TxEngineInitialized, 1);
     } else {
@@ -1617,6 +1623,12 @@ VOID VirtIoSndUninitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx)
 _Use_decl_annotations_
 NTSTATUS VirtIoSndInitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG RequestCount)
 {
+    return VirtIoSndInitRxEngineEx(Dx, VIRTIOSND_CAPTURE_BLOCK_ALIGN, RequestCount);
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtIoSndInitRxEngineEx(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG FrameBytes, ULONG RequestCount)
+{
     NTSTATUS status;
 
     if (Dx == NULL) {
@@ -1639,7 +1651,7 @@ NTSTATUS VirtIoSndInitRxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG RequestCoun
 #endif
     }
 
-    status = VirtIoSndRxInit(&Dx->Rx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_RX], RequestCount);
+    status = VirtIoSndRxInitEx(&Dx->Rx, &Dx->DmaCtx, &Dx->Queues[VIRTIOSND_QUEUE_RX], FrameBytes, RequestCount);
     if (NT_SUCCESS(status)) {
         InterlockedExchange(&Dx->RxEngineInitialized, 1);
     } else {

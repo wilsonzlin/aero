@@ -97,6 +97,14 @@ typedef struct _VIRTIOSND_RX_ENGINE {
     const VIRTIOSND_QUEUE* Queue;
     PVIRTIOSND_DMA_CONTEXT DmaCtx;
 
+    /*
+     * PCM frame size in bytes (Channels * BytesPerSample) used for validating
+     * RX payload alignment.
+     *
+     * Contract v1 fixed-format capture uses 2 bytes per frame (mono S16_LE).
+     */
+    ULONG FrameBytes;
+
     ULONG RequestCount;
     VIRTIOSND_RX_REQUEST* Requests;
 
@@ -132,6 +140,22 @@ _Must_inspect_result_ NTSTATUS VirtIoSndRxInit(
      * If 0, a default is selected. Values larger than the backing virtqueue size
      * are clamped to the contract v1 rxq size.
      */
+    _In_ ULONG RequestCount);
+
+/*
+ * Initialize the RX engine with an explicit PCM frame size.
+ *
+ * This is used by the WaveRT miniport when negotiating capture formats beyond
+ * the Aero contract v1 fixed mono S16_LE.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndRxInitEx(
+    _Out_ VIRTIOSND_RX_ENGINE* Rx,
+    _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
+    _In_ const VIRTIOSND_QUEUE* Queue,
+    _In_ ULONG FrameBytes,
     _In_ ULONG RequestCount);
 
 _IRQL_requires_(PASSIVE_LEVEL)

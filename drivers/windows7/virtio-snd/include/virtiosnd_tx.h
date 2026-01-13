@@ -100,6 +100,14 @@ typedef struct _VIRTIOSND_TX_ENGINE {
     const VIRTIOSND_QUEUE* Queue;
     PVIRTIOSND_DMA_CONTEXT DmaCtx;
 
+    /*
+     * PCM frame size in bytes (Channels * BytesPerSample) used for validating
+     * period alignment.
+     *
+     * Contract v1 fixed-format render uses 4 bytes per frame (stereo S16_LE).
+     */
+    ULONG FrameBytes;
+
     ULONG MaxPeriodBytes;
     ULONG BufferCount;
     VIRTIOSND_TX_BUFFER* Buffers;
@@ -136,6 +144,24 @@ _Must_inspect_result_ NTSTATUS VirtioSndTxInit(
     _Out_ VIRTIOSND_TX_ENGINE* Tx,
     _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
     _In_ const VIRTIOSND_QUEUE* Queue,
+    _In_ ULONG MaxPeriodBytes,
+    _In_ ULONG BufferCount,
+    _In_ BOOLEAN SuppressInterrupts);
+
+/*
+ * Initialize the TX engine with an explicit PCM frame size.
+ *
+ * This is used by the WaveRT miniport when negotiating formats beyond the
+ * Aero contract v1 fixed stereo S16_LE.
+ *
+ * IRQL: PASSIVE_LEVEL only.
+ */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndTxInitEx(
+    _Out_ VIRTIOSND_TX_ENGINE* Tx,
+    _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
+    _In_ const VIRTIOSND_QUEUE* Queue,
+    _In_ ULONG FrameBytes,
     _In_ ULONG MaxPeriodBytes,
     _In_ ULONG BufferCount,
     _In_ BOOLEAN SuppressInterrupts);

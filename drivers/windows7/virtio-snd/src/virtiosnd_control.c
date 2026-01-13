@@ -253,6 +253,25 @@ VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ PVIRTIOSND_DMA_CONTEXT Dma
     Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStateIdle;
     Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStateIdle;
     RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
+
+    RtlZeroMemory(&Ctrl->Caps, sizeof(Ctrl->Caps));
+    Ctrl->CapsValid = 0;
+
+    /*
+     * Default selected formats: Aero contract v1 fixed formats.
+     *
+     * These defaults ensure existing call sites that do not explicitly select a
+     * format (legacy tests, null backend) retain historical behavior.
+     */
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Channels = 2u;
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Padding = 0;
+
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Channels = 1u;
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Padding = 0;
 }
 
 _Use_decl_annotations_
@@ -309,6 +328,10 @@ VirtioSndCtrlUninit(VIRTIOSND_CONTROL* Ctrl)
     Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStateIdle;
     Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStateIdle;
     RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
+
+    RtlZeroMemory(&Ctrl->Caps, sizeof(Ctrl->Caps));
+    Ctrl->CapsValid = 0;
+    RtlZeroMemory(&Ctrl->SelectedFormat, sizeof(Ctrl->SelectedFormat));
 }
 
 VOID
@@ -692,6 +715,39 @@ VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO*
     return VirtioSndCtrlPcmInfoQuery(Ctrl, Info, &captureInfo);
 }
 
+NTSTATUS
+VirtioSndCtrlPcmInfoAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo, _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo)
+{
+    NTSTATUS status;
+
+    if (Ctrl == NULL || PlaybackInfo == NULL || CaptureInfo == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    RtlZeroMemory(PlaybackInfo, sizeof(*PlaybackInfo));
+    RtlZeroMemory(CaptureInfo, sizeof(*CaptureInfo));
+
+    status = VirtioSndCtrlPcmInfoQuery(Ctrl, PlaybackInfo, CaptureInfo);
+    if (NT_SUCCESS(status)) {
+        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Formats = PlaybackInfo->formats;
+        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Rates = PlaybackInfo->rates;
+        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMin = PlaybackInfo->channels_min;
+        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMax = PlaybackInfo->channels_max;
+
+        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Formats = CaptureInfo->formats;
+        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Rates = CaptureInfo->rates;
+        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMin = CaptureInfo->channels_min;
+        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMax = CaptureInfo->channels_max;
+
+        InterlockedExchange(&Ctrl->CapsValid, 1);
+    }
+
+    return status;
+}
+
 static NTSTATUS
 VirtioSndCtrlPcmInfoQuery(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo, _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo)
 {
@@ -743,6 +799,61 @@ VirtioSndCtrlPcmInfo1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO
     return VirtioSndCtrlPcmInfoQuery(Ctrl, &playbackInfo, Info);
 }
 
+NTSTATUS
+VirtioSndCtrlSelectFormat(
+    _Inout_ VIRTIOSND_CONTROL* Ctrl,
+    _In_ ULONG StreamId,
+    _In_ UCHAR Channels,
+    _In_ UCHAR Format,
+    _In_ UCHAR Rate)
+{
+    ULONG rateHz;
+    USHORT bytesPerSample;
+    LONG capsValid;
+
+    if (Ctrl == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (StreamId != VIRTIO_SND_PLAYBACK_STREAM_ID && StreamId != VIRTIO_SND_CAPTURE_STREAM_ID) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Channels == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    bytesPerSample = 0;
+    if (!VirtioSndPcmFormatToBytesPerSample(Format, &bytesPerSample) || bytesPerSample == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    rateHz = 0;
+    if (!VirtioSndPcmRateToHz(Rate, &rateHz) || rateHz == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    capsValid = InterlockedCompareExchange(&Ctrl->CapsValid, 0, 0);
+    if (capsValid != 0) {
+        const VIRTIOSND_PCM_CAPS* caps;
+
+        caps = &Ctrl->Caps[StreamId];
+        if ((caps->Formats & VIRTIO_SND_PCM_FMT_MASK(Format)) == 0 || (caps->Rates & VIRTIO_SND_PCM_RATE_MASK(Rate)) == 0) {
+            return STATUS_NOT_SUPPORTED;
+        }
+        if (Channels < caps->ChannelsMin || Channels > caps->ChannelsMax) {
+            return STATUS_NOT_SUPPORTED;
+        }
+    }
+
+    Ctrl->SelectedFormat[StreamId].Channels = Channels;
+    Ctrl->SelectedFormat[StreamId].Format = Format;
+    Ctrl->SelectedFormat[StreamId].Rate = Rate;
+    Ctrl->SelectedFormat[StreamId].Padding = 0;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS
 VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamId, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
 
@@ -772,12 +883,33 @@ VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamI
     ULONG respStatus;
     ULONG respLen;
     ULONG virtioStatus;
+    VIRTIOSND_PCM_FORMAT selected;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    status = VirtioSndCtrlBuildPcmSetParamsReq(&req, StreamId, BufferBytes, PeriodBytes);
+    selected = Ctrl->SelectedFormat[StreamId];
+    if (selected.Channels == 0) {
+        /*
+         * Defensive: SelectedFormat is expected to always be set (defaults are
+         * applied in VirtioSndCtrlInit). If it is not, fall back to contract v1
+         * fixed format parameters.
+         */
+        selected.Channels = (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? 1u : 2u;
+        selected.Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+        selected.Rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+        selected.Padding = 0;
+    }
+
+    status = VirtioSndCtrlBuildPcmSetParamsReqEx(
+        &req,
+        StreamId,
+        BufferBytes,
+        PeriodBytes,
+        selected.Channels,
+        selected.Format,
+        selected.Rate);
     if (!NT_SUCCESS(status)) {
         return status;
     }

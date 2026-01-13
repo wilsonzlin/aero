@@ -15,6 +15,16 @@ static __forceinline UCHAR VirtioSndCtrlFixedChannelsForStream(_In_ ULONG Stream
     return (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? 1 : 2;
 }
 
+static __forceinline BOOLEAN VirtioSndCtrlIsSupportedPcmFormat(_In_ UCHAR Format, _Out_opt_ USHORT* BytesPerSample)
+{
+    /*
+     * Keep this helper intentionally minimal: it is used to compute frame sizing
+     * for request validation. Higher layers (WaveRT) decide which of these
+     * formats to expose to Windows.
+     */
+    return VirtioSndPcmFormatToBytesPerSample(Format, BytesPerSample);
+}
+
 _Use_decl_annotations_
 NTSTATUS VirtioSndCtrlBuildPcmInfoReq(VIRTIO_SND_PCM_INFO_REQ* Req)
 {
@@ -162,6 +172,76 @@ NTSTATUS VirtioSndCtrlBuildPcmSetParamsReq(
     Req->channels = channels;
     Req->format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
     Req->rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+    Req->padding = 0;
+    return STATUS_SUCCESS;
+}
+
+_Use_decl_annotations_
+NTSTATUS VirtioSndCtrlBuildPcmSetParamsReqEx(
+    VIRTIO_SND_PCM_SET_PARAMS_REQ* Req,
+    ULONG StreamId,
+    ULONG BufferBytes,
+    ULONG PeriodBytes,
+    UCHAR Channels,
+    UCHAR Format,
+    UCHAR Rate)
+{
+    USHORT bytesPerSample;
+    ULONG frameBytes;
+    ULONG rateHz;
+
+    if (Req == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Channels == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    bytesPerSample = 0;
+    if (!VirtioSndCtrlIsSupportedPcmFormat(Format, &bytesPerSample) || bytesPerSample == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    rateHz = 0;
+    if (!VirtioSndPcmRateToHz(Rate, &rateHz) || rateHz == 0) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    frameBytes = (ULONG)Channels * (ULONG)bytesPerSample;
+    if (frameBytes == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /*
+     * Validate buffer/period sizing up-front so callers don't accidentally
+     * submit misaligned PCM buffers.
+     */
+    if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes || (BufferBytes % frameBytes) != 0 || (PeriodBytes % frameBytes) != 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (PeriodBytes > VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    if (BufferBytes > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    RtlZeroMemory(Req, sizeof(*Req));
+    Req->code = VIRTIO_SND_R_PCM_SET_PARAMS;
+    Req->stream_id = StreamId;
+    Req->buffer_bytes = BufferBytes;
+    Req->period_bytes = PeriodBytes;
+    Req->features = 0;
+    Req->channels = Channels;
+    Req->format = Format;
+    Req->rate = Rate;
     Req->padding = 0;
     return STATUS_SUCCESS;
 }

@@ -354,6 +354,20 @@ _Must_inspect_result_ NTSTATUS VirtIoSndInitTxEngine(
     _In_ ULONG BufferCount,
     _In_ BOOLEAN SuppressInterrupts);
 
+/*
+ * Initialize the TX engine with an explicit PCM frame size (Channels * BytesPerSample).
+ *
+ * Contract v1 callers should continue using VirtIoSndInitTxEngine(), which
+ * defaults to 4 bytes per frame (stereo S16_LE).
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndInitTxEngineEx(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_ ULONG FrameBytes,
+    _In_ ULONG MaxPeriodBytes,
+    _In_ ULONG BufferCount,
+    _In_ BOOLEAN SuppressInterrupts);
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
 VOID VirtIoSndUninitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 
@@ -368,6 +382,18 @@ VOID VirtIoSndUninitTxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
  */
 _IRQL_requires_max_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtIoSndInitRxEngine(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx, _In_ ULONG RequestCount);
+
+/*
+ * Initialize the RX engine with an explicit PCM frame size (Channels * BytesPerSample).
+ *
+ * Contract v1 callers should continue using VirtIoSndInitRxEngine(), which
+ * defaults to 2 bytes per frame (mono S16_LE).
+ */
+_IRQL_requires_max_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtIoSndInitRxEngineEx(
+    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_ ULONG FrameBytes,
+    _In_ ULONG RequestCount);
 
 /*
  * Tear down the RX (capture) engine.

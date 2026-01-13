@@ -522,18 +522,28 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
          * the Aero contract v1. This avoids discovering mismatches later during
          * SET_PARAMS / PREPARE / START.
          */
-        if (dx->Started) {
-            VIRTIO_SND_PCM_INFO playbackInfo;
-            NTSTATUS capStatus;
-            VIRTIO_SND_PCM_INFO captureInfo;
+         if (dx->Started) {
+             VIRTIO_SND_PCM_INFO playbackInfo;
+             VIRTIO_SND_PCM_INFO captureInfo;
 
-            RtlZeroMemory(&playbackInfo, sizeof(playbackInfo));
-            status = VirtioSndCtrlPcmInfo(&dx->Control, &playbackInfo);
-            if (!NT_SUCCESS(status)) {
-                VIRTIOSND_TRACE_ERROR("PCM_INFO sanity check failed: 0x%08X\n", (UINT)status);
+             RtlZeroMemory(&playbackInfo, sizeof(playbackInfo));
+             RtlZeroMemory(&captureInfo, sizeof(captureInfo));
 
-                /* Ensure no partially-started transport state remains. */
-                VirtIoSndStopHardware(dx);
+             /*
+              * Capability discovery:
+              * Query stream 0/1 PCM_INFO once and cache the formats/rates/channel
+              * ranges for WaveRT to expose as supported formats.
+              *
+              * VirtioSndCtrlPcmInfoAll also validates that the contract-v1 fixed
+              * format (S16/48kHz) is present so existing Aero device models
+              * remain supported.
+              */
+             status = VirtioSndCtrlPcmInfoAll(&dx->Control, &playbackInfo, &captureInfo);
+             if (!NT_SUCCESS(status)) {
+                 VIRTIOSND_TRACE_ERROR("PCM_INFO sanity check failed: 0x%08X\n", (UINT)status);
+
+                 /* Ensure no partially-started transport state remains. */
+                 VirtIoSndStopHardware(dx);
                 hwStarted = FALSE;
 
                 if (!forceNullBackend) {
@@ -542,37 +552,27 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
 
                 VIRTIOSND_TRACE("ForceNullBackend=1: continuing without virtio transport\n");
                 status = STATUS_SUCCESS;
-            } else {
-                VIRTIOSND_TRACE(
-                    "PCM_INFO stream %lu: dir=%u ch=[%u..%u] formats=0x%I64x rates=0x%I64x\n",
-                    (ULONG)playbackInfo.stream_id,
-                    (UINT)playbackInfo.direction,
+             } else {
+                 VIRTIOSND_TRACE(
+                     "PCM_INFO stream %lu: dir=%u ch=[%u..%u] formats=0x%I64x rates=0x%I64x\n",
+                     (ULONG)playbackInfo.stream_id,
+                     (UINT)playbackInfo.direction,
                     (UINT)playbackInfo.channels_min,
-                    (UINT)playbackInfo.channels_max,
-                    (ULONGLONG)playbackInfo.formats,
-                    (ULONGLONG)playbackInfo.rates);
+                     (UINT)playbackInfo.channels_max,
+                     (ULONGLONG)playbackInfo.formats,
+                     (ULONGLONG)playbackInfo.rates);
 
-                /*
-                 * The control helper validates both stream 0 and stream 1, but
-                 * also log the capture stream's fields for diagnostics (best-effort).
-                 */
-                RtlZeroMemory(&captureInfo, sizeof(captureInfo));
-                capStatus = VirtioSndCtrlPcmInfo1(&dx->Control, &captureInfo);
-                if (NT_SUCCESS(capStatus)) {
-                    VIRTIOSND_TRACE(
-                        "PCM_INFO stream %lu: dir=%u ch=[%u..%u] formats=0x%I64x rates=0x%I64x\n",
-                        (ULONG)captureInfo.stream_id,
-                        (UINT)captureInfo.direction,
-                        (UINT)captureInfo.channels_min,
-                        (UINT)captureInfo.channels_max,
-                        (ULONGLONG)captureInfo.formats,
-                        (ULONGLONG)captureInfo.rates);
-                } else {
-                    VIRTIOSND_TRACE_ERROR("PCM_INFO1 query (logging) failed: 0x%08X\n", (UINT)capStatus);
-                }
-            }
-        }
-    }
+                 VIRTIOSND_TRACE(
+                     "PCM_INFO stream %lu: dir=%u ch=[%u..%u] formats=0x%I64x rates=0x%I64x\n",
+                     (ULONG)captureInfo.stream_id,
+                     (UINT)captureInfo.direction,
+                     (UINT)captureInfo.channels_min,
+                     (UINT)captureInfo.channels_max,
+                     (ULONGLONG)captureInfo.formats,
+                     (ULONGLONG)captureInfo.rates);
+             }
+         }
+     }
 
     status = VirtIoSndAdapterContext_Register(unknownAdapter, dx, forceNullBackend);
     if (!NT_SUCCESS(status)) {
