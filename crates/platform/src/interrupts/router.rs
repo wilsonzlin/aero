@@ -195,21 +195,21 @@ impl PlatformInterrupts {
         isa_irq_to_gsi[0] = 2;
 
         let lapic_clock = Arc::new(AtomicClock::default());
+        let apic_enabled = Arc::new(AtomicBool::new(false));
         let mut lapics = Vec::with_capacity(cpu_count as usize);
+        let mut sinks: Vec<Arc<dyn LapicInterruptSink>> = Vec::with_capacity(cpu_count as usize);
         for apic_id in 0..cpu_count {
             let lapic = Arc::new(LocalApic::with_clock(lapic_clock.clone(), apic_id));
             // Keep LAPICs enabled for platform-level interrupt injection (tests and early bring-up).
             lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
+            sinks.push(Arc::new(RoutedLapicSink {
+                lapic: lapic.clone(),
+                apic_enabled: apic_enabled.clone(),
+            }));
             lapics.push(lapic);
         }
 
-        let apic_enabled = Arc::new(AtomicBool::new(false));
-        let sink: Arc<dyn LapicInterruptSink> = Arc::new(RoutedLapicSink {
-            lapic: lapics[0].clone(),
-            apic_enabled: apic_enabled.clone(),
-        });
-
-        let ioapic = Arc::new(Mutex::new(IoApic::new(IoApicId(0), sink)));
+        let ioapic = Arc::new(Mutex::new(IoApic::with_lapics(IoApicId(0), sinks)));
 
         // Wire LAPIC EOI -> IOAPIC Remote-IRR handling.
         for lapic in &lapics {
@@ -470,6 +470,57 @@ impl PlatformInterrupts {
             return;
         };
         lapic.reset_state(apic_id);
+    }
+
+    pub fn get_pending_for_apic(&self, apic_id: u8) -> Option<u8> {
+        match self.mode {
+            PlatformInterruptMode::LegacyPic => {
+                if apic_id == self.lapics.first()?.apic_id() {
+                    self.pic.get_pending_vector()
+                } else {
+                    None
+                }
+            }
+            PlatformInterruptMode::Apic => self.lapic_for_apic_id(apic_id)?.get_pending_vector(),
+        }
+    }
+
+    pub fn acknowledge_for_apic(&mut self, apic_id: u8, vector: u8) {
+        match self.mode {
+            PlatformInterruptMode::LegacyPic => {
+                if apic_id == self.lapics.first().map(|lapic| lapic.apic_id()).unwrap_or(0) {
+                    self.pic.acknowledge(vector);
+                }
+            }
+            PlatformInterruptMode::Apic => {
+                if let Some(lapic) = self.lapic_for_apic_id(apic_id) {
+                    let _ = lapic.ack(vector);
+                }
+            }
+        }
+    }
+
+    pub fn eoi_for_apic(&mut self, apic_id: u8, vector: u8) {
+        match self.mode {
+            PlatformInterruptMode::LegacyPic => {
+                if apic_id == self.lapics.first().map(|lapic| lapic.apic_id()).unwrap_or(0) {
+                    self.pic.eoi(vector);
+                }
+            }
+            PlatformInterruptMode::Apic => {
+                let _ = vector;
+                if let Some(lapic) = self.lapic_for_apic_id(apic_id) {
+                    lapic.eoi();
+                }
+            }
+        }
+    }
+
+    fn lapic_for_apic_id(&self, apic_id: u8) -> Option<&LocalApic> {
+        self.lapics
+            .iter()
+            .find(|lapic| lapic.apic_id() == apic_id)
+            .map(|lapic| lapic.as_ref())
     }
 
     fn set_gsi_level_internal(&mut self, gsi: u32, level: bool) {
@@ -885,6 +936,30 @@ mod tests {
 
         ints.eoi(0x40);
         assert_eq!(ints.get_pending(), Some(0x40));
+    }
+
+    #[test]
+    fn level_triggered_remote_irr_cleared_by_eoi_from_non_bsp_lapic() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // GSI1 -> vector 0x40, level-triggered, unmasked, destination=APIC1.
+        let vector = 0x40u8;
+        program_ioapic_entry(&mut ints, 1, u32::from(vector) | (1 << 15), 1 << 24);
+
+        ints.raise_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.get_pending_for_apic(1), Some(vector));
+        assert_eq!(ints.get_pending_for_apic(0), None);
+
+        // ACK moves the vector into ISR; the IOAPIC must not redeliver while Remote-IRR is set.
+        ints.acknowledge_for_apic(1, vector);
+        assert_eq!(ints.get_pending_for_apic(1), None);
+
+        // EOI on the non-BSP LAPIC must clear Remote-IRR and trigger redelivery when the line is
+        // still asserted.
+        ints.eoi_for_apic(1, vector);
+        assert_eq!(ints.get_pending_for_apic(1), Some(vector));
+        assert_eq!(ints.get_pending_for_apic(0), None);
     }
 
     #[test]
