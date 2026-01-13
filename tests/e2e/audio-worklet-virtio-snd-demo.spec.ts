@@ -8,6 +8,9 @@ test("AudioWorklet output runs and does not underrun with virtio-snd demo", asyn
   test.setTimeout(60_000);
   test.skip(test.info().project.name !== "chromium", "AudioWorklet output test only runs on Chromium.");
 
+  // The virtio-snd demo boots a dedicated worker that loads and instantiates a large WASM module.
+  // When Chromium doesn't have a cached compilation artifact yet (common in CI), this can take
+  // longer than Playwright's default 30s timeout.
   page.setDefaultTimeout(60_000);
 
   await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: "load" });
@@ -15,6 +18,7 @@ test("AudioWorklet output runs and does not underrun with virtio-snd demo", asyn
   await page.click("#init-audio-virtio-snd-demo");
 
   await page.waitForFunction(() => {
+    // Exposed by the audio UI entrypoint (`src/main.ts` in the root app).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputVirtioSndDemo;
     return out?.enabled === true && out?.context?.state === "running";
@@ -35,6 +39,7 @@ test("AudioWorklet output runs and does not underrun with virtio-snd demo", asyn
   const initialRead = initialIndices.read;
   const initialWrite = initialIndices.write;
 
+  // Sanity check: ensure the AudioWorklet is actually consuming from the ring.
   await page.waitForFunction(
     (initialRead) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,17 +61,21 @@ test("AudioWorklet output runs and does not underrun with virtio-snd demo", asyn
       return ((write - (initialWrite as number)) >>> 0) > 0;
     },
     initialWrite,
+    // Allow enough time for WASM compilation + worker startup in CI.
     { timeout: 45_000 },
   );
 
   await waitForAudioOutputNonSilent(page, "__aeroAudioOutputVirtioSndDemo", { threshold: 0.01 });
 
   await page.waitForFunction(() => {
+    // Exposed by the audio demo UI (updated from the CPU worker).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const stats = (globalThis as any).__aeroAudioVirtioSndDemoStats;
     return stats && typeof stats.totalFramesWritten === "number" && stats.totalFramesWritten > 0;
   });
 
+  // Ignore any startup underruns while the worker + WASM demo bootstraps; assert on the
+  // delta over a steady-state window so cold CI runners remain stable.
   const steady0 = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputVirtioSndDemo;
@@ -85,7 +94,7 @@ test("AudioWorklet output runs and does not underrun with virtio-snd demo", asyn
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const backend = (globalThis as any).__aeroAudioToneBackend;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const demoStats = (globalThis as any).__aeroAudioVirtioSndDemoStats;
+    const stats = (globalThis as any).__aeroAudioVirtioSndDemoStats;
     const ring = out.ringBuffer as { readIndex: Uint32Array; writeIndex: Uint32Array };
     const read = Atomics.load(ring.readIndex, 0) >>> 0;
     const write = Atomics.load(ring.writeIndex, 0) >>> 0;
@@ -93,7 +102,7 @@ test("AudioWorklet output runs and does not underrun with virtio-snd demo", asyn
       enabled: out?.enabled,
       state: out?.context?.state,
       backend,
-      totalWritten: typeof demoStats?.totalFramesWritten === "number" ? demoStats.totalFramesWritten : null,
+      totalWritten: typeof stats?.totalFramesWritten === "number" ? stats.totalFramesWritten : null,
       read,
       write,
       bufferLevelFrames: typeof out?.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : null,
@@ -115,9 +124,9 @@ test("AudioWorklet output runs and does not underrun with virtio-snd demo", asyn
 
   const deltaUnderrun = (((result.underruns as number) - (steady0!.underruns as number)) >>> 0) as number;
   const deltaOverrun = (((result.overruns as number) - (steady0!.overruns as number)) >>> 0) as number;
+  // Allow a few render quanta of slack over the window to avoid cold-start flakes.
   expect(deltaUnderrun).toBeLessThanOrEqual(1024);
   expect(deltaOverrun).toBe(0);
   expect(maxAbs).not.toBeNull();
   expect(maxAbs as number).toBeGreaterThan(0.01);
 });
-

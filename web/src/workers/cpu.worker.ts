@@ -106,8 +106,22 @@ type AudioOutputHdaDemoStartMessage = {
   gain?: number;
 };
 
+type AudioOutputVirtioSndDemoStartMessage = {
+  type: "audioOutputVirtioSndDemo.start";
+  ringBuffer: SharedArrayBuffer;
+  capacityFrames: number;
+  channelCount: number;
+  sampleRate: number;
+  freqHz?: number;
+  gain?: number;
+};
+
 type AudioOutputHdaDemoReadyMessage = {
   type: "audioOutputHdaDemo.ready";
+};
+
+type AudioOutputVirtioSndDemoReadyMessage = {
+  type: "audioOutputVirtioSndDemo.ready";
 };
 
 type AudioOutputHdaDemoErrorMessage = {
@@ -115,25 +129,13 @@ type AudioOutputHdaDemoErrorMessage = {
   message: string;
 };
 
-type AudioOutputHdaDemoStopMessage = {
-  type: "audioOutputHdaDemo.stop";
-};
-
-type AudioOutputVirtioSndDemoStartMessage = {
-  type: "audioOutputVirtioSndDemo.start";
-  ringBuffer: SharedArrayBuffer;
-  capacityFrames: number;
-  channelCount: number;
-  sampleRate: number;
-};
-
-type AudioOutputVirtioSndDemoReadyMessage = {
-  type: "audioOutputVirtioSndDemo.ready";
-};
-
 type AudioOutputVirtioSndDemoErrorMessage = {
   type: "audioOutputVirtioSndDemo.error";
   message: string;
+};
+
+type AudioOutputHdaDemoStopMessage = {
+  type: "audioOutputHdaDemo.stop";
 };
 
 type AudioOutputVirtioSndDemoStopMessage = {
@@ -646,6 +648,10 @@ async function startVirtioSndDemo(msg: AudioOutputVirtioSndDemoStartMessage): Pr
   if (sampleRate <= 0) throw new Error("sampleRate must be > 0");
 
   // Prefer the single-threaded WASM build for this standalone demo mode.
+  // Playwright CI prebuilds `pkg-single` but not always `pkg-threaded`; forcing
+  // "single" avoids an extra failed fetch/compile attempt before falling back.
+  //
+  // If the single build is unavailable, fall back to the default auto selection.
   let api: WasmApi;
   try {
     if (!hdaDemoWasmMemory) {
@@ -670,6 +676,13 @@ async function startVirtioSndDemo(msg: AudioOutputVirtioSndDemoStartMessage): Pr
   const DemoCtor = api.VirtioSndPlaybackDemo as any;
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   const demo = new DemoCtor(msg.ringBuffer, capacityFrames, channelCount, sampleRate);
+
+  const freqHz = typeof msg.freqHz === "number" ? msg.freqHz : 440;
+  const gain = typeof msg.gain === "number" ? msg.gain : 0.1;
+  if (typeof demo.set_sine_wave === "function") {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    demo.set_sine_wave(freqHz, gain);
+  }
 
   virtioSndDemoInstance = demo;
   const header = new Uint32Array(msg.ringBuffer, 0, AUDIO_HEADER_U32_LEN);
@@ -703,18 +716,15 @@ async function startVirtioSndDemo(msg: AudioOutputVirtioSndDemoStartMessage): Pr
 
     if (!virtioSndDemoClockStarted) {
       virtioSndDemoClock = new AudioFrameClock(sampleRateHz, nowNs);
-
       if (level > target) {
         maybePostVirtioSndDemoStats();
         return;
       }
-
       const prime = Math.max(0, target - level);
       if (prime > 0) {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
         virtioSndDemoInstance.tick(prime);
       }
-
       virtioSndDemoClockStarted = true;
       virtioSndDemoClock = new AudioFrameClock(sampleRateHz, nowNs);
       maybePostVirtioSndDemoStats();
@@ -2229,6 +2239,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       ctx.postMessage({ type: "audioOutputHdaDemo.error", message } satisfies AudioOutputHdaDemoErrorMessage);
       stopHdaDemo();
     });
+    return;
+  }
+
+  if ((msg as Partial<AudioOutputVirtioSndDemoStopMessage>).type === "audioOutputVirtioSndDemo.stop") {
+    stopVirtioSndDemo();
     return;
   }
 

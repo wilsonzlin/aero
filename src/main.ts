@@ -1448,6 +1448,8 @@ function renderAudioPanel(): HTMLElement {
         capacityFrames: output.ringBuffer.capacityFrames,
         channelCount: output.ringBuffer.channelCount,
         sampleRate: output.context.sampleRate,
+        freqHz: 440,
+        gain: 0.1,
       });
 
       try {
@@ -1486,6 +1488,8 @@ function renderAudioPanel(): HTMLElement {
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
           `sampleRate: ${metrics.sampleRate}\n` +
+          `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+          `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
           `capacityFrames: ${metrics.capacityFrames}\n` +
           `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
           `underrunFrames: ${metrics.underrunCount}\n` +

@@ -123,6 +123,11 @@ mod virtio_snd_pci_bridge;
 pub use virtio_snd_pci_bridge::VirtioSndPciBridge;
 
 #[cfg(target_arch = "wasm32")]
+mod virtio_snd_playback_demo;
+#[cfg(target_arch = "wasm32")]
+pub use virtio_snd_playback_demo::VirtioSndPlaybackDemo;
+
+#[cfg(target_arch = "wasm32")]
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]

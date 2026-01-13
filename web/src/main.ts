@@ -3236,6 +3236,8 @@ function renderAudioPanel(): HTMLElement {
   let syntheticMic: { stop(): void } | null = null;
   let hdaDemoWorker: Worker | null = null;
   let hdaDemoStats: { [k: string]: unknown } | null = null;
+  let virtioSndDemoWorker: Worker | null = null;
+  let virtioSndDemoStats: { [k: string]: unknown } | null = null;
 
   function stopTone() {
     toneGeneration += 1;
@@ -3288,9 +3290,24 @@ function renderAudioPanel(): HTMLElement {
     }
   }
 
+  function stopVirtioSndDemo(): void {
+    if (!virtioSndDemoWorker) return;
+    virtioSndDemoWorker.postMessage({ type: "audioOutputVirtioSndDemo.stop" });
+    virtioSndDemoWorker.terminate();
+    virtioSndDemoWorker = null;
+    virtioSndDemoStats = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroAudioVirtioSndDemoStats = undefined;
+    if (toneTimer !== null) {
+      window.clearInterval(toneTimer);
+      toneTimer = null;
+    }
+  }
+
   async function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
     stopTone();
     stopHdaDemo();
+    stopVirtioSndDemo();
 
     const freqHz = 440;
     const gain = 0.1;
@@ -3380,6 +3397,7 @@ function renderAudioPanel(): HTMLElement {
       status.textContent = "";
       stopLoopback();
       stopHdaDemo();
+      stopVirtioSndDemo();
       const output = await createAudioOutput({ sampleRate: 48_000, latencyHint: "interactive" });
       // Expose for Playwright smoke tests.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3412,6 +3430,7 @@ function renderAudioPanel(): HTMLElement {
       stopTone();
       stopLoopback();
       stopHdaDemo();
+      stopVirtioSndDemo();
 
       try {
         // Ensure the static config (if any) has been loaded before starting the
@@ -3501,6 +3520,7 @@ function renderAudioPanel(): HTMLElement {
       stopTone();
       stopLoopback();
       stopHdaDemo();
+      stopVirtioSndDemo();
 
       // Best-effort: ensure this WASM build includes the HDA demo wrapper.
       try {
@@ -3653,6 +3673,157 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
+  const virtioSndDemoButton = el("button", {
+    id: "init-audio-virtio-snd-demo",
+    text: "Init audio output (virtio-snd demo)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+      stopLoopback();
+      stopHdaDemo();
+      stopVirtioSndDemo();
+
+      // Best-effort: ensure this WASM build includes the virtio-snd demo wrapper.
+      try {
+        const { api } = await wasmInitPromise;
+        if (typeof api.VirtioSndPlaybackDemo !== "function") {
+          status.textContent =
+            "virtio-snd demo is unavailable in this WASM build (missing VirtioSndPlaybackDemo export).";
+          return;
+        }
+      } catch {
+        status.textContent = "virtio-snd demo is unavailable (WASM init failed).";
+        return;
+      }
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        // Match the HDA demo buffering (~340ms @ 48k).
+        ringBufferFrames: 16_384,
+      });
+      // Expose for Playwright smoke tests / e2e assertions.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioOutputVirtioSndDemo = output;
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioToneBackend = "wasm-virtio-snd";
+
+      // Prefill the ring with silence so the worker has time to attach and start producing audio
+      // without incurring startup underruns.
+      const level = output.getBufferLevelFrames();
+      const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
+      if (prefillFrames > 0) {
+        Atomics.add(output.ringBuffer.writeIndex, 0, prefillFrames);
+      }
+
+      virtioSndDemoWorker = new Worker(new URL("./workers/cpu.worker.ts", import.meta.url), { type: "module" });
+      virtioSndDemoWorker.addEventListener("message", (ev: MessageEvent<unknown>) => {
+        const msg = ev.data as { type?: unknown } | null;
+        if (!msg || msg.type !== "audioOutputVirtioSndDemo.stats") return;
+        virtioSndDemoStats = msg as { [k: string]: unknown };
+        // Expose for Playwright/debugging.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (globalThis as any).__aeroAudioVirtioSndDemoStats = virtioSndDemoStats;
+      });
+
+      const workerReady = new Promise<void>((resolve, reject) => {
+        const worker = virtioSndDemoWorker;
+        if (!worker) {
+          reject(new Error("Missing virtio-snd demo worker"));
+          return;
+        }
+
+        const timeoutMs = 45_000;
+        const onMessage = (ev: MessageEvent<unknown>) => {
+          const data = ev.data as { type?: unknown; message?: unknown } | null | undefined;
+          if (!data || typeof data !== "object") return;
+          if (data.type === "audioOutputVirtioSndDemo.ready") {
+            cleanup();
+            resolve();
+          } else if (data.type === "audioOutputVirtioSndDemo.error") {
+            cleanup();
+            reject(new Error(typeof data.message === "string" ? data.message : "virtio-snd demo worker error"));
+          }
+        };
+        const onError = (ev: ErrorEvent) => {
+          cleanup();
+          reject(new Error(ev.message || "virtio-snd demo worker error"));
+        };
+
+        const timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error(`Timed out waiting for virtio-snd demo worker init (${timeoutMs}ms).`));
+        }, timeoutMs);
+        (timer as unknown as { unref?: () => void }).unref?.();
+
+        const cleanup = () => {
+          window.clearTimeout(timer);
+          worker.removeEventListener("message", onMessage);
+          worker.removeEventListener("error", onError);
+        };
+
+        worker.addEventListener("message", onMessage);
+        worker.addEventListener("error", onError);
+      });
+
+      virtioSndDemoWorker.postMessage({
+        type: "audioOutputVirtioSndDemo.start",
+        ringBuffer: output.ringBuffer.buffer,
+        capacityFrames: output.ringBuffer.capacityFrames,
+        channelCount: output.ringBuffer.channelCount,
+        sampleRate: output.context.sampleRate,
+        freqHz: 440,
+        gain: 0.1,
+      });
+
+      try {
+        await workerReady;
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        stopVirtioSndDemo();
+        return;
+      }
+
+      await output.resume();
+      status.textContent = "Audio initialized and virtio-snd playback demo started in CPU worker.";
+      const timer = window.setInterval(() => {
+        const metrics = output.getMetrics();
+        const read = Atomics.load(output.ringBuffer.readIndex, 0) >>> 0;
+        const write = Atomics.load(output.ringBuffer.writeIndex, 0) >>> 0;
+        const demoStats = virtioSndDemoStats;
+        const demoLines: string[] = [];
+        if (demoStats) {
+          const t = demoStats["targetFrames"];
+          const lvl = demoStats["bufferLevelFrames"];
+          if (typeof t === "number") demoLines.push(`worker.targetFrames: ${t}`);
+          if (typeof lvl === "number") demoLines.push(`worker.bufferLevelFrames: ${lvl}`);
+          const totalWritten = demoStats["totalFramesWritten"];
+          if (typeof totalWritten === "number") demoLines.push(`virtioSnd.totalFramesWritten: ${totalWritten}`);
+          const totalDropped = demoStats["totalFramesDropped"];
+          if (typeof totalDropped === "number") demoLines.push(`virtioSnd.totalFramesDropped: ${totalDropped}`);
+        }
+        status.textContent =
+          `AudioContext: ${metrics.state}\n` +
+          `sampleRate: ${metrics.sampleRate}\n` +
+          `baseLatencySeconds: ${metrics.baseLatencySeconds ?? "n/a"}\n` +
+          `outputLatencySeconds: ${metrics.outputLatencySeconds ?? "n/a"}\n` +
+          `capacityFrames: ${metrics.capacityFrames}\n` +
+          `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
+          `underrunFrames: ${metrics.underrunCount}\n` +
+          `overrunFrames: ${metrics.overrunCount}\n` +
+          `ring.readFrameIndex: ${read}\n` +
+          `ring.writeFrameIndex: ${write}` +
+          (demoLines.length ? `\n${demoLines.join("\n")}` : "");
+      }, 50);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      toneTimer = timer as unknown as number;
+    },
+  });
+
   const loopbackButton = el("button", {
     id: "init-audio-loopback-synthetic",
     text: "Init audio loopback (synthetic mic)",
@@ -3661,6 +3832,7 @@ function renderAudioPanel(): HTMLElement {
       stopTone();
       stopLoopback();
       stopHdaDemo();
+      stopVirtioSndDemo();
 
       const output = await createAudioOutput({
         sampleRate: 48_000,
@@ -3779,7 +3951,7 @@ function renderAudioPanel(): HTMLElement {
     "div",
     { class: "panel" },
     el("h2", { text: "Audio" }),
-    el("div", { class: "row" }, button, workerButton, hdaDemoButton, loopbackButton),
+    el("div", { class: "row" }, button, workerButton, hdaDemoButton, virtioSndDemoButton, loopbackButton),
     status,
   );
 }
