@@ -344,8 +344,17 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 
 - `pfnProcessVertices`
 
+### Patch rendering (N-Patch / Bezier patches)
+
 Patch rendering DDIs (`pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`) are implemented for a bring-up subset
-(see “Fixed-function vertex formats (FVF)” above); they are no longer treated as “stubs”.
+(see “Fixed-function vertex formats (FVF)” above); they are no longer treated as “stubs”:
+
+- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`
+
+Limitations:
+
+- Only the fixed-function fallback path is supported (no user shaders).
+- Only Bezier cubic patches are supported (`Basis=BEZIER`, `Degree=CUBIC`).
 
 ### Bring-up no-op DDIs
 
@@ -385,4 +394,4 @@ In particular:
 - **Patch caps**: keep N-patch/patch caps conservative (e.g. avoid `D3DDEVCAPS_NPATCHES` /
   `MaxNpatchTessellationLevel`) until the patch path is exercised end-to-end on Win7 and `ProcessVertices` is implemented.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
-  guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `SupportsBcFormats()`).
+  guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `SupportsBcFormats()`). 

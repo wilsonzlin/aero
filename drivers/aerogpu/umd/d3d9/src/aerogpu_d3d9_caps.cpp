@@ -191,7 +191,7 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   // Keep caps conservative: only advertise features that are actually wired up
   // end-to-end in the AeroGPU D3D9 UMD so the runtime doesn't route into
-  // unimplemented DDIs (notably patch rendering and MSAA).
+  // unimplemented DDIs (notably MSAA).
   //
   // We still report SM2.0 (VS/PS 2.0) as required by DWM on Win7.
   out->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
