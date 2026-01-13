@@ -816,6 +816,102 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 }
 
+static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq) {
+  AEROVNET_VIRTIO_NET_HDR BuiltHdr;
+  AEROVNET_TX_OFFLOAD_INTENT Intent;
+  AEROVNET_OFFLOAD_PARSE_INFO Info;
+  ULONG FrameLen;
+  UCHAR HeaderBytes[256];
+  ULONG CopyLen;
+  PVOID FramePtr;
+  AEROVNET_OFFLOAD_RESULT OffRes;
+
+  if (!Adapter || !TxReq || !TxReq->Nbl || !TxReq->Nb || !TxReq->HeaderVa) {
+    return NDIS_STATUS_INVALID_PACKET;
+  }
+
+  RtlZeroMemory(&Intent, sizeof(Intent));
+  RtlZeroMemory(&BuiltHdr, sizeof(BuiltHdr));
+  RtlZeroMemory(&Info, sizeof(Info));
+
+  // LSO/TSO request (per-NBL).
+  {
+    ULONG_PTR LsoVal = (ULONG_PTR)NET_BUFFER_LIST_INFO(TxReq->Nbl, TcpLargeSendNetBufferListInfo);
+    if (LsoVal != 0) {
+      USHORT Mss = (USHORT)(LsoVal & 0xFFFFFu); // MSS is stored in the low 20 bits.
+      Intent.WantTso = 1;
+      Intent.TsoMss = Mss;
+    }
+  }
+
+  // TCP checksum offload request (per-NBL).
+  if (!Intent.WantTso) {
+    NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO CsumInfo;
+    CsumInfo.Value = (ULONG_PTR)NET_BUFFER_LIST_INFO(TxReq->Nbl, TcpIpChecksumNetBufferListInfo);
+
+    if (CsumInfo.Transmit.TcpChecksum) {
+      Intent.WantTcpChecksum = 1;
+    }
+
+    // Do not accept unsupported checksum requests (we only advertise TCP checksum).
+    if (CsumInfo.Transmit.UdpChecksum || CsumInfo.Transmit.IpHeaderChecksum) {
+      return NDIS_STATUS_INVALID_PACKET;
+    }
+  }
+
+  if (!Intent.WantTso && !Intent.WantTcpChecksum) {
+    // Normal packet: all zeros.
+    RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
+    return NDIS_STATUS_SUCCESS;
+  }
+
+  FrameLen = NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+  CopyLen = (FrameLen < sizeof(HeaderBytes)) ? FrameLen : (ULONG)sizeof(HeaderBytes);
+
+  FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, HeaderBytes, 1, 0);
+  if (!FramePtr) {
+    return NDIS_STATUS_INVALID_PACKET;
+  }
+
+  OffRes = AerovNetBuildTxVirtioNetHdr((const uint8_t*)FramePtr, (size_t)CopyLen, &Intent, &BuiltHdr, &Info);
+  if (OffRes != AEROVNET_OFFLOAD_OK) {
+    return NDIS_STATUS_INVALID_PACKET;
+  }
+
+  // Enforce current offload enablement.
+  if (Intent.WantTso) {
+    if (Intent.TsoMss == 0) {
+      return NDIS_STATUS_INVALID_PACKET;
+    }
+    if (Info.IpVersion == 4) {
+      if (!Adapter->TxTsoV4Enabled) {
+        return NDIS_STATUS_INVALID_PACKET;
+      }
+    } else if (Info.IpVersion == 6) {
+      if (!Adapter->TxTsoV6Enabled) {
+        return NDIS_STATUS_INVALID_PACKET;
+      }
+    } else {
+      return NDIS_STATUS_INVALID_PACKET;
+    }
+  } else {
+    if (Info.IpVersion == 4) {
+      if (!Adapter->TxChecksumV4Enabled) {
+        return NDIS_STATUS_INVALID_PACKET;
+      }
+    } else if (Info.IpVersion == 6) {
+      if (!Adapter->TxChecksumV6Enabled) {
+        return NDIS_STATUS_INVALID_PACKET;
+      }
+    } else {
+      return NDIS_STATUS_INVALID_PACKET;
+    }
+  }
+
+  RtlCopyMemory(TxReq->HeaderVa, &BuiltHdr, sizeof(BuiltHdr));
+  return NDIS_STATUS_SUCCESS;
+}
+
 static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PLIST_ENTRY CompleteTxReqs,
                                          _Inout_ PNET_BUFFER_LIST* CompleteNblHead, _Inout_ PNET_BUFFER_LIST* CompleteNblTail) {
   virtio_sg_entry_t Sg[AEROVNET_MAX_TX_SG_ELEMENTS + 1];
@@ -844,7 +940,15 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
       continue;
     }
 
-    RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
+    {
+      NDIS_STATUS TxStatus = AerovNetBuildTxHeader(Adapter, TxReq);
+      if (TxStatus != NDIS_STATUS_SUCCESS) {
+        RemoveEntryList(&TxReq->Link);
+        InsertTailList(CompleteTxReqs, &TxReq->Link);
+        AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, CompleteNblHead, CompleteNblTail);
+        continue;
+      }
+    }
 
     Needed = (uint16_t)(TxReq->SgList->NumberOfElements + 1);
 
@@ -1760,118 +1864,13 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     TxReq->State = AerovNetTxPendingSubmit;
     InsertTailList(&Adapter->TxPendingList, &TxReq->Link);
   } else {
-    // Prepare virtio descriptors: virtio-net header + payload SG elements.
-    //
-    // Populate VIRTIO_NET_HDR based on NDIS offload metadata when enabled.
     {
-      NDIS_STATUS TxStatus;
-      AEROVNET_VIRTIO_NET_HDR BuiltHdr;
-      AEROVNET_TX_OFFLOAD_INTENT Intent;
-      AEROVNET_OFFLOAD_PARSE_INFO Info;
-      ULONG FrameLen;
-      UCHAR HeaderBytes[256];
-      ULONG CopyLen;
-      PVOID FramePtr;
-      AEROVNET_OFFLOAD_RESULT OffRes;
-
-      RtlZeroMemory(&Intent, sizeof(Intent));
-      RtlZeroMemory(&BuiltHdr, sizeof(BuiltHdr));
-      RtlZeroMemory(&Info, sizeof(Info));
-
-      // LSO/TSO request (per-NBL).
-      {
-        ULONG_PTR LsoVal = (ULONG_PTR)NET_BUFFER_LIST_INFO(TxReq->Nbl, TcpLargeSendNetBufferListInfo);
-        if (LsoVal != 0) {
-          USHORT Mss = (USHORT)(LsoVal & 0xFFFFFu); // MSS is stored in the low 20 bits.
-          Intent.WantTso = 1;
-          Intent.TsoMss = Mss;
-        }
+      NDIS_STATUS TxStatus = AerovNetBuildTxHeader(Adapter, TxReq);
+      if (TxStatus != NDIS_STATUS_SUCCESS) {
+        AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, &CompleteHead, &CompleteTail);
+        CompleteNow = TRUE;
+        goto ReleaseAndExit;
       }
-
-      // TCP checksum offload request (per-NBL).
-      if (!Intent.WantTso) {
-        NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO CsumInfo;
-        CsumInfo.Value = (ULONG_PTR)NET_BUFFER_LIST_INFO(TxReq->Nbl, TcpIpChecksumNetBufferListInfo);
-
-        if (CsumInfo.Transmit.TcpChecksum) {
-          Intent.WantTcpChecksum = 1;
-        }
-
-        // Do not accept unsupported checksum requests (we only advertise TCP checksum).
-        if (CsumInfo.Transmit.UdpChecksum || CsumInfo.Transmit.IpHeaderChecksum) {
-          Intent.WantTcpChecksum = 0;
-          TxStatus = NDIS_STATUS_INVALID_PACKET;
-          goto CompleteBadOffload;
-        }
-      }
-
-      if (!Intent.WantTso && !Intent.WantTcpChecksum) {
-        // Normal packet: all zeros.
-        RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
-      } else {
-        FrameLen = NET_BUFFER_DATA_LENGTH(TxReq->Nb);
-        CopyLen = (FrameLen < sizeof(HeaderBytes)) ? FrameLen : (ULONG)sizeof(HeaderBytes);
-
-        FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, HeaderBytes, 1, 0);
-        if (!FramePtr) {
-          TxStatus = NDIS_STATUS_INVALID_PACKET;
-          goto CompleteBadOffload;
-        }
-
-        OffRes = AerovNetBuildTxVirtioNetHdr((const uint8_t*)FramePtr, (size_t)CopyLen, &Intent, &BuiltHdr, &Info);
-        if (OffRes != AEROVNET_OFFLOAD_OK) {
-          TxStatus = NDIS_STATUS_INVALID_PACKET;
-          goto CompleteBadOffload;
-        }
-
-        // Enforce current offload enablement.
-        if (Intent.WantTso) {
-          if (Intent.TsoMss == 0) {
-            TxStatus = NDIS_STATUS_INVALID_PACKET;
-            goto CompleteBadOffload;
-          }
-          if (Info.IpVersion == 4) {
-            if (!Adapter->TxTsoV4Enabled) {
-              TxStatus = NDIS_STATUS_INVALID_PACKET;
-              goto CompleteBadOffload;
-            }
-          } else if (Info.IpVersion == 6) {
-            if (!Adapter->TxTsoV6Enabled) {
-              TxStatus = NDIS_STATUS_INVALID_PACKET;
-              goto CompleteBadOffload;
-            }
-          } else {
-            TxStatus = NDIS_STATUS_INVALID_PACKET;
-            goto CompleteBadOffload;
-          }
-        } else {
-          if (Info.IpVersion == 4) {
-            if (!Adapter->TxChecksumV4Enabled) {
-              TxStatus = NDIS_STATUS_INVALID_PACKET;
-              goto CompleteBadOffload;
-            }
-          } else if (Info.IpVersion == 6) {
-            if (!Adapter->TxChecksumV6Enabled) {
-              TxStatus = NDIS_STATUS_INVALID_PACKET;
-              goto CompleteBadOffload;
-            }
-          } else {
-            TxStatus = NDIS_STATUS_INVALID_PACKET;
-            goto CompleteBadOffload;
-          }
-        }
-
-        RtlCopyMemory(TxReq->HeaderVa, &BuiltHdr, sizeof(BuiltHdr));
-      }
-
-      goto HeaderDone;
-
-    CompleteBadOffload:
-      AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, &CompleteHead, &CompleteTail);
-      CompleteNow = TRUE;
-      goto ReleaseAndExit;
-
-    HeaderDone:;
     }
 
     Sg[0].addr = (uint64_t)TxReq->HeaderPa.QuadPart;
