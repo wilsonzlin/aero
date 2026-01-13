@@ -172,3 +172,123 @@ fn translates_pow_to_wgsl_pow() {
 
     assert!(wgsl.wgsl.contains("pow("), "wgsl:\n{}", wgsl.wgsl);
 }
+#[test]
+fn translates_nrm_to_wgsl_normalize() {
+    // ps_3_0:
+    //   def c0, 1.0, 2.0, 3.0, 4.0
+    //   nrm r0, c0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3F80_0000,
+        0x4000_0000,
+        0x4040_0000,
+        0x4080_0000,
+        opcode_token(36, 2),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&shader).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap();
+    validate_wgsl(&wgsl.wgsl);
+
+    assert!(wgsl.wgsl.contains("normalize("), "wgsl:\n{}", wgsl.wgsl);
+}
+
+#[test]
+fn translates_lit_to_wgsl_pow() {
+    // ps_3_0:
+    //   def c0, 0.5, 0.25, 0.0, 8.0
+    //   lit r0, c0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3F00_0000,
+        0x3E80_0000,
+        0x0000_0000,
+        0x4100_0000,
+        opcode_token(16, 2),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&shader).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap();
+    validate_wgsl(&wgsl.wgsl);
+
+    assert!(wgsl.wgsl.contains("pow("), "wgsl:\n{}", wgsl.wgsl);
+}
+
+#[test]
+fn translates_sincos_to_wgsl_sin_cos_with_saturate() {
+    // ps_3_0:
+    //   def c0, 1.0, 0.0, 0.0, 0.0
+    //   def c1, 2.0, 0.0, 0.0, 0.0
+    //   def c2, 0.5, 0.0, 0.0, 0.0
+    //   sincos_sat r0, c0, c1, c2
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x3F80_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        opcode_token(81, 5),
+        dst_token(2, 1, 0xF),
+        0x4000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        opcode_token(81, 5),
+        dst_token(2, 2, 0xF),
+        0x3F00_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        // sincos_sat r0, c0, c1, c2
+        opcode_token(37, 4) | (1u32 << 20),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        src_token(2, 2, 0xE4, 0),
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&shader).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap();
+    validate_wgsl(&wgsl.wgsl);
+
+    assert!(wgsl.wgsl.contains("sin("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("cos("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
+}

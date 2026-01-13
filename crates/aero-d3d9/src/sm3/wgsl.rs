@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 
 use crate::sm3::decode::{
-    ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType, WriteMask,
+    ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType,
 };
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
@@ -294,7 +294,9 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
         | IrOp::Exp { dst, src, modifiers }
         | IrOp::Log { dst, src, modifiers }
         | IrOp::Ddx { dst, src, modifiers }
-        | IrOp::Ddy { dst, src, modifiers } => {
+        | IrOp::Ddy { dst, src, modifiers }
+        | IrOp::Nrm { dst, src, modifiers }
+        | IrOp::Lit { dst, src, modifiers } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src, usage);
             collect_mods_usage(modifiers, usage);
@@ -353,6 +355,23 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             collect_src_usage(src0, usage);
             collect_src_usage(src1, usage);
             collect_src_usage(src2, usage);
+            collect_mods_usage(modifiers, usage);
+        }
+        IrOp::SinCos {
+            dst,
+            src,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            collect_dst_usage(dst, usage);
+            collect_src_usage(src, usage);
+            if let Some(src1) = src1 {
+                collect_src_usage(src1, usage);
+            }
+            if let Some(src2) = src2 {
+                collect_src_usage(src2, usage);
+            }
             collect_mods_usage(modifiers, usage);
         }
         IrOp::TexSample {
@@ -797,12 +816,8 @@ fn emit_op_line(
             let e = apply_float_result_modifiers(format!("fract({s})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Exp { dst, src, modifiers } => {
-            emit_float_func1(dst, src, modifiers, f32_defs, "exp2")
-        }
-        IrOp::Log { dst, src, modifiers } => {
-            emit_float_func1(dst, src, modifiers, f32_defs, "log2")
-        }
+        IrOp::Exp { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "exp2"),
+        IrOp::Log { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, f32_defs, "log2"),
         IrOp::Ddx { dst, src, modifiers } => {
             let (s, ty) = src_expr(src, f32_defs)?;
             if ty != ScalarTy::F32 {
@@ -827,12 +842,101 @@ fn emit_op_line(
             let e = apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
             emit_assign(dst, e)
         }
-        IrOp::Dp2 {
+        IrOp::Nrm {
             dst,
-            src0,
-            src1,
+            src,
             modifiers,
         } => {
+            let (s, ty) = src_expr(src, f32_defs)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("nrm only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("nrm destination must be float"));
+            }
+            // D3D9 `nrm`: normalize src.xyz; the W component is not well-specified,
+            // but most shaders only consume `.xyz`. Set W to 1.0 for deterministic output.
+            let e = apply_float_result_modifiers(
+                format!("vec4<f32>(normalize(({s}).xyz), 1.0)"),
+                modifiers,
+            )?;
+            emit_assign(dst, e)
+        }
+        IrOp::Lit {
+            dst,
+            src,
+            modifiers,
+        } => {
+            let (s, ty) = src_expr(src, f32_defs)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("lit only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("lit destination must be float"));
+            }
+            // D3D9 `lit`:
+            //   dst.x = 1
+            //   dst.y = max(src.x, 0)
+            //   dst.z = (src.x > 0) ? pow(max(src.y, 0), src.w) : 0
+            //   dst.w = 1
+            let sx = format!("({s}).x");
+            let sy = format!("({s}).y");
+            let sw = format!("({s}).w");
+            let y = format!("max({sx}, 0.0)");
+            let z = format!(
+                "select(0.0, pow(max({sy}, 0.0), {sw}), ({sx} > 0.0))"
+            );
+            let e = apply_float_result_modifiers(
+                format!("vec4<f32>(1.0, {y}, {z}, 1.0)"),
+                modifiers,
+            )?;
+            emit_assign(dst, e)
+        }
+        IrOp::SinCos {
+            dst,
+            src,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            let (s0, ty0) = src_expr(src, f32_defs)?;
+            if ty0 != ScalarTy::F32 {
+                return Err(err("sincos only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("sincos destination must be float"));
+            }
+            let angle = match (src1, src2) {
+                (None, None) => format!("({s0}).x"),
+                (Some(src1), Some(src2)) => {
+                    let (s1, ty1) = src_expr(src1, f32_defs)?;
+                    let (s2, ty2) = src_expr(src2, f32_defs)?;
+                    if ty1 != ScalarTy::F32 || ty2 != ScalarTy::F32 {
+                        return Err(err(
+                            "sincos scale/offset operands must be float in WGSL lowering",
+                        ));
+                    }
+                    // D3D9 `sincos` optionally scales/biases the angle:
+                    //   angle = src0.x * src1.x + src2.x
+                    format!("(({s0}).x * ({s1}).x + ({s2}).x)")
+                }
+                _ => {
+                    return Err(err(
+                        "sincos must have either 1 or 3 source operands in WGSL lowering",
+                    ))
+                }
+            };
+            // WGSL trig functions operate on radians; D3D9 SM2/3 `sincos` is specified in radians.
+            let e = apply_float_result_modifiers(
+                format!("vec4<f32>(sin({angle}), cos({angle}), 0.0, 0.0)"),
+                modifiers,
+            )?;
+            emit_assign(dst, e)
+        }
+        IrOp::Dp2 { dst, src0, src1, modifiers } => {
             let (a, aty) = src_expr(src0, f32_defs)?;
             let (b, bty) = src_expr(src1, f32_defs)?;
             if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
@@ -1282,6 +1386,9 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
         | IrOp::Log { modifiers, .. }
         | IrOp::Ddx { modifiers, .. }
         | IrOp::Ddy { modifiers, .. }
+        | IrOp::Nrm { modifiers, .. }
+        | IrOp::Lit { modifiers, .. }
+        | IrOp::SinCos { modifiers, .. }
         | IrOp::Min { modifiers, .. }
         | IrOp::Max { modifiers, .. }
         | IrOp::SetCmp { modifiers, .. }

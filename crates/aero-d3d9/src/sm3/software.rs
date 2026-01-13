@@ -542,6 +542,9 @@ fn exec_op(
         | IrOp::Log { dst, modifiers, .. }
         | IrOp::Ddx { dst, modifiers, .. }
         | IrOp::Ddy { dst, modifiers, .. }
+        | IrOp::Nrm { dst, modifiers, .. }
+        | IrOp::Lit { dst, modifiers, .. }
+        | IrOp::SinCos { dst, modifiers, .. }
         | IrOp::Min { dst, modifiers, .. }
         | IrOp::Max { dst, modifiers, .. }
         | IrOp::SetCmp { dst, modifiers, .. }
@@ -636,6 +639,45 @@ fn exec_op(
             // Screen-space derivatives require neighboring pixels, which the software interpreter
             // does not currently model. Treat as zero to keep the reference path deterministic.
             Vec4::ZERO
+        }
+        IrOp::Nrm { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let len = (a.x * a.x + a.y * a.y + a.z * a.z).sqrt();
+            if len <= f32::EPSILON {
+                Vec4::new(0.0, 0.0, 0.0, 1.0)
+            } else {
+                Vec4::new(a.x / len, a.y / len, a.z / len, 1.0)
+            }
+        }
+        IrOp::Lit { src, .. } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let y = a.x.max(0.0);
+            let z = if a.x > 0.0 {
+                a.y.max(0.0).powf(a.w)
+            } else {
+                0.0
+            };
+            Vec4::new(1.0, y, z, 1.0)
+        }
+        IrOp::SinCos {
+            src,
+            src1,
+            src2,
+            ..
+        } => {
+            let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let angle = match (src1, src2) {
+                (None, None) => a.x,
+                (Some(src1), Some(src2)) => {
+                    let s1 =
+                        exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                    let s2 =
+                        exec_src(src2, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+                    a.x * s1.x + s2.x
+                }
+                _ => a.x,
+            };
+            Vec4::new(angle.sin(), angle.cos(), 0.0, 0.0)
         }
         IrOp::Min { src0, src1, .. } => {
             let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);

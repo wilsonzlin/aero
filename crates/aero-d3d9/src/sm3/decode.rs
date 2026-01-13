@@ -71,6 +71,9 @@ pub enum Opcode {
     Frc,
     Min,
     Max,
+    Nrm,
+    Lit,
+    SinCos,
     Sge,
     Slt,
     Seq,
@@ -122,6 +125,7 @@ impl Opcode {
             9 => Self::Dp4,
             10 => Self::Min,
             11 => Self::Max,
+            16 => Self::Lit,    // 0x10
             12 => Self::Slt,
             13 => Self::Sge,
             14 => Self::Exp,
@@ -134,6 +138,8 @@ impl Opcode {
             29 => Self::EndLoop,
             31 => Self::Dcl,
             32 => Self::Pow,
+            36 => Self::Nrm,    // 0x24
+            37 => Self::SinCos, // 0x25
             40 => Self::If,
             41 => Self::Ifc,
             42 => Self::Else,
@@ -185,6 +191,9 @@ impl Opcode {
             Self::Frc => "frc",
             Self::Min => "min",
             Self::Max => "max",
+            Self::Nrm => "nrm",
+            Self::Lit => "lit",
+            Self::SinCos => "sincos",
             Self::Sge => "sge",
             Self::Slt => "slt",
             Self::Seq => "seq",
@@ -752,7 +761,14 @@ fn decode_operands_and_extras(
                 });
             }
         }
-        Opcode::Mov | Opcode::Rcp | Opcode::Rsq | Opcode::Exp | Opcode::Log => {
+        Opcode::Mov
+        | Opcode::Rcp
+        | Opcode::Rsq
+        | Opcode::Frc
+        | Opcode::Exp
+        | Opcode::Log
+        | Opcode::Nrm
+        | Opcode::Lit => {
             parse_fixed_operands(
                 opcode,
                 stage,
@@ -804,15 +820,63 @@ fn decode_operands_and_extras(
                 &mut operands,
             )?;
         }
-        Opcode::Frc => {
-            parse_fixed_operands(
-                opcode,
-                stage,
-                major,
-                operand_tokens,
-                &[OperandKind::Dst, OperandKind::Src],
-                &mut operands,
-            )?;
+        Opcode::SinCos => {
+            // SM3 `sincos` has multiple encodings / operand counts. We currently
+            // support the common forms:
+            //   - sincos dst, src0
+            //   - sincos dst, src0, src1, src2
+            //
+            // Other forms are rejected for now.
+            //
+            // Bits 16..19 are opcode-specific; reject any non-zero "specific"
+            // field since we don't yet model those variants.
+            let specific = (opcode_token >> 16) & 0xF;
+            if specific != 0 {
+                return Err(DecodeError {
+                    token_index: 0,
+                    message: format!(
+                        "opcode {} has unsupported encoding (specific=0x{specific:x})",
+                        opcode.name()
+                    ),
+                });
+            }
+
+            match operand_tokens.len() {
+                2 => {
+                    parse_fixed_operands(
+                        opcode,
+                        stage,
+                        major,
+                        operand_tokens,
+                        &[OperandKind::Dst, OperandKind::Src],
+                        &mut operands,
+                    )?;
+                }
+                4 => {
+                    parse_fixed_operands(
+                        opcode,
+                        stage,
+                        major,
+                        operand_tokens,
+                        &[
+                            OperandKind::Dst,
+                            OperandKind::Src,
+                            OperandKind::Src,
+                            OperandKind::Src,
+                        ],
+                        &mut operands,
+                    )?;
+                }
+                other => {
+                    return Err(DecodeError {
+                        token_index: 0,
+                        message: format!(
+                            "opcode {} expected 2 or 4 operand tokens but has {other}",
+                            opcode.name()
+                        ),
+                    });
+                }
+            }
         }
         Opcode::Add
         | Opcode::Sub

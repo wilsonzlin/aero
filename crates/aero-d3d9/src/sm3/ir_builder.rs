@@ -316,6 +316,16 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                     modifiers,
                 })?
             }
+            Opcode::Nrm => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Nrm {
+                dst,
+                src,
+                modifiers,
+            })?,
+            Opcode::Lit => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Lit {
+                dst,
+                src,
+                modifiers,
+            })?,
             Opcode::Min => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Min {
                 dst,
                 src0,
@@ -334,6 +344,31 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src1,
                 modifiers,
             })?,
+            Opcode::SinCos => {
+                let dst = extract_dst(inst, 0)?;
+                let src = extract_src(inst, 1)?;
+                let src1 = if inst.operands.len() > 2 {
+                    Some(extract_src(inst, 2)?)
+                } else {
+                    None
+                };
+                let src2 = if inst.operands.len() > 3 {
+                    Some(extract_src(inst, 3)?)
+                } else {
+                    None
+                };
+                let modifiers = build_modifiers(inst)?;
+                push_stmt(
+                    &mut stack,
+                    Stmt::Op(IrOp::SinCos {
+                        dst,
+                        src,
+                        src1,
+                        src2,
+                        modifiers,
+                    }),
+                )?;
+            }
 
             Opcode::Sge => push_cmpop(&mut stack, inst, CompareOp::Ge)?,
             Opcode::Slt => push_cmpop(&mut stack, inst, CompareOp::Lt)?,
@@ -686,9 +721,36 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             dst,
             src,
             modifiers,
+        }
+        | IrOp::Nrm {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Lit {
+            dst,
+            src,
+            modifiers,
         } => {
             collect_used_input_regs_dst(dst, out);
             collect_used_input_regs_src(src, out);
+            collect_used_input_regs_modifiers(modifiers, out);
+        }
+        IrOp::SinCos {
+            dst,
+            src,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            collect_used_input_regs_dst(dst, out);
+            collect_used_input_regs_src(src, out);
+            if let Some(src1) = src1 {
+                collect_used_input_regs_src(src1, out);
+            }
+            if let Some(src2) = src2 {
+                collect_used_input_regs_src(src2, out);
+            }
             collect_used_input_regs_modifiers(modifiers, out);
         }
         IrOp::Add {
@@ -920,9 +982,36 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             dst,
             src,
             modifiers,
+        }
+        | IrOp::Nrm {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Lit {
+            dst,
+            src,
+            modifiers,
         } => {
             remap_input_regs_in_dst(dst, remap);
             remap_input_regs_in_src(src, remap);
+            remap_input_regs_in_modifiers(modifiers, remap);
+        }
+        IrOp::SinCos {
+            dst,
+            src,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            remap_input_regs_in_dst(dst, remap);
+            remap_input_regs_in_src(src, remap);
+            if let Some(src1) = src1 {
+                remap_input_regs_in_src(src1, remap);
+            }
+            if let Some(src2) = src2 {
+                remap_input_regs_in_src(src2, remap);
+            }
             remap_input_regs_in_modifiers(modifiers, remap);
         }
         IrOp::Add {

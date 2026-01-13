@@ -176,6 +176,11 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    Nrm {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
     /// Base-2 exponent: `dst = 2^src`.
     ///
     /// D3D9 SM2/3 `exp` uses base-2 semantics (not natural exponent).
@@ -202,6 +207,25 @@ pub enum IrOp {
     Ddy {
         dst: Dst,
         src: Src,
+        modifiers: InstModifiers,
+    },
+    /// D3D9 `lit` lighting coefficient helper.
+    ///
+    /// See lowering for the exact component-wise behavior.
+    Lit {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
+    /// D3D9 `sincos` instruction.
+    ///
+    /// SM2/3 define multiple operand-count variants; the IR represents the
+    /// optional extra source operands as `src1`/`src2` when present.
+    SinCos {
+        dst: Dst,
+        src: Src,
+        src1: Option<Src>,
+        src2: Option<Src>,
         modifiers: InstModifiers,
     },
     Min {
@@ -697,6 +721,15 @@ fn format_op(op: &IrOp) -> String {
             format_inst("log", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
+        IrOp::Nrm {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("nrm", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
         IrOp::Ddx {
             dst,
             src,
@@ -715,6 +748,35 @@ fn format_op(op: &IrOp) -> String {
             format_inst("dsy", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
+        IrOp::Lit {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("lit", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::SinCos {
+            dst,
+            src,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            let mut srcs = vec![src.clone()];
+            if let Some(src1) = src1 {
+                srcs.push(src1.clone());
+            }
+            if let Some(src2) = src2 {
+                srcs.push(src2.clone());
+            }
+            format!(
+                "{} {}",
+                format_inst("sincos", modifiers),
+                format_dst_src(dst, &srcs)
+            )
+        }
         IrOp::Min {
             dst,
             src0,

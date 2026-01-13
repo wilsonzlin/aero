@@ -64,7 +64,9 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
         | IrOp::Exp { dst: _, src, modifiers }
         | IrOp::Log { dst: _, src, modifiers }
         | IrOp::Ddx { dst: _, src, modifiers }
-        | IrOp::Ddy { dst: _, src, modifiers } => {
+        | IrOp::Ddy { dst: _, src, modifiers }
+        | IrOp::Nrm { dst: _, src, modifiers }
+        | IrOp::Lit { dst: _, src, modifiers } => {
             if matches!(op, IrOp::Ddx { .. } | IrOp::Ddy { .. }) && stage != ShaderStage::Pixel {
                 return Err(VerifyError {
                     message: "derivative instructions are only valid in pixel shaders".to_owned(),
@@ -73,11 +75,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             verify_src(src)?;
             verify_modifiers(modifiers)?;
         }
-        IrOp::Mova {
-            dst,
-            src,
-            modifiers,
-        } => {
+        IrOp::Mova { dst, src, modifiers } => {
             if dst.reg.file != RegFile::Addr {
                 return Err(VerifyError {
                     message: "mova destination is not an address register".to_owned(),
@@ -185,6 +183,22 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             verify_src(src0)?;
             verify_src(src1)?;
             verify_src(src2)?;
+            verify_modifiers(modifiers)?;
+        }
+        IrOp::SinCos {
+            dst: _,
+            src,
+            src1,
+            src2,
+            modifiers,
+        } => {
+            verify_src(src)?;
+            if let Some(src1) = src1 {
+                verify_src(src1)?;
+            }
+            if let Some(src2) = src2 {
+                verify_src(src2)?;
+            }
             verify_modifiers(modifiers)?;
         }
         IrOp::TexSample {
