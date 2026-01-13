@@ -71,6 +71,26 @@ tests** in the canonical stack:
 - `cargo test -p aero-machine` exercises end-to-end wiring: BIOS POST, PCI layout/INTx routing,
   storage controllers, snapshots, and platform interrupt delivery.
 
+### BIOS Tasks
+
+> Note: The canonical Windows 7 storage + boot-media topology (including the **CD-first El Torito
+> install flow**) is defined in [`docs/05-storage-topology-win7.md`](../docs/05-storage-topology-win7.md).
+> Treat it as the source of truth.
+
+| ID | Task | Priority | Dependencies | Complexity |
+|----|------|----------|--------------|------------|
+| BI-001 | POST sequence | P0 | None | Medium |
+| BI-002 | Memory detection (E820) | P0 | BI-001 | Medium |
+| BI-003 | Interrupt vector table setup | P0 | BI-001 | Low |
+| BI-004 | BIOS data area setup | P0 | BI-001 | Low |
+| BI-005 | INT 10h (video) | P0 | None | Medium |
+| BI-006 | INT 13h (disk + EDD): include CD-ROM drive numbers (`0xE0..=0xEF`) + EDD `AH=41/42/48` (2048-byte sectors) | P0 | None | Medium |
+| BI-007 | INT 15h (system) | P0 | None | Medium |
+| BI-008 | INT 16h (keyboard) | P0 | None | Low |
+| BI-009 | Boot device selection (Win7 install: **CD-ROM/El Torito first**, HDD fallback) | P0 | BI-006 | Low |
+| BI-010 | Boot sector loading: HDD MBR/VBR **or** El Torito (no-emulation) boot image from install ISO | P0 | BI-009 | Low |
+| BI-011 | BIOS test suite | P0 | BI-001..BI-010 | Medium |
+
 ### Remaining integration gaps (high-value work)
 
 If you are looking for impactful integration/boot work today, focus on:
