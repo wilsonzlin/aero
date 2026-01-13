@@ -45,6 +45,11 @@ fn vbe_info_signature_and_mode_list_termination() {
         "mode list should contain at least one mode + terminator"
     );
     assert_eq!(*modes.last().unwrap(), 0xFFFF);
+
+    // Required boot modes per docs/16-aerogpu-vga-vesa-compat.md.
+    assert!(modes.contains(&0x115));
+    assert!(modes.contains(&0x118));
+    assert!(modes.contains(&0x160));
 }
 
 #[test]

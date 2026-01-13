@@ -73,6 +73,27 @@ fn mode_info_1024x768x32() {
 }
 
 #[test]
+fn mode_info_1280x720x32() {
+    let (_bus, vga) = new_bus_with_vga();
+
+    let mode = 0x160;
+    let mi = vga.borrow().mode_info(mode).expect("mode info");
+
+    assert_eq!(mi.bits_per_pixel(), 32);
+    assert_eq!(mi.bytes_per_scan_line(), 1280 * 4);
+    assert_eq!(mi.phys_base_ptr(), VBE_LFB_BASE);
+
+    assert_eq!(mi.red_mask_size(), 8);
+    assert_eq!(mi.red_field_position(), 16);
+    assert_eq!(mi.green_mask_size(), 8);
+    assert_eq!(mi.green_field_position(), 8);
+    assert_eq!(mi.blue_mask_size(), 8);
+    assert_eq!(mi.blue_field_position(), 0);
+    assert_eq!(mi.reserved_mask_size(), 8);
+    assert_eq!(mi.reserved_field_position(), 24);
+}
+
+#[test]
 fn setting_mode_enables_lfb_mapping_and_updates_resolution() {
     let (mut bus, vga) = new_bus_with_vga();
 

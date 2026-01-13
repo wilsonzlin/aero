@@ -243,6 +243,8 @@ impl VbeState {
             Self::mode(0x112, 640, 480, 32, 6),
             Self::mode(0x115, 800, 600, 32, 6),
             Self::mode(0x118, 1024, 768, 32, 6),
+            // OEM-defined mode ID used by the docs for "1280×720×32bpp".
+            Self::mode(0x160, 1280, 720, 32, 6),
             Self::mode(0x11B, 1280, 1024, 32, 6),
         ];
 
