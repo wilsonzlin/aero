@@ -998,6 +998,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
     $orderedKeys = @(
         "os",
         "guest_tools_manifest",
+        "guest_tools_manifest_inputs",
         "extra_files_not_in_manifest",
         "certs_on_media_policy_mismatch",
         "packaged_drivers_summary",
