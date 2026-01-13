@@ -128,7 +128,14 @@ impl AudioRingBuffer {
                 .copy_from_slice(&samples[first_samples..first_samples + second_samples]);
         }
 
-        self.write_frame = (self.write_frame + frames_to_write) % self.capacity_frames;
+        // Avoid `% capacity_frames` here: `frames_to_write <= capacity_frames`, so
+        // the sum is always < 2*capacity_frames and can be wrapped with a single
+        // conditional subtract (cheaper than a division/modulo).
+        let mut write_frame = self.write_frame + frames_to_write;
+        if write_frame >= self.capacity_frames {
+            write_frame -= self.capacity_frames;
+        }
+        self.write_frame = write_frame;
         self.len_frames = self
             .len_frames
             .saturating_add(frames_to_write)
@@ -195,7 +202,14 @@ impl AudioRingBuffer {
                     .copy_from_slice(&self.data[..second_samples]);
             }
 
-            self.read_frame = (self.read_frame + available) % self.capacity_frames;
+            // Avoid `% capacity_frames` here: `available <= capacity_frames`, so
+            // the sum is always < 2*capacity_frames and can be wrapped with a
+            // single conditional subtract.
+            let mut read_frame = self.read_frame + available;
+            if read_frame >= self.capacity_frames {
+                read_frame -= self.capacity_frames;
+            }
+            self.read_frame = read_frame;
         }
 
         let available_samples = available * self.channels;
