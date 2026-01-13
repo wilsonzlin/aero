@@ -55,6 +55,7 @@ FORBIDDEN_EXTENSIONS=(
 # smaller size cap for allowlisted items.
 ALLOWLIST_FORBIDDEN_EXTENSION_GLOBS=(
   assets/bios.bin
+  crates/firmware/acpi/dsdt.aml
   test_images/boot_sectors/int_sanity.bin
   tests/fixtures/bootsector.bin
   tests/fixtures/realmode_vbe_test.bin
