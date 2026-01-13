@@ -198,7 +198,7 @@ function Validate-DriverPackageManifest {
 
   Assert-JsonObject -Value $data -Context 'manifest root' -ManifestPath $ManifestPath
 
-  $allowedTopLevel = @('$schema', 'infFiles', 'wow64Files', 'additionalFiles', 'wdfCoInstaller')
+  $allowedTopLevel = @('$schema', 'infFiles', 'wow64Files', 'additionalFiles', 'toolFiles', 'wdfCoInstaller')
   $unknownKeys = @()
   foreach ($prop in $data.PSObject.Properties) {
     if ($allowedTopLevel -cnotcontains $prop.Name) {
@@ -326,6 +326,36 @@ function Validate-DriverPackageManifest {
       $key = $s.Replace('\', '/').ToLowerInvariant()
       if ($seen.ContainsKey($key)) {
         throw "Invalid manifest '$ManifestPath': additionalFiles contains a duplicate entry '$s'."
+      }
+      $seen[$key] = $true
+    }
+  }
+
+  $toolProp = $data.PSObject.Properties['toolFiles']
+  if ($null -ne $toolProp) {
+    Assert-JsonArray -Value $toolProp.Value -Context 'toolFiles' -ManifestPath $ManifestPath
+
+    $seen = @{}
+    $index = 0
+    foreach ($entry in $toolProp.Value) {
+      $index++
+      Assert-JsonString -Value $entry -Context "toolFiles[$index]" -ManifestPath $ManifestPath
+      $s = ([string]$entry).Trim()
+
+      if ($DriverRoot) {
+        Assert-PathIsRelativeAndUnderRoot -Root $DriverRoot -ChildPath $s -Context "toolFiles[$index]" -ManifestPath $ManifestPath
+      } elseif ([System.IO.Path]::IsPathRooted($s)) {
+        throw "Invalid manifest '$ManifestPath': toolFiles[$index] must be a relative path (got '$s')."
+      }
+
+      $ext = [System.IO.Path]::GetExtension($s).ToLowerInvariant()
+      if ($ext -ne '.exe') {
+        throw "Invalid manifest '$ManifestPath': toolFiles[$index] '$s' must end with '.exe'."
+      }
+
+      $key = $s.Replace('\', '/').ToLowerInvariant()
+      if ($seen.ContainsKey($key)) {
+        throw "Invalid manifest '$ManifestPath': toolFiles contains a duplicate entry '$s'."
       }
       $seen[$key] = $true
     }
