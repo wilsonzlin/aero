@@ -292,6 +292,9 @@ Implementation notes (bring-up):
   vertices to clip-space on the CPU.
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
+- Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:
+  the UMD tessellates the patch on the CPU into scratch UP buffers and draws it through the same fixed-function fallback
+  pipeline. `DeletePatch` evicts the cached tessellation for a handle.
 
 Limitations (bring-up):
 
@@ -339,7 +342,10 @@ In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* fu
 
 These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet (they currently return `D3DERR_NOTAVAILABLE`):
 
-- `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch` / `pfnProcessVertices`
+- `pfnProcessVertices`
+
+Patch rendering DDIs (`pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`) are implemented for a bring-up subset
+(see “Fixed-function vertex formats (FVF)” above); they are no longer treated as “stubs”.
 
 ### Bring-up no-op DDIs
 
@@ -376,7 +382,7 @@ Some bring-up entrypoints correspond primarily to **fixed-function** and legacy 
 
 In particular:
 
-- **Patch caps**: until `Draw*Patch`/`ProcessVertices` are implemented, do not advertise N-patch/patch support
-  (e.g. `D3DDEVCAPS_NPATCHES`, `MaxNpatchTessellationLevel`, etc.).
+- **Patch caps**: keep N-patch/patch caps conservative (e.g. avoid `D3DDEVCAPS_NPATCHES` /
+  `MaxNpatchTessellationLevel`) until the patch path is exercised end-to-end on Win7 and `ProcessVertices` is implemented.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
   guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `SupportsBcFormats()`).
