@@ -324,7 +324,7 @@ fn collect_files(
         if !src.is_file() {
             bail!(
                 "guest tools missing required file: {}",
-                src.to_string_lossy()
+                format!("{src:?}")
             );
         }
         out.push(FileToPackage {
@@ -337,7 +337,7 @@ fn collect_files(
     if !config_dir.is_dir() {
         bail!(
             "guest tools missing required directory: {}",
-            config_dir.to_string_lossy()
+            format!("{config_dir:?}")
         );
     }
 
@@ -496,14 +496,14 @@ fn collect_files(
                 "guest tools certs directory contains no certificate files (*.cer/*.crt/*.p7b), \
                  but signing_policy={} requires at least one: {}",
                 config.signing_policy,
-                certs_dir.to_string_lossy(),
+                format!("{certs_dir:?}"),
             );
         }
         out.extend(certs);
     } else if config.signing_policy.certs_required() {
         bail!(
             "guest tools missing required directory: {}",
-            certs_dir.to_string_lossy()
+            format!("{certs_dir:?}")
         );
     }
     // Optional: include documentation alongside the packaged driver tree.
