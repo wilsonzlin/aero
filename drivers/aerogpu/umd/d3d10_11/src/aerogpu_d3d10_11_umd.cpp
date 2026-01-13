@@ -4922,9 +4922,18 @@ void AEROGPU_APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice,
 
   bool report_notimpl = false;
   if (num_viewports > 1 && pViewports) {
+    auto viewport_disabled = [](const AEROGPU_DDI_VIEWPORT& vp) -> bool {
+      // Treat non-positive (or NaN) dimensions as disabled; this mirrors the
+      // host-side command executor behavior and avoids spurious E_NOTIMPL when
+      // runtimes pad the array with unused entries.
+      return !(vp.Width > 0.0f && vp.Height > 0.0f);
+    };
     const auto& vp0 = pViewports[0];
     for (uint32_t i = 1; i < num_viewports; i++) {
       const auto& vp = pViewports[i];
+      if (viewport_disabled(vp)) {
+        continue;
+      }
       if (vp.TopLeftX != vp0.TopLeftX ||
           vp.TopLeftY != vp0.TopLeftY ||
           vp.Width != vp0.Width ||
@@ -4998,9 +5007,17 @@ void AEROGPU_APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice,
 
   bool report_notimpl = false;
   if (num_rects > 1 && pRects) {
+    auto rect_disabled = [](const AEROGPU_DDI_RECT& r) -> bool {
+      const int64_t w = static_cast<int64_t>(r.right) - static_cast<int64_t>(r.left);
+      const int64_t h = static_cast<int64_t>(r.bottom) - static_cast<int64_t>(r.top);
+      return w <= 0 || h <= 0;
+    };
     const auto& r0 = pRects[0];
     for (uint32_t i = 1; i < num_rects; i++) {
       const auto& r = pRects[i];
+      if (rect_disabled(r)) {
+        continue;
+      }
       if (r.left != r0.left || r.top != r0.top || r.right != r0.right || r.bottom != r0.bottom) {
         report_notimpl = true;
         break;
