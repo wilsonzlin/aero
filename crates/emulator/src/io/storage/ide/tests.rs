@@ -121,6 +121,52 @@ impl DiskBackend for SharedRecordingDisk {
 }
 
 #[test]
+fn drive_address_master_present_is_stable_and_nonzero() {
+    let disk = MemDisk::new(4);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
+
+    // Select master in LBA mode.
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+
+    let v0 = ide.io_read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+    let v1 = ide.io_read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+    assert_ne!(v0, 0);
+    assert_ne!(v0, 0xFF, "DADR should not float high when a device is present");
+    assert_eq!(v0, v1, "DADR reads should be stable");
+}
+
+#[test]
+fn drive_address_slave_absent_floats_bus_high() {
+    let disk = MemDisk::new(4);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
+
+    // Select slave (no device attached).
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xF0);
+    assert_eq!(ide.io_read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8, 0xFF);
+}
+
+#[test]
+fn drive_address_reads_do_not_clear_irq_latch() {
+    let disk = MemDisk::new(4);
+    let mut ide = IdeController::new(0xC000);
+    ide.attach_primary_master_ata(AtaDevice::new(Box::new(disk), "Aero HDD"));
+
+    ide.io_write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ide.io_write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC); // IDENTIFY DEVICE
+    assert!(ide.primary_irq_pending());
+
+    // DADR reads must not clear the IRQ latch.
+    let _ = ide.io_read(PRIMARY_PORTS.ctrl_base + 1, 1);
+    assert!(ide.primary_irq_pending());
+
+    // STATUS reads still clear it.
+    let _ = ide.io_read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.primary_irq_pending());
+}
+
+#[test]
 fn ata_pio_read_multi_sector() {
     let mut disk = MemDisk::new(8);
     let mut expected = vec![0u8; 1024];
