@@ -7,6 +7,7 @@
 //! MVP assumption: `HCCPARAMS1.CSZ = 0`, i.e. **32-byte contexts**.
 //! 64-byte contexts are not supported yet.
 
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::MemoryBus;
@@ -214,6 +215,18 @@ impl SlotContext {
     pub fn set_context_entries(&mut self, entries: u8) {
         let entries = (entries as u32) & 0x1f;
         self.dwords[0] = (self.dwords[0] & !(0x1f << 27)) | (entries << 27);
+    }
+
+    /// Parses the Route String field into a validated [`XhciRouteString`].
+    pub fn parsed_route_string(&self) -> Result<XhciRouteString, XhciRouteStringError> {
+        XhciRouteString::from_raw(self.route_string())
+    }
+
+    /// Sets the Route String field from downstream hub ports ordered from root-to-device.
+    pub fn set_route_string_from_root_ports(&mut self, ports: &[u8]) -> Result<(), XhciRouteStringError> {
+        let route = XhciRouteString::encode_from_root(ports)?;
+        self.set_route_string(route.raw());
+        Ok(())
     }
 
     /// Root Hub Port Number field (DW1 bits 0..=7).
@@ -461,5 +474,122 @@ impl Dcbaa {
     ) -> Result<u64, ContextError> {
         let addr = self.entry_addr(slot_id)?;
         Ok(read_u64_le(mem, addr))
+    }
+}
+
+/// Maximum depth encoded by the Slot Context Route String field.
+///
+/// xHCI encodes up to 5 tiers of hub routing (20 bits, 5 nibbles).
+pub const XHCI_ROUTE_STRING_MAX_DEPTH: usize = 5;
+
+/// Maximum downstream port number encodable in a Route String nibble.
+///
+/// Per xHCI spec (Slot Context, Route String), each tier is encoded as a 4-bit port number where
+/// `0` means "no more tiers" and valid downstream ports are `1..=15`.
+///
+/// Reference: xHCI 1.2 §6.2.2 "Slot Context" (Route String field).
+pub const XHCI_ROUTE_STRING_MAX_PORT: u8 = 15;
+
+/// Errors returned when decoding or encoding a Slot Context Route String.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum XhciRouteStringError {
+    #[error("route string uses bits outside the 20-bit field: 0x{0:x}")]
+    OutOfRange(u32),
+
+    #[error("route string has a gap (encountered terminator then later non-zero nibble): 0x{0:x}")]
+    NonZeroAfterTerminator(u32),
+
+    #[error("route string depth exceeds {max} tiers (ports={depth})")]
+    TooDeep { depth: usize, max: usize },
+
+    #[error("invalid downstream port number in route string: {port} (valid range is 1..={max})")]
+    InvalidPort { port: u8, max: u8 },
+}
+
+/// A validated xHCI Slot Context Route String.
+///
+/// The Route String is a 20-bit value made up of up to 5 4-bit nibbles. Each nibble encodes a
+/// downstream hub port number (`1..=15`). A `0` nibble terminates the string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct XhciRouteString(u32);
+
+impl XhciRouteString {
+    /// Builds a validated route string from the raw 20-bit field value.
+    pub fn from_raw(raw: u32) -> Result<Self, XhciRouteStringError> {
+        if raw & !0x000f_ffff != 0 {
+            return Err(XhciRouteStringError::OutOfRange(raw));
+        }
+
+        // Enforce the invariant that once a 0 nibble is encountered, all higher nibbles must be 0.
+        let mut seen_terminator = false;
+        for i in 0..XHCI_ROUTE_STRING_MAX_DEPTH {
+            let nibble = ((raw >> (4 * i)) & 0x0f) as u8;
+            if nibble == 0 {
+                seen_terminator = true;
+                continue;
+            }
+            if seen_terminator {
+                return Err(XhciRouteStringError::NonZeroAfterTerminator(raw));
+            }
+            // nibble is nonzero, range is implicitly 1..=15 due to 4-bit field, but keep the check
+            // explicit so callers that pass in already-shifted values get a useful error.
+            if nibble > XHCI_ROUTE_STRING_MAX_PORT {
+                return Err(XhciRouteStringError::InvalidPort {
+                    port: nibble,
+                    max: XHCI_ROUTE_STRING_MAX_PORT,
+                });
+            }
+        }
+
+        Ok(Self(raw))
+    }
+
+    /// Returns the underlying raw 20-bit value.
+    pub fn raw(self) -> u32 {
+        self.0
+    }
+
+    /// Returns the sequence of downstream hub ports starting at the hub directly attached to the
+    /// root port.
+    pub fn ports_from_root(self) -> Vec<u8> {
+        let mut ports = Vec::new();
+        for i in 0..XHCI_ROUTE_STRING_MAX_DEPTH {
+            let nibble = ((self.0 >> (4 * i)) & 0x0f) as u8;
+            if nibble == 0 {
+                break;
+            }
+            ports.push(nibble);
+        }
+        ports
+    }
+
+    /// Returns the sequence of downstream hub ports starting at the hub directly attached to the
+    /// device (i.e. closest-to-device first).
+    pub fn ports_to_root(self) -> Vec<u8> {
+        let mut ports = self.ports_from_root();
+        ports.reverse();
+        ports
+    }
+
+    /// Encodes a Route String from a list of port numbers ordered from root-to-device.
+    pub fn encode_from_root(ports: &[u8]) -> Result<Self, XhciRouteStringError> {
+        if ports.len() > XHCI_ROUTE_STRING_MAX_DEPTH {
+            return Err(XhciRouteStringError::TooDeep {
+                depth: ports.len(),
+                max: XHCI_ROUTE_STRING_MAX_DEPTH,
+            });
+        }
+
+        let mut raw: u32 = 0;
+        for (i, &port) in ports.iter().enumerate() {
+            if port == 0 || port > XHCI_ROUTE_STRING_MAX_PORT {
+                return Err(XhciRouteStringError::InvalidPort {
+                    port,
+                    max: XHCI_ROUTE_STRING_MAX_PORT,
+                });
+            }
+            raw |= (port as u32) << (4 * i);
+        }
+        Self::from_raw(raw)
     }
 }

@@ -8,6 +8,8 @@ import {
 export type UhciHidPassthroughDeviceKind = "webhid" | "usb-hid-passthrough";
 
 function clampHubPortCount(value: number): number {
+  // UHCI (USB 1.1) hubs advertise an 8-bit downstream port count (1..=255). Do not apply xHCI's
+  // Route String constraints here: xHCI encodes hub port numbers in 4-bit nibbles (1..=15).
   if (!Number.isFinite(value)) return 1;
   const int = Math.floor(value);
   return Math.max(1, Math.min(255, int));

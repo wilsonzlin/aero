@@ -16,6 +16,9 @@ export const WEBUSB_GUEST_ROOT_PORT: GuestUsbRootPort = 1;
  *
  * Note: this is the *total* number of downstream ports on the hub, including the
  * reserved ports used for synthetic devices.
+ *
+ * This constant is UHCI-specific. xHCI's Slot Context Route String encodes downstream hub ports
+ * as 4-bit values (valid range 1..=15), so xHCI synthetic hubs should not expose >15 ports.
  */
 export const DEFAULT_EXTERNAL_HUB_PORT_COUNT = 16;
 
