@@ -557,17 +557,19 @@ impl UhciRuntime {
 
     pub fn webusb_drain_actions(&mut self) -> Result<JsValue, JsValue> {
         let Some(state) = self.webusb.as_ref() else {
-            // Avoid allocating an empty JS array on every poll tick when WebUSB is detached.
             return Ok(JsValue::NULL);
         };
         if !state.connected {
             return Ok(JsValue::NULL);
         }
 
+        // Keep the hot poll path allocation-free when idle.
+        if state.dev.pending_summary().queued_actions == 0 {
+            return Ok(JsValue::NULL);
+        }
+
         let actions: Vec<UsbHostAction> = state.dev.drain_actions();
         if actions.is_empty() {
-            // Keep parity with other WASM USB bridges: when there is nothing to do, return `null`
-            // so the JS runtime can early-return without allocating an empty array.
             return Ok(JsValue::NULL);
         }
         let out = Array::new();

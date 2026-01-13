@@ -1033,7 +1033,7 @@ export interface WasmApi {
 
         webusb_attach(preferredPort?: number): number;
         webusb_detach(): void;
-        webusb_drain_actions(): UsbHostAction[];
+        webusb_drain_actions(): UsbHostAction[] | null;
         webusb_push_completion(completion: UsbHostCompletion): void;
 
         save_state?(): Uint8Array;
