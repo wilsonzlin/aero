@@ -3944,18 +3944,31 @@ static bool IsSupportedD3D11BlendOp(uint32_t blend_op) {
 
 template <typename RtBlendDescT>
 static bool D3D11RtBlendDescEquivalent(const RtBlendDescT& a, const RtBlendDescT& b) {
-  return a.BlendEnable == b.BlendEnable &&
-         a.SrcBlend == b.SrcBlend &&
+  if (a.BlendEnable != b.BlendEnable) {
+    return false;
+  }
+  if (a.RenderTargetWriteMask != b.RenderTargetWriteMask) {
+    return false;
+  }
+  // Blend factors/ops are ignored when blending is disabled, so avoid rejecting
+  // state solely due to differences in unused fields.
+  if (!a.BlendEnable) {
+    return true;
+  }
+  return a.SrcBlend == b.SrcBlend &&
          a.DestBlend == b.DestBlend &&
          a.BlendOp == b.BlendOp &&
          a.SrcBlendAlpha == b.SrcBlendAlpha &&
          a.DestBlendAlpha == b.DestBlendAlpha &&
-         a.BlendOpAlpha == b.BlendOpAlpha &&
-         a.RenderTargetWriteMask == b.RenderTargetWriteMask;
+         a.BlendOpAlpha == b.BlendOpAlpha;
 }
 
 template <typename RtBlendDescT>
 static bool D3D11RtBlendDescRepresentableByAeroGpu(const RtBlendDescT& rt) {
+  // Protocol only supports 4 bits of write mask.
+  if ((static_cast<uint32_t>(rt.RenderTargetWriteMask) & ~0xFu) != 0) {
+    return false;
+  }
   if (!rt.BlendEnable) {
     // When BlendEnable=FALSE, blend factors/ops are ignored by the pipeline.
     // Do not reject states solely due to unsupported factors in this case.
@@ -3996,6 +4009,11 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
 
   bool filled = false;
   __if_exists(D3D11DDIARG_CREATEBLENDSTATE::RenderTarget) {
+    __if_exists(D3D11DDIARG_CREATEBLENDSTATE::AlphaToCoverageEnable) {
+      if (pDesc->AlphaToCoverageEnable) {
+        return E_NOTIMPL;
+      }
+    }
     bool independent = false;
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::IndependentBlendEnable) {
       independent = pDesc->IndependentBlendEnable ? true : false;
@@ -4023,7 +4041,14 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
   }
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::BlendDesc) {
-      const auto& desc = pDesc->BlendDesc;
+      // Copy so `decltype(desc)` is a value type (required for MSVC __if_exists
+      // member probes on some WDK vintages).
+      const auto desc = pDesc->BlendDesc;
+      __if_exists(decltype(desc)::AlphaToCoverageEnable) {
+        if (desc.AlphaToCoverageEnable) {
+          return E_NOTIMPL;
+        }
+      }
       const bool independent = desc.IndependentBlendEnable ? true : false;
       const auto& rt0 = desc.RenderTarget[0];
       if (independent) {
@@ -4049,7 +4074,14 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
   }
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::Desc) {
-      const auto& desc = pDesc->Desc;
+      // Copy so `decltype(desc)` is a value type (required for MSVC __if_exists
+      // member probes on some WDK vintages).
+      const auto desc = pDesc->Desc;
+      __if_exists(decltype(desc)::AlphaToCoverageEnable) {
+        if (desc.AlphaToCoverageEnable) {
+          return E_NOTIMPL;
+        }
+      }
       const bool independent = desc.IndependentBlendEnable ? true : false;
       const auto& rt0 = desc.RenderTarget[0];
       if (independent) {
@@ -4076,7 +4108,14 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
   if (!filled) {
     __if_exists(D3D11DDIARG_CREATEBLENDSTATE::pBlendDesc) {
       if (pDesc->pBlendDesc) {
-        const auto& desc = *pDesc->pBlendDesc;
+        // Copy so `decltype(desc)` is a value type (required for MSVC __if_exists
+        // member probes on some WDK vintages).
+        const auto desc = *pDesc->pBlendDesc;
+        __if_exists(decltype(desc)::AlphaToCoverageEnable) {
+          if (desc.AlphaToCoverageEnable) {
+            return E_NOTIMPL;
+          }
+        }
         const bool independent = desc.IndependentBlendEnable ? true : false;
         const auto& rt0 = desc.RenderTarget[0];
         if (independent) {

@@ -161,6 +161,46 @@ bool TestPerRenderTargetMismatchReturnsNotImpl() {
   return true;
 }
 
+bool TestAlphaToCoverageReturnsNotImpl() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(alpha-to-coverage)")) {
+    return false;
+  }
+
+  constexpr uint32_t kBlendZero = 1;
+  constexpr uint32_t kBlendOne = 2;
+  constexpr uint32_t kBlendOpAdd = 1;
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 1; // not representable by AeroGPU protocol
+  desc.SrcBlend = kBlendOne;
+  desc.DestBlend = kBlendZero;
+  desc.BlendOp = kBlendOpAdd;
+  desc.SrcBlendAlpha = kBlendOne;
+  desc.DestBlendAlpha = kBlendZero;
+  desc.BlendOpAlpha = kBlendOpAdd;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 0;
+    desc.RenderTargetWriteMask[i] = 0xF;
+  }
+
+  std::vector<uint8_t> state_storage;
+  D3D10DDI_HBLENDSTATE hState = MakeBlendState(&dev, desc, &state_storage);
+  if (!Check(hState.pDrvPrivate != nullptr, "blend state storage (alpha-to-coverage)")) {
+    return false;
+  }
+
+  const HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_NOTIMPL, "CreateBlendState should return E_NOTIMPL for AlphaToCoverageEnable")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, hState);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -168,6 +208,9 @@ int main() {
     return 1;
   }
   if (!TestPerRenderTargetMismatchReturnsNotImpl()) {
+    return 1;
+  }
+  if (!TestAlphaToCoverageReturnsNotImpl()) {
     return 1;
   }
   return 0;
