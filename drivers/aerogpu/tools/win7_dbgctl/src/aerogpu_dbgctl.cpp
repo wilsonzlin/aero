@@ -1738,6 +1738,93 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)qe.error_count);
   };
 
+  const auto DumpPerfSnapshot = [&]() {
+    aerogpu_escape_query_perf_out qp;
+    ZeroMemory(&qp, sizeof(qp));
+    qp.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qp.hdr.op = AEROGPU_ESCAPE_OP_QUERY_PERF;
+    qp.hdr.size = sizeof(qp);
+    qp.hdr.reserved0 = 0;
+
+    NTSTATUS stPerf = SendAerogpuEscape(f, hAdapter, &qp, sizeof(qp));
+    if (!NT_SUCCESS(stPerf)) {
+      if (stPerf == STATUS_NOT_SUPPORTED) {
+        wprintf(L"Perf: (not supported)\n");
+      } else {
+        PrintNtStatus(L"D3DKMTEscape(query-perf) failed", f, stPerf);
+      }
+      return;
+    }
+
+    const uint64_t submitted = (uint64_t)qp.last_submitted_fence;
+    const uint64_t completed = (uint64_t)qp.last_completed_fence;
+    const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
+
+    uint32_t ringPending = 0;
+    if (qp.ring0_entry_count != 0) {
+      const uint32_t head = qp.ring0_head;
+      const uint32_t tail = qp.ring0_tail;
+      if (tail >= head) {
+        ringPending = tail - head;
+      } else {
+        ringPending = tail + qp.ring0_entry_count - head;
+      }
+      if (ringPending > qp.ring0_entry_count) {
+        ringPending = qp.ring0_entry_count;
+      }
+    }
+
+    wprintf(L"Perf counters (snapshot):\n");
+    wprintf(L"  fences: submitted=0x%I64x completed=0x%I64x pending=%I64u\n",
+            (unsigned long long)submitted,
+            (unsigned long long)completed,
+            (unsigned long long)pendingFences);
+    wprintf(L"  ring0:  head=%lu tail=%lu pending=%lu entry_count=%lu size_bytes=%lu\n",
+            (unsigned long)qp.ring0_head,
+            (unsigned long)qp.ring0_tail,
+            (unsigned long)ringPending,
+            (unsigned long)qp.ring0_entry_count,
+            (unsigned long)qp.ring0_size_bytes);
+    wprintf(L"  submits: total=%I64u render=%I64u present=%I64u internal=%I64u\n",
+            (unsigned long long)qp.total_submissions,
+            (unsigned long long)qp.total_render_submits,
+            (unsigned long long)qp.total_presents,
+            (unsigned long long)qp.total_internal_submits);
+    if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, ring_push_failures) + sizeof(qp.ring_push_failures)) {
+      wprintf(L"  ring_push_failures: %I64u\n", (unsigned long long)qp.ring_push_failures);
+    }
+    wprintf(L"  irqs: fence=%I64u vblank=%I64u spurious=%I64u\n",
+            (unsigned long long)qp.irq_fence_delivered,
+            (unsigned long long)qp.irq_vblank_delivered,
+            (unsigned long long)qp.irq_spurious);
+    if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(qp.last_error_fence)) {
+      wprintf(L"  irq_error: count=%I64u last_fence=0x%I64x\n",
+              (unsigned long long)qp.error_irq_count,
+              (unsigned long long)qp.last_error_fence);
+    }
+    wprintf(L"  resets: ResetFromTimeout=%I64u last_reset_time_100ns=%I64u\n",
+            (unsigned long long)qp.reset_from_timeout_count,
+            (unsigned long long)qp.last_reset_time_100ns);
+
+    const bool errorLatched = (qp.reserved0 & 0x80000000u) != 0;
+    const uint32_t lastErrorTime10ms = (qp.reserved0 & 0x7FFFFFFFu);
+    wprintf(L"  device_error: latched=%s last_time_10ms=%lu\n",
+            errorLatched ? L"true" : L"false",
+            (unsigned long)lastErrorTime10ms);
+
+    wprintf(L"  vblank: seq=0x%I64x last_time_ns=0x%I64x period_ns=%lu\n",
+            (unsigned long long)qp.vblank_seq,
+            (unsigned long long)qp.last_vblank_time_ns,
+            (unsigned long)qp.vblank_period_ns);
+    if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) +
+                         sizeof(qp.selftest_last_error_code)) {
+      wprintf(L"  selftest: count=%I64u last_error=%lu (%s)\n",
+              (unsigned long long)qp.selftest_count,
+              (unsigned long)qp.selftest_last_error_code,
+              SelftestErrorToString(qp.selftest_last_error_code));
+    }
+  };
+
   const auto DumpUmdPrivateSummary = [&]() {
     if (!f->QueryAdapterInfo) {
       wprintf(L"UMDRIVERPRIVATE: (not available)\n");
@@ -2122,6 +2209,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
  
     DumpFenceSnapshot();
     DumpErrorInfoSnapshot();
+    DumpPerfSnapshot();
     DumpUmdPrivateSummary();
     DumpSegmentBudgetSummary();
     DumpRingSummary();
@@ -2161,6 +2249,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
   DumpFenceSnapshot();
   DumpErrorInfoSnapshot();
+  DumpPerfSnapshot();
   DumpUmdPrivateSummary();
   DumpSegmentBudgetSummary();
   DumpRingSummary();
@@ -2377,6 +2466,27 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     w.Key("supported");
     w.Bool(true);
 
+    w.Key("flags_u32_hex");
+    w.String(HexU32(qp.flags));
+    const bool flagsValid = (qp.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID) != 0;
+    w.Key("flags");
+    w.BeginObject();
+    w.Key("valid");
+    w.Bool(flagsValid);
+    w.Key("ring_valid");
+    if (flagsValid) {
+      w.Bool((qp.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID) != 0);
+    } else {
+      w.Null();
+    }
+    w.Key("vblank_valid");
+    if (flagsValid) {
+      w.Bool((qp.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID) != 0);
+    } else {
+      w.Null();
+    }
+    w.EndObject();
+
     const uint64_t submitted = (uint64_t)qp.last_submitted_fence;
     const uint64_t completed = (uint64_t)qp.last_completed_fence;
     const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
@@ -2423,6 +2533,12 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     JsonWriteU64HexDec(w, "render", qp.total_render_submits);
     JsonWriteU64HexDec(w, "present", qp.total_presents);
     JsonWriteU64HexDec(w, "internal", qp.total_internal_submits);
+    if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, ring_push_failures) + sizeof(qp.ring_push_failures)) {
+      JsonWriteU64HexDec(w, "ring_push_failures", qp.ring_push_failures);
+    } else {
+      w.Key("ring_push_failures");
+      w.Null();
+    }
     w.EndObject();
 
     w.Key("irqs");
@@ -2436,6 +2552,22 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     w.BeginObject();
     JsonWriteU64HexDec(w, "reset_from_timeout_count", qp.reset_from_timeout_count);
     JsonWriteU64HexDec(w, "last_reset_time_100ns", qp.last_reset_time_100ns);
+    w.EndObject();
+
+    w.Key("selftest");
+    w.BeginObject();
+    const bool haveSelftest =
+        (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) +
+                           sizeof(qp.selftest_last_error_code));
+    w.Key("available");
+    w.Bool(haveSelftest);
+    if (haveSelftest) {
+      JsonWriteU64HexDec(w, "count", qp.selftest_count);
+      w.Key("last_error_code");
+      w.Uint32(qp.selftest_last_error_code);
+      w.Key("last_error_str");
+      w.String(WideToUtf8(SelftestErrorToString(qp.selftest_last_error_code)));
+    }
     w.EndObject();
 
     w.Key("vblank");
@@ -3129,6 +3261,9 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.total_render_submits,
           (unsigned long long)q.total_presents,
           (unsigned long long)q.total_internal_submits);
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, ring_push_failures) + sizeof(q.ring_push_failures)) {
+    wprintf(L"  ring_push_failures: %I64u\n", (unsigned long long)q.ring_push_failures);
+  }
   wprintf(L"  irqs: fence=%I64u vblank=%I64u spurious=%I64u\n",
           (unsigned long long)q.irq_fence_delivered,
           (unsigned long long)q.irq_vblank_delivered,
@@ -3176,6 +3311,12 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.vblank_seq,
           (unsigned long long)q.last_vblank_time_ns,
           (unsigned long)q.vblank_period_ns);
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) + sizeof(q.selftest_last_error_code)) {
+    wprintf(L"  selftest: count=%I64u last_error=%lu (%s)\n",
+            (unsigned long long)q.selftest_count,
+            (unsigned long)q.selftest_last_error_code,
+            SelftestErrorToString(q.selftest_last_error_code));
+  }
 
   wprintf(L"Raw:\n");
   wprintf(L"  last_submitted_fence=%I64u\n", (unsigned long long)q.last_submitted_fence);
@@ -3194,6 +3335,14 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(q.last_error_fence)) {
     wprintf(L"  error_irq_count=%I64u\n", (unsigned long long)q.error_irq_count);
     wprintf(L"  last_error_fence=%I64u\n", (unsigned long long)q.last_error_fence);
+  }
+  wprintf(L"  flags=0x%08lx\n", (unsigned long)q.flags);
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, ring_push_failures) + sizeof(q.ring_push_failures)) {
+    wprintf(L"  ring_push_failures=%I64u\n", (unsigned long long)q.ring_push_failures);
+  }
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) + sizeof(q.selftest_last_error_code)) {
+    wprintf(L"  selftest_count=%I64u\n", (unsigned long long)q.selftest_count);
+    wprintf(L"  selftest_last_error_code=%lu\n", (unsigned long)q.selftest_last_error_code);
   }
   wprintf(L"  reset_from_timeout_count=%I64u\n", (unsigned long long)q.reset_from_timeout_count);
   wprintf(L"  last_reset_time_100ns=%I64u\n", (unsigned long long)q.last_reset_time_100ns);
@@ -6855,6 +7004,27 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   w.Key("ok");
   w.Bool(true);
 
+  w.Key("flags_u32_hex");
+  w.String(HexU32(q.flags));
+  const bool flagsValid = (q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID) != 0;
+  w.Key("flags");
+  w.BeginObject();
+  w.Key("valid");
+  w.Bool(flagsValid);
+  w.Key("ring_valid");
+  if (flagsValid) {
+    w.Bool((q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID) != 0);
+  } else {
+    w.Null();
+  }
+  w.Key("vblank_valid");
+  if (flagsValid) {
+    w.Bool((q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID) != 0);
+  } else {
+    w.Null();
+  }
+  w.EndObject();
+
   w.Key("fences");
   w.BeginObject();
   JsonWriteU64HexDec(w, "last_submitted_fence", submitted);
@@ -6864,6 +7034,11 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   if (haveErrorIrq) {
     JsonWriteU64HexDec(w, "error_irq_count", errorIrqCount);
     JsonWriteU64HexDec(w, "last_error_fence", lastErrorFence);
+  } else {
+    w.Key("error_irq_count");
+    w.Null();
+    w.Key("last_error_fence");
+    w.Null();
   }
   w.EndObject();
 
@@ -6887,6 +7062,12 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   JsonWriteU64HexDec(w, "render", q.total_render_submits);
   JsonWriteU64HexDec(w, "present", q.total_presents);
   JsonWriteU64HexDec(w, "internal", q.total_internal_submits);
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, ring_push_failures) + sizeof(q.ring_push_failures)) {
+    JsonWriteU64HexDec(w, "ring_push_failures", q.ring_push_failures);
+  } else {
+    w.Key("ring_push_failures");
+    w.Null();
+  }
   w.EndObject();
 
   w.Key("irqs");
@@ -6894,8 +7075,15 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   JsonWriteU64HexDec(w, "fence_delivered", q.irq_fence_delivered);
   JsonWriteU64HexDec(w, "vblank_delivered", q.irq_vblank_delivered);
   JsonWriteU64HexDec(w, "spurious", q.irq_spurious);
-  JsonWriteU64HexDec(w, "error_irq_count", q.error_irq_count);
-  JsonWriteU64HexDec(w, "last_error_fence", q.last_error_fence);
+  if (haveErrorIrq) {
+    JsonWriteU64HexDec(w, "error_irq_count", errorIrqCount);
+    JsonWriteU64HexDec(w, "last_error_fence", lastErrorFence);
+  } else {
+    w.Key("error_irq_count");
+    w.Null();
+    w.Key("last_error_fence");
+    w.Null();
+  }
   w.EndObject();
 
   w.Key("resets");
@@ -6920,7 +7108,7 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   w.Key("period_ns");
   w.Uint32(q.vblank_period_ns);
   w.EndObject();
-
+ 
   // Last error snapshot (best-effort; may not be supported by older KMD/device builds).
   w.Key("last_error");
   w.BeginObject();
@@ -6953,6 +7141,22 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
       w.Key("error_count");
       w.Uint32(qe.error_count);
     }
+  }
+  w.EndObject();
+ 
+  w.Key("selftest");
+  w.BeginObject();
+  const bool haveSelftest =
+      (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) +
+                         sizeof(q.selftest_last_error_code));
+  w.Key("available");
+  w.Bool(haveSelftest);
+  if (haveSelftest) {
+    JsonWriteU64HexDec(w, "count", q.selftest_count);
+    w.Key("last_error_code");
+    w.Uint32(q.selftest_last_error_code);
+    w.Key("last_error_str");
+    w.String(WideToUtf8(SelftestErrorToString(q.selftest_last_error_code)));
   }
   w.EndObject();
 

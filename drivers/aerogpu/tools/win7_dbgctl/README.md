@@ -91,11 +91,13 @@ Minimum supported commands:
   - a stall warning if the completed fence does not advance for multiple intervals while work is pending.
 
 - `aerogpu_dbgctl --query-perf` *(alias: `--perf`)*  
-  Dumps a KMD-provided perf/health counter snapshot (fence/ring progress, submit counts, IRQ counts,
-  reset counts, vblank counters, and error IRQ / last-error diagnostics when available).
-  Also includes sticky device error state when supported:
-  - `device_error.latched` and `device_error.last_time_10ms` (approx; packed into `reserved0` for ABI stability), and
-  - error IRQ telemetry (`error_irq_count` / `last_error_fence`) when supported by the KMD (dbgctl may fall back to `--query-fence` on older builds).
+  Dumps a KMD-provided perf/health counter snapshot, including:
+  - fence + ring progress (ring0 head/tail),
+  - submit counters (total / render / present / internal),
+  - ring push failures (submission path failures before reaching the device),
+  - IRQ delivery counters (fence/vblank/spurious + error IRQ snapshot when available; dbgctl may fall back to `--query-fence` on older builds),
+  - reset counts, vblank counters, and selftest stats (count + last error when available), and
+  - sticky device error state (`device_error.latched` + `device_error.last_time_10ms`; packed into `reserved0` for ABI stability).
   On older KMD builds this may print `(not supported)`; upgrade the driver to enable it.
 
 - `aerogpu_dbgctl --query-scanout`  

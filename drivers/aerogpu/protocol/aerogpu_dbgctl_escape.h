@@ -186,7 +186,6 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u64 vblank_seq;
   aerogpu_escape_u64 last_vblank_time_ns;
   aerogpu_escape_u32 vblank_period_ns;
-
   /*
    * Packed error state (best-effort):
    * - Bit 31: KMD device error latched (AEROGPU_IRQ_ERROR observed).
@@ -202,10 +201,33 @@ typedef struct aerogpu_escape_query_perf_out {
    */
   aerogpu_escape_u64 error_irq_count;
   aerogpu_escape_u64 last_error_fence;
+
+  /*
+   * Additional perf counters (appended).
+   *
+   * These fields are appended to keep the layout backwards compatible with
+   * older bring-up tooling. Callers must check `hdr.size` before reading them.
+   */
+  aerogpu_escape_u64 ring_push_failures;
+  aerogpu_escape_u64 selftest_count;
+  aerogpu_escape_u32 selftest_last_error_code; /* enum aerogpu_dbgctl_selftest_error */
+  /*
+   * Flags (appended):
+   * - Bit 31: flags are valid (newer KMDs). If clear, tooling should treat any
+   *   other flag bits as unavailable.
+   * - Bit 0: ring0_head/tail are valid (0 when unavailable, e.g. legacy device
+   *   while powered down).
+   * - Bit 1: vblank snapshot fields are valid (device supports vblank).
+   */
+  aerogpu_escape_u32 flags;
 } aerogpu_escape_query_perf_out;
 
+#define AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID (1u << 31)
+#define AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID (1u << 0)
+#define AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID (1u << 1)
+
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 160);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 184);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
@@ -227,6 +249,10 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, vblank_peri
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reserved0) == 140);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, error_irq_count) == 144);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_error_fence) == 152);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring_push_failures) == 160);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, selftest_count) == 168);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) == 176);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, flags) == 180);
 
 /*
  * Must remain stable across x86/x64.

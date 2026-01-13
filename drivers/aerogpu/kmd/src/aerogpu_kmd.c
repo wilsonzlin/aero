@@ -1494,6 +1494,7 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
         return STATUS_DEVICE_NOT_READY;
     }
     if (!Adapter->RingVa || !Adapter->Bar0) {
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
         return STATUS_DEVICE_NOT_READY;
     }
 
@@ -1504,6 +1505,7 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     ULONG nextTail = (Adapter->RingTail + 1) % Adapter->RingEntryCount;
     if (nextTail == head) {
         KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
         return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
     }
 
@@ -1550,6 +1552,7 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
         return STATUS_DEVICE_NOT_READY;
     }
     if (!Adapter->RingVa || !Adapter->RingHeader || !Adapter->Bar0 || Adapter->RingEntryCount == 0) {
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
         return STATUS_DEVICE_NOT_READY;
     }
 
@@ -1561,6 +1564,7 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     const uint32_t pending = tail - head;
     if (pending >= Adapter->RingEntryCount) {
         KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
         return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
     }
 
@@ -7246,7 +7250,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                 /*
                  * Defensive: if the device reports an IRQ_STATUS bit we don't understand,
                  * still ACK it to avoid interrupt storms from a stuck level-triggered line.
-                 */
+                */
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
                 InterlockedIncrement(&adapter->IrqIsrCount);
                 static LONG g_UnexpectedIrqWarned = 0;
@@ -9291,6 +9295,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->ring0_size_bytes = (uint32_t)adapter->RingSizeBytes;
         out->ring0_entry_count = (uint32_t)adapter->RingEntryCount;
 
+        BOOLEAN ringValid = FALSE;
         {
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
@@ -9300,9 +9305,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
                 head = adapter->RingHeader->head;
                 tail = adapter->RingHeader->tail;
+                ringValid = TRUE;
             } else if (poweredOn) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
                 tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+                ringValid = TRUE;
             }
 
             out->ring0_head = (uint32_t)head;
@@ -9351,6 +9358,30 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (pEscape->PrivateDriverDataSize >=
             (offsetof(aerogpu_escape_query_perf_out, last_error_fence) + sizeof(aerogpu_escape_u64))) {
             out->last_error_fence = (uint64_t)AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, ring_push_failures) + sizeof(aerogpu_escape_u64))) {
+            out->ring_push_failures =
+                (uint64_t)InterlockedCompareExchange64(&adapter->PerfRingPushFailures, 0, 0);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, selftest_count) + sizeof(aerogpu_escape_u64))) {
+            out->selftest_count = (uint64_t)InterlockedCompareExchange64(&adapter->PerfSelftestCount, 0, 0);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) + sizeof(aerogpu_escape_u32))) {
+            out->selftest_last_error_code =
+                (uint32_t)InterlockedCompareExchange(&adapter->PerfSelftestLastErrorCode, 0, 0);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, flags) + sizeof(aerogpu_escape_u32))) {
+            out->flags = AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID;
+            if (ringValid) {
+                out->flags |= AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID;
+            }
+            if (adapter->SupportsVblank) {
+                out->flags |= AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID;
+            }
         }
 
         return STATUS_SUCCESS;
@@ -9647,8 +9678,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
         io->reserved0 = 0;
 
+        InterlockedIncrement64(&adapter->PerfSelftestCount);
+        InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+
         if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
             return STATUS_SUCCESS;
         }
 
@@ -9660,6 +9695,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (!adapter->Bar0 || !adapter->RingVa || adapter->RingEntryCount == 0 ||
             (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && !adapter->RingHeader)) {
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
+            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
             return STATUS_SUCCESS;
         }
 
@@ -9702,6 +9738,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             dmaVa = AeroGpuAllocContiguous(dmaSizeBytes, &dmaPa);
             if (!dmaVa) {
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                 return STATUS_SUCCESS;
             }
 
@@ -9734,6 +9771,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             if (!desc) {
                 AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                 return STATUS_SUCCESS;
             }
 
@@ -9837,6 +9875,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             io->error_code = (pushStatus == STATUS_DEVICE_BUSY)
                                  ? AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY
                                  : AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
+            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
             return STATUS_SUCCESS;
         }
 
@@ -9864,6 +9903,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              */
             io->passed = 0;
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT;
+            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
             return STATUS_SUCCESS;
         }
 
@@ -9879,6 +9919,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
             if (!haveVblankRegs) {
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                 return STATUS_SUCCESS;
             }
 
@@ -9942,6 +9983,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                 if (seqNow <= seq0) {
                     io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                     return STATUS_SUCCESS;
                 }
 
@@ -9955,6 +9997,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG));
                 if (!haveIrqRegs) {
                     io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                     return STATUS_SUCCESS;
                 }
 
@@ -10077,6 +10120,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
 
                     if (!ok) {
+                        InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                         return STATUS_SUCCESS;
                     }
                 }
@@ -10163,6 +10207,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             const BOOLEAN haveCursorRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG));
             if (!haveCursorRegs) {
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                 return STATUS_SUCCESS;
             }
 
@@ -10265,12 +10310,14 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
             if (!ok) {
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                 return STATUS_SUCCESS;
             }
         }
 
         io->passed = 1;
         io->error_code = AEROGPU_DBGCTL_SELFTEST_OK;
+        InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
         return STATUS_SUCCESS;
     }
 

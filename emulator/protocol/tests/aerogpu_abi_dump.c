@@ -528,9 +528,13 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, vblank_seq);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_vblank_time_ns);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, vblank_period_ns);
-  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, reserved0);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, flags);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, error_irq_count);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_error_fence);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring_push_failures);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, selftest_count);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, selftest_last_error_code);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, reserved0);
 
   PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, signal_fence);
   PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, cmd_gpa);
@@ -993,6 +997,10 @@ int main(void) {
   PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH);
   PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED);
   PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED);
+
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID);
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID);
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID);
 
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED);

@@ -2555,7 +2555,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
     assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 48);
-    assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 160);
+    assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 184);
     assert_eq!(abi.size("aerogpu_dbgctl_ring_desc"), 24);
     assert_eq!(abi.size("aerogpu_dbgctl_ring_desc_v2"), 40);
     assert_eq!(abi.size("aerogpu_escape_query_error_out"), 40);
@@ -2651,14 +2651,8 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 32);
     assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"),
-        40
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"),
-        44
-    );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"), 40);
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"), 44);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "total_submissions"),
         48
@@ -2716,6 +2710,19 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_error_fence"),
         152
     );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "ring_push_failures"),
+        160
+    );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "selftest_count"), 168);
+    assert_eq!(
+        abi.offset(
+            "aerogpu_escape_query_perf_out",
+            "selftest_last_error_code"
+        ),
+        176
+    );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "flags"), 180);
 
     assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "signal_fence"), 0);
     assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "cmd_gpa"), 8);
@@ -3005,6 +3012,12 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS"), 32);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS"), 32);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_READ_GPA_MAX_BYTES"), 4096);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID"),
+        1u64 << 31
+    );
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID"), 1);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID"), 2);
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"),
         1u64 << 31

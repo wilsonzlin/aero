@@ -261,6 +261,12 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfResetFromTimeoutCount;
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfLastResetTime100ns;
 
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfRingPushFailures;
+
+    /* dbgctl selftest statistics (AEROGPU_ESCAPE_OP_SELFTEST). */
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfSelftestCount;
+    volatile LONG PerfSelftestLastErrorCode; /* enum aerogpu_dbgctl_selftest_error */
+
     /*
      * Sticky error IRQ tracking.
      *
