@@ -455,6 +455,41 @@ impl AerogpuCmdWriter {
             .copy_from_slice(dxbc_bytes);
     }
 
+    pub fn create_shader_dxbc_ex(
+        &mut self,
+        shader_handle: AerogpuHandle,
+        stage_ex: AerogpuShaderStageEx,
+        dxbc_bytes: &[u8],
+    ) {
+        assert!(dxbc_bytes.len() <= u32::MAX as usize);
+        let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>()
+            .checked_add(dxbc_bytes.len())
+            .expect("CREATE_SHADER_DXBC packet too large (usize overflow)");
+        let base = self.append_raw(AerogpuCmdOpcode::CreateShaderDxbc, unpadded_size);
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, shader_handle),
+            shader_handle,
+        );
+        // ABI extension encoding:
+        // - stage = Compute (sentinel for "use stage_ex")
+        // - reserved0 = stage_ex
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, stage),
+            AerogpuShaderStage::Compute as u32,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, dxbc_size_bytes),
+            dxbc_bytes.len() as u32,
+        );
+        self.write_u32_at(
+            base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0),
+            stage_ex as u32,
+        );
+        self.buf[base + size_of::<AerogpuCmdCreateShaderDxbc>()
+            ..base + size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len()]
+            .copy_from_slice(dxbc_bytes);
+    }
+
     pub fn destroy_shader(&mut self, shader_handle: AerogpuHandle) {
         let base = self.append_raw(
             AerogpuCmdOpcode::DestroyShader,

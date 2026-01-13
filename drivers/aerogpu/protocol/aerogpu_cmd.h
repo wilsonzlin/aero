@@ -160,6 +160,29 @@ enum aerogpu_shader_stage {
   AEROGPU_SHADER_STAGE_GEOMETRY = 3,
 };
 
+/*
+ * Extended shader stage used by the "stage_ex" ABI extension.
+ *
+ * Matches the DXBC/D3D10+ `D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE` values:
+ * - 0 = Pixel
+ * - 1 = Vertex
+ * - 2 = Geometry
+ * - 3 = Hull
+ * - 4 = Domain
+ * - 5 = Compute
+ *
+ * Note: this intentionally does **not** match `enum aerogpu_shader_stage` (legacy AeroGPU stage
+ * enum).
+ */
+enum aerogpu_shader_stage_ex {
+  AEROGPU_SHADER_STAGE_EX_PIXEL = 0,
+  AEROGPU_SHADER_STAGE_EX_VERTEX = 1,
+  AEROGPU_SHADER_STAGE_EX_GEOMETRY = 2,
+  AEROGPU_SHADER_STAGE_EX_HULL = 3,
+  AEROGPU_SHADER_STAGE_EX_DOMAIN = 4,
+  AEROGPU_SHADER_STAGE_EX_COMPUTE = 5,
+};
+
 enum aerogpu_index_format {
   AEROGPU_INDEX_FORMAT_UINT16 = 0,
   AEROGPU_INDEX_FORMAT_UINT32 = 1,

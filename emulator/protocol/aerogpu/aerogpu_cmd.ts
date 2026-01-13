@@ -1420,6 +1420,19 @@ export class AerogpuCmdWriter {
     new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE, dxbcBytes.byteLength).set(dxbcBytes);
   }
 
+  createShaderDxbcEx(shaderHandle: AerogpuHandle, stageEx: AerogpuShaderStageEx, dxbcBytes: Uint8Array): void {
+    const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
+    const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
+    this.view.setUint32(base + 8, shaderHandle, true);
+    // ABI extension encoding:
+    // - stage = Compute (sentinel for "use stage_ex")
+    // - reserved0 = stageEx
+    this.view.setUint32(base + 12, AerogpuShaderStage.Compute, true);
+    this.view.setUint32(base + 16, dxbcBytes.byteLength, true);
+    this.view.setUint32(base + 20, stageEx, true);
+    new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE, dxbcBytes.byteLength).set(dxbcBytes);
+  }
+
   destroyShader(shaderHandle: AerogpuHandle): void {
     const base = this.appendRaw(AerogpuCmdOpcode.DestroyShader, AEROGPU_CMD_DESTROY_SHADER_SIZE);
     this.view.setUint32(base + 8, shaderHandle, true);
