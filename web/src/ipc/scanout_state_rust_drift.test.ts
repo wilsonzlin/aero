@@ -1,0 +1,114 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+import {
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_SOURCE_LEGACY_TEXT,
+  SCANOUT_SOURCE_LEGACY_VBE_LFB,
+  SCANOUT_SOURCE_WDDM,
+  SCANOUT_STATE_BYTE_LEN,
+  SCANOUT_STATE_GENERATION_BUSY_BIT,
+  SCANOUT_STATE_U32_LEN,
+  ScanoutStateIndex,
+} from "./scanout_state";
+
+function parseRustConstExpr(source: string, name: string): string {
+  // Keep the matcher intentionally strict so we fail loudly if the Rust source changes.
+  const re = new RegExp(String.raw`^\s*pub const ${name}: [^=]+ = (.+);$`, "m");
+  const match = source.match(re);
+  if (!match) {
+    throw new Error(`Failed to locate \`pub const ${name}\` in crates/aero-shared/src/scanout_state.rs`);
+  }
+  return match[1]?.trim() ?? "";
+}
+
+function parseRustIntLiteral(token: string): bigint | null {
+  // Rust allows numeric suffixes like `123u32` or `0xffusize`. We only care about the numeric part.
+  const match = token.match(/^(0x[0-9a-fA-F_]+|\d[\d_]*)(?:[a-zA-Z][a-zA-Z0-9_]*)?$/);
+  if (!match) return null;
+  const raw = (match[1] ?? "").replaceAll("_", "");
+  if (raw.length === 0) return null;
+  if (raw.startsWith("0x") || raw.startsWith("0X")) {
+    return BigInt(raw);
+  }
+  return BigInt(raw);
+}
+
+function evalRustConstExpr(expr: string, env: Readonly<Record<string, bigint>>): bigint {
+  const e = expr.trim();
+  if (e in env) return env[e] ?? 0n;
+
+  const lit = parseRustIntLiteral(e);
+  if (lit != null) return lit;
+
+  // Support the small subset of const expressions used by ScanoutState.
+  const shift = e.match(/^(.+?)\s*<<\s*(.+)$/);
+  if (shift) return evalRustConstExpr(shift[1] ?? "", env) << evalRustConstExpr(shift[2] ?? "", env);
+
+  const mul = e.match(/^(.+?)\s*\*\s*(.+)$/);
+  if (mul) return evalRustConstExpr(mul[1] ?? "", env) * evalRustConstExpr(mul[2] ?? "", env);
+
+  throw new Error(`Unsupported Rust const expression: ${expr}`);
+}
+
+function parseRustConstNumber(source: string, name: string, env: Readonly<Record<string, bigint>> = {}): number {
+  const expr = parseRustConstExpr(source, name);
+  const value = evalRustConstExpr(expr, env);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`Rust const ${name} too large to represent as a JS number: ${value.toString()}`);
+  }
+  return Number(value);
+}
+
+describe("ScanoutState layout matches Rust source of truth", () => {
+  it("keeps scanout state constants in sync with crates/aero-shared/src/scanout_state.rs", () => {
+    const rustUrl = new URL("../../../crates/aero-shared/src/scanout_state.rs", import.meta.url);
+    const rust = readFileSync(rustUrl, "utf8");
+
+    const rustU32Len = parseRustConstNumber(rust, "SCANOUT_STATE_U32_LEN");
+    expect(SCANOUT_STATE_U32_LEN, "SCANOUT_STATE_U32_LEN mismatch (Rust <-> TS)").toBe(rustU32Len);
+
+    const rustByteLen = parseRustConstNumber(rust, "SCANOUT_STATE_BYTE_LEN", {
+      SCANOUT_STATE_U32_LEN: BigInt(rustU32Len),
+    });
+    expect(SCANOUT_STATE_BYTE_LEN, "SCANOUT_STATE_BYTE_LEN mismatch (Rust <-> TS)").toBe(rustByteLen);
+
+    const rustBusyBit = parseRustConstNumber(rust, "SCANOUT_STATE_GENERATION_BUSY_BIT");
+    expect(SCANOUT_STATE_GENERATION_BUSY_BIT >>> 0, "SCANOUT_STATE_GENERATION_BUSY_BIT mismatch (Rust <-> TS)").toBe(
+      rustBusyBit,
+    );
+
+    // Scanout source enum values.
+    expect(SCANOUT_SOURCE_LEGACY_TEXT, "SCANOUT_SOURCE_LEGACY_TEXT mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "SCANOUT_SOURCE_LEGACY_TEXT"),
+    );
+    expect(SCANOUT_SOURCE_LEGACY_VBE_LFB, "SCANOUT_SOURCE_LEGACY_VBE_LFB mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "SCANOUT_SOURCE_LEGACY_VBE_LFB"),
+    );
+    expect(SCANOUT_SOURCE_WDDM, "SCANOUT_SOURCE_WDDM mismatch (Rust <-> TS)").toBe(parseRustConstNumber(rust, "SCANOUT_SOURCE_WDDM"));
+
+    // Scanout format enum values.
+    expect(SCANOUT_FORMAT_B8G8R8X8, "SCANOUT_FORMAT_B8G8R8X8 mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "SCANOUT_FORMAT_B8G8R8X8"),
+    );
+
+    // Header indices / layout offsets.
+    expect(ScanoutStateIndex.GENERATION, "ScanoutStateIndex.GENERATION mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "GENERATION"),
+    );
+    expect(ScanoutStateIndex.SOURCE, "ScanoutStateIndex.SOURCE mismatch (Rust <-> TS)").toBe(parseRustConstNumber(rust, "SOURCE"));
+    expect(ScanoutStateIndex.BASE_PADDR_LO, "ScanoutStateIndex.BASE_PADDR_LO mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "BASE_PADDR_LO"),
+    );
+    expect(ScanoutStateIndex.BASE_PADDR_HI, "ScanoutStateIndex.BASE_PADDR_HI mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "BASE_PADDR_HI"),
+    );
+    expect(ScanoutStateIndex.WIDTH, "ScanoutStateIndex.WIDTH mismatch (Rust <-> TS)").toBe(parseRustConstNumber(rust, "WIDTH"));
+    expect(ScanoutStateIndex.HEIGHT, "ScanoutStateIndex.HEIGHT mismatch (Rust <-> TS)").toBe(parseRustConstNumber(rust, "HEIGHT"));
+    expect(ScanoutStateIndex.PITCH_BYTES, "ScanoutStateIndex.PITCH_BYTES mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "PITCH_BYTES"),
+    );
+    expect(ScanoutStateIndex.FORMAT, "ScanoutStateIndex.FORMAT mismatch (Rust <-> TS)").toBe(parseRustConstNumber(rust, "FORMAT"));
+  });
+});
+
