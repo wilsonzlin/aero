@@ -419,6 +419,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache FreeDOS download
+        uses: actions/cache@v4
+        with:
+          path: test-images/cache/
+          key: freedos-cache-${{ hashFiles('scripts/prepare-freedos.sh') }}
+          restore-keys: |
+            freedos-cache-
+
       - name: Setup Rust
         id: setup-rust
         uses: ./.github/actions/setup-rust
