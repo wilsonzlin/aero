@@ -89,6 +89,8 @@ Minimum supported commands:
   - `AEROGPU_ESCAPE_OP_READ_GPA` to read cursor bytes from guest physical memory
   
   Useful for diagnosing cursor image/pitch/fb_gpa bugs without relying on host-side captures.
+  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
+  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
 - `aerogpu_dbgctl --read-gpa GPA --size N [--out FILE] [--force]`  
   Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
@@ -113,6 +115,7 @@ Minimum supported commands:
 - `aerogpu_dbgctl --dump-last-cmd --out <path>`
   Dumps the raw bytes of the most recent command stream buffer (`cmd_gpa .. cmd_gpa+cmd_size_bytes`) from the ring
   into `<path>` (binary). Use `--index-from-tail K` to select older submissions (0 = newest).
+  Also writes a small metadata file to `<path>.txt` (ring head/tail, selected descriptor, etc.) when possible.
   On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
   to `<path>.alloc_table.bin`. A small metadata summary is also written to `<path>.txt` (ring/fence/GPAs/sizes).
 
@@ -304,8 +307,8 @@ This tool currently supports JSON output for snapshot-style commands:
 - `--selftest`
 - `--list-displays`
 
-Streaming/binary-output commands (`--watch-fence`, `--watch-ring`, `--wait-vblank`, `--query-scanline`, `--dump-scanout-bmp`,
-`--dump-last-cmd`, `--read-gpa`) currently return `ok:false` in JSON mode.
+The following commands currently return `ok:false` in JSON mode: `--query-segments`, `--watch-fence`, `--watch-ring`, `--wait-vblank`,
+`--query-scanline`, `--dump-scanout-bmp`, `--dump-cursor-bmp`, `--dump-last-cmd`, `--read-gpa`.
 
 ## Build (Windows 7)
 
