@@ -1195,10 +1195,47 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
 mod tests {
     use super::*;
     use crate::devices::VirtioDevice;
-    use crate::memory::{read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
+    use crate::memory::{
+        read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+    };
     use crate::queue::{
         PoppedDescriptorChain, VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE,
     };
+
+    #[derive(Debug, Default, Clone)]
+    struct TestCaptureSource {
+        inner: aero_audio::capture::VecDequeCaptureSource,
+        read_calls: usize,
+        samples_read: usize,
+        last_requested: Option<usize>,
+        dropped_samples: u64,
+    }
+
+    impl TestCaptureSource {
+        fn push_samples(&mut self, samples: &[f32]) {
+            self.inner.push_samples(samples);
+        }
+
+        fn remaining_samples(&self) -> usize {
+            self.inner.len()
+        }
+    }
+
+    impl AudioCaptureSource for TestCaptureSource {
+        fn read_mono_f32(&mut self, out: &mut [f32]) -> usize {
+            self.read_calls += 1;
+            self.last_requested = Some(out.len());
+            let got = self.inner.read_mono_f32(out);
+            self.samples_read += got;
+            got
+        }
+
+        fn take_dropped_samples(&mut self) -> u64 {
+            let v = self.dropped_samples;
+            self.dropped_samples = 0;
+            v
+        }
+    }
 
     fn status(resp: &[u8]) -> u32 {
         u32::from_le_bytes(resp[0..4].try_into().unwrap())
@@ -1218,6 +1255,19 @@ mod tests {
         write_u32_le(mem, base + 8, len).unwrap();
         write_u16_le(mem, base + 12, flags).unwrap();
         write_u16_le(mem, base + 14, next).unwrap();
+    }
+
+    fn pop_chain(queue: &mut VirtQueue, mem: &GuestRam) -> DescriptorChain {
+        match queue.pop_descriptor_chain(mem).unwrap().unwrap() {
+            PoppedDescriptorChain::Chain(chain) => chain,
+            PoppedDescriptorChain::Invalid { error, .. } => {
+                panic!("unexpected descriptor chain parse error: {error:?}")
+            }
+        }
+    }
+
+    fn read_status_code(mem: &GuestRam, addr: u64) -> u32 {
+        read_u32_le(mem, addr).unwrap()
     }
 
     #[test]
@@ -1707,5 +1757,406 @@ mod tests {
 
         let resp = mem.get_slice(resp_addr, 8).unwrap();
         assert_eq!(u32::from_le_bytes(resp[0..4].try_into().unwrap()), VIRTIO_SND_S_BAD_MSG);
+    }
+
+    #[test]
+    fn rx_returns_io_err_when_capture_stream_not_running_and_zeros_payload() {
+        let mut snd = VirtioSnd::new_with_capture(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            TestCaptureSource::default(),
+        );
+
+        // Valid RX chain header, but stream not running.
+        assert_ne!(snd.capture.state, StreamState::Running);
+
+        let mut mem = GuestRam::new(0x20000);
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let header_addr = 0x4000;
+        let payload_addr = 0x4100;
+        let status_addr = 0x4200;
+
+        // Header: stream_id + reserved
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&CAPTURE_STREAM_ID.to_le_bytes());
+        mem.get_slice_mut(header_addr, 8).unwrap().copy_from_slice(&hdr);
+
+        // Fill payload/status with non-zero bytes so we can assert deterministic writes.
+        mem.get_slice_mut(payload_addr, 8).unwrap().fill(0xAA);
+        mem.get_slice_mut(status_addr, 8).unwrap().fill(0xBB);
+
+        // 0: OUT header, 1: IN payload, 2: IN status
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            payload_addr,
+            8,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            status_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        // Submit chain head=0.
+        write_u16_le(&mut mem, avail, 0).unwrap(); // flags
+        write_u16_le(&mut mem, avail + 2, 1).unwrap(); // idx
+        write_u16_le(&mut mem, avail + 4, 0).unwrap(); // ring[0]
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let status_code = read_status_code(&mem, status_addr);
+        assert_eq!(status_code, VIRTIO_SND_S_IO_ERR);
+        assert_eq!(read_u32_le(&mem, status_addr + 4).unwrap(), 0);
+
+        assert_eq!(mem.get_slice(payload_addr, 8).unwrap(), &[0u8; 8]);
+
+        assert_eq!(snd.capture_source.read_calls, 0);
+        assert_eq!(snd.capture_source.samples_read, 0);
+
+        // Used element should report payload + status bytes written.
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 16);
+    }
+
+    #[test]
+    fn rx_bad_chain_writes_silence_payload_and_reports_bad_msg() {
+        let mut snd = VirtioSnd::new_with_capture(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            TestCaptureSource::default(),
+        );
+        // Force the stream into Running so the error comes from chain parsing.
+        snd.capture.state = StreamState::Running;
+
+        let mut mem = GuestRam::new(0x20000);
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let header_addr = 0x4000;
+        let extra_out_addr = 0x4010;
+        let payload_addr = 0x4100;
+        let status_addr = 0x4200;
+
+        // Header: valid stream_id, but add an extra OUT descriptor to trigger `extra_out`.
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&CAPTURE_STREAM_ID.to_le_bytes());
+        mem.get_slice_mut(header_addr, 8).unwrap().copy_from_slice(&hdr);
+        mem.get_slice_mut(extra_out_addr, 1).unwrap()[0] = 0x99;
+
+        mem.get_slice_mut(payload_addr, 8).unwrap().fill(0xCC);
+        mem.get_slice_mut(status_addr, 8).unwrap().fill(0xDD);
+
+        // 0: OUT header, 1: OUT extra byte (invalid), 2: IN payload, 3: IN status
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            extra_out_addr,
+            1,
+            VIRTQ_DESC_F_NEXT,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            payload_addr,
+            8,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            3,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            3,
+            status_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        assert_eq!(read_status_code(&mem, status_addr), VIRTIO_SND_S_BAD_MSG);
+        assert_eq!(mem.get_slice(payload_addr, 8).unwrap(), &[0u8; 8]);
+        assert_eq!(snd.capture_source.read_calls, 0);
+        assert_eq!(snd.capture_source.samples_read, 0);
+    }
+
+    #[test]
+    fn rx_running_captures_expected_s16le_samples() {
+        let mut source = TestCaptureSource::default();
+        source.push_samples(&[-1.0, -0.5, 0.0, 1.0]);
+        let mut snd = VirtioSnd::new_with_capture(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            source,
+        );
+        snd.capture.state = StreamState::Running;
+
+        let mut mem = GuestRam::new(0x20000);
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let header_addr = 0x4000;
+        let payload1_addr = 0x4100;
+        let payload2_addr = 0x4200;
+        let status_addr = 0x4300;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&CAPTURE_STREAM_ID.to_le_bytes());
+        mem.get_slice_mut(header_addr, 8).unwrap().copy_from_slice(&hdr);
+
+        mem.get_slice_mut(payload1_addr, 5).unwrap().fill(0xAA);
+        mem.get_slice_mut(payload2_addr, 3).unwrap().fill(0xAA);
+        mem.get_slice_mut(status_addr, 8).unwrap().fill(0xAA);
+
+        // 0: OUT header, 1-2: IN payload, 3: IN status
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            payload1_addr,
+            5,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            payload2_addr,
+            3,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            3,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            3,
+            status_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        assert_eq!(read_status_code(&mem, status_addr), VIRTIO_SND_S_OK);
+
+        let expected: [u8; 8] = [
+            0x00, 0x80, // -1.0 -> -32768
+            0x00, 0xC0, // -0.5 -> -16384
+            0x00, 0x00, // 0.0 -> 0
+            0xFF, 0x7F, // 1.0 -> 32767
+        ];
+        assert_eq!(mem.get_slice(payload1_addr, 5).unwrap(), &expected[..5]);
+        assert_eq!(mem.get_slice(payload2_addr, 3).unwrap(), &expected[5..]);
+
+        assert_eq!(snd.capture_source.read_calls, 1);
+        assert_eq!(snd.capture_source.last_requested, Some(4));
+        assert_eq!(snd.capture_source.samples_read, 4);
+        assert_eq!(snd.capture_source.remaining_samples(), 0);
+        assert_eq!(snd.capture_telemetry, CaptureTelemetry::default());
+    }
+
+    #[test]
+    fn rx_underrun_zero_fills_and_increments_telemetry() {
+        let mut source = TestCaptureSource::default();
+        source.push_samples(&[0.25, -0.25]);
+        let mut snd = VirtioSnd::new_with_capture(
+            aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            source,
+        );
+        snd.capture.state = StreamState::Running;
+
+        let mut mem = GuestRam::new(0x20000);
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let header_addr = 0x4000;
+        let payload_addr = 0x4100;
+        let status_addr = 0x4200;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&CAPTURE_STREAM_ID.to_le_bytes());
+        mem.get_slice_mut(header_addr, 8).unwrap().copy_from_slice(&hdr);
+
+        mem.get_slice_mut(payload_addr, 10).unwrap().fill(0xAB);
+        mem.get_slice_mut(status_addr, 8).unwrap().fill(0xAB);
+
+        // Need 5 samples (10 bytes), but only provide 2 -> underrun of 3.
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            header_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            payload_addr,
+            10,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            status_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_RX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        assert_eq!(read_status_code(&mem, status_addr), VIRTIO_SND_S_OK);
+
+        let expected: [u8; 10] = [
+            0x00, 0x20, // 0.25 -> 8192
+            0x00, 0xE0, // -0.25 -> -8192
+            0x00, 0x00, // silence (underrun)
+            0x00, 0x00, // silence
+            0x00, 0x00, // silence
+        ];
+        assert_eq!(mem.get_slice(payload_addr, 10).unwrap(), &expected);
+
+        assert_eq!(snd.capture_source.read_calls, 1);
+        assert_eq!(snd.capture_source.last_requested, Some(5));
+        assert_eq!(snd.capture_source.samples_read, 2);
+        assert_eq!(snd.capture_source.remaining_samples(), 0);
+
+        assert_eq!(
+            snd.capture_telemetry,
+            CaptureTelemetry {
+                dropped_samples: 0,
+                underrun_samples: 3,
+                underrun_responses: 1,
+            }
+        );
     }
 }
