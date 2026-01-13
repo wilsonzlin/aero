@@ -43,6 +43,17 @@ func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock ratelimit.Cl
 
 func (sm *SessionManager) Metrics() *metrics.Metrics { return sm.metrics }
 
+// ActiveSessions returns the current number of active sessions tracked by this
+// manager.
+//
+// This is primarily intended for tests and observability; callers should not
+// rely on this for synchronization.
+func (sm *SessionManager) ActiveSessions() int {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return len(sm.sessions)
+}
+
 func (sm *SessionManager) CreateSession() (*Session, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		id, err := newSessionID()
