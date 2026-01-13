@@ -1580,13 +1580,13 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
             ws.send(frame);
           });
 
-        const waitForClose = async (ws) =>
+        const waitForErrorAndClose = async (ws) =>
           await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("timed out waiting for unauthorized close")), 10_000);
             let errMsg;
             let closed;
             const maybeDone = () => {
-              if (!closed) return;
+              if (!errMsg || !closed) return;
               cleanup();
               resolve({ errMsg, closeCode: closed.code, closeReason: closed.reason });
             };
@@ -1600,6 +1600,7 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
               }
               if (msg?.type === "error") {
                 errMsg = msg;
+                maybeDone();
               }
             };
             const onClose = (event) => {
@@ -1668,14 +1669,14 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         // Sending datagrams before completing auth (and before receiving ready) should be rejected.
         const wsMissing = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsMissing.binaryType = "arraybuffer";
-        const missingPromise = waitForClose(wsMissing);
+        const missingPromise = waitForErrorAndClose(wsMissing);
         await waitForOpen(wsMissing);
         wsMissing.send(buildV1Frame("should be rejected"));
         const missingRes = await missingPromise;
 
         const wsInvalid = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsInvalid.binaryType = "arraybuffer";
-        const invalidPromise = waitForClose(wsInvalid);
+        const invalidPromise = waitForErrorAndClose(wsInvalid);
         await waitForOpen(wsInvalid);
         wsInvalid.send(JSON.stringify({ type: "auth", token: `${token}-invalid` }));
         const invalidRes = await invalidPromise;
