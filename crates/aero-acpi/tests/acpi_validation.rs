@@ -85,6 +85,92 @@ fn parse_integer(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
     }
 }
 
+fn eisa_id_to_u32(id: &str) -> Option<u32> {
+    let bytes = id.as_bytes();
+    if bytes.len() != 7 {
+        return None;
+    }
+    let c1 = bytes[0];
+    let c2 = bytes[1];
+    let c3 = bytes[2];
+    if !c1.is_ascii_uppercase() || !c2.is_ascii_uppercase() || !c3.is_ascii_uppercase() {
+        return None;
+    }
+
+    fn hex_val(c: u8) -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            _ => None,
+        }
+    }
+
+    let b0 = ((c1 - b'@') << 2) | ((c2 - b'@') >> 3);
+    let b1 = (((c2 - b'@') & 0x07) << 5) | (c3 - b'@');
+    let b2 = (hex_val(bytes[3])? << 4) | hex_val(bytes[4])?;
+    let b3 = (hex_val(bytes[5])? << 4) | hex_val(bytes[6])?;
+    Some(u32::from_le_bytes([b0, b1, b2, b3]))
+}
+
+fn io_port_descriptor(min: u16, max: u16, alignment: u8, length: u8) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    out[0] = 0x47; // tag + length
+    out[1] = 0x01; // decode16
+    out[2..4].copy_from_slice(&min.to_le_bytes());
+    out[4..6].copy_from_slice(&max.to_le_bytes());
+    out[6] = alignment;
+    out[7] = length;
+    out
+}
+
+fn find_device_body<'a>(aml: &'a [u8], device: &[u8; 4]) -> Option<&'a [u8]> {
+    // DeviceOp: ExtOpPrefix (0x5B), DeviceOp (0x82), PkgLength, NameSeg, body...
+    for i in 0..aml.len().saturating_sub(2) {
+        if aml[i] != 0x5B || aml[i + 1] != 0x82 {
+            continue;
+        }
+        let Some((pkg_len, pkg_len_bytes)) = parse_pkg_length(aml, i + 2) else {
+            continue;
+        };
+        let payload_start = i + 2 + pkg_len_bytes;
+        let pkg_end = payload_start.checked_add(pkg_len.saturating_sub(pkg_len_bytes))?;
+        if pkg_end > aml.len() || payload_start + 4 > pkg_end {
+            continue;
+        }
+        if &aml[payload_start..payload_start + 4] == device {
+            return Some(&aml[payload_start + 4..pkg_end]);
+        }
+    }
+    None
+}
+
+fn parse_named_buffer<'a>(aml: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
+    // NameOp (0x08), NameSeg, BufferOp (0x11), PkgLength, BufferSize, data...
+    for i in 0..aml.len().saturating_sub(5) {
+        if aml[i] != 0x08 || &aml[i + 1..i + 5] != name {
+            continue;
+        }
+        let mut offset = i + 5;
+        if *aml.get(offset)? != 0x11 {
+            return None;
+        }
+        offset += 1;
+        let (pkg_len, pkg_len_bytes) = parse_pkg_length(aml, offset)?;
+        offset += pkg_len_bytes;
+        let payload_end = offset + pkg_len.saturating_sub(pkg_len_bytes);
+        let (buf_size, size_bytes) = parse_integer(aml, offset)?;
+        offset += size_bytes;
+        let data_start = offset;
+        let data_end = data_start + (buf_size as usize);
+        if data_end > payload_end || data_end > aml.len() {
+            return None;
+        }
+        return Some(&aml[data_start..data_end]);
+    }
+    None
+}
+
 /// Parse the static `_PRT` package emitted by the DSDT AML.
 ///
 /// Returns entries of the form: (PCI address, pin, GSI).
@@ -332,6 +418,7 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     // Minimal AML sanity check: should contain the device names we emit.
     let dsdt = mem.read(tables.addresses.dsdt, dsdt_hdr.length as usize);
     let aml = &dsdt[36..];
+    assert!(aml.windows(4).any(|w| w == b"SYS0"));
     assert!(aml.windows(4).any(|w| w == b"PCI0"));
     assert!(aml.windows(4).any(|w| w == b"HPET"));
     assert!(aml.windows(4).any(|w| w == b"_PRT"));
@@ -466,6 +553,42 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     ] {
         assert_eq!(addr % DEFAULT_ACPI_ALIGNMENT, 0);
     }
+}
+
+#[test]
+fn dsdt_system_resources_device_reserves_acpi_pm_ports() {
+    let cfg = AcpiConfig {
+        smi_cmd_port: 0x00B3,
+        pm1a_evt_blk: 0x0500,
+        pm1a_cnt_blk: 0x0504,
+        pm_tmr_blk: 0x0508,
+        gpe0_blk: 0x0520,
+        gpe0_blk_len: 0x10,
+        ..Default::default()
+    };
+    let tables = AcpiTables::build(&cfg, AcpiPlacement::default());
+    let aml = &tables.dsdt[36..];
+
+    let sys0 = find_device_body(aml, b"SYS0").expect("expected DSDT to contain _SB_.SYS0");
+
+    let pnp0c02 = eisa_id_to_u32("PNP0C02").unwrap().to_le_bytes();
+    let hid_pnp0c02 = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0c02[..]].concat();
+    assert!(
+        sys0.windows(hid_pnp0c02.len()).any(|w| w == hid_pnp0c02),
+        "expected SYS0._HID to be PNP0C02"
+    );
+
+    let crs = parse_named_buffer(sys0, b"_CRS").expect("expected SYS0 to have a _CRS buffer");
+    assert!(
+        crs.ends_with(&[0x79, 0x00]),
+        "expected SYS0._CRS ResourceTemplate to end with EndTag"
+    );
+
+    let pm1a_evt = io_port_descriptor(cfg.pm1a_evt_blk, cfg.pm1a_evt_blk, 1, 4);
+    assert!(
+        crs.windows(pm1a_evt.len()).any(|w| w == pm1a_evt),
+        "expected SYS0._CRS to reserve the PM1a_EVT_BLK I/O range"
+    );
 }
 
 #[test]

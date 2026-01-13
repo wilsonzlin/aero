@@ -752,6 +752,7 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
 
     // Scope (_SB_) { ... }
     let mut sb = Vec::new();
+    sb.extend_from_slice(&aml_device_sys0(cfg));
     sb.extend_from_slice(&aml_device_pci0(cfg));
     sb.extend_from_slice(&aml_device_hpet(cfg));
     sb.extend_from_slice(&aml_device_rtc());
@@ -976,6 +977,36 @@ fn aml_s5() -> Vec<u8> {
     out.extend_from_slice(b"_S5_");
     out.extend_from_slice(&pkg);
     out
+}
+
+fn sys0_crs(cfg: &AcpiConfig) -> Vec<u8> {
+    // Motherboard resources device (PNP0C02) reserving the fixed-feature ACPI
+    // PM I/O ports and reset port. This prevents OS resource allocators from
+    // treating these ports as free PCI I/O space.
+    let mut out = Vec::new();
+    out.extend_from_slice(&io_port_descriptor(cfg.smi_cmd_port, cfg.smi_cmd_port, 1, 1));
+    out.extend_from_slice(&io_port_descriptor(cfg.pm1a_evt_blk, cfg.pm1a_evt_blk, 1, 4));
+    out.extend_from_slice(&io_port_descriptor(cfg.pm1a_cnt_blk, cfg.pm1a_cnt_blk, 1, 2));
+    out.extend_from_slice(&io_port_descriptor(cfg.pm_tmr_blk, cfg.pm_tmr_blk, 1, 4));
+    out.extend_from_slice(&io_port_descriptor(
+        cfg.gpe0_blk,
+        cfg.gpe0_blk,
+        1,
+        cfg.gpe0_blk_len,
+    ));
+    // Reset port used by the FADT ResetReg.
+    out.extend_from_slice(&io_port_descriptor(0x0CF9, 0x0CF9, 1, 1));
+    out.extend_from_slice(&[0x79, 0x00]); // EndTag
+    out
+}
+
+fn aml_device_sys0(cfg: &AcpiConfig) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&aml_name_eisa_id(*b"_HID", "PNP0C02"));
+    body.extend_from_slice(&aml_name_integer(*b"_UID", 0));
+    body.extend_from_slice(&aml_name_integer(*b"_STA", 0x0F));
+    body.extend_from_slice(&aml_name_buffer(*b"_CRS", &sys0_crs(cfg)));
+    aml_device(*b"SYS0", &body)
 }
 
 fn aml_device_pci0(cfg: &AcpiConfig) -> Vec<u8> {
