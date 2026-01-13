@@ -901,6 +901,7 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
 
     ctx->InD0 = FALSE;
     (VOID)InterlockedExchange(&ctx->VirtioStarted, 0);
+    (VOID)InterlockedExchange64(&ctx->NegotiatedFeatures, 0);
     VirtioInputUpdateStatusQActiveState(ctx);
 
     /*
