@@ -21,7 +21,9 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   AeroGPU PCI identity at `00:07.0` (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1
   VRAM aperture). In `aero_machine` today this wires the **BAR1 VRAM aperture** to a dedicated
   host-backed VRAM buffer and implements minimal **legacy VGA decode** (permissive VGA port I/O +
-  a VRAM-backed `0xA0000..0xBFFFF` window).
+  a VRAM-backed `0xA0000..0xBFFFF` window). An MVP BAR0 device model is also present (ring/fence
+  transport + scanout/cursor regs + vblank pacing), and `Machine::display_present()` will prefer
+  the WDDM-programmed scanout framebuffer once scanout0 is enabled.
 
   Concretely:
 
@@ -34,8 +36,8 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   `PhysBasePtr` to `BAR1_BASE + 0x20000` (see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`) so
   INT 10h VBE mode set/clear writes land in BAR1-backed VRAM.
 
-  The full WDDM command execution + scanout + vblank pacing device model still lives in
-  `crates/emulator` and is not yet wired into `aero_machine::Machine`.
+  Full 3D command execution still lives in `crates/emulator`; the `aero_machine` BAR0 transport is
+  currently a no-op command executor with fence completion so the Win7 KMD doesn't deadlock.
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
   `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a minimal Bochs/QEMU “Standard
   VGA”-like PCI stub at `00:0c.0` (`1234:1111`) so the VBE linear framebuffer (LFB) aperture is

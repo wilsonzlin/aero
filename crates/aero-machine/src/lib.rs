@@ -272,19 +272,14 @@ pub struct MachineConfig {
     ///
     /// When enabled, the machine wires:
     ///
-    /// - BAR0: a minimal AeroGPU MMIO register block (MAGIC/ABI/FEATURES, IRQ status/enable/ack,
-    ///   scanout0 registers, and vblank counters) suitable for WDDM driver detection and
-    ///   `D3DKMTWaitForVerticalBlankEvent` pacing.
+    /// - BAR0: an MVP AeroGPU MMIO register block (MAGIC/ABI/FEATURES, ring/fence transport,
+    ///   IRQ status/enable/ack, scanout0 + cursor registers, and vblank counters) suitable for WDDM
+    ///   driver detection and `D3DKMTWaitForVerticalBlankEvent` pacing.
     /// - BAR1: a dedicated VRAM aperture, and the legacy VGA window (`0xA0000..0xC0000`) as an
     ///   alias of the first 128KiB of that VRAM (for firmware/bootloader compatibility).
     ///
     /// This is the foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
     /// firmware/bootloader compatibility and for the guest WDDM driver to claim scanout.
-    ///
-    /// Note: `aero_machine` currently implements BAR1 VRAM/legacy VGA aliasing plus a minimal BAR0
-    /// register block covering:
-    /// - ring/fence transport (no-op command execution) so the in-tree Win7 KMD can initialize, and
-    /// - scanout/vblank pacing for host presentation.
     ///
     /// The full AeroGPU command execution model is not implemented yet.
     ///
@@ -397,9 +392,9 @@ impl MachineConfig {
     /// - exposes the canonical AeroGPU PCI identity at `00:07.0` (`A3A0:0001`), and
     /// - disables the transitional standalone VGA/VBE path (`enable_vga=false`).
     ///
-    /// Note: `enable_aerogpu` currently wires BAR1-backed VRAM plus legacy VGA aliasing and a
-    /// minimal BAR0 scanout/vblank register block; the full AeroGPU command/ring execution model is
-    /// not implemented yet.
+    /// Note: `enable_aerogpu` currently wires BAR1-backed VRAM plus legacy VGA aliasing and an MVP
+    /// BAR0 register block (ring/fence transport + scanout/cursor + vblank pacing). The full
+    /// AeroGPU command/ring execution model is not implemented yet.
     #[must_use]
     pub fn win7_graphics(ram_size_bytes: u64) -> Self {
         let mut cfg = Self::win7_storage(ram_size_bytes);
@@ -1877,7 +1872,6 @@ impl PciDevice for VgaPciConfigDevice {
         &mut self.cfg
     }
 }
-
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
@@ -3780,7 +3774,7 @@ impl Machine {
     /// Re-render the emulated display into the machine's host-visible framebuffer cache.
     ///
     /// When the standalone VGA/VBE device model is disabled and `enable_aerogpu=true`, this
-    /// presents either:
+    /// presents (in priority order):
     ///
     /// - the guest-programmed AeroGPU scanout (WDDM scanout0), if claimed, or
     /// - the active VBE linear framebuffer (if a VBE mode is set), or
@@ -3914,118 +3908,68 @@ impl Machine {
     }
 
     fn display_present_aerogpu_scanout(&mut self) -> bool {
-        let Some(aerogpu) = &self.aerogpu_mmio else {
+        let (Some(aerogpu), Some(pci_cfg)) = (&self.aerogpu_mmio, &self.pci_cfg) else {
             return false;
         };
 
-        let state = { aerogpu.borrow().scanout0_state() };
-        let wddm_scanout_active = state.wddm_scanout_active;
-        let enable = state.enable;
-        let width = state.width;
-        let height = state.height;
-        let format = state.format;
-        let pitch_bytes = state.pitch_bytes;
-        let fb_gpa = state.fb_gpa;
+        // Snapshot scanout/cursor state without holding the borrow across guest memory reads (the
+        // scanout or cursor bitmaps may live in BAR1 VRAM, which re-enters the PCI MMIO router).
+        let (state, cursor) = {
+            let dev = aerogpu.borrow();
+            (dev.scanout0_state(), dev.cursor_snapshot())
+        };
 
-        if !wddm_scanout_active {
+        if !state.wddm_scanout_active {
             return false;
         }
 
-        if !enable {
+        // Once WDDM scanout has been claimed, never fall back to the BIOS VBE/text paths until the
+        // machine is reset.
+        if !state.enable {
             self.display_fb.clear();
             self.display_width = 0;
             self.display_height = 0;
             return true;
         }
 
-        if width == 0 || height == 0 || fb_gpa == 0 {
-            self.display_fb.clear();
-            self.display_width = 0;
-            self.display_height = 0;
-            return true;
-        }
-
-        let (is_bgr, has_alpha) = match format {
-            x if x == agpu_pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                || x == agpu_pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
-            {
-                (true, false)
-            }
-            x if x == agpu_pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                || x == agpu_pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 =>
-            {
-                (true, true)
-            }
-            x if x == agpu_pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                || x == agpu_pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
-            {
-                (false, false)
-            }
-            x if x == agpu_pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                || x == agpu_pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
-            {
-                (false, true)
-            }
-            _ => {
-                self.display_fb.clear();
-                self.display_width = 0;
-                self.display_height = 0;
-                return true;
-            }
+        // Gate device-initiated scanout reads on PCI COMMAND.BME.
+        let command = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(aero_devices::pci::profile::AEROGPU.bdf)
+                .map(|cfg| cfg.command())
+                .unwrap_or(0)
         };
-
-        let bytes_per_pixel = 4usize;
-        let row_bytes = usize::try_from(width)
-            .ok()
-            .and_then(|w| w.checked_mul(bytes_per_pixel));
-        let Some(row_bytes) = row_bytes else {
-            self.display_fb.clear();
-            self.display_width = 0;
-            self.display_height = 0;
-            return true;
-        };
-        let pitch = usize::try_from(pitch_bytes).unwrap_or(0);
-        if pitch < row_bytes {
+        if (command & (1 << 2)) == 0 {
             self.display_fb.clear();
             self.display_width = 0;
             self.display_height = 0;
             return true;
         }
 
-        let total_pixels = usize::try_from(width)
-            .ok()
-            .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)));
-        let Some(total_pixels) = total_pixels else {
+        let Some(mut fb) = state.read_rgba8888(&mut self.mem) else {
             self.display_fb.clear();
             self.display_width = 0;
             self.display_height = 0;
             return true;
         };
 
-        self.display_width = width;
-        self.display_height = height;
-        self.display_fb.resize(total_pixels, 0);
-
-        let mut row = vec![0u8; row_bytes];
-        for y in 0..height {
-            let src = fb_gpa + u64::from(pitch_bytes).wrapping_mul(u64::from(y));
-            self.mem.read_physical(src, &mut row);
-
-            let y_usize = usize::try_from(y).unwrap_or(0);
-            let base = y_usize.saturating_mul(width as usize);
-            let dst_row = &mut self.display_fb[base..base + width as usize];
-
-            for (px, dst) in row.chunks_exact(4).zip(dst_row.iter_mut()) {
-                let a = if has_alpha { px[3] } else { 0xff };
-                let (r, g, b) = if is_bgr {
-                    (px[2], px[1], px[0])
-                } else {
-                    (px[0], px[1], px[2])
-                };
-                *dst = u32::from_le_bytes([r, g, b, a]);
+        if cursor.enable {
+            if let Some(cursor_fb) = cursor.read_rgba8888(&mut self.mem) {
+                aerogpu::composite_cursor_rgba8888_over_scanout(
+                    &mut fb,
+                    state.width,
+                    state.height,
+                    &cursor,
+                    &cursor_fb,
+                );
             }
         }
 
+        self.display_width = state.width;
+        self.display_height = state.height;
+        self.display_fb = fb;
         true
     }
 

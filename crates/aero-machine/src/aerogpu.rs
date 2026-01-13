@@ -30,6 +30,317 @@ pub struct AeroGpuScanout0State {
     pub fb_gpa: u64,
 }
 
+impl AeroGpuScanout0State {
+    pub fn read_rgba8888(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u32>> {
+        if !self.enable {
+            return None;
+        }
+        if self.width == 0 || self.height == 0 {
+            return None;
+        }
+        if self.fb_gpa == 0 {
+            return None;
+        }
+
+        let bytes_per_pixel = match self.format {
+            x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
+                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
+                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 => 4usize,
+            x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
+                || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 => 2usize,
+            _ => return None,
+        };
+
+        let width = usize::try_from(self.width).ok()?;
+        let height = usize::try_from(self.height).ok()?;
+        let pitch = usize::try_from(self.pitch_bytes).ok()?;
+        if pitch == 0 {
+            return None;
+        }
+
+        let row_bytes = width.checked_mul(bytes_per_pixel)?;
+        if pitch < row_bytes {
+            return None;
+        }
+
+        // Validate GPA arithmetic does not wrap.
+        let pitch_u64 = u64::from(self.pitch_bytes);
+        let row_bytes_u64 = u64::try_from(row_bytes).ok()?;
+        let last_row_gpa = self
+            .fb_gpa
+            .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
+        last_row_gpa.checked_add(row_bytes_u64)?;
+
+        let mut out = vec![0u32; width.checked_mul(height)?];
+        let mut row = vec![0u8; row_bytes];
+
+        for y in 0..height {
+            let row_gpa = self.fb_gpa + (y as u64) * pitch_u64;
+            mem.read_physical(row_gpa, &mut row);
+
+            let dst_row = &mut out[y * width..(y + 1) * width];
+
+            match self.format {
+                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        let b = src[0];
+                        let g = src[1];
+                        let r = src[2];
+                        let a = src[3];
+                        *dst = u32::from_le_bytes([r, g, b, a]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        let b = src[0];
+                        let g = src[1];
+                        let r = src[2];
+                        *dst = u32::from_le_bytes([r, g, b, 0xFF]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        *dst = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        *dst = u32::from_le_bytes([src[0], src[1], src[2], 0xFF]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::B5G6R5Unorm as u32 => {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(2)) {
+                        let pix = u16::from_le_bytes([src[0], src[1]]);
+                        let b = (pix & 0x1f) as u8;
+                        let g = ((pix >> 5) & 0x3f) as u8;
+                        let r = ((pix >> 11) & 0x1f) as u8;
+                        let r8 = (r << 3) | (r >> 2);
+                        let g8 = (g << 2) | (g >> 4);
+                        let b8 = (b << 3) | (b >> 2);
+                        *dst = u32::from_le_bytes([r8, g8, b8, 0xFF]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 => {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(2)) {
+                        let pix = u16::from_le_bytes([src[0], src[1]]);
+                        let b = (pix & 0x1f) as u8;
+                        let g = ((pix >> 5) & 0x1f) as u8;
+                        let r = ((pix >> 10) & 0x1f) as u8;
+                        let a = ((pix >> 15) & 0x1) as u8;
+                        let r8 = (r << 3) | (r >> 2);
+                        let g8 = (g << 3) | (g >> 2);
+                        let b8 = (b << 3) | (b >> 2);
+                        *dst = u32::from_le_bytes([r8, g8, b8, if a != 0 { 0xFF } else { 0 }]);
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        Some(out)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AeroGpuCursorConfig {
+    pub enable: bool,
+    pub x: i32,
+    pub y: i32,
+    pub hot_x: u32,
+    pub hot_y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub format: u32,
+    pub fb_gpa: u64,
+    pub pitch_bytes: u32,
+}
+
+impl AeroGpuCursorConfig {
+    pub(crate) fn read_rgba8888(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u32>> {
+        if !self.enable {
+            return None;
+        }
+        if self.width == 0 || self.height == 0 {
+            return None;
+        }
+        if self.fb_gpa == 0 {
+            return None;
+        }
+
+        // MVP: only accept 32bpp cursor formats.
+        let is_32bpp = matches!(
+            self.format,
+            x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
+                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
+                || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
+        );
+        if !is_32bpp {
+            return None;
+        }
+
+        let width = usize::try_from(self.width).ok()?;
+        let height = usize::try_from(self.height).ok()?;
+        let pitch = usize::try_from(self.pitch_bytes).ok()?;
+        if pitch == 0 {
+            return None;
+        }
+
+        let row_bytes = width.checked_mul(4)?;
+        if pitch < row_bytes {
+            return None;
+        }
+
+        // Validate GPA arithmetic does not wrap.
+        let pitch_u64 = u64::from(self.pitch_bytes);
+        let row_bytes_u64 = u64::try_from(row_bytes).ok()?;
+        let last_row_gpa = self
+            .fb_gpa
+            .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
+        last_row_gpa.checked_add(row_bytes_u64)?;
+
+        let mut out = vec![0u32; width.checked_mul(height)?];
+        let mut row = vec![0u8; row_bytes];
+
+        for y in 0..height {
+            let row_gpa = self.fb_gpa + (y as u64) * pitch_u64;
+            mem.read_physical(row_gpa, &mut row);
+            let dst_row = &mut out[y * width..(y + 1) * width];
+
+            match self.format {
+                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        let b = src[0];
+                        let g = src[1];
+                        let r = src[2];
+                        let a = src[3];
+                        *dst = u32::from_le_bytes([r, g, b, a]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        let b = src[0];
+                        let g = src[1];
+                        let r = src[2];
+                        *dst = u32::from_le_bytes([r, g, b, 0xFF]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        *dst = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+                    }
+                }
+                x if x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
+                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
+                {
+                    for (dst, src) in dst_row.iter_mut().zip(row.chunks_exact(4)) {
+                        *dst = u32::from_le_bytes([src[0], src[1], src[2], 0xFF]);
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        Some(out)
+    }
+}
+
+pub(crate) fn composite_cursor_rgba8888_over_scanout(
+    scanout: &mut [u32],
+    scanout_width: u32,
+    scanout_height: u32,
+    cursor_cfg: &AeroGpuCursorConfig,
+    cursor: &[u32],
+) {
+    if !cursor_cfg.enable {
+        return;
+    }
+    let Some(sw) = usize::try_from(scanout_width).ok() else {
+        return;
+    };
+    let Some(sh) = usize::try_from(scanout_height).ok() else {
+        return;
+    };
+    if scanout.len() < sw.saturating_mul(sh) {
+        return;
+    }
+
+    let Ok(cw) = usize::try_from(cursor_cfg.width) else {
+        return;
+    };
+    let Ok(ch) = usize::try_from(cursor_cfg.height) else {
+        return;
+    };
+    if cw == 0 || ch == 0 {
+        return;
+    }
+    if cursor.len() < cw.saturating_mul(ch) {
+        return;
+    }
+
+    let left = cursor_cfg.x.saturating_sub(cursor_cfg.hot_x as i32);
+    let top = cursor_cfg.y.saturating_sub(cursor_cfg.hot_y as i32);
+
+    for cy in 0..ch {
+        let dst_y = top.saturating_add(cy as i32);
+        if dst_y < 0 || dst_y >= scanout_height as i32 {
+            continue;
+        }
+        for cx in 0..cw {
+            let dst_x = left.saturating_add(cx as i32);
+            if dst_x < 0 || dst_x >= scanout_width as i32 {
+                continue;
+            }
+            let src = cursor[cy * cw + cx];
+            let src_bytes = src.to_le_bytes();
+            let sa = src_bytes[3] as u32;
+            if sa == 0 {
+                continue;
+            }
+
+            let dst_index = dst_y as usize * sw + dst_x as usize;
+            let dst = scanout[dst_index];
+            if sa == 0xFF {
+                scanout[dst_index] = src;
+                continue;
+            }
+
+            let dst_bytes = dst.to_le_bytes();
+            let inv = 255u32 - sa;
+            let blend = |s: u8, d: u8| -> u8 {
+                let v = u32::from(s) * sa + u32::from(d) * inv;
+                ((v + 127) / 255) as u8
+            };
+            let r = blend(src_bytes[0], dst_bytes[0]);
+            let g = blend(src_bytes[1], dst_bytes[1]);
+            let b = blend(src_bytes[2], dst_bytes[2]);
+            scanout[dst_index] = u32::from_le_bytes([r, g, b, 0xFF]);
+        }
+    }
+}
 #[derive(Debug, Clone)]
 pub struct AeroGpuMmioDevice {
     abi_version: u32,
@@ -313,6 +624,21 @@ impl AeroGpuMmioDevice {
         }
 
         self.next_vblank_ns = Some(next);
+    }
+
+    pub(crate) fn cursor_snapshot(&self) -> AeroGpuCursorConfig {
+        AeroGpuCursorConfig {
+            enable: self.cursor_enable,
+            x: self.cursor_x,
+            y: self.cursor_y,
+            hot_x: self.cursor_hot_x,
+            hot_y: self.cursor_hot_y,
+            width: self.cursor_width,
+            height: self.cursor_height,
+            format: self.cursor_format,
+            fb_gpa: self.cursor_fb_gpa,
+            pitch_bytes: self.cursor_pitch_bytes,
+        }
     }
 
     pub fn process(&mut self, mem: &mut dyn MemoryBus, dma_enabled: bool) {
