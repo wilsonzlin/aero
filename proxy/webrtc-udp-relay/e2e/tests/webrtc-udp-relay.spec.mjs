@@ -872,6 +872,102 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
   }
 });
 
+test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt", async ({ page }) => {
+  const jwtSecret = "e2e-jwt-secret";
+  const now = Math.floor(Date.now() / 1000);
+  const token = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+  const invalidToken = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: `${jwtSecret}-wrong`,
+  });
+
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "jwt",
+    JWT_SECRET: jwtSecret,
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, token, invalidToken }) => {
+        const waitForOpen = (ws) =>
+          new Promise((resolve, reject) => {
+            ws.addEventListener("open", () => resolve(), { once: true });
+            ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+          });
+
+        const waitForErrorAndClose = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for error + close")), 10_000);
+            let errMsg;
+            let closed;
+            const maybeDone = () => {
+              if (!errMsg || !closed) return;
+              cleanup();
+              resolve({ errMsg, closeCode: closed.code, closeReason: closed.reason });
+            };
+            const onMessage = (event) => {
+              if (typeof event.data !== "string") return;
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                return;
+              }
+              if (msg?.type === "error") {
+                errMsg = msg;
+                maybeDone();
+              }
+            };
+            const onClose = (event) => {
+              closed = event;
+              maybeDone();
+            };
+            const cleanup = () => {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              ws.removeEventListener("close", onClose);
+            };
+            ws.addEventListener("message", onMessage);
+            ws.addEventListener("close", onClose);
+          });
+
+        const unauthWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        const unauthPromise = waitForErrorAndClose(unauthWS);
+        await waitForOpen(unauthWS);
+        unauthWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "v=0" } }));
+        const unauth = await unauthPromise;
+
+        const invalidWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        const invalidPromise = waitForErrorAndClose(invalidWS);
+        await waitForOpen(invalidWS);
+        invalidWS.send(JSON.stringify({ type: "auth", token: invalidToken }));
+        const invalid = await invalidPromise;
+
+        return { unauth, invalid };
+      },
+      { relayPort: relay.port, token, invalidToken },
+    );
+
+    expect(res.unauth.errMsg?.code).toBe("unauthorized");
+    expect(res.unauth.closeCode).toBe(1008);
+
+    expect(res.invalid.errMsg?.code).toBe("unauthorized");
+    expect(res.invalid.closeCode).toBe(1008);
+  } finally {
+    await Promise.all([web.close(), relay.kill()]);
+  }
+});
+
 test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ page }) => {
   const echo = await startUdpEchoServer("udp6", "::1");
   test.skip(!echo, "ipv6 not supported in test environment");
