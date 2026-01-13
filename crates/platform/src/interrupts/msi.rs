@@ -1,4 +1,5 @@
 use super::router::PlatformInterrupts;
+use super::router::PlatformInterruptMode;
 use aero_interrupts::apic::LocalApic;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -65,16 +66,28 @@ impl MsiTrigger for ApicSystem {
 
 impl MsiTrigger for PlatformInterrupts {
     fn trigger_msi(&mut self, message: MsiMessage) {
+        // Match the IOAPIC's routing semantics: when the platform is still in legacy PIC mode, we
+        // suppress APIC injections so pending interrupts do not accumulate and unexpectedly fire
+        // later when switching to APIC mode.
+        if self.mode() != PlatformInterruptMode::Apic {
+            return;
+        }
+
         let vector = message.vector();
         let dest = message.destination_id();
 
-        // xAPIC "physical destination" decoding (single-CPU for now).
-        // - If the destination matches the bootstrap processor's APIC ID, inject.
-        // - Treat destination ID 0xFF as a broadcast (single-CPU => BSP).
-        //
-        // Multi-CPU destination decoding can be layered on later.
-        if dest == self.lapic_apic_id() || dest == 0xFF {
-            self.lapic_inject_fixed(vector);
+        // xAPIC "physical destination" decoding:
+        // - Destination ID 0xFF is a broadcast to all LAPICs.
+        // - Otherwise, target the LAPIC whose APIC ID matches `dest`.
+        if dest == 0xFF {
+            for lapic in self.lapics_iter() {
+                lapic.inject_fixed_interrupt(vector);
+            }
+            return;
+        }
+
+        if let Some(lapic) = self.lapic_by_apic_id(dest) {
+            lapic.inject_fixed_interrupt(vector);
         }
     }
 }
@@ -90,12 +103,15 @@ impl MsiTrigger for Rc<RefCell<PlatformInterrupts>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interrupts::{InterruptController, PlatformInterruptMode};
+    use crate::interrupts::InterruptController;
 
     fn enable_lapic_svr(ints: &PlatformInterrupts) {
         // The LAPIC model drops injected interrupts while the software enable bit is cleared.
         // Keep this explicit in tests so behaviour doesn't depend on constructor defaults.
-        ints.lapic_mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
+        let bytes = (0x1FFu32).to_le_bytes();
+        for lapic in ints.lapics_iter() {
+            lapic.mmio_write(0xF0, &bytes);
+        }
     }
 
     fn msi_message(dest_id: u8, vector: u8) -> MsiMessage {
@@ -116,9 +132,8 @@ mod tests {
         assert_eq!(sys.lapic0().get_pending_vector(), Some(0x44));
     }
 
-    // NOTE: `PlatformInterrupts` currently models a single CPU with xAPIC "physical destination"
-    // MSI decoding. These tests lock down the exact semantics so future SMP work can extend the
-    // logic intentionally (and update tests accordingly) instead of regressing behaviour silently.
+    // NOTE: `PlatformInterrupts::new()` models the canonical single-CPU PC platform, but MSI
+    // delivery must also correctly target non-BSP LAPICs in SMP guests.
 
     #[test]
     fn platform_interrupts_msi_delivers_when_destination_matches_bsp() {
@@ -163,5 +178,38 @@ mod tests {
         ints.trigger_msi(msi_message(other_dest, 0x46));
 
         assert_eq!(ints.get_pending(), None);
+    }
+
+    #[test]
+    fn apic_mode_delivers_msi_to_target_lapic() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&ints);
+
+        ints.trigger_msi(msi_message(1, 0x44));
+
+        assert_eq!(ints.lapic_by_index(0).unwrap().get_pending_vector(), None);
+        assert_eq!(
+            ints.lapic_by_index(1).unwrap().get_pending_vector(),
+            Some(0x44)
+        );
+    }
+
+    #[test]
+    fn apic_mode_broadcast_msi_delivers_to_all_lapics() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&ints);
+
+        ints.trigger_msi(msi_message(0xFF, 0x55));
+
+        assert_eq!(
+            ints.lapic_by_index(0).unwrap().get_pending_vector(),
+            Some(0x55)
+        );
+        assert_eq!(
+            ints.lapic_by_index(1).unwrap().get_pending_vector(),
+            Some(0x55)
+        );
     }
 }

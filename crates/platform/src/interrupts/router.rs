@@ -507,12 +507,9 @@ impl PlatformInterrupts {
         );
     }
 
+    #[cfg(test)]
     pub(crate) fn lapic_apic_id(&self) -> u8 {
         self.lapics[0].apic_id()
-    }
-
-    pub(crate) fn lapic_inject_fixed(&self, vector: u8) {
-        self.lapics[0].inject_fixed_interrupt(vector);
     }
 
     /// Reset a specific LAPIC's internal state back to its power-on baseline.
@@ -577,6 +574,18 @@ impl PlatformInterrupts {
             .map(|lapic| lapic.as_ref())
     }
 
+    #[cfg(test)]
+    pub(crate) fn lapic_by_index(&self, cpu_index: usize) -> Option<&LocalApic> {
+        self.lapics.get(cpu_index).map(|lapic| lapic.as_ref())
+    }
+
+    pub(crate) fn lapic_by_apic_id(&self, apic_id: u8) -> Option<&LocalApic> {
+        self.lapic_for_apic_id(apic_id)
+    }
+
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
     fn set_gsi_level_internal(&mut self, gsi: u32, level: bool) {
         if let Some(slot) = self.gsi_level.get_mut(gsi as usize) {
             *slot = level;
