@@ -1289,6 +1289,12 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
     exp: now + 5 * 60,
     secret: jwtSecret,
   });
+  const invalidToken = mintHS256JWT({
+    sid: "sess_e2e",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: `${jwtSecret}-wrong`,
+  });
 
   const echo = await startUdpEchoServer("udp4", "127.0.0.1");
   const relay = await spawnRelayServer({
@@ -1301,7 +1307,7 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
     await page.goto(web.url);
 
     const res = await page.evaluate(
-      async ({ relayPort, echoPort, token }) => {
+      async ({ relayPort, echoPort, token, invalidToken }) => {
         const waitForOpen = (ws) =>
           new Promise((resolve, reject) => {
             ws.addEventListener("open", () => resolve(), { once: true });
@@ -1461,6 +1467,12 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         wsAuthMsg.close();
         const echoedFirstMsgText = new TextDecoder().decode(echoedFirstMsgFrame.slice(8));
 
+        const wsInvalidQuery = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(invalidToken)}`);
+        wsInvalidQuery.binaryType = "arraybuffer";
+        const invalidQueryPromise = waitForErrorAndClose(wsInvalidQuery);
+        await waitForOpen(wsInvalidQuery);
+        const invalidQueryRes = await invalidQueryPromise;
+
         // Sending datagrams before completing auth (and before receiving ready) should be rejected.
         const wsMissing = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsMissing.binaryType = "arraybuffer";
@@ -1479,15 +1491,19 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         return {
           echoedQueryText,
           echoedFirstMsgText,
+          invalidQueryRes,
           missingRes,
           invalidRes,
         };
       },
-      { relayPort: relay.port, echoPort: echo.port, token },
+      { relayPort: relay.port, echoPort: echo.port, token, invalidToken },
     );
 
     expect(res.echoedQueryText).toBe("hello from websocket jwt query");
     expect(res.echoedFirstMsgText).toBe("hello from websocket jwt first message");
+
+    expect(res.invalidQueryRes.errMsg?.code).toBe("unauthorized");
+    expect(res.invalidQueryRes.closeCode).toBe(1008);
 
     expect(res.missingRes.errMsg?.code).toBe("unauthorized");
     expect(res.missingRes.closeCode).toBe(1008);
