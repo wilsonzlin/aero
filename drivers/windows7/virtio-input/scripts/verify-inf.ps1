@@ -68,6 +68,14 @@ function Parse-InfInteger([string]$Text) {
   throw ("Unable to parse integer value '{0}'." -f $Text)
 }
 
+function Unquote-InfString([string]$Text) {
+  $t = $Text.Trim()
+  if ($t.Length -ge 2 -and $t.StartsWith('"') -and $t.EndsWith('"')) {
+    return $t.Substring(1, $t.Length - 2)
+  }
+  return $t
+}
+
 function Split-InfCommaList([string]$Text) {
   # INF comma-separated lists do not support quoting/escaping in our usage here.
   $items = @($Text.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
@@ -278,6 +286,31 @@ $requiredStrings = @(
 foreach ($s in $requiredStrings) {
   if ((Get-MatchingLines -Lines $lines -Regex $s.Regex).Count -eq 0) {
     Add-Failure -Failures $failures -Message ("Missing required [Strings] entry: {0}" -f $s.Name)
+  }
+}
+
+if ($sections.ContainsKey('Strings')) {
+  $stringsLines = $sections['Strings']
+
+  $kbdLines = Get-MatchingLines -Lines $stringsLines -Regex '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*='
+  $mouseLines = Get-MatchingLines -Lines $stringsLines -Regex '(?i)^AeroVirtioMouse\.DeviceDesc\s*='
+
+  if ($kbdLines.Count -ge 1 -and $mouseLines.Count -ge 1) {
+    $kbdVal = $null
+    $mouseVal = $null
+
+    if ($kbdLines[0] -match '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*=\s*(?<val>.+)$') {
+      $kbdVal = Unquote-InfString -Text $Matches['val']
+    }
+    if ($mouseLines[0] -match '(?i)^AeroVirtioMouse\.DeviceDesc\s*=\s*(?<val>.+)$') {
+      $mouseVal = Unquote-InfString -Text $Matches['val']
+    }
+
+    if (($null -ne $kbdVal) -and ($null -ne $mouseVal)) {
+      if ($kbdVal -eq $mouseVal) {
+        Add-Failure -Failures $failures -Message ("Keyboard and mouse DeviceDesc strings are identical ('{0}'); they should be distinct so the devices can be distinguished in Device Manager." -f $kbdVal)
+      }
+    }
   }
 }
 
