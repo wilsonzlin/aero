@@ -97,3 +97,59 @@ fn presented_scanout_includes_cursor_overlay() {
     assert_eq!(&rgba8[12..16], &blue);
 }
 
+#[test]
+fn presented_scanout_cursor_overlay_requires_bus_mastering() {
+    let mut mem = Bus::new(0x1000);
+
+    // 2x2 blue background.
+    let blue = [0u8, 0, 255, 255];
+    let scanout_rgba = blue.repeat(4);
+
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    // Enable PCI MMIO decode so we can program cursor regs, but leave bus mastering disabled.
+    dev.config_write(0x04, 2, 1 << 1);
+    dev.set_backend(Box::new(StaticScanoutBackend {
+        scanout: AeroGpuBackendScanout {
+            width: 2,
+            height: 2,
+            rgba8: scanout_rgba,
+        },
+    }));
+
+    // Cursor framebuffer: 1x1 red pixel at 50% alpha, stored as BGRA.
+    let cursor_fb_gpa = 0x100u64;
+    mem.write_physical(cursor_fb_gpa, &[0, 0, 255, 128]);
+
+    // Program cursor registers.
+    dev.mmio_write(&mut mem, mmio::CURSOR_FB_GPA_LO, 4, cursor_fb_gpa as u32);
+    dev.mmio_write(
+        &mut mem,
+        mmio::CURSOR_FB_GPA_HI,
+        4,
+        (cursor_fb_gpa >> 32) as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::CURSOR_PITCH_BYTES, 4, 4);
+    dev.mmio_write(&mut mem, mmio::CURSOR_WIDTH, 4, 1);
+    dev.mmio_write(&mut mem, mmio::CURSOR_HEIGHT, 4, 1);
+    dev.mmio_write(
+        &mut mem,
+        mmio::CURSOR_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8A8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::CURSOR_HOT_X, 4, 0);
+    dev.mmio_write(&mut mem, mmio::CURSOR_HOT_Y, 4, 0);
+    dev.mmio_write(&mut mem, mmio::CURSOR_X, 4, 0);
+    dev.mmio_write(&mut mem, mmio::CURSOR_Y, 4, 0);
+    dev.mmio_write(&mut mem, mmio::CURSOR_ENABLE, 4, 1);
+
+    let (_w, _h, rgba8) = dev
+        .read_presented_scanout_rgba8(&mut mem, 0)
+        .expect("scanout should be readable");
+
+    // With COMMAND.BME clear, cursor DMA cannot run, so the presented scanout should remain blue.
+    assert_eq!(&rgba8[0..4], &blue);
+    assert_eq!(&rgba8[4..8], &blue);
+    assert_eq!(&rgba8[8..12], &blue);
+    assert_eq!(&rgba8[12..16], &blue);
+}

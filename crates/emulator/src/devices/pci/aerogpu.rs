@@ -223,7 +223,10 @@ impl AeroGpuPciDevice {
          * Note: `read_scanout0_rgba` reads scanout0 from guest memory and does
          * *not* include the cursor overlay.
          */
-        if (self.regs.features & FEATURE_CURSOR) != 0 {
+        // Cursor DMA is gated by PCI COMMAND.BME (bus mastering enable). When BME is disabled, a
+        // real device cannot fetch the cursor framebuffer from guest memory, so do not composite
+        // it into the presented scanout.
+        if self.bus_master_enabled() && (self.regs.features & FEATURE_CURSOR) != 0 {
             if let Some(cursor_rgba) = self.regs.cursor.read_rgba(mem) {
                 let _ = composite_cursor_rgba_over_scanout(
                     &mut scanout.rgba8,
