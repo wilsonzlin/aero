@@ -259,9 +259,12 @@ fn aerogpu_cmd_depth_only_render_pass_writes_depth() {
 
         // Pass 1: depth-only (no color RTV bound), clear depth, draw at z=0.5.
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetRenderTargets as u32);
-        stream.extend_from_slice(&0u32.to_le_bytes()); // color_count
+        // Use a non-zero RTV count with a NULL handle to ensure the executor accepts "all-NULL"
+        // RTV arrays (i.e. no color target bound, but with an explicit slot count).
+        stream.extend_from_slice(&1u32.to_le_bytes()); // color_count
         stream.extend_from_slice(&D.to_le_bytes()); // depth_stencil
-        for _ in 0..8 {
+        stream.extend_from_slice(&0u32.to_le_bytes()); // colors[0] = NULL
+        for _ in 0..7 {
             stream.extend_from_slice(&0u32.to_le_bytes());
         }
         end_cmd(&mut stream, start);
@@ -332,4 +335,3 @@ fn aerogpu_cmd_depth_only_render_pass_writes_depth() {
         }
     });
 }
-

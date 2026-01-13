@@ -3606,24 +3606,12 @@ impl AerogpuD3d11Executor {
 
         // Create local texture views so we can continue mutating `self` while the render pass is
         // active.
-        let mut color_views: Vec<Option<wgpu::TextureView>> =
-            Vec::with_capacity(self.state.render_targets.len() + usize::from(depth_only_pass));
-        for &tex_id in &self.state.render_targets {
-            let Some(tex_id) = tex_id else {
-                color_views.push(None);
-                continue;
-            };
-            let tex = self
-                .resources
-                .textures
-                .get(&tex_id)
-                .ok_or_else(|| anyhow!("unknown render target texture {tex_id}"))?;
-            color_views.push(Some(
-                tex.texture
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-            ));
-        }
-        if depth_only_pass {
+        //
+        // Note: depth-only draws bind a dummy color target (see
+        // `get_or_create_render_pipeline_for_state`). In that mode we intentionally ignore any
+        // explicit NULL RTV slots carried in the D3D state; the render pass color attachment list
+        // must match the pipeline target list (1 dummy target).
+        let color_views: Vec<Option<wgpu::TextureView>> = if depth_only_pass {
             let ds_id = self
                 .state
                 .depth_stencil
@@ -3636,8 +3624,26 @@ impl AerogpuD3d11Executor {
                     .ok_or_else(|| anyhow!("unknown depth stencil texture {ds_id}"))?;
                 (tex.desc.width, tex.desc.height)
             };
-            color_views.push(Some(self.depth_only_dummy_color_view(ds_w, ds_h)));
-        }
+            vec![Some(self.depth_only_dummy_color_view(ds_w, ds_h))]
+        } else {
+            let mut out = Vec::with_capacity(self.state.render_targets.len());
+            for &tex_id in &self.state.render_targets {
+                let Some(tex_id) = tex_id else {
+                    out.push(None);
+                    continue;
+                };
+                let tex = self
+                    .resources
+                    .textures
+                    .get(&tex_id)
+                    .ok_or_else(|| anyhow!("unknown render target texture {tex_id}"))?;
+                out.push(Some(
+                    tex.texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                ));
+            }
+            out
+        };
         let depth_stencil_view: Option<(wgpu::TextureView, wgpu::TextureFormat)> =
             if let Some(ds_id) = self.state.depth_stencil {
                 let tex = self
@@ -3656,21 +3662,15 @@ impl AerogpuD3d11Executor {
 
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> =
             Vec::with_capacity(color_views.len());
-        for (idx, view) in color_views.iter().enumerate() {
+        for view in color_views.iter() {
             let Some(view) = view.as_ref() else {
                 color_attachments.push(None);
                 continue;
             };
-            let is_dummy = depth_only_pass && idx == render_targets.len();
-            let load = if is_dummy {
-                wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+            let (load, store) = if depth_only_pass {
+                (wgpu::LoadOp::Clear(wgpu::Color::BLACK), wgpu::StoreOp::Discard)
             } else {
-                wgpu::LoadOp::Load
-            };
-            let store = if is_dummy {
-                wgpu::StoreOp::Discard
-            } else {
-                wgpu::StoreOp::Store
+                (wgpu::LoadOp::Load, wgpu::StoreOp::Store)
             };
             color_attachments.push(Some(wgpu::RenderPassColorAttachment {
                 view,
@@ -10989,6 +10989,7 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         super::wgsl_link::locations_in_struct(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL, "VsOut")?;
 
     let mut ps_link_locations = ps_declared_inputs.clone();
+    let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl_source.as_str());
 
     let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
         .difference(&vs_outputs)
@@ -11007,19 +11008,17 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
             .intersection(&vs_outputs)
             .copied()
             .collect();
+        if ps_link_locations != ps_declared_inputs {
+            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                linked_ps_wgsl.as_ref(),
+                &ps_link_locations,
+            ));
+        }
     }
 
-    let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl_source.as_str());
-    if ps_link_locations != ps_declared_inputs {
-        linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
-            linked_ps_wgsl.as_ref(),
-            &ps_link_locations,
-        ));
-    }
-
-    // Trim fragment shader outputs to the currently-bound render target slots. This mirrors the
-    // main pipeline path: D3D discards writes to unbound RTVs, but WebGPU requires outputs to have
-    // a matching `ColorTargetState`.
+    // Trim fragment shader outputs to the currently-bound render target slots (skipping gaps).
+    // This mirrors the main pipeline path: D3D discards writes to unbound RTVs, but WebGPU
+    // requires outputs to have a matching `ColorTargetState`.
     let keep_output_locations: BTreeSet<u32> = state
         .render_targets
         .iter()
