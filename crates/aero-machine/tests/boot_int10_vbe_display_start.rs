@@ -84,7 +84,7 @@ fn run_until_halt(m: &mut Machine) {
 }
 
 #[test]
-fn boot_sector_int10_vbe_display_start_pans_visible_scanout() {
+fn boot_int10_vbe_display_start() {
     let boot = build_int10_vbe_display_start_boot_sector();
 
     let mut m = Machine::new(MachineConfig {
@@ -109,4 +109,3 @@ fn boot_sector_int10_vbe_display_start_pans_visible_scanout() {
     // The top-left visible pixel should therefore be green.
     assert_eq!(vga.borrow().get_framebuffer()[0], 0xFF00_FF00);
 }
-
