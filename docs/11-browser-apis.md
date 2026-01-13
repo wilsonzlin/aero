@@ -1235,7 +1235,7 @@ registerProcessor('aero-audio-processor', AeroAudioProcessor);
 > - `AudioContext` vs `webkitAudioContext` (Safari/WebKit)
 > - fallback constructor option sets (some browsers throw on certain `AudioContext` option combinations)
 > - optional startup/latency-smoothing policies like `startupPrefillFrames` and `discardOnResume` (see `docs/06-audio-subsystem.md`)
-> - `AudioWorkletNode` option compatibility fallbacks (e.g. `outputChannelCount` support)
+> - `AudioWorkletNode` option compatibility fallbacks (e.g. `outputChannelCount` support in older Safari/WebKit)
 
 ```javascript
 async function setupAudio() {

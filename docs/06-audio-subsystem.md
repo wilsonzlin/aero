@@ -279,6 +279,8 @@ Related diagnostics knobs (not latency controls, but useful when tuning):
 - It probes `globalThis.AudioContext`, and falls back to `globalThis.webkitAudioContext` when needed (Safari).
 - Some WebKit/Safari variants are stricter about `AudioContext` constructor options; the implementation includes fallbacks so that
   “requested” settings (like `sampleRate`/`latencyHint`) do not hard-fail audio output initialization.
+- Some browsers also differ in which `AudioWorkletNode` constructor options they accept; `createAudioOutput` retries node creation
+  without `outputChannelCount` when needed for compatibility.
 - Always treat `audioOutput.context.sampleRate` as authoritative (Safari/iOS may ignore the requested sample rate).
 
 ---
