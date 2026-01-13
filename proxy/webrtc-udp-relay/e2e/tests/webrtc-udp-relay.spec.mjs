@@ -1010,7 +1010,14 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         apiKeyQueryWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
         const apiKeyQuery = await apiKeyQueryPromise;
 
-        return { unauth, invalid, authAPIKey, invalidQuery, query, invalidAPIKeyQuery, apiKeyQuery };
+        const mismatchWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        const mismatchPromise = waitForClose(mismatchWS);
+        await waitForOpen(mismatchWS);
+        // If both token and apiKey are provided, they must match.
+        mismatchWS.send(JSON.stringify({ type: "auth", token, apiKey: `${token}-mismatch` }));
+        const mismatch = await mismatchPromise;
+
+        return { unauth, invalid, authAPIKey, invalidQuery, query, invalidAPIKeyQuery, apiKeyQuery, mismatch };
       },
       { relayPort: relay.port, token, invalidToken },
     );
@@ -1064,6 +1071,13 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
       expect(["bad_message", "bad message", ""]).toContain(res.apiKeyQuery.closeReason ?? "");
     }
     expect(res.apiKeyQuery.closeCode).toBe(1008);
+
+    if (res.mismatch.errMsg) {
+      expect(res.mismatch.errMsg.code).toBe("bad_message");
+    } else {
+      expect(["bad_message", "bad message", ""]).toContain(res.mismatch.closeReason ?? "");
+    }
+    expect(res.mismatch.closeCode).toBe(1008);
   } finally {
     await Promise.all([web.close(), relay.kill()]);
   }
@@ -1706,6 +1720,13 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         wsInvalid.send(JSON.stringify({ type: "auth", token: `${token}-invalid` }));
         const invalidRes = await invalidPromise;
 
+        const wsMismatch = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        wsMismatch.binaryType = "arraybuffer";
+        const mismatchPromise = waitForErrorAndClose(wsMismatch);
+        await waitForOpen(wsMismatch);
+        wsMismatch.send(JSON.stringify({ type: "auth", token, apiKey: `${token}-mismatch` }));
+        const mismatchRes = await mismatchPromise;
+
         return {
           echoedQueryText,
           echoedAPIKeyText,
@@ -1714,6 +1735,7 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
           invalidQueryRes,
           missingRes,
           invalidRes,
+          mismatchRes,
         };
       },
       { relayPort: relay.port, echoPort: echo.port, token, invalidToken },
@@ -1732,6 +1754,9 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
 
     expect(res.invalidRes.errMsg?.code).toBe("unauthorized");
     expect(res.invalidRes.closeCode).toBe(1008);
+
+    expect(res.mismatchRes.errMsg?.code).toBe("bad_message");
+    expect(res.mismatchRes.closeCode).toBe(1008);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo.close()]);
   }
