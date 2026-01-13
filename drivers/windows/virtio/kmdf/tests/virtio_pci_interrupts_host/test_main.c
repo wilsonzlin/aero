@@ -24,6 +24,10 @@
 unsigned int WdfTestReadRegisterUcharCount;
 volatile const UCHAR* WdfTestLastReadRegisterUcharAddress;
 
+/* Optional instrumentation hooks for our stub ntddk.h READ/WRITE_REGISTER_USHORT. */
+PFN_WDF_TEST_READ_REGISTER_USHORT WdfTestReadRegisterUshortHook;
+PFN_WDF_TEST_WRITE_REGISTER_USHORT WdfTestWriteRegisterUshortHook;
+
 typedef struct _TEST_CALLBACKS {
     WDFDEVICE ExpectedDevice;
     int ConfigCalls;
@@ -58,6 +62,77 @@ static void ResetRegisterReadInstrumentation(void)
 {
     WdfTestReadRegisterUcharCount = 0;
     WdfTestLastReadRegisterUcharAddress = NULL;
+}
+
+/*
+ * Minimal emulation of the virtio "CommonCfg queue_msix_vector" windowed register.
+ *
+ * In the virtio spec, queue_select chooses which queue's configuration is being
+ * accessed via the queue_* fields. Real hardware stores a distinct
+ * queue_msix_vector per queue, but the MMIO offset is fixed.
+ *
+ * Our host tests need to observe per-queue vector programming, so we virtualize
+ * reads/writes to &CommonCfg->queue_msix_vector using the ntddk.h hook pointers.
+ */
+static volatile VIRTIO_PCI_COMMON_CFG* gTestCommonCfg;
+static ULONG gTestCommonCfgQueueCount;
+static USHORT gTestCommonCfgQueueVectors[64];
+
+static USHORT TestReadRegisterUshort(_In_ volatile const USHORT* Register)
+{
+    if (gTestCommonCfg != NULL && Register == (volatile const USHORT*)&gTestCommonCfg->queue_msix_vector) {
+        USHORT q = (USHORT)gTestCommonCfg->queue_select;
+        if (q < gTestCommonCfgQueueCount) {
+            return gTestCommonCfgQueueVectors[q];
+        }
+    }
+
+    return *Register;
+}
+
+static VOID TestWriteRegisterUshort(_Out_ volatile USHORT* Register, _In_ USHORT Value)
+{
+    if (gTestCommonCfg != NULL && Register == (volatile USHORT*)&gTestCommonCfg->queue_msix_vector) {
+        USHORT q = (USHORT)gTestCommonCfg->queue_select;
+        if (q < gTestCommonCfgQueueCount) {
+            gTestCommonCfgQueueVectors[q] = Value;
+        }
+    }
+
+    *Register = Value;
+}
+
+static void InstallCommonCfgQueueVectorWindowHooks(_In_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg, _In_ ULONG QueueCount)
+{
+    ULONG i;
+
+    assert(CommonCfg != NULL);
+    assert(QueueCount <= 64);
+
+    gTestCommonCfg = CommonCfg;
+    gTestCommonCfgQueueCount = QueueCount;
+    for (i = 0; i < QueueCount; i++) {
+        gTestCommonCfgQueueVectors[i] = VIRTIO_PCI_MSI_NO_VECTOR;
+    }
+
+    WdfTestReadRegisterUshortHook = TestReadRegisterUshort;
+    WdfTestWriteRegisterUshortHook = TestWriteRegisterUshort;
+}
+
+static void UninstallCommonCfgQueueVectorWindowHooks(void)
+{
+    gTestCommonCfg = NULL;
+    gTestCommonCfgQueueCount = 0;
+    memset(gTestCommonCfgQueueVectors, 0, sizeof(gTestCommonCfgQueueVectors));
+    WdfTestReadRegisterUshortHook = NULL;
+    WdfTestWriteRegisterUshortHook = NULL;
+}
+
+static USHORT ReadCommonCfgQueueVector(_Inout_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg, _In_ USHORT QueueIndex)
+{
+    WRITE_REGISTER_USHORT(&CommonCfg->queue_select, QueueIndex);
+    (VOID)READ_REGISTER_USHORT(&CommonCfg->queue_select);
+    return READ_REGISTER_USHORT(&CommonCfg->queue_msix_vector);
 }
 
 static void PrepareIntx(
@@ -384,12 +459,77 @@ static void TestResetInProgressGating(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestMsixQuiesceResumeVectors(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+    ULONG i;
+    ULONG q;
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 2);
+
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */);
+
+    /* Establish a known vector mapping and program the device. */
+    interrupts.u.Msix.ConfigVector = 0;
+    interrupts.u.Msix.QueueVectors[0] = 1;
+    interrupts.u.Msix.QueueVectors[1] = 2;
+
+    st = VirtioPciInterruptsProgramMsixVectors(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(commonCfg.msix_config == interrupts.u.Msix.ConfigVector);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == interrupts.u.Msix.QueueVectors[q]);
+    }
+
+    /* Precondition: OS interrupt delivery enabled before quiesce. */
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == TRUE);
+    }
+
+    /* Quiesce: should gate DPCs, disable OS delivery, and clear device routing. */
+    st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+
+    assert(InterlockedCompareExchange(&interrupts.ResetInProgress, 0, 0) != 0);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+    }
+
+    assert(commonCfg.msix_config == VIRTIO_PCI_MSI_NO_VECTOR);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == VIRTIO_PCI_MSI_NO_VECTOR);
+    }
+
+    /* Resume: should restore routing and re-enable OS delivery. */
+    st = VirtioPciInterruptsResume(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+
+    assert(InterlockedCompareExchange(&interrupts.ResetInProgress, 0, 0) == 0);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == TRUE);
+    }
+
+    assert(commonCfg.msix_config == interrupts.u.Msix.ConfigVector);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == interrupts.u.Msix.QueueVectors[q]);
+    }
+
+    Cleanup(&interrupts, dev);
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
 int main(void)
 {
     TestIntxSpuriousInterrupt();
     TestIntxRealInterruptDispatch();
     TestMsixDispatchAndRouting();
     TestResetInProgressGating();
+    TestMsixQuiesceResumeVectors();
     printf("virtio_pci_interrupts_host_tests: PASS\n");
     return 0;
 }

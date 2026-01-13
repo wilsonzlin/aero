@@ -123,6 +123,25 @@ static __forceinline VOID RtlZeroMemory(_Out_ PVOID Destination, _In_ size_t Len
 extern unsigned int WdfTestReadRegisterUcharCount;
 extern volatile const UCHAR* WdfTestLastReadRegisterUcharAddress;
 
+/*
+ * Optional hooks for host-side register access emulation.
+ *
+ * Some virtio MMIO registers (e.g. CommonCfg.queue_msix_vector) behave like a
+ * window into per-queue state selected by another register (CommonCfg.queue_select).
+ * The interrupt helper programs these registers via READ/WRITE_REGISTER_USHORT.
+ *
+ * On real hardware, each queue has a distinct queue_msix_vector value even
+ * though the register appears at a fixed offset. Host unit tests can emulate
+ * this behavior by installing hooks to virtualize reads/writes.
+ *
+ * When NULL, the default behavior is a plain volatile load/store.
+ */
+typedef USHORT (*PFN_WDF_TEST_READ_REGISTER_USHORT)(_In_ volatile const USHORT* Register);
+typedef VOID (*PFN_WDF_TEST_WRITE_REGISTER_USHORT)(_Out_ volatile USHORT* Register, _In_ USHORT Value);
+
+extern PFN_WDF_TEST_READ_REGISTER_USHORT WdfTestReadRegisterUshortHook;
+extern PFN_WDF_TEST_WRITE_REGISTER_USHORT WdfTestWriteRegisterUshortHook;
+
 /* Register access helpers (very small volatile load/store stubs). */
 static __forceinline UCHAR READ_REGISTER_UCHAR(_In_ volatile const UCHAR* Register)
 {
@@ -133,6 +152,9 @@ static __forceinline UCHAR READ_REGISTER_UCHAR(_In_ volatile const UCHAR* Regist
 
 static __forceinline USHORT READ_REGISTER_USHORT(_In_ volatile const USHORT* Register)
 {
+    if (WdfTestReadRegisterUshortHook != NULL) {
+        return WdfTestReadRegisterUshortHook(Register);
+    }
     return *Register;
 }
 
@@ -143,6 +165,10 @@ static __forceinline VOID WRITE_REGISTER_UCHAR(_Out_ volatile UCHAR* Register, _
 
 static __forceinline VOID WRITE_REGISTER_USHORT(_Out_ volatile USHORT* Register, _In_ USHORT Value)
 {
+    if (WdfTestWriteRegisterUshortHook != NULL) {
+        WdfTestWriteRegisterUshortHook(Register, Value);
+        return;
+    }
     *Register = Value;
 }
 
@@ -176,4 +202,3 @@ static __forceinline LONG InterlockedCompareExchange(
     (VOID)__atomic_compare_exchange_n(Destination, &expected, Exchange, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     return expected;
 }
-
