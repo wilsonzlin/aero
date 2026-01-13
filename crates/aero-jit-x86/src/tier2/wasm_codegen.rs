@@ -797,14 +797,48 @@ impl Emitter<'_> {
                 scale,
                 disp,
             } => {
-                self.emit_operand(base);
-                self.emit_operand(index);
-                self.f.instruction(&Instruction::I64Const(scale as i64));
-                self.f.instruction(&Instruction::I64Mul);
-                self.f.instruction(&Instruction::I64Add);
+                // Emit a minimal sequence for `base + index * scale + disp`.
+                //
+                // `Addr` is often created/normalized by optimizations so that `index` is `0` and/or
+                // `scale` is `1`. Avoid emitting redundant `mul`/`add` instructions in those cases
+                // (important now that Tier-2 can strength-reduce `x +/- const` into `Addr`).
+                let mut has_sum = false;
+
+                if !matches!(base, Operand::Const(0)) {
+                    self.emit_operand(base);
+                    has_sum = true;
+                }
+
+                if scale != 0 && !matches!(index, Operand::Const(0)) {
+                    if has_sum {
+                        self.emit_operand(index);
+                        if scale != 1 {
+                            self.f.instruction(&Instruction::I64Const(scale as i64));
+                            self.f.instruction(&Instruction::I64Mul);
+                        }
+                        self.f.instruction(&Instruction::I64Add);
+                    } else {
+                        self.emit_operand(index);
+                        if scale != 1 {
+                            self.f.instruction(&Instruction::I64Const(scale as i64));
+                            self.f.instruction(&Instruction::I64Mul);
+                        }
+                        has_sum = true;
+                    }
+                }
+
                 if disp != 0 {
-                    self.f.instruction(&Instruction::I64Const(disp));
-                    self.f.instruction(&Instruction::I64Add);
+                    if has_sum {
+                        self.f.instruction(&Instruction::I64Const(disp));
+                        self.f.instruction(&Instruction::I64Add);
+                    } else {
+                        self.f.instruction(&Instruction::I64Const(disp));
+                        has_sum = true;
+                    }
+                }
+
+                if !has_sum {
+                    self.f.instruction(&Instruction::I64Const(0));
                 }
                 self.f
                     .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));

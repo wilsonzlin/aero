@@ -257,6 +257,17 @@ fn gen_random_trace(rng: &mut ChaCha8Rng, max_instrs: usize) -> TraceIr {
         }
     }
 
+    // Post-processing may append extra instructions to improve test coverage. If we ended with an
+    // unconditional terminator, temporarily pop it so we can re-append it at the end (Tier-2 IR
+    // requires `Instr::SideExit` to be the final instruction).
+    let tail_side_exit = match body.last().copied() {
+        Some(Instr::SideExit { exit_rip }) => {
+            body.pop();
+            Some(exit_rip)
+        }
+        _ => None,
+    };
+
     // Ensure traces exercise regalloc caching reasonably often by forcing at least one reg touch.
     if !body.iter().any(|i| matches!(i, Instr::LoadReg { .. } | Instr::StoreReg { .. })) {
         let dst = v(next_value);
@@ -297,6 +308,10 @@ fn gen_random_trace(rng: &mut ChaCha8Rng, max_instrs: usize) -> TraceIr {
             src: Operand::Value(val),
             width: Width::W64,
         });
+    }
+
+    if let Some(exit_rip) = tail_side_exit {
+        body.push(Instr::SideExit { exit_rip });
     }
 
     TraceIr {
