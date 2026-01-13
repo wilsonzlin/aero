@@ -7656,7 +7656,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         /*
-         * Driver-owned ring buffer / fence page (contiguous allocations with stable kernel VAs).
+         * Driver-owned contiguous buffers with stable kernel VAs:
+         * - ring buffer
+         * - fence page
+         * - cursor framebuffer backing store (protocol cursor regs)
          *
          * For scanout we fall back to physical translation via MmGetVirtualForPhysical below.
          */
@@ -7668,6 +7671,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             } ranges[] = {
                 {(ULONGLONG)adapter->RingPa.QuadPart, (ULONGLONG)adapter->RingSizeBytes, adapter->RingVa},
                 {(ULONGLONG)adapter->FencePagePa.QuadPart, (ULONGLONG)PAGE_SIZE, adapter->FencePageVa},
+                {(ULONGLONG)adapter->CursorFbPa.QuadPart, (ULONGLONG)adapter->CursorFbSizeBytes, adapter->CursorFbVa},
             };
 
             for (UINT i = 0; i < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++i) {

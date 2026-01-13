@@ -80,7 +80,7 @@ Minimum supported commands:
 
 - `aerogpu_dbgctl --read-gpa GPA --size N [--out FILE] [--force]`  
   Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
-  ring buffers, and driver-owned DMA buffers for pending submissions).
+  cursor framebuffer, ring buffers, and driver-owned DMA buffers for pending submissions).
   
   Notes:
   - The KMD enforces a hard ABI maximum of `AEROGPU_DBGCTL_READ_GPA_MAX_BYTES` (currently 4096 bytes).
