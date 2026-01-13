@@ -266,6 +266,31 @@ To also write BMP dumps next to the binaries:
 run_all.cmd --dump
 ```
 
+### Capturing the last submission cmd stream (offline decode)
+
+If a test triggers a **GPU hang/TDR** or produces **incorrect rendering**, capture the most recent submission cmd stream
+from inside the Win7 guest and decode it on the host. This avoids attaching a kernel debugger and often gives you
+the quickest view of “what did the guest last submit?”.
+
+Guest (Win7):
+
+```cmd
+aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin
+```
+
+Copy `C:\cmd.bin` plus any sibling outputs that dbgctl produced (for example `C:\cmd.bin.alloc_table.bin` and `C:\cmd.bin.txt`)
+to the host.
+
+Host (repo root):
+
+```bash
+cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc cmd.bin.alloc_table.bin
+cargo run -p aero-gpu-trace-replay -- decode-cmd-stream cmd.bin
+```
+
+For the canonical workflow (including `--force` and `--index-from-tail` tips), see:
+[`docs/windows7-driver-troubleshooting.md` → “Dumping the last AeroGPU submission”](../../../../docs/windows7-driver-troubleshooting.md#dumping-the-last-aerogpu-submission-cmd-stream-and-alloc-table).
+
 ### D3D9 UMD call tracing (bring-up / debugging)
 
 When debugging D3D9Ex tests (especially early bring-up issues where a test or `dwm.exe` fails before you get useful logs),
