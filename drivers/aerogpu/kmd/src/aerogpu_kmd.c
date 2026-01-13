@@ -3667,7 +3667,7 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
 
                     if (mode == NULL) {
                         /* End of enumeration. Some WDDM helpers return STATUS_GRAPHICS_NO_MORE_ELEMENTS here. */
-                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS) {
+                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS && stNext != STATUS_NO_MORE_ENTRIES) {
                             supported = FALSE;
                         } else if (next != NULL) {
                             /* Defensive: unexpected next pointer at end-of-list. */
@@ -3775,7 +3775,7 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
                     mode = next;
 
                     if (mode == NULL) {
-                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS) {
+                        if (stNext != STATUS_SUCCESS && stNext != STATUS_GRAPHICS_NO_MORE_ELEMENTS && stNext != STATUS_NO_MORE_ENTRIES) {
                             supported = FALSE;
                         } else if (next != NULL) {
                             tms.pfnReleaseModeInfo(hTargetModeSet, next);
