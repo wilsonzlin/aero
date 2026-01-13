@@ -356,7 +356,9 @@ The proxy exposes:
 - `WS /udp` — **multiplexed** UDP relay datagrams (v1/v2 framing per [`proxy/webrtc-udp-relay/PROTOCOL.md`](./proxy/webrtc-udp-relay/PROTOCOL.md)). This is the mode used by the browser `WebSocketUdpProxyClient`.
 - `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — **legacy per-target** UDP relay (one destination per WebSocket; raw UDP payload bytes).
 
-See `net-proxy/README.md` for allowlisting and client URL examples.
+Note: the DoH endpoints are `fetch()`-based HTTP requests, so browser clients generally need them to be **same-origin**
+with the frontend dev server (or be served with permissive CORS). The easiest approach during local dev is to proxy
+`/dns-query` and `/dns-json` through Vite; see [`net-proxy/README.md`](./net-proxy/README.md).
 
 ### Networking architecture choices
 
