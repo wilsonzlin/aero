@@ -205,7 +205,8 @@ where
 {
     pub fn new(config: JitConfig, backend: B, compile: C) -> Self {
         let cache = CodeCache::new(config.cache_max_blocks, config.cache_max_bytes);
-        let profile = HotnessProfile::new(config.hot_threshold);
+        let profile_capacity = HotnessProfile::recommended_capacity(config.cache_max_blocks);
+        let profile = HotnessProfile::new_with_capacity(config.hot_threshold, profile_capacity);
         Self {
             config,
             stats: JitRuntimeStats::default(),

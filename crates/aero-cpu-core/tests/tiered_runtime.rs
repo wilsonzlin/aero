@@ -6,6 +6,7 @@ use aero_cpu_core::exec::{
     ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, InterpreterBlockExit, StepOutcome,
 };
 use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
+use aero_cpu_core::jit::profile::HotnessProfile;
 use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
 };
@@ -146,6 +147,68 @@ fn hotness_threshold_triggers_compile_request_once() {
     }
 
     assert_eq!(compile.snapshot(), vec![0]);
+}
+
+#[test]
+fn hotness_profile_is_memory_bounded() {
+    let config = JitConfig {
+        enabled: true,
+        // Avoid triggering compilation; we just want to churn the hotness table.
+        hot_threshold: 1_000_000,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+    let mut jit = JitRuntime::new(config.clone(), TestJitBackend::default(), RecordingCompileSink::default());
+
+    let capacity = HotnessProfile::recommended_capacity(config.cache_max_blocks);
+    let total = capacity * 2;
+    for entry_rip in 0..(total as u64) {
+        jit.prepare_block(entry_rip);
+    }
+
+    let mut present = 0usize;
+    for entry_rip in 0..(total as u64) {
+        if jit.hotness(entry_rip) != 0 {
+            present += 1;
+        }
+    }
+
+    assert!(present <= capacity, "hotness table exceeded capacity: {present} > {capacity}");
+    assert_eq!(present, capacity);
+    assert_eq!(jit.hotness(0), 0, "old entries should be evicted once capacity is exceeded");
+}
+
+#[test]
+fn hot_blocks_still_trigger_compile_requests_under_eviction_pressure() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 5,
+        cache_max_blocks: 16,
+        cache_max_bytes: 0,
+    };
+    let compile = RecordingCompileSink::default();
+    let mut jit = JitRuntime::new(config.clone(), TestJitBackend::default(), compile.clone());
+
+    let hot_rips = [0x10u64, 0x20, 0x30];
+
+    // Give the hot entries a small head start so they aren't arbitrarily evicted among the 1-hit
+    // cold entries when the table first fills.
+    for _ in 0..2 {
+        for &rip in &hot_rips {
+            jit.prepare_block(rip);
+        }
+    }
+
+    let capacity = HotnessProfile::recommended_capacity(config.cache_max_blocks);
+    for i in 0..(capacity * 4) {
+        jit.prepare_block(hot_rips[i % hot_rips.len()]);
+        // Unique cold RIPs to force table churn.
+        jit.prepare_block(0x1000 + (i as u64));
+    }
+
+    let mut requested = compile.snapshot();
+    requested.sort_unstable();
+    assert_eq!(requested, hot_rips.to_vec());
 }
 
 #[test]
