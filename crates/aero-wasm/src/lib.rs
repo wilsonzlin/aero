@@ -3873,6 +3873,52 @@ impl Machine {
         Ok(())
     }
 
+    /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM.
+    ///
+    /// This attaches the image to the canonical Windows 7 attachment point:
+    /// IDE PIIX3 secondary channel master ATAPI (`disk_id=1`).
+    ///
+    /// Note: this requires OPFS `FileSystemSyncAccessHandle` support (worker-only).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_install_media_iso_opfs(&mut self, path: String) -> Result<(), JsValue> {
+        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+            .await
+            .map_err(|e| match e {
+                aero_opfs::DiskError::NotSupported(msg) if msg.contains("sync access handles") => {
+                    js_error("OPFS sync access handles (FileSystemSyncAccessHandle) are unavailable. This API is worker-only (Dedicated Worker) and cannot run on the main thread.")
+                }
+                other => js_error(&other.to_string()),
+            })?;
+
+        self.inner
+            .attach_ide_secondary_master_iso(Box::new(disk))
+            .map_err(|e| js_error(&e.to_string()))
+    }
+
+    /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM, preserving
+    /// guest-visible ATAPI media state.
+    ///
+    /// This is intended for snapshot restore flows where the ATAPI device state is restored from a
+    /// snapshot but the host-side backend must be re-attached before resuming execution.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn attach_install_media_iso_opfs_for_restore(
+        &mut self,
+        path: String,
+    ) -> Result<(), JsValue> {
+        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+            .await
+            .map_err(|e| match e {
+                aero_opfs::DiskError::NotSupported(msg) if msg.contains("sync access handles") => {
+                    js_error("OPFS sync access handles (FileSystemSyncAccessHandle) are unavailable. This API is worker-only (Dedicated Worker) and cannot run on the main thread.")
+                }
+                other => js_error(&other.to_string()),
+            })?;
+
+        self.inner
+            .attach_ide_secondary_master_iso_for_restore(Box::new(disk))
+            .map_err(|e| js_error(&e.to_string()))
+    }
+
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
         RunExit::from_native(self.inner.run_slice(max_insts as u64))
     }
