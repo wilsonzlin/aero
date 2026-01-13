@@ -958,8 +958,15 @@ pub struct WgslOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindGroupLayout {
-    /// Binding 0 is always the constants buffer.
-    pub sampler_bindings: HashMap<u16, (u32, u32)>, // sampler_index -> (texture_binding, sampler_binding)
+    /// Bind group index used for texture/sampler bindings in this shader stage.
+    ///
+    /// Contract:
+    /// - group(0): constants buffer shared by VS/PS
+    /// - group(1): VS texture/sampler bindings
+    /// - group(2): PS texture/sampler bindings
+    pub sampler_group: u32,
+    /// sampler_index -> (texture_binding, sampler_binding)
+    pub sampler_bindings: HashMap<u16, (u32, u32)>,
 }
 
 pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
@@ -972,27 +979,32 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
     wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
     wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n\n");
 
+    let sampler_group = match ir.version.stage {
+        ShaderStage::Vertex => 1u32,
+        ShaderStage::Pixel => 2u32,
+    };
     let mut sampler_bindings = HashMap::new();
     // Allocate bindings: (texture, sampler) pairs.
     //
-    // IMPORTANT: Binding numbers must be stable across shader stages. Using a sequential allocator
-    // based on "samplers used by this stage" can produce mismatched binding locations when (for
-    // example) the vertex shader samples from `s1` while the pixel shader samples from `s0`.
+    // D3D9 has separate sampler register namespaces for vertex and pixel shaders. WebGPU binds
+    // resources per (group, binding), so we model this by assigning each stage its own bind group:
+    // - VS samplers live in group(1)
+    // - PS samplers live in group(2)
     //
-    // Derive binding numbers from the D3D9 sampler register index instead:
-    //   texture binding = 1 + 2*s
-    //   sampler binding = 2 + 2*s
+    // Derive binding numbers from the D3D9 sampler register index for stability:
+    //   texture binding = 2*s
+    //   sampler binding = 2*s + 1
     for &s in &ir.used_samplers {
-        let tex_binding = 1u32 + u32::from(s) * 2;
+        let tex_binding = u32::from(s) * 2;
         let samp_binding = tex_binding + 1;
         sampler_bindings.insert(s, (tex_binding, samp_binding));
         wgsl.push_str(&format!(
-            "@group(0) @binding({}) var tex{}: texture_2d<f32>;\n",
-            tex_binding, s
+            "@group({}) @binding({}) var tex{}: texture_2d<f32>;\n",
+            sampler_group, tex_binding, s
         ));
         wgsl.push_str(&format!(
-            "@group(0) @binding({}) var samp{}: sampler;\n",
-            samp_binding, s
+            "@group({}) @binding({}) var samp{}: sampler;\n",
+            sampler_group, samp_binding, s
         ));
     }
     if !ir.used_samplers.is_empty() {
@@ -1101,7 +1113,10 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             WgslOutput {
                 wgsl,
                 entry_point: "vs_main",
-                bind_group_layout: BindGroupLayout { sampler_bindings },
+                bind_group_layout: BindGroupLayout {
+                    sampler_group,
+                    sampler_bindings,
+                },
             }
         }
         ShaderStage::Pixel => {
@@ -1211,7 +1226,10 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             WgslOutput {
                 wgsl,
                 entry_point: "fs_main",
-                bind_group_layout: BindGroupLayout { sampler_bindings },
+                bind_group_layout: BindGroupLayout {
+                    sampler_group,
+                    sampler_bindings,
+                },
             }
         }
     }

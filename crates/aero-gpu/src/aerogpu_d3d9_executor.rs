@@ -88,10 +88,14 @@ pub struct AerogpuD3d9Executor {
     downlevel_flags: wgpu::DownlevelFlags,
     bc_copy_to_buffer_supported: bool,
 
-    bind_group_layout: wgpu::BindGroupLayout,
+    constants_bind_group_layout: wgpu::BindGroupLayout,
+    samplers_bind_group_layout_vs: wgpu::BindGroupLayout,
+    samplers_bind_group_layout_ps: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
-    bind_group: Option<wgpu::BindGroup>,
-    bind_group_dirty: bool,
+    constants_bind_group: wgpu::BindGroup,
+    samplers_bind_group_vs: Option<wgpu::BindGroup>,
+    samplers_bind_group_ps: Option<wgpu::BindGroup>,
+    samplers_bind_groups_dirty: bool,
     samplers_vs: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
     sampler_state_vs: [D3d9SamplerState; MAX_SAMPLERS],
     samplers_ps: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
@@ -149,8 +153,10 @@ impl<'a> SubmissionCtx<'a> {
 #[derive(Debug)]
 struct ContextState {
     constants_buffer: wgpu::Buffer,
-    bind_group: Option<wgpu::BindGroup>,
-    bind_group_dirty: bool,
+    constants_bind_group: wgpu::BindGroup,
+    samplers_bind_group_vs: Option<wgpu::BindGroup>,
+    samplers_bind_group_ps: Option<wgpu::BindGroup>,
+    samplers_bind_groups_dirty: bool,
     samplers_vs: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
     sampler_state_vs: [D3d9SamplerState; MAX_SAMPLERS],
     samplers_ps: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
@@ -159,11 +165,20 @@ struct ContextState {
 }
 
 impl ContextState {
-    fn new(device: &wgpu::Device, default_sampler: Arc<wgpu::Sampler>) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        constants_bind_group_layout: &wgpu::BindGroupLayout,
+        default_sampler: Arc<wgpu::Sampler>,
+    ) -> Self {
+        let constants_buffer = create_constants_buffer(device);
+        let constants_bind_group =
+            create_constants_bind_group(device, constants_bind_group_layout, &constants_buffer);
         Self {
-            constants_buffer: create_constants_buffer(device),
-            bind_group: None,
-            bind_group_dirty: true,
+            constants_buffer,
+            constants_bind_group,
+            samplers_bind_group_vs: None,
+            samplers_bind_group_ps: None,
+            samplers_bind_groups_dirty: true,
             samplers_vs: std::array::from_fn(|_| default_sampler.clone()),
             sampler_state_vs: std::array::from_fn(|_| D3d9SamplerState::default()),
             samplers_ps: std::array::from_fn(|_| default_sampler.clone()),
@@ -642,6 +657,76 @@ fn create_constants_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     })
 }
 
+fn create_constants_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("aerogpu-d3d9.constants_bind_group_layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(CONSTANTS_BUFFER_SIZE_BYTES as u64),
+            },
+            count: None,
+        }],
+    })
+}
+
+fn create_samplers_bind_group_layout(
+    device: &wgpu::Device,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayout {
+    // Matches `aero-d3d9` token stream shader translation binding contract:
+    // - group(1): VS samplers
+    // - group(2): PS samplers
+    //
+    // And bindings derived from sampler register index:
+    //   texture binding = 2*s
+    //   sampler binding = 2*s + 1
+    let mut entries = Vec::with_capacity(MAX_SAMPLERS * 2);
+    for slot in 0..MAX_SAMPLERS {
+        let tex_binding = slot as u32 * 2;
+        let samp_binding = tex_binding + 1;
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: tex_binding,
+            visibility,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            },
+            count: None,
+        });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: samp_binding,
+            visibility,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
+
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("aerogpu-d3d9.samplers_bind_group_layout"),
+        entries: &entries,
+    })
+}
+
+fn create_constants_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    constants_buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("aerogpu-d3d9.constants_bind_group"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: constants_buffer.as_entire_binding(),
+        }],
+    })
+}
+
 fn create_default_render_states() -> Vec<u32> {
     // Keep this list scoped to the render states we use for pipeline derivation. Other render
     // states are initialized to 0 until written.
@@ -1005,12 +1090,22 @@ impl AerogpuD3d9Executor {
 
         let bc_copy_to_buffer_supported = bc_copy_to_buffer_supported(&device, &queue);
 
-        let bind_group_layout = create_bind_group_layout(&device);
+        let constants_bind_group_layout = create_constants_bind_group_layout(&device);
+        let samplers_bind_group_layout_vs =
+            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::VERTEX);
+        let samplers_bind_group_layout_ps =
+            create_samplers_bind_group_layout(&device, wgpu::ShaderStages::FRAGMENT);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("aerogpu-d3d9.pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[
+                &constants_bind_group_layout,
+                &samplers_bind_group_layout_vs,
+                &samplers_bind_group_layout_ps,
+            ],
             push_constant_ranges: &[],
         });
+        let constants_bind_group =
+            create_constants_bind_group(&device, &constants_bind_group_layout, &constants_buffer);
 
         let clear_color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu-d3d9.clear_params"),
@@ -1076,10 +1171,14 @@ impl AerogpuD3d9Executor {
             dummy_texture_view,
             downlevel_flags,
             bc_copy_to_buffer_supported,
-            bind_group_layout,
+            constants_bind_group_layout,
+            samplers_bind_group_layout_vs,
+            samplers_bind_group_layout_ps,
             pipeline_layout,
-            bind_group: None,
-            bind_group_dirty: true,
+            constants_bind_group,
+            samplers_bind_group_vs: None,
+            samplers_bind_group_ps: None,
+            samplers_bind_groups_dirty: true,
             samplers_vs,
             sampler_state_vs,
             samplers_ps,
@@ -1154,8 +1253,9 @@ impl AerogpuD3d9Executor {
         self.triangle_fan_index_buffers.clear();
         self.contexts.clear();
         self.current_context_id = 0;
-        self.bind_group = None;
-        self.bind_group_dirty = true;
+        self.samplers_bind_group_vs = None;
+        self.samplers_bind_group_ps = None;
+        self.samplers_bind_groups_dirty = true;
         self.sampler_state_vs = std::array::from_fn(|_| D3d9SamplerState::default());
         self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
         self.sampler_cache.clear();
@@ -1680,12 +1780,21 @@ impl AerogpuD3d9Executor {
             ctx
         } else {
             let default_sampler = self.sampler_for_state(D3d9SamplerState::default());
-            ContextState::new(&self.device, default_sampler)
+            ContextState::new(
+                &self.device,
+                &self.constants_bind_group_layout,
+                default_sampler,
+            )
         };
 
         std::mem::swap(&mut self.constants_buffer, &mut next.constants_buffer);
-        std::mem::swap(&mut self.bind_group, &mut next.bind_group);
-        std::mem::swap(&mut self.bind_group_dirty, &mut next.bind_group_dirty);
+        std::mem::swap(&mut self.constants_bind_group, &mut next.constants_bind_group);
+        std::mem::swap(&mut self.samplers_bind_group_vs, &mut next.samplers_bind_group_vs);
+        std::mem::swap(&mut self.samplers_bind_group_ps, &mut next.samplers_bind_group_ps);
+        std::mem::swap(
+            &mut self.samplers_bind_groups_dirty,
+            &mut next.samplers_bind_groups_dirty,
+        );
         std::mem::swap(&mut self.samplers_vs, &mut next.samplers_vs);
         std::mem::swap(&mut self.sampler_state_vs, &mut next.sampler_state_vs);
         std::mem::swap(&mut self.samplers_ps, &mut next.samplers_ps);
@@ -1984,11 +2093,13 @@ impl AerogpuD3d9Executor {
     }
 
     fn invalidate_bind_groups(&mut self) {
-        self.bind_group = None;
-        self.bind_group_dirty = true;
+        self.samplers_bind_group_vs = None;
+        self.samplers_bind_group_ps = None;
+        self.samplers_bind_groups_dirty = true;
         for ctx in self.contexts.values_mut() {
-            ctx.bind_group = None;
-            ctx.bind_group_dirty = true;
+            ctx.samplers_bind_group_vs = None;
+            ctx.samplers_bind_group_ps = None;
+            ctx.samplers_bind_groups_dirty = true;
         }
     }
 
@@ -4400,8 +4511,6 @@ impl AerogpuD3d9Executor {
             AeroGpuCmd::BindShaders { vs, ps, .. } => {
                 self.state.vs = vs;
                 self.state.ps = ps;
-                // Bind group selection depends on which shader stage references each sampler.
-                self.bind_group_dirty = true;
                 Ok(())
             }
             AeroGpuCmd::SetShaderConstantsF {
@@ -4688,11 +4797,11 @@ impl AerogpuD3d9Executor {
                 match shader_stage {
                     s if s == cmd::AerogpuShaderStage::Vertex as u32 => {
                         self.state.textures_vs[slot_idx] = texture;
-                        self.bind_group_dirty = true;
+                        self.samplers_bind_groups_dirty = true;
                     }
                     s if s == cmd::AerogpuShaderStage::Pixel as u32 => {
                         self.state.textures_ps[slot_idx] = texture;
-                        self.bind_group_dirty = true;
+                        self.samplers_bind_groups_dirty = true;
                     }
                     _ => {}
                 }
@@ -6453,7 +6562,7 @@ impl AerogpuD3d9Executor {
             }
             self.flush_texture_binding_if_dirty(Some(encoder), tex_handle, ctx)?;
         }
-        self.ensure_bind_group();
+        self.ensure_sampler_bind_groups();
         let (vs_key, ps_key, vs_uses_semantic_locations) = {
             let vs = self
                 .shaders
@@ -6722,10 +6831,15 @@ impl AerogpuD3d9Executor {
             None => None,
         };
 
-        let bind_group = self
-            .bind_group
+        let constants_bind_group = &self.constants_bind_group;
+        let samplers_bind_group_vs = self
+            .samplers_bind_group_vs
             .as_ref()
-            .expect("ensure_bind_group initializes bind group");
+            .expect("ensure_sampler_bind_groups initializes VS sampler bind group");
+        let samplers_bind_group_ps = self
+            .samplers_bind_group_ps
+            .as_ref()
+            .expect("ensure_sampler_bind_groups initializes PS sampler bind group");
 
         let (color_views, depth_view) = self.render_target_attachments()?;
         let color_attachments = color_views
@@ -7089,7 +7203,9 @@ impl AerogpuD3d9Executor {
         }
 
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, bind_group, &[]);
+        pass.set_bind_group(0, constants_bind_group, &[]);
+        pass.set_bind_group(1, samplers_bind_group_vs, &[]);
+        pass.set_bind_group(2, samplers_bind_group_ps, &[]);
 
         // Bind vertex buffers: wgpu slot is derived from the vertex declaration's used streams.
         for stream in &vertex_buffers.streams {
@@ -7239,101 +7355,39 @@ impl AerogpuD3d9Executor {
         Ok(module)
     }
 
-    fn ensure_bind_group(&mut self) {
-        if !self.bind_group_dirty && self.bind_group.is_some() {
+    fn ensure_sampler_bind_groups(&mut self) {
+        if !self.samplers_bind_groups_dirty
+            && self.samplers_bind_group_vs.is_some()
+            && self.samplers_bind_group_ps.is_some()
+        {
             return;
         }
 
-        // WebGPU binds resources per (group, binding) across shader stages. D3D9 allows vertex and
-        // pixel shaders to bind different textures/samplers for the same sampler register index.
+        // D3D9 has separate sampler namespaces for vertex and pixel shaders. Model this with
+        // separate bind groups:
+        // - group(1): VS textures/samplers
+        // - group(2): PS textures/samplers
         //
-        // Best-effort model:
-        // - If a sampler index is referenced by only one stage, bind that stage's texture/sampler.
-        // - If referenced by both, attempt to bind the shared resource if both stages agree;
-        //   otherwise prefer the pixel-stage binding and log the conflict.
-        let used_samplers_vs = self
-            .shaders
-            .get(&self.state.vs)
-            .map(|s| s.used_samplers_mask)
-            .unwrap_or(0);
-        let used_samplers_ps = self
-            .shaders
-            .get(&self.state.ps)
-            .map(|s| s.used_samplers_mask)
-            .unwrap_or(0);
+        // Binding numbers are derived from sampler register index:
+        // - texture binding = 2*s
+        // - sampler binding = 2*s + 1
+        let srgb_enabled = |states: &Vec<u32>| -> bool {
+            states
+                .get(d3d9::D3DSAMP_SRGBTEXTURE as usize)
+                .copied()
+                .unwrap_or(0)
+                != 0
+        };
 
-        let bind_group = {
-            let mut entries: Vec<wgpu::BindGroupEntry> = Vec::with_capacity(1 + MAX_SAMPLERS * 2);
-            entries.push(wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.constants_buffer.as_entire_binding(),
-            });
-
-            let srgb_enabled = |states: &Vec<u32>| -> bool {
-                states
-                    .get(d3d9::D3DSAMP_SRGBTEXTURE as usize)
-                    .copied()
-                    .unwrap_or(0)
-                    != 0
-            };
-
+        let samplers_bind_group_vs = {
+            let mut entries: Vec<wgpu::BindGroupEntry> = Vec::with_capacity(MAX_SAMPLERS * 2);
             for slot in 0..MAX_SAMPLERS {
-                // `aero-d3d9` shader generation uses binding numbers derived from the sampler
-                // register index.
-                let tex_binding = 1u32 + slot as u32 * 2;
+                let tex_binding = slot as u32 * 2;
                 let samp_binding = tex_binding + 1;
 
-                let bit = 1u16 << slot;
-                let uses_vs = (used_samplers_vs & bit) != 0;
-                let uses_ps = (used_samplers_ps & bit) != 0;
-
-                let (tex_handle, srgb_texture, sampler) = if uses_vs && !uses_ps {
-                    (
-                        self.state.textures_vs[slot],
-                        srgb_enabled(&self.state.sampler_states_vs[slot]),
-                        self.samplers_vs[slot].as_ref(),
-                    )
-                } else if uses_ps && !uses_vs {
-                    (
-                        self.state.textures_ps[slot],
-                        srgb_enabled(&self.state.sampler_states_ps[slot]),
-                        self.samplers_ps[slot].as_ref(),
-                    )
-                } else if uses_vs && uses_ps {
-                    let tex_vs = self.state.textures_vs[slot];
-                    let tex_ps = self.state.textures_ps[slot];
-                    let srgb_vs = srgb_enabled(&self.state.sampler_states_vs[slot]);
-                    let srgb_ps = srgb_enabled(&self.state.sampler_states_ps[slot]);
-
-                    let same_texture = if tex_vs == tex_ps {
-                        true
-                    } else {
-                        let vs_underlying = self.resolve_resource_handle(tex_vs).ok();
-                        let ps_underlying = self.resolve_resource_handle(tex_ps).ok();
-                        vs_underlying.is_some() && vs_underlying == ps_underlying
-                    };
-                    let compatible_sampler = self.sampler_state_vs[slot]
-                        == self.sampler_state_ps[slot]
-                        && srgb_vs == srgb_ps;
-
-                    if !(same_texture && compatible_sampler) {
-                        debug!(
-                            slot,
-                            tex_vs,
-                            tex_ps,
-                            "VS/PS conflict for sampler index; binding pixel-stage texture/sampler"
-                        );
-                    }
-
-                    (tex_ps, srgb_ps, self.samplers_ps[slot].as_ref())
-                } else {
-                    // Unused by both stages: bind the pixel-stage entry by convention.
-                    (
-                        self.state.textures_ps[slot],
-                        srgb_enabled(&self.state.sampler_states_ps[slot]),
-                        self.samplers_ps[slot].as_ref(),
-                    )
-                };
+                let tex_handle = self.state.textures_vs[slot];
+                let srgb_texture = srgb_enabled(&self.state.sampler_states_vs[slot]);
+                let sampler = self.samplers_vs[slot].as_ref();
 
                 let view: &wgpu::TextureView = if tex_handle == 0 {
                     &self.dummy_texture_view
@@ -7364,14 +7418,60 @@ impl AerogpuD3d9Executor {
             }
 
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu-d3d9.bind_group"),
-                layout: &self.bind_group_layout,
+                label: Some("aerogpu-d3d9.samplers_bind_group_vs"),
+                layout: &self.samplers_bind_group_layout_vs,
                 entries: &entries,
             })
         };
 
-        self.bind_group = Some(bind_group);
-        self.bind_group_dirty = false;
+        let samplers_bind_group_ps = {
+            let mut entries: Vec<wgpu::BindGroupEntry> = Vec::with_capacity(MAX_SAMPLERS * 2);
+            for slot in 0..MAX_SAMPLERS {
+                let tex_binding = slot as u32 * 2;
+                let samp_binding = tex_binding + 1;
+
+                let tex_handle = self.state.textures_ps[slot];
+                let srgb_texture = srgb_enabled(&self.state.sampler_states_ps[slot]);
+                let sampler = self.samplers_ps[slot].as_ref();
+
+                let view: &wgpu::TextureView = if tex_handle == 0 {
+                    &self.dummy_texture_view
+                } else {
+                    let underlying = self.resolve_resource_handle(tex_handle).ok();
+                    match underlying.and_then(|h| self.resources.get(&h)) {
+                        Some(Resource::Texture2d {
+                            view, view_srgb, ..
+                        }) => {
+                            if srgb_texture {
+                                view_srgb.as_ref().unwrap_or(view)
+                            } else {
+                                view
+                            }
+                        }
+                        _ => &self.dummy_texture_view,
+                    }
+                };
+
+                entries.push(wgpu::BindGroupEntry {
+                    binding: tex_binding,
+                    resource: wgpu::BindingResource::TextureView(view),
+                });
+                entries.push(wgpu::BindGroupEntry {
+                    binding: samp_binding,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                });
+            }
+
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aerogpu-d3d9.samplers_bind_group_ps"),
+                layout: &self.samplers_bind_group_layout_ps,
+                entries: &entries,
+            })
+        };
+
+        self.samplers_bind_group_vs = Some(samplers_bind_group_vs);
+        self.samplers_bind_group_ps = Some(samplers_bind_group_ps);
+        self.samplers_bind_groups_dirty = false;
     }
 
     fn set_render_state_u32(&mut self, state_id: u32, value: u32) {
@@ -7912,7 +8012,7 @@ impl AerogpuD3d9Executor {
         }
 
         if affects_bind_group {
-            self.bind_group_dirty = true;
+            self.samplers_bind_groups_dirty = true;
         }
     }
 
@@ -8795,50 +8895,6 @@ fn map_stencil_op(op: u32) -> wgpu::StencilOperation {
         7 => wgpu::StencilOperation::DecrementWrap,
         _ => wgpu::StencilOperation::Keep,
     }
-}
-
-fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    // Match `aero-d3d9` shader generation: all bindings are in group(0), with
-    // binding(0)=constants and (texture,sampler) pairs laid out as:
-    //   texture binding = 1 + 2*s
-    //   sampler binding = 2 + 2*s
-    let mut entries = Vec::with_capacity(1 + MAX_SAMPLERS * 2);
-    entries.push(wgpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: wgpu::BufferSize::new(CONSTANTS_BUFFER_SIZE_BYTES as u64),
-        },
-        count: None,
-    });
-
-    for slot in 0..MAX_SAMPLERS {
-        let tex_binding = 1u32 + slot as u32 * 2;
-        let samp_binding = tex_binding + 1;
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: tex_binding,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                multisampled: false,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            },
-            count: None,
-        });
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: samp_binding,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        });
-    }
-
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("aerogpu-d3d9.bind_group_layout"),
-        entries: &entries,
-    })
 }
 
 fn log_unsupported_d3d9_border_color_once(border_color: u32) {
