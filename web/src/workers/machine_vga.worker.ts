@@ -39,6 +39,20 @@ type MachineVgaWorkerStartMessage = {
    * for Rust heap allocations.
    */
   ramSizeBytes?: number;
+  /**
+   * Request the canonical machine be constructed with AeroGPU enabled (and VGA disabled by default).
+   *
+   * This is purely configuration plumbing; it assumes the AeroGPU device model exists behind the
+   * `enable_aerogpu` flag.
+   */
+  enableAerogpu?: boolean;
+  /**
+   * Optional explicit VGA enablement override when constructing the machine via `new_with_config`.
+   *
+   * Note: current native machine config treats AeroGPU and VGA as mutually exclusive; passing
+   * `enableAerogpu=true` and `enableVga=true` will fail machine construction.
+   */
+  enableVga?: boolean;
 };
 
 type MachineVgaWorkerStopMessage = {
@@ -630,7 +644,12 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
   }
 
   const ramSizeBytes = typeof msg.ramSizeBytes === "number" ? msg.ramSizeBytes : 2 * 1024 * 1024;
-  machine = new api.Machine(ramSizeBytes >>> 0);
+  const enableAerogpu = !!msg.enableAerogpu;
+  const enableVga = typeof msg.enableVga === "boolean" ? msg.enableVga : undefined;
+  machine =
+    enableAerogpu && typeof api.Machine.new_with_config === "function"
+      ? api.Machine.new_with_config(ramSizeBytes >>> 0, true, enableVga)
+      : new api.Machine(ramSizeBytes >>> 0);
   const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
   const vbeMode = msg.vbeMode;
   let diskImage: Uint8Array;

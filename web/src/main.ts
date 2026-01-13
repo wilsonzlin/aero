@@ -1684,14 +1684,44 @@ function renderMachineWorkerPanel(): HTMLElement {
       ramSizeBytes: 2 * 1024 * 1024,
       ...(typeof window !== "undefined"
         ? (() => {
-            const raw = new URLSearchParams(window.location.search).get("machineWorkerVbe");
-            if (!raw) return {};
-            const match = /^(\d+)x(\d+)$/.exec(raw.trim());
-            if (!match) return {};
-            const width = Number.parseInt(match[1] ?? "", 10);
-            const height = Number.parseInt(match[2] ?? "", 10);
-            if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return {};
-            return { vbeMode: { width, height } };
+            const search = new URLSearchParams(window.location.search);
+            const out: Record<string, unknown> = {};
+
+            const vbeRaw = search.get("machineWorkerVbe");
+            if (vbeRaw) {
+              const match = /^(\d+)x(\d+)$/.exec(vbeRaw.trim());
+              if (match) {
+                const width = Number.parseInt(match[1] ?? "", 10);
+                const height = Number.parseInt(match[2] ?? "", 10);
+                if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+                  out.vbeMode = { width, height };
+                }
+              }
+            }
+
+            const aerogpuRaw = search.get("machineWorkerAerogpu");
+            if (aerogpuRaw !== null) {
+              const normalized = aerogpuRaw.trim().toLowerCase();
+              if (normalized === "" || normalized === "1" || normalized === "true") {
+                out.enableAerogpu = true;
+              } else if (normalized === "0" || normalized === "false") {
+                out.enableAerogpu = false;
+              } else {
+                out.enableAerogpu = true;
+              }
+            }
+
+            const vgaRaw = search.get("machineWorkerVga");
+            if (vgaRaw !== null) {
+              const normalized = vgaRaw.trim().toLowerCase();
+              if (normalized === "" || normalized === "1" || normalized === "true") {
+                out.enableVga = true;
+              } else if (normalized === "0" || normalized === "false") {
+                out.enableVga = false;
+              }
+            }
+
+            return out;
           })()
         : {}),
     });
@@ -1711,7 +1741,8 @@ function renderMachineWorkerPanel(): HTMLElement {
       text:
         "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes display scanout via the framebuffer protocol. " +
         "(Prefers unified display_* exports when present; falls back to legacy vga_*.) " +
-        "VBE mode test: add ?machineWorkerVbe=1280x720 to the URL to boot the worker into a Bochs VBE 32bpp mode.",
+        "VBE mode test: add ?machineWorkerVbe=1280x720 to the URL to boot the worker into a Bochs VBE 32bpp mode. " +
+        "AeroGPU config test: add ?machineWorkerAerogpu=1 to request AeroGPU (VGA disabled by default).",
     }),
     el("div", { class: "row" }, startButton, stopButton),
     status,
