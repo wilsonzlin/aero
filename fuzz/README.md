@@ -44,6 +44,7 @@ cargo +"$nightly" fuzz run fuzz_aerosparse_open
 cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
+cargo +"$nightly" fuzz run fuzz_aerogpu_bc_decompress
 cargo +"$nightly" fuzz run fuzz_tier0_step
 cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
 
@@ -157,11 +158,14 @@ cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
 # AeroGPU command stream + alloc-table parsing
 cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
- 
+
+# AeroGPU CPU BCn decompression (BC1/BC2/BC3/BC7) + hostile dims/truncated inputs
+cd fuzz && cargo fuzz run fuzz_aerogpu_bc_decompress -- -runs=10000
+
 # DXBC parsing
 cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000
 cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_sm4_parse.dict
- 
+  
 # DXBC container + signature + SM4/SM5 token parsing
 cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
 

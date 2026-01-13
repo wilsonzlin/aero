@@ -278,3 +278,9 @@ name = "fuzz_d3d9_shader_parse"
 path = "fuzz_targets/fuzz_d3d9_shader_parse.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_aerogpu_bc_decompress"
+path = "fuzz_targets/fuzz_aerogpu_bc_decompress.rs"
+test = false
+doc = false

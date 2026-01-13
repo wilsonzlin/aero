@@ -212,7 +212,9 @@ pnpm-debug.log*
 
 # cargo-fuzz
 fuzz/artifacts/
-fuzz/corpus/
+fuzz/corpus/*
+!fuzz/corpus/fuzz_aerogpu_bc_decompress/
+!fuzz/corpus/fuzz_aerogpu_bc_decompress/**
 
 # Aero Win7 virtio selftest build outputs (avoid clutter if building with MSVC locally)
 drivers/windows7/tests/guest-selftest/**/Debug/

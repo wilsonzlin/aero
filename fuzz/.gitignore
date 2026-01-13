@@ -1,4 +1,7 @@
 target/
 artifacts/
-corpus/
+corpus/*
 
+# Keep a tiny checked-in seed corpus for select targets.
+!corpus/fuzz_aerogpu_bc_decompress/
+!corpus/fuzz_aerogpu_bc_decompress/**
