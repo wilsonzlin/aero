@@ -620,6 +620,27 @@ mod tests {
     }
 
     #[test]
+    fn resolve_drops_invalid_suffix_len_zero_and_fromto_end_before_start() {
+        // These specs cannot be produced by the parser (it rejects -0 and end < start),
+        // but `resolve_ranges` should be defensive when given them directly.
+        let specs = [
+            ByteRangeSpec::Suffix { len: 0 },
+            ByteRangeSpec::FromTo { start: 5, end: 3 },
+        ];
+        assert!(matches!(
+            resolve_ranges(&specs, 10, false),
+            Err(RangeResolveError::Unsatisfiable)
+        ));
+
+        let specs = [
+            ByteRangeSpec::Suffix { len: 0 },
+            ByteRangeSpec::FromTo { start: 0, end: 0 },
+        ];
+        let resolved = resolve_ranges(&specs, 10, false).unwrap();
+        assert_resolved_eq(&resolved, &[(0, 0)], 10);
+    }
+
+    #[test]
     fn resolve_drops_out_of_bounds_and_errors_when_none_remain() {
         let specs = parse_range_header("bytes=0-0,20-30").unwrap();
         let resolved = resolve_ranges(&specs, 10, false).unwrap();
