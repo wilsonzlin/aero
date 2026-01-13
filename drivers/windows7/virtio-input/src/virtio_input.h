@@ -211,6 +211,7 @@ typedef enum _VIOINPUT_DEVICE_KIND {
     VioInputDeviceKindUnknown = 0,
     VioInputDeviceKindKeyboard,
     VioInputDeviceKindMouse,
+    VioInputDeviceKindTablet,
 } VIOINPUT_DEVICE_KIND;
 
 #define VIOINPUT_PCI_SUBSYSTEM_ID_KEYBOARD 0x0010

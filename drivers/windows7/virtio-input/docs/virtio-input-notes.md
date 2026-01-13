@@ -55,6 +55,47 @@ QEMU typically exposes virtio-input over PCI using devices such as:
 
 All of these should enumerate as a virtio-input PCI function.
 
+### Driver device-kind classification (strict vs compat)
+
+The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contract v1):
+
+- It queries `VIRTIO_INPUT_CFG_ID_NAME` and only accepts the exact strings:
+  - `Aero Virtio Keyboard`
+  - `Aero Virtio Mouse`
+- If the name is not recognized, the driver fails start (Code 10) rather than guessing.
+
+This keeps the contract deterministic, but it means QEMU virtio-input devices (which usually report names like `QEMU Virtio Keyboard`) won’t start unless compatibility mode is enabled.
+
+#### Enabling compat mode (per-device registry DWORD)
+
+Set a DWORD value under the device instance’s **Device Parameters** key:
+
+```
+HKLM\SYSTEM\CurrentControlSet\Enum\<your device instance>\Device Parameters\CompatDeviceKind = 1 (DWORD)
+```
+
+For example, from an elevated command prompt:
+
+```bat
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\PCI\VEN_1AF4&DEV_1052&REV_01\...\Device Parameters" ^
+  /v CompatDeviceKind /t REG_DWORD /d 1 /f
+```
+
+Compat mode can also be enabled at build time by defining `VIOINPUT_COMPAT_DEVICE_KIND_DEFAULT=1`.
+
+#### What compat mode does
+
+When `CompatDeviceKind` is enabled, device kind is determined as follows:
+
+1. **Case-insensitive prefix match** on `ID_NAME` for commonly-seen QEMU strings:
+   - `QEMU Virtio Keyboard*`
+   - `QEMU Virtio Mouse*`
+   - `QEMU Virtio Tablet*`
+2. **Fallback heuristic** (only if `ID_NAME` didn’t match) using `EV_BITS(types)`:
+   - If `EV_ABS` is present → **tablet**
+   - Else if `EV_REL` is present → **mouse**
+   - Else if `EV_KEY` + `EV_LED` are present → **keyboard**
+
 ## Specification pointers
 
 When implementing/debugging the driver logic, the primary references are:

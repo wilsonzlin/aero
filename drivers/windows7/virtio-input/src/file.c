@@ -138,7 +138,7 @@ static VOID VirtioInputEvtDeviceFileCreate(_In_ WDFDEVICE Device, _In_ WDFREQUES
 
     switch (fileCtx->CollectionNumber) {
     case 1:
-        if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
+        if (devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) {
             fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_MOUSE;
         } else if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
             fileCtx->DefaultReportId = VIRTIO_INPUT_REPORT_ID_KEYBOARD;

@@ -458,7 +458,8 @@ NTSTATUS VirtioInputReportArrived(
             return STATUS_NOT_SUPPORTED;
         }
     }
-    if (devCtx->DeviceKind == VioInputDeviceKindMouse && ReportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
+    if ((devCtx->DeviceKind == VioInputDeviceKindMouse || devCtx->DeviceKind == VioInputDeviceKindTablet) &&
+        ReportId != VIRTIO_INPUT_REPORT_ID_MOUSE) {
         return STATUS_NOT_SUPPORTED;
     }
 
