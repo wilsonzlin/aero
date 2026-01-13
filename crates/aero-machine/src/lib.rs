@@ -317,8 +317,9 @@ impl MachineConfig {
     /// - exposes the canonical AeroGPU PCI identity at `00:07.0` (`A3A0:0001`), and
     /// - disables the transitional standalone VGA/VBE path (`enable_vga=false`).
     ///
-    /// Note: this preset only changes PCI enumeration. The AeroGPU device model itself is not
-    /// implemented by `aero_machine` yet.
+    /// Note: `enable_aerogpu` currently wires BAR1-backed VRAM plus minimal legacy VGA aliasing, but
+    /// the full BAR0 WDDM/MMIO/ring protocol (and VBE/scanout) is not implemented by `aero_machine`
+    /// yet.
     #[must_use]
     pub fn win7_graphics(ram_size_bytes: u64) -> Self {
         let mut cfg = Self::win7_storage(ram_size_bytes);
@@ -2192,10 +2193,11 @@ pub struct Machine {
     // Temporary legacy text-mode scanout renderer used when VGA is disabled but the canonical
     // AeroGPU PCI identity is enabled.
     //
-    // Today `MachineConfig::enable_aerogpu` is a PCI config-space exposure only (no MMIO device
-    // model), but we still want BIOS/boot text output to be visible when VGA is disabled. Until
-    // the full AeroGPU legacy frontend exists, we present text mode by scanning guest memory at
-    // 0xB8000 and rendering it with the existing VGA text renderer.
+    // Today `MachineConfig::enable_aerogpu` wires BAR1-backed VRAM plus minimal legacy VGA decode,
+    // but it does not yet implement VBE mode setting or the BAR0 WDDM/MMIO/ring protocol. We still
+    // want BIOS/boot text output to be visible when the standalone VGA device model is disabled, so
+    // we present text mode by scanning guest physical memory at 0xB8000 and rendering it with the
+    // existing VGA text renderer.
     aerogpu_text_renderer: Option<VgaDevice>,
 
     // ---------------------------------------------------------------------
@@ -2862,9 +2864,11 @@ impl Machine {
         // palette.
         vga.set_text_mode_80x25();
 
-        // Read the full 32KiB legacy text window from guest physical memory. Without the VGA device
-        // model wired up, this lives in guest RAM (but once AeroGPU legacy decode is implemented it
-        // may be backed by VRAM instead; either way `read_physical` provides the correct bytes).
+        // Read the full 32KiB legacy text window from guest physical memory.
+        //
+        // This address range is routed to whichever VGA implementation is active (standalone VGA or
+        // the AeroGPU legacy VGA alias), so `read_physical` provides the correct bytes without the
+        // renderer needing to know which path is wired.
         let mut text = [0u8; 0x8000];
         self.mem.read_physical(0xB8000, &mut text);
 

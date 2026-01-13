@@ -10,8 +10,10 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
 
 - `MachineConfig::enable_aerogpu=true`: expose the **AeroGPU PCI identity** at `00:07.0`
   (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). This is the
-  canonical Windows driver binding target (`PCI\VEN_A3A0&DEV_0001`). In `aero_machine` today this is
-  PCI config-space exposure only; the full AeroGPU device model is wired separately.
+  canonical Windows driver binding target (`PCI\VEN_A3A0&DEV_0001`). In `aero_machine` today BAR1 is
+  backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into
+  it (minimal legacy VGA decode); the full BAR0 WDDM/MMIO/ring protocol + scanout are integrated
+  separately.
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation
   (`aero_gpu_vga`) plus a **transitional** PCI VGA stub at `00:0c.0` (`1234:1111`) used only for
   boot display / VBE LFB routing. This stub is not part of the long-term Windows paravirtual device

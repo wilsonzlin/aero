@@ -14,8 +14,9 @@ The canonical machine supports **two mutually-exclusive** display configurations
 
 - `MachineConfig::enable_aerogpu=true`: expose the canonical AeroGPU PCI identity at `00:07.0`
   (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In `aero_machine`
-  today this is **PCI config-space exposure only**; the full AeroGPU device model (MMIO + ring +
-  VGA/VBE scanout) is integrated separately.
+  today BAR1 is backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is
+  aliased into it (plus minimal VGA port decode). The full AeroGPU device model (BAR0 WDDM/MMIO/ring
+  protocol + scanout + VBE mode set) is integrated separately.
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x20000`.

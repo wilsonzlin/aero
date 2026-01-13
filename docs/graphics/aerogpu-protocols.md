@@ -13,8 +13,9 @@ Note on the canonical machine (`aero_machine::Machine`):
   (`PCI\\VEN_A3A0&DEV_0001`).
 - When `MachineConfig::enable_aerogpu=true`, the machine exposes the AeroGPU PCI identity at
   `00:07.0` (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In
-  `aero_machine` today this is PCI config-space exposure only; the full AeroGPU device model is
-  integrated separately.
+  `aero_machine` today BAR1 is backed by a dedicated VRAM buffer and the legacy VGA window
+  (`0xA0000..0xBFFFF`) is aliased into it (minimal legacy VGA decode); the full BAR0 WDDM/MMIO/ring
+  protocol + scanout are integrated separately.
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
   when `MachineConfig::enable_vga=true`, plus a minimal “Standard VGA”-like PCI stub at `00:0c.0`
   (`1234:1111`) used only for VBE LFB MMIO routing.
