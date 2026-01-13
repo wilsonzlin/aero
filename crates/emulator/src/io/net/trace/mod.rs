@@ -8,9 +8,6 @@ use super::stack::{
     UdpTransport,
 };
 use super::NetworkBackend;
-use crate::io::virtio::devices::net::VirtioNetDevice;
-use crate::io::virtio::vio_core::VirtQueueError;
-use memory::GuestMemory;
 
 pub mod pcapng;
 
@@ -1003,27 +1000,6 @@ impl<B: NetworkBackend> NetworkBackend for TracingBackend<'_, B> {
         let frame = self.inner.poll_receive()?;
         self.tracer.record_ethernet(FrameDirection::GuestRx, &frame);
         Some(frame)
-    }
-}
-
-pub trait VirtioNetDeviceTraceExt {
-    fn inject_rx_frame_traced(
-        &mut self,
-        tracer: &NetTracer,
-        mem: &mut impl GuestMemory,
-        frame: &[u8],
-    ) -> Result<bool, VirtQueueError>;
-}
-
-impl VirtioNetDeviceTraceExt for VirtioNetDevice {
-    fn inject_rx_frame_traced(
-        &mut self,
-        tracer: &NetTracer,
-        mem: &mut impl GuestMemory,
-        frame: &[u8],
-    ) -> Result<bool, VirtQueueError> {
-        tracer.record_ethernet(FrameDirection::GuestRx, frame);
-        self.inject_rx_frame(mem, frame)
     }
 }
 

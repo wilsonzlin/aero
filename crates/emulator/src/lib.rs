@@ -15,7 +15,7 @@ If you're already depending on `crates/emulator`, the recommended entrypoint is
 
 ## Legacy audio stack (feature gated)
 
-The `emulator` crate contains a legacy audio stack (AC97/HDA/DSP and an older virtio-snd device model)
+The `emulator` crate contains a legacy audio stack (AC97/HDA/DSP)
 that is intentionally **not** built by default.
 
 These compile-fail doctests ensure the default feature set does not accidentally expose the legacy
@@ -23,11 +23,6 @@ modules, while still allowing them to be enabled for targeted testing via `--fea
 
 ```compile_fail
 use emulator::io::audio;
-fn main() {}
-```
-
-```compile_fail
-use emulator::io::virtio::devices::snd;
 fn main() {}
 ```
 "#

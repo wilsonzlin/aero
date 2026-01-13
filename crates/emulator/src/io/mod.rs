@@ -6,7 +6,6 @@ pub mod pci;
 pub mod serial;
 pub mod storage;
 pub mod usb;
-pub mod virtio;
 
 /// Trait implemented by devices that respond to x86 IN/OUT instructions.
 ///
