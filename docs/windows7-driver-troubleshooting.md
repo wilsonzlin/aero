@@ -511,21 +511,29 @@ This only applies if you are attempting to install Windows directly onto **virti
 
 If you must keep the Aero GPU selected while recovering, use Safe Mode (below) since it typically avoids loading third-party display drivers.
 
-### Advanced diagnostics (mode / scanout state)
+### Advanced diagnostics (scanout / cursor state)
 
 If the OS boots far enough that you can run tools (local console preferred; RDP may change the active display path), dump the scanout state:
 
 - `aerogpu_dbgctl --status`
-  - Captures a combined snapshot (device/ABI + fences + ring0 + scanout0 + vblank + CreateAllocation trace summary).
+  - Captures a combined snapshot (device/ABI + fences + ring0 + scanout0 + cursor + vblank + CreateAllocation trace summary).
 
 - `aerogpu_dbgctl --query-scanout`
   - Confirms whether scanout is enabled, the current mode (`width/height/pitch`), and whether a framebuffer GPA is programmed.
   - Useful for diagnosing blank output caused by mode/pitch mismatches or a missing scanout surface address.
 
+- `aerogpu_dbgctl --query-cursor`
+  - Dumps the hardware cursor MMIO state (`CURSOR_*` registers): enable, position/hotspot, size/format/pitch, and the cursor framebuffer GPA.
+  - Useful when the desktop is running but the cursor is missing/stuck/off-screen.
+
 If you have the Win7 guest-side validation suite available, you can also run:
 
 - `drivers\\aerogpu\\tests\\win7\\bin\\scanout_state_sanity.exe`
   - Validates that the KMD cached mode matches the MMIO scanout registers and the desktop resolution (helps catch broken `DxgkDdiCommitVidPn` mode caching).
+
+- `drivers\\aerogpu\\tests\\win7\\bin\\cursor_state_sanity.exe`
+  - Moves the cursor, sets a custom cursor shape, and validates cursor MMIO state via `AEROGPU_ESCAPE_OP_QUERY_CURSOR`.
+  - Note: this test is only meaningful on a local console session; it will skip under RDP unless `--allow-remote` is passed (in which case it still skips).
 
 ### Alternative recovery options (if the OS boots but the screen is unusable)
 
