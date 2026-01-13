@@ -395,16 +395,28 @@ Limitations:
 
 ### ProcessVertices
 
-`pfnProcessVertices` is implemented and is **not** treated as a stub. The current implementation is a conservative CPU-side
-buffer-to-buffer copy from the active stream 0 vertex buffer into the destination buffer, with stride handling and the
-same “upload/dirty-range” notifications used by `Unlock`.
+`pfnProcessVertices` is implemented and is **not** treated as a stub.
 
-Code anchor: `device_process_vertices()` in `src/aerogpu_d3d9_driver.cpp`.
+Current behavior is intentionally bring-up level, with two paths:
+
+- **Fixed-function CPU transform (small subset):** when **no user shaders** are bound and the source stream 0 layout
+  corresponds to `D3DFVF_XYZ | D3DFVF_DIFFUSE` (and the `TEX1` variant), the UMD applies a CPU-side
+  **World/View/Projection + viewport** transform and writes **`XYZRHW`** position into the destination layout described by
+  `hVertexDecl`, copying `DIFFUSE` (and `TEXCOORD0` when present).
+- **Fallback memcpy-style path:** for all other cases, `ProcessVertices` falls back to a conservative buffer-to-buffer copy
+  from the active stream 0 vertex buffer into the destination buffer, with stride-aware semantics and the same
+  “upload/dirty-range” notifications used by `Unlock`.
+
+Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
+
+- `device_process_vertices()` (DDI entrypoint / dispatcher)
+- `device_process_vertices_internal()` + `parse_process_vertices_dest_decl()` (fixed-function CPU transform subset)
 
 Limitations:
 
 - Only buffer resources are supported (source VB and destination must both be `ResourceKind::Buffer`).
-- No fixed-function or shader vertex processing is performed (this does not run a transform pipeline).
+- The fixed-function CPU transform path is limited to the `XYZ|DIFFUSE` (and `TEX1`) subset and does not execute shaders
+  or fixed-function lighting/material; it is intended to satisfy simple legacy callers.
 
 ### Bring-up no-op DDIs
 
