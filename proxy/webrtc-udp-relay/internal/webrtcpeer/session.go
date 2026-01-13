@@ -346,8 +346,10 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 					return
 				}
 				if maxL2MessageBytes > 0 && len(msg.Data) > maxL2MessageBytes {
-					// Close asynchronously so we never block a pion callback on teardown.
-					go func() { _ = dc.Close() }()
+					// Let the bridge handle oversize accounting and shutdown. We pass the
+					// pion-managed buffer directly because HandleDataChannelMessage does
+					// not retain it on the oversize path.
+					b.HandleDataChannelMessage(msg.Data)
 					return
 				}
 				// Copy because pion reuses internal buffers.
