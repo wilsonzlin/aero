@@ -433,7 +433,7 @@ impl Bios {
             // cache the value in `Bios::video_mode` so BIOS snapshots can be created without a
             // memory bus (important for snapshot APIs that only expose `&self`).
             video_mode: self.video_mode,
-            tty_output: self.tty_output.clone(),
+            tty_output: self.tty_output().to_vec(),
             rsdp_addr: self.rsdp_addr,
             acpi_reclaimable: self.acpi_reclaimable,
             acpi_nvs: self.acpi_nvs,
@@ -454,7 +454,8 @@ impl Bios {
         }
         BiosDataArea::write_video_mode(memory, snapshot.video_mode);
         self.video_mode = snapshot.video_mode;
-        self.tty_output = snapshot.tty_output;
+        self.clear_tty_output();
+        self.push_tty_bytes(&snapshot.tty_output);
         self.rsdp_addr = snapshot.rsdp_addr;
         self.acpi_reclaimable = snapshot.acpi_reclaimable;
         self.acpi_nvs = snapshot.acpi_nvs;

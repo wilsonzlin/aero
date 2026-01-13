@@ -79,6 +79,13 @@ const KEYBOARD_QUEUE_CAPACITY: usize =
 pub const EBDA_BASE: u64 = 0x0009_F000;
 pub const EBDA_SIZE: usize = 0x1000;
 
+/// Maximum size of the BIOS "TTY output" debug buffer.
+///
+/// The BIOS records INT 10h AH=0Eh teletype output and fatal error messages here so tests and
+/// debuggers can inspect guest-visible output. Keep this bounded to avoid untrusted guests growing
+/// host memory unboundedly.
+pub const MAX_TTY_OUTPUT_BYTES: usize = 64 * 1024; // 64KiB
+
 // Re-export the shared PC platform constants so firmware callers don't need to depend on
 // `aero-pc-constants` directly.
 pub use aero_pc_constants::{
@@ -319,6 +326,11 @@ pub struct Bios {
     /// exists so BIOS snapshots can restore the last reported mode without needing a memory bus.
     video_mode: u8,
     tty_output: Vec<u8>,
+    /// Start offset of the valid window within [`Bios::tty_output`].
+    ///
+    /// We maintain a rolling log by advancing this offset as the buffer overflows. Once the start
+    /// offset grows large enough, we compact the vector to avoid unbounded capacity growth.
+    tty_output_start: usize,
     /// INT 13h status code from the most recent disk operation (AH=01h).
     last_int13_status: u8,
 
@@ -354,6 +366,7 @@ impl Bios {
             keyboard_queue: VecDeque::new(),
             video_mode: 0x03,
             tty_output: Vec::new(),
+            tty_output_start: 0,
             last_int13_status: 0,
             rsdp_addr: None,
             acpi_reclaimable: None,
@@ -377,7 +390,8 @@ impl Bios {
     }
 
     pub fn tty_output(&self) -> &[u8] {
-        &self.tty_output
+        let start = self.tty_output_start.min(self.tty_output.len());
+        &self.tty_output[start..]
     }
 
     /// Clear the BIOS "TTY output" buffer.
@@ -389,6 +403,7 @@ impl Bios {
     /// It is not intended to be a stable, user-facing console API.
     pub fn clear_tty_output(&mut self) {
         self.tty_output.clear();
+        self.tty_output_start = 0;
     }
 
     pub fn rsdp_addr(&self) -> Option<u64> {
@@ -460,6 +475,56 @@ impl Bios {
 
     pub fn set_acpi_builder(&mut self, builder: Box<dyn AcpiBuilder>) {
         self.acpi_builder = builder;
+    }
+
+    fn push_tty_byte(&mut self, byte: u8) {
+        self.push_tty_bytes(std::slice::from_ref(&byte));
+    }
+
+    fn push_tty_bytes(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+
+        let max = MAX_TTY_OUTPUT_BYTES;
+
+        // If a single write is larger than the whole buffer, keep only the tail.
+        if bytes.len() >= max {
+            self.tty_output.clear();
+            self.tty_output_start = 0;
+            self.tty_output
+                .extend_from_slice(&bytes[bytes.len().saturating_sub(max)..]);
+            return;
+        }
+
+        // Keep the start offset in-bounds, even if other code left it inconsistent.
+        let mut start = self.tty_output_start.min(self.tty_output.len());
+        let len = self.tty_output.len();
+
+        // Ensure the existing window does not exceed `max` (e.g. restored from an older snapshot).
+        let mut window_len = len - start;
+        if window_len > max {
+            start = len - max;
+            window_len = max;
+        }
+
+        let new_window_len = window_len + bytes.len();
+        if new_window_len > max {
+            let drop = new_window_len - max;
+            start = start.saturating_add(drop).min(len);
+        }
+
+        self.tty_output_start = start;
+        self.tty_output.extend_from_slice(bytes);
+
+        // Compact once the discarded prefix grows large enough so the backing allocation cannot
+        // grow without bound.
+        if self.tty_output_start >= max {
+            let start = self.tty_output_start.min(self.tty_output.len());
+            self.tty_output.copy_within(start.., 0);
+            self.tty_output.truncate(self.tty_output.len() - start);
+            self.tty_output_start = 0;
+        }
     }
 }
 

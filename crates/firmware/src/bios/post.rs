@@ -24,7 +24,7 @@ impl Bios {
         self.acpi_nvs = None;
         self.smbios_eps_addr = None;
         self.last_int13_status = 0;
-        self.tty_output.clear();
+        self.clear_tty_output();
 
         // 0) Install ROM stubs (read-only).
         //
@@ -215,10 +215,10 @@ impl Bios {
 
     fn bios_diag(&mut self, bus: &mut dyn BiosBus, msg: &str) {
         // Record the message in the TTY buffer for programmatic inspection.
-        self.tty_output.extend_from_slice(msg.as_bytes());
+        self.push_tty_bytes(msg.as_bytes());
         let needs_newline = !msg.as_bytes().last().is_some_and(|b| *b == b'\n');
         if needs_newline {
-            self.tty_output.push(b'\n');
+            self.push_tty_byte(b'\n');
         }
 
         // Best-effort: also render to the VGA text buffer so the reason is visible on the guest

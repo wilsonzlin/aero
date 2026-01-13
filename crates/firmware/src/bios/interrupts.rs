@@ -277,14 +277,13 @@ fn handle_int19(
     match disk.read_sector(0, &mut sector) {
         Ok(()) => {}
         Err(_) => {
-            bios.tty_output.extend_from_slice(b"Disk read error\n");
+            bios.push_tty_bytes(b"Disk read error\n");
             cpu.halted = true;
             return;
         }
     }
     if sector[510] != 0x55 || sector[511] != 0xAA {
-        bios.tty_output
-            .extend_from_slice(b"Invalid boot signature\n");
+        bios.push_tty_bytes(b"Invalid boot signature\n");
         cpu.halted = true;
         return;
     }
@@ -322,7 +321,7 @@ fn handle_int10(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     // Keep the historical "TTY output" buffer for tests/debugging.
     let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     if ah == 0x0E {
-        bios.tty_output.push((cpu.gpr[gpr::RAX] & 0xFF) as u8);
+        bios.push_tty_byte((cpu.gpr[gpr::RAX] & 0xFF) as u8);
     }
 
     // Bridge machine CPU state + memory bus to the firmware-side INT 10h implementation.
@@ -1709,12 +1708,40 @@ fn build_e820_map(
 #[cfg(test)]
 mod tests {
     use super::super::{
-        ivt, A20Gate, BiosConfig, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE, PCIE_ECAM_BASE,
-        PCIE_ECAM_SIZE,
+        ivt, A20Gate, BiosConfig, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE,
+        MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
     use super::*;
     use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, FLAG_ZF};
     use memory::MemoryBus as _;
+
+    #[test]
+    fn int10_teletype_tty_output_is_a_bounded_rolling_log() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+        bios.video
+            .vga
+            .set_text_mode_03h(&mut super::super::BiosMemoryBus::new(&mut mem), true);
+
+        let total = MAX_TTY_OUTPUT_BYTES + 1024;
+        for i in 0..total {
+            cpu.gpr[gpr::RAX] = 0x0E00 | ((i % 256) as u64);
+            handle_int10(&mut bios, &mut cpu, &mut mem);
+        }
+
+        let out = bios.tty_output();
+        assert_eq!(out.len(), MAX_TTY_OUTPUT_BYTES);
+
+        let start = total - MAX_TTY_OUTPUT_BYTES;
+        assert_eq!(out[0], (start % 256) as u8);
+        assert_eq!(out[out.len() - 1], ((total - 1) % 256) as u8);
+
+        let tail = &out[out.len() - 16..];
+        let expected_tail: Vec<u8> = (total - 16..total).map(|i| (i % 256) as u8).collect();
+        assert_eq!(tail, expected_tail.as_slice());
+    }
 
     #[test]
     fn int13_ext_read_reads_lba_into_memory() {
