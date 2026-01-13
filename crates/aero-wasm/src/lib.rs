@@ -3001,46 +3001,49 @@ mod legacy_demo_vm {
 
         #[cfg(target_arch = "wasm32")]
         pub async fn snapshot_full_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
-            let mut file = OpfsSyncFile::create(&path)
-                .await
-                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e))?;
+            let mut file = OpfsSyncFile::create(&path).await.map_err(|e| {
+                crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e)
+            })?;
 
             self.inner
                 .save_snapshot_full_to(&mut file)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-            file.close()
-                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e))?;
+            file.close().map_err(|e| {
+                crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e)
+            })?;
             Ok(())
         }
 
         #[cfg(target_arch = "wasm32")]
         pub async fn snapshot_dirty_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
-            let mut file = OpfsSyncFile::create(&path)
-                .await
-                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e))?;
+            let mut file = OpfsSyncFile::create(&path).await.map_err(|e| {
+                crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e)
+            })?;
 
             self.inner
                 .save_snapshot_dirty_to(&mut file)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-            file.close()
-                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e))?;
+            file.close().map_err(|e| {
+                crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e)
+            })?;
             Ok(())
         }
 
         #[cfg(target_arch = "wasm32")]
         pub async fn restore_snapshot_from_opfs(&mut self, path: String) -> Result<(), JsValue> {
-            let mut file = OpfsSyncFile::open(&path, false)
-                .await
-                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e))?;
+            let mut file = OpfsSyncFile::open(&path, false).await.map_err(|e| {
+                crate::opfs_io_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e)
+            })?;
 
             self.inner
                 .restore_snapshot_from_checked(&mut file)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-            file.close()
-                .map_err(|e| crate::opfs_io_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e))?;
+            file.close().map_err(|e| {
+                crate::opfs_io_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e)
+            })?;
             Ok(())
         }
     }
@@ -3391,8 +3394,8 @@ fn opfs_cross_origin_isolated() -> Option<bool> {
 
 #[cfg(target_arch = "wasm32")]
 fn opfs_worker_hint() -> String {
-    let mut hint = "Hint: Run the wasm module in a DedicatedWorker (not the main thread)."
-        .to_string();
+    let mut hint =
+        "Hint: Run the wasm module in a DedicatedWorker (not the main thread).".to_string();
     // Many Aero browser flows require the threaded WASM build, which in turn requires COOP/COEP
     // (cross-origin isolation) to unlock `SharedArrayBuffer`. Mention this only when we can
     // observe that the current context is *not* cross-origin isolated.
@@ -3443,7 +3446,10 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
 #[cfg(target_arch = "wasm32")]
 fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsValue {
     let kind = err.kind();
-    if matches!(kind, std::io::ErrorKind::Unsupported | std::io::ErrorKind::NotConnected) {
+    if matches!(
+        kind,
+        std::io::ErrorKind::Unsupported | std::io::ErrorKind::NotConnected
+    ) {
         let msg = format!(
             "{operation} failed for OPFS path \"{path}\": {err}\n{}",
             opfs_worker_hint()
@@ -3719,7 +3725,9 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let backend = aero_opfs::OpfsBackend::open(&path, create, size_bytes)
             .await
-            .map_err(|e| opfs_disk_error_to_js("Machine.attach_ide_primary_master_disk_opfs", &path, e))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.attach_ide_primary_master_disk_opfs", &path, e)
+            })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
             .map_err(js_error)
@@ -3813,7 +3821,11 @@ impl Machine {
         let backend = aero_opfs::OpfsBackend::open_existing(&path)
             .await
             .map_err(|e| {
-                opfs_disk_error_to_js("Machine.attach_ide_primary_master_disk_opfs_existing", &path, e)
+                opfs_disk_error_to_js(
+                    "Machine.attach_ide_primary_master_disk_opfs_existing",
+                    &path,
+                    e,
+                )
             })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
@@ -3836,7 +3848,8 @@ impl Machine {
         path: String,
     ) -> Result<(), JsValue> {
         let overlay_path = path.clone();
-        self.attach_ide_primary_master_disk_opfs_existing(path).await?;
+        self.attach_ide_primary_master_disk_opfs_existing(path)
+            .await?;
         self.set_ide_primary_master_ata_overlay_ref(&overlay_path, "");
         Ok(())
     }
@@ -3879,7 +3892,9 @@ impl Machine {
     ) -> Result<(), JsValue> {
         let storage = aero_opfs::OpfsByteStorage::open(&path, true)
             .await
-            .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_aerospar_opfs_create", &path, e))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.set_disk_aerospar_opfs_create", &path, e)
+            })?;
         let disk = aero_storage::AeroSparseDisk::create(
             storage,
             aero_storage::AeroSparseConfig {
@@ -3982,8 +3997,9 @@ impl Machine {
                 opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(overlay)", &paths, e)
             })?;
 
-        let disk = aero_storage::AeroCowDisk::create(base_disk, overlay_backend, overlay_block_size_bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let disk =
+            aero_storage::AeroCowDisk::create(base_disk, overlay_backend, overlay_block_size_bytes)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
@@ -4176,10 +4192,7 @@ impl Machine {
 
     /// Return the current BIOS TTY output length without copying the bytes into JS.
     pub fn bios_tty_output_len(&self) -> u32 {
-        self.inner
-            .bios_tty_output()
-            .len()
-            .min(u32::MAX as usize) as u32
+        self.inner.bios_tty_output().len().min(u32::MAX as usize) as u32
     }
 
     /// Clear the BIOS TTY output buffer without reading it.
@@ -4878,13 +4891,17 @@ impl Machine {
             return Ok(());
         };
 
-        let opfs_error =
-            |disk_id: u32, which: &str, path: &str, err: aero_opfs::DiskError| -> JsValue {
+        let opfs_error = |disk_id: u32,
+                          which: &str,
+                          path: &str,
+                          err: aero_opfs::DiskError|
+         -> JsValue {
             let msg = format!(
                 "Machine.reattach_restored_disks_from_opfs: failed to open OPFS {which} for disk_id={disk_id} ({path:?}): {err}"
             );
             match err {
-                aero_opfs::DiskError::NotSupported(_) | aero_opfs::DiskError::BackendUnavailable => {
+                aero_opfs::DiskError::NotSupported(_)
+                | aero_opfs::DiskError::BackendUnavailable => {
                     Error::new(&format!("{msg}\n{}", opfs_worker_hint())).into()
                 }
                 _ => JsValue::from_str(&msg),
@@ -4909,9 +4926,10 @@ impl Machine {
 
             match disk_id {
                 aero_machine::Machine::DISK_ID_PRIMARY_HDD => {
-                    let base_backend = aero_opfs::OpfsByteStorage::open(&base_image, false)
-                        .await
-                        .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
+                    let base_backend =
+                        aero_opfs::OpfsByteStorage::open(&base_image, false)
+                            .await
+                            .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                     let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
                         JsValue::from_str(&format!(
                             "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=0 base_image={base_image:?}: {e}"
@@ -4965,9 +4983,10 @@ impl Machine {
                 }
 
                 aero_machine::Machine::DISK_ID_IDE_PRIMARY_MASTER => {
-                    let base_backend = aero_opfs::OpfsByteStorage::open(&base_image, false)
-                        .await
-                        .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
+                    let base_backend =
+                        aero_opfs::OpfsByteStorage::open(&base_image, false)
+                            .await
+                            .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                     let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
                         JsValue::from_str(&format!(
                             "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=2 base_image={base_image:?}: {e}"
@@ -5576,8 +5595,8 @@ mod reattach_restored_disks_from_opfs_tests {
     use super::*;
 
     use aero_opfs::{DiskError, OpfsByteStorage};
-    use aero_storage::VirtualDisk as _;
     use aero_snapshot::{DiskOverlayRef, DiskOverlayRefs, SnapshotTarget as _};
+    use aero_storage::VirtualDisk as _;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     fn unique_path(prefix: &str, ext: &str) -> String {

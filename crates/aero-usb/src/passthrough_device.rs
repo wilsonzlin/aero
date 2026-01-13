@@ -248,8 +248,6 @@ fn decode_speed(val: u8) -> SnapshotResult<UsbSpeed> {
         1 => Ok(UsbSpeed::Low),
         // Back-compat: older snapshots used 2 for high speed when the enum variant was removed.
         2 => Ok(UsbSpeed::High),
-        _ => Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
-            "usb speed",
-        )),
+        _ => Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding("usb speed")),
     }
 }

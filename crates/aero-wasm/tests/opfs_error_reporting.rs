@@ -10,7 +10,7 @@ fn unique_path(prefix: &str, ext: &str) -> String {
 }
 
 fn js_error_message(err: JsValue) -> String {
-    if let Ok(e) = err.dyn_into::<js_sys::Error>() {
+    if let Ok(e) = err.clone().dyn_into::<js_sys::Error>() {
         return e.message().into();
     }
     err.as_string().unwrap_or_else(|| format!("{err:?}"))
@@ -175,4 +175,3 @@ async fn cow_opfs_open_unavailable_error_includes_operation_and_both_paths_and_h
         "expected DedicatedWorker hint in message, got: {msg}"
     );
 }
-

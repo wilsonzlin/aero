@@ -293,9 +293,12 @@ impl VirtioNetPciBridge {
         let net_tx = open_ring_by_kind(io_ipc_sab.clone(), NET_TX, 0)?;
         let net_rx = open_ring_by_kind(io_ipc_sab, NET_RX, 0)?;
 
-        let backend = VirtioNetBackendAdapter::new(Some(Box::new(
-            NetRingBackend::with_max_frame_bytes(net_tx, net_rx, L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD),
-        )));
+        let backend =
+            VirtioNetBackendAdapter::new(Some(Box::new(NetRingBackend::with_max_frame_bytes(
+                net_tx,
+                net_rx,
+                L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
+            ))));
 
         // Deterministic locally-administered MAC.
         let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
@@ -452,10 +455,7 @@ impl VirtioNetPciBridge {
     ///
     /// Values are exposed as JS `BigInt` so callers do not lose precision for long-running VMs.
     pub fn virtio_net_stats(&mut self) -> JsValue {
-        let Some(dev) = self
-            .dev
-            .device_mut::<VirtioNet<VirtioNetBackendAdapter>>()
-        else {
+        let Some(dev) = self.dev.device_mut::<VirtioNet<VirtioNetBackendAdapter>>() else {
             return JsValue::NULL;
         };
         let Some(stats) = dev.backend_mut().l2_ring_stats() else {
