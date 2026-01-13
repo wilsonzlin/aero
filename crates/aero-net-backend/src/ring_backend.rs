@@ -201,6 +201,11 @@ pub struct L2TunnelRingBackendStats {
     pub rx_dropped_oversize: u64,
     pub rx_dropped_oversize_bytes: u64,
     pub rx_corrupt: u64,
+    /// Whether the RX ring has entered a permanent broken state due to corruption.
+    ///
+    /// When this is `true`, [`L2TunnelRingBackend::poll_receive`] will stop attempting to pop from
+    /// the ring and will always return `None`.
+    pub rx_broken: bool,
 }
 
 /// A ring-buffer-backed variant of [`crate::L2TunnelBackend`].
@@ -230,7 +235,6 @@ pub struct L2TunnelRingBackend<TX, RX> {
     rx: RX,
     max_frame_bytes: usize,
     stats: L2TunnelRingBackendStats,
-    rx_broken: bool,
 }
 
 impl<TX: FrameRing, RX: FrameRing> L2TunnelRingBackend<TX, RX> {
@@ -246,7 +250,6 @@ impl<TX: FrameRing, RX: FrameRing> L2TunnelRingBackend<TX, RX> {
             rx,
             max_frame_bytes,
             stats: L2TunnelRingBackendStats::default(),
-            rx_broken: false,
         }
     }
 
@@ -293,7 +296,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
     }
 
     fn poll_receive(&mut self) -> Option<Vec<u8>> {
-        if self.rx_broken {
+        if self.stats.rx_broken {
             return None;
         }
 
@@ -314,7 +317,7 @@ impl<TX: FrameRing, RX: FrameRing> NetworkBackend for L2TunnelRingBackend<TX, RX
                 Err(PopError::Empty) => return None,
                 Err(PopError::Corrupt) => {
                     self.stats.rx_corrupt += 1;
-                    self.rx_broken = true;
+                    self.stats.rx_broken = true;
                     return None;
                 }
             }
@@ -403,6 +406,7 @@ mod tests {
                 rx_dropped_oversize: 0,
                 rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 0,
+                rx_broken: false,
             }
         );
         assert_eq!(tx.try_pop(), Err(PopError::Empty));
@@ -433,6 +437,7 @@ mod tests {
                 rx_dropped_oversize: 0,
                 rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 0,
+                rx_broken: false,
             }
         );
 
@@ -465,6 +470,7 @@ mod tests {
                 rx_dropped_oversize: 0,
                 rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 0,
+                rx_broken: false,
             }
         );
         assert_eq!(tx.try_pop(), Err(PopError::Empty));
@@ -496,6 +502,7 @@ mod tests {
                 rx_dropped_oversize: 1,
                 rx_dropped_oversize_bytes: 3,
                 rx_corrupt: 0,
+                rx_broken: false,
             }
         );
     }
@@ -563,6 +570,7 @@ mod tests {
                 rx_dropped_oversize: MAX_RX_POPS_PER_POLL as u64,
                 rx_dropped_oversize_bytes: (MAX_RX_POPS_PER_POLL as u64) * 3,
                 rx_corrupt: 0,
+                rx_broken: false,
             }
         );
     }
@@ -628,6 +636,7 @@ mod tests {
                 rx_dropped_oversize: 0,
                 rx_dropped_oversize_bytes: 0,
                 rx_corrupt: 1,
+                rx_broken: true,
             }
         );
 
@@ -635,6 +644,7 @@ mod tests {
         assert_eq!(backend.poll_receive(), None);
         assert_eq!(rx.calls(), 1);
         assert_eq!(backend.stats().rx_corrupt, 1);
+        assert!(backend.stats().rx_broken);
     }
 
     #[test]

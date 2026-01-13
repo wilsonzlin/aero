@@ -108,6 +108,7 @@ fn ring_backend_transmit_counts_push_and_drop_reasons() {
             rx_dropped_oversize: 0,
             rx_dropped_oversize_bytes: 0,
             rx_corrupt: 0,
+            rx_broken: false,
         }
     );
 
@@ -152,6 +153,7 @@ fn ring_backend_poll_receive_drops_oversize_frames_with_bounded_work() {
             rx_dropped_oversize_bytes: (aero_net_backend::ring_backend::MAX_RX_POPS_PER_POLL as u64)
                 * 10,
             rx_corrupt: 0,
+            rx_broken: false,
         }
     );
     assert_eq!(
@@ -174,10 +176,12 @@ fn ring_backend_poll_receive_marks_rx_broken_on_corrupt() {
 
     assert_eq!(backend.poll_receive(), None);
     assert_eq!(backend.stats().rx_corrupt, 1);
+    assert!(backend.stats().rx_broken);
     assert_eq!(backend.rx_ring().pop_calls(), 1);
 
     // Once corrupt, the backend should stop reading the RX ring.
     assert_eq!(backend.poll_receive(), None);
     assert_eq!(backend.stats().rx_corrupt, 1);
+    assert!(backend.stats().rx_broken);
     assert_eq!(backend.rx_ring().pop_calls(), 1);
 }

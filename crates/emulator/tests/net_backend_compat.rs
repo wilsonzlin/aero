@@ -89,6 +89,7 @@ fn ring_backend_paths_work() {
             rx_dropped_oversize: 0,
             rx_dropped_oversize_bytes: 0,
             rx_corrupt: 0,
+            rx_broken: false,
         }
     );
 }
