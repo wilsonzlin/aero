@@ -3752,7 +3752,9 @@ mod tests {
     fn unknown_opcode_error_uses_friendly_name_when_known() {
         // Force an "unknown opcode" through the emitter path and ensure the resulting error
         // message uses `opcode_name()` instead of a raw `opcode_<n>` placeholder.
-        let module = minimal_module(vec![Sm4Inst::Unknown { opcode: 44 }]);
+        let module = minimal_module(vec![Sm4Inst::Unknown {
+            opcode: crate::sm4::opcode::OPCODE_MOVC,
+        }]);
 
         let io = IoMaps::default();
         let resources = ResourceUsage {
@@ -3772,7 +3774,7 @@ mod tests {
         let err = emit_instructions(&mut w, &module, &ctx).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("if_nz"),
+            msg.contains("movc"),
             "expected friendly opcode name in error message, got: {msg}"
         );
     }

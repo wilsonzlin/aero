@@ -188,16 +188,17 @@ pub const OPERAND_SEL_SELECT1: u32 = 2;
 /// Returns the human-friendly name for an SM4/SM5 opcode.
 ///
 /// The DXBC token stream encodes opcodes as numeric values. For bring-up work it's
-/// useful to turn "unknown opcode 44" into a disassembly-style mnemonic like
-/// "if_nz".
+/// useful to turn "unknown opcode 75" into a disassembly-style mnemonic like
+/// "resinfo".
 ///
 /// This table is intentionally small and is only used for diagnostics. It is
 /// expected to grow over time as more instructions are supported.
 pub fn opcode_name(opcode: u32) -> Option<&'static str> {
     match opcode {
-        // ---- Currently supported by the decoder/translator ----
+        // ---- Opcodes implemented by the current decoder/translator ----
         OPCODE_NOP => Some("nop"),
         OPCODE_MOV => Some("mov"),
+        OPCODE_MOVC => Some("movc"),
         OPCODE_ADD => Some("add"),
         OPCODE_MAD => Some("mad"),
         OPCODE_MUL => Some("mul"),
@@ -207,32 +208,40 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DP4 => Some("dp4"),
         OPCODE_MIN => Some("min"),
         OPCODE_MAX => Some("max"),
-        OPCODE_CUSTOMDATA => Some("customdata"),
-        OPCODE_RET => Some("ret"),
-        OPCODE_SAMPLE => Some("sample"),
-        OPCODE_SAMPLE_L => Some("sample_l"),
-        OPCODE_LD => Some("ld"),
-
-        // ---- Common SM4/SM5 opcodes not implemented yet (diagnostics only) ----
-        //
-        // The numeric IDs below are the DXBC `opcode_type` values (low 11 bits of the opcode token)
-        // as used by the D3D10+/SM4 tokenized program format.
-        //
-        // This is intentionally a small, "bring-up oriented" set: it is not meant to be a full
-        // disassembler table.
-        // Integer/bit ops.
-        OPCODE_MOVC => Some("movc"),
+        OPCODE_UDIV => Some("udiv"),
+        OPCODE_IDIV => Some("idiv"),
         OPCODE_BFI => Some("bfi"),
         OPCODE_UBFE => Some("ubfe"),
         OPCODE_IBFE => Some("ibfe"),
-        // Raw/structured buffer ops.
+        OPCODE_CUSTOMDATA => Some("customdata"),
+        OPCODE_IF => Some("if"),
+        OPCODE_ELSE => Some("else"),
+        OPCODE_ENDIF => Some("endif"),
+        OPCODE_RET => Some("ret"),
+        OPCODE_EMIT => Some("emit"),
+        OPCODE_CUT => Some("cut"),
+        OPCODE_EMIT_STREAM => Some("emit_stream"),
+        OPCODE_CUT_STREAM => Some("cut_stream"),
+        OPCODE_SAMPLE => Some("sample"),
+        OPCODE_SAMPLE_L => Some("sample_l"),
+        OPCODE_LD => Some("ld"),
         OPCODE_LD_RAW => Some("ld_raw"),
         OPCODE_LD_STRUCTURED => Some("ld_structured"),
         OPCODE_STORE_RAW => Some("store_raw"),
         OPCODE_STORE_STRUCTURED => Some("store_structured"),
-        // Control-flow / compare / integer ops not modeled by the IR yet.
+        OPCODE_DCL_THREAD_GROUP => Some("dcl_thread_group"),
+        OPCODE_DCL_GS_INPUT_PRIMITIVE => Some("dcl_gs_input_primitive"),
+        OPCODE_DCL_GS_OUTPUT_TOPOLOGY => Some("dcl_gs_output_topology"),
+        OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => Some("dcl_gs_max_output_vertex_count"),
+        OPCODE_DCL_RESOURCE_RAW => Some("dcl_resource_raw"),
+        OPCODE_DCL_RESOURCE_STRUCTURED => Some("dcl_resource_structured"),
+        OPCODE_DCL_UAV_RAW => Some("dcl_uav_raw"),
+        OPCODE_DCL_UAV_STRUCTURED => Some("dcl_uav_structured"),
+
+        // ---- Common SM4/SM5 opcodes we don't translate yet (diagnostics only) ----
+        // Integer/bit ops not modeled by the IR yet.
         30 => Some("iadd"),
-        44 => Some("if_nz"),
+        // Resource query.
         75 => Some("resinfo"),
 
         _ => None,
