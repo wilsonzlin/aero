@@ -400,6 +400,7 @@ dependencies = [
  "aero-devices-input",
  "aero-devices-nvme",
  "aero-devices-storage",
+ "aero-edid",
  "aero-gpu-vga",
  "aero-interrupts",
  "aero-io-snapshot",

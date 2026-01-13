@@ -31,3 +31,4 @@ memory = { path = "../memory" }
 [dev-dependencies]
 pretty_assertions = "1"
 aero-usb = { path = "../aero-usb" }
+aero-edid = { path = "../aero-edid" }
