@@ -266,7 +266,10 @@ QEMU_BIN=/path/to/qemu-system-x86_64 bash ./drivers/windows7/virtio-input/tests/
 After reboot:
 
 1. Open **Device Manager**.
-2. Verify a HID keyboard device exists:
+2. Under **Human Interface Devices**, the virtio-input PCI functions should appear with distinct names when the Aero subsystem IDs are present:
+   - **Aero VirtIO Keyboard**
+   - **Aero VirtIO Mouse**
+3. Verify a HID keyboard device exists:
    - Category: **Keyboards**
    - Typical name: **HID Keyboard Device**
    - Properties → **Driver** → **Driver Details**
@@ -274,14 +277,14 @@ After reboot:
      - `kbdhid.sys`
      - `hidclass.sys`
      - `hidparse.sys`
-3. Verify a HID mouse device exists:
+4. Verify a HID mouse device exists:
    - Category: **Mice and other pointing devices**
    - Typical name: **HID-compliant mouse**
    - Driver Details should include:
      - `mouhid.sys`
      - `hidclass.sys`
      - `hidparse.sys`
-4. Confirm input works in the guest desktop (typing, mouse movement/clicks).
+5. Confirm input works in the guest desktop (typing, mouse movement/clicks).
 
 ## Run `hidtest`
 

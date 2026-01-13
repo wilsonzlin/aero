@@ -275,6 +275,9 @@ These are common “first look” signals when validating the driver end-to-end:
   - Typical state: **Code 28** (“drivers for this device are not installed”).
 - **After successful install (expected):**
   - The virtio-input PCI function(s) bind to `aero_virtio_input.sys` and appear under **Human Interface Devices** (`HIDClass`).
+  - When the guest exposes the Aero subsystem IDs, the two functions should have distinct names under **Human Interface Devices**:
+    - **Aero VirtIO Keyboard** (`SUBSYS_00101AF4`)
+    - **Aero VirtIO Mouse** (`SUBSYS_00111AF4`)
   - A HID keyboard and HID mouse are present and use the in-box HID stacks:
     - Keyboard: **Keyboards → HID Keyboard Device** (`kbdhid.sys`, `hidclass.sys`, `hidparse.sys`)
     - Mouse: **Mice and other pointing devices → HID-compliant mouse** (`mouhid.sys`, `hidclass.sys`, `hidparse.sys`)

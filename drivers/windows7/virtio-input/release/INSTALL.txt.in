@@ -38,5 +38,9 @@ into the Local Machine certificate stores:
   sc query {{SERVICE}}
   dir %SystemRoot%\System32\drivers\{{SYS}}
 
+  In Device Manager, the virtio-input PCI function(s) should bind under "Human Interface Devices" as:
+    - Aero VirtIO Keyboard
+    - Aero VirtIO Mouse
+
 (Optional) Disable test-signing (requires reboot):
   bcdedit /set testsigning off
