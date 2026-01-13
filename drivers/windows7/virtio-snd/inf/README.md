@@ -36,7 +36,7 @@ In a finished package, this directory contains the driver package payload:
 
 ## Bring-up toggles (registry)
 
-The INFs create per-device registry values with safe defaults (`0`):
+The **contract v1** and **transitional/QEMU** virtio-snd INFs create per-device registry values with safe defaults (`0`):
 
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
   - `0` (default): use virtio backend
@@ -44,6 +44,9 @@ The INFs create per-device registry values with safe defaults (`0`):
 - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
   - `0` (default): INTx-strict (fail START_DEVICE if INTx is unavailable)
   - `1`: allow polling-only mode when INTx cannot be discovered/connected
+
+The legacy **I/O-port** bring-up package (`aero-virtio-snd-ioport.inf` / `virtiosnd_ioport.sys`) currently creates/uses
+`ForceNullBackend` only.
 
 You can find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 
