@@ -14,7 +14,7 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
         enable_vga: true,
         // Keep this test stable if AeroGPU becomes enabled-by-default in the canonical presets.
         enable_aerogpu: false,
-        vga_lfb_base: lfb_base,
+        vga_lfb_base: Some(lfb_base),
         // Keep the machine minimal for the PCI stub check.
         enable_serial: false,
         enable_i8042: false,

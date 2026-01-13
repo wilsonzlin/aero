@@ -117,7 +117,11 @@ pub const VGA_VRAM_SIZE: usize = 4 * VGA_PLANE_SIZE;
 /// We align the start of the VBE framebuffer to the full planar region size (256KiB / 0x40000).
 pub const VBE_FRAMEBUFFER_OFFSET: usize = VGA_VRAM_SIZE;
 
-/// Default total VRAM for the device (16MiB), enough for common VBE modes.
+/// Default size of the VBE ("SVGA") framebuffer region in bytes (16MiB), enough for common VBE
+/// modes.
+///
+/// Note: the device's *total* VRAM allocation also includes the legacy VGA planar region at the
+/// start of `vram` (`[0, VBE_FRAMEBUFFER_OFFSET)`).
 pub const DEFAULT_VRAM_SIZE: usize = 16 * 1024 * 1024;
 
 /// Configuration for [`VgaDevice`].

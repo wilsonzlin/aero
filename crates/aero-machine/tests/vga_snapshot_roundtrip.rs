@@ -32,7 +32,7 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
         enable_pc_platform: true,
         enable_vga: true,
         enable_aerogpu: false,
-        vga_lfb_base: lfb_base,
+        vga_lfb_base: Some(lfb_base),
         enable_serial: false,
         enable_i8042: false,
         enable_a20_gate: false,

@@ -1,3 +1,4 @@
+use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
@@ -331,8 +332,7 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         (0x118u16, (1024, 768)),
         (0x160u16, (1280, 720)),
     ] {
-        m.set_disk_image(build_vbe_boot_sector(mode).to_vec())
-            .unwrap();
+        m.set_disk_image(build_vbe_boot_sector(mode).to_vec()).unwrap();
         m.reset();
         run_until_halt(&mut m);
 
@@ -368,8 +368,12 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
         assert_eq!(phys_base_ptr, m.vbe_lfb_base_u32());
 
-        m.display_present();
-        assert_eq!(m.display_resolution(), (w as u32, h as u32));
+        let vga = m.vga().expect("pc platform should include VGA");
+        {
+            let mut vga = vga.borrow_mut();
+            vga.present();
+            assert_eq!(vga.get_resolution(), (w, h));
+        }
 
         // Write a single red pixel at (0,0) in packed 32bpp BGRX.
         m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
@@ -377,6 +381,49 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         let pixel0 = m.display_framebuffer()[0];
         assert_eq!(pixel0, 0xFF00_00FF);
     }
+}
+
+#[test]
+fn bios_vbe_sync_mode_and_custom_lfb_base() {
+    let custom_lfb_base = SVGA_LFB_BASE + 0x0100_0000;
+    let cfg = MachineConfig {
+        ram_size_bytes: 64 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        vga_lfb_base: Some(custom_lfb_base),
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(build_vbe_boot_sector(0x118).to_vec())
+        .unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
+    let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
+    assert_eq!(phys_base_ptr, custom_lfb_base);
+
+    let vga = m.vga().expect("pc platform should include VGA");
+    {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        assert_eq!(vga.get_resolution(), (1024, 768));
+    }
+
+    // Write a single red pixel at (0,0) in packed 32bpp BGRX.
+    m.write_physical_u32(u64::from(custom_lfb_base), 0x00FF_0000);
+    let pixel0 = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        vga.get_framebuffer()[0]
+    };
+    assert_eq!(pixel0, 0xFF00_00FF);
 }
 
 #[test]
@@ -438,8 +485,12 @@ fn bios_vbe_palette_sync_updates_vga_dac() {
     // Write palette index 1 to the first pixel in the 8bpp framebuffer.
     m.write_physical_u8(m.vbe_lfb_base(), 1);
 
-    m.display_present();
-    let pixel0 = m.display_framebuffer()[0];
+    let vga = m.vga().expect("machine should include VGA");
+    let pixel0 = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        vga.get_framebuffer()[0]
+    };
 
     // Palette entry 1 was set to red (B=0,G=0,R=0x3F).
     assert_eq!(pixel0, 0xFF00_00FF);
@@ -504,9 +555,13 @@ fn bios_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
 
     run_until_halt(&mut m);
 
-    m.display_present();
-    assert_eq!(m.display_resolution(), (1024, 768));
-    let pixel0 = m.display_framebuffer()[0];
+    let vga = m.vga().expect("machine should include VGA");
+    let pixel0 = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        assert_eq!(vga.get_resolution(), (1024, 768));
+        vga.get_framebuffer()[0]
+    };
 
     assert_eq!(pixel0, 0xFF00_00FF);
 }

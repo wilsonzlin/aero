@@ -51,7 +51,7 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
         enable_pc_platform: true,
         enable_vga: true,
         enable_aerogpu: false,
-        vga_lfb_base: lfb_base,
+        vga_lfb_base: Some(lfb_base),
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();

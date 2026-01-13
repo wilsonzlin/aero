@@ -15,7 +15,7 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
         enable_pc_platform: false,
         enable_vga: true,
         enable_aerogpu: false,
-        vga_lfb_base: lfb_base,
+        vga_lfb_base: Some(lfb_base),
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()
