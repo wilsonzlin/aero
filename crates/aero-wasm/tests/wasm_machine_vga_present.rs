@@ -315,3 +315,58 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
         unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
     assert_eq!(&disp_fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
 }
+
+#[wasm_bindgen_test]
+fn wasm_machine_aerogpu_config_disables_vga_by_default_and_displays_text_mode() {
+    let boot = boot_sector_write_a_to_b8000();
+    // Enable AeroGPU via the wasm wrapper and rely on its default to disable VGA.
+    let mut machine = Machine::new_with_config(16 * 1024 * 1024, true, None)
+        .expect("Machine::new_with_config(enable_aerogpu=true)");
+    machine
+        .set_disk_image(&boot)
+        .expect("set_disk_image should accept a 512-byte boot sector");
+    machine.reset();
+
+    let mut halted = false;
+    for _ in 0..10_000 {
+        let exit = machine.run_slice(50_000);
+        match exit.kind() {
+            RunExitKind::Completed => {}
+            RunExitKind::Halted => {
+                halted = true;
+                break;
+            }
+            other => panic!("unexpected RunExitKind: {other:?}"),
+        }
+    }
+    assert!(halted, "guest never reached HLT");
+
+    // VGA should not be present by default when AeroGPU is enabled.
+    assert_eq!(machine.vga_width(), 0);
+    assert_eq!(machine.vga_height(), 0);
+    assert_eq!(machine.vga_framebuffer_ptr(), 0);
+    assert_eq!(machine.vga_framebuffer_len_bytes(), 0);
+
+    // But the unified display scanout should still expose BIOS text mode output by scanning the
+    // legacy `0xB8000` text buffer.
+    machine.display_present();
+    let w = machine.display_width();
+    let h = machine.display_height();
+    assert!(w > 0, "expected non-zero display_width in AeroGPU text mode");
+    assert!(h > 0, "expected non-zero display_height in AeroGPU text mode");
+    assert_eq!(machine.display_stride_bytes(), w * 4);
+
+    let ptr = machine.display_framebuffer_ptr();
+    let len = machine.display_framebuffer_len_bytes();
+    assert!(ptr != 0, "expected non-zero display_framebuffer_ptr");
+    assert!(len != 0, "expected non-zero display_framebuffer_len_bytes");
+
+    // Safety: ptr/len is a view into the module's own linear memory.
+    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
+    let hash = fnv1a(fb);
+    let blank = fnv1a_blank_rgba8(len as usize);
+    assert_ne!(
+        hash, blank,
+        "expected AeroGPU text-mode framebuffer hash to differ from blank screen"
+    );
+}
