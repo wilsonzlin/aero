@@ -833,13 +833,16 @@ function renderMachinePanel(): HTMLElement {
         if (normalized === "0" || normalized === "false") return false;
         return true;
       })();
-      const machine =
-        enableAerogpu && typeof api.Machine.new_with_config === "function"
-          ? api.Machine.new_with_config(ramSizeBytes, true, enableVgaOverride)
-          : new api.Machine(ramSizeBytes);
+      const canEnableAerogpu = enableAerogpu && typeof api.Machine.new_with_config === "function";
+      const machine = canEnableAerogpu
+        ? api.Machine.new_with_config(ramSizeBytes, true, enableVgaOverride)
+        : new api.Machine(ramSizeBytes);
       const vbeRaw = search.get("machineVbe");
       let diskImage = buildSerialBootSector(bootMessage);
-      if (vbeRaw) {
+      // Bochs VBE programming requires the legacy VGA/VBE device model. If the user requested the
+      // AeroGPU config (which disables VGA by default), ignore `machineVbe` so we keep visible text
+      // output via the `0xB8000` fallback scanout.
+      if (vbeRaw && !canEnableAerogpu) {
         const match = /^(\d+)x(\d+)$/.exec(vbeRaw.trim());
         if (match) {
           const width = Number.parseInt(match[1] ?? "", 10);
