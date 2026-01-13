@@ -298,8 +298,8 @@ fn translates_vertex_id_and_instance_id_builtins_from_semantics() {
     assert!(translated
         .wgsl
         .contains("@builtin(instance_index) instance_id: u32"));
-    assert!(translated.wgsl.contains("f32(input.vertex_id)"));
-    assert!(translated.wgsl.contains("f32(input.instance_id)"));
+    assert!(translated.wgsl.contains("bitcast<f32>(input.vertex_id)"));
+    assert!(translated.wgsl.contains("bitcast<f32>(input.instance_id)"));
 
     assert!(translated.reflection.inputs.iter().any(|p| {
         p.semantic_name.eq_ignore_ascii_case("SV_VertexID")

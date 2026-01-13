@@ -808,6 +808,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst: _, src } => scan_src_regs(src, &mut scan_reg),
+            Sm4Inst::Utof { dst: _, src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src_regs(cond, &mut scan_reg);
                 scan_src_regs(a, &mut scan_reg);
@@ -1235,7 +1236,16 @@ impl IoMaps {
                             register: reg,
                         },
                     )?;
-                    return Ok(expand_to_vec4("f32(input.vertex_id)", p));
+                    // `SV_VertexID` / `@builtin(vertex_index)` is an integer system value in D3D.
+                    //
+                    // Our internal register model is `vec4<f32>` (untyped 32-bit lanes). Integer
+                    // operations therefore expect the *raw integer bit pattern* to be carried in a
+                    // float lane, not the float numeric value of the integer.
+                    //
+                    // Converting via `f32(input.vertex_id)` would lose the original bits (e.g.
+                    // breaking `and`/`xor`/shifts once those ops are implemented). Preserve the bits
+                    // with a bitcast instead.
+                    return Ok(expand_to_vec4("bitcast<f32>(input.vertex_id)", p));
                 }
                 if Some(reg) == self.vs_instance_id_register {
                     let p = self.inputs.get(&reg).ok_or(
@@ -1244,7 +1254,9 @@ impl IoMaps {
                             register: reg,
                         },
                     )?;
-                    return Ok(expand_to_vec4("f32(input.instance_id)", p));
+                    // See `vs_vertex_id_register` above for why this is a `bitcast<f32>` rather
+                    // than a numeric `f32(...)` conversion.
+                    return Ok(expand_to_vec4("bitcast<f32>(input.instance_id)", p));
                 }
                 let field_indices = self.vs_input_fields_by_register.get(&reg).ok_or(
                     ShaderTranslateError::SignatureMissingRegister {
@@ -1339,6 +1351,13 @@ impl IoMaps {
                             register: reg,
                         },
                     )?;
+                    // `SV_IsFrontFace` is a boolean system value. For now we expand it to a
+                    // numeric 0.0/1.0 in the internal `vec4<f32>` register model.
+                    //
+                    // Note: D3D-style boolean "mask bits" (0 / 0xffffffff) can be represented as:
+                    // `bitcast<f32>(select(0u, 0xffffffffu, input.front_facing))`.
+                    // We intentionally keep the numeric representation until we translate boolean
+                    // and integer ops that depend on the mask form.
                     return Ok(expand_to_vec4("select(0.0, 1.0, input.front_facing)", p));
                 }
                 let p = self.inputs.get(&reg).ok_or(
@@ -1786,6 +1805,7 @@ fn scan_resources(module: &Sm4Module) -> Result<ResourceUsage, ShaderTranslateEr
             Sm4Inst::If { cond, .. } => scan_src(cond)?,
             Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
+            Sm4Inst::Utof { dst: _, src } => scan_src(src)?,
             Sm4Inst::Movc {
                 dst: _,
                 cond,
@@ -1980,6 +2000,10 @@ fn emit_temp_and_output_decls(
             }
             Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst, src } => {
+                scan_reg(dst.reg);
+                scan_src_regs(src, &mut scan_reg);
+            }
+            Sm4Inst::Utof { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
             }
@@ -2235,6 +2259,16 @@ fn emit_instructions(
 
                 let expr = maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "movc", ctx)?;
+            }
+            Sm4Inst::Utof { dst, src } => {
+                // Unsigned int -> float conversion.
+                //
+                // The source operand is carried in our untyped `vec4<f32>` register model; we
+                // reinterpret each lane as `u32`, then apply a numeric conversion to `f32`.
+                let src_bits = emit_src_vec4(src, inst_index, "utof", ctx)?;
+                let rhs = format!("vec4<f32>(bitcast<vec4<u32>>({src_bits}))");
+                let rhs = maybe_saturate(dst, rhs);
+                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "utof", ctx)?;
             }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "add", ctx)?;

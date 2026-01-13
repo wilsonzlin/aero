@@ -932,11 +932,10 @@ fn translates_texture_load_with_nonzero_lod() {
 }
 
 #[test]
-fn translates_texture_load_with_vertex_id_numeric_coords() {
+fn translates_texture_load_with_vertex_id_raw_bits_coords() {
     // `SV_VertexID` is surfaced to the translator as a `u32` builtin and expanded into our
-    // internal `vec4<f32>` register model via `f32(input.vertex_id)`. This means that integer
-    // texel coordinates may sometimes appear as numeric floats (not raw integer bits), so `ld`
-    // emission must handle both.
+    // internal `vec4<f32>` register model via `bitcast<f32>(input.vertex_id)` so the original
+    // integer bit pattern is preserved (required for integer/bit ops).
     const D3D_NAME_VERTEX_ID: u32 = 6;
 
     let isgn_params = vec![DxbcSignatureParameter {
@@ -977,7 +976,70 @@ fn translates_texture_load_with_vertex_id_numeric_coords() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
-    assert!(translated.wgsl.contains("f32(input.vertex_id)"));
+    assert!(translated.wgsl.contains("bitcast<f32>(input.vertex_id)"));
+}
+
+#[test]
+fn translates_utof_from_vertex_id_bits() {
+    // Demonstrate how to recover a float numeric value from the raw integer bit-pattern carried in
+    // our `vec4<f32>` register model.
+    //
+    // In real DXBC this is handled by the `utof` instruction; until we translate more integer
+    // instructions this test asserts the intended WGSL pattern (`bitcast` -> numeric conversion).
+    const D3D_NAME_VERTEX_ID: u32 = 6;
+
+    let isgn_params = vec![DxbcSignatureParameter {
+        semantic_name: "SV_VertexID".to_owned(),
+        semantic_index: 0,
+        system_value_type: D3D_NAME_VERTEX_ID,
+        component_type: 0,
+        register: 0,
+        mask: 0b0001,
+        read_write_mask: 0b0001,
+        stream: 0,
+        min_precision: 0,
+    }];
+    // Only write X; the translator will apply D3D default fill for SV_Position.
+    let osgn_params = vec![sig_param("SV_Position", 0, 0, 0b0001)];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Utof {
+                dst: dst(RegFile::Temp, 0, WriteMask::X),
+                src: src_reg(RegFile::Input, 0),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::X),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("bitcast<f32>(input.vertex_id)"),
+        "expected raw-bits vertex_id expansion:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("vec4<f32>(bitcast<vec4<u32>>"),
+        "expected `utof` to convert from raw integer bits via bitcast:\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]

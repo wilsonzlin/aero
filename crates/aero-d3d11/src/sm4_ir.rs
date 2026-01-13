@@ -154,6 +154,17 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    /// `utof dest, src`
+    ///
+    /// Converts the unsigned integer bit pattern in `src` into a float numeric value.
+    ///
+    /// Note: DXBC registers are untyped. In our WGSL backend the register file is modeled as
+    /// `vec4<f32>`, so the input to this instruction is expected to be carried as raw integer bits
+    /// inside an `f32` lane (e.g. produced by `bitcast<f32>(...)`).
+    Utof {
+        dst: DstOperand,
+        src: SrcOperand,
+    },
     Add {
         dst: DstOperand,
         a: SrcOperand,
@@ -268,10 +279,17 @@ pub enum Sm4Inst {
     ///
     /// Note: `coord` and `lod` are integer-typed in SM4/SM5.
     ///
-    /// DXBC register files are untyped; integer values are stored as raw 32-bit patterns in the
-    /// same lanes that this crate currently models as `vec4<f32>`. When lowering `ld` to WGSL
-    /// `textureLoad`, backends must therefore interpret coordinate and mip operands as integer
-    /// *bits* (i.e. bitcast `f32` -> `i32`), not numeric float values.
+    /// DXBC register files are untyped; in the WGSL backend we model the register file as
+    /// `vec4<f32>` where each lane is treated as an untyped 32-bit payload.
+    ///
+    /// Integer values may therefore appear as:
+    /// - Raw integer bit patterns (common for real DXBC, which writes integers into the untyped
+    ///   register file).
+    /// - Numeric float values (e.g. produced by float arithmetic or explicit integer->float
+    ///   conversions).
+    ///
+    /// When emitting WGSL `textureLoad`, the backend picks between `i32(f32)` and
+    /// `bitcast<i32>(f32)` per lane to recover an `i32` coordinate/LOD.
     Ld {
         dst: DstOperand,
         /// Texel coordinate (x/y in `.xy`).
