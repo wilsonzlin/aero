@@ -136,7 +136,10 @@ static bool ChangeDisplaySettingsExWithTimeout(const DEVMODEW& target,
       if (out_timed_out) {
         *out_timed_out = true;
       }
-      *err = aerogpu_test::FormatString("ChangeDisplaySettingsExW timed out after %lu ms", (unsigned long)timeout_ms);
+      *err = aerogpu_test::FormatString("ChangeDisplaySettingsExW timed out after %lu ms (target=%lux%lu)",
+                                        (unsigned long)timeout_ms,
+                                        (unsigned long)target.dmPelsWidth,
+                                        (unsigned long)target.dmPelsHeight);
     } else {
       *err = "WaitForSingleObject(ChangeDisplaySettingsExW) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
     }
