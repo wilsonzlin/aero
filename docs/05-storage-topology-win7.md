@@ -74,8 +74,9 @@ enables the same canonical controller set in the full-system `Machine` integrati
 2. The boot ISO is presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary master**.
 3. BIOS selects the CD by using a **CD boot drive number** in `DL` (recommend **`DL=0xE0`** for the
    first CD-ROM drive) and performs an **El Torito no-emulation** boot.
-4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), BIOS falls
-   back to the primary HDD boot path and enters the HDD boot sector with **`DL=0x80`**.
+4. If the CD is absent or unbootable (no ISO, empty tray, invalid boot catalog, etc.), the boot
+   order should fall back to the primary HDD boot path and enter the HDD boot sector with
+   **`DL=0x80`** (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`).
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
 
 Implementation note (Rust): in `aero_machine`, this corresponds to configuring the BIOS boot drive
