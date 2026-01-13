@@ -16,6 +16,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - `IOCTL_HID_GET_REPORT_DESCRIPTOR` (descriptor length sanity check)
   - `IOCTL_HID_GET_DEVICE_DESCRIPTOR` (cross-check reported descriptor length)
   - `IOCTL_HID_GET_COLLECTION_DESCRIPTOR` (when supported by the OS/headers; useful for newer HIDCLASS consumers)
+- Supports `--selftest` mode to validate the virtio-input HID descriptor contract and exit non-zero on mismatch.
 - Reads input reports via `ReadFile` in a loop and prints raw bytes + best-effort decoding for:
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
@@ -75,6 +76,29 @@ List all HID interfaces:
 ```bat
 hidtest.exe --list
 ```
+
+Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch).
+
+Selftest output is pipe-delimited for easy serial log scraping:
+
+```text
+HIDTEST|SELFTEST|keyboard|...|PASS|...
+HIDTEST|SELFTEST|mouse|...|PASS|...
+HIDTEST|SELFTEST|SUMMARY|RESULT|PASS
+```
+
+```bat
+hidtest.exe --selftest
+```
+
+To selftest just one collection:
+
+```bat
+hidtest.exe --selftest --keyboard
+hidtest.exe --selftest --mouse
+```
+
+`--selftest` is intentionally standalone and cannot be combined with `--vid`, `--pid`, `--index`, `--counters`, LED writes, or negative-test options.
 
 Open the virtio keyboard collection by default and read reports:
 

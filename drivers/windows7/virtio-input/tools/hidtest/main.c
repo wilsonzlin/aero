@@ -12,6 +12,7 @@
 #include <setupapi.h>
 #include <hidsdi.h>
 #include <hidpi.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -177,6 +178,7 @@ typedef struct HID_DESCRIPTOR_MIN {
 
 typedef struct OPTIONS {
     int list_only;
+    int selftest;
     int have_vid;
     int have_pid;
     int have_index;
@@ -223,6 +225,10 @@ typedef struct SELECTED_DEVICE {
     DWORD hid_report_desc_len;
     int hid_report_desc_valid;
 } SELECTED_DEVICE;
+
+// Forward decls (used by --selftest helpers).
+static void free_selected_device(SELECTED_DEVICE *dev);
+static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out);
 
 static int is_virtio_input_device(const HIDD_ATTRIBUTES *attr)
 {
@@ -740,6 +746,7 @@ static void print_usage(void)
     wprintf(L"\n");
     wprintf(L"Usage:\n");
     wprintf(L"  hidtest.exe [--list]\n");
+    wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-cycle] [--dump-desc]\n");
     wprintf(L"             [--dump-collection-desc]\n");
@@ -754,6 +761,7 @@ static void print_usage(void)
     wprintf(L"\n");
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
+    wprintf(L"  --selftest      Validate virtio-input keyboard/mouse HID descriptor contract and exit\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
     wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
@@ -813,6 +821,168 @@ static void print_usage(void)
     wprintf(L"    (legacy/alternate PIDs: 0x1052 / 0x1011).\n");
     wprintf(L"  - Without filters, the tool prefers a virtio-input keyboard interface.\n");
     wprintf(L"  - Press Ctrl+C to exit the report read loop.\n");
+}
+
+static void selftest_logf(const wchar_t *device, const wchar_t *check, const wchar_t *status, const wchar_t *fmt, ...)
+{
+    va_list ap;
+    wprintf(L"HIDTEST|SELFTEST|%ls|%ls|%ls", device ? device : L"<null>", check ? check : L"<null>",
+            status ? status : L"<null>");
+    if (fmt != NULL && fmt[0] != L'\0') {
+        wprintf(L"|");
+        va_start(ap, fmt);
+        vwprintf(fmt, ap);
+        va_end(ap);
+    }
+    wprintf(L"\n");
+}
+
+static int virtio_pid_allowed_for_keyboard(USHORT pid)
+{
+    return (pid == VIRTIO_INPUT_PID_KEYBOARD) || (pid == VIRTIO_INPUT_PID_MODERN) || (pid == VIRTIO_INPUT_PID_TRANSITIONAL);
+}
+
+static int virtio_pid_allowed_for_mouse(USHORT pid)
+{
+    return (pid == VIRTIO_INPUT_PID_MOUSE) || (pid == VIRTIO_INPUT_PID_MODERN) || (pid == VIRTIO_INPUT_PID_TRANSITIONAL);
+}
+
+static int selftest_validate_device(const wchar_t *device_name, const SELECTED_DEVICE *dev, int is_keyboard)
+{
+    int ok = 1;
+    DWORD expected_input_len = is_keyboard ? VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN : VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN;
+    DWORD expected_desc_len = is_keyboard ? VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN : VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN;
+    int (*pid_allowed)(USHORT) = is_keyboard ? virtio_pid_allowed_for_keyboard : virtio_pid_allowed_for_mouse;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        selftest_logf(device_name, L"OPEN", L"FAIL", L"reason=no_device_handle");
+        return 0;
+    }
+
+    if (!dev->attr_valid) {
+        selftest_logf(device_name, L"HidD_GetAttributes", L"FAIL", L"reason=unavailable");
+        ok = 0;
+    } else {
+        if (dev->attr.VendorID == VIRTIO_INPUT_VID) {
+            selftest_logf(device_name, L"VID", L"PASS", L"expected=0x%04X got=0x%04X", VIRTIO_INPUT_VID,
+                          dev->attr.VendorID);
+        } else {
+            selftest_logf(device_name, L"VID", L"FAIL", L"expected=0x%04X got=0x%04X", VIRTIO_INPUT_VID,
+                          dev->attr.VendorID);
+            ok = 0;
+        }
+
+        if (pid_allowed(dev->attr.ProductID)) {
+            selftest_logf(device_name, L"PID", L"PASS", L"allowed=0x%04X/0x%04X/0x%04X got=0x%04X",
+                          is_keyboard ? VIRTIO_INPUT_PID_KEYBOARD : VIRTIO_INPUT_PID_MOUSE, VIRTIO_INPUT_PID_MODERN,
+                          VIRTIO_INPUT_PID_TRANSITIONAL, dev->attr.ProductID);
+        } else {
+            selftest_logf(device_name, L"PID", L"FAIL", L"allowed=0x%04X/0x%04X/0x%04X got=0x%04X",
+                          is_keyboard ? VIRTIO_INPUT_PID_KEYBOARD : VIRTIO_INPUT_PID_MOUSE, VIRTIO_INPUT_PID_MODERN,
+                          VIRTIO_INPUT_PID_TRANSITIONAL, dev->attr.ProductID);
+            ok = 0;
+        }
+    }
+
+    if (!dev->caps_valid) {
+        selftest_logf(device_name, L"HidP_GetCaps", L"FAIL", L"reason=unavailable");
+        ok = 0;
+    } else {
+        if (dev->caps.InputReportByteLength == expected_input_len) {
+            selftest_logf(device_name, L"InputReportByteLength", L"PASS", L"expected=%lu got=%u",
+                          (unsigned long)expected_input_len, dev->caps.InputReportByteLength);
+        } else {
+            selftest_logf(device_name, L"InputReportByteLength", L"FAIL", L"expected=%lu got=%u",
+                          (unsigned long)expected_input_len, dev->caps.InputReportByteLength);
+            ok = 0;
+        }
+    }
+
+    if (!dev->report_desc_valid) {
+        selftest_logf(device_name, L"IOCTL_HID_GET_REPORT_DESCRIPTOR", L"FAIL", L"reason=ioctl_failed");
+        ok = 0;
+    } else {
+        if (dev->report_desc_len == expected_desc_len) {
+            selftest_logf(device_name, L"ReportDescriptorLength", L"PASS", L"expected=%lu got=%lu",
+                          (unsigned long)expected_desc_len, (unsigned long)dev->report_desc_len);
+        } else {
+            selftest_logf(device_name, L"ReportDescriptorLength", L"FAIL", L"expected=%lu got=%lu",
+                          (unsigned long)expected_desc_len, (unsigned long)dev->report_desc_len);
+            ok = 0;
+        }
+    }
+
+    if (!dev->hid_report_desc_valid) {
+        selftest_logf(device_name, L"IOCTL_HID_GET_DEVICE_DESCRIPTOR", L"FAIL", L"reason=ioctl_failed");
+        ok = 0;
+    } else if (dev->report_desc_valid && dev->hid_report_desc_len == dev->report_desc_len) {
+        selftest_logf(device_name, L"HidDescriptorReportLength", L"PASS", L"hid=%lu ioctl=%lu",
+                      (unsigned long)dev->hid_report_desc_len, (unsigned long)dev->report_desc_len);
+    } else if (dev->report_desc_valid) {
+        selftest_logf(device_name, L"HidDescriptorReportLength", L"FAIL", L"hid=%lu ioctl=%lu",
+                      (unsigned long)dev->hid_report_desc_len, (unsigned long)dev->report_desc_len);
+        ok = 0;
+    } else {
+        // Report descriptor length was unavailable (already a failure), but still log the HID-reported value.
+        selftest_logf(device_name, L"HidDescriptorReportLength", L"FAIL", L"hid=%lu ioctl=<unavailable>",
+                      (unsigned long)dev->hid_report_desc_len);
+        ok = 0;
+    }
+
+    selftest_logf(device_name, L"RESULT", ok ? L"PASS" : L"FAIL", L"");
+    return ok;
+}
+
+static int run_selftest(const OPTIONS *opt)
+{
+    int ok = 1;
+    int test_keyboard = 0;
+    int test_mouse = 0;
+
+    if (opt != NULL && (opt->want_keyboard || opt->want_mouse)) {
+        test_keyboard = opt->want_keyboard;
+        test_mouse = opt->want_mouse;
+    } else {
+        test_keyboard = 1;
+        test_mouse = 1;
+    }
+
+    if (test_keyboard) {
+        OPTIONS sel;
+        SELECTED_DEVICE dev;
+        ZeroMemory(&sel, sizeof(sel));
+        ZeroMemory(&dev, sizeof(dev));
+        dev.handle = INVALID_HANDLE_VALUE;
+        sel.want_keyboard = 1;
+
+        if (!enumerate_hid_devices(&sel, &dev)) {
+            selftest_logf(L"keyboard", L"ENUM", L"FAIL", L"reason=no_matching_device");
+            ok = 0;
+        } else if (!selftest_validate_device(L"keyboard", &dev, 1)) {
+            ok = 0;
+        }
+        free_selected_device(&dev);
+    }
+
+    if (test_mouse) {
+        OPTIONS sel;
+        SELECTED_DEVICE dev;
+        ZeroMemory(&sel, sizeof(sel));
+        ZeroMemory(&dev, sizeof(dev));
+        dev.handle = INVALID_HANDLE_VALUE;
+        sel.want_mouse = 1;
+
+        if (!enumerate_hid_devices(&sel, &dev)) {
+            selftest_logf(L"mouse", L"ENUM", L"FAIL", L"reason=no_matching_device");
+            ok = 0;
+        } else if (!selftest_validate_device(L"mouse", &dev, 0)) {
+            ok = 0;
+        }
+        free_selected_device(&dev);
+    }
+
+    selftest_logf(L"SUMMARY", L"RESULT", ok ? L"PASS" : L"FAIL", L"");
+    return ok ? 0 : 1;
 }
 
 static void free_selected_device(SELECTED_DEVICE *dev)
@@ -1962,6 +2132,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--selftest") == 0) {
+            opt.selftest = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--keyboard") == 0) {
             opt.want_keyboard = 1;
             continue;
@@ -2149,6 +2324,17 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--keyboard and --mouse are mutually exclusive.\n");
         return 2;
     }
+    if (opt.selftest &&
+        (opt.list_only || opt.dump_desc || opt.have_vid || opt.have_pid || opt.have_index || opt.have_led_mask ||
+         opt.led_cycle || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_set_output_xfer_packet ||
+         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_device_descriptor ||
+         opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out ||
+         opt.ioctl_bad_get_indexed_string_out || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
+         opt.query_counters)) {
+        wprintf(
+            L"--selftest cannot be combined with --list, --dump-desc, --vid/--pid/--index, --counters, LED, or negative-test options.\n");
+        return 2;
+    }
     if (opt.have_led_mask && opt.led_cycle) {
         wprintf(L"--led/--led-hidd/--led-ioctl-set-output and --led-cycle are mutually exclusive.\n");
         return 2;
@@ -2281,6 +2467,10 @@ int wmain(int argc, wchar_t **argv)
          opt.hidd_bad_set_output_report)) {
         wprintf(L"--counters is mutually exclusive with LED actions, descriptor dump, and negative tests.\n");
         return 2;
+    }
+
+    if (opt.selftest) {
+        return run_selftest(&opt);
     }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
