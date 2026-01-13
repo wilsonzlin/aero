@@ -954,6 +954,21 @@ mod tests {
             "response buffer must not be written when BME is clear"
         );
 
+        // `poll()` must also be gated by PCI Bus Master Enable. A JS runtime may call `poll()` even
+        // before the guest enables DMA; ensure it cannot touch guest memory in that state.
+        bridge.poll();
+        assert!(!bridge.irq_asserted(), "IRQ should remain gated when BME is clear");
+        assert_eq!(
+            read_u16_le(&bridge.mem, used + 2).unwrap(),
+            0,
+            "used.idx must not advance when polling with BME clear"
+        );
+        assert_eq!(
+            bridge.mem.get_slice(resp, 4).unwrap(),
+            &[0xAA; 4],
+            "response buffer must not be written when polling with BME clear"
+        );
+
         // Now enable Bus Master and kick again. The device should DMA the response and update the
         // used ring, producing an interrupt.
         bridge.set_pci_command((1u32 << 1) | (1u32 << 2));
@@ -1044,6 +1059,63 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn snapshot_roundtrip_restores_sample_rates_and_worklet_ring_state_when_attached() {
+        let capacity_frames = 256;
+        let channel_count = 2;
+
+        let mut guest1 = vec![0u8; 0x4000];
+        let guest_base1 = guest1.as_mut_ptr() as u32;
+        let guest_size1 = guest1.len() as u32;
+        let mut bridge1 = VirtioSndPciBridge::new(guest_base1, guest_size1, None).unwrap();
+
+        // Mutate virtio-snd state so the snapshot has meaningful internal fields.
+        bridge1.set_host_sample_rate_hz(96_000).unwrap();
+        bridge1.set_capture_sample_rate_hz(44_100).unwrap();
+
+        // Attach a worklet ring and seed it with non-trivial indices.
+        let ring1 = WorkletBridge::new(capacity_frames, channel_count).unwrap();
+        let sab1 = ring1.shared_buffer();
+        bridge1
+            .attach_audio_ring(sab1.clone(), capacity_frames, channel_count)
+            .unwrap();
+
+        let expected_ring_state = AudioWorkletRingState {
+            capacity_frames,
+            read_pos: 7,
+            write_pos: 42,
+        };
+        ring1.restore_state(&expected_ring_state);
+        assert_eq!(bridge1.buffer_level_frames(), 35);
+
+        let snap = bridge1.save_state();
+
+        let mut guest2 = vec![0u8; 0x4000];
+        let guest_base2 = guest2.as_mut_ptr() as u32;
+        let guest_size2 = guest2.len() as u32;
+        let mut bridge2 = VirtioSndPciBridge::new(guest_base2, guest_size2, None).unwrap();
+
+        let ring2 = WorkletBridge::new(capacity_frames, channel_count).unwrap();
+        let sab2 = ring2.shared_buffer();
+        bridge2
+            .attach_audio_ring(sab2.clone(), capacity_frames, channel_count)
+            .unwrap();
+
+        bridge2.load_state(&snap).unwrap();
+
+        assert_eq!(bridge2.snd_mut().host_sample_rate_hz(), 96_000);
+        assert_eq!(bridge2.snd_mut().capture_sample_rate_hz(), 44_100);
+        assert_eq!(ring2.snapshot_state(), expected_ring_state);
+        assert_eq!(bridge2.buffer_level_frames(), 35);
+        assert!(
+            bridge2.pending_audio_ring_state.is_none(),
+            "load_state should apply ring state immediately when a ring is attached"
+        );
+
+        drop(guest1);
+        drop(guest2);
+    }
+
+    #[wasm_bindgen_test]
     fn deferred_worklet_ring_restore_is_applied_on_attach() {
         let capacity_frames = 8;
         let channel_count = 2;
@@ -1098,6 +1170,60 @@ mod tests {
         assert_eq!(ring.snapshot_state(), expected);
         assert!(
             bridge2.pending_audio_ring_state.is_none(),
+            "pending state should be consumed once applied"
+        );
+
+        // ---- Capacity mismatch path ----
+        // If the host re-attaches a ring with a different capacity than the snapshot captured,
+        // restores should be best-effort and must not panic. The bridge clears the snapshot's
+        // `capacity_frames` field before calling `WorkletBridge::restore_state` so the ring indices
+        // are restored using the *actual* ring capacity (rather than clamping to the snapshot
+        // capacity).
+        let mismatch_ring_state = AudioWorkletRingState {
+            capacity_frames: 16,
+            read_pos: 0,
+            write_pos: 20,
+        };
+
+        let virtio_pci = bridge2.dev.save_state();
+        let snd_state = bridge2.snd_mut().snapshot_state();
+        let mismatch_snapshot = VirtioSndPciState {
+            virtio_pci,
+            snd: snd_state,
+            worklet_ring: mismatch_ring_state.clone(),
+        };
+        let mismatch_bytes = mismatch_snapshot.save_state();
+
+        let mut guest3 = vec![0u8; 0x4000];
+        let guest_base3 = guest3.as_mut_ptr() as u32;
+        let guest_size3 = guest3.len() as u32;
+        let mut bridge3 = VirtioSndPciBridge::new(guest_base3, guest_size3, None).unwrap();
+        bridge3.load_state(&mismatch_bytes).unwrap();
+
+        assert_eq!(
+            bridge3.pending_audio_ring_state.as_ref(),
+            Some(&mismatch_ring_state),
+            "load_state should stash ring state when no ring is attached"
+        );
+
+        let larger_capacity = 32;
+        let ring3 = WorkletBridge::new(larger_capacity, channel_count).unwrap();
+        let sab3 = ring3.shared_buffer();
+        bridge3
+            .attach_audio_ring(sab3, larger_capacity, channel_count)
+            .unwrap();
+
+        let got = ring3.snapshot_state();
+        assert_eq!(got.capacity_frames, larger_capacity);
+        assert_eq!(got.read_pos, 0);
+        assert_eq!(got.write_pos, 20);
+        assert_eq!(
+            bridge3.buffer_level_frames(),
+            20,
+            "mismatched restore should use the attached ring capacity (best-effort)"
+        );
+        assert!(
+            bridge3.pending_audio_ring_state.is_none(),
             "pending state should be consumed once applied"
         );
 
