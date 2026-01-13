@@ -725,6 +725,13 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
         });
         const invalidAuthStatus = invalidAuth.status;
 
+        const apiKeyAuth = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
+          headers: {
+            "X-API-Key": token,
+          },
+        });
+        const apiKeyAuthStatus = apiKeyAuth.status;
+
         const authIceRes = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -872,13 +879,14 @@ test("authenticates WebRTC /webrtc/ice + /webrtc/signal with AUTH_MODE=jwt", asy
 
         ws.close();
         pc.close();
-        return { unauthStatus, invalidAuthStatus, authStatus, echoedText };
+        return { unauthStatus, invalidAuthStatus, apiKeyAuthStatus, authStatus, echoedText };
       },
       { relayPort: relay.port, echoPort: echo.port, token, invalidToken },
     );
 
     expect(res.unauthStatus).toBe(401);
     expect(res.invalidAuthStatus).toBe(401);
+    expect(res.apiKeyAuthStatus).toBe(200);
     expect(res.authStatus).toBe(200);
     expect(res.echoedText).toBe("hello from chromium jwt");
   } finally {
@@ -982,7 +990,20 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         queryWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
         const query = await queryPromise;
 
-        return { unauth, invalid, invalidQuery, query };
+        const invalidAPIKeyQueryWS = new WebSocket(
+          `ws://127.0.0.1:${relayPort}/webrtc/signal?apiKey=${encodeURIComponent(invalidToken)}`,
+        );
+        const invalidAPIKeyQueryPromise = waitForClose(invalidAPIKeyQueryWS);
+        await waitForOpen(invalidAPIKeyQueryWS);
+        const invalidAPIKeyQuery = await invalidAPIKeyQueryPromise;
+
+        const apiKeyQueryWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal?apiKey=${encodeURIComponent(token)}`);
+        const apiKeyQueryPromise = waitForClose(apiKeyQueryWS);
+        await waitForOpen(apiKeyQueryWS);
+        apiKeyQueryWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
+        const apiKeyQuery = await apiKeyQueryPromise;
+
+        return { unauth, invalid, invalidQuery, query, invalidAPIKeyQuery, apiKeyQuery };
       },
       { relayPort: relay.port, token, invalidToken },
     );
@@ -1015,6 +1036,20 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
       expect(["bad_message", "bad message", ""]).toContain(res.query.closeReason ?? "");
     }
     expect(res.query.closeCode).toBe(1008);
+
+    if (res.invalidAPIKeyQuery.errMsg) {
+      expect(res.invalidAPIKeyQuery.errMsg.code).toBe("unauthorized");
+    } else {
+      expect(["unauthorized", ""]).toContain(res.invalidAPIKeyQuery.closeReason ?? "");
+    }
+    expect(res.invalidAPIKeyQuery.closeCode).toBe(1008);
+
+    if (res.apiKeyQuery.errMsg) {
+      expect(res.apiKeyQuery.errMsg.code).toBe("bad_message");
+    } else {
+      expect(["bad_message", "bad message", ""]).toContain(res.apiKeyQuery.closeReason ?? "");
+    }
+    expect(res.apiKeyQuery.closeCode).toBe(1008);
   } finally {
     await Promise.all([web.close(), relay.kill()]);
   }
@@ -1604,6 +1639,16 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
         wsQuery.close();
         const echoedQueryText = new TextDecoder().decode(echoedQueryFrame.slice(8));
 
+        const apiKeyQueryText = "hello from websocket jwt apiKey query";
+        const wsAPIKeyQuery = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?apiKey=${encodeURIComponent(token)}`);
+        wsAPIKeyQuery.binaryType = "arraybuffer";
+        const apiKeyReadyPromise = waitForReady(wsAPIKeyQuery);
+        await waitForOpen(wsAPIKeyQuery);
+        await apiKeyReadyPromise;
+        const echoedAPIKeyFrame = await sendAndRecv(wsAPIKeyQuery, buildV1Frame(apiKeyQueryText));
+        wsAPIKeyQuery.close();
+        const echoedAPIKeyText = new TextDecoder().decode(echoedAPIKeyFrame.slice(8));
+
         const firstMsgText = "hello from websocket jwt first message";
         const wsAuthMsg = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         wsAuthMsg.binaryType = "arraybuffer";
@@ -1638,6 +1683,7 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
 
         return {
           echoedQueryText,
+          echoedAPIKeyText,
           echoedFirstMsgText,
           invalidQueryRes,
           missingRes,
@@ -1648,6 +1694,7 @@ test("authenticates /udp via JWT (query-string + first message handshake)", asyn
     );
 
     expect(res.echoedQueryText).toBe("hello from websocket jwt query");
+    expect(res.echoedAPIKeyText).toBe("hello from websocket jwt apiKey query");
     expect(res.echoedFirstMsgText).toBe("hello from websocket jwt first message");
 
     expect(res.invalidQueryRes.errMsg?.code).toBe("unauthorized");
