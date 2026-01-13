@@ -201,6 +201,8 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     files.push(manifest_file);
     files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
+    ensure_no_case_insensitive_path_collisions(&files)?;
+
     let iso_path = config.out_dir.join("aero-guest-tools.iso");
     let zip_path = config.out_dir.join("aero-guest-tools.zip");
     let manifest_path = config.out_dir.join("manifest.json");
@@ -224,6 +226,70 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
         zip_path,
         manifest_path,
     })
+}
+
+fn ensure_no_case_insensitive_path_collisions(files: &[FileToPackage]) -> Result<()> {
+    // Windows (and many zip extractors targeting Windows semantics) treat file paths as
+    // case-insensitive. If we emit two entries that differ only by case, extraction can silently
+    // drop/overwrite one of them.
+    //
+    // Additionally, zip archives contain explicit directory entries. Two different directory
+    // casings (e.g. `Foo/` vs `foo/`) can also cause extraction issues, so include implied
+    // directories in the collision check as well.
+    let mut by_lower: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for f in files {
+        let rel_path = f.rel_path.as_str();
+        by_lower
+            .entry(rel_path.to_ascii_lowercase())
+            .or_default()
+            .insert(rel_path.to_string());
+
+        let path = Path::new(rel_path);
+        for ancestor in path.ancestors().skip(1) {
+            if ancestor.as_os_str().is_empty() {
+                break;
+            }
+
+            let dir = ancestor.to_string_lossy().replace('\\', "/");
+            let key = dir.to_ascii_lowercase();
+            by_lower
+                .entry(key)
+                .or_default()
+                .insert(format!("{dir}/"));
+        }
+    }
+
+    let collisions: Vec<(String, Vec<String>)> = by_lower
+        .into_iter()
+        .filter_map(|(lower, paths)| {
+            if paths.len() > 1 {
+                Some((lower, paths.into_iter().collect()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if collisions.is_empty() {
+        return Ok(());
+    }
+
+    let mut msg = String::new();
+    msg.push_str("case-insensitive path collision(s) detected in packaged payload:\n");
+    for (lower, mut paths) in collisions {
+        paths.sort();
+        msg.push_str(&format!("  {lower}:\n"));
+        for p in paths {
+            msg.push_str(&format!("    - {p}\n"));
+        }
+    }
+    msg.push_str(
+        "\nRemediation: rename or remove one of the colliding files/directories so that all \
+         packaged paths are unique when compared case-insensitively.\n",
+    );
+
+    bail!("{msg}");
 }
 
 #[derive(Debug, Clone)]
