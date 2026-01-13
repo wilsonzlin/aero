@@ -6939,6 +6939,43 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
     return 1;
   }
 
+  // Best-effort: feature bits + scanout enable (helps interpret skipped vblank/IRQ checks).
+  uint64_t features = 0;
+  bool haveFeatures = false;
+  {
+    aerogpu_escape_query_device_v2_out dev;
+    ZeroMemory(&dev, sizeof(dev));
+    dev.hdr.version = AEROGPU_ESCAPE_VERSION;
+    dev.hdr.op = AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2;
+    dev.hdr.size = sizeof(dev);
+    dev.hdr.reserved0 = 0;
+    const NTSTATUS stDev = SendAerogpuEscape(f, hAdapter, &dev, sizeof(dev));
+    if (NT_SUCCESS(stDev)) {
+      features = dev.features_lo;
+      haveFeatures = true;
+    }
+  }
+
+  bool scanoutKnown = false;
+  bool scanoutEnabled = false;
+  {
+    aerogpu_escape_query_scanout_out qs;
+    ZeroMemory(&qs, sizeof(qs));
+    qs.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    qs.hdr.size = sizeof(qs);
+    qs.hdr.reserved0 = 0;
+    qs.vidpn_source_id = 0;
+    const NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
+    if (NT_SUCCESS(stScanout)) {
+      scanoutKnown = true;
+      scanoutEnabled = (qs.mmio_enable != 0);
+    }
+  }
+
+  const bool featureVblank = haveFeatures && ((features & AEROGPU_FEATURE_VBLANK) != 0);
+  const bool featureCursor = haveFeatures && ((features & AEROGPU_FEATURE_CURSOR) != 0);
+
   aerogpu_escape_selftest_inout q;
   ZeroMemory(&q, sizeof(q));
   q.hdr.version = AEROGPU_ESCAPE_VERSION;
@@ -6954,6 +6991,60 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
   }
 
   const int rc = q.passed ? 0 : 3;
+
+  enum SelftestStage {
+    STAGE_RING = 0,
+    STAGE_VBLANK = 1,
+    STAGE_IRQ = 2,
+    STAGE_CURSOR = 3,
+    STAGE_DONE = 4,
+  };
+
+  SelftestStage failedStage = STAGE_DONE;
+  if (!q.passed) {
+    switch (q.error_code) {
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK:
+      failedStage = STAGE_VBLANK;
+      break;
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED:
+      failedStage = STAGE_IRQ;
+      break;
+    case AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE:
+    case AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH:
+      failedStage = STAGE_CURSOR;
+      break;
+    default:
+      failedStage = STAGE_RING;
+      break;
+    }
+  }
+
+  const auto SubcheckStatus = [&](SelftestStage stage,
+                                  bool featureKnown,
+                                  bool featureEnabled,
+                                  bool requireScanout) -> const char * {
+    if (!featureKnown) {
+      return "unknown";
+    }
+    if (!featureEnabled) {
+      return "skip";
+    }
+    if (requireScanout && scanoutKnown && !scanoutEnabled) {
+      return "skip";
+    }
+    if (q.passed || failedStage > stage) {
+      return "pass";
+    }
+    if (failedStage == stage) {
+      return "fail";
+    }
+    return "skip";
+  };
+
   JsonWriter w(out);
   w.BeginObject();
   w.Key("schema_version");
@@ -6966,6 +7057,33 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
   w.Bool(q.passed ? true : false);
   w.Key("timeout_ms");
   w.Uint32(timeoutMs);
+
+  w.Key("features_known");
+  w.Bool(haveFeatures ? true : false);
+  if (haveFeatures) {
+    w.Key("features_lo");
+    w.Uint64(features);
+  }
+
+  w.Key("scanout_known");
+  w.Bool(scanoutKnown ? true : false);
+  if (scanoutKnown) {
+    w.Key("scanout_enabled");
+    w.Bool(scanoutEnabled ? true : false);
+  }
+
+  w.Key("subchecks");
+  w.BeginObject();
+  w.Key("ring");
+  w.String(SubcheckStatus(STAGE_RING, true, true, false));
+  w.Key("vblank");
+  w.String(SubcheckStatus(STAGE_VBLANK, haveFeatures, featureVblank, true));
+  w.Key("irq");
+  w.String(SubcheckStatus(STAGE_IRQ, haveFeatures, featureVblank, true));
+  w.Key("cursor");
+  w.String(SubcheckStatus(STAGE_CURSOR, haveFeatures, featureCursor, false));
+  w.EndObject();
+
   if (!q.passed) {
     w.Key("error_code");
     w.Uint32(q.error_code);
