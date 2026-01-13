@@ -14,7 +14,7 @@ use crate::wasm::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
     IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
     IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
-    IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64, WASM32_MAX_PAGES,
+    JIT_EXIT_SENTINEL_I64, WASM32_MAX_PAGES,
 };
 
 /// WASM export name for Tier-1 blocks.
@@ -136,7 +136,6 @@ struct ImportedFuncs {
     mem_write_u32: Option<u32>,
     mem_write_u64: Option<u32>,
     mmu_translate: Option<u32>,
-    _page_fault: Option<u32>,
     jit_exit_mmio: Option<u32>,
     jit_exit: Option<u32>,
     count: u32,
@@ -364,10 +363,6 @@ impl Tier1WasmCodegen {
         } else {
             None
         };
-        let ty_page_fault = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I64]);
         let ty_jit_exit_mmio = if options.inline_tlb {
             let ty = types.len();
             types.ty().function(
@@ -430,7 +425,6 @@ impl Tier1WasmCodegen {
             mem_write_u32: needs_mem_write_u32.then(|| next(&mut next_func)),
             mem_write_u64: needs_mem_write_u64.then(|| next(&mut next_func)),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
-            _page_fault: options.inline_tlb.then(|| next(&mut next_func)),
             jit_exit_mmio: options.inline_tlb.then(|| next(&mut next_func)),
             jit_exit: needs_jit_exit.then(|| next(&mut next_func)),
             count: next_func - func_base,
@@ -497,13 +491,6 @@ impl Tier1WasmCodegen {
                 IMPORT_MODULE,
                 IMPORT_MMU_TRANSLATE,
                 EntityType::Function(ty_mmu_translate.expect("type for mmu_translate")),
-            );
-        }
-        if options.inline_tlb {
-            imports.import(
-                IMPORT_MODULE,
-                IMPORT_PAGE_FAULT,
-                EntityType::Function(ty_page_fault),
             );
         }
         if options.inline_tlb {
