@@ -17,6 +17,11 @@ This repo implements virtio-input as a **single multi-function PCI device** (AER
 
 Each function is a standard virtio 1.1 device (`VIRTIO_ID_INPUT`) with its own virtqueues.
 
+When installed with the in-tree Windows 7 driver (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`), these two PCI functions appear as **separate named devices** in Windows Device Manager (HIDClass):
+
+- **Aero VirtIO Keyboard**
+- **Aero VirtIO Mouse**
+
 ---
 
 ## Device model overview
