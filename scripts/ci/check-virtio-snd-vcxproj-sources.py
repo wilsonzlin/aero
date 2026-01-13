@@ -132,11 +132,21 @@ def validate_inf_alias_equivalent(*, canonical: Path, alias: Path) -> None:
     canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
     alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
 
+    # Prefer repo-relative labels in the diff output for readability in CI logs.
+    try:
+        canonical_label = canonical.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        canonical_label = canonical.as_posix()
+    try:
+        alias_label = alias.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        alias_label = alias.as_posix()
+
     diff = difflib.unified_diff(
         canonical_lines,
         alias_lines,
-        fromfile=canonical.as_posix(),
-        tofile=alias.as_posix(),
+        fromfile=canonical_label,
+        tofile=alias_label,
         lineterm="",
     )
     diff_text = "\n".join(diff)
