@@ -62,5 +62,26 @@ fn vga_dac_ports_program_palette_entry_and_read_back() {
 
         // Read index auto-increments after every 3 components.
         assert_eq!(m.io_read(0x3C7, 1) as u8, base_index.wrapping_add(2));
+
+        // ---------------------------------------------------------------------
+        // Optional: ensure palette programming affects visible text mode output.
+        // ---------------------------------------------------------------------
+        // Use a fully-enabled PEL mask so index 1 is not masked away.
+        m.io_write(0x3C6, 1, 0xFF);
+
+        // Reprogram palette entry 1 (normally blue) to pure red using classic 6-bit values.
+        m.io_write(0x3C8, 1, 0x01);
+        m.io_write(0x3C9, 1, 63); // R
+        m.io_write(0x3C9, 1, 0); // G
+        m.io_write(0x3C9, 1, 0); // B
+
+        // Put a blank cell with background color 1 at the top-left.
+        m.write_physical_u8(0xB8000, b' ');
+        m.write_physical_u8(0xB8001, 0x10); // bg=1, fg=0
+
+        m.display_present();
+        assert_eq!(m.display_resolution(), (720, 400));
+        // RGBA8888 little-endian u32: [R, G, B, A].
+        assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
     }
 }
