@@ -49,6 +49,20 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(AEROGPU.device_id, 0x0001);
     assert_eq!(AEROGPU.class.as_u32(), 0x030000);
 
+    // BAR layout for AeroGPU (per `docs/16-aerogpu-vga-vesa-compat.md`):
+    // - BAR0: 64KiB non-prefetchable MMIO registers
+    // - BAR1: prefetchable MMIO VRAM aperture
+    assert_eq!(AEROGPU.bars.len(), 2);
+    assert_eq!(AEROGPU.bars[0].index, AEROGPU_BAR0_INDEX);
+    assert_eq!(AEROGPU.bars[0].kind, PciBarKind::Mem32);
+    assert_eq!(AEROGPU.bars[0].size, AEROGPU_BAR0_SIZE);
+    assert!(!AEROGPU.bars[0].prefetchable);
+
+    assert_eq!(AEROGPU.bars[1].index, AEROGPU_BAR1_VRAM_INDEX);
+    assert_eq!(AEROGPU.bars[1].kind, PciBarKind::Mem32);
+    assert_eq!(AEROGPU.bars[1].size, AEROGPU_VRAM_SIZE);
+    assert!(AEROGPU.bars[1].prefetchable);
+
     assert_eq!(VIRTIO_NET.class.as_u32(), 0x020000);
     assert_eq!(VIRTIO_BLK.class.as_u32(), 0x010000);
     assert_eq!(VIRTIO_INPUT_KEYBOARD.class.as_u32(), 0x098000);
@@ -68,6 +82,25 @@ fn canonical_bdfs_are_stable() {
     //
     // In particular, `00:07.0` is reserved for the AeroGPU (A3A0:0001) device contract.
     assert_eq!(AEROGPU.bdf, PciBdf::new(0, 0x07, 0));
+}
+
+#[test]
+fn aerogpu_bar_offsets_and_flags_are_stable() {
+    let mut cfg = AEROGPU.build_config_space();
+
+    // BAR0 must remain at config offset 0x10.
+    let bar0 = cfg.read(0x10, 4);
+    assert_eq!(bar0 & 0x1, 0, "BAR0 must be MMIO (bit0=0)");
+    assert_eq!(bar0 & 0x8, 0, "BAR0 must be non-prefetchable (bit3=0)");
+
+    // BAR1 must remain at config offset 0x14.
+    let bar1 = cfg.read(0x14, 4);
+    assert_eq!(bar1 & 0x1, 0, "BAR1 must be MMIO (bit0=0)");
+    assert_eq!(
+        bar1 & 0x8,
+        0x8,
+        "BAR1 must be prefetchable (bit3=1) for VRAM aperture"
+    );
 }
 
 #[test]

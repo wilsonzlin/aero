@@ -264,7 +264,26 @@ pub const RTL8139_BARS: [PciBarProfile; 2] = [
 
 pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
 
-pub const AEROGPU_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(0, 64 * 1024, false)];
+/// AeroGPU BAR0 index (MMIO control registers).
+pub const AEROGPU_BAR0_INDEX: u8 = 0;
+/// AeroGPU BAR1 index (prefetchable VRAM aperture).
+pub const AEROGPU_BAR1_VRAM_INDEX: u8 = 1;
+/// Size in bytes of the AeroGPU BAR0 register window.
+pub const AEROGPU_BAR0_SIZE: u64 = 64 * 1024;
+/// Size in bytes of the AeroGPU VRAM aperture exposed via BAR1.
+///
+/// This window backs the legacy VGA 0xA0000..0xBFFFF alias plus the VBE linear framebuffer and
+/// provides headroom for future WDDM-visible VRAM allocations. 64MiB is large enough for a 32bpp
+/// 4K scanout (~32MiB) while staying within the recommended 32–128MiB range described in
+/// `docs/16-aerogpu-vga-vesa-compat.md`.
+pub const AEROGPU_VRAM_SIZE: u64 = 64 * 1024 * 1024;
+
+pub const AEROGPU_BARS: [PciBarProfile; 2] = [
+    // BAR0: 64KiB non-prefetchable MMIO registers.
+    PciBarProfile::mem32(AEROGPU_BAR0_INDEX, AEROGPU_BAR0_SIZE, false),
+    // BAR1: prefetchable MMIO VRAM aperture.
+    PciBarProfile::mem32(AEROGPU_BAR1_VRAM_INDEX, AEROGPU_VRAM_SIZE, true),
+];
 
 pub const VIRTIO_CAP_COMMON: [u8; 14] = [
     16, 1, 0, 0, 0, 0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
