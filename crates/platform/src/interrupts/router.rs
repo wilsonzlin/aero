@@ -1103,6 +1103,34 @@ mod tests {
         assert!(ints.lapics[0].is_pending(0x40));
     }
 
+    #[test]
+    fn reset_lapic_preserves_ioapic_routing_to_existing_sink_arc() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // Route GSI1 -> vector 0x60 to LAPIC1 (APIC ID 1), edge-triggered, unmasked.
+        program_ioapic_entry(&mut ints, 1, 0x60, 1 << 24);
+
+        // First delivery: LAPIC1 should receive it.
+        ints.raise_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.lapics[1].get_pending_vector(), Some(0x60));
+        assert!(ints.lapics[1].ack(0x60));
+        ints.lapics[1].eoi();
+        ints.lower_irq(InterruptInput::Gsi(1));
+
+        // Reset LAPIC1's internal state. This should *not* require rebuilding the IOAPIC sink graph.
+        ints.reset_lapic(1);
+
+        // After INIT/reset, our LAPIC model starts disabled; re-enable it so it will accept injected
+        // interrupts.
+        ints.lapics[1].mmio_write(0xF0, &0x1FFu32.to_le_bytes());
+
+        // Second delivery: should still route to LAPIC1 via the original `Arc<LocalApic>` held by
+        // the IOAPIC sinks.
+        ints.raise_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.lapics[1].get_pending_vector(), Some(0x60));
+    }
+
     fn lapic_read_u32(lapic: &LocalApic, offset: u64) -> u32 {
         let mut buf = [0u8; 4];
         lapic.mmio_read(offset, &mut buf);
