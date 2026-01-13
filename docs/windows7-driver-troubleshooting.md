@@ -107,6 +107,12 @@ If `cmd.bin.alloc_table.bin` exists, decode the full submission:
 cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc cmd.bin.alloc_table.bin
 ```
 
+To inspect the alloc table itself (alloc_id → gpa/size/flags), run:
+
+```bash
+cargo run -p aero-gpu-trace-replay -- decode-alloc-table cmd.bin.alloc_table.bin
+```
+
 If there is no alloc table dump (common on legacy ring formats), skip `decode-submit` and use `decode-cmd-stream` below.
 
 ### 3) Optional: list opcodes directly (`decode-cmd-stream`)
