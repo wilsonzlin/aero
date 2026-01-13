@@ -4130,6 +4130,7 @@ static int ioctl_bad_get_collection_descriptor(const SELECTED_DEVICE *dev)
 {
     DWORD bytes = 0;
     BOOL ok;
+    DWORD err;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         wprintf(L"Invalid device handle\n");
@@ -4151,7 +4152,29 @@ static int ioctl_bad_get_collection_descriptor(const SELECTED_DEVICE *dev)
         return 1;
     }
 
-    print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR bad output buffer)");
+    err = GetLastError();
+    print_win32_error_w(L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR bad output buffer)", err);
+
+    // If the primary function code is not supported, try a known alternate.
+    if (err == ERROR_INVALID_FUNCTION || err == ERROR_NOT_SUPPORTED) {
+        bytes = 0;
+        wprintf(L"Primary IOCTL returned %lu; trying alternate IOCTL code...\n", err);
+        ok = DeviceIoControl(
+            dev->handle,
+            IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT,
+            NULL,
+            0,
+            (PVOID)(ULONG_PTR)0x1,
+            4096,
+            &bytes,
+            NULL);
+        if (ok) {
+            wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+            return 1;
+        }
+
+        print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT bad output buffer)");
+    }
     return 0;
 }
 
