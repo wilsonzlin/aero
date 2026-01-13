@@ -93,15 +93,6 @@ test.describe("gpu worker presented color policy", () => {
 
     const result = await runBackend(page, "webgl2_wgpu");
 
-    if (result.error) {
-      // Some environments may not have the wasm bundle built/available (e.g. when running a
-      // minimal smoke subset). Treat this as a skip rather than a hard failure.
-      const message = String(result.error);
-      if (/wgpu|wasm|aero-gpu/i.test(message)) {
-        test.skip(true, `webgl2_wgpu not available/usable in this Playwright environment: ${message}`);
-      }
-    }
-
     expect(result.error).toBeNull();
     expect(result.backend).toBe("webgl2_wgpu");
 

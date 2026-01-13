@@ -211,6 +211,20 @@ export class WgpuWebGl2Presenter implements Presenter {
       throw new PresenterError('invalid_size', `canvas has invalid size ${w}x${h}`);
     }
 
+    // Best-effort: redraw the last source framebuffer right before readback so we don't depend
+    // on `preserveDrawingBuffer` behavior of the underlying WebGL swap chain.
+    //
+    // We use the existing deterministic screenshot export as the "last frame" source, then
+    // re-present it through the wasm presenter (so we still validate the presenter's
+    // sRGB/alpha/Y-flip policy).
+    try {
+      const src = await request_screenshot();
+      present_rgba8888(src, this.srcWidth * 4);
+    } catch {
+      // Ignore: if screenshot readback fails, fall back to reading whatever is currently in the
+      // canvas. This is debug-only and should not break normal presenter operation.
+    }
+
     // Ensure rendering is complete before readback (best-effort; this is debug-only).
     try {
       gl.finish();
