@@ -655,15 +655,13 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
                     match self.surface.get_current_texture() {
                         Ok(frame) => frame,
                         Err(err) => match surface_acquire_error_action(&err) {
-                            SurfaceAcquireErrorAction::DropFrame => {
+                            SurfaceAcquireErrorAction::Fatal => return Err(err.into()),
+                            SurfaceAcquireErrorAction::DropFrame
+                            | SurfaceAcquireErrorAction::ReconfigureAndRetry => {
                                 tracing::warn!(
-                                    "wgpu surface timeout during present retry; dropping frame"
+                                    "wgpu surface acquire failed after reconfigure; dropping frame: {err:?}"
                                 );
                                 return Ok(());
-                            }
-                            SurfaceAcquireErrorAction::Fatal
-                            | SurfaceAcquireErrorAction::ReconfigureAndRetry => {
-                                return Err(err.into())
                             }
                         },
                     }
