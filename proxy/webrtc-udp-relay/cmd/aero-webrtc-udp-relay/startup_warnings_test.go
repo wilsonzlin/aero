@@ -286,3 +286,47 @@ func TestStartupSecurityWarnings_L2AuthForwardModeQuery(t *testing.T) {
 		t.Fatalf("expected warning_code=l2_backend_auth_forward_mode_query, got %#v", records())
 	}
 }
+
+func TestStartupSecurityWarnings_L2AuthForwardModeQuery_NoWarningWhenL2Disabled(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:                     config.ModeDev,
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "secret",
+		MaxSessions:              1,
+		L2BackendWSURL:           "",
+		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeQuery,
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	for _, r := range records() {
+		if r.level != slog.LevelWarn {
+			continue
+		}
+		if r.attrs["warning_code"] == "l2_backend_auth_forward_mode_query" {
+			t.Fatalf("did not expect l2_backend_auth_forward_mode_query warning when L2 is disabled; got %#v", records())
+		}
+	}
+}
+
+func TestStartupSecurityWarnings_SafeConfig_NoWarnings(t *testing.T) {
+	logger, records := newRecordingLogger()
+
+	cfg := config.Config{
+		Mode:        config.ModeProd,
+		AuthMode:    config.AuthModeAPIKey,
+		APIKey:      "secret",
+		MaxSessions: 10,
+		// L2 defaults: disabled, so no L2 warning.
+	}
+	destPolicy := policy.NewProductionDestinationPolicy()
+
+	logStartupSecurityWarnings(logger, cfg, destPolicy)
+
+	if got := records(); len(got) != 0 {
+		t.Fatalf("expected no warnings, got %#v", got)
+	}
+}
