@@ -1790,13 +1790,14 @@ VirtIoSndWaveRtMapVirtioFormatToKs(_In_ UCHAR VirtioFormat, _Out_ PUSHORT BitsPe
 static NTSTATUS
 VirtIoSndWaveRtBuildFormatTableFromCaps(
     _In_ const VIRTIOSND_PCM_CAPS* Caps,
+    _In_ ULONG PreferredChannels,
     _Outptr_result_maybenull_ PVIRTIOSND_WAVERT_FORMAT_ENTRY* OutFormats,
     _Out_ PULONG OutFormatCount,
     _Outptr_result_maybenull_ PKSDATARANGE** OutDataRanges)
 {
     static const UCHAR kVirtioFormats[] = {
-        VIRTIO_SND_PCM_FMT_U8,
         VIRTIO_SND_PCM_FMT_S16,
+        VIRTIO_SND_PCM_FMT_U8,
         VIRTIO_SND_PCM_FMT_S24,
         VIRTIO_SND_PCM_FMT_S32,
         VIRTIO_SND_PCM_FMT_FLOAT,
@@ -1838,6 +1839,17 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
     }
     if (channelsMax > 8) {
         channelsMax = 8;
+    }
+
+    /*
+     * Preserve the Aero contract v1 fixed format as the first enumerated
+     * supported format when available.
+     *
+     * In practice, Windows tends to treat the first enumerated format as the
+     * "preferred" / default mix format for an endpoint.
+     */
+    if (PreferredChannels < channelsMin || PreferredChannels > channelsMax) {
+        PreferredChannels = channelsMin;
     }
 
     count = 0;
@@ -1914,61 +1926,112 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
             continue;
         }
 
-        for (rate = 0; rate < 64u; ++rate) {
+        /*
+         * Emit the 48kHz contract-v1 rate first when present, followed by all
+         * other supported rates in ascending virtio rate-code order.
+         */
+        for (rate = 0; rate < 2u; ++rate) {
+            ULONG rateCode;
             ULONG rateHz;
 
-            if ((Caps->Rates & VIRTIO_SND_PCM_RATE_MASK(rate)) == 0) {
-                continue;
+            if (rate == 0) {
+                rateCode = (ULONG)VIRTIO_SND_PCM_RATE_48000;
+            } else {
+                /* Start from zero and skip the preferred rate code. */
+                rateCode = 0;
             }
 
-            rateHz = 0;
-            if (!VirtioSndPcmRateToHz((UCHAR)rate, &rateHz) || rateHz == 0) {
-                continue;
-            }
-
-            for (channels = channelsMin; channels <= channelsMax; ++channels) {
-                ULONG channelMask;
-                ULONG blockAlign;
-                ULONG avgBytesPerSec;
-
-                if (out >= count) {
-                    /* Defensive: should never happen. */
-                    break;
+            for (; rateCode < 64u; ++rateCode) {
+                if (rate == 0 && rateCode != (ULONG)VIRTIO_SND_PCM_RATE_48000) {
+                    continue;
                 }
-
-                channelMask = 0;
-                if (!VirtIoSndWaveRtChannelMaskForChannels((USHORT)channels, &channelMask)) {
+                if (rate != 0 && rateCode == (ULONG)VIRTIO_SND_PCM_RATE_48000) {
                     continue;
                 }
 
-                blockAlign = channels * (ULONG)bytesPerSample;
-                avgBytesPerSec = rateHz * blockAlign;
+                if ((Caps->Rates & VIRTIO_SND_PCM_RATE_MASK(rateCode)) == 0) {
+                    continue;
+                }
 
-                formats[out].Format.Channels = (USHORT)channels;
-                formats[out].Format.BitsPerSample = bits;
-                formats[out].Format.SampleRate = rateHz;
-                formats[out].Format.BlockAlign = blockAlign;
-                formats[out].Format.AvgBytesPerSec = avgBytesPerSec;
-                formats[out].Format.ChannelMask = channelMask;
-                formats[out].Format.SubFormat = sub;
-                formats[out].Format.VirtioFormat = vf;
-                formats[out].Format.VirtioRate = (UCHAR)rate;
+                rateHz = 0;
+                if (!VirtioSndPcmRateToHz((UCHAR)rateCode, &rateHz) || rateHz == 0) {
+                    continue;
+                }
 
-                formats[out].DataRange.DataRange.FormatSize = sizeof(KSDATARANGE_AUDIO);
-                formats[out].DataRange.DataRange.Flags = 0;
-                formats[out].DataRange.DataRange.SampleSize = 0;
-                formats[out].DataRange.DataRange.Reserved = 0;
-                formats[out].DataRange.DataRange.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
-                formats[out].DataRange.DataRange.SubFormat = sub;
-                formats[out].DataRange.DataRange.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
-                formats[out].DataRange.MaximumChannels = channels;
-                formats[out].DataRange.MinimumBitsPerSample = bits;
-                formats[out].DataRange.MaximumBitsPerSample = bits;
-                formats[out].DataRange.MinimumSampleFrequency = rateHz;
-                formats[out].DataRange.MaximumSampleFrequency = rateHz;
+                /*
+                 * Emit the preferred channel count first (if in range), followed
+                 * by the remaining supported counts in ascending order.
+                 */
+                for (channels = 0; channels < 2u; ++channels) {
+                    ULONG channelCount;
+                    ULONG channelMask;
+                    ULONG blockAlign;
+                    ULONG avgBytesPerSec;
 
-                ranges[out] = (PKSDATARANGE)&formats[out].DataRange;
-                out++;
+                    if (channels == 0) {
+                        channelCount = PreferredChannels;
+                    } else {
+                        channelCount = channelsMin;
+                    }
+
+                    for (; channelCount <= channelsMax; ++channelCount) {
+                        if (channels == 0 && channelCount != PreferredChannels) {
+                            continue;
+                        }
+                        if (channels != 0 && channelCount == PreferredChannels) {
+                            continue;
+                        }
+
+                        if (out >= count) {
+                            /* Defensive: should never happen. */
+                            break;
+                        }
+
+                        channelMask = 0;
+                        if (!VirtIoSndWaveRtChannelMaskForChannels((USHORT)channelCount, &channelMask)) {
+                            continue;
+                        }
+
+                        blockAlign = channelCount * (ULONG)bytesPerSample;
+                        avgBytesPerSec = rateHz * blockAlign;
+
+                        formats[out].Format.Channels = (USHORT)channelCount;
+                        formats[out].Format.BitsPerSample = bits;
+                        formats[out].Format.SampleRate = rateHz;
+                        formats[out].Format.BlockAlign = blockAlign;
+                        formats[out].Format.AvgBytesPerSec = avgBytesPerSec;
+                        formats[out].Format.ChannelMask = channelMask;
+                        formats[out].Format.SubFormat = sub;
+                        formats[out].Format.VirtioFormat = vf;
+                        formats[out].Format.VirtioRate = (UCHAR)rateCode;
+
+                        formats[out].DataRange.DataRange.FormatSize = sizeof(KSDATARANGE_AUDIO);
+                        formats[out].DataRange.DataRange.Flags = 0;
+                        formats[out].DataRange.DataRange.SampleSize = 0;
+                        formats[out].DataRange.DataRange.Reserved = 0;
+                        formats[out].DataRange.DataRange.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
+                        formats[out].DataRange.DataRange.SubFormat = sub;
+                        formats[out].DataRange.DataRange.Specifier = KSDATAFORMAT_SPECIFIER_WAVEFORMATEX;
+                        formats[out].DataRange.MaximumChannels = channelCount;
+                        formats[out].DataRange.MinimumBitsPerSample = bits;
+                        formats[out].DataRange.MaximumBitsPerSample = bits;
+                        formats[out].DataRange.MinimumSampleFrequency = rateHz;
+                        formats[out].DataRange.MaximumSampleFrequency = rateHz;
+
+                        ranges[out] = (PKSDATARANGE)&formats[out].DataRange;
+                        out++;
+                    }
+                }
+
+                if (rate == 0) {
+                    /* Only emit the preferred rate once. */
+                    break;
+                }
+            }
+
+            if (rate == 0) {
+                /* If the preferred rate is not supported, the loop will skip it anyway. */
+                continue;
             }
         }
     }
@@ -2012,6 +2075,7 @@ VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPO
 
     status = VirtIoSndWaveRtBuildFormatTableFromCaps(
         &dx->Control.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID],
+        (ULONG)VIRTIOSND_CHANNELS,
         &Miniport->RenderFormats,
         &Miniport->RenderFormatCount,
         &Miniport->RenderDataRanges);
@@ -2021,6 +2085,7 @@ VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPO
 
     status = VirtIoSndWaveRtBuildFormatTableFromCaps(
         &dx->Control.Caps[VIRTIO_SND_CAPTURE_STREAM_ID],
+        (ULONG)VIRTIOSND_CAPTURE_CHANNELS,
         &Miniport->CaptureFormats,
         &Miniport->CaptureFormatCount,
         &Miniport->CaptureDataRanges);
