@@ -525,7 +525,10 @@ fn translates_pixel_legacy_color_output_semantic() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("@fragment"));
-    assert!(translated.wgsl.contains("return o0;"));
+    assert!(translated.wgsl.contains("struct PsOut"));
+    assert!(translated.wgsl.contains("@location(0) target0"));
+    assert!(translated.wgsl.contains("out.target0 = o0"));
+    assert!(translated.wgsl.contains("return out;"));
 }
 
 #[test]

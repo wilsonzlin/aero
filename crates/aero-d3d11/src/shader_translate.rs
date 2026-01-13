@@ -130,7 +130,7 @@ pub enum ShaderTranslateError {
         slot: u32,
         max: u32,
     },
-    PixelShaderMissingSvTarget0,
+    PixelShaderMissingColorOutputs,
     MissingThreadGroupSize,
     InvalidThreadGroupSize {
         x: u32,
@@ -216,8 +216,11 @@ impl fmt::Display for ShaderTranslateError {
                     _ => write!(f, "{kind} slot {slot} is out of range (max {max})"),
                 }
             }
-            ShaderTranslateError::PixelShaderMissingSvTarget0 => {
-                write!(f, "pixel shader output signature is missing SV_Target0")
+            ShaderTranslateError::PixelShaderMissingColorOutputs => {
+                write!(
+                    f,
+                    "pixel shader output signature declares no render-target outputs (SV_Target0..7 or legacy COLOR0..7)"
+                )
             }
             ShaderTranslateError::InvalidThreadGroupSize { x, y, z } => write!(
                 f,
@@ -425,6 +428,17 @@ fn translate_ps(
     let io = build_io_maps(module, isgn, osgn)?;
     let resources = scan_resources(module, rdef.as_ref())?;
 
+    let mut ps_targets: Vec<&ParamInfo> = io
+        .outputs
+        .values()
+        .filter(|p| p.sys_value == Some(D3D_NAME_TARGET))
+        .collect();
+    ps_targets.sort_by_key(|p| p.param.semantic_index);
+    let ps_has_depth_output = io.ps_sv_depth_register.is_some();
+    if ps_targets.is_empty() && !ps_has_depth_output {
+        return Err(ShaderTranslateError::PixelShaderMissingColorOutputs);
+    }
+
     let reflection = ShaderReflection {
         inputs: io.inputs_reflection(),
         outputs: io.outputs_reflection_pixel(),
@@ -440,26 +454,24 @@ fn translate_ps(
         io.emit_ps_structs(&mut w)?;
     }
 
-    let ps_has_depth_output = io.ps_sv_depth_register.is_some();
-    if ps_has_depth_output {
-        w.line("struct PsOut {");
-        w.indent();
-        // Preserve the existing single-target model: `SV_Target0` always maps to `@location(0)`.
-        if io.ps_sv_target0_register.is_some() {
-            w.line("@location(0) target0: vec4<f32>,");
-        }
-        w.line("@builtin(frag_depth) depth: f32,");
-        w.dedent();
-        w.line("};");
-        w.line("");
+    w.line("struct PsOut {");
+    w.indent();
+    for p in &ps_targets {
+        let location = p.param.semantic_index;
+        w.line(&format!("@location({location}) target{location}: vec4<f32>,"));
     }
+    if ps_has_depth_output {
+        w.line("@builtin(frag_depth) depth: f32,");
+    }
+    w.dedent();
+    w.line("};");
+    w.line("");
 
     w.line("@fragment");
-    match (ps_has_inputs, ps_has_depth_output) {
-        (true, true) => w.line("fn fs_main(input: PsIn) -> PsOut {"),
-        (false, true) => w.line("fn fs_main() -> PsOut {"),
-        (true, false) => w.line("fn fs_main(input: PsIn) -> @location(0) vec4<f32> {"),
-        (false, false) => w.line("fn fs_main() -> @location(0) vec4<f32> {"),
+    if ps_has_inputs {
+        w.line("fn fs_main(input: PsIn) -> PsOut {");
+    } else {
+        w.line("fn fs_main() -> PsOut {");
     }
     w.indent();
     w.line("");
@@ -473,49 +485,7 @@ fn translate_ps(
     emit_instructions(&mut w, module, &ctx)?;
 
     w.line("");
-
-    if ps_has_depth_output {
-        w.line("var out: PsOut;");
-
-        if let Some(target_reg) = io.ps_sv_target0_register {
-            let target_param = io.outputs.get(&target_reg).ok_or(
-                ShaderTranslateError::SignatureMissingRegister {
-                    io: "output",
-                    register: target_reg,
-                },
-            )?;
-            let expr = apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
-            w.line(&format!("out.target0 = {expr};"));
-        }
-
-        let depth_reg = io
-            .ps_sv_depth_register
-            .expect("ps_has_depth_output implies depth reg");
-        let depth_param =
-            io.outputs
-                .get(&depth_reg)
-                .ok_or(ShaderTranslateError::SignatureMissingRegister {
-                    io: "output",
-                    register: depth_reg,
-                })?;
-        let depth_expr = apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
-        w.line(&format!("out.depth = {depth_expr};"));
-        w.line("return out;");
-    } else {
-        let target_reg = io
-            .ps_sv_target0_register
-            .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
-        let target_param =
-            io.outputs
-                .get(&target_reg)
-                .ok_or(ShaderTranslateError::SignatureMissingRegister {
-                    io: "output",
-                    register: target_reg,
-                })?;
-        let return_expr =
-            apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
-        w.line(&format!("return {return_expr};"));
-    }
+    io.emit_ps_return(&mut w)?;
     w.dedent();
     w.line("}");
 
@@ -667,22 +637,16 @@ fn build_io_maps(
         }
     }
 
-    let mut ps_sv_target0_reg = None;
     if module.stage == ShaderStage::Pixel {
-        ps_sv_target0_reg = outputs
-            .values()
-            .find(|p| p.sys_value == Some(D3D_NAME_TARGET) && p.param.semantic_index == 0)
-            .map(|p| p.param.register);
-        if ps_sv_target0_reg.is_none() {
-            // Legacy `COLOR` can stand in for `SV_Target` in some SM4-era shaders.
-            ps_sv_target0_reg = osgn
-                .parameters
-                .iter()
-                .find(|p| p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("COLOR"))
-                .map(|p| p.register);
-            if let Some(reg) = ps_sv_target0_reg {
-                if let Some(p) = outputs.get_mut(&reg) {
-                    p.sys_value = Some(D3D_NAME_TARGET);
+        // Legacy `COLOR` semantics (SM4-era) can stand in for `SV_Target` on pixel shader
+        // outputs. Treat `COLORn` as `SV_Targetn` by updating the resolved system value type.
+        for p in &osgn.parameters {
+            if !p.semantic_name.eq_ignore_ascii_case("COLOR") {
+                continue;
+            }
+            if let Some(info) = outputs.get_mut(&p.register) {
+                if info.sys_value.is_none() {
+                    info.sys_value = Some(D3D_NAME_TARGET);
                 }
             }
         }
@@ -757,7 +721,6 @@ fn build_io_maps(
         vs_position_register: vs_position_reg,
         ps_position_register: ps_position_reg,
         ps_primitive_id_register: ps_primitive_id_reg,
-        ps_sv_target0_register: ps_sv_target0_reg,
         ps_sv_depth_register: ps_sv_depth_reg,
         vs_vertex_id_register: vs_vertex_id_reg,
         vs_instance_id_register: vs_instance_id_reg,
@@ -844,7 +807,6 @@ fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
         vs_position_register: None,
         ps_position_register: None,
         ps_primitive_id_register: None,
-        ps_sv_target0_register: None,
         ps_sv_depth_register: None,
         vs_vertex_id_register: None,
         vs_instance_id_register: None,
@@ -1138,7 +1100,6 @@ struct IoMaps {
     vs_position_register: Option<u32>,
     ps_position_register: Option<u32>,
     ps_primitive_id_register: Option<u32>,
-    ps_sv_target0_register: Option<u32>,
     ps_sv_depth_register: Option<u32>,
     vs_vertex_id_register: Option<u32>,
     vs_instance_id_register: Option<u32>,
@@ -1186,7 +1147,7 @@ impl IoMaps {
                     semantic_name: p.param.semantic_name.clone(),
                     semantic_index: p.param.semantic_index,
                     register: p.param.register,
-                    location: is_target.then_some(p.param.register),
+                    location: is_target.then_some(p.param.semantic_index),
                     builtin: None,
                     mask: p.param.mask,
                     stream: p.param.stream,
@@ -1310,6 +1271,40 @@ impl IoMaps {
             // missing components with D3D defaults.
             let src = apply_sig_mask_to_vec4(&format!("o{}", p.param.register), p.param.mask);
             w.line(&format!("out.{} = {src};", p.field_name('o')));
+        }
+        w.line("return out;");
+        Ok(())
+    }
+
+    fn emit_ps_return(&self, w: &mut WgslWriter) -> Result<(), ShaderTranslateError> {
+        let mut targets: Vec<&ParamInfo> = self
+            .outputs
+            .values()
+            .filter(|p| p.sys_value == Some(D3D_NAME_TARGET))
+            .collect();
+        targets.sort_by_key(|p| p.param.semantic_index);
+
+        let has_depth = self.ps_sv_depth_register.is_some();
+        if targets.is_empty() && !has_depth {
+            return Err(ShaderTranslateError::PixelShaderMissingColorOutputs);
+        }
+
+        w.line("var out: PsOut;");
+        for p in targets {
+            let location = p.param.semantic_index;
+            let reg = p.param.register;
+            let expr = apply_sig_mask_to_vec4(&format!("o{reg}"), p.param.mask);
+            w.line(&format!("out.target{location} = {expr};"));
+        }
+        if let Some(depth_reg) = self.ps_sv_depth_register {
+            let depth_param = self.outputs.get(&depth_reg).ok_or(
+                ShaderTranslateError::SignatureMissingRegister {
+                    io: "output",
+                    register: depth_reg,
+                },
+            )?;
+            let depth_expr = apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
+            w.line(&format!("out.depth = {depth_expr};"));
         }
         w.line("return out;");
         Ok(())
@@ -2431,9 +2426,6 @@ fn emit_temp_and_output_decls(
     if let Some(pos_reg) = io.vs_position_register {
         outputs.insert(pos_reg);
     }
-    if let Some(ps_target) = io.ps_sv_target0_register {
-        outputs.insert(ps_target);
-    }
 
     let has_temps = !temps.is_empty();
     for &idx in &temps {
@@ -3393,57 +3385,7 @@ fn emit_instructions(
 
                 match ctx.stage {
                     ShaderStage::Vertex => ctx.io.emit_vs_return(w)?,
-                    ShaderStage::Pixel => {
-                        if let Some(depth_reg) = ctx.io.ps_sv_depth_register {
-                            // Pixel shaders that write depth return a `PsOut` struct; mirror the
-                            // epilogue return sequence with a uniquely-named local.
-                            let out_var = format!("out_ret_{inst_index}");
-                            w.line(&format!("var {out_var}: PsOut;"));
-
-                            if let Some(target_reg) = ctx.io.ps_sv_target0_register {
-                                let target_param = ctx.io.outputs.get(&target_reg).ok_or(
-                                    ShaderTranslateError::SignatureMissingRegister {
-                                        io: "output",
-                                        register: target_reg,
-                                    },
-                                )?;
-                                let expr = apply_sig_mask_to_vec4(
-                                    &format!("o{target_reg}"),
-                                    target_param.param.mask,
-                                );
-                                w.line(&format!("{out_var}.target0 = {expr};"));
-                            }
-
-                            let depth_param = ctx.io.outputs.get(&depth_reg).ok_or(
-                                ShaderTranslateError::SignatureMissingRegister {
-                                    io: "output",
-                                    register: depth_reg,
-                                },
-                            )?;
-                            let depth_expr = apply_sig_mask_to_scalar(
-                                &format!("o{depth_reg}"),
-                                depth_param.param.mask,
-                            );
-                            w.line(&format!("{out_var}.depth = {depth_expr};"));
-                            w.line(&format!("return {out_var};"));
-                        } else {
-                            let target_reg = ctx
-                                .io
-                                .ps_sv_target0_register
-                                .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
-                            let target_param = ctx.io.outputs.get(&target_reg).ok_or(
-                                ShaderTranslateError::SignatureMissingRegister {
-                                    io: "output",
-                                    register: target_reg,
-                                },
-                            )?;
-                            let return_expr = apply_sig_mask_to_vec4(
-                                &format!("o{target_reg}"),
-                                target_param.param.mask,
-                            );
-                            w.line(&format!("return {return_expr};"));
-                        }
-                    }
+                    ShaderStage::Pixel => ctx.io.emit_ps_return(w)?,
                     ShaderStage::Compute => {
                         // Compute entry points return `()`.
                         w.line("return;");
@@ -3905,6 +3847,20 @@ mod tests {
             kind: SrcKind::ImmediateF32([0; 4]),
             swizzle: Swizzle::XYZW,
             modifier: OperandModifier::None,
+        }
+    }
+
+    fn sig_param(semantic_name: &str, semantic_index: u32, register: u32) -> DxbcSignatureParameter {
+        DxbcSignatureParameter {
+            semantic_name: semantic_name.to_owned(),
+            semantic_index,
+            system_value_type: 0,
+            component_type: 0,
+            register,
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: 0,
+            min_precision: 0,
         }
     }
 
@@ -4380,5 +4336,73 @@ mod tests {
             builtin_from_d3d_name(D3D_NAME_GS_INSTANCE_ID),
             Some(Builtin::GsInstanceIndex)
         );
+    }
+
+    #[test]
+    fn pixel_shader_sv_target1_only_emits_location_1() {
+        let module = minimal_module(vec![Sm4Inst::Ret]);
+        let isgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("SV_Target", 1, 3)],
+        };
+
+        let translated = translate_ps(&module, &isgn, &osgn, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated.wgsl.contains("@location(1)"));
+        assert!(translated.wgsl.contains("target1"));
+        assert!(translated.wgsl.contains("o3"));
+
+        let reflected = translated
+            .reflection
+            .outputs
+            .iter()
+            .find(|o| o.semantic_index == 1)
+            .expect("reflected output");
+        assert_eq!(reflected.location, Some(1));
+    }
+
+    #[test]
+    fn pixel_shader_sv_target0_and_1_emit_both_locations() {
+        let module = minimal_module(vec![Sm4Inst::Ret]);
+        let isgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("SV_Target", 0, 0), sig_param("SV_Target", 1, 1)],
+        };
+
+        let translated = translate_ps(&module, &isgn, &osgn, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated.wgsl.contains("@location(0)"));
+        assert!(translated.wgsl.contains("@location(1)"));
+
+        let mut locations: Vec<u32> = translated
+            .reflection
+            .outputs
+            .iter()
+            .filter_map(|o| o.location)
+            .collect();
+        locations.sort_unstable();
+        assert_eq!(locations, vec![0, 1]);
+    }
+
+    #[test]
+    fn pixel_shader_legacy_color_is_treated_as_sv_target() {
+        let module = minimal_module(vec![Sm4Inst::Ret]);
+        let isgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("COLOR", 1, 4)],
+        };
+
+        let translated = translate_ps(&module, &isgn, &osgn, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated.wgsl.contains("@location(1)"));
+        assert!(translated.wgsl.contains("o4"));
+
+        let reflected = translated
+            .reflection
+            .outputs
+            .iter()
+            .find(|o| o.semantic_index == 1)
+            .expect("reflected output");
+        assert_eq!(reflected.location, Some(1));
     }
 }
