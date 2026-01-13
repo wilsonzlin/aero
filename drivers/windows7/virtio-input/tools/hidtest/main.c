@@ -1319,7 +1319,11 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
     devinfo = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
     if (devinfo == INVALID_HANDLE_VALUE) {
-        print_last_error_w(L"SetupDiGetClassDevs");
+        if (opt != NULL && opt->quiet) {
+            print_last_error_file_w(stderr, L"SetupDiGetClassDevs");
+        } else {
+            print_last_error_w(L"SetupDiGetClassDevs");
+        }
         return 0;
     }
 
@@ -1352,29 +1356,46 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         if (!SetupDiEnumDeviceInterfaces(devinfo, NULL, &hid_guid, iface_index, &iface)) {
             DWORD err = GetLastError();
             if (err != ERROR_NO_MORE_ITEMS) {
-                print_win32_error_w(L"SetupDiEnumDeviceInterfaces", err);
+                if (opt != NULL && opt->quiet) {
+                    print_win32_error_file_w(stderr, L"SetupDiEnumDeviceInterfaces", err);
+                } else {
+                    print_win32_error_w(L"SetupDiEnumDeviceInterfaces", err);
+                }
             }
             break;
         }
 
         SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, NULL, 0, &required, NULL);
         if (required == 0) {
-            wprintf(L"[%lu] SetupDiGetDeviceInterfaceDetail: required size=0\n", iface_index);
+            if (opt != NULL && opt->quiet) {
+                fwprintf(stderr, L"[%lu] SetupDiGetDeviceInterfaceDetail: required size=0\n", iface_index);
+            } else {
+                wprintf(L"[%lu] SetupDiGetDeviceInterfaceDetail: required size=0\n", iface_index);
+            }
             iface_index++;
             continue;
         }
 
         detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)malloc(required);
         if (detail == NULL) {
-            wprintf(L"Out of memory\n");
+            if (opt != NULL && opt->quiet) {
+                fwprintf(stderr, L"Out of memory\n");
+            } else {
+                wprintf(L"Out of memory\n");
+            }
             SetupDiDestroyDeviceInfoList(devinfo);
             return 0;
         }
 
         detail->cbSize = sizeof(*detail);
         if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, required, NULL, NULL)) {
-            wprintf(L"[%lu] SetupDiGetDeviceInterfaceDetail failed\n", iface_index);
-            print_last_error_w(L"SetupDiGetDeviceInterfaceDetail");
+            if (opt != NULL && opt->quiet) {
+                fwprintf(stderr, L"[%lu] SetupDiGetDeviceInterfaceDetail failed\n", iface_index);
+                print_last_error_file_w(stderr, L"SetupDiGetDeviceInterfaceDetail");
+            } else {
+                wprintf(L"[%lu] SetupDiGetDeviceInterfaceDetail failed\n", iface_index);
+                print_last_error_w(L"SetupDiGetDeviceInterfaceDetail");
+            }
             free(detail);
             iface_index++;
             continue;
