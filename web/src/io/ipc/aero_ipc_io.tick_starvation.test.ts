@@ -215,4 +215,89 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
       if (!exited) await worker.terminate();
     }
   });
+
+  it("run ticks while draining malformed commands (decode failures can't starve ticks)", async () => {
+    const { buffer: ipcBuffer } = createIpcBuffer([
+      { kind: queueKind.CMD, capacityBytes: 1 << 19 },
+      { kind: queueKind.EVT, capacityBytes: 1 << 16 },
+    ]);
+
+    const tickCounterSab = new SharedArrayBuffer(4);
+    const tickSawCmdDataSab = new SharedArrayBuffer(8);
+    const tickCounter = new Int32Array(tickCounterSab);
+    const tickSawCmdData = new Int32Array(tickSawCmdDataSab);
+
+    const worker = new Worker(new URL("./test_workers/aipc_tick_starvation_run_worker.ts", import.meta.url), {
+      type: "module",
+      workerData: {
+        ipcBuffer,
+        tickCounter: tickCounterSab,
+        tickSawCmdData: tickSawCmdDataSab,
+        tickIntervalMs: 1,
+        // Work is driven by malformed decode cost, not handler cost.
+        workIters: 0,
+      },
+      execArgv: ["--experimental-strip-types"],
+    } as unknown as WorkerOptions);
+
+    const makeMalformedMmioWrite = (dataLen: number): Uint8Array => {
+      // mmioWrite wire format:
+      //   u16 tag (0x0101)
+      //   u32 id
+      //   u64 addr
+      //   u32 len
+      //   [len bytes]
+      //
+      // We deliberately set `len` larger than the actual payload so decodeCommand reads and slices
+      // the data, then fails with "trailing bytes".
+      const actualLen = dataLen >>> 0;
+      const declaredLen = (actualLen + 0x1000) >>> 0;
+      const bytes = new Uint8Array(2 + 4 + 8 + 4 + actualLen);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      let off = 0;
+      view.setUint16(off, 0x0101, true);
+      off += 2;
+      view.setUint32(off, 1, true);
+      off += 4;
+      // addr u64 = 0
+      view.setUint32(off, 0, true);
+      off += 4;
+      view.setUint32(off, 0, true);
+      off += 4;
+      view.setUint32(off, declaredLen, true);
+      off += 4;
+      bytes.fill(0xaa, off);
+      return bytes;
+    };
+
+    const malformed = makeMalformedMmioWrite(8 * 1024);
+
+    let exited = false;
+    try {
+      await withTimeout(once(worker, "message") as Promise<[any]>, 2000, "server worker ready (malformed)");
+
+      const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
+
+      // Pre-fill so the server starts draining immediately.
+      while (cmdQ.tryPush(malformed)) {}
+
+      const end = nowMs() + 50;
+      while (nowMs() < end) {
+        for (let i = 0; i < 256; i++) cmdQ.tryPush(malformed);
+      }
+
+      expect(Atomics.load(tickCounter, 0)).toBeGreaterThan(0);
+      expect(Atomics.load(tickSawCmdData, 0)).toBe(1);
+
+      // Shut down the server loop.
+      const shutdownBytes = encodeCommand({ kind: "shutdown" });
+      while (!cmdQ.tryPush(shutdownBytes)) {
+        await sleep0();
+      }
+      await withTimeout(once(worker, "exit") as Promise<[number]>, 4000, "server worker exit (malformed)");
+      exited = true;
+    } finally {
+      if (!exited) await worker.terminate();
+    }
+  });
 });
