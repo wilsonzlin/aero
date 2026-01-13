@@ -25,7 +25,7 @@ mod policy;
 pub mod snapshot;
 mod stack;
 
-pub use backend::NetStackBackend;
+pub use backend::{NetStackBackend, NetStackBackendLimits, NetStackBackendStats};
 pub use policy::{HostPolicy, IpCidr};
 pub use snapshot::{
     DnsCacheEntrySnapshot, NetworkStackSnapshotState, TcpConnectionSnapshot, TcpConnectionStatus,
