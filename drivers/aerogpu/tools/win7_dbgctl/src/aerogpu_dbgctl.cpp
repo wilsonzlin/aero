@@ -201,6 +201,7 @@ static void PrintUsage() {
            L"  --query-scanout\n"
            L"  --query-cursor  (alias: --dump-cursor)\n"
            L"  --dump-ring\n"
+           L"  --watch-ring\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
            L"  --dump-vblank  (alias: --query-vblank)\n"
@@ -1474,6 +1475,188 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
   return 0;
 }
 
+static int DoWatchRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId, uint32_t samples,
+                       uint32_t intervalMs) {
+  if (samples == 0 || intervalMs == 0) {
+    fwprintf(stderr, L"--watch-ring requires --samples N and --interval-ms N\n");
+    PrintUsage();
+    return 1;
+  }
+
+  if (samples > 1000000u) {
+    samples = 1000000u;
+  }
+  if (intervalMs > 60000u) {
+    intervalMs = 60000u;
+  }
+
+  // sizeof(aerogpu_legacy_ring_entry) (see drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h).
+  static const uint32_t kLegacyRingEntrySizeBytes = 24u;
+
+  const auto RingFormatToString = [&](uint32_t fmt) -> const wchar_t * {
+    switch (fmt) {
+    case AEROGPU_DBGCTL_RING_FORMAT_LEGACY:
+      return L"legacy";
+    case AEROGPU_DBGCTL_RING_FORMAT_AGPU:
+      return L"agpu";
+    default:
+      return L"unknown";
+    }
+  };
+
+  const auto TryComputeLegacyPending = [&](uint32_t ringSizeBytes, uint32_t head, uint32_t tail,
+                                           uint64_t *pendingOut) -> bool {
+    if (!pendingOut) {
+      return false;
+    }
+    if (ringSizeBytes == 0 || (ringSizeBytes % kLegacyRingEntrySizeBytes) != 0) {
+      return false;
+    }
+    const uint32_t entryCount = ringSizeBytes / kLegacyRingEntrySizeBytes;
+    if (entryCount == 0 || head >= entryCount || tail >= entryCount) {
+      return false;
+    }
+    if (tail >= head) {
+      *pendingOut = (uint64_t)(tail - head);
+    } else {
+      *pendingOut = (uint64_t)(tail + entryCount - head);
+    }
+    return true;
+  };
+
+  wprintf(L"Watching ring %lu: samples=%lu interval_ms=%lu\n", (unsigned long)ringId, (unsigned long)samples,
+          (unsigned long)intervalMs);
+
+  bool decided = false;
+  bool useV2 = false;
+  uint32_t v2DescCapacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+  for (uint32_t i = 0; i < samples; ++i) {
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    uint64_t pending = 0;
+    const wchar_t *fmtStr = L"unknown";
+
+    bool haveLast = false;
+    uint64_t lastFence = 0;
+    uint32_t lastFlags = 0;
+
+    if (!decided || useV2) {
+      aerogpu_escape_dump_ring_v2_inout q2;
+      ZeroMemory(&q2, sizeof(q2));
+      q2.hdr.version = AEROGPU_ESCAPE_VERSION;
+      q2.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING_V2;
+      q2.hdr.size = sizeof(q2);
+      q2.hdr.reserved0 = 0;
+      q2.ring_id = ringId;
+      q2.desc_capacity = v2DescCapacity;
+
+      NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q2, sizeof(q2));
+      if (NT_SUCCESS(st)) {
+        decided = true;
+        useV2 = true;
+
+        head = q2.head;
+        tail = q2.tail;
+        fmtStr = RingFormatToString(q2.ring_format);
+
+        if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+          // Monotonic indices (modulo u32 wrap).
+          pending = (uint64_t)(uint32_t)(tail - head);
+
+          // v2 AGPU dumps are a recent tail window; newest is last.
+          if (q2.desc_count > 0 && q2.desc_count <= AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+            const aerogpu_dbgctl_ring_desc_v2 &d = q2.desc[q2.desc_count - 1];
+            lastFence = (uint64_t)d.fence;
+            lastFlags = (uint32_t)d.flags;
+            haveLast = true;
+          }
+
+          // For watch mode, only ask the KMD to return the newest descriptor.
+          v2DescCapacity = 1;
+        } else {
+          // Legacy (masked indices) or unknown: compute pending best-effort using the legacy ring layout.
+          if (!TryComputeLegacyPending(q2.ring_size_bytes, head, tail, &pending)) {
+            pending = (uint64_t)(uint32_t)(tail - head);
+          }
+
+          // Only print the "last" descriptor if we know we captured the full pending region.
+          if (pending != 0 && pending == (uint64_t)q2.desc_count && q2.desc_count > 0 &&
+              q2.desc_count <= AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+            const aerogpu_dbgctl_ring_desc_v2 &d = q2.desc[q2.desc_count - 1];
+            lastFence = (uint64_t)d.fence;
+            lastFlags = (uint32_t)d.flags;
+            haveLast = true;
+          }
+
+          v2DescCapacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+        }
+      } else if (st == STATUS_NOT_SUPPORTED) {
+        decided = true;
+        useV2 = false;
+        // Fall through to legacy dump-ring below.
+      } else {
+        PrintNtStatus(L"D3DKMTEscape(dump-ring-v2) failed", f, st);
+        return 2;
+      }
+    }
+
+    if (decided && !useV2) {
+      aerogpu_escape_dump_ring_inout q;
+      ZeroMemory(&q, sizeof(q));
+      q.hdr.version = AEROGPU_ESCAPE_VERSION;
+      q.hdr.op = AEROGPU_ESCAPE_OP_DUMP_RING;
+      q.hdr.size = sizeof(q);
+      q.hdr.reserved0 = 0;
+      q.ring_id = ringId;
+      q.desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
+
+      NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+      if (!NT_SUCCESS(st)) {
+        PrintNtStatus(L"D3DKMTEscape(dump-ring) failed", f, st);
+        return 2;
+      }
+
+      head = q.head;
+      tail = q.tail;
+
+      // Best-effort legacy detection (tail<head wrap requires knowing entry_count).
+      bool assumedLegacy = false;
+      if (TryComputeLegacyPending(q.ring_size_bytes, head, tail, &pending)) {
+        assumedLegacy = true;
+      } else {
+        pending = (uint64_t)(uint32_t)(tail - head);
+      }
+      fmtStr = assumedLegacy ? L"legacy" : L"unknown";
+
+      // Only print the "last" descriptor if we know we captured the full pending region.
+      if (pending != 0 && pending == (uint64_t)q.desc_count && q.desc_count > 0 &&
+          q.desc_count <= AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+        const aerogpu_dbgctl_ring_desc &d = q.desc[q.desc_count - 1];
+        lastFence = (uint64_t)d.signal_fence;
+        lastFlags = (uint32_t)d.flags;
+        haveLast = true;
+      }
+    }
+
+    if (haveLast) {
+      wprintf(L"ring[%lu/%lu] fmt=%s head=%lu tail=%lu pending=%I64u last_fence=0x%I64x last_flags=0x%08lx\n",
+              (unsigned long)(i + 1), (unsigned long)samples, fmtStr, (unsigned long)head, (unsigned long)tail,
+              (unsigned long long)pending, (unsigned long long)lastFence, (unsigned long)lastFlags);
+    } else {
+      wprintf(L"ring[%lu/%lu] fmt=%s head=%lu tail=%lu pending=%I64u\n", (unsigned long)(i + 1),
+              (unsigned long)samples, fmtStr, (unsigned long)head, (unsigned long)tail, (unsigned long long)pending);
+    }
+    fflush(stdout);
+
+    if (i + 1 < samples) {
+      Sleep(intervalMs);
+    }
+  }
+
+  return 0;
+}
+
 static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
                         aerogpu_escape_query_vblank_out *out, bool *supportedOut) {
   ZeroMemory(out, sizeof(*out));
@@ -2041,6 +2224,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_SCANOUT,
     CMD_QUERY_CURSOR,
     CMD_DUMP_RING,
+    CMD_WATCH_RING,
     CMD_DUMP_CREATEALLOCATION,
     CMD_DUMP_VBLANK,
     CMD_WAIT_VBLANK,
@@ -2221,6 +2405,12 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--watch-ring") == 0) {
+      if (!SetCommand(CMD_WATCH_RING)) {
+        return 1;
+      }
+      continue;
+    }
     if (wcscmp(a, L"--dump-createalloc") == 0 || wcscmp(a, L"--dump-createallocation") == 0 ||
         wcscmp(a, L"--dump-allocations") == 0) {
       if (!SetCommand(CMD_DUMP_CREATEALLOCATION)) {
@@ -2353,6 +2543,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_DUMP_RING:
     rc = DoDumpRing(&f, open.hAdapter, ringId);
+    break;
+  case CMD_WATCH_RING:
+    rc = DoWatchRing(&f, open.hAdapter, ringId, watchSamples, watchIntervalMs);
     break;
   case CMD_DUMP_CREATEALLOCATION:
     rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath);
