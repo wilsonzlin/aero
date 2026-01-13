@@ -431,19 +431,25 @@ Many AeroGPU binding packets already carry a `shader_stage` plus a trailing `res
 - `AEROGPU_CMD_SET_SAMPLERS`
 - `AEROGPU_CMD_SET_CONSTANT_BUFFERS`
 
-For GS/HS/DS we need to bind D3D resources **per stage**, but the legacy `enum aerogpu_shader_stage`
-only defines `VS/PS/CS`. We extend these packets by interpreting the trailing reserved field as an
-optional `stage_ex`.
+For GS/HS/DS we need to bind D3D resources **per stage**, but the D3D11 executor’s stable binding
+model only has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS
+as “compute-like” stages and bind their resources through the existing compute bind group, using a
+small `stage_ex` tag carried in the trailing reserved field.
 
 **Definition (conceptual):**
 
 ```c
-// New: used only when binding resources for GS/HS/DS.
+// New: used when binding resources for GS/HS/DS (and optionally compute).
+//
+// Values match DXBC program-type IDs (`D3D10_SB_PROGRAM_TYPE` / `D3D11_SB_PROGRAM_TYPE`):
+//   0 = Pixel, 1 = Vertex, 2 = Geometry, 3 = Hull, 4 = Domain, 5 = Compute.
 enum aerogpu_shader_stage_ex {
-   AEROGPU_STAGE_EX_NONE     = 0, // Use shader_stage (legacy VS/PS/CS).
-   AEROGPU_STAGE_EX_GEOMETRY = 3,
-   AEROGPU_STAGE_EX_HULL     = 4,
-   AEROGPU_STAGE_EX_DOMAIN   = 5,
+   AEROGPU_STAGE_EX_PIXEL    = 0,
+   AEROGPU_STAGE_EX_VERTEX   = 1,
+   AEROGPU_STAGE_EX_GEOMETRY = 2,
+   AEROGPU_STAGE_EX_HULL     = 3,
+   AEROGPU_STAGE_EX_DOMAIN   = 4,
+   AEROGPU_STAGE_EX_COMPUTE  = 5,
 };
 
 // Example: SET_TEXTURE
@@ -458,14 +464,15 @@ struct aerogpu_cmd_set_texture {
 
 **Encoding rules:**
 
-- Legacy stages keep working:
+- Legacy VS/PS bindings: use the existing `shader_stage` field and write `stage_ex = 0`:
   - VS: `shader_stage = VERTEX`, `stage_ex = 0`
   - PS: `shader_stage = PIXEL`,  `stage_ex = 0`
+- For compute, `stage_ex = 0` remains valid legacy encoding:
   - CS: `shader_stage = COMPUTE`, `stage_ex = 0`
-- Emulated stages use the compute bind group (`@group(2)`) but select a different *logical* stage:
-  - GS: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY`
-  - HS: `shader_stage = COMPUTE`, `stage_ex = HULL`
-  - DS: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`
+- `stage_ex` encoding is enabled by setting `shader_stage = COMPUTE` and `stage_ex != 0`:
+  - GS resources: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (2)
+  - HS resources: `shader_stage = COMPUTE`, `stage_ex = HULL`     (3)
+  - DS resources: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`   (4)
 
 The host maintains separate binding tables for CS vs GS/HS/DS so that compute dispatch and
 graphics-tess/GS pipelines do not trample each other’s bindings, but they all map to WGSL
@@ -474,8 +481,11 @@ graphics-tess/GS pipelines do not trample each other’s bindings, but they all 
 #### 1.2) Extended `BIND_SHADERS` packet layout
 
 `AEROGPU_CMD_BIND_SHADERS` is extended by appending `gs/hs/ds` handles after the existing payload.
-Old guests keep emitting the 24-byte packet; old hosts ignore the extra bytes due to
-`hdr.size_bytes`.
+
+Compatibility note: the legacy 24-byte packet already has a trailing `reserved0` field. For
+forward-compat, the host may interpret `reserved0 != 0` as “a GS is bound” for older guests. When
+the extended layout is used, `reserved0` should be set to 0 and the appended `gs/hs/ds` handles are
+authoritative.
 
 ```c
 // Existing prefix (ABI 1.0+):
@@ -487,7 +497,7 @@ struct aerogpu_cmd_bind_shaders {
    aerogpu_handle_t vs;              // 0 = unbound
    aerogpu_handle_t ps;              // 0 = unbound
    aerogpu_handle_t cs;              // 0 = unbound
-   uint32_t reserved0;               // must be 0
+   uint32_t reserved0;               // legacy: may be interpreted as gs when non-zero; extended: should be 0
 
    // Present when hdr.size_bytes >= 36:
    aerogpu_handle_t gs;              // 0 = unbound
@@ -496,7 +506,8 @@ struct aerogpu_cmd_bind_shaders {
 };
 ```
 
-**Host decoding rule:** treat missing trailing fields as `0` (unbound).
+**Host decoding rule:** if the extension fields are missing, treat `gs/hs/ds` as unbound and (for
+compat) optionally treat `reserved0` as `gs`.
 
 #### 1.3) Primitive topology extensions: adjacency + patchlists
 
