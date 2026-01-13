@@ -168,16 +168,33 @@ struct Step {
     flags: u8,
 }
 
-fn addr_from_seed(seed: u32) -> u64 {
-    // Spread seeds across the upper half of guest RAM so we don't collide too much with ring
-    // structures. Still allow OOB by not clamping.
-    let base = 0x10_000u64;
-    base.wrapping_add((seed as u64) & 0x3fff)
+fn addr_from_seed(seed: u32, allow_oob: bool) -> u64 {
+    // Keep addresses away from the queue structures by default so we hit deeper device logic, but
+    // allow some OOB address cases for negative testing.
+    if allow_oob {
+        // Large spread that will frequently exceed guest RAM.
+        (seed as u64) << 8
+    } else {
+        let base = 0x10_000u64;
+        base.wrapping_add((seed as u64) & 0x3fff)
+    }
+}
+
+fn rate_from_choice(choice: u8) -> u32 {
+    match choice % 5 {
+        0 => 48_000,
+        1 => 44_100,
+        2 => 32_000,
+        3 => 96_000,
+        _ => 192_000,
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
     let mut u = Unstructured::new(data);
 
+    let host_rate_choice: u8 = u.arbitrary().unwrap_or(0);
+    let capture_rate_choice: u8 = u.arbitrary().unwrap_or(0);
     let capture_seed: u64 = u.arbitrary().unwrap_or(0);
     let steps_count: usize = u.int_in_range(0usize..=MAX_STEPS).unwrap_or(0);
     let mut steps = Vec::with_capacity(steps_count);
@@ -219,7 +236,12 @@ fuzz_target!(|data: &[u8]| {
         state: capture_seed,
         dropped: 0,
     };
-    let mut snd = VirtioSnd::new_with_capture(output, capture);
+    let mut snd = VirtioSnd::new_with_capture_and_host_sample_rate(
+        output,
+        capture,
+        rate_from_choice(host_rate_choice),
+    );
+    snd.set_capture_sample_rate_hz(rate_from_choice(capture_rate_choice));
 
     let ctrl_addrs = QueueAddrs {
         desc: 0x1000,
@@ -372,8 +394,9 @@ fuzz_target!(|data: &[u8]| {
         match step.kind {
             StepKind::Control => {
                 let head = step.head % ctrl_addrs.size;
-                let req_addr = addr_from_seed(step.addr_seed0);
-                let resp_addr = addr_from_seed(step.addr_seed1);
+                let allow_oob = (step.flags & 0x80) != 0;
+                let req_addr = addr_from_seed(step.addr_seed0, allow_oob);
+                let resp_addr = addr_from_seed(step.addr_seed1, allow_oob);
 
                 // Write a small header (code + stream_id) into the request buffer so we exercise a
                 // variety of control commands without allocating attacker-controlled payloads.
@@ -432,7 +455,7 @@ fuzz_target!(|data: &[u8]| {
             }
             StepKind::Event => {
                 let head = step.head % event_addrs.size;
-                let buf_addr = addr_from_seed(step.addr_seed0);
+                let buf_addr = addr_from_seed(step.addr_seed0, (step.flags & 0x80) != 0);
                 let buf_len = (step.len0).min(256);
                 write_desc(
                     &mut mem,
@@ -458,9 +481,10 @@ fuzz_target!(|data: &[u8]| {
             }
             StepKind::Tx => {
                 let head = step.head % tx_addrs.size;
-                let hdr_addr = addr_from_seed(step.addr_seed0);
-                let pcm_addr = addr_from_seed(step.addr_seed1);
-                let status_addr = addr_from_seed(step.addr_seed2);
+                let allow_oob = (step.flags & 0x80) != 0;
+                let hdr_addr = addr_from_seed(step.addr_seed0, allow_oob);
+                let pcm_addr = addr_from_seed(step.addr_seed1, allow_oob);
+                let status_addr = addr_from_seed(step.addr_seed2, allow_oob);
 
                 // Always write a stream_id field so we hit both OK + BAD_MSG paths depending on the
                 // value (and current stream state).
@@ -539,9 +563,10 @@ fuzz_target!(|data: &[u8]| {
             }
             StepKind::Rx => {
                 let head = step.head % rx_addrs.size;
-                let hdr_addr = addr_from_seed(step.addr_seed0);
-                let payload_addr = addr_from_seed(step.addr_seed1);
-                let resp_addr = addr_from_seed(step.addr_seed2);
+                let allow_oob = (step.flags & 0x80) != 0;
+                let hdr_addr = addr_from_seed(step.addr_seed0, allow_oob);
+                let payload_addr = addr_from_seed(step.addr_seed1, allow_oob);
+                let resp_addr = addr_from_seed(step.addr_seed2, allow_oob);
 
                 let stream_id = step.a;
                 let mut hdr = [0u8; 8];
