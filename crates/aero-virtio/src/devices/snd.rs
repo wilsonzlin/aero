@@ -2144,6 +2144,70 @@ mod tests {
     }
 
     #[test]
+    fn tx_decodes_i16_extremes_within_expected_f32_range() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let hdr_addr = 0x4000;
+        let payload_addr = 0x5000;
+        let resp_addr = 0x6000;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        write_bytes(&mut mem, hdr_addr, &hdr);
+
+        // One frame: L=i16::MIN (-32768 -> -1.0), R=i16::MAX (32767 -> 0.9999695...).
+        let mut payload = [0u8; 4];
+        payload[0..2].copy_from_slice(&i16::MIN.to_le_bytes());
+        payload[2..4].copy_from_slice(&i16::MAX.to_le_bytes());
+        write_bytes(&mut mem, payload_addr, &payload);
+
+        let chain = build_chain(
+            &mut mem,
+            desc_table,
+            avail,
+            used,
+            &[
+                (hdr_addr, 8, false),
+                (payload_addr, payload.len() as u32, false),
+                (resp_addr, 8, true),
+            ],
+        );
+
+        let status = snd.handle_tx_chain(&mut mem, &chain);
+        assert_eq!(status, VIRTIO_SND_S_OK);
+
+        let frames = snd.output_mut().available_frames();
+        assert_eq!(frames, 1);
+        let samples = snd.output_mut().pop_interleaved_stereo(frames);
+        assert_eq!(samples.len(), 2);
+
+        let expected_left = -1.0f32;
+        let expected_right = (i16::MAX as f32) / 32768.0;
+        assert!(
+            (samples[0] - expected_left).abs() <= 1e-6,
+            "left sample expected {expected_left}, got {}",
+            samples[0]
+        );
+        assert!(
+            (samples[1] - expected_right).abs() <= 1e-6,
+            "right sample expected {expected_right}, got {}",
+            samples[1]
+        );
+        for &s in &samples {
+            assert!(
+                (-1.0..=1.0).contains(&s),
+                "decoded sample must be within [-1, 1], got {s}"
+            );
+        }
+    }
+
+    #[test]
     fn tx_process_queue_writes_pcm_status_ok_into_response_descriptor() {
         let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
         drive_playback_to_running(&mut snd);
@@ -2207,6 +2271,85 @@ mod tests {
         assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
         assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
 
+        assert_eq!(snd.output_mut().available_frames(), 0);
+    }
+
+    #[test]
+    fn tx_process_queue_writes_pcm_status_bad_msg_for_bad_payload() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 8u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        let hdr_addr = 0x4000;
+        let payload_addr = 0x5000;
+        let resp_addr = 0x6000;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        write_bytes(&mut mem, hdr_addr, &hdr);
+
+        // Incomplete stereo frame: only one i16 sample.
+        write_bytes(&mut mem, payload_addr, &16384i16.to_le_bytes());
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            hdr_addr,
+            8,
+            VIRTQ_DESC_F_NEXT,
+            1,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            payload_addr,
+            2,
+            VIRTQ_DESC_F_NEXT,
+            2,
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            2,
+            resp_addr,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.process_queue(VIRTIO_SND_QUEUE_TX, chain, &mut queue, &mut mem)
+            .unwrap();
+
+        let expected = virtio_snd_pcm_status(VIRTIO_SND_S_BAD_MSG, 0);
+        assert_eq!(mem.get_slice(resp_addr, 8).unwrap(), &expected);
+
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
         assert_eq!(snd.output_mut().available_frames(), 0);
     }
 
@@ -2532,6 +2675,42 @@ mod tests {
             &[
                 (hdr_addr, 8, false),
                 (payload_addr, payload.len() as u32, false),
+                (resp_addr, 8, true),
+            ],
+        );
+
+        let status = snd.handle_tx_chain(&mut mem, &chain);
+        assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+        assert_eq!(snd.output_mut().available_frames(), 0);
+    }
+
+    #[test]
+    fn tx_rejects_payload_when_payload_descriptor_is_out_of_bounds() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        drive_playback_to_running(&mut snd);
+
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let hdr_addr = 0x4000;
+        let resp_addr = 0x5000;
+        let invalid_payload_addr = mem.len() - 2;
+
+        let mut hdr = [0u8; 8];
+        hdr[0..4].copy_from_slice(&PLAYBACK_STREAM_ID.to_le_bytes());
+        write_bytes(&mut mem, hdr_addr, &hdr);
+
+        // Payload descriptor extends beyond the end of guest memory.
+        let chain = build_chain(
+            &mut mem,
+            desc_table,
+            avail,
+            used,
+            &[
+                (hdr_addr, 8, false),
+                (invalid_payload_addr, 4, false),
                 (resp_addr, 8, true),
             ],
         );
