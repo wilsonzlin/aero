@@ -3935,7 +3935,10 @@ impl AerogpuD3d11Executor {
                 ] {
                     let stage_bindings = self.bindings.stage_mut(stage);
                     stage_bindings.clear_texture_handle(underlying);
+                    stage_bindings.clear_uav_texture_handle(underlying);
                     stage_bindings.clear_constant_buffer_handle(underlying);
+                    stage_bindings.clear_srv_buffer_handle(underlying);
+                    stage_bindings.clear_uav_buffer_handle(underlying);
                 }
             }
         } else {
@@ -3973,7 +3976,10 @@ impl AerogpuD3d11Executor {
             ] {
                 let stage_bindings = self.bindings.stage_mut(stage);
                 stage_bindings.clear_texture_handle(handle);
+                stage_bindings.clear_uav_texture_handle(handle);
                 stage_bindings.clear_constant_buffer_handle(handle);
+                stage_bindings.clear_srv_buffer_handle(handle);
+                stage_bindings.clear_uav_buffer_handle(handle);
             }
         }
 
