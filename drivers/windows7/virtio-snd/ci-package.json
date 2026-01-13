@@ -14,6 +14,7 @@
     "scripts/lint-inf.sh",
     "scripts/run-host-tests.sh",
     "scripts/run-host-tests.ps1",
+    "tests/README.md",
     "tests/host/README.md",
     "tests/offline-install/README.md",
     "tests/qemu/README.md",
