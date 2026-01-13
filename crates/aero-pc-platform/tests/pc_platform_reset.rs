@@ -322,21 +322,28 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     // Add a dummy PCI endpoint that uses the *default* `PciDevice::reset` implementation (clears
     // COMMAND only). This ensures `PcPlatform::reset` must explicitly reprogram INTx metadata in
     // config space via `PciIntxRouter::configure_device_intx`.
-    let bdf = PciBdf::new(0, 4, 0);
     let expected_pin = PciInterruptPin::IntC;
 
-    {
+    let bdf = {
         let mut pci_cfg = pc.pci_cfg.borrow_mut();
-        pci_cfg
-            .bus_mut()
-            .add_device(bdf, Box::new(DummyPciConfigDevice::new(0x1af4, 0x1000)));
-        let cfg = pci_cfg
-            .bus_mut()
+        let bus = pci_cfg.bus_mut();
+        // Pick a free device number so this test remains robust if the default PC platform adds
+        // more devices in the future.
+        let device = (0u8..32)
+            .find(|&dev| {
+                (0u8..8).all(|func| bus.device_config(PciBdf::new(0, dev, func)).is_none())
+            })
+            .expect("PCI bus is full; cannot allocate test-only dummy device");
+        let bdf = PciBdf::new(0, device, 0);
+
+        bus.add_device(bdf, Box::new(DummyPciConfigDevice::new(0x1af4, 0x1000)));
+        let cfg = bus
             .device_config_mut(bdf)
             .expect("dummy device config should be accessible");
         pc.pci_intx
             .configure_device_intx(bdf, Some(expected_pin), cfg);
-    }
+        bdf
+    };
     pc.register_pci_intx_source(bdf, expected_pin, |_pc| false);
 
     let pin_before = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
