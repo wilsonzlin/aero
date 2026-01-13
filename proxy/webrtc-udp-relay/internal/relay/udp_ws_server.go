@@ -69,6 +69,21 @@ func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg
 		upgrader: websocket.Upgrader{},
 	}
 	srv.upgrader.CheckOrigin = srv.checkOrigin
+	srv.upgrader.Error = func(w http.ResponseWriter, r *http.Request, status int, reason error) {
+		code := "bad_message"
+		message := "websocket upgrade failed"
+		if reason != nil {
+			message = reason.Error()
+		}
+		if status == http.StatusForbidden {
+			code = "forbidden"
+			message = "forbidden"
+		} else if status >= 500 {
+			code = "internal_error"
+			message = "internal error"
+		}
+		writeUDPWSJSONError(w, status, code, message)
+	}
 	return srv, nil
 }
 
@@ -93,6 +108,17 @@ func (s *UDPWebSocketServer) checkOrigin(r *http.Request) bool {
 }
 
 func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Match /webrtc/signal: always return a JSON error to accidental HTTP callers
+	// and avoid Gorilla's default plain-text `http.Error` responses.
+	if !s.checkOrigin(r) {
+		writeUDPWSJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	if !websocket.IsWebSocketUpgrade(r) {
+		writeUDPWSJSONError(w, http.StatusBadRequest, "bad_message", "websocket upgrade required")
+		return
+	}
+
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -478,4 +504,14 @@ func (d *wsUDPDataChannel) Send(data []byte) error {
 func isTimeout(err error) bool {
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func writeUDPWSJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(udpWSControlMessage{
+		Type:    "error",
+		Code:    code,
+		Message: message,
+	})
 }

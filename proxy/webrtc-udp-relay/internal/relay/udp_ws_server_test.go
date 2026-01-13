@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1117,4 +1118,100 @@ func TestUDPWebSocketServer_OriginChecks_AllowsConfiguredOrigin(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
+}
+
+func TestUDPWebSocketServer_NonWebSocketRequestReturnsJSONError(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+
+	srv, err := NewUDPWebSocketServer(cfg, nil, DefaultConfig(), policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/udp")
+	if err != nil {
+		t.Fatalf("http.Get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type=%q, want application/json", ct)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal: %v (body=%q)", err, body)
+	}
+	if out["code"] != "bad_message" {
+		t.Fatalf("code=%#v, want %q (body=%q)", out["code"], "bad_message", body)
+	}
+}
+
+func TestUDPWebSocketServer_ForbiddenOriginReturnsJSONError(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+
+	srv, err := NewUDPWebSocketServer(cfg, nil, DefaultConfig(), policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/udp"
+
+	h := http.Header{}
+	h.Set("Origin", "https://evil.example.com")
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, h)
+	if err == nil {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+		t.Fatalf("expected dial error")
+	}
+	if resp == nil {
+		t.Fatalf("expected HTTP response with status %d", http.StatusForbidden)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d (err=%v)", resp.StatusCode, http.StatusForbidden, err)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("content-type=%q, want application/json", ct)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("unmarshal: %v (body=%q)", err, body)
+	}
+	if out["code"] != "forbidden" {
+		t.Fatalf("code=%#v, want %q (body=%q)", out["code"], "forbidden", body)
+	}
 }

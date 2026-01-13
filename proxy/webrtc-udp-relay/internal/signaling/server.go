@@ -69,6 +69,11 @@ type Config struct {
 	// WebSocket inbound signaling hardening.
 	MaxSignalingMessageBytes      int64
 	MaxSignalingMessagesPerSecond int
+
+	// WebRTCDataChannelMaxMessageBytes bounds inbound WebRTC DataChannel messages.
+	// It should match the pion SettingEngine SCTP max message size configuration
+	// (see webrtcpeer.NewAPI/ApplyNetworkSettings).
+	WebRTCDataChannelMaxMessageBytes int
 }
 
 // Server implements the relay's HTTP/WebSocket signaling surface.
@@ -108,6 +113,8 @@ type Server struct {
 	MaxSignalingMessageBytes      int64
 	MaxSignalingMessagesPerSecond int
 
+	WebRTCDataChannelMaxMessageBytes int
+
 	mu             sync.Mutex
 	webrtcSessions map[*webrtcpeer.Session]struct{}
 	preSessions    map[string]*preSessionReservation
@@ -135,8 +142,9 @@ func NewServer(cfg Config) *Server {
 		SignalingWSIdleTimeout:  cfg.SignalingWSIdleTimeout,
 		SignalingWSPingInterval: cfg.SignalingWSPingInterval,
 
-		MaxSignalingMessageBytes:      cfg.MaxSignalingMessageBytes,
-		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
+		MaxSignalingMessageBytes:         cfg.MaxSignalingMessageBytes,
+		MaxSignalingMessagesPerSecond:    cfg.MaxSignalingMessagesPerSecond,
+		WebRTCDataChannelMaxMessageBytes: cfg.WebRTCDataChannelMaxMessageBytes,
 
 		webrtcSessions: make(map[*webrtcpeer.Session]struct{}),
 	}
@@ -453,7 +461,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), cleanup)
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), s.WebRTCDataChannelMaxMessageBytes, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
@@ -591,7 +599,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), cleanup)
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, aeroSessionCookieFromRequest(r), s.WebRTCDataChannelMaxMessageBytes, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -1104,7 +1112,7 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, wss.origin, wss.credential, aeroSessionCookieFromRequest(wss.req), cleanup)
+	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, wss.origin, wss.credential, aeroSessionCookieFromRequest(wss.req), wss.srv.WebRTCDataChannelMaxMessageBytes, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		return err

@@ -45,6 +45,7 @@ func TestWebRTCDataChannel_OversizeMessageClosesSession(t *testing.T) {
 		"example.com",
 		"",
 		nil,
+		cfg.WebRTCDataChannelMaxMessageBytes,
 		func() { sessCloseOnce.Do(func() { close(sessClosed) }) },
 	)
 	if err != nil {

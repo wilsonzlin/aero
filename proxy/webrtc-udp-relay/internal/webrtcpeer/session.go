@@ -23,6 +23,8 @@ type Session struct {
 	credential string
 	onClose    func()
 
+	maxDataChannelMessageBytes int
+
 	aeroSessionCookie    string
 	hasAeroSessionCookie bool
 
@@ -32,7 +34,7 @@ type Session struct {
 	close sync.Once
 }
 
-func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, onClose func()) (*Session, error) {
+func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, maxDataChannelMessageBytes int, onClose func()) (*Session, error) {
 	if api == nil {
 		api = webrtc.NewAPI()
 	}
@@ -42,13 +44,14 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		return nil, err
 	}
 	s := &Session{
-		pc:         pc,
-		relayCfg:   relayCfg,
-		destPolicy: destPolicy,
-		quota:      quota,
-		origin:     origin,
-		credential: credential,
-		onClose:    onClose,
+		pc:                         pc,
+		relayCfg:                   relayCfg,
+		destPolicy:                 destPolicy,
+		quota:                      quota,
+		origin:                     origin,
+		credential:                 credential,
+		maxDataChannelMessageBytes: maxDataChannelMessageBytes,
+		onClose:                    onClose,
 	}
 	if aeroSessionCookie != nil {
 		s.aeroSessionCookie = *aeroSessionCookie
@@ -105,6 +108,20 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			}
 
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				if s.maxDataChannelMessageBytes > 0 && len(msg.Data) > s.maxDataChannelMessageBytes {
+					var sessionID any
+					if s.quota != nil {
+						sessionID = s.quota.ID()
+					}
+					slog.Warn("udp datachannel message too large",
+						"session_id", sessionID,
+						"msg_bytes", len(msg.Data),
+						"max_bytes", s.maxDataChannelMessageBytes,
+					)
+					// Close asynchronously so we never block a pion callback on teardown.
+					go func() { _ = s.Close() }()
+					return
+				}
 				if msg.IsString {
 					return
 				}
@@ -202,6 +219,20 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				go func() { _ = s.Close() }()
 			})
 			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				if s.maxDataChannelMessageBytes > 0 && len(msg.Data) > s.maxDataChannelMessageBytes {
+					var sessionID any
+					if s.quota != nil {
+						sessionID = s.quota.ID()
+					}
+					slog.Warn("l2 datachannel message too large",
+						"session_id", sessionID,
+						"msg_bytes", len(msg.Data),
+						"max_bytes", s.maxDataChannelMessageBytes,
+					)
+					// Close asynchronously so we never block a pion callback on teardown.
+					go func() { _ = s.Close() }()
+					return
+				}
 				if msg.IsString {
 					return
 				}
