@@ -80,8 +80,20 @@ static volatile VIRTIO_PCI_COMMON_CFG* gTestCommonCfg;
 static ULONG gTestCommonCfgQueueCount;
 static USHORT gTestCommonCfgQueueVectors[64];
 
+/*
+ * Optional fault injection: override the returned value for a specific USHORT
+ * register address. This lets tests validate that the helper rejects hardware
+ * that does not latch MSI-X vector programming (readback mismatch).
+ */
+static volatile const USHORT* gTestOverrideReadRegisterUshortAddress;
+static USHORT gTestOverrideReadRegisterUshortValue;
+
 static USHORT TestReadRegisterUshort(_In_ volatile const USHORT* Register)
 {
+    if (gTestOverrideReadRegisterUshortAddress != NULL && Register == gTestOverrideReadRegisterUshortAddress) {
+        return gTestOverrideReadRegisterUshortValue;
+    }
+
     if (gTestCommonCfg != NULL && Register == (volatile const USHORT*)&gTestCommonCfg->queue_msix_vector) {
         USHORT q = (USHORT)gTestCommonCfg->queue_select;
         if (q < gTestCommonCfgQueueCount) {
@@ -128,6 +140,18 @@ static void UninstallCommonCfgQueueVectorWindowHooks(void)
     memset(gTestCommonCfgQueueVectors, 0, sizeof(gTestCommonCfgQueueVectors));
     WdfTestReadRegisterUshortHook = NULL;
     WdfTestWriteRegisterUshortHook = NULL;
+}
+
+static void InstallReadRegisterUshortOverride(_In_ volatile const USHORT* Address, _In_ USHORT Value)
+{
+    gTestOverrideReadRegisterUshortAddress = Address;
+    gTestOverrideReadRegisterUshortValue = Value;
+}
+
+static void ClearReadRegisterUshortOverride(void)
+{
+    gTestOverrideReadRegisterUshortAddress = NULL;
+    gTestOverrideReadRegisterUshortValue = 0;
 }
 
 static USHORT ReadCommonCfgQueueVector(_Inout_ volatile VIRTIO_PCI_COMMON_CFG* CommonCfg, _In_ USHORT QueueIndex)
@@ -518,6 +542,78 @@ static void TestMsixVectorUtilizationOnePerQueueWhenPossible(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestMsixSingleVectorFallbackRouting(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+    BOOLEAN handled;
+    ULONG q;
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 4);
+
+    ResetRegisterReadInstrumentation();
+    PrepareMsix(&interrupts, &dev, &cb, 4 /* queues */, 1 /* message count */, NULL);
+
+    assert(interrupts.u.Msix.UsedVectorCount == 1);
+    assert(interrupts.u.Msix.ConfigVector == 0);
+    assert(interrupts.u.Msix.QueueVectors != NULL);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(interrupts.u.Msix.QueueVectors[q] == 0);
+    }
+
+    /* MSI-X ISR must not read ISR status. */
+    assert(WdfTestReadRegisterUcharCount == 0);
+
+    st = VirtioPciInterruptsProgramMsixVectors(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(commonCfg.msix_config == interrupts.u.Msix.ConfigVector);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == interrupts.u.Msix.QueueVectors[q]);
+    }
+
+    /* Vector 0: config + all queues. */
+    ResetCallbacks(&cb);
+    cb.ExpectedDevice = dev;
+    handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
+    assert(handled == TRUE);
+    WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[0]);
+    assert(cb.ConfigCalls == 1);
+    assert(cb.QueueCallsTotal == 4);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(cb.QueueCallsPerIndex[q] == 1);
+    }
+
+    /* Still no ISR status reads in MSI-X mode. */
+    assert(WdfTestReadRegisterUcharCount == 0);
+
+    Cleanup(&interrupts, dev);
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
+static void TestMsixProgramQueueVectorReadbackFailure(void)
+{
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+    USHORT queues[2];
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 2);
+
+    queues[0] = 1;
+    queues[1] = 2;
+
+    InstallReadRegisterUshortOverride((volatile const USHORT*)&commonCfg.queue_msix_vector, 0 /* wrong value */);
+    st = VirtioPciProgramMsixVectors(&commonCfg, NULL, 2, 3 /* config vector */, queues);
+    assert(st == STATUS_DEVICE_HARDWARE_ERROR);
+    ClearReadRegisterUshortOverride();
+
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
 static void TestResetInProgressGating(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -816,6 +912,42 @@ static void TestMsixResumeVectorReadbackFailure(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestMsixQuiesceQueueVectorReadbackFailure(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+    ULONG i;
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 2);
+
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */, NULL);
+
+    /*
+     * VirtioPciInterruptsQuiesce clears device routing and validates that the
+     * device reads back VIRTIO_PCI_MSI_NO_VECTOR. Emulate a device that fails
+     * to clear queue_msix_vector.
+     */
+    InstallReadRegisterUshortOverride((volatile const USHORT*)&commonCfg.queue_msix_vector, 0 /* wrong value */);
+    st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
+    assert(st == STATUS_DEVICE_HARDWARE_ERROR);
+
+    /* Even on failure, quiesce should still have disabled interrupts. */
+    assert(interrupts.ResetInProgress == 1);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+        assert(interrupts.u.Msix.Interrupts[i]->DisableCalls == 1);
+    }
+
+    ClearReadRegisterUshortOverride();
+
+    Cleanup(&interrupts, dev);
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
 int main(void)
 {
     TestIntxSpuriousInterrupt();
@@ -824,10 +956,13 @@ int main(void)
     TestMsixLimitedVectorRouting();
     TestMsixVectorUtilizationPartialQueueVectors();
     TestMsixVectorUtilizationOnePerQueueWhenPossible();
+    TestMsixSingleVectorFallbackRouting();
+    TestMsixProgramQueueVectorReadbackFailure();
     TestResetInProgressGating();
     TestMsixQuiesceResumeVectors();
     TestIntxQuiesceResume();
     TestMsixResumeVectorReadbackFailure();
+    TestMsixQuiesceQueueVectorReadbackFailure();
     printf("virtio_pci_interrupts_host_tests: PASS\n");
     return 0;
 }
