@@ -254,7 +254,7 @@ See:
 
 * `docs/graphics/win7-d3d9-umd-tracing.md`
 
-Example: dump the trace on the first stubbed DDI hit (useful for spotting which unimplemented entrypoint the runtime exercised):
+Example: dump the trace on the first stub-tagged DDI hit (useful for spotting which unimplemented entrypoint the runtime exercised):
 
 ```cmd
 set AEROGPU_D3D9_TRACE=1
@@ -263,6 +263,7 @@ set AEROGPU_D3D9_TRACE_FILTER=stub
 set AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1
 set AEROGPU_D3D9_TRACE_DUMP_ON_DETACH=1
 ```
+This trigger relies on the explicit `(stub)` marker in the trace name (`func_name()`); if no traced entrypoints are stub-tagged in the current build, it will not fire.
 
 By default on Windows, the trace dump is emitted via `OutputDebugStringA` (view with Sysinternals DebugView).
 For console tests, you can also set:
