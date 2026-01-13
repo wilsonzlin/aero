@@ -382,6 +382,11 @@ export class WebGpuPresenter {
    * Present and read back the final canvas pixels as RGBA8 (top-left origin).
    *
    * This is intended for validation tests; it is not a fast path.
+   *
+   * Semantics: this reads back the **presented output** (swapchain texture) and therefore
+   * includes any color-space/alpha policy applied during presentation. Do not confuse this
+   * with `Presenter.screenshot()` in `web/src/gpu/presenter.ts`, which is defined as a
+   * readback of the *source framebuffer* bytes for deterministic hashing.
    */
   async presentAndReadbackRgba8(): Promise<Uint8Array> {
     if (!this.srcTex) throw new Error("presentAndReadbackRgba8() called before setSourceRgba8()");

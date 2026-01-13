@@ -43,6 +43,11 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
  *
  * The hash is computed on **RGBA8, top-left origin** to avoid backend-specific conventions.
  *
+ * Note: this intentionally hashes the **presented** output (i.e. after the presenter's
+ * sRGB/alpha/flip policy). This is different from the `Presenter.screenshot()` contract
+ * in `web/src/gpu/presenter.ts`, which is defined as a readback of the *source framebuffer*
+ * bytes for deterministic guest-frame hashing.
+ *
  * @param {HTMLCanvasElement} canvas
  * @param {GpuColorValidationOptions} opts
  */
