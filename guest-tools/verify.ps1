@@ -669,6 +669,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
     $orderedKeys = @(
         "os",
         "guest_tools_manifest",
+        "certs_on_media_policy_mismatch",
         "packaged_drivers_summary",
         "guest_tools_setup_state",
         "guest_tools_config",
@@ -1117,6 +1118,61 @@ try {
         error = $_.Exception.Message
     }
     Add-Check "guest_tools_manifest" "Guest Tools Media Integrity (manifest.json)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Guest Tools media sanity: cert files vs signing_policy ---
+try {
+    $certDir = Join-Path $scriptDir "certs"
+    $certFiles = @()
+    if (Test-Path $certDir) {
+        $certFiles += (Get-ChildItem -Path $certDir -Recurse -Filter *.cer -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -Path $certDir -Recurse -Filter *.crt -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -Path $certDir -Recurse -Filter *.p7b -ErrorAction SilentlyContinue)
+    }
+
+    $policy = $gtSigningPolicy
+    if ((-not $policy) -and $report.media_integrity -and ($report.media_integrity -is [hashtable]) -and $report.media_integrity.signing_policy) {
+        $policy = "" + $report.media_integrity.signing_policy
+    }
+    $policyLower = ""
+    if ($policy) { $policyLower = ("" + $policy).ToLower() }
+
+    $st = "PASS"
+    $sum = ""
+    $det = @()
+
+    if (-not $policyLower -or $policyLower.Length -eq 0) {
+        $sum = "signing_policy unknown; certificate files under certs\\: " + $certFiles.Count
+    } elseif (($policyLower -eq "production") -or ($policyLower -eq "none")) {
+        if ($certFiles -and $certFiles.Count -gt 0) {
+            $st = "WARN"
+            $sum = "signing_policy=" + $policyLower + " but found " + $certFiles.Count + " certificate file(s) under certs\\."
+            $names = @($certFiles | ForEach-Object { $_.Name })
+            if ($names.Count -le 10) {
+                $det += ("Cert files: " + ($names -join ", "))
+            } else {
+                $preview = @($names | Select-Object -First 10)
+                $det += ("Cert files: " + ($preview -join ", ") + " ... (" + $names.Count + " total)")
+            }
+            $det += ("Remediation: Rebuild/replace the Guest Tools media so certs\\ is empty/absent for signing_policy=" + $policyLower + ".")
+            $det += "If you intended to use test-signed drivers, set signing_policy=test and include only the required signing certificate(s) under certs\\."
+        } else {
+            $sum = "signing_policy=" + $policyLower + "; no certificate files found under certs\\ (expected)."
+        }
+    } else {
+        # signing_policy=test: certificate files are expected; do not warn.
+        $sum = "signing_policy=" + $policyLower + "; certificate files under certs\\: " + $certFiles.Count
+    }
+
+    $data = @{
+        signing_policy = $policy
+        cert_dir = $certDir
+        cert_dir_exists = (Test-Path $certDir)
+        cert_files = @($certFiles | ForEach-Object { $_.FullName })
+    }
+    Add-Check "certs_on_media_policy_mismatch" "Guest Tools Media Sanity (certs vs signing_policy)" $st $sum $data $det
+} catch {
+    Add-Check "certs_on_media_policy_mismatch" "Guest Tools Media Sanity (certs vs signing_policy)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Guest Tools setup state (C:\AeroGuestTools\*) ---
