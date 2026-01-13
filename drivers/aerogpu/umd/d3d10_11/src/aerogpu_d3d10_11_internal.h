@@ -967,37 +967,6 @@ struct Device {
 // - `num_rtvs` is clamped to AEROGPU_MAX_RENDER_TARGETS.
 // - Slots within `[0, current_rtv_count)` may be null (handle==0).
 // - Slots >= current_rtv_count are cleared to 0/nullptr.
-//
-// The current AeroGPU host executors only support contiguous render target
-// bindings (a prefix starting at slot 0). Any "gap" (non-zero RTV handle after a
-// zero) is normalized away by truncating the RTV list at the first null slot.
-inline void NormalizeRenderTargetsNoGapsLocked(Device* dev) {
-  if (!dev) {
-    return;
-  }
-
-  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  uint32_t new_count = 0;
-  bool seen_gap = false;
-  for (uint32_t i = 0; i < count; ++i) {
-    const aerogpu_handle_t h = dev->current_rtvs[i];
-    if (h == 0) {
-      seen_gap = true;
-      continue;
-    }
-    if (seen_gap) {
-      dev->current_rtvs[i] = 0;
-      dev->current_rtv_resources[i] = nullptr;
-    } else {
-      new_count = i + 1;
-    }
-  }
-  for (uint32_t i = new_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    dev->current_rtvs[i] = 0;
-    dev->current_rtv_resources[i] = nullptr;
-  }
-  dev->current_rtv_count = new_count;
-}
 
 inline void SetRenderTargetsStateLocked(Device* dev,
                                         uint32_t num_rtvs,
@@ -1008,9 +977,8 @@ inline void SetRenderTargetsStateLocked(Device* dev,
   }
 
   const uint32_t count = std::min<uint32_t>(num_rtvs, AEROGPU_MAX_RENDER_TARGETS);
-  // Start by accepting the runtime-provided RTV slot count. We will normalize
-  // below to match the current AeroGPU protocol limitation that render targets
-  // must be a contiguous prefix starting at slot 0 (no gaps).
+  // Accept the runtime-provided RTV slot count. Individual slots inside
+  // `[0, count)` may be null, matching D3D11's OMSetRenderTargets semantics.
   dev->current_rtv_count = count;
   dev->current_rtvs.fill(0);
   dev->current_rtv_resources.fill(nullptr);
@@ -1021,11 +989,6 @@ inline void SetRenderTargetsStateLocked(Device* dev,
     dev->current_rtv_resources[i] = res;
     dev->current_rtvs[i] = res ? res->handle : (view ? view->texture : 0);
   }
-
-  // Normalize away unsupported "gaps" (non-zero after a zero) so the emitted
-  // AEROGPU_CMD_SET_RENDER_TARGETS packet stays within the host executor's
-  // current capabilities.
-  NormalizeRenderTargetsNoGapsLocked(dev);
 
   if (dsv) {
     dev->current_dsv_resource = dsv->resource;

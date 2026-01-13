@@ -1186,6 +1186,12 @@ static void EmitSetRenderTargetsLocked(Device* dev) {
     SetError(dev, E_OUTOFMEMORY);
     return;
   }
+
+  // Optional bring-up logging for Win7 tracing.
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u",
+                       static_cast<unsigned>(count),
+                       static_cast<unsigned>(dev->current_dsv));
 }
 
 static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resource) {
@@ -1193,8 +1199,7 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
     return;
   }
   bool changed = false;
-  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  for (uint32_t i = 0; i < count; ++i) {
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
     if (dev->current_rtvs[i] == resource) {
       dev->current_rtvs[i] = 0;
       dev->current_rtv_resources[i] = nullptr;
@@ -1207,11 +1212,6 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
     changed = true;
   }
   if (changed) {
-    // AeroGPU host executors currently require render targets to be a contiguous
-    // prefix starting at slot 0. Unbinding an RTV due to SRV aliasing can create
-    // holes (e.g. unbinding slot 0 while slot 1 remains bound), so normalize the
-    // cached RTV state before emitting the rebinding packet.
-    NormalizeRenderTargetsNoGapsLocked(dev);
     EmitSetRenderTargetsLocked(dev);
   }
 }
@@ -8917,26 +8917,34 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   }
   put_identity(resources[numResources - 1], std::move(saved));
 
-  bool needs_rebind = false;
+  auto is_rotated = [&resources](const Resource* res) -> bool {
+    if (!res) {
+      return false;
+    }
+    return std::find(resources.begin(), resources.end(), res) != resources.end();
+  };
+
+  // If any bound outputs were rotated (e.g. swapchain backbuffer), re-emit the
+  // OM binding with the new protocol handles.
+  bool outputs_need_rebind = false;
   const uint32_t bound_rtv_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> new_rtvs = dev->current_rtvs;
   for (uint32_t i = 0; i < bound_rtv_count; ++i) {
     Resource* rtv_res = dev->current_rtv_resources[i];
-    if (!rtv_res) {
-      continue;
+    if (is_rotated(rtv_res)) {
+      outputs_need_rebind = true;
     }
-    if (std::find(resources.begin(), resources.end(), rtv_res) != resources.end()) {
-      needs_rebind = true;
-      break;
+    if (rtv_res) {
+      new_rtvs[i] = rtv_res->handle;
     }
   }
-  if (needs_rebind) {
-    std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> new_rtvs = dev->current_rtvs;
-    for (uint32_t i = 0; i < bound_rtv_count; ++i) {
-      if (dev->current_rtv_resources[i]) {
-        new_rtvs[i] = dev->current_rtv_resources[i]->handle;
-      }
-    }
+  aerogpu_handle_t new_dsv = dev->current_dsv;
+  if (is_rotated(dev->current_dsv_resource)) {
+    outputs_need_rebind = true;
+    new_dsv = dev->current_dsv_resource ? dev->current_dsv_resource->handle : 0;
+  }
 
+  if (outputs_need_rebind) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
     if (!cmd) {
       // Undo the rotation (rotate right by one).
@@ -8953,20 +8961,14 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     // rebind packet. If we fail to append (OOM), we roll back the rotation and
     // must keep the previous handles intact.
     dev->current_rtvs = new_rtvs;
-
+    dev->current_dsv = new_dsv;
+ 
     cmd->color_count = bound_rtv_count;
-    cmd->depth_stencil = dev->current_dsv;
+    cmd->depth_stencil = new_dsv;
     for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
       cmd->colors[i] = (i < bound_rtv_count) ? new_rtvs[i] : 0;
     }
   }
-
-  auto is_rotated = [&resources](const Resource* res) -> bool {
-    if (!res) {
-      return false;
-    }
-    return std::find(resources.begin(), resources.end(), res) != resources.end();
-  };
 
   for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
     if (!is_rotated(dev->current_vs_srvs[slot])) {
