@@ -12,6 +12,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - AeroSparse disk image parsing/open (`aero-storage`)
 - AeroGPU command stream + alloc-table parsing (`aero-gpu` / `aero-protocol`)
 - DXBC container + shader bytecode parsing (`aero-dxbc`)
+- D3D9 SM2/SM3 shader decoding + IR lowering (`aero-d3d9::sm3`)
 
 ## Prereqs
 
@@ -143,16 +144,17 @@ cd fuzz && cargo fuzz run fuzz_disk_image_open_auto -- -runs=10000
 
 # AeroGPU command stream + alloc-table parsing
 cd fuzz && cargo fuzz run fuzz_aerogpu_parse -- -runs=10000
+ 
+# DXBC parsing
+cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000
 
 # DXBC container + signature + SM4/SM5 token parsing
 cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
 
 # Optional: use the bundled dictionary to help libFuzzer find DXBC/signature chunk IDs faster
 cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_sm4_parse.dict
-
-cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000
-
-# D3D9 shader model 3 decode
+ 
+# D3D9 SM2/SM3 bytecode decode + IR build
 cd fuzz && cargo fuzz run fuzz_d3d9_sm3_decode -- -runs=10000
 
 # Networking (quick sanity)

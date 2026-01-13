@@ -39,6 +39,15 @@ jobs:
       - name: fuzz_aerogpu_parse (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerogpu_parse -- -max_total_time=10
 
+      - name: fuzz_dxbc_parse (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_parse -- -max_total_time=10
+
+      - name: fuzz_dxbc_sm4_parse (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_dxbc_sm4_parse -- -max_total_time=10
+
+      - name: fuzz_d3d9_sm3_decode (10s)
+        run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_d3d9_sm3_decode -- -max_total_time=10
+
       - name: fuzz_aerosparse_open (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_aerosparse_open -- -max_total_time=10 -max_len=1048576 -dict=fuzz/fuzz_targets/fuzz_aerosparse_open.dict
 

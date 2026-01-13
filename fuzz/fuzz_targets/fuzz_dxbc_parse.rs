@@ -7,9 +7,23 @@ use libfuzzer_sys::fuzz_target;
 /// malformed "container" blobs.
 const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 
+/// `DxbcFile::parse` validates each chunk offset in a loop. Cap `chunk_count` for
+/// deterministic fuzz iteration cost (especially when libFuzzer generates a
+/// valid DXBC header but an absurd number of chunks).
+const MAX_DXBC_CHUNKS: u32 = 1024;
+
 fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_SIZE_BYTES {
         return;
+    }
+
+    // Pre-filter absurd `chunk_count` values to avoid worst-case O(n) parsing
+    // time on otherwise-valid DXBC headers.
+    if data.len() >= 32 && &data[..4] == b"DXBC" {
+        let chunk_count = u32::from_le_bytes([data[28], data[29], data[30], data[31]]);
+        if chunk_count > MAX_DXBC_CHUNKS {
+            return;
+        }
     }
 
     // Treat the slice as a candidate DXBC container. All errors are acceptable.
@@ -22,8 +36,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Also iterate a bounded number of chunks to stress the offset table / chunk
     // header parsing paths without risking long runtimes on huge chunk counts.
-    for chunk in dxbc.chunks().take(64) {
+    for chunk in dxbc.chunks().take(MAX_DXBC_CHUNKS as usize) {
         let _ = (chunk.fourcc, chunk.data.len());
     }
 });
-
