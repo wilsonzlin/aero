@@ -6026,54 +6026,6 @@ impl AerogpuD3d11Executor {
                             }
                         }
                     }
-                    if !needs_break {
-                        for (stage, used_slots) in [
-                            (ShaderStage::Vertex, &used_textures_vs),
-                            (ShaderStage::Pixel, &used_textures_ps),
-                            (ShaderStage::Compute, &used_textures_cs),
-                        ] {
-                            let stage_bindings = self.bindings.stage(stage);
-                            for (slot, used) in used_slots.iter().copied().enumerate() {
-                                if !used {
-                                    continue;
-                                }
-                                if stage_bindings
-                                    .srv_buffer(slot as u32)
-                                    .is_some_and(|srv| srv.buffer == handle)
-                                {
-                                    needs_break = true;
-                                    break;
-                                }
-                            }
-                            if needs_break {
-                                break;
-                            }
-                        }
-                    }
-                    if !needs_break {
-                        for (stage, used_slots) in [
-                            (ShaderStage::Vertex, &used_textures_vs),
-                            (ShaderStage::Pixel, &used_textures_ps),
-                            (ShaderStage::Compute, &used_textures_cs),
-                        ] {
-                            let stage_bindings = self.bindings.stage(stage);
-                            for (slot, used) in used_slots.iter().copied().enumerate() {
-                                if !used {
-                                    continue;
-                                }
-                                if stage_bindings
-                                    .srv_buffer(slot as u32)
-                                    .is_some_and(|srv| srv.buffer == handle)
-                                {
-                                    needs_break = true;
-                                    break;
-                                }
-                            }
-                            if needs_break {
-                                break;
-                            }
-                        }
-                    }
                 }
 
                 // SRV bindings (`t#`) can point at either textures or buffers. Check the SRV slot
@@ -6213,6 +6165,7 @@ impl AerogpuD3d11Executor {
                         for (stage, used_slots) in [
                             (ShaderStage::Vertex, &used_textures_vs),
                             (ShaderStage::Pixel, &used_textures_ps),
+                            (ShaderStage::Geometry, &used_textures_gs),
                             (ShaderStage::Compute, &used_textures_cs),
                         ] {
                             let stage_bindings = self.bindings.stage(stage);
@@ -8258,7 +8211,6 @@ impl AerogpuD3d11Executor {
                     ShaderStage::Hull,
                     ShaderStage::Domain,
                     ShaderStage::Compute,
-                    ShaderStage::Geometry,
                 ] {
                     let stage_bindings = self.bindings.stage_mut(stage);
                     stage_bindings.clear_texture_handle(underlying);
@@ -8312,7 +8264,6 @@ impl AerogpuD3d11Executor {
                 ShaderStage::Hull,
                 ShaderStage::Domain,
                 ShaderStage::Compute,
-                ShaderStage::Geometry,
             ] {
                 let stage_bindings = self.bindings.stage_mut(stage);
                 stage_bindings.clear_texture_handle(handle);
@@ -10839,7 +10790,6 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
-            ShaderStage::Geometry,
         ] {
             self.bindings
                 .stage_mut(stage)

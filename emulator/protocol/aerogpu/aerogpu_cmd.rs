@@ -164,6 +164,10 @@ pub enum AerogpuShaderStage {
     Vertex = 0,
     Pixel = 1,
     Compute = 2,
+    /// D3D11 geometry shader stage.
+    ///
+    /// Note: WebGPU does not expose geometry shaders, but AeroGPU still carries the stage to
+    /// allow D3D11 command streams to be forwarded without dropping stage-local binding state.
     Geometry = 3,
 }
 
