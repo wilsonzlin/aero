@@ -276,6 +276,14 @@ mod tests {
         assert_eq!(events[1].category, GpuErrorCategory::DeviceLost);
         assert_eq!(events[1].backend_kind, GpuBackendKind::WebGpu);
         assert!(events[1].message.contains("GPU recovery failed on"));
+        assert_eq!(
+            events[1]
+                .details
+                .as_ref()
+                .and_then(|d| d.get("attempt_backend"))
+                .map(String::as_str),
+            Some("webgpu")
+        );
 
         assert_eq!(events[2].severity, GpuErrorSeverityKind::Info);
         assert_eq!(events[2].category, GpuErrorCategory::DeviceLost);
@@ -285,6 +293,78 @@ mod tests {
         assert_eq!(events[3].severity, GpuErrorSeverityKind::Info);
         assert_eq!(events[3].category, GpuErrorCategory::DeviceLost);
         assert_eq!(events[3].backend_kind, GpuBackendKind::WebGl2);
+        assert!(events[3].message.contains("fallback succeeded"));
+    }
+
+    #[test]
+    fn recovery_falls_back_from_webgl2_to_webgpu() {
+        let stats = GpuStats::new();
+        let mut machine =
+            GpuRecoveryMachine::new(GpuBackendKind::WebGl2, BackendAvailability::both());
+
+        let mut events = Vec::new();
+        let mut attempted = Vec::new();
+        let outcome = machine.handle_device_lost(
+            43,
+            &stats,
+            |e| events.push(e),
+            |backend| {
+                attempted.push(backend);
+                match backend {
+                    GpuBackendKind::WebGl2 => Err("webgl2 init failed".to_string()),
+                    GpuBackendKind::WebGpu => Ok(()),
+                }
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            RecoveryOutcome::Recovered {
+                backend_kind: GpuBackendKind::WebGpu
+            }
+        );
+        assert_eq!(machine.state(), RecoveryState::Running);
+        assert_eq!(machine.backend_kind(), GpuBackendKind::WebGpu);
+
+        let snap = stats.snapshot();
+        assert_eq!(snap.recoveries_attempted, 2);
+        assert_eq!(snap.recoveries_succeeded, 1);
+
+        assert_eq!(
+            attempted,
+            vec![GpuBackendKind::WebGl2, GpuBackendKind::WebGpu]
+        );
+
+        // Event ordering should be deterministic:
+        // 1) Attempt current, 2) fail current, 3) attempt fallback, 4) fallback succeeds.
+        assert_eq!(events.len(), 4, "{events:#?}");
+
+        assert_eq!(events[0].severity, GpuErrorSeverityKind::Info);
+        assert_eq!(events[0].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[0].backend_kind, GpuBackendKind::WebGl2);
+        assert!(events[0].message.contains("Attempting GPU recovery on"));
+
+        assert_eq!(events[1].severity, GpuErrorSeverityKind::Warning);
+        assert_eq!(events[1].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[1].backend_kind, GpuBackendKind::WebGl2);
+        assert!(events[1].message.contains("GPU recovery failed on"));
+        assert_eq!(
+            events[1]
+                .details
+                .as_ref()
+                .and_then(|d| d.get("attempt_backend"))
+                .map(String::as_str),
+            Some("webgl2")
+        );
+
+        assert_eq!(events[2].severity, GpuErrorSeverityKind::Info);
+        assert_eq!(events[2].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[2].backend_kind, GpuBackendKind::WebGpu);
+        assert!(events[2].message.contains("Attempting GPU recovery fallback"));
+
+        assert_eq!(events[3].severity, GpuErrorSeverityKind::Info);
+        assert_eq!(events[3].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[3].backend_kind, GpuBackendKind::WebGpu);
         assert!(events[3].message.contains("fallback succeeded"));
     }
 
@@ -325,12 +405,15 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].severity, GpuErrorSeverityKind::Error);
         assert_eq!(events[0].category, GpuErrorCategory::Init);
+        assert_eq!(events[0].backend_kind, GpuBackendKind::WebGpu);
         assert!(events[0].message.contains("not available"));
         assert_eq!(events[1].severity, GpuErrorSeverityKind::Info);
         assert_eq!(events[1].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[1].backend_kind, GpuBackendKind::WebGpu);
         assert!(events[1].message.contains("Attempting GPU recovery"));
         assert_eq!(events[2].severity, GpuErrorSeverityKind::Info);
         assert_eq!(events[2].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[2].backend_kind, GpuBackendKind::WebGpu);
         assert!(events[2].message.contains("GPU recovery succeeded"));
     }
 
@@ -392,6 +475,14 @@ mod tests {
         assert_eq!(events[2].category, GpuErrorCategory::DeviceLost);
         assert_eq!(events[2].backend_kind, GpuBackendKind::WebGpu);
         assert!(events[2].message.contains("GPU recovery failed on"));
+        assert_eq!(
+            events[2]
+                .details
+                .as_ref()
+                .and_then(|d| d.get("attempt_backend"))
+                .map(String::as_str),
+            Some("webgpu")
+        );
 
         assert_eq!(events[3].severity, GpuErrorSeverityKind::Info);
         assert_eq!(events[3].category, GpuErrorCategory::DeviceLost);
@@ -517,6 +608,14 @@ mod tests {
         assert_eq!(events[1].category, GpuErrorCategory::DeviceLost);
         assert_eq!(events[1].backend_kind, GpuBackendKind::WebGpu);
         assert!(events[1].message.contains("GPU recovery failed on"));
+        assert_eq!(
+            events[1]
+                .details
+                .as_ref()
+                .and_then(|d| d.get("attempt_backend"))
+                .map(String::as_str),
+            Some("webgpu")
+        );
 
         assert_eq!(events[2].severity, GpuErrorSeverityKind::Fatal);
         assert_eq!(events[2].category, GpuErrorCategory::DeviceLost);
@@ -552,6 +651,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].severity, GpuErrorSeverityKind::Fatal);
         assert_eq!(events[0].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[0].backend_kind, GpuBackendKind::WebGpu);
         assert_eq!(events[0].message, "GPU recovery requested while already failed");
     }
 }
