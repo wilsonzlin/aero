@@ -69,7 +69,8 @@ Commands:
   conformance Run instruction conformance / differential tests (x86_64 unix only).
   input      Run the USB/input-focused test suite (Rust + web; optional Playwright subset).
   snapshot   Inspect/validate an `aero-snapshot` file without loading multi-GB RAM payloads.
-  test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright).
+  test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright). Also validates
+             deterministic in-repo fixtures when Rust tests are enabled.
   wasm       Build the Rust→WASM packages used by the web app.
   web        Run web (Node/Vite) tasks via npm.
 

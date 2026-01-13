@@ -3,6 +3,7 @@ use crate::paths;
 use crate::runner::Runner;
 use crate::tools;
 use std::env;
+use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -26,6 +27,13 @@ Run Aero's full test stack (Rust, WASM, TypeScript, Playwright) with one command
 
 Usage:
   cargo xtask test-all [options] [-- <extra playwright args>]
+
+Note:
+  When Rust tests are enabled (default), this command also validates deterministic
+  binary fixtures and fails fast if they are out of date:
+
+    - cargo xtask fixtures --check   (regenerate via: cargo xtask fixtures)
+    - cargo xtask bios-rom --check   (if supported by this repo; for assets/bios.bin)
 
 Options:
   --skip-rust           Skip Rust checks/tests (cargo fmt/clippy/test)
@@ -85,6 +93,24 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let cargo_locked_args: [&str; 1] = ["--locked"];
 
     if !opts.skip_rust {
+        // Validate deterministic binary fixtures early so `cargo xtask test-all` fails fast when a
+        // fixture-regeneration step is needed.
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&repo_root)
+            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
+            .args(["xtask", "fixtures", "--check"]);
+        runner.run_step("Fixtures: cargo xtask fixtures --check", &mut cmd)?;
+
+        // Validate the checked-in BIOS ROM fixture (assets/bios.bin) if this repo implements a
+        // corresponding xtask check command.
+        if xtask_subcommand_exists(&repo_root, "bios-rom")? {
+            let mut cmd = Command::new("cargo");
+            cmd.current_dir(&repo_root)
+                .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
+                .args(["xtask", "bios-rom", "--check"]);
+            runner.run_step("BIOS ROM: cargo xtask bios-rom --check", &mut cmd)?;
+        }
+
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&repo_root)
             .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
@@ -264,4 +290,31 @@ fn next_value(
         Some(v) => Ok(v),
         None => Err(XtaskError::Message(format!("{flag} requires a value"))),
     }
+}
+
+fn xtask_subcommand_exists(repo_root: &std::path::Path, subcommand: &str) -> Result<bool> {
+    let output = Command::new("cargo")
+        .current_dir(repo_root)
+        .args(["xtask", "help"])
+        .output()
+        .map_err(|err| match err.kind() {
+            io::ErrorKind::NotFound => XtaskError::Message("missing required command: cargo".into()),
+            _ => XtaskError::Message(format!("failed to run `cargo xtask help`: {err}")),
+        })?;
+
+    if !output.status.success() {
+        return Err(XtaskError::Message(
+            "`cargo xtask help` failed while checking for optional subcommands".into(),
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with(subcommand)
+            && trimmed[subcommand.len()..]
+                .chars()
+                .next()
+                .map_or(true, |c| c.is_whitespace())
+    }))
 }
