@@ -89,6 +89,7 @@ Current state of the in-tree virtio-snd driver package:
 
 - The shipped virtio-snd build uses **INTx** (it does not connect message interrupt resources).
 - It also programs virtio MSI-X routing registers (`msix_config`, `queue_msix_vector`) to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) during bring-up.
+- The shipped `inf/aero_virtio_snd.inf` does **not** opt into MSI/MSI-X, so Windows will normally assign an INTx resource (matching the shipped driver behavior).
 
 Implication: **do not enable MSI/MSI-X in the INF for virtio-snd yet** unless you also update the driver to program virtio MSI-X vectors. If Windows assigns only message interrupts, the driver will either:
 
@@ -101,7 +102,7 @@ On Windows 7, MSI/MSI-X is typically enabled via INF `HKR` settings under:
 
 `Interrupt Management\\MessageSignaledInterruptProperties`
 
-Example (add to the relevant virtio-snd INF, e.g. `inf/aero_virtio_snd.inf`):
+If/when MSI/MSI-X is enabled for virtio-snd, add an `AddReg` section like the following to the chosen INF:
 
 ```inf
 [AeroVirtioSnd_Install.NT.HW]
