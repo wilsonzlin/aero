@@ -240,6 +240,16 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 src,
                 modifiers,
             })?,
+            Opcode::Exp => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Exp {
+                dst,
+                src,
+                modifiers,
+            })?,
+            Opcode::Log => push_unop(&mut stack, inst, |dst, src, modifiers| IrOp::Log {
+                dst,
+                src,
+                modifiers,
+            })?,
             Opcode::Min => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Min {
                 dst,
                 src0,
@@ -247,6 +257,12 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 modifiers,
             })?,
             Opcode::Max => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Max {
+                dst,
+                src0,
+                src1,
+                modifiers,
+            })?,
+            Opcode::Pow => push_binop(&mut stack, inst, |dst, src0, src1, modifiers| IrOp::Pow {
                 dst,
                 src0,
                 src1,
@@ -549,6 +565,16 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             dst,
             src,
             modifiers,
+        }
+        | IrOp::Exp {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Log {
+            dst,
+            src,
+            modifiers,
         } => {
             collect_used_input_regs_dst(dst, out);
             collect_used_input_regs_src(src, out);
@@ -602,6 +628,12 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             src1,
             modifiers,
             ..
+        }
+        | IrOp::Pow {
+            dst,
+            src0,
+            src1,
+            modifiers,
         } => {
             collect_used_input_regs_dst(dst, out);
             collect_used_input_regs_src(src0, out);
@@ -738,6 +770,16 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             dst,
             src,
             modifiers,
+        }
+        | IrOp::Exp {
+            dst,
+            src,
+            modifiers,
+        }
+        | IrOp::Log {
+            dst,
+            src,
+            modifiers,
         } => {
             remap_input_regs_in_dst(dst, remap);
             remap_input_regs_in_src(src, remap);
@@ -791,6 +833,12 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             src1,
             modifiers,
             ..
+        }
+        | IrOp::Pow {
+            dst,
+            src0,
+            src1,
+            modifiers,
         } => {
             remap_input_regs_in_dst(dst, remap);
             remap_input_regs_in_src(src0, remap);

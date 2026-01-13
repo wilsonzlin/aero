@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
-use crate::sm3::ir::{Block, CompareOp, Cond, Dst, InstModifiers, IrOp, RegFile, RegRef, Src, Stmt};
+use crate::sm3::ir::{
+    Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Src, Stmt,
+};
 use crate::sm3::types::ShaderStage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,55 +224,65 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
     }
 
     match op {
-        IrOp::Mov { dst, src, .. }
-        | IrOp::Mova { dst, src, .. }
-        | IrOp::Rcp { dst, src, .. }
-        | IrOp::Rsq { dst, src, .. }
-        | IrOp::Frc { dst, src, .. } => {
+        IrOp::Mov { dst, src, modifiers }
+        | IrOp::Mova { dst, src, modifiers }
+        | IrOp::Rcp { dst, src, modifiers }
+        | IrOp::Rsq { dst, src, modifiers }
+        | IrOp::Frc { dst, src, modifiers }
+        | IrOp::Exp { dst, src, modifiers }
+        | IrOp::Log { dst, src, modifiers } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src, usage);
+            collect_mods_usage(modifiers, usage);
         }
-        IrOp::Add { dst, src0, src1, .. }
-        | IrOp::Sub { dst, src0, src1, .. }
-        | IrOp::Mul { dst, src0, src1, .. }
-        | IrOp::Min { dst, src0, src1, .. }
-        | IrOp::Max { dst, src0, src1, .. }
-        | IrOp::Dp3 { dst, src0, src1, .. }
-        | IrOp::Dp4 { dst, src0, src1, .. }
-        | IrOp::SetCmp { dst, src0, src1, .. } => {
+        IrOp::Add { dst, src0, src1, modifiers }
+        | IrOp::Sub { dst, src0, src1, modifiers }
+        | IrOp::Mul { dst, src0, src1, modifiers }
+        | IrOp::Min { dst, src0, src1, modifiers }
+        | IrOp::Max { dst, src0, src1, modifiers }
+        | IrOp::Dp3 { dst, src0, src1, modifiers }
+        | IrOp::Dp4 { dst, src0, src1, modifiers }
+        | IrOp::SetCmp { dst, src0, src1, modifiers, .. }
+        | IrOp::Pow { dst, src0, src1, modifiers } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src0, usage);
             collect_src_usage(src1, usage);
+            collect_mods_usage(modifiers, usage);
         }
         IrOp::Select {
             dst,
             cond,
             src_ge,
             src_lt,
+            modifiers,
             ..
         } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(cond, usage);
             collect_src_usage(src_ge, usage);
             collect_src_usage(src_lt, usage);
+            collect_mods_usage(modifiers, usage);
         }
         IrOp::Mad {
             dst,
             src0,
             src1,
             src2,
+            modifiers,
             ..
         } => {
             collect_dst_usage(dst, usage);
             collect_src_usage(src0, usage);
             collect_src_usage(src1, usage);
             collect_src_usage(src2, usage);
+            collect_mods_usage(modifiers, usage);
         }
         IrOp::TexSample {
             dst,
             coord,
             ddx,
             ddy,
+            modifiers,
             ..
         } => {
             collect_dst_usage(dst, usage);
@@ -281,7 +293,14 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             if let Some(ddy) = ddy {
                 collect_src_usage(ddy, usage);
             }
+            collect_mods_usage(modifiers, usage);
         }
+    }
+}
+
+fn collect_mods_usage(mods: &InstModifiers, usage: &mut RegUsage) {
+    if let Some(pred) = &mods.predicate {
+        collect_reg_ref_usage(&pred.reg, usage);
     }
 }
 
@@ -335,27 +354,6 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage) {
     }
     if let Some(rel) = &reg.relative {
         collect_reg_ref_usage(&rel.reg, usage);
-    }
-}
-
-fn op_modifiers(op: &IrOp) -> &InstModifiers {
-    match op {
-        IrOp::Mov { modifiers, .. }
-        | IrOp::Mova { modifiers, .. }
-        | IrOp::Add { modifiers, .. }
-        | IrOp::Sub { modifiers, .. }
-        | IrOp::Mul { modifiers, .. }
-        | IrOp::Mad { modifiers, .. }
-        | IrOp::Dp3 { modifiers, .. }
-        | IrOp::Dp4 { modifiers, .. }
-        | IrOp::Rcp { modifiers, .. }
-        | IrOp::Rsq { modifiers, .. }
-        | IrOp::Frc { modifiers, .. }
-        | IrOp::Min { modifiers, .. }
-        | IrOp::Max { modifiers, .. }
-        | IrOp::SetCmp { modifiers, .. }
-        | IrOp::Select { modifiers, .. }
-        | IrOp::TexSample { modifiers, .. } => modifiers,
     }
 }
 
@@ -490,21 +488,23 @@ fn cond_expr(cond: &Cond) -> Result<String, WgslError> {
             };
             Ok(format!("({a}.x {op_str} {b}.x)"))
         }
-        Cond::Predicate { pred } => {
-            let mut e = reg_var_name(&pred.reg)?;
-            e.push('.');
-            e.push(match pred.component {
-                SwizzleComponent::X => 'x',
-                SwizzleComponent::Y => 'y',
-                SwizzleComponent::Z => 'z',
-                SwizzleComponent::W => 'w',
-            });
-            if pred.negate {
-                Ok(format!("!({e})"))
-            } else {
-                Ok(e)
-            }
-        }
+        Cond::Predicate { pred } => predicate_expr(pred),
+    }
+}
+
+fn predicate_expr(pred: &PredicateRef) -> Result<String, WgslError> {
+    let mut e = reg_var_name(&pred.reg)?;
+    e.push('.');
+    e.push(match pred.component {
+        SwizzleComponent::X => 'x',
+        SwizzleComponent::Y => 'y',
+        SwizzleComponent::Z => 'z',
+        SwizzleComponent::W => 'w',
+    });
+    if pred.negate {
+        Ok(format!("!({e})"))
+    } else {
+        Ok(e)
     }
 }
 
@@ -524,22 +524,6 @@ fn apply_float_result_modifiers(expr: String, mods: &InstModifiers) -> Result<St
         out = format!("clamp({out}, vec4<f32>(0.0), vec4<f32>(1.0))");
     }
     Ok(out)
-}
-
-fn predicate_ref_expr(pred: &crate::sm3::ir::PredicateRef) -> Result<String, WgslError> {
-    let mut e = reg_var_name(&pred.reg)?;
-    e.push('.');
-    e.push(match pred.component {
-        SwizzleComponent::X => 'x',
-        SwizzleComponent::Y => 'y',
-        SwizzleComponent::Z => 'z',
-        SwizzleComponent::W => 'w',
-    });
-    if pred.negate {
-        Ok(format!("!({e})"))
-    } else {
-        Ok(e)
-    }
 }
 
 fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
@@ -644,6 +628,8 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             let e = apply_float_result_modifiers(format!("fract({s})"), modifiers)?;
             emit_assign(dst, e)
         }
+        IrOp::Exp { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, "exp2"),
+        IrOp::Log { dst, src, modifiers } => emit_float_func1(dst, src, modifiers, "log2"),
         IrOp::Dp3 { dst, src0, src1, modifiers } => {
             let (a, aty) = src_expr(src0)?;
             let (b, bty) = src_expr(src1)?;
@@ -679,7 +665,6 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             src1,
             modifiers,
         } => {
-            // `sge/slt/seq/sne`-style compare producing float mask: 1.0/0.0.
             let (a, aty) = src_expr(src0)?;
             let (b, bty) = src_expr(src1)?;
             if aty != bty {
@@ -747,8 +732,32 @@ fn emit_op_line(op: &IrOp) -> Result<String, WgslError> {
             )?;
             emit_assign(dst, e)
         }
+        IrOp::Pow {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => emit_float_func2(dst, src0, src1, modifiers, "pow"),
         IrOp::TexSample { .. } => Err(err("texture sampling not supported in WGSL lowering")),
     }
+}
+
+fn emit_float_func1(
+    dst: &Dst,
+    src: &Src,
+    modifiers: &InstModifiers,
+    func: &str,
+) -> Result<String, WgslError> {
+    let (s, ty) = src_expr(src)?;
+    if ty != ScalarTy::F32 {
+        return Err(err("float function uses non-float source"));
+    }
+    let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+    if dst_ty != ScalarTy::F32 {
+        return Err(err("float function destination must be float"));
+    }
+    let e = apply_float_result_modifiers(format!("{func}({s})"), modifiers)?;
+    emit_assign(dst, e)
 }
 
 fn emit_float_binop(
@@ -817,7 +826,7 @@ fn emit_stmt(wgsl: &mut String, stmt: &Stmt, indent: usize) -> Result<(), WgslEr
     match stmt {
         Stmt::Op(op) => {
             if let Some(pred) = &op_modifiers(op).predicate {
-                let pred_cond = predicate_ref_expr(pred)?;
+                let pred_cond = predicate_expr(pred)?;
                 let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
                 let line = emit_op_line(op)?;
                 let inner_pad = "  ".repeat(indent + 1);
@@ -860,6 +869,30 @@ fn emit_stmt(wgsl: &mut String, stmt: &Stmt, indent: usize) -> Result<(), WgslEr
         }
     }
     Ok(())
+}
+
+fn op_modifiers(op: &IrOp) -> &InstModifiers {
+    match op {
+        IrOp::Mov { modifiers, .. }
+        | IrOp::Mova { modifiers, .. }
+        | IrOp::Add { modifiers, .. }
+        | IrOp::Sub { modifiers, .. }
+        | IrOp::Mul { modifiers, .. }
+        | IrOp::Mad { modifiers, .. }
+        | IrOp::Dp3 { modifiers, .. }
+        | IrOp::Dp4 { modifiers, .. }
+        | IrOp::Rcp { modifiers, .. }
+        | IrOp::Rsq { modifiers, .. }
+        | IrOp::Frc { modifiers, .. }
+        | IrOp::Exp { modifiers, .. }
+        | IrOp::Log { modifiers, .. }
+        | IrOp::Min { modifiers, .. }
+        | IrOp::Max { modifiers, .. }
+        | IrOp::SetCmp { modifiers, .. }
+        | IrOp::Select { modifiers, .. }
+        | IrOp::Pow { modifiers, .. }
+        | IrOp::TexSample { modifiers, .. } => modifiers,
+    }
 }
 
 pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslError> {

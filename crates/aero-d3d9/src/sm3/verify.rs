@@ -44,26 +44,12 @@ fn verify_block(block: &Block) -> Result<(), VerifyError> {
 
 fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
     match op {
-        IrOp::Mov {
-            dst: _,
-            src,
-            modifiers,
-        }
-        | IrOp::Rcp {
-            dst: _,
-            src,
-            modifiers,
-        }
-        | IrOp::Rsq {
-            dst: _,
-            src,
-            modifiers,
-        }
-        | IrOp::Frc {
-            dst: _,
-            src,
-            modifiers,
-        } => {
+        IrOp::Mov { dst: _, src, modifiers }
+        | IrOp::Rcp { dst: _, src, modifiers }
+        | IrOp::Rsq { dst: _, src, modifiers }
+        | IrOp::Frc { dst: _, src, modifiers }
+        | IrOp::Exp { dst: _, src, modifiers }
+        | IrOp::Log { dst: _, src, modifiers } => {
             verify_src(src)?;
             verify_modifiers(modifiers)?;
         }
@@ -124,6 +110,12 @@ fn verify_op(op: &IrOp) -> Result<(), VerifyError> {
         }
         | IrOp::SetCmp {
             op: _,
+            dst: _,
+            src0,
+            src1,
+            modifiers,
+        }
+        | IrOp::Pow {
             dst: _,
             src0,
             src1,

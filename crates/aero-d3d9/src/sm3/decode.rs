@@ -60,6 +60,8 @@ pub enum Opcode {
     Mul,
     Dp3,
     Dp4,
+    Exp,
+    Log,
     Rcp,
     Rsq,
     Frc,
@@ -90,6 +92,7 @@ pub enum Opcode {
     TexKill,
     TexLdd,
     TexLdl,
+    Pow,
     Comment,
     End,
     Unknown(u16),
@@ -112,12 +115,15 @@ impl Opcode {
             11 => Self::Max,
             12 => Self::Slt,
             13 => Self::Sge,
+            14 => Self::Exp,
+            15 => Self::Log,
             19 => Self::Frc, // 0x13
             25 => Self::Call,
             27 => Self::Loop,
             28 => Self::Ret,
             29 => Self::EndLoop,
             31 => Self::Dcl,
+            32 => Self::Pow,
             40 => Self::If,
             41 => Self::Ifc,
             42 => Self::Else,
@@ -156,6 +162,8 @@ impl Opcode {
             Self::Mul => "mul",
             Self::Dp3 => "dp3",
             Self::Dp4 => "dp4",
+            Self::Exp => "exp",
+            Self::Log => "log",
             Self::Rcp => "rcp",
             Self::Rsq => "rsq",
             Self::Frc => "frc",
@@ -185,6 +193,7 @@ impl Opcode {
             Self::TexKill => "texkill",
             Self::TexLdd => "texldd",
             Self::TexLdl => "texldl",
+            Self::Pow => "pow",
             Self::Comment => "comment",
             Self::End => "end",
             Self::Unknown(_) => "unknown",
@@ -718,7 +727,7 @@ fn decode_operands_and_extras(
                 });
             }
         }
-        Opcode::Mov | Opcode::Mova | Opcode::Rcp | Opcode::Rsq => {
+        Opcode::Mov | Opcode::Mova | Opcode::Rcp | Opcode::Rsq | Opcode::Exp | Opcode::Log => {
             parse_fixed_operands(
                 opcode,
                 stage,
@@ -748,7 +757,8 @@ fn decode_operands_and_extras(
         | Opcode::Seq
         | Opcode::Sne
         | Opcode::Dp3
-        | Opcode::Dp4 => {
+        | Opcode::Dp4
+        | Opcode::Pow => {
             parse_fixed_operands(
                 opcode,
                 stage,

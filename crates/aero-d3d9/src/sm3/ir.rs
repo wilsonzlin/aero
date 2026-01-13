@@ -155,6 +155,22 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    /// Base-2 exponent: `dst = 2^src`.
+    ///
+    /// D3D9 SM2/3 `exp` uses base-2 semantics (not natural exponent).
+    Exp {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
+    /// Base-2 logarithm: `dst = log2(src)`.
+    ///
+    /// D3D9 SM2/3 `log` uses base-2 semantics (not natural logarithm).
+    Log {
+        dst: Dst,
+        src: Src,
+        modifiers: InstModifiers,
+    },
     Min {
         dst: Dst,
         src0: Src,
@@ -181,6 +197,12 @@ pub enum IrOp {
         cond: Src,
         src_ge: Src,
         src_lt: Src,
+        modifiers: InstModifiers,
+    },
+    Pow {
+        dst: Dst,
+        src0: Src,
+        src1: Src,
         modifiers: InstModifiers,
     },
     TexSample {
@@ -597,6 +619,24 @@ fn format_op(op: &IrOp) -> String {
             format_inst("frc", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
         ),
+        IrOp::Exp {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("exp", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::Log {
+            dst,
+            src,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("log", modifiers),
+            format_dst_src(dst, std::slice::from_ref(src))
+        ),
         IrOp::Min {
             dst,
             src0,
@@ -651,6 +691,16 @@ fn format_op(op: &IrOp) -> String {
             format_inst("cmp", modifiers),
             format_dst(dst),
             format_srcs(&[cond.clone(), src_ge.clone(), src_lt.clone()])
+        ),
+        IrOp::Pow {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("pow", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
         ),
         IrOp::TexSample {
             kind,
