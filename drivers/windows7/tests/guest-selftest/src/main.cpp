@@ -1016,7 +1016,7 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
     return;
   }
 
-  log.Logf("%s-irq|INFO|mode=msi messages=%lu", dev_name, static_cast<unsigned long>(irq.info.messages));
+  log.Logf("%s-irq|INFO|mode=msi|messages=%lu", dev_name, static_cast<unsigned long>(irq.info.messages));
 }
 
 struct VirtioSndPciIdInfo {
@@ -7245,7 +7245,6 @@ int wmain(int argc, wchar_t** argv) {
   } else {
     log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
   }
-  EmitVirtioIrqMarker(log, "virtio-blk", {L"PCI\\VEN_1AF4&DEV_1042"});
   all_ok = all_ok && blk_ok;
 
   const auto input = VirtioInputTest(log);
