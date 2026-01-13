@@ -1156,6 +1156,15 @@ mod tests {
                 Some("present shader test pipeline"),
             );
 
+            let pipeline_srgb = crate::pipeline::create_fullscreen_triangle_pipeline(
+                device,
+                &bind_group_layout,
+                &shader,
+                "fs_main",
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                Some("present shader test pipeline (srgb)"),
+            );
+
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("present shader test sampler"),
                 mag_filter: wgpu::FilterMode::Nearest,
@@ -1225,6 +1234,22 @@ mod tests {
                 view_formats: &[],
             });
             let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let output_srgb = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("present shader test output (srgb)"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let output_srgb_view = output_srgb.create_view(&wgpu::TextureViewDescriptor::default());
 
             let bytes_per_row = padded_bytes_per_row(4);
             let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1378,6 +1403,52 @@ mod tests {
             assert!(
                 encoded[0] > linear[0],
                 "manual sRGB encoding should increase mid-range values"
+            );
+
+            // Rendering to an sRGB render target should encode automatically when the shader does
+            // *not* apply manual gamma.
+            let srgb_auto = render_and_readback(
+                device,
+                queue,
+                &pipeline_srgb,
+                &bind_group,
+                &uniform_buffer,
+                &output_srgb,
+                &output_srgb_view,
+                &readback,
+                false,
+            )
+            .await;
+            assert!(
+                (186..=189).contains(&srgb_auto[0]),
+                "sRGB render target encode produced unexpected value: {}",
+                srgb_auto[0]
+            );
+            assert_eq!(srgb_auto[3], 255);
+
+            // And if manual sRGB encoding is (incorrectly) enabled on top of an sRGB target, we
+            // should observe double-gamma.
+            let srgb_double = render_and_readback(
+                device,
+                queue,
+                &pipeline_srgb,
+                &bind_group,
+                &uniform_buffer,
+                &output_srgb,
+                &output_srgb_view,
+                &readback,
+                true,
+            )
+            .await;
+            assert!(
+                (220..=225).contains(&srgb_double[0]),
+                "double sRGB encode produced unexpected value: {}",
+                srgb_double[0]
+            );
+            assert_eq!(srgb_double[3], 255);
+            assert!(
+                srgb_double[0] > srgb_auto[0],
+                "double gamma should be brighter than single gamma"
             );
         });
     }
