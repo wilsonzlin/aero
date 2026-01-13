@@ -48,6 +48,7 @@ pub fn build_function_from_x86<B: Tier1Bus>(
 struct Tier2CfgBuilder<'a, B: Tier1Bus> {
     bus: &'a B,
     bitness: u32,
+    ip_mask: u64,
     cfg: CfgBuildConfig,
     rip_to_block: HashMap<u64, BlockId>,
     blocks: Vec<Option<Block>>,
@@ -57,9 +58,16 @@ struct Tier2CfgBuilder<'a, B: Tier1Bus> {
 
 impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
     fn new(bus: &'a B, bitness: u32, cfg: CfgBuildConfig) -> Self {
+        let ip_mask = match bitness {
+            32 => 0xffff_ffff,
+            64 => u64::MAX,
+            16 => 0xffff,
+            other => panic!("invalid x86 bitness {other}"),
+        };
         Self {
             bus,
             bitness,
+            ip_mask,
             cfg,
             rip_to_block: HashMap::new(),
             blocks: Vec::new(),
@@ -69,6 +77,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
     }
 
     fn build(mut self, entry_rip: u64) -> Function {
+        let entry_rip = entry_rip & self.ip_mask;
         let entry = match self.get_or_create_block(entry_rip) {
             Some(id) => id,
             None => {
@@ -109,6 +118,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
     }
 
     fn get_or_create_block(&mut self, rip: u64) -> Option<BlockId> {
+        let rip = rip & self.ip_mask;
         if let Some(id) = self.rip_to_block.get(&rip).copied() {
             return Some(id);
         }
@@ -208,46 +218,58 @@ fn lower_terminator<B: Tier1Bus>(
     base: u32,
 ) -> TerminatorLowering {
     match ir.terminator {
-        IrTerminator::Jump { target } => match builder.get_or_create_block(target) {
-            Some(id) => TerminatorLowering::Term(Terminator::Jump(id)),
-            // We can always side-exit to a known absolute RIP.
-            None => TerminatorLowering::Term(Terminator::SideExit { exit_rip: target }),
-        },
+        IrTerminator::Jump { target } => {
+            let target = target & builder.ip_mask;
+            match builder.get_or_create_block(target) {
+                Some(id) => TerminatorLowering::Term(Terminator::Jump(id)),
+                // We can always side-exit to a known absolute RIP.
+                None => TerminatorLowering::Term(Terminator::SideExit { exit_rip: target }),
+            }
+        }
         IrTerminator::CondJump {
             cond,
             target,
             fallthrough,
-        } => match (
-            builder.get_or_create_block(target),
-            builder.get_or_create_block(fallthrough),
-        ) {
-            (Some(then_bb), Some(else_bb)) => TerminatorLowering::Term(Terminator::Branch {
-                cond: Operand::Value(ValueId(
-                    base.checked_add(cond.0)
-                        .expect("Tier-2 ValueId space exhausted"),
-                )),
-                then_bb,
-                else_bb,
-            }),
-            // Can't represent a conditional transfer to unknown blocks; conservatively deopt at
-            // the block entry.
-            _ => TerminatorLowering::DeoptAtEntry,
-        },
+        } => {
+            let target = target & builder.ip_mask;
+            let fallthrough = fallthrough & builder.ip_mask;
+            match (
+                builder.get_or_create_block(target),
+                builder.get_or_create_block(fallthrough),
+            ) {
+                (Some(then_bb), Some(else_bb)) => TerminatorLowering::Term(Terminator::Branch {
+                    cond: Operand::Value(ValueId(
+                        base.checked_add(cond.0)
+                            .expect("Tier-2 ValueId space exhausted"),
+                    )),
+                    then_bb,
+                    else_bb,
+                }),
+                // Can't represent a conditional transfer to unknown blocks; conservatively deopt at
+                // the block entry.
+                _ => TerminatorLowering::DeoptAtEntry,
+            }
+        }
         // Dynamic targets can't be represented in the Tier-2 CFG. Deopt and let the interpreter
         // re-execute the block (including the control-flow instruction).
         IrTerminator::IndirectJump { .. } => TerminatorLowering::DeoptAtEntry,
-        IrTerminator::ExitToInterpreter { next_rip } => match bb.end_kind {
-            BlockEndKind::Limit {
-                next_rip: limit_rip,
-            } => {
-                debug_assert_eq!(next_rip, limit_rip);
-                match builder.get_or_create_block(next_rip) {
-                    Some(id) => TerminatorLowering::Term(Terminator::Jump(id)),
-                    None => TerminatorLowering::Term(Terminator::SideExit { exit_rip: next_rip }),
+        IrTerminator::ExitToInterpreter { next_rip } => {
+            let next_rip = next_rip & builder.ip_mask;
+            match bb.end_kind {
+                BlockEndKind::Limit {
+                    next_rip: limit_rip,
+                } => {
+                    debug_assert_eq!(next_rip, limit_rip);
+                    match builder.get_or_create_block(next_rip) {
+                        Some(id) => TerminatorLowering::Term(Terminator::Jump(id)),
+                        None => {
+                            TerminatorLowering::Term(Terminator::SideExit { exit_rip: next_rip })
+                        }
+                    }
                 }
+                _ => TerminatorLowering::Term(Terminator::SideExit { exit_rip: next_rip }),
             }
-            _ => TerminatorLowering::Term(Terminator::SideExit { exit_rip: next_rip }),
-        },
+        }
     }
 }
 
