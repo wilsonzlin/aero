@@ -48,7 +48,26 @@ declare global {
 // `perf_export.json` via `tools/perf/run.mjs` against `npm run preview`.
 installPerfHud();
 perf.installGlobalApi();
-if (new URLSearchParams(location.search).has('trace')) perf.traceStart();
+const harnessSearchParams = new URLSearchParams(location.search);
+if (harnessSearchParams.has('trace')) perf.traceStart();
+
+// Nice-to-have: allow forcing the IO worker's input backend selection from the repo-root Vite harness:
+// - `?kbd=ps2|usb|virtio|auto`
+// - `?mouse=ps2|usb|virtio|auto`
+const harnessInputBackendOverrides: Partial<Pick<AeroConfig, "forceKeyboardBackend" | "forceMouseBackend">> = {};
+const parseHarnessInputBackendOverride = (value: string | null): AeroConfig["forceKeyboardBackend"] | undefined => {
+  if (value === null) return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === "" || v === "default") return "auto";
+  if (v === "auto" || v === "ps2" || v === "usb" || v === "virtio") {
+    return v as AeroConfig["forceKeyboardBackend"];
+  }
+  return undefined;
+};
+const forcedKbd = parseHarnessInputBackendOverride(harnessSearchParams.get("kbd"));
+if (forcedKbd !== undefined) harnessInputBackendOverrides.forceKeyboardBackend = forcedKbd;
+const forcedMouse = parseHarnessInputBackendOverride(harnessSearchParams.get("mouse"));
+if (forcedMouse !== undefined) harnessInputBackendOverrides.forceMouseBackend = forcedMouse;
 
 // Install optional `window.aero.bench` helpers so automation can invoke
 // microbenchmarks without requiring the emulator/guest OS.
@@ -1126,6 +1145,7 @@ function renderAudioPanel(): HTMLElement {
         proxyUrl: null,
         activeDiskImage: null,
         logLevel: "info",
+        ...harnessInputBackendOverrides,
       };
 
       try {
@@ -1529,6 +1549,7 @@ function renderAudioPanel(): HTMLElement {
         proxyUrl: null,
         activeDiskImage: null,
         logLevel: "info",
+        ...harnessInputBackendOverrides,
       };
 
       try {
@@ -1700,6 +1721,7 @@ function renderAudioPanel(): HTMLElement {
         proxyUrl: null,
         activeDiskImage: null,
         logLevel: "info",
+        ...harnessInputBackendOverrides,
       };
 
       let backend: "worker" | "main" = "worker";
@@ -1831,6 +1853,7 @@ function renderAudioPanel(): HTMLElement {
           proxyUrl: null,
           activeDiskImage: null,
           logLevel: "info",
+          ...harnessInputBackendOverrides,
         };
 
         workerCoordinator.start(workerConfig);

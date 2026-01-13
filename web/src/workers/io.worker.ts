@@ -442,9 +442,11 @@ let mouseUsbOk = false;
 let syntheticUsbKeyboardPendingReport: Uint8Array | null = null;
 let syntheticUsbGamepadPendingReport: Uint8Array | null = null;
 let keyboardInputBackend: InputBackend = "ps2";
+const warnedForcedKeyboardBackendUnavailable = new Set<string>();
 const pressedKeyboardHidUsages = new Uint8Array(256);
 let pressedKeyboardHidUsageCount = 0;
 let mouseInputBackend: InputBackend = "ps2";
+const warnedForcedMouseBackendUnavailable = new Set<string>();
 let mouseButtonsMask = 0;
 let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
@@ -4547,11 +4549,39 @@ function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
 
 function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): void {
   keyboardUsbOk = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbKeyboard);
+
+  const force = currentConfig?.forceKeyboardBackend;
+  const virtioOk = opts.virtioKeyboardOk && !!virtioInputKeyboard;
+  const usbOk = keyboardUsbOk;
+
+  if (force && force !== "auto") {
+    const forcedOk = force === "ps2" || (force === "virtio" && virtioOk) || (force === "usb" && usbOk);
+    if (!forcedOk && !warnedForcedKeyboardBackendUnavailable.has(force)) {
+      warnedForcedKeyboardBackendUnavailable.add(force);
+      const reason =
+        force === "virtio"
+          ? virtioInputKeyboard
+            ? "virtio-input keyboard is not ready (DRIVER_OK not set)"
+            : "virtio-input keyboard device is unavailable"
+          : force === "usb"
+            ? !usbHid
+              ? "USB HID bridge is unavailable"
+              : !syntheticUsbHidAttached
+                ? "synthetic USB HID devices are not attached"
+                : "synthetic USB keyboard is not configured by the guest yet"
+            : "requested backend is unavailable";
+      const message = `[io.worker] forceKeyboardBackend=${force} requested, but ${reason}; falling back to auto selection.`;
+      console.warn(message);
+      pushEvent({ kind: "log", level: "warn", message });
+    }
+  }
+
   keyboardInputBackend = chooseKeyboardInputBackend({
     current: keyboardInputBackend,
     keysHeld: pressedKeyboardHidUsageCount !== 0,
-    virtioOk: opts.virtioKeyboardOk && !!virtioInputKeyboard,
-    usbOk: keyboardUsbOk,
+    virtioOk,
+    usbOk,
+    force,
   });
 }
 
@@ -4560,14 +4590,40 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
   const syntheticUsbMouseConfigured = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbMouse);
   mouseUsbOk = !!usbHid && (!ps2Available || syntheticUsbMouseConfigured);
   const prevBackend = mouseInputBackend;
+  const force = currentConfig?.forceMouseBackend;
+  const virtioOk = opts.virtioMouseOk && !!virtioInputMouse;
+  const usbOk = !!usbHid && (!ps2Available || syntheticUsbMouseConfigured);
   const nextBackend = chooseMouseInputBackend({
     current: mouseInputBackend,
     buttonsHeld: mouseButtonsMask !== 0,
-    virtioOk: opts.virtioMouseOk && !!virtioInputMouse,
+    virtioOk,
     // Use PS/2 injection until the synthetic USB mouse is configured; once configured, route via
     // the USB HID bridge to avoid duplicate devices in the guest.
-    usbOk: mouseUsbOk,
+    usbOk,
+    force,
   });
+
+  if (force && force !== "auto") {
+    const forcedOk = force === "ps2" || (force === "virtio" && virtioOk) || (force === "usb" && usbOk);
+    if (!forcedOk && !warnedForcedMouseBackendUnavailable.has(force)) {
+      warnedForcedMouseBackendUnavailable.add(force);
+      const reason =
+        force === "virtio"
+          ? virtioInputMouse
+            ? "virtio-input mouse is not ready (DRIVER_OK not set)"
+            : "virtio-input mouse device is unavailable"
+          : force === "usb"
+            ? !usbHid
+              ? "USB HID bridge is unavailable"
+              : ps2Available && !syntheticUsbMouseConfigured
+                ? "synthetic USB mouse is not configured by the guest yet"
+                : "USB mouse backend is unavailable"
+            : "requested backend is unavailable";
+      const message = `[io.worker] forceMouseBackend=${force} requested, but ${reason}; falling back to auto selection.`;
+      console.warn(message);
+      pushEvent({ kind: "log", level: "warn", message });
+    }
+  }
 
   // Optional extra robustness: when we *do* switch backends, send a "buttons=0" update to the
   // previous backend. This should be redundant because backend switching is gated on

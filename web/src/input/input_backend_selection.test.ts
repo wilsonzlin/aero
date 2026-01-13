@@ -24,6 +24,64 @@ describe("input_backend_selection", () => {
       ).toBe("usb");
     });
 
+    it("honors force override when available", () => {
+      expect(
+        chooseKeyboardInputBackend({
+          current: "ps2",
+          keysHeld: false,
+          virtioOk: true,
+          usbOk: true,
+          force: "usb",
+        }),
+      ).toBe("usb");
+
+      expect(
+        chooseKeyboardInputBackend({
+          current: "usb",
+          keysHeld: false,
+          virtioOk: true,
+          usbOk: true,
+          force: "ps2",
+        }),
+      ).toBe("ps2");
+    });
+
+    it("falls back to auto selection when forced backend is unavailable", () => {
+      // Force virtio, but virtio isn't ready: should fall back to USB.
+      expect(
+        chooseKeyboardInputBackend({
+          current: "ps2",
+          keysHeld: false,
+          virtioOk: false,
+          usbOk: true,
+          force: "virtio",
+        }),
+      ).toBe("usb");
+
+      // Force USB, but USB isn't ready: should fall back to virtio if available.
+      expect(
+        chooseKeyboardInputBackend({
+          current: "ps2",
+          keysHeld: false,
+          virtioOk: true,
+          usbOk: false,
+          force: "usb",
+        }),
+      ).toBe("virtio");
+    });
+
+    it("does not switch while keys are held even when force override changes", () => {
+      expect(
+        chooseKeyboardInputBackend({
+          current: "ps2",
+          keysHeld: true,
+          virtioOk: true,
+          usbOk: true,
+          force: "virtio",
+        }),
+      ).toBe("ps2");
+    });
+
     it("prefers virtio when available and no keys are held", () => {
       expect(
         chooseKeyboardInputBackend({
@@ -77,6 +135,64 @@ describe("input_backend_selection", () => {
           usbOk: false,
         }),
       ).toBe("virtio");
+    });
+
+    it("honors force override when available", () => {
+      expect(
+        chooseMouseInputBackend({
+          current: "ps2",
+          buttonsHeld: false,
+          virtioOk: true,
+          usbOk: true,
+          force: "usb",
+        }),
+      ).toBe("usb");
+
+      expect(
+        chooseMouseInputBackend({
+          current: "usb",
+          buttonsHeld: false,
+          virtioOk: true,
+          usbOk: true,
+          force: "ps2",
+        }),
+      ).toBe("ps2");
+    });
+
+    it("falls back to auto selection when forced backend is unavailable", () => {
+      // Force virtio, but virtio isn't ready: should fall back to USB.
+      expect(
+        chooseMouseInputBackend({
+          current: "ps2",
+          buttonsHeld: false,
+          virtioOk: false,
+          usbOk: true,
+          force: "virtio",
+        }),
+      ).toBe("usb");
+
+      // Force USB, but USB isn't ready: should fall back to virtio if available.
+      expect(
+        chooseMouseInputBackend({
+          current: "ps2",
+          buttonsHeld: false,
+          virtioOk: true,
+          usbOk: false,
+          force: "usb",
+        }),
+      ).toBe("virtio");
+    });
+
+    it("does not switch while buttons are held even when force override changes", () => {
+      expect(
+        chooseMouseInputBackend({
+          current: "ps2",
+          buttonsHeld: true,
+          virtioOk: true,
+          usbOk: true,
+          force: "virtio",
+        }),
+      ).toBe("ps2");
     });
 
     it("prefers virtio when available and no buttons are held", () => {

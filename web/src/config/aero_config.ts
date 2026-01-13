@@ -1,4 +1,5 @@
 import { PCI_MMIO_BASE_MIB } from "../arch/guest_phys.ts";
+import type { InputBackendOverride } from "../input/input_backend_selection.ts";
 import type { VirtioInputPciMode } from "../io/devices/virtio_input.ts";
 import type { VirtioNetPciMode } from "../io/devices/virtio_net.ts";
 import type { VirtioSndPciMode } from "../io/devices/virtio_snd.ts";
@@ -48,6 +49,24 @@ export interface AeroConfig {
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;
   uiScale?: number;
+  /**
+   * Overrides the keyboard input backend selection in the IO worker.
+   *
+   * - "auto": use the default selection logic (virtio → usb → ps2)
+   * - "ps2": always inject via i8042 PS/2
+   * - "usb": always inject via synthetic USB HID (when available)
+   * - "virtio": always inject via virtio-input (when available)
+   *
+   * When the forced backend is not currently available (e.g. virtio before DRIVER_OK),
+   * the IO worker will fall back to "auto" and emit a one-time warning.
+   */
+  forceKeyboardBackend?: InputBackendOverride;
+  /**
+   * Overrides the mouse input backend selection in the IO worker.
+   *
+   * See `forceKeyboardBackend` for semantics.
+   */
+  forceMouseBackend?: InputBackendOverride;
   /**
    * Selects which virtio-pci transport to expose for virtio-net:
    * - "modern": modern-only (Aero contract v1, status quo)
@@ -222,6 +241,17 @@ function parseL2TunnelTokenTransport(value: unknown): L2TunnelTokenTransport | u
   if (v === "query" || v === "url") return "query";
   if (v === "subprotocol" || v === "subproto" || v === "protocol") return "subprotocol";
   if (v === "both") return "both";
+  return undefined;
+}
+
+function parseInputBackendOverride(value: unknown): InputBackendOverride | undefined {
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === "" || v === "default") return "auto";
+  if (v === "auto") return "auto";
+  if (v === "ps2" || v === "i8042") return "ps2";
+  if (v === "usb" || v === "hid" || v === "usbhid") return "usb";
+  if (v === "virtio" || v === "virtio-input" || v === "virtio_input") return "virtio";
   return undefined;
 }
 
@@ -428,6 +458,30 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
     }
   }
 
+  if (hasOwn(input, "forceKeyboardBackend")) {
+    const parsed = parseInputBackendOverride(input.forceKeyboardBackend);
+    if (parsed !== undefined) {
+      overrides.forceKeyboardBackend = parsed;
+    } else {
+      issues.push({
+        key: "forceKeyboardBackend",
+        message: 'forceKeyboardBackend must be "auto", "ps2", "usb", or "virtio".',
+      });
+    }
+  }
+
+  if (hasOwn(input, "forceMouseBackend")) {
+    const parsed = parseInputBackendOverride(input.forceMouseBackend);
+    if (parsed !== undefined) {
+      overrides.forceMouseBackend = parsed;
+    } else {
+      issues.push({
+        key: "forceMouseBackend",
+        message: 'forceMouseBackend must be "auto", "ps2", "usb", or "virtio".',
+      });
+    }
+  }
+
   if (hasOwn(input, "virtioNetMode")) {
     const parsed = parseVirtioPciMode(input.virtioNetMode);
     if (parsed !== undefined) {
@@ -586,6 +640,34 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
       overrides.uiScale = parsed.value;
       lockedKeys.add("uiScale");
       if ("issue" in parsed) issues.push({ key: "uiScale", message: parsed.issue });
+    }
+  }
+
+  const kbd = params.get("kbd") ?? params.get("keyboard");
+  if (kbd !== null) {
+    const parsed = parseInputBackendOverride(kbd);
+    if (parsed !== undefined) {
+      overrides.forceKeyboardBackend = parsed;
+      lockedKeys.add("forceKeyboardBackend");
+    } else {
+      issues.push({
+        key: "forceKeyboardBackend",
+        message: 'kbd must be "auto", "ps2", "usb", or "virtio".',
+      });
+    }
+  }
+
+  const mouse = params.get("mouse");
+  if (mouse !== null) {
+    const parsed = parseInputBackendOverride(mouse);
+    if (parsed !== undefined) {
+      overrides.forceMouseBackend = parsed;
+      lockedKeys.add("forceMouseBackend");
+    } else {
+      issues.push({
+        key: "forceMouseBackend",
+        message: 'mouse must be "auto", "ps2", "usb", or "virtio".',
+      });
     }
   }
 
