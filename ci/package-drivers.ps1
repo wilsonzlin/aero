@@ -808,7 +808,7 @@ function New-IsoFromFolder {
             }
         }
 
-        & $cargoExe run --quiet --locked --manifest-path $manifestPath --bin aero_iso -- `
+        & $cargoExe run --quiet --release --locked --manifest-path $manifestPath --bin aero_iso -- `
             --in-dir $Folder `
             --out-iso $IsoPath `
             --volume-id $VolumeLabel `

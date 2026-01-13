@@ -219,6 +219,29 @@ Timestamps in the ISO/zip are controlled by `SOURCE_DATE_EPOCH` (or `--source-da
 SOURCE_DATE_EPOCH=0 cargo run --release --locked -- ...
 ```
 
+### Deterministic ISO builder for already-staged folders (`aero_iso`)
+
+CI driver bundle packaging (`ci/package-drivers.ps1`) needs to turn an already-staged directory tree
+into an ISO image *deterministically* (bit-identical across runs/hosts). For this use case, the
+packager workspace also provides a small standalone ISO builder:
+
+- Binary: `aero_iso`
+- Inputs: a directory tree (`--in-dir`) + output path (`--out-iso`) + volume label (`--volume-id`)
+- Uses the same deterministic ISO9660 + Joliet writer as the main packager.
+- Filters common host metadata files/dirs (e.g. hidden `.*`, `__MACOSX`, `Thumbs.db`, `desktop.ini`)
+  to keep outputs stable.
+
+Example:
+
+```bash
+SOURCE_DATE_EPOCH=0 cargo run --release --locked \
+  --manifest-path tools/packaging/aero_packager/Cargo.toml \
+  --bin aero_iso -- \
+  --in-dir /path/to/staged-bundle \
+  --out-iso /path/to/out.iso \
+  --volume-id AEROVIRTIO_WIN7_0_0_0
+```
+
 ## Spec format
 
 The packager uses a small JSON spec to validate and sanity-check the driver artifacts before packaging.
