@@ -1626,6 +1626,65 @@ fn translates_udiv_and_idiv_to_integer_division_and_modulo() {
 }
 
 #[test]
+fn translates_udiv_respects_independent_dest_write_masks() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let a = SrcOperand {
+        kind: SrcKind::ImmediateF32([7, 7, 7, 7]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let b = SrcOperand {
+        kind: SrcKind::ImmediateF32([3, 3, 3, 3]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::UDiv {
+                dst_quot: dst(RegFile::Temp, 0, WriteMask::X),
+                dst_rem: dst(RegFile::Temp, 1, WriteMask::Y),
+                a,
+                b,
+            },
+            // Ensure quotient reaches the output.
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Quotient and remainder write masks are independent in DXBC; ensure we only write r0.x and
+    // r1.y for this instruction.
+    assert!(
+        translated.wgsl.contains("r0.x = (udiv_qf0).x;"),
+        "expected udiv quotient to write only x lane:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("r1.y = (udiv_rf0).y;"),
+        "expected udiv remainder to write only y lane:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_ubfe_to_extract_bits() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[
