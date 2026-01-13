@@ -402,11 +402,29 @@ impl UsbHidPassthrough {
     }
 
     pub fn push_input_report(&mut self, report_id: u8, data: &[u8]) {
-        let mut out = Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
-        if report_id != 0 {
-            out.push(report_id);
-        }
-        out.extend_from_slice(data);
+        // WebHID is expected to provide the report ID separately (via `reportId`) and the report
+        // payload without the report ID prefix (via `data`). However, some browser/device
+        // combinations may include the prefix in `data` anyway; in that case avoid double
+        // prefixing and generating `[id, id, ...]` which can exceed the report size declared by
+        // the report descriptor.
+        let data_already_prefixed = report_id != 0
+            && self
+                .input_report_lengths
+                .get(&report_id)
+                .is_some_and(|&expected_len| expected_len == data.len())
+            && data.first() == Some(&report_id);
+
+        let out = if data_already_prefixed {
+            data.to_vec()
+        } else {
+            let mut out =
+                Vec::with_capacity(data.len().saturating_add((report_id != 0) as usize));
+            if report_id != 0 {
+                out.push(report_id);
+            }
+            out.extend_from_slice(data);
+            out
+        };
 
         self.last_input_reports.insert(report_id, out.clone());
 
@@ -1917,6 +1935,34 @@ mod tests {
         assert_eq!(
             dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
             UsbInResult::Data(vec![0x11, 0x22])
+        );
+    }
+
+    #[test]
+    fn push_input_report_does_not_double_prefix_report_id() {
+        let report = sample_report_descriptor_with_ids();
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            report,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        configure_device(&mut dev);
+
+        // Descriptor defines report ID 1 with 4 bytes of payload (total length 5 including the
+        // report ID prefix). If `data` already contains the report ID prefix, it should be queued
+        // as-is rather than being prefixed again.
+        dev.push_input_report(1, &[1, 0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(
+            dev.handle_in_transfer(INTERRUPT_IN_EP, 64),
+            UsbInResult::Data(vec![1, 0xaa, 0xbb, 0xcc, 0xdd])
         );
     }
 
