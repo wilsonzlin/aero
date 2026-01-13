@@ -135,10 +135,18 @@ __forceinline BOOLEAN VioInputLogEnabled(_In_ ULONG Mask)
 
 /*
  * When diagnostics are compiled out, keep VIOINPUT_LOG() as a single statement
- * without triggering "conditional expression is constant" warnings under /W4.
- * Extra format/arg parameters are intentionally discarded.
+ * without triggering /W4 "conditional expression is constant" warnings, while
+ * still "using" the varargs to avoid /W4 unused-local warnings in Release
+ * builds (many callsites only pass locals for logging).
+ *
+ * __noop is supported by MSVC and clang-cl; it discards its arguments without
+ * evaluating them or emitting code.
  */
+#if defined(_MSC_VER) || defined(__clang__)
+#define VIOINPUT_LOG(_mask, ...) __noop((_mask), __VA_ARGS__)
+#else
 #define VIOINPUT_LOG(_mask, ...) (void)(_mask)
+#endif
 
 #endif
 
