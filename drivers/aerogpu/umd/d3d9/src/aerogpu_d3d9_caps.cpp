@@ -22,6 +22,9 @@ constexpr uint32_t kBaseSupportedFormats[] = {
     22u, // D3DFMT_X8R8G8B8
     21u, // D3DFMT_A8R8G8B8
     32u, // D3DFMT_A8B8G8R8
+    23u, // D3DFMT_R5G6B5
+    24u, // D3DFMT_X1R5G5B5
+    25u, // D3DFMT_A1R5G5B5
     75u, // D3DFMT_D24S8
 };
 
@@ -116,6 +119,12 @@ uint32_t format_ops_for_d3d9_format(uint32_t format) {
   switch (format) {
     case 75u: // D3DFMT_D24S8
       return kD3DUsageDepthStencil;
+    case 23u: // D3DFMT_R5G6B5
+    case 24u: // D3DFMT_X1R5G5B5
+    case 25u: // D3DFMT_A1R5G5B5
+      // 16-bit RGB formats are supported for texture sampling, but render-target
+      // support is not currently exposed/validated.
+      return 0u;
     case static_cast<uint32_t>(kD3dFmtDxt1):
     case static_cast<uint32_t>(kD3dFmtDxt2):
     case static_cast<uint32_t>(kD3dFmtDxt3):

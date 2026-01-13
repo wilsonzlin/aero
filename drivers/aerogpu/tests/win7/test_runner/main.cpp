@@ -918,6 +918,7 @@ int main(int argc, char** argv) {
       "dwm_flush_pacing",
       "d3d9ex_triangle",
       "d3d9ex_fixedfunc_texture_stage_state",
+      "d3d9ex_texture_16bit_formats",
       "d3d9ex_stateblock_sanity",
       "d3d9ex_scissor_sanity",
       "d3d9ex_draw_indexed_primitive_up",

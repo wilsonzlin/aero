@@ -2391,6 +2391,54 @@ HRESULT throttle_presents_locked(Device* dev, uint32_t d3d9_present_flags) {
   return S_OK;
 }
 
+// D3DFMT_X1R5G5B5 uses an "X" bit where D3DFMT_A1R5G5B5 uses alpha. D3D9 treats
+// the alpha component as 1.0 when sampling X1 formats. Since the AeroGPU
+// protocol currently exposes only B5G5R5A1, we fix up CPU writes by forcing the
+// high bit of each 16-bit texel to 1.
+static void force_x1r5g5b5_alpha1_bytes(uint8_t* bytes, uint32_t offset_bytes, uint32_t size_bytes) {
+  if (!bytes || size_bytes == 0) {
+    return;
+  }
+
+  // The alpha bit is bit 15 (MSB) of the 16-bit word, which is the high bit of
+  // the high byte in little-endian memory.
+  const uint32_t start = (offset_bytes & 1u) ? 0u : 1u;
+  for (uint32_t i = start; i < size_bytes; i += 2u) {
+    bytes[i] |= 0x80u;
+  }
+}
+
+static void force_x1r5g5b5_alpha1_locked_range(
+    void* locked_ptr,
+    uint32_t locked_offset_bytes,
+    uint32_t locked_size_bytes,
+    uint32_t write_offset_bytes,
+    uint32_t write_size_bytes) {
+  if (!locked_ptr || locked_size_bytes == 0 || write_size_bytes == 0) {
+    return;
+  }
+
+  const uint64_t lock_start = static_cast<uint64_t>(locked_offset_bytes);
+  const uint64_t lock_end = lock_start + static_cast<uint64_t>(locked_size_bytes);
+  const uint64_t write_start = static_cast<uint64_t>(write_offset_bytes);
+  const uint64_t write_end = write_start + static_cast<uint64_t>(write_size_bytes);
+
+  const uint64_t start = std::max(lock_start, write_start);
+  const uint64_t end = std::min(lock_end, write_end);
+  if (end <= start) {
+    return;
+  }
+
+  const uint64_t rel = start - lock_start;
+  if (rel > 0xFFFFFFFFull) {
+    return;
+  }
+
+  auto* bytes = static_cast<uint8_t*>(locked_ptr) + static_cast<uint32_t>(rel);
+  force_x1r5g5b5_alpha1_bytes(bytes,
+                              /*offset_bytes=*/static_cast<uint32_t>(start),
+                              /*size_bytes=*/static_cast<uint32_t>(end - start));
+}
 static bool SupportsBcFormats(const Device* dev) {
   if (!dev || !dev->adapter) {
     return false;
@@ -6824,6 +6872,40 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   }
 
   if (res->pool != kD3DPOOL_SYSTEMMEM && res->kind != ResourceKind::Buffer) {
+    const uint32_t fmt = static_cast<uint32_t>(res->format);
+    const bool wants_rt = (res->usage & kD3DUsageRenderTarget) != 0;
+    const bool wants_ds = (res->usage & kD3DUsageDepthStencil) != 0;
+    if (wants_rt && wants_ds) {
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
+
+    // Enforce deterministic format/usage combinations.
+    //
+    // The AeroGPU D3D9 UMD only exposes render-target support for the common 32-bit
+    // color formats. 16-bit RGB formats are supported for texture sampling only.
+    if (wants_rt) {
+      switch (fmt) {
+        // D3DFMT_A8R8G8B8 / D3DFMT_X8R8G8B8 / D3DFMT_A8B8G8R8
+        case 21u:
+        case 22u:
+        case 32u:
+          break;
+        default:
+          return trace.ret(D3DERR_INVALIDCALL);
+      }
+    }
+    if (wants_ds) {
+      // D3DFMT_D24S8
+      if (fmt != 75u) {
+        return trace.ret(D3DERR_INVALIDCALL);
+      }
+    } else {
+      // Prevent depth formats from being created without depth-stencil usage.
+      if (fmt == 75u) {
+        return trace.ret(D3DERR_INVALIDCALL);
+      }
+    }
+
     const uint32_t agpu_format = d3d9_format_to_aerogpu(res->format);
     if (agpu_format == AEROGPU_FORMAT_INVALID) {
       return trace.ret(D3DERR_INVALIDCALL);
@@ -8951,11 +9033,21 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
     return trace.ret(E_INVALIDARG);
   }
 
+  const uint32_t locked_flags = res->locked_flags;
+  void* locked_ptr = res->locked_ptr;
+  const uint32_t locked_offset = res->locked_offset;
+  const uint32_t locked_size = res->locked_size;
+
   res->locked = false;
   res->locked_ptr = nullptr;
-
-  const uint32_t locked_flags = res->locked_flags;
   res->locked_flags = 0;
+
+  // D3DFMT_X1R5G5B5: treat alpha as 1. If the app wrote texels with the MSB
+  // cleared, fix them up in-place before the host observes the backing bytes.
+  if ((locked_flags & kD3DLOCK_READONLY) == 0 && size != 0 && locked_ptr != nullptr &&
+      static_cast<uint32_t>(res->format) == 24u /*D3DFMT_X1R5G5B5*/) {
+    force_x1r5g5b5_alpha1_locked_range(locked_ptr, locked_offset, locked_size, offset, size);
+  }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (res->backing_alloc_id != 0 && res->wddm_hAllocation != 0 && dev->wddm_device != 0) {

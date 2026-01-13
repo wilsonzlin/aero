@@ -21,6 +21,9 @@
 
 namespace aerogpu {
 
+// aerogpu_d3d9_driver.cpp helper (not part of the public UMD header).
+uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format);
+
 namespace {
 
 // D3DERR_INVALIDCALL from d3d9.h.
@@ -899,7 +902,7 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check(hr == S_OK, "GetCaps(GETFORMATCOUNT)")) {
     return false;
   }
-  if (!Check(format_count == 9, "format_count == 9")) {
+  if (!Check(format_count == 12, "format_count == 12")) {
     return false;
   }
 
@@ -911,10 +914,13 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
 
   constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
   constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
-  constexpr uint32_t kExpectedFormats[9] = {
+  constexpr uint32_t kExpectedFormats[12] = {
       22u, // D3DFMT_X8R8G8B8
       21u, // D3DFMT_A8R8G8B8
       32u, // D3DFMT_A8B8G8R8
+      23u, // D3DFMT_R5G6B5
+      24u, // D3DFMT_X1R5G5B5
+      25u, // D3DFMT_A1R5G5B5
       75u, // D3DFMT_D24S8
       static_cast<uint32_t>(kD3dFmtDxt1), // D3DFMT_DXT1
       static_cast<uint32_t>(kD3dFmtDxt2), // D3DFMT_DXT2
@@ -941,7 +947,13 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       return false;
     }
 
-    uint32_t expected_ops = (payload.format == 75u) ? kD3DUsageDepthStencil : kD3DUsageRenderTarget;
+    uint32_t expected_ops = kD3DUsageRenderTarget;
+    if (payload.format == 75u) {
+      expected_ops = kD3DUsageDepthStencil;
+    }
+    if (payload.format == 23u || payload.format == 24u || payload.format == 25u) {
+      expected_ops = 0u;
+    }
     if (payload.format == static_cast<uint32_t>(kD3dFmtDxt1) ||
         payload.format == static_cast<uint32_t>(kD3dFmtDxt2) ||
         payload.format == static_cast<uint32_t>(kD3dFmtDxt3) ||
@@ -1487,6 +1499,49 @@ bool TestCreateResourceMipmappedTextureEmitsMipLevels() {
   // can't fail due to span-buffer capacity constraints.
   dev->cmd.set_vector();
   return true;
+}
+
+bool TestRgb16FormatMappingAndLayout() {
+  constexpr uint32_t kD3dFmtR5G6B5 = 23u;
+  constexpr uint32_t kD3dFmtX1R5G5B5 = 24u;
+  constexpr uint32_t kD3dFmtA1R5G5B5 = 25u;
+
+  if (!Check(d3d9_format_to_aerogpu(kD3dFmtR5G6B5) == AEROGPU_FORMAT_B5G6R5_UNORM,
+             "d3d9_format_to_aerogpu(R5G6B5)")) {
+    return false;
+  }
+  if (!Check(d3d9_format_to_aerogpu(kD3dFmtX1R5G5B5) == AEROGPU_FORMAT_B5G5R5A1_UNORM,
+             "d3d9_format_to_aerogpu(X1R5G5B5)")) {
+    return false;
+  }
+  if (!Check(d3d9_format_to_aerogpu(kD3dFmtA1R5G5B5) == AEROGPU_FORMAT_B5G5R5A1_UNORM,
+             "d3d9_format_to_aerogpu(A1R5G5B5)")) {
+    return false;
+  }
+
+  if (!Check(bytes_per_pixel(static_cast<D3DDDIFORMAT>(kD3dFmtR5G6B5)) == 2u, "bytes_per_pixel(R5G6B5)==2")) {
+    return false;
+  }
+  if (!Check(bytes_per_pixel(static_cast<D3DDDIFORMAT>(kD3dFmtX1R5G5B5)) == 2u, "bytes_per_pixel(X1R5G5B5)==2")) {
+    return false;
+  }
+  if (!Check(bytes_per_pixel(static_cast<D3DDDIFORMAT>(kD3dFmtA1R5G5B5)) == 2u, "bytes_per_pixel(A1R5G5B5)==2")) {
+    return false;
+  }
+
+  // Uncompressed 16-bit: row_pitch = width * 2.
+  Texture2dLayout layout{};
+  if (!Check(calc_texture2d_layout(static_cast<D3DDDIFORMAT>(kD3dFmtR5G6B5), 7, 5, 3, 1, &layout),
+             "calc_texture2d_layout(R5G6B5)")) {
+    return false;
+  }
+  if (!Check(layout.row_pitch_bytes == 14u, "R5G6B5 row_pitch_bytes (7*2)")) {
+    return false;
+  }
+  if (!Check(layout.slice_pitch_bytes == 70u, "R5G6B5 slice_pitch_bytes (14*5)")) {
+    return false;
+  }
+  return Check(layout.total_size_bytes == 84ull, "R5G6B5 total_size_bytes (mip chain)");
 }
 
 bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
@@ -8734,6 +8789,7 @@ int main() {
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
   failures += !aerogpu::TestCreateResourceComputesBcTexturePitchAndSize();
   failures += !aerogpu::TestCreateResourceMipmappedTextureEmitsMipLevels();
+  failures += !aerogpu::TestRgb16FormatMappingAndLayout();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked();
   failures += !aerogpu::TestAllocBackedUnlockEmitsDirtyRange();

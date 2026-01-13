@@ -45,6 +45,7 @@ dwm_flush_pacing
 d3d9ex_triangle
 d3d9ex_fixedfunc_textured_triangle
 d3d9ex_fixedfunc_texture_stage_state
+d3d9ex_texture_16bit_formats
 d3d9ex_stateblock_sanity
 d3d9_texture_16bit_sampling
 d3d9ex_scissor_sanity
