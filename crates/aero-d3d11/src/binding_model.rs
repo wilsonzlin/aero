@@ -5,9 +5,10 @@
 //! - `@group(0)` = vertex shader stage resources
 //! - `@group(1)` = pixel shader stage resources
 //! - `@group(2)` = compute shader stage resources
+//! - `@group(3)` = geometry shader stage resources
 //!
 //! Internal translation/emulation passes may reserve additional bind groups. For example,
-//! compute-side vertex pulling uses `@group(3)` (see `runtime::vertex_pulling`).
+//! compute-side vertex pulling uses `@group(4)` (see `runtime::vertex_pulling`).
 //!
 //! Within each group, D3D register spaces are mapped into disjoint `@binding`
 //! ranges so `b#`, `t#`, `s#`, and SM5 `u#` can coexist.

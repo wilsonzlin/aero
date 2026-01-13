@@ -18,10 +18,10 @@ use crate::binding_model::{
 /// - `@group(0)` = vertex shader resources
 /// - `@group(1)` = pixel/fragment shader resources
 /// - `@group(2)` = compute shader resources
+/// - `@group(3)` = geometry shader resources (compute-emulated)
 ///
-/// Additional bind groups may be reserved for internal emulation needs (e.g.
-/// GS/HS/DS emulation helpers). By default we allow one additional internal
-/// group (`@group(3)`), but callers can override this via
+/// Additional bind groups may be reserved for internal emulation needs beyond group 3. Callers can
+/// override the maximum group index via
 /// [`build_pipeline_bindings_info_with_max_group`].
 const DEFAULT_MAX_BIND_GROUP_INDEX: u32 = 3;
 pub(super) const UNIFORM_BINDING_SIZE_ALIGN: u64 = 16;

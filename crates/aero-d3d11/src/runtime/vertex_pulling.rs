@@ -20,9 +20,9 @@ use crate::input_layout::{
 
 /// Reserved bind-group index for IA vertex pulling resources.
 ///
-/// Group indices `0..=2` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS
+/// Group indices `0..=3` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS/GS
 /// resources. Vertex pulling uses a dedicated group to coexist with those bindings.
-pub const VERTEX_PULLING_GROUP: u32 = 3;
+pub const VERTEX_PULLING_GROUP: u32 = 4;
 
 /// `@binding` number for the vertex pulling uniform buffer inside [`VERTEX_PULLING_GROUP`].
 ///

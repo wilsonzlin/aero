@@ -255,7 +255,9 @@ pub fn translate_sm4_module_to_wgsl(
 /// Scans a decoded SM4/SM5 module and produces bind group layout entries for the
 /// module's declared shader stage.
 ///
-/// Note: The binding model reserves `@group(2)` for compute resources.
+/// Note: The signature-driven binding model reserves:
+/// - `@group(2)` for compute resources
+/// - `@group(3)` for geometry resources
 pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, ShaderTranslateError> {
     Ok(scan_resources(module, None)?.bindings(module.stage))
 }
@@ -1682,6 +1684,7 @@ impl ResourceUsage {
             ShaderStage::Vertex => 0,
             ShaderStage::Pixel => 1,
             ShaderStage::Compute => 2,
+            ShaderStage::Geometry => 3,
             _ => 0,
         }
     }
@@ -1691,6 +1694,10 @@ impl ResourceUsage {
             ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
             ShaderStage::Pixel => wgpu::ShaderStages::FRAGMENT,
             ShaderStage::Compute => wgpu::ShaderStages::COMPUTE,
+            // Geometry shaders are executed via a compute emulation path, but still use their own
+            // stage-scoped bind group (`@group(3)`) so they don't collide with true compute shader
+            // resources (`@group(2)`).
+            ShaderStage::Geometry => wgpu::ShaderStages::COMPUTE,
             _ => wgpu::ShaderStages::empty(),
         };
         let group = Self::stage_bind_group(stage);
