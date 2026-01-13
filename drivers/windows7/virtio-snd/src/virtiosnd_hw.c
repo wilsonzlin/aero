@@ -870,7 +870,7 @@ NTSTATUS VirtIoSndStartHardware(
     ULONGLONG bar0Base;
     ULONG cfgBytes;
     VIRTIO_PCI_MODERN_TRANSPORT_INIT_ERROR initErr;
-    const UINT64 requiredFeatures = VIRTIO_F_VERSION_1 | (UINT64)VIRTIO_RING_F_INDIRECT_DESC;
+    const UINT64 allowedFeatures = VIRTIO_F_VERSION_1 | (UINT64)VIRTIO_RING_F_INDIRECT_DESC;
 
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -958,12 +958,30 @@ NTSTATUS VirtIoSndStartHardware(
      */
     status = VirtioPciModernTransportNegotiateFeatures(
         &Dx->Transport,
-        /*Required=*/requiredFeatures,
+        /*Required=*/allowedFeatures,
         /*Wanted=*/0,
         &Dx->NegotiatedFeatures);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("feature negotiation failed: 0x%08X\n", (UINT)status);
         goto fail;
+    }
+
+    /*
+     * Defense-in-depth: contract v1 is strict about feature negotiation (split
+     * rings + indirect only). If a buggy device model or transport layer
+     * negotiates extra bits (e.g. EVENT_IDX / packed rings), explicitly refuse
+     * them so queue setup does not attempt to enable unsupported modes.
+     */
+    {
+        const UINT64 disallowed = Dx->NegotiatedFeatures & ~allowedFeatures;
+        if (disallowed != 0) {
+            VIRTIOSND_TRACE_ERROR(
+                "negotiated disallowed virtio features (contract v1): negotiated=0x%I64x disallowed=0x%I64x allowed=0x%I64x; masking\n",
+                (ULONGLONG)Dx->NegotiatedFeatures,
+                (ULONGLONG)disallowed,
+                (ULONGLONG)allowedFeatures);
+            Dx->NegotiatedFeatures &= allowedFeatures;
+        }
     }
 
     /*
