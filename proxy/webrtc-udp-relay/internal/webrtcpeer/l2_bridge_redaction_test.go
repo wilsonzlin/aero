@@ -15,6 +15,17 @@ func TestSanitizeWSURLForLog_StripsSensitiveParts(t *testing.T) {
 	}
 }
 
+func TestSanitizeWSURLForLog_StripsUserInfoOnParseFailure(t *testing.T) {
+	// Include an invalid URL escape to force url.Parse to fail while still
+	// containing userinfo.
+	raw := "wss://user:pass@example.com/l2?token=%ZZ"
+	got := sanitizeWSURLForLog(raw)
+	want := "wss://example.com/l2"
+	if got != want {
+		t.Fatalf("sanitizeWSURLForLog(%q)=%q, want %q", raw, got, want)
+	}
+}
+
 func TestL2Bridge_SanitizeStringForLog_RedactsCredentialAndEscapedCredential(t *testing.T) {
 	cred := "bad=secret"
 	b := &l2Bridge{

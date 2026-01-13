@@ -624,6 +624,18 @@ func sanitizeWSURLForLog(raw string) string {
 		// Fall back to stripping query/fragment, avoiding accidental token leaks.
 		raw = strings.SplitN(raw, "?", 2)[0]
 		raw = strings.SplitN(raw, "#", 2)[0]
+		// Best-effort strip of userinfo (e.g. ws://user:pass@host/...)
+		if schemeIdx := strings.Index(raw, "://"); schemeIdx != -1 {
+			rest := raw[schemeIdx+3:]
+			if at := strings.Index(rest, "@"); at != -1 {
+				// Only treat this as userinfo if the '@' appears before the first
+				// path separator.
+				slash := strings.Index(rest, "/")
+				if slash == -1 || at < slash {
+					raw = raw[:schemeIdx+3] + rest[at+1:]
+				}
+			}
+		}
 		return raw
 	}
 
