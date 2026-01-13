@@ -91,9 +91,9 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv4(const uint8_t* ipv4,
 }
 
 static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6,
-                                                             size_t ipv6_len,
-                                                             size_t* l3_len_out,
-                                                             uint8_t* proto_out) {
+                                                              size_t ipv6_len,
+                                                              size_t* l3_len_out,
+                                                              uint8_t* proto_out) {
   uint8_t version;
   uint8_t next;
   size_t off;
@@ -118,7 +118,12 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6
    * Minimal IPv6 extension header walker. This intentionally supports only the
    * standard, length-delimited headers that Windows commonly emits.
    */
-  for (;;) {
+  /*
+   * Bound extension header traversal to avoid pathological header chains. This
+   * helper is used on potentially untrusted frames (host-provided in unit tests
+   * and guest-provided in the miniport), so keep parsing work deterministic.
+   */
+  for (size_t iter = 0; iter < 8u; iter++) {
     if (next == AEROVNET_IPPROTO_TCP) {
       *l3_len_out = off;
       *proto_out = next;
@@ -178,6 +183,8 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6
     /* Unknown/unsupported extension header. */
     return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_IPV6;
   }
+
+  return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_IPV6;
 }
 
 static AEROVNET_OFFLOAD_RESULT aerovnet_parse_tcp(const uint8_t* tcp, size_t tcp_len, size_t* tcp_header_len_out) {
