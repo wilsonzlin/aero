@@ -112,6 +112,17 @@ pub enum HdaMmioReg {
     Stream1(StreamReg),
 }
 
+/// A decoded MMIO address pointing at a specific byte within an HDA register.
+///
+/// The legacy HDA controller supports sub-word and cross-register accesses by
+/// decoding at byte granularity. Higher-level MMIO reads/writes (1/2/4 bytes)
+/// are composed from consecutive byte accesses.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct HdaMmioRegByte {
+    pub reg: HdaMmioReg,
+    pub byte: u8,
+}
+
 impl HdaMmioReg {
     pub fn decode(offset: u32) -> Option<Self> {
         match offset {
@@ -158,6 +169,232 @@ impl HdaMmioReg {
             HDA_SD1BDPU => Some(Self::Stream1(StreamReg::Bdpu)),
             _ => None,
         }
+    }
+
+    /// Decode an MMIO offset into a register + byte index.
+    ///
+    /// This is used to support real driver access patterns such as:
+    /// - Reading `GCAP`/`VMIN`/`VMAJ` as a single dword at offset 0x00.
+    /// - Accessing the stream status byte at `SDnCTL+3`.
+    /// - Reading across adjacent registers (e.g. dword at `SDnLVI` spanning `LVI+FIFOW`).
+    pub fn decode_byte(offset: u32) -> Option<HdaMmioRegByte> {
+        // Global registers.
+        if offset >= HDA_GCAP && offset < HDA_GCAP + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Gcap,
+                byte: (offset - HDA_GCAP) as u8,
+            });
+        }
+        if offset == HDA_VMIN {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Vmin,
+                byte: 0,
+            });
+        }
+        if offset == HDA_VMAJ {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Vmaj,
+                byte: 0,
+            });
+        }
+        if offset >= HDA_GCTL && offset < HDA_GCTL + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Gctl,
+                byte: (offset - HDA_GCTL) as u8,
+            });
+        }
+        if offset >= HDA_WAKEEN && offset < HDA_WAKEEN + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Wakeen,
+                byte: (offset - HDA_WAKEEN) as u8,
+            });
+        }
+        if offset >= HDA_STATESTS && offset < HDA_STATESTS + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Statests,
+                byte: (offset - HDA_STATESTS) as u8,
+            });
+        }
+        if offset >= HDA_GSTS && offset < HDA_GSTS + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Gsts,
+                byte: (offset - HDA_GSTS) as u8,
+            });
+        }
+        if offset >= HDA_INTCTL && offset < HDA_INTCTL + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Intctl,
+                byte: (offset - HDA_INTCTL) as u8,
+            });
+        }
+        if offset >= HDA_INTSTS && offset < HDA_INTSTS + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Intsts,
+                byte: (offset - HDA_INTSTS) as u8,
+            });
+        }
+
+        // CORB registers.
+        if offset >= HDA_CORBLBASE && offset < HDA_CORBLBASE + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Corb(CorbReg::Lbase),
+                byte: (offset - HDA_CORBLBASE) as u8,
+            });
+        }
+        if offset >= HDA_CORBUBASE && offset < HDA_CORBUBASE + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Corb(CorbReg::Ubase),
+                byte: (offset - HDA_CORBUBASE) as u8,
+            });
+        }
+        if offset >= HDA_CORBWP && offset < HDA_CORBWP + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Corb(CorbReg::Wp),
+                byte: (offset - HDA_CORBWP) as u8,
+            });
+        }
+        if offset >= HDA_CORBRP && offset < HDA_CORBRP + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Corb(CorbReg::Rp),
+                byte: (offset - HDA_CORBRP) as u8,
+            });
+        }
+        if offset == HDA_CORBCTL {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Corb(CorbReg::Ctl),
+                byte: 0,
+            });
+        }
+        if offset == HDA_CORBSTS {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Corb(CorbReg::Sts),
+                byte: 0,
+            });
+        }
+        if offset == HDA_CORBSIZE {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Corb(CorbReg::Size),
+                byte: 0,
+            });
+        }
+
+        // RIRB registers.
+        if offset >= HDA_RIRBLBASE && offset < HDA_RIRBLBASE + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Rirb(RirbReg::Lbase),
+                byte: (offset - HDA_RIRBLBASE) as u8,
+            });
+        }
+        if offset >= HDA_RIRBUBASE && offset < HDA_RIRBUBASE + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Rirb(RirbReg::Ubase),
+                byte: (offset - HDA_RIRBUBASE) as u8,
+            });
+        }
+        if offset >= HDA_RIRBWP && offset < HDA_RIRBWP + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Rirb(RirbReg::Wp),
+                byte: (offset - HDA_RIRBWP) as u8,
+            });
+        }
+        if offset >= HDA_RINTCNT && offset < HDA_RINTCNT + 2 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Rirb(RirbReg::RintCnt),
+                byte: (offset - HDA_RINTCNT) as u8,
+            });
+        }
+        if offset == HDA_RIRBCTL {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Rirb(RirbReg::Ctl),
+                byte: 0,
+            });
+        }
+        if offset == HDA_RIRBSTS {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Rirb(RirbReg::Sts),
+                byte: 0,
+            });
+        }
+        if offset == HDA_RIRBSIZE {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Rirb(RirbReg::Size),
+                byte: 0,
+            });
+        }
+
+        // DMA position buffer registers.
+        if offset >= HDA_DPLBASE && offset < HDA_DPLBASE + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Dplbase,
+                byte: (offset - HDA_DPLBASE) as u8,
+            });
+        }
+        if offset >= HDA_DPUBASE && offset < HDA_DPUBASE + 4 {
+            return Some(HdaMmioRegByte {
+                reg: HdaMmioReg::Dpubase,
+                byte: (offset - HDA_DPUBASE) as u8,
+            });
+        }
+
+        // Stream descriptor blocks.
+        fn decode_stream(
+            offset: u32,
+            base: u32,
+            wrap: fn(StreamReg) -> HdaMmioReg,
+        ) -> Option<HdaMmioRegByte> {
+            if offset < base || offset >= base + 0x20 {
+                return None;
+            }
+            let rel = offset - base;
+            match rel {
+                0x00..=0x03 => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::CtlSts),
+                    byte: rel as u8,
+                }),
+                0x04..=0x07 => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Lpib),
+                    byte: (rel - 0x04) as u8,
+                }),
+                0x08..=0x0b => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Cbl),
+                    byte: (rel - 0x08) as u8,
+                }),
+                0x0c..=0x0d => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Lvi),
+                    byte: (rel - 0x0c) as u8,
+                }),
+                0x0e..=0x0f => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Fifow),
+                    byte: (rel - 0x0e) as u8,
+                }),
+                0x10..=0x11 => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Fifos),
+                    byte: (rel - 0x10) as u8,
+                }),
+                0x12..=0x13 => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Fmt),
+                    byte: (rel - 0x12) as u8,
+                }),
+                0x18..=0x1b => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Bdpl),
+                    byte: (rel - 0x18) as u8,
+                }),
+                0x1c..=0x1f => Some(HdaMmioRegByte {
+                    reg: wrap(StreamReg::Bdpu),
+                    byte: (rel - 0x1c) as u8,
+                }),
+                _ => None,
+            }
+        }
+
+        if let Some(decoded) = decode_stream(offset, HDA_SD0CTL, HdaMmioReg::Stream0) {
+            return Some(decoded);
+        }
+        if let Some(decoded) = decode_stream(offset, HDA_SD1CTL, HdaMmioReg::Stream1) {
+            return Some(decoded);
+        }
+
+        None
     }
 }
 

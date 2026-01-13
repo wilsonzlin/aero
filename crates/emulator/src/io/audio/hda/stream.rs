@@ -1,6 +1,5 @@
 use memory::MemoryBus;
 
-use super::mask_for_size;
 use super::regs::*;
 use crate::io::audio::dsp::pcm::{PcmSampleFormat, PcmSpec};
 
@@ -220,7 +219,7 @@ pub struct HdaStream {
     sts: u8,
     lpib: u32,
     cbl: u32,
-    lvi: u16,
+    lvi: u8,
     fifow: u16,
     fifos: u16,
     fmt: u16,
@@ -281,72 +280,175 @@ impl HdaStream {
         (self.ctl & SD_CTL_RUN != 0) && (self.ctl & SD_CTL_SRST != 0)
     }
 
+    #[cfg(test)]
     pub fn mmio_read(&self, reg: StreamReg, size: usize) -> u64 {
         if size == 0 {
             return 0;
         }
-        match reg {
-            StreamReg::CtlSts => {
-                ((self.sts as u32 as u64) << 24 | self.ctl as u64) & mask_for_size(size)
-            }
-            StreamReg::Lpib => self.lpib as u64 & mask_for_size(size),
-            StreamReg::Cbl => self.cbl as u64 & mask_for_size(size),
-            StreamReg::Lvi => self.lvi as u64 & mask_for_size(size),
-            StreamReg::Fifow => self.fifow as u64 & mask_for_size(size),
-            StreamReg::Fifos => self.fifos as u64 & mask_for_size(size),
-            StreamReg::Fmt => self.fmt as u64 & mask_for_size(size),
-            StreamReg::Bdpl => self.bdpl as u64 & mask_for_size(size),
-            StreamReg::Bdpu => self.bdpu as u64 & mask_for_size(size),
+        let mut out = 0u64;
+        let capped = size.min(8);
+        for i in 0..capped {
+            out |= (u64::from(self.mmio_read_byte(reg, i as u8))) << (i * 8);
         }
+        out
     }
 
+    #[cfg(test)]
     pub fn mmio_write(&mut self, reg: StreamReg, size: usize, value: u64, intsts: &mut u32) {
         if size == 0 {
             return;
         }
-        let value = value & mask_for_size(size);
+        let capped = size.min(8);
+        for i in 0..capped {
+            let b = ((value >> (i * 8)) & 0xff) as u8;
+            self.mmio_write_byte(reg, i as u8, b, intsts);
+        }
+    }
+
+    pub fn mmio_read_byte(&self, reg: StreamReg, byte: u8) -> u8 {
         match reg {
-            StreamReg::CtlSts => {
-                let w = value as u32;
-                let new_ctl = w & 0x00FF_FFFF;
-                let sts_clear = (w >> 24) as u8;
-                if sts_clear != 0 {
-                    self.sts &= !sts_clear;
-                    if self.sts & SD_STS_BCIS == 0 {
+            StreamReg::CtlSts => match byte {
+                0..=2 => ((self.ctl >> (u32::from(byte) * 8)) & 0xff) as u8,
+                3 => self.sts,
+                _ => 0,
+            },
+            StreamReg::Lpib => {
+                if byte < 4 {
+                    ((self.lpib >> (u32::from(byte) * 8)) & 0xff) as u8
+                } else {
+                    0
+                }
+            }
+            StreamReg::Cbl => {
+                if byte < 4 {
+                    ((self.cbl >> (u32::from(byte) * 8)) & 0xff) as u8
+                } else {
+                    0
+                }
+            }
+            StreamReg::Lvi => match byte {
+                0 => self.lvi,
+                // SDnLVI is 8-bit; upper bits are reserved and must read as 0.
+                _ => 0,
+            },
+            StreamReg::Fifow => {
+                if byte < 2 {
+                    ((self.fifow >> (u32::from(byte) * 8)) & 0xff) as u8
+                } else {
+                    0
+                }
+            }
+            StreamReg::Fifos => {
+                if byte < 2 {
+                    ((self.fifos >> (u32::from(byte) * 8)) & 0xff) as u8
+                } else {
+                    0
+                }
+            }
+            StreamReg::Fmt => {
+                if byte < 2 {
+                    ((self.fmt >> (u32::from(byte) * 8)) & 0xff) as u8
+                } else {
+                    0
+                }
+            }
+            StreamReg::Bdpl => {
+                if byte < 4 {
+                    ((self.bdpl >> (u32::from(byte) * 8)) & 0xff) as u8
+                } else {
+                    0
+                }
+            }
+            StreamReg::Bdpu => {
+                if byte < 4 {
+                    ((self.bdpu >> (u32::from(byte) * 8)) & 0xff) as u8
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    pub fn mmio_write_byte(&mut self, reg: StreamReg, byte: u8, value: u8, intsts: &mut u32) {
+        match reg {
+            StreamReg::CtlSts => match byte {
+                0..=2 => {
+                    let shift = u32::from(byte) * 8;
+                    let mask = 0xffu32 << shift;
+                    let old_ctl = self.ctl;
+                    self.ctl = (self.ctl & !mask) | (u32::from(value) << shift);
+
+                    // Stream reset deasserted -> reset internal state.
+                    if (old_ctl & SD_CTL_SRST != 0) && (self.ctl & SD_CTL_SRST == 0) {
+                        self.lpib = 0;
+                        self.sts = 0;
+                        self.bdl_index = 0;
+                        self.bdl_offset = 0;
                         *intsts &= !self.intsts_bit();
                     }
                 }
-
-                let old_ctl = self.ctl;
-                self.ctl = new_ctl;
-
-                // Stream reset deasserted -> reset internal state.
-                if (old_ctl & SD_CTL_SRST != 0) && (new_ctl & SD_CTL_SRST == 0) {
-                    self.lpib = 0;
-                    self.sts = 0;
-                    self.bdl_index = 0;
-                    self.bdl_offset = 0;
-                    *intsts &= !self.intsts_bit();
+                3 => {
+                    // Status byte: write-1-to-clear.
+                    if value != 0 {
+                        self.sts &= !value;
+                        if self.sts & SD_STS_BCIS == 0 {
+                            *intsts &= !self.intsts_bit();
+                        }
+                    }
                 }
-            }
+                _ => {}
+            },
             StreamReg::Lpib => {
                 // Read-only in hardware.
-                let _ = value;
+                let _ = (byte, value);
             }
-            StreamReg::Cbl => self.cbl = value as u32,
+            StreamReg::Cbl => {
+                if byte < 4 {
+                    let shift = u32::from(byte) * 8;
+                    let mask = 0xffu32 << shift;
+                    self.cbl = (self.cbl & !mask) | (u32::from(value) << shift);
+                }
+            }
             StreamReg::Lvi => {
                 // SDnLVI is architecturally an 8-bit "last valid index" into the 256-entry BDL.
-                // Mask the guest-provided value to prevent pathological writes (e.g. 0xffff)
-                // from driving unbounded loops or out-of-range descriptor indexing.
-                self.lvi = (value as u16) & 0x00ff;
+                // Mask the guest-provided value (and ignore higher bytes) so pathological writes
+                // (e.g. 0xffff) cannot drive out-of-range descriptor indexing.
+                if byte == 0 {
+                    self.lvi = value;
+                }
             }
-            StreamReg::Fifow => self.fifow = value as u16,
+            StreamReg::Fifow => {
+                if byte < 2 {
+                    let shift = u32::from(byte) * 8;
+                    let mask = 0xffu16 << shift;
+                    self.fifow = (self.fifow & !mask) | (u16::from(value) << shift);
+                }
+            }
             StreamReg::Fifos => {
-                let _ = value;
+                // Read-only in hardware.
+                let _ = (byte, value);
             }
-            StreamReg::Fmt => self.fmt = value as u16,
-            StreamReg::Bdpl => self.bdpl = value as u32,
-            StreamReg::Bdpu => self.bdpu = value as u32,
+            StreamReg::Fmt => {
+                if byte < 2 {
+                    let shift = u32::from(byte) * 8;
+                    let mask = 0xffu16 << shift;
+                    self.fmt = (self.fmt & !mask) | (u16::from(value) << shift);
+                }
+            }
+            StreamReg::Bdpl => {
+                if byte < 4 {
+                    let shift = u32::from(byte) * 8;
+                    let mask = 0xffu32 << shift;
+                    self.bdpl = (self.bdpl & !mask) | (u32::from(value) << shift);
+                }
+            }
+            StreamReg::Bdpu => {
+                if byte < 4 {
+                    let shift = u32::from(byte) * 8;
+                    let mask = 0xffu32 << shift;
+                    self.bdpu = (self.bdpu & !mask) | (u32::from(value) << shift);
+                }
+            }
         }
     }
 
@@ -365,7 +467,7 @@ impl HdaStream {
 
         // Consume at most one BDL entry per call. Real hardware is paced by the
         // link; callers are expected to invoke `poll()` periodically.
-        let max_entries = self.lvi as usize + 1;
+        let max_entries = usize::from(self.lvi) + 1;
         for _ in 0..max_entries.max(1) {
             let entry = self.read_bdl_entry(mem, self.bdl_index);
             let remaining = entry.len.saturating_sub(self.bdl_offset);
@@ -409,7 +511,7 @@ impl HdaStream {
             return;
         }
 
-        let max_entries = self.lvi as usize + 1;
+        let max_entries = usize::from(self.lvi) + 1;
         for _ in 0..max_entries.max(1) {
             let entry = self.read_bdl_entry(mem, self.bdl_index);
             let remaining = entry.len.saturating_sub(self.bdl_offset);
@@ -463,7 +565,7 @@ impl HdaStream {
             }
         }
 
-        if self.bdl_index >= self.lvi {
+        if self.bdl_index >= u16::from(self.lvi) {
             self.bdl_index = 0;
         } else {
             self.bdl_index += 1;
@@ -480,6 +582,13 @@ impl HdaStream {
             len,
             ioc: (flags & 1) != 0,
         }
+    }
+}
+
+#[cfg(test)]
+impl HdaStream {
+    pub(crate) fn test_set_sts(&mut self, value: u8) {
+        self.sts = value;
     }
 }
 

@@ -115,39 +115,82 @@ impl HdaController {
     }
 
     pub fn mmio_read(&mut self, offset: u32, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
+        let mut out = 0u64;
+        let capped = size.min(8);
+        for i in 0..capped {
+            out |= u64::from(self.mmio_read_u8(offset + i as u32)) << (i * 8);
         }
-        match HdaMmioReg::decode(offset) {
-            Some(HdaMmioReg::Gcap) => (self.gcap as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Vmin) => (self.vmin as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Vmaj) => (self.vmaj as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Gctl) => (self.gctl as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Wakeen) => (self.wakeen as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Statests) => (self.statests as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Gsts) => (self.gsts as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Intctl) => (self.intctl as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Intsts) => (self.intsts as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Dplbase) => (self.posbuf.dplbase() as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Dpubase) => (self.posbuf.dpubase() as u64) & mask_for_size(size),
-            Some(HdaMmioReg::Corb(reg)) => self.corb.mmio_read(reg, size),
-            Some(HdaMmioReg::Rirb(reg)) => self.rirb.mmio_read(reg, size),
-            Some(HdaMmioReg::Stream0(reg)) => self.out_stream0.mmio_read(reg, size),
-            Some(HdaMmioReg::Stream1(reg)) => self.in_stream0.mmio_read(reg, size),
-            None => 0,
-        }
+        out
     }
 
     pub fn mmio_write(&mut self, offset: u32, size: usize, value: u64) {
-        if size == 0 {
-            return;
+        let capped = size.min(8);
+        for i in 0..capped {
+            let b = ((value >> (i * 8)) & 0xff) as u8;
+            self.mmio_write_u8(offset + i as u32, b);
         }
-        match HdaMmioReg::decode(offset) {
-            Some(HdaMmioReg::Gctl) => {
-                let new_val = (value as u32) & mask_for_size(size) as u32;
-                let old_crst = self.gctl & GCTL_CRST;
-                self.gctl = (self.gctl & !mask_for_size(size) as u32) | new_val;
 
+        self.recalc_intsts_summary();
+        self.update_irq_line();
+    }
+
+    fn mmio_read_u8(&mut self, offset: u32) -> u8 {
+        let Some(decoded) = HdaMmioReg::decode_byte(offset) else {
+            return 0;
+        };
+
+        let shift = u32::from(decoded.byte) * 8;
+        match decoded.reg {
+            HdaMmioReg::Gcap => ((u32::from(self.gcap) >> shift) & 0xff) as u8,
+            HdaMmioReg::Vmin => self.vmin,
+            HdaMmioReg::Vmaj => self.vmaj,
+            HdaMmioReg::Gctl => ((self.gctl >> shift) & 0xff) as u8,
+            HdaMmioReg::Wakeen => ((u32::from(self.wakeen) >> shift) & 0xff) as u8,
+            HdaMmioReg::Statests => ((u32::from(self.statests) >> shift) & 0xff) as u8,
+            HdaMmioReg::Gsts => ((u32::from(self.gsts) >> shift) & 0xff) as u8,
+            HdaMmioReg::Intctl => ((self.intctl >> shift) & 0xff) as u8,
+            HdaMmioReg::Intsts => ((self.intsts >> shift) & 0xff) as u8,
+            HdaMmioReg::Dplbase => ((self.posbuf.dplbase() >> shift) & 0xff) as u8,
+            HdaMmioReg::Dpubase => ((self.posbuf.dpubase() >> shift) & 0xff) as u8,
+            HdaMmioReg::Corb(reg) => {
+                let width = match reg {
+                    CorbReg::Lbase | CorbReg::Ubase => 4,
+                    CorbReg::Wp | CorbReg::Rp => 2,
+                    CorbReg::Ctl | CorbReg::Sts | CorbReg::Size => 1,
+                };
+                let full = self.corb.mmio_read(reg, width);
+                ((full >> shift) & 0xff) as u8
+            }
+            HdaMmioReg::Rirb(reg) => {
+                let width = match reg {
+                    RirbReg::Lbase | RirbReg::Ubase => 4,
+                    RirbReg::Wp | RirbReg::RintCnt => 2,
+                    RirbReg::Ctl | RirbReg::Sts | RirbReg::Size => 1,
+                };
+                let full = self.rirb.mmio_read(reg, width);
+                ((full >> shift) & 0xff) as u8
+            }
+            HdaMmioReg::Stream0(reg) => self.out_stream0.mmio_read_byte(reg, decoded.byte),
+            HdaMmioReg::Stream1(reg) => self.in_stream0.mmio_read_byte(reg, decoded.byte),
+        }
+    }
+
+    fn mmio_write_u8(&mut self, offset: u32, value: u8) {
+        let Some(decoded) = HdaMmioReg::decode_byte(offset) else {
+            return;
+        };
+
+        let shift = u32::from(decoded.byte) * 8;
+        match decoded.reg {
+            // Read-only registers.
+            HdaMmioReg::Gcap | HdaMmioReg::Vmin | HdaMmioReg::Vmaj => {}
+
+            HdaMmioReg::Gctl => {
+                let old = self.gctl;
+                let mask = 0xffu32 << shift;
+                self.gctl = (self.gctl & !mask) | (u32::from(value) << shift);
+
+                let old_crst = old & GCTL_CRST;
                 let new_crst = self.gctl & GCTL_CRST;
                 if old_crst != 0 && new_crst == 0 {
                     self.reset();
@@ -155,64 +198,80 @@ impl HdaController {
                     // Leaving reset: expose codec presence immediately.
                     self.statests |= 1;
                 }
-
-                self.recalc_intsts_summary();
-                self.update_irq_line();
             }
-            Some(HdaMmioReg::Wakeen) => {
-                self.wakeen = (value as u16) & mask_for_size(size) as u16;
+            HdaMmioReg::Wakeen => {
+                let mask = 0xffu16 << shift;
+                self.wakeen = (self.wakeen & !mask) | (u16::from(value) << shift);
             }
-            Some(HdaMmioReg::Statests) => {
+            HdaMmioReg::Statests => {
                 // Write-1-to-clear.
-                let mask = (value as u16) & mask_for_size(size) as u16;
+                let mask = u16::from(value) << shift;
                 self.statests &= !mask;
             }
-            Some(HdaMmioReg::Gsts) => {
+            HdaMmioReg::Gsts => {
                 // Mostly read-only in real hardware; accept W1C for now.
-                let mask = (value as u16) & mask_for_size(size) as u16;
+                let mask = u16::from(value) << shift;
                 self.gsts &= !mask;
             }
-            Some(HdaMmioReg::Intctl) => {
-                self.intctl = (value as u32) & mask_for_size(size) as u32;
-                self.recalc_intsts_summary();
-                self.update_irq_line();
+            HdaMmioReg::Intctl => {
+                let mask = 0xffu32 << shift;
+                self.intctl = (self.intctl & !mask) | (u32::from(value) << shift);
             }
-            Some(HdaMmioReg::Intsts) => {
+            HdaMmioReg::Intsts => {
                 // W1C for all non-summary bits.
-                let mask = (value as u32) & mask_for_size(size) as u32;
+                let mask = u32::from(value) << shift;
                 self.intsts &= !mask;
-                self.recalc_intsts_summary();
-                self.update_irq_line();
             }
-            Some(HdaMmioReg::Dplbase) => {
-                self.posbuf
-                    .write_dplbase((value as u32) & mask_for_size(size) as u32);
+            HdaMmioReg::Dplbase => {
+                let old = self.posbuf.dplbase();
+                let mask = 0xffu32 << shift;
+                let new = (old & !mask) | (u32::from(value) << shift);
+                self.posbuf.write_dplbase(new);
             }
-            Some(HdaMmioReg::Dpubase) => {
-                self.posbuf
-                    .write_dpubase((value as u32) & mask_for_size(size) as u32);
+            HdaMmioReg::Dpubase => {
+                let old = self.posbuf.dpubase();
+                let mask = 0xffu32 << shift;
+                let new = (old & !mask) | (u32::from(value) << shift);
+                self.posbuf.write_dpubase(new);
             }
-            Some(HdaMmioReg::Corb(reg)) => {
-                self.corb.mmio_write(reg, size, value);
+            HdaMmioReg::Corb(reg) => {
+                let width = match reg {
+                    CorbReg::Lbase | CorbReg::Ubase => 4,
+                    CorbReg::Wp | CorbReg::Rp => 2,
+                    CorbReg::Ctl | CorbReg::Sts | CorbReg::Size => 1,
+                };
+                if width == 1 {
+                    self.corb.mmio_write(reg, 1, value as u64);
+                    return;
+                }
+
+                let full = self.corb.mmio_read(reg, width);
+                let mask = 0xffu64 << shift;
+                let new = (full & !mask) | (u64::from(value) << shift);
+                self.corb.mmio_write(reg, width, new);
             }
-            Some(HdaMmioReg::Rirb(reg)) => {
-                self.rirb.mmio_write(reg, size, value);
-                self.recalc_intsts_summary();
-                self.update_irq_line();
+            HdaMmioReg::Rirb(reg) => {
+                let width = match reg {
+                    RirbReg::Lbase | RirbReg::Ubase => 4,
+                    RirbReg::Wp | RirbReg::RintCnt => 2,
+                    RirbReg::Ctl | RirbReg::Sts | RirbReg::Size => 1,
+                };
+                if width == 1 {
+                    self.rirb.mmio_write(reg, 1, value as u64);
+                    return;
+                }
+
+                let full = self.rirb.mmio_read(reg, width);
+                let mask = 0xffu64 << shift;
+                let new = (full & !mask) | (u64::from(value) << shift);
+                self.rirb.mmio_write(reg, width, new);
             }
-            Some(HdaMmioReg::Stream0(reg)) => {
-                self.out_stream0
-                    .mmio_write(reg, size, value, &mut self.intsts);
-                self.recalc_intsts_summary();
-                self.update_irq_line();
-            }
-            Some(HdaMmioReg::Stream1(reg)) => {
-                self.in_stream0
-                    .mmio_write(reg, size, value, &mut self.intsts);
-                self.recalc_intsts_summary();
-                self.update_irq_line();
-            }
-            _ => {}
+            HdaMmioReg::Stream0(reg) => self
+                .out_stream0
+                .mmio_write_byte(reg, decoded.byte, value, &mut self.intsts),
+            HdaMmioReg::Stream1(reg) => self
+                .in_stream0
+                .mmio_write_byte(reg, decoded.byte, value, &mut self.intsts),
         }
     }
 
@@ -328,6 +387,68 @@ mod tests {
         assert_eq!(mask_for_size(7), 0x00FF_FFFF_FFFF_FFFF);
         assert_eq!(mask_for_size(8), u64::MAX);
         assert_eq!(mask_for_size(9), u64::MAX);
+    }
+
+    #[test]
+    fn gcap_vmin_vmaj_can_be_read_as_one_dword() {
+        let mut hda = HdaController::new();
+
+        let gcap = hda.mmio_read(HDA_GCAP, 2) as u32;
+        let vmin = hda.mmio_read(HDA_VMIN, 1) as u32;
+        let vmaj = hda.mmio_read(HDA_VMAJ, 1) as u32;
+
+        // Sanity check to ensure we're not trivially packing zeroes.
+        assert_eq!(vmin, 0);
+        assert_eq!(vmaj, 1);
+
+        let packed = hda.mmio_read(HDA_GCAP, 4) as u32;
+        assert_eq!(packed, gcap | (vmin << 16) | (vmaj << 24));
+    }
+
+    #[test]
+    fn stream_status_is_byte_accessible_and_w1c() {
+        let mut hda = HdaController::new();
+
+        // Force a status byte with bits 0..=2 set.
+        hda.out_stream0.test_set_sts(0b111);
+
+        let sts_off = HDA_SD0CTL + 3;
+        assert_eq!(hda.mmio_read(sts_off, 1) as u8, 0b111);
+
+        // W1C the BCIS bit.
+        hda.mmio_write(sts_off, 1, 1u64 << 2);
+        assert_eq!(hda.mmio_read(sts_off, 1) as u8, 0b011);
+    }
+
+    #[test]
+    fn stream_lvi_and_fifow_allow_word_access() {
+        let mut hda = HdaController::new();
+
+        hda.mmio_write(HDA_SD0LVI, 2, 0x1234);
+        hda.mmio_write(HDA_SD0FIFOW, 2, 0x5678);
+
+        // SDnLVI is 8 bits in the Intel HDA spec; upper bits are reserved and must read as 0.
+        assert_eq!(hda.mmio_read(HDA_SD0LVI, 2) as u16, 0x0034);
+        assert_eq!(hda.mmio_read(HDA_SD0FIFOW, 2) as u16, 0x5678);
+
+        // A 32-bit access at SD0LVI spans LVI + FIFOW.
+        assert_eq!(hda.mmio_read(HDA_SD0LVI, 4) as u32, 0x5678_0034);
+    }
+
+    #[test]
+    fn mmio_reads_and_writes_do_not_panic_for_common_sizes() {
+        let mut hda = HdaController::new();
+        let limit = HdaPciDevice::MMIO_BAR_SIZE;
+
+        for offset in 0..limit {
+            for size in [1usize, 2, 4] {
+                if offset + (size as u32) > limit {
+                    continue;
+                }
+                let _ = hda.mmio_read(offset, size);
+                hda.mmio_write(offset, size, 0);
+            }
+        }
     }
 
     #[derive(Clone, Debug)]
