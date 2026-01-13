@@ -253,6 +253,7 @@ export type MachineHandle = {
               rx_dropped_oversize: bigint;
               rx_dropped_oversize_bytes?: bigint;
               rx_corrupt: bigint;
+              rx_broken?: boolean;
           }
         | null;
     /**
@@ -377,11 +378,17 @@ export type VirtioNetPciBridgeHandle = {
     virtio_net_stats?():
         | {
               tx_pushed_frames: bigint;
+              tx_pushed_bytes?: bigint;
               tx_dropped_oversize: bigint;
+              tx_dropped_oversize_bytes?: bigint;
               tx_dropped_full: bigint;
+              tx_dropped_full_bytes?: bigint;
               rx_popped_frames: bigint;
+              rx_popped_bytes?: bigint;
               rx_dropped_oversize: bigint;
+              rx_dropped_oversize_bytes?: bigint;
               rx_corrupt: bigint;
+              rx_broken?: boolean;
           }
         | null;
     free(): void;
@@ -843,6 +850,7 @@ export interface WasmApi {
                    rx_dropped_oversize: bigint;
                    rx_dropped_oversize_bytes?: bigint;
                    rx_corrupt: bigint;
+                   rx_broken?: boolean;
                }
             | null;
         run_slice(max_insts: number): { kind: number; executed: number; detail: string; free(): void };
