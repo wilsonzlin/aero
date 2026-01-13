@@ -84,7 +84,8 @@ boots the install ISO first, then switch back to `0x80` for normal HDD boots aft
 
 ### 2) Normal boot (after installation)
 
-1. BIOS boot order boots from the **AHCI HDD** (ICH9 AHCI port 0).
+1. BIOS boot order boots from the **AHCI HDD** (ICH9 AHCI port 0) and enters the boot sector with
+   **`DL=0x80`**.
 2. The IDE CD-ROM may remain attached (useful for tooling/driver ISOs), but is not required.
 
 ---
