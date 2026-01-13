@@ -314,6 +314,7 @@ For quick guest-side sanity checks:
   * Fence counters (`AEROGPU_ESCAPE_OP_QUERY_FENCE`): `drivers/aerogpu/tests/win7/fence_state_sanity`
   * Ring snapshot (`AEROGPU_ESCAPE_OP_DUMP_RING_V2`): `drivers/aerogpu/tests/win7/ring_state_sanity`
   * Scanout mode caching vs MMIO scanout state (`DxgkDdiCommitVidPn`): `drivers/aerogpu/tests/win7/scanout_state_sanity`
+  * Cursor MMIO state (`AEROGPU_ESCAPE_OP_QUERY_CURSOR`): `drivers/aerogpu/tests/win7/cursor_state_sanity`
   * CreateAllocation trace dump (`AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`): `drivers/aerogpu/tests/win7/dump_createalloc_sanity`
   * UMDRIVERPRIVATE discovery blob (`D3DKMTQueryAdapterInfo`): `drivers/aerogpu/tests/win7/umd_private_sanity`
   * D3D9 raster status (`IDirect3DDevice9::GetRasterStatus`): `drivers/aerogpu/tests/win7/d3d9_raster_status_sanity` and `drivers/aerogpu/tests/win7/d3d9_raster_status_pacing`
