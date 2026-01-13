@@ -240,6 +240,28 @@ fn wasm_machine_vga_present_exposes_nonblank_framebuffer() {
         hash, blank,
         "expected VGA framebuffer hash to differ from blank screen"
     );
+
+    // Unified display scanout API should also expose a non-blank framebuffer.
+    machine.display_present();
+    let disp_w = machine.display_width();
+    let disp_h = machine.display_height();
+    assert!(disp_w > 0, "expected non-zero display_width");
+    assert!(disp_h > 0, "expected non-zero display_height");
+    assert_eq!(machine.display_stride_bytes(), disp_w * 4);
+
+    let disp_ptr = machine.display_framebuffer_ptr();
+    let disp_len = machine.display_framebuffer_len_bytes();
+    assert!(disp_ptr != 0, "expected non-zero display_framebuffer_ptr");
+    assert!(disp_len != 0, "expected non-zero display_framebuffer_len_bytes");
+
+    // Safety: ptr/len is a view into the module's own linear memory.
+    let disp_fb = unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
+    let disp_hash = fnv1a(disp_fb);
+    let disp_blank = fnv1a_blank_rgba8(disp_len as usize);
+    assert_ne!(
+        disp_hash, disp_blank,
+        "expected display framebuffer hash to differ from blank screen"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -278,4 +300,18 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
     // Safety: ptr/len is a view into the module's own linear memory.
     let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
     assert_eq!(&fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+
+    // Unified display API should surface the same scanout.
+    machine.display_present();
+    assert_eq!(machine.display_width(), 64);
+    assert_eq!(machine.display_height(), 64);
+    assert_eq!(machine.display_stride_bytes(), 64 * 4);
+
+    let disp_ptr = machine.display_framebuffer_ptr();
+    let disp_len = machine.display_framebuffer_len_bytes();
+    assert!(disp_ptr != 0, "expected non-zero display_framebuffer_ptr");
+    assert_eq!(disp_len, 64 * 64 * 4);
+    let disp_fb =
+        unsafe { core::slice::from_raw_parts(disp_ptr as *const u8, disp_len as usize) };
+    assert_eq!(&disp_fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
 }

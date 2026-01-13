@@ -268,6 +268,47 @@ fn machine_vga_scanout_exports_non_empty_rgba8888_framebuffer() {
 
     // The raw pointer view is only meaningful for wasm32 builds; native builds return 0.
     assert_eq!(m.vga_framebuffer_ptr(), 0);
+
+    // ---------------------------------------------------------------------
+    // Unified display scanout API should behave equivalently (and remain stable
+    // as the underlying scanout backend changes).
+    // ---------------------------------------------------------------------
+    m.display_present();
+    let disp_w = m.display_width();
+    let disp_h = m.display_height();
+    assert!(disp_w > 0, "display_width must be non-zero when VGA is present");
+    assert!(
+        disp_h > 0,
+        "display_height must be non-zero when VGA is present"
+    );
+    assert_eq!(m.display_stride_bytes(), disp_w.saturating_mul(4));
+
+    let disp_len_bytes = m.display_framebuffer_len_bytes();
+    let disp_expected_len_bytes = (disp_w as u64)
+        .saturating_mul(disp_h as u64)
+        .saturating_mul(4);
+    assert!(
+        disp_expected_len_bytes <= u64::from(u32::MAX),
+        "display framebuffer byte length should fit in u32 for test mode"
+    );
+    assert_eq!(
+        disp_len_bytes as u64, disp_expected_len_bytes,
+        "display len_bytes must equal width * height * 4"
+    );
+
+    let disp_copy = m.display_framebuffer_copy_rgba8888();
+    assert!(!disp_copy.is_empty(), "copied display framebuffer should be non-empty");
+    assert_eq!(disp_copy.len() as u32, disp_len_bytes);
+
+    let disp_blank = fnv1a_blank_rgba8(disp_copy.len());
+    let disp_hash = fnv1a(&disp_copy);
+    assert_ne!(
+        disp_hash, disp_blank,
+        "expected display framebuffer hash to differ from blank screen"
+    );
+
+    // The raw pointer view is only meaningful for wasm32 builds; native builds return 0.
+    assert_eq!(m.display_framebuffer_ptr(), 0);
 }
 
 #[test]
@@ -291,4 +332,14 @@ fn machine_vbe_scanout_reflects_programmed_mode_and_pixels() {
 
     // First pixel should be red in RGBA8888.
     assert_eq!(&copy[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+
+    // Unified display API should surface the same scanout.
+    m.display_present();
+    assert_eq!(m.display_width(), 64);
+    assert_eq!(m.display_height(), 64);
+    assert_eq!(m.display_stride_bytes(), 64 * 4);
+    assert_eq!(m.display_framebuffer_len_bytes(), 64 * 64 * 4);
+    let disp_copy = m.display_framebuffer_copy_rgba8888();
+    assert_eq!(disp_copy.len(), 64 * 64 * 4);
+    assert_eq!(&disp_copy[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
 }

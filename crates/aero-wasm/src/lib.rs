@@ -2643,13 +2643,118 @@ impl Machine {
     }
 
     // -------------------------------------------------------------------------
-    // VGA/SVGA scanout (BIOS text mode + VBE graphics)
+    // Unified display scanout (legacy VGA/VBE today; AeroGPU/WDDM later)
+    // -------------------------------------------------------------------------
+
+    /// Re-render the emulated display into the machine's host-visible framebuffer cache.
+    ///
+    /// Call this before reading the framebuffer via `display_framebuffer_*` or before sampling
+    /// `display_width()`/`display_height()` after the guest changes video modes.
+    pub fn display_present(&mut self) {
+        self.inner.display_present();
+    }
+
+    /// Current display output width in pixels (0 if no display scanout is available).
+    pub fn display_width(&self) -> u32 {
+        let (w, _) = self.inner.display_resolution();
+        w
+    }
+
+    /// Current display output height in pixels (0 if no display scanout is available).
+    pub fn display_height(&self) -> u32 {
+        let (_, h) = self.inner.display_resolution();
+        h
+    }
+
+    /// Current display output stride in bytes (RGBA8888, tightly packed).
+    pub fn display_stride_bytes(&self) -> u32 {
+        self.display_width().saturating_mul(4)
+    }
+
+    /// Pointer (into wasm linear memory) to the display RGBA8888 framebuffer.
+    ///
+    /// Returns `0` if no display scanout is available.
+    ///
+    /// # Safety contract (JS/host)
+    /// The caller must re-query this pointer after each [`Machine::display_present`] call because
+    /// the framebuffer pointer may change (e.g. due to resize/reallocation).
+    #[cfg(target_arch = "wasm32")]
+    pub fn display_framebuffer_ptr(&self) -> u32 {
+        let fb = self.inner.display_framebuffer();
+        if fb.is_empty() {
+            return 0;
+        }
+        fb.as_ptr() as u32
+    }
+
+    /// See [`Machine::display_framebuffer_ptr`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn display_framebuffer_ptr(&self) -> u32 {
+        0
+    }
+
+    /// Length in bytes of the display framebuffer (RGBA8888).
+    ///
+    /// Returns `0` if no display scanout is available.
+    ///
+    /// The caller must re-query this length after each [`Machine::display_present`] call because it
+    /// may change (e.g. due to resize/reallocation).
+    pub fn display_framebuffer_len_bytes(&self) -> u32 {
+        let fb = self.inner.display_framebuffer();
+        if fb.is_empty() {
+            return 0;
+        }
+        let bytes = (fb.len() as u64).saturating_mul(4);
+        bytes.min(u64::from(u32::MAX)) as u32
+    }
+
+    /// Copy the current display buffer into a byte vector (RGBA8888).
+    ///
+    /// This is significantly slower than using `display_framebuffer_ptr()`/`display_framebuffer_len_bytes()`,
+    /// but it is convenient for tests and for simple JS callers.
+    pub fn display_framebuffer_copy_rgba8888(&mut self) -> Vec<u8> {
+        self.inner.display_present();
+        let fb: &[u32] = self.inner.display_framebuffer();
+        if fb.is_empty() {
+            return Vec::new();
+        }
+
+        // The canonical display scanout stores pixels as `u32::from_le_bytes([r,g,b,a])`.
+        //
+        // On little-endian targets (including wasm32), the in-memory representation of `u32`
+        // matches RGBA byte order, so we can copy the framebuffer as a raw byte slice.
+        //
+        // On big-endian targets, we must convert each pixel to little-endian bytes explicitly.
+        #[cfg(target_endian = "little")]
+        {
+            // Safety: `fb` is a valid slice of `u32` pixels (RGBA8888). Reinterpreting it as bytes
+            // preserves RGBA byte order on little-endian architectures.
+            let bytes =
+                unsafe { core::slice::from_raw_parts(fb.as_ptr() as *const u8, fb.len() * 4) };
+            bytes.to_vec()
+        }
+
+        #[cfg(not(target_endian = "little"))]
+        {
+            let mut out = Vec::with_capacity(fb.len().saturating_mul(4));
+            for &px in fb {
+                out.extend_from_slice(&px.to_le_bytes());
+            }
+            out
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Legacy VGA/SVGA scanout (BIOS text mode + VBE graphics)
     // -------------------------------------------------------------------------
 
     /// Re-render the VGA/SVGA device into its front buffer if necessary.
     ///
     /// Call this before reading the framebuffer via `vga_framebuffer_*` or before sampling
     /// `vga_width()`/`vga_height()` after the guest changes video modes.
+    ///
+    /// This is a transitional API for the legacy VGA/VBE scanout path. Prefer the unified
+    /// `display_*` methods instead.
     pub fn vga_present(&mut self) {
         let Some(vga) = self.inner.vga() else {
             return;
@@ -2658,6 +2763,8 @@ impl Machine {
     }
 
     /// Current VGA output width in pixels (0 if the machine does not have a VGA device).
+    ///
+    /// Legacy/transitional: prefer [`Machine::display_width`].
     pub fn vga_width(&self) -> u32 {
         let Some(vga) = self.inner.vga() else {
             return 0;
@@ -2667,6 +2774,8 @@ impl Machine {
     }
 
     /// Current VGA output height in pixels (0 if the machine does not have a VGA device).
+    ///
+    /// Legacy/transitional: prefer [`Machine::display_height`].
     pub fn vga_height(&self) -> u32 {
         let Some(vga) = self.inner.vga() else {
             return 0;
@@ -2676,6 +2785,8 @@ impl Machine {
     }
 
     /// Current VGA output stride in bytes (RGBA8888, tightly packed).
+    ///
+    /// Legacy/transitional: prefer [`Machine::display_stride_bytes`].
     pub fn vga_stride_bytes(&self) -> u32 {
         self.vga_width().saturating_mul(4)
     }
@@ -2683,6 +2794,8 @@ impl Machine {
     /// Pointer (into wasm linear memory) to the VGA RGBA8888 framebuffer.
     ///
     /// Returns `0` if VGA is absent.
+    ///
+    /// Legacy/transitional: prefer [`Machine::display_framebuffer_ptr`].
     ///
     /// # Safety contract (JS/host)
     /// The caller must re-query this pointer after each [`Machine::vga_present`] call because the
@@ -2705,6 +2818,8 @@ impl Machine {
     ///
     /// Returns `0` if VGA is absent.
     ///
+    /// Legacy/transitional: prefer [`Machine::display_framebuffer_len_bytes`].
+    ///
     /// The caller must re-query this length after each [`Machine::vga_present`] call because it
     /// may change (front/back swap or resize).
     pub fn vga_framebuffer_len_bytes(&self) -> u32 {
@@ -2719,6 +2834,8 @@ impl Machine {
     ///
     /// This is significantly slower than using `vga_framebuffer_ptr()`/`vga_framebuffer_len_bytes()`,
     /// but it is convenient for tests and for simple JS callers.
+    ///
+    /// Legacy/transitional: prefer [`Machine::display_framebuffer_copy_rgba8888`].
     pub fn vga_framebuffer_copy_rgba8888(&mut self) -> Vec<u8> {
         let Some(vga) = self.inner.vga() else {
             return Vec::new();
