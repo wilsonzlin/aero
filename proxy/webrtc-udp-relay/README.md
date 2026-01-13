@@ -560,6 +560,7 @@ The container + client integration uses the following environment variables and 
   - The relay requires a minimum of 100 ports when a range is configured (rule of thumb: ~100 UDP ports per ~50 concurrent sessions).
   - The provided `docker-compose.yml` defaults the relay to `50000-50100/udp` to avoid colliding
     with the coturn relay range (`49152-49200/udp`).
+- `WEBRTC_SESSION_CONNECT_TIMEOUT` (Go duration, default: `30s`): close server-side WebRTC sessions that fail to reach `PeerConnectionStateConnected` within this duration.
 - `WEBRTC_UDP_LISTEN_IP`: local IP address to bind ICE UDP sockets to (default `0.0.0.0`, meaning "use library defaults / all interfaces").
 - `WEBRTC_NAT_1TO1_IPS`: comma-separated public IPs to advertise for ICE when the relay is behind NAT.
 - `WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE`: `host` or `srflx` (default: `host`).
@@ -589,6 +590,7 @@ The container + client integration uses the following environment variables and 
 Equivalent flags:
 
 - `--webrtc-udp-port-min` / `--webrtc-udp-port-max`
+- `--webrtc-session-connect-timeout`
 - `--webrtc-udp-listen-ip`
 - `--webrtc-nat-1to1-ips`
 - `--webrtc-nat-1to1-ip-candidate-type`
