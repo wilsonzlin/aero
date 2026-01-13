@@ -19,6 +19,8 @@ Status:
 - UHCI remains the “known-good” controller for Windows 7 in-box driver binding today.
 - EHCI bring-up exists (regs + root hub), but schedule walking and snapshot support are still
   staged; see [`docs/usb-ehci.md`](./usb-ehci.md).
+- The web runtime currently exposes an xHCI *placeholder* (a minimal MMIO register file + snapshot
+  plumbing). It is not yet a functional guest-visible USB controller.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -30,7 +32,8 @@ The xHCI controller is exposed as a **PCI function** with a single MMIO BAR for 
 
 ### PCI identity (native runtime)
 
-Native (`aero_machine` / `crates/devices`) uses a stable PCI identity so guests can bind class drivers predictably.
+The repo defines a stable PCI identity for xHCI in `crates/devices` so native integrations can bind
+class drivers predictably.
 
 | Field | Value |
 |---|---|
@@ -46,10 +49,14 @@ Notes:
 - The canonical PCI identity is defined in `crates/devices/src/pci/profile.rs` as `USB_XHCI_QEMU`.
 - We currently target **legacy INTx** (level-triggered) by default instead of MSI/MSI-X (see [Unsupported features / known gaps](#unsupported-features--known-gaps)).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
+- `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
+  USB). Treat the native PCI profile as an intended contract for future wiring.
 
 ### PCI identity (web runtime)
 
-The browser/WASM runtime currently uses a different (Intel-ish) identity and BDF than the native profile. This keeps the web runtime’s PCI layout stable for its own integration tests and allows xHCI to be enabled independently of the native canonical PCI profiles.
+The browser/WASM runtime currently uses a different (Intel-ish) identity and BDF than the native
+profile. This keeps the web runtime’s PCI layout stable for its own integration tests and allows
+xHCI to be enabled independently of the native canonical PCI profiles.
 
 | Field | Value |
 |---|---|
@@ -64,27 +71,36 @@ Notes:
 
 - Web implementation: `web/src/io/devices/xhci.ts` (`XhciPciDevice`).
 - Web init wiring: `web/src/workers/io_xhci_init.ts` (attempts to initialize `XhciControllerBridge` if present in the WASM build).
+- WASM export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`). Today this
+  is a **stub** register file (byte-addressed MMIO window) with a tick counter and snapshot helpers;
+  `irq_asserted()` currently always returns `false`.
 - The web runtime currently does **not** expose MSI/MSI-X capabilities for xHCI.
 
 ---
 
-## Supported feature set (MVP)
+## Implementation status (today) vs MVP target
 
-The current xHCI effort is intentionally an **MVP** aimed at USB input bring-up and USB passthrough enablement, not full USB 3.x fidelity.
+The current xHCI effort is intentionally staged. The long-term goal is a real xHCI host controller
+for modern guests and for high-speed/superspeed passthrough, but the in-tree code today is mostly
+**scaffolding** (TRB/ring helpers + small controller stubs).
 
-At a high level, the MVP supports:
+### What exists today
 
-### Minimal controller MMIO surface
+#### Minimal controller MMIO surfaces
 
-`aero_usb::xhci::XhciController` is a deliberately small xHCI MMIO/register model. Today it provides:
+- Native/shared Rust: `aero_usb::xhci::XhciController`
+  - Minimal MMIO register file (CAPLENGTH/HCIVERSION, USBCMD, USBSTS, CRCR) with basic unaligned access handling.
+  - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
+  - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
+- Web/WASM: `aero_wasm::XhciControllerBridge`
+  - Byte-addressed MMIO register file (bounded, currently `0x4000` bytes).
+  - `tick()` counter only (no scheduling yet).
+  - Deterministic snapshot/restore of the register file + tick count.
+  - No IRQs yet (`irq_asserted()` always `false`).
 
-- A minimal MMIO register file (CAPLENGTH/HCIVERSION, USBCMD, USBSTS, CRCR) with basic unaligned access handling.
-- A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
-- A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
+These are **not** full xHCI implementations (no doorbells, no event ring, no ports, no slots).
 
-This is **not** yet a full xHCI command/transfer engine (no doorbells, no slot contexts, no event ring, no port model).
-
-### TRB + ring building blocks
+#### TRB + ring building blocks
 
 `crates/aero-usb/src/xhci/` also provides:
 
@@ -94,7 +110,7 @@ This is **not** yet a full xHCI command/transfer engine (no doorbells, no slot c
 
 These are used by tests and by higher-level “transfer engine” harnesses.
 
-### Transfer execution for non-control endpoints (Normal TRBs)
+#### Transfers (non-control endpoints via Normal TRBs)
 
 `aero_usb::xhci::transfer::XhciTransferExecutor` can execute **Normal TRBs** for non-control endpoints:
 
@@ -110,6 +126,27 @@ Key semantics:
 ### Device model layer
 
 xHCI shares the same USB device model abstractions as UHCI (`crate::UsbDeviceModel` / `device::AttachedUsbDevice`), so device work (HID descriptors, report formats, passthrough normalization) does not need to be duplicated per controller type.
+
+#### Test-only: xHCI-style command + control transfer harness
+
+`crates/aero-usb/tests/xhci_webusb_passthrough.rs` contains a small **xHCI-style** harness that
+consumes TRBs from guest memory (via `RingCursor`) and drives the existing `AttachedUsbDevice`
+control pipe:
+
+- Command ring bring-up: `Enable Slot` → `Address Device` → `Configure Endpoint`.
+- EP0 control-IN transfer built from `Setup Stage` / `Data Stage` / `Status Stage` TRBs (e.g.
+  `GET_DESCRIPTOR`).
+- Bulk IN/OUT via Normal TRBs for passthrough-style flows.
+
+This harness is a reference/validation tool; it is **not** yet integrated into the guest-visible
+MMIO controller stubs.
+
+### Still MVP-relevant but not implemented yet
+
+- Root hub + per-port register model (connect/reset/change bits, timers).
+- Doorbells, command ring + event ring, interrupters, and slot/endpoint context state machines.
+- Endpoint 0 control transfer engine wired into the controller (beyond the test harness).
+- Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
 
 ---
 
@@ -139,6 +176,9 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 - **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
   - Today, `aero_usb::xhci::XhciController` snapshots only a small subset of state (`USBCMD`, `USBSTS`, `CRCR`) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.1`.
+- The web/WASM bridge (`aero_wasm::XhciControllerBridge`) snapshots as `XHCB` (version `1.0`) and currently stores:
+  - its in-memory register byte array, and
+  - a tick counter.
 - **Host resources are not snapshotted.** Any host-side asynchronous USB work (e.g. in-flight WebUSB/WebHID requests) must be treated as **reset** across restore; the host integration is responsible for resuming forwarding after restore.
 
 Practical implication: restores are deterministic for pure-emulated devices, but passthrough devices may need re-authorization/re-attachment and may observe a transient disconnect.
