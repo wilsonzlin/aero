@@ -1422,6 +1422,9 @@ static int run_selftest(const OPTIONS *opt)
         ZeroMemory(&dev, sizeof(dev));
         dev.handle = INVALID_HANDLE_VALUE;
         sel.want_keyboard = 1;
+        sel.have_vid = 1;
+        sel.vid = VIRTIO_INPUT_VID;
+        sel.quiet = opt ? opt->quiet : 0;
 
         if (!enumerate_hid_devices(&sel, &dev)) {
             selftest_logf(L"keyboard", L"ENUM", L"FAIL", L"reason=no_matching_device");
@@ -1439,6 +1442,9 @@ static int run_selftest(const OPTIONS *opt)
         ZeroMemory(&dev, sizeof(dev));
         dev.handle = INVALID_HANDLE_VALUE;
         sel.want_mouse = 1;
+        sel.have_vid = 1;
+        sel.vid = VIRTIO_INPUT_VID;
+        sel.quiet = opt ? opt->quiet : 0;
 
         if (!enumerate_hid_devices(&sel, &dev)) {
             selftest_logf(L"mouse", L"ENUM", L"FAIL", L"reason=no_matching_device");

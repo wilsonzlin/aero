@@ -121,7 +121,9 @@ hidtest.exe --selftest --json
 
 `--selftest` exits `0` on pass and `1` on fail.
 
-`--selftest` is intentionally standalone and cannot be combined with `--vid`, `--pid`, `--index`, `--counters`, LED writes, or negative-test options.
+`--selftest` is intentionally standalone and cannot be combined with `--state`, `--list`, descriptor dump options, `--vid`, `--pid`, `--index`, counters, LED writes, or negative-test options.
+
+Tip: pass `--quiet` with `--selftest` to suppress the per-device enumeration output (leaving only the `HIDTEST|SELFTEST|...` lines).
 
 Open the virtio keyboard collection by default and read reports:
 
