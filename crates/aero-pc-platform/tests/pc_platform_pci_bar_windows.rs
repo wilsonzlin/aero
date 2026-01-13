@@ -281,6 +281,18 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
     let ecam_start = PCIE_ECAM_BASE;
     let ecam_end = ecam_start + PCIE_ECAM_SIZE;
 
+    // PCI0._CRS should not advertise the ECAM/MMCONFIG region as part of the general-purpose
+    // PCI MMIO aperture (it is described separately by MCFG). If this regresses, guests may
+    // allocate BARs into ECAM and corrupt config space accesses.
+    for w in &mmio_windows {
+        assert!(
+            !ranges_overlap(w.start, w.end, ecam_start, ecam_end),
+            "ACPI PCI0._CRS MMIO window overlaps ECAM: window=[0x{:x}..0x{:x}) ecam=[0x{ecam_start:x}..0x{ecam_end:x})",
+            w.start,
+            w.end
+        );
+    }
+
     // Ensure the allocator's entire MMIO aperture is contained within the ACPI-declared windows.
     // This makes the test fail if `PciResourceAllocatorConfig::default()` drifts outside `_CRS`,
     // even if the current set of devices doesn't allocate enough BAR space to hit the edges.
