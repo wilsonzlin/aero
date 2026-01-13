@@ -413,6 +413,11 @@ pub struct ProxyConfig {
     pub stack_max_dns_cache_entries: u32,
     pub stack_max_buffered_tcp_bytes_per_conn: u32,
 
+    /// Timeout for DNS lookups performed by the proxy (both stack DNS queries and hostname
+    /// resolution for forwarded TCP/UDP connections).
+    ///
+    /// When `None`, DNS lookups are not bounded (legacy behaviour).
+    pub dns_lookup_timeout: Option<Duration>,
     pub dns_default_ttl_secs: u32,
     pub dns_max_ttl_secs: u32,
 
@@ -523,6 +528,12 @@ impl ProxyConfig {
             64 * 1024 * 1024,
         );
 
+        // DNS lookup timeout (defense in depth against stuck resolvers / getaddrinfo).
+        let dns_lookup_timeout_ms =
+            read_env_u64_clamped("AERO_L2_DNS_LOOKUP_TIMEOUT_MS", 2000, 0, 60_000);
+        let dns_lookup_timeout =
+            (dns_lookup_timeout_ms > 0).then(|| Duration::from_millis(dns_lookup_timeout_ms));
+
         let dns_default_ttl_secs = std::env::var("AERO_L2_DNS_DEFAULT_TTL_SECS")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
@@ -568,6 +579,7 @@ impl ProxyConfig {
             stack_max_pending_dns,
             stack_max_dns_cache_entries,
             stack_max_buffered_tcp_bytes_per_conn,
+            dns_lookup_timeout,
             dns_default_ttl_secs,
             dns_max_ttl_secs,
             capture_dir,

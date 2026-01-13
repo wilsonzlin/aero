@@ -29,6 +29,7 @@ fn test_config(bind_addr: SocketAddr, shutdown_grace: Duration) -> ProxyConfig {
         stack_max_pending_dns: stack_defaults.max_pending_dns,
         stack_max_dns_cache_entries: stack_defaults.max_dns_cache_entries,
         stack_max_buffered_tcp_bytes_per_conn: stack_defaults.max_buffered_tcp_bytes_per_conn,
+        dns_lookup_timeout: Some(Duration::from_millis(2000)),
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,

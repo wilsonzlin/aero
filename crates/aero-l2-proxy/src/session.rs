@@ -19,7 +19,7 @@ use tokio::{
 };
 use tracing::Instrument;
 
-use crate::{overrides::ForwardKey, protocol, server::AppState};
+use crate::{overrides::ForwardKey, protocol, server::AppState, timeouts::timeout_opt};
 
 // Default-deny private/reserved ranges in the stack itself so we can drop obviously-invalid
 // connections early (before creating any tokio socket state).
@@ -832,13 +832,23 @@ async fn process_actions(
                 let event_tx = event_tx.clone();
                 let metrics = state.metrics.clone();
                 let timeout_dur = state.cfg.tcp_connect_timeout;
+                let dns_lookup_timeout = state.cfg.dns_lookup_timeout;
 
                 let target = forward
                     .map(|f| (f.host, f.port))
                     .unwrap_or_else(|| (remote_ip.to_string(), remote_port));
 
                 let task = tokio::spawn(async move {
-                    tcp_task(connection_id, target, rx, event_tx, timeout_dur, metrics).await;
+                    tcp_task(
+                        connection_id,
+                        target,
+                        rx,
+                        event_tx,
+                        timeout_dur,
+                        dns_lookup_timeout,
+                        metrics,
+                    )
+                    .await;
                 });
 
                 tcp_conns.insert(connection_id, TcpConnHandle { tx, task });
@@ -909,7 +919,21 @@ async fn process_actions(
                         .map(|f| (f.host, f.port))
                         .unwrap_or_else(|| (dst_ip.to_string(), dst_port));
                     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
-                    let remote_addr = resolve_host_port(&remote.0, remote.1).await?;
+                    let remote_addr = match resolve_host_port(
+                        &remote.0,
+                        remote.1,
+                        state.cfg.dns_lookup_timeout,
+                    )
+                    .await
+                    {
+                        Ok(addr) => addr,
+                        Err(err) => {
+                            if err.kind() == std::io::ErrorKind::TimedOut {
+                                state.metrics.dns_fail();
+                            }
+                            return Err(err.into());
+                        }
+                    };
                     socket.connect(remote_addr).await?;
                     let socket = std::sync::Arc::new(socket);
                     let socket_task = socket.clone();
@@ -1010,11 +1034,15 @@ async fn tcp_task(
     mut rx: mpsc::Receiver<TcpOutMsg>,
     event_tx: mpsc::Sender<SessionEvent>,
     connect_timeout: std::time::Duration,
+    dns_lookup_timeout: Option<Duration>,
     metrics: crate::metrics::Metrics,
 ) {
-    let addr = match resolve_host_port(&target.0, target.1).await {
+    let addr = match resolve_host_port(&target.0, target.1, dns_lookup_timeout).await {
         Ok(addr) => addr,
-        Err(_) => {
+        Err(err) => {
+            if err.kind() == std::io::ErrorKind::TimedOut {
+                metrics.dns_fail();
+            }
             metrics.tcp_connect_failed();
             let _ = event_tx
                 .send(SessionEvent::Tcp(TcpProxyEvent::Error { connection_id }))
@@ -1166,13 +1194,26 @@ async fn udp_task(
     }
 }
 
-async fn resolve_host_port(host: &str, port: u16) -> std::io::Result<SocketAddr> {
+async fn resolve_host_port(
+    host: &str,
+    port: u16,
+    dns_lookup_timeout: Option<Duration>,
+) -> std::io::Result<SocketAddr> {
     // Allow direct numeric IPs without DNS lookups.
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(SocketAddr::new(ip, port));
     }
 
-    let addrs = tokio::net::lookup_host((host, port)).await?;
+    let addrs = match timeout_opt(dns_lookup_timeout, tokio::net::lookup_host((host, port))).await
+    {
+        Ok(res) => res?,
+        Err(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "DNS lookup timed out",
+            ))
+        }
+    };
     // The proxy stack is IPv4-only today (guest addresses and policy enforcement), so prefer IPv4
     // results when available. This avoids surprises where `localhost` resolves to `::1` first and
     // a service is bound only on `127.0.0.1`.
@@ -1291,7 +1332,7 @@ mod tests {
             "localhost must resolve to at least one address"
         );
 
-        let resolved = resolve_host_port("localhost", port)
+        let resolved = resolve_host_port("localhost", port, None)
             .await
             .expect("resolve_host_port");
 

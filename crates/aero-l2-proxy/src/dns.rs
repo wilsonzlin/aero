@@ -8,12 +8,15 @@ use std::{
 use anyhow::Result;
 use trust_dns_resolver::TokioAsyncResolver;
 
+use crate::timeouts::timeout_opt;
+
 #[derive(Debug, Clone)]
 pub struct DnsService {
     resolver: TokioAsyncResolver,
     static_a: HashMap<String, Ipv4Addr>,
     default_ttl_secs: u32,
     max_ttl_secs: u32,
+    lookup_timeout: Option<Duration>,
 }
 
 impl DnsService {
@@ -21,6 +24,7 @@ impl DnsService {
         static_a: HashMap<String, Ipv4Addr>,
         default_ttl_secs: u32,
         max_ttl_secs: u32,
+        lookup_timeout: Option<Duration>,
     ) -> Result<Self> {
         let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap_or_else(|err| {
             tracing::warn!(
@@ -36,6 +40,7 @@ impl DnsService {
             static_a,
             default_ttl_secs,
             max_ttl_secs,
+            lookup_timeout,
         })
     }
 
@@ -50,8 +55,13 @@ impl DnsService {
             return Ok((Some(ip), self.default_ttl_secs, true));
         }
 
-        match self.resolver.ipv4_lookup(name_norm.as_ref()).await {
-            Ok(lookup) => {
+        match timeout_opt(
+            self.lookup_timeout,
+            self.resolver.ipv4_lookup(name_norm.as_ref()),
+        )
+        .await
+        {
+            Ok(Ok(lookup)) => {
                 let ip = lookup.iter().next().map(|a| a.0);
                 let ttl = ttl_secs_from_valid_until(
                     Some(lookup.valid_until()),
@@ -60,7 +70,7 @@ impl DnsService {
                 );
                 Ok((ip, ttl, false))
             }
-            Err(_err) => Ok((None, 0, false)),
+            Ok(Err(_)) | Err(_) => Ok((None, 0, false)),
         }
     }
 }

@@ -8,6 +8,8 @@ mod gateway_session;
 mod metrics;
 #[cfg(not(target_arch = "wasm32"))]
 mod pcapng;
+#[cfg(not(target_arch = "wasm32"))]
+mod timeouts;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod auth;

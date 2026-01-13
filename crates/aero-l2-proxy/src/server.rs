@@ -104,6 +104,7 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
         cfg.test_overrides.dns_a.clone(),
         cfg.dns_default_ttl_secs,
         cfg.dns_max_ttl_secs,
+        cfg.dns_lookup_timeout,
     )
     .map_err(std::io::Error::other)?;
 

@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::sync::Mutex;
+use std::{sync::Mutex, time::Duration};
 
 use aero_l2_proxy::{AuthMode, ProxyConfig, SecurityConfig};
 
@@ -58,6 +58,7 @@ fn reset_common_env() -> Vec<EnvVarGuard> {
         EnvVarGuard::unset("AERO_L2_CAPTURE_DIR"),
         EnvVarGuard::unset("AERO_L2_CAPTURE_MAX_BYTES"),
         EnvVarGuard::unset("AERO_L2_CAPTURE_FLUSH_INTERVAL_MS"),
+        EnvVarGuard::unset("AERO_L2_DNS_LOOKUP_TIMEOUT_MS"),
     ]
 }
 
@@ -278,4 +279,35 @@ fn proxy_config_accepts_custom_l2_payload_limits() {
     let cfg = ProxyConfig::from_env().expect("expected config to accept custom payload limits");
     assert_eq!(cfg.l2_max_frame_payload, 1234);
     assert_eq!(cfg.l2_max_control_payload, 99);
+}
+
+#[test]
+fn proxy_config_dns_lookup_timeout_can_be_disabled_and_is_clamped() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guards = reset_common_env();
+
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _insecure = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
+
+    {
+        let _dns_timeout = EnvVarGuard::set("AERO_L2_DNS_LOOKUP_TIMEOUT_MS", "0");
+        let cfg = ProxyConfig::from_env().expect("parse config");
+        assert!(
+            cfg.dns_lookup_timeout.is_none(),
+            "expected AERO_L2_DNS_LOOKUP_TIMEOUT_MS=0 to disable the timeout"
+        );
+    }
+
+    {
+        let _dns_timeout = EnvVarGuard::set("AERO_L2_DNS_LOOKUP_TIMEOUT_MS", "1234");
+        let cfg = ProxyConfig::from_env().expect("parse config");
+        assert_eq!(cfg.dns_lookup_timeout, Some(Duration::from_millis(1234)));
+    }
+
+    {
+        // Values above the max should be clamped.
+        let _dns_timeout = EnvVarGuard::set("AERO_L2_DNS_LOOKUP_TIMEOUT_MS", "999999");
+        let cfg = ProxyConfig::from_env().expect("parse config");
+        assert_eq!(cfg.dns_lookup_timeout, Some(Duration::from_millis(60_000)));
+    }
 }
