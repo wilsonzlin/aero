@@ -218,14 +218,6 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_uhci: bool,
-    /// Whether to expose the canonical AeroGPU PCI identity at `00:07.0`
-    /// (`aero_devices::pci::profile::AEROGPU.bdf`, `VID:DID = A3A0:0001`).
-    ///
-    /// This is currently a **config-space only** placeholder: BARs are enumerated and assigned by
-    /// firmware/BIOS POST, but no MMIO BAR handler is wired yet.
-    ///
-    /// Requires [`MachineConfig::enable_pc_platform`].
-    pub enable_aerogpu: bool,
     /// Whether to attach the legacy VGA/VBE device model.
     ///
     /// This is the transitional standalone VGA/VBE path used for BIOS/boot display and VGA-focused
@@ -306,7 +298,6 @@ impl Default for MachineConfig {
             enable_virtio_blk: false,
             enable_virtio_input: false,
             enable_uhci: false,
-            enable_aerogpu: false,
             enable_vga: true,
             enable_aerogpu: false,
             enable_serial: true,
@@ -354,7 +345,6 @@ impl MachineConfig {
             enable_virtio_blk: false,
             enable_virtio_input: false,
             enable_uhci: false,
-            enable_aerogpu: false,
             enable_vga: true,
             enable_aerogpu: false,
             enable_serial: true,
@@ -1744,28 +1734,6 @@ impl MmioHandler for VgaMmio {
 // PCI stub is intentionally not installed.
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
-
-struct AerogpuPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AerogpuPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for AerogpuPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
 
 struct VgaPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
@@ -5338,13 +5306,6 @@ impl Machine {
                 }
             };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
-
-            if self.cfg.enable_aerogpu {
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    aero_devices::pci::profile::AEROGPU.bdf,
-                    Box::new(AerogpuPciConfigDevice::new()),
-                );
-            }
 
             if use_legacy_vga {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
