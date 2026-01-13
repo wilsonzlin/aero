@@ -462,7 +462,7 @@ Relay → client:
 }
 ```
 
-This endpoint waits for ICE gathering to complete so that candidates are embedded in the SDP.
+The server waits up to a small timeout (configurable; default ~2s) for ICE gathering to complete so that candidates are embedded in the returned SDP. If gathering does not complete in time, the server returns an answer anyway; the returned SDP may be missing candidates and connectivity may fail.
 
 ### WebSocket signaling (trickle ICE)
 

@@ -108,6 +108,8 @@ type Server struct {
 	preSessions    []*relay.Session
 }
 
+var gatheringCompletePromise = webrtc.GatheringCompletePromise
+
 func NewServer(cfg Config) *Server {
 	return &Server{
 		Sessions:             cfg.Sessions,
@@ -398,17 +400,25 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gatherComplete := webrtc.GatheringCompletePromise(pc)
+	gatherComplete := gatheringCompletePromise(pc)
 	if err := pc.SetLocalDescription(answer); err != nil {
 		_ = sess.Close()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to set local description")
 		return
 	}
+
+	waitCtx, cancel := context.WithTimeout(r.Context(), s.iceGatheringTimeout())
+	defer cancel()
 	select {
 	case <-gatherComplete:
-	case <-r.Context().Done():
-		_ = sess.Close()
-		return
+	case <-waitCtx.Done():
+		// If the request is canceled (client disconnected), abort without writing a
+		// response; otherwise return the best-effort SDP even if ICE gathering isn't
+		// complete yet (matching /webrtc/offer fallback behavior).
+		if r.Context().Err() != nil {
+			_ = sess.Close()
+			return
+		}
 	}
 
 	local := pc.LocalDescription()
@@ -520,7 +530,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gatherComplete := webrtc.GatheringCompletePromise(pc)
+	gatherComplete := gatheringCompletePromise(pc)
 	if err := pc.SetLocalDescription(answer); err != nil {
 		_ = sess.Close()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
