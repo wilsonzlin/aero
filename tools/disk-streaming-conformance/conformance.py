@@ -12,11 +12,15 @@ No third-party dependencies; Python stdlib only.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
+import random
 import re
 import sys
 import textwrap
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Mapping, Sequence
@@ -170,6 +174,56 @@ def _fmt_bytes(n: int) -> str:
     if unit == "B":
         return f"{n} B"
     return f"{value:.2f} {unit}"
+
+
+@dataclass(frozen=True)
+class ChunkedDiskManifest:
+    """
+    Parsed + validated chunked disk image manifest (aero.chunked-disk-image.v1).
+
+    This mirrors the schema used by `web/src/storage/remote_chunked_disk.ts` and
+    `services/image-gateway/openapi.yaml`.
+    """
+
+    version: str
+    mime_type: str
+    total_size: int
+    chunk_size: int
+    chunk_count: int
+    chunk_index_width: int
+    chunk_sizes: list[int]
+    chunk_sha256: list[str | None]
+
+
+def _sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _derive_manifest_url_from_base_url(base_url: str) -> str:
+    """
+    Given a chunked base URL (prefix), derive `<base>/manifest.json`.
+
+    Notes:
+    - `base_url` is treated as a directory prefix, not a file.
+    - Query string is preserved (useful for some signed URL schemes).
+    """
+
+    parts = urllib.parse.urlsplit(base_url)
+    base_path = parts.path
+    if not base_path.endswith("/"):
+        base_path += "/"
+    manifest_path = base_path + "manifest.json"
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, manifest_path, parts.query, parts.fragment))
+
+
+def _derive_chunk_url(*, manifest_url: str, chunk_index: int, chunk_index_width: int) -> str:
+    name = str(chunk_index).zfill(chunk_index_width)
+    parts = urllib.parse.urlsplit(manifest_url)
+    path = parts.path
+    prefix = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+    chunk_path = f"{prefix}chunks/{name}.bin"
+    # Preserve querystring auth material (e.g. signed URLs), matching the browser client.
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, chunk_path, parts.query, parts.fragment))
 
 
 class TestFailure(Exception):
@@ -785,10 +839,13 @@ def _test_options_preflight_if_modified_since(
         return TestResult(name=name, status="WARN", details=str(e))
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    env_mode = os.environ.get("MODE")
     env_base_url = os.environ.get("BASE_URL")
+    env_manifest_url = os.environ.get("MANIFEST_URL")
     env_token = os.environ.get("TOKEN")
     env_origin = os.environ.get("ORIGIN")
     env_max_body_bytes = os.environ.get("MAX_BODY_BYTES")
+    env_max_bytes_per_chunk = os.environ.get("MAX_BYTES_PER_CHUNK")
 
     parser = argparse.ArgumentParser(
         prog="disk-streaming-conformance",
@@ -797,12 +854,42 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
             """\
             Disk image streaming endpoint conformance checks.
 
-            Required: BASE_URL / --base-url
+            Modes:
+              - range   (default): HTTP Range-based streaming endpoint
+              - chunked: chunked disk image delivery (manifest + chunks/, no Range)
+
+            Required (range mode): BASE_URL / --base-url
+            Required (chunked mode): MANIFEST_URL / --manifest-url OR BASE_URL / --base-url (prefix containing manifest.json)
+
             Optional: TOKEN / --token, ORIGIN / --origin
             """
         ),
     )
-    parser.add_argument("--base-url", default=env_base_url, help="Base URL to the disk image (env: BASE_URL)")
+    env_mode_norm = env_mode.strip().lower() if env_mode else ""
+    if env_mode_norm not in ("range", "chunked"):
+        env_mode_norm = ""
+    parser.add_argument(
+        "--mode",
+        choices=["range", "chunked"],
+        default=env_mode_norm or "range",
+        help="Conformance mode (env: MODE; default: range)",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=env_base_url,
+        help=(
+            "Range mode: base URL to the disk image bytes endpoint. "
+            "Chunked mode: base URL prefix containing manifest.json + chunks/ (env: BASE_URL)"
+        ),
+    )
+    parser.add_argument(
+        "--manifest-url",
+        default=env_manifest_url,
+        help=(
+            "Chunked mode: explicit manifest URL (env: MANIFEST_URL). "
+            "If omitted, the tool will fetch <base-url>/manifest.json."
+        ),
+    )
     parser.add_argument("--token", default=env_token, help="Auth token or full Authorization header value (env: TOKEN)")
     parser.add_argument(
         "--origin",
@@ -810,20 +897,50 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Origin to simulate for CORS (env: ORIGIN; default: https://example.com)",
     )
     parser.add_argument("--timeout", type=float, default=30.0, help="Request timeout in seconds (default: 30)")
-    default_max_body_bytes = 1024 * 1024
+
+    # In range mode, reads are capped at 1MiB by default because a bug can trigger a full-disk
+    # download (20–40GB). In chunked mode we intentionally fetch whole chunks, so default higher.
+    default_max_body_bytes_range = 1024 * 1024
+    default_max_body_bytes_chunked = 8 * 1024 * 1024
+    default_max_body_bytes_env: int | None = None
     if env_max_body_bytes is not None and env_max_body_bytes.strip() != "":
         try:
-            default_max_body_bytes = int(env_max_body_bytes)
+            default_max_body_bytes_env = int(env_max_body_bytes)
         except ValueError:
             parser.error(f"Invalid MAX_BODY_BYTES {env_max_body_bytes!r} (expected integer)")
     parser.add_argument(
         "--max-body-bytes",
         type=int,
-        default=default_max_body_bytes,
+        default=None,
         help=(
             "Maximum response body bytes to read per request "
-            f"(env: MAX_BODY_BYTES; default: {default_max_body_bytes}). "
+            f"(env: MAX_BODY_BYTES; default: {default_max_body_bytes_range} for range mode, "
+            f"{default_max_body_bytes_chunked} for chunked mode). "
             "The tool caps reads to avoid accidentally downloading full disk images."
+        ),
+    )
+    default_max_bytes_per_chunk = 8 * 1024 * 1024
+    if env_max_bytes_per_chunk is not None and env_max_bytes_per_chunk.strip() != "":
+        try:
+            default_max_bytes_per_chunk = int(env_max_bytes_per_chunk)
+        except ValueError:
+            parser.error(f"Invalid MAX_BYTES_PER_CHUNK {env_max_bytes_per_chunk!r} (expected integer)")
+    parser.add_argument(
+        "--max-bytes-per-chunk",
+        type=int,
+        default=default_max_bytes_per_chunk,
+        help=(
+            "Chunked mode safety cap: refuse to download chunk objects larger than this. "
+            f"(env: MAX_BYTES_PER_CHUNK; default: {default_max_bytes_per_chunk})."
+        ),
+    )
+    parser.add_argument(
+        "--sample-chunks",
+        type=int,
+        default=0,
+        help=(
+            "Chunked mode: fetch N additional pseudo-random chunks in addition to first+last "
+            "(default: 0)."
         ),
     )
     parser.add_argument(
@@ -846,9 +963,35 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
 
-    if not args.base_url:
-        parser.error("Missing --base-url (or env BASE_URL)")
-    args.base_url = args.base_url.strip()
+    if args.base_url is not None:
+        args.base_url = args.base_url.strip()
+        if args.base_url == "":
+            args.base_url = None
+    if args.manifest_url is not None:
+        args.manifest_url = args.manifest_url.strip()
+        if args.manifest_url == "":
+            args.manifest_url = None
+
+    if args.mode == "range":
+        if not args.base_url:
+            parser.error("Missing --base-url (or env BASE_URL)")
+    elif args.mode == "chunked":
+        if not args.manifest_url and not args.base_url:
+            parser.error("Missing --manifest-url (or env MANIFEST_URL) or --base-url (or env BASE_URL)")
+
+    if args.max_body_bytes is None:
+        if default_max_body_bytes_env is not None:
+            args.max_body_bytes = default_max_body_bytes_env
+        else:
+            args.max_body_bytes = default_max_body_bytes_chunked if args.mode == "chunked" else default_max_body_bytes_range
+
+    if args.max_body_bytes <= 0:
+        parser.error("--max-body-bytes must be > 0")
+    if args.max_bytes_per_chunk <= 0:
+        parser.error("--max-bytes-per-chunk must be > 0")
+    if args.sample_chunks < 0:
+        parser.error("--sample-chunks must be >= 0")
+
     args.origin = args.origin.strip()
     if args.origin == "":
         args.origin = None
@@ -860,8 +1003,6 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         args.expect_corp = args.expect_corp.strip()
         if args.expect_corp == "":
             args.expect_corp = None
-    if args.max_body_bytes <= 0:
-        parser.error("--max-body-bytes must be > 0")
     return args
 
 
@@ -1500,8 +1641,562 @@ def _test_private_cache_control(
         return TestResult(name=name, status="FAIL", details=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Chunked disk image conformance (manifest.json + chunks/, no Range)
+# ---------------------------------------------------------------------------
+
+
+def _json_int(value: object, *, name: str) -> int:
+    # JSON numbers should parse as Python ints; reject floats/bools for conformance.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TestFailure(f"{name} must be an integer, got {type(value).__name__}")
+    return int(value)
+
+
+def _parse_chunked_manifest_v1(raw: object) -> ChunkedDiskManifest:
+    if not isinstance(raw, dict):
+        raise TestFailure("manifest.json must be a JSON object")
+
+    schema = raw.get("schema")
+    _require(schema == "aero.chunked-disk-image.v1", f"unsupported manifest schema {schema!r}")
+
+    version = raw.get("version")
+    _require(isinstance(version, str) and version.strip(), "manifest.version must be a non-empty string")
+
+    mime_type = raw.get("mimeType")
+    _require(isinstance(mime_type, str) and mime_type.strip(), "manifest.mimeType must be a non-empty string")
+
+    total_size = _json_int(raw.get("totalSize"), name="totalSize")
+    chunk_size = _json_int(raw.get("chunkSize"), name="chunkSize")
+    chunk_count = _json_int(raw.get("chunkCount"), name="chunkCount")
+    chunk_index_width = _json_int(raw.get("chunkIndexWidth"), name="chunkIndexWidth")
+
+    _require(total_size > 0, f"totalSize must be > 0, got {total_size}")
+    _require(total_size % 512 == 0, f"totalSize must be a multiple of 512, got {total_size}")
+    _require(chunk_size > 0, f"chunkSize must be > 0, got {chunk_size}")
+    _require(chunk_size % 512 == 0, f"chunkSize must be a multiple of 512, got {chunk_size}")
+    _require(chunk_count > 0, f"chunkCount must be > 0, got {chunk_count}")
+    _require(chunk_index_width > 0, f"chunkIndexWidth must be > 0, got {chunk_index_width}")
+
+    expected_chunk_count = (total_size + chunk_size - 1) // chunk_size
+    _require(
+        chunk_count == expected_chunk_count,
+        f"chunkCount mismatch: expected={expected_chunk_count} manifest={chunk_count}",
+    )
+
+    min_width = len(str(chunk_count - 1))
+    _require(
+        chunk_index_width >= min_width,
+        f"chunkIndexWidth too small: need>={min_width} got={chunk_index_width}",
+    )
+
+    last_chunk_size = total_size - chunk_size * (chunk_count - 1)
+    _require(
+        0 < last_chunk_size <= chunk_size,
+        f"invalid final chunk size: derived={last_chunk_size} chunkSize={chunk_size}",
+    )
+
+    chunks = raw.get("chunks")
+    chunk_sizes: list[int] = []
+    chunk_sha256: list[str | None] = []
+
+    if chunks is None:
+        chunk_sizes = [chunk_size] * chunk_count
+        chunk_sizes[-1] = last_chunk_size
+        chunk_sha256 = [None] * chunk_count
+    else:
+        _require(isinstance(chunks, list), "chunks must be an array when present")
+        _require(len(chunks) == chunk_count, f"chunks.length mismatch: expected={chunk_count} actual={len(chunks)}")
+        for i, item in enumerate(chunks):
+            _require(isinstance(item, dict), f"chunks[{i}] must be a JSON object")
+
+            if "size" not in item:
+                raise TestFailure(f"chunks[{i}].size is required when chunks[] is present")
+            size = _json_int(item.get("size"), name=f"chunks[{i}].size")
+            _require(size > 0, f"chunks[{i}].size must be > 0, got {size}")
+            if i < chunk_count - 1:
+                _require(
+                    size == chunk_size,
+                    f"chunks[{i}].size mismatch: expected={chunk_size} actual={size}",
+                )
+            else:
+                _require(
+                    size == last_chunk_size,
+                    f"chunks[{i}].size mismatch: expected={last_chunk_size} actual={size}",
+                )
+            chunk_sizes.append(size)
+
+            sha = item.get("sha256")
+            if sha is None:
+                chunk_sha256.append(None)
+            else:
+                _require(isinstance(sha, str), f"chunks[{i}].sha256 must be a string")
+                normalized = sha.strip().lower()
+                _require(
+                    re.fullmatch(r"[0-9a-f]{64}", normalized) is not None,
+                    f"chunks[{i}].sha256 must be a 64-char hex string, got {sha!r}",
+                )
+                chunk_sha256.append(normalized)
+
+    _require(sum(chunk_sizes) == total_size, f"chunk sizes do not sum to totalSize: sum={sum(chunk_sizes)} totalSize={total_size}")
+
+    return ChunkedDiskManifest(
+        version=version.strip(),
+        mime_type=mime_type.strip(),
+        total_size=total_size,
+        chunk_size=chunk_size,
+        chunk_count=chunk_count,
+        chunk_index_width=chunk_index_width,
+        chunk_sizes=chunk_sizes,
+        chunk_sha256=chunk_sha256,
+    )
+
+
+def _test_chunked_manifest_fetch(
+    *,
+    manifest_url: str,
+    origin: str | None,
+    authorization: str | None,
+    timeout_s: float,
+    max_body_bytes: int,
+) -> tuple[TestResult, HttpResponse | None, object | None]:
+    name = "manifest: GET returns 200 and parses JSON"
+    try:
+        headers: dict[str, str] = {"Accept-Encoding": "identity"}
+        if origin is not None:
+            headers["Origin"] = origin
+        if authorization is not None:
+            headers["Authorization"] = authorization
+
+        resp = _request(
+            url=manifest_url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
+        )
+        _require(200 <= resp.status < 300, f"expected 2xx, got {resp.status}")
+        if resp.body_truncated:
+            raise TestFailure(
+                "manifest response body was truncated by safety cap; "
+                f"read {len(resp.body)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
+                "Increase --max-body-bytes to debug."
+            )
+
+        try:
+            text = resp.body.decode("utf-8")
+        except UnicodeDecodeError:
+            raise TestFailure("manifest body is not valid UTF-8") from None
+
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise TestFailure(f"manifest body is not valid JSON: {e}") from None
+
+        return TestResult(name=name, status="PASS", details=f"bytes={len(resp.body)}"), resp, raw
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e)), None, None
+
+
+def _test_chunked_manifest_schema(*, raw: object | None) -> tuple[TestResult, ChunkedDiskManifest | None]:
+    name = "manifest: schema aero.chunked-disk-image.v1 and size/count consistency"
+    if raw is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no manifest JSON)"), None
+    try:
+        manifest = _parse_chunked_manifest_v1(raw)
+        return (
+            TestResult(
+                name=name,
+                status="PASS",
+                details=(
+                    f"totalSize={manifest.total_size} ({_fmt_bytes(manifest.total_size)}), "
+                    f"chunkSize={manifest.chunk_size} ({_fmt_bytes(manifest.chunk_size)}), "
+                    f"chunkCount={manifest.chunk_count}"
+                ),
+            ),
+            manifest,
+        )
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e)), None
+
+
+def _test_chunked_content_type(
+    *,
+    name: str,
+    resp: HttpResponse | None,
+    expected: str,
+) -> TestResult:
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    try:
+        ct = _header(resp, "Content-Type")
+        _require(ct is not None, "missing Content-Type")
+        media = _media_type(ct)
+        _require(media == expected, f"expected Content-Type {expected!r}, got {ct!r}")
+        return TestResult(name=name, status="PASS", details=f"Content-Type={ct!r}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_chunked_chunk_encoding(*, name: str, resp: HttpResponse | None) -> TestResult:
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    try:
+        content_encoding = _header(resp, "Content-Encoding")
+        if content_encoding is None:
+            return TestResult(name=name, status="PASS", details="(absent)")
+        encodings = _csv_tokens(content_encoding)
+        _require(encodings == {"identity"}, f"expected Content-Encoding absent or 'identity', got {content_encoding!r}")
+        return TestResult(name=name, status="PASS", details=f"value={content_encoding!r}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_cache_control_immutable(
+    *,
+    name: str,
+    resp: HttpResponse | None,
+    strict: bool,
+    require_no_transform: bool,
+) -> TestResult:
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    cache_control = _header(resp, "Cache-Control")
+    if cache_control is None:
+        msg = "missing Cache-Control (recommended: include immutable)"
+        return TestResult(name=name, status="FAIL" if strict else "WARN", details=msg)
+    tokens = _csv_tokens(cache_control)
+    issues: list[str] = []
+    if "immutable" not in tokens:
+        issues.append(f"Cache-Control missing immutable: {cache_control!r}")
+    if require_no_transform and "no-transform" not in tokens:
+        issues.append(f"Cache-Control missing no-transform: {cache_control!r}")
+    if issues:
+        return TestResult(name=name, status="FAIL" if strict else "WARN", details="; ".join(issues))
+    return TestResult(name=name, status="PASS", details=f"Cache-Control={cache_control!r}")
+
+
+def _test_cors_allow_origin(*, name: str, resp: HttpResponse | None, origin: str | None) -> TestResult:
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    try:
+        _require_allow_origin(resp, origin)
+        allow_origin = _header(resp, "Access-Control-Allow-Origin") or ""
+        return TestResult(name=name, status="PASS", details=f"Allow-Origin={allow_origin!r}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
+def _test_cors_expose_etag_if_present(*, name: str, resp: HttpResponse | None, origin: str | None) -> TestResult:
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    etag = _header(resp, "ETag")
+    if etag is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no ETag header)")
+    expose = _header(resp, "Access-Control-Expose-Headers")
+    if expose is None:
+        return TestResult(
+            name=name,
+            status="WARN",
+            details="ETag is present but Access-Control-Expose-Headers is missing (browsers won't expose ETag to JS)",
+        )
+    tokens = _csv_tokens(expose)
+    if "*" in tokens or "etag" in tokens:
+        return TestResult(name=name, status="PASS", details=f"Expose-Headers={expose!r}")
+    return TestResult(name=name, status="WARN", details=f"ETag not exposed via Access-Control-Expose-Headers: {expose!r}")
+
+
+def _main_chunked(args: argparse.Namespace) -> int:
+    origin: str | None = args.origin
+    timeout_s: float = args.timeout
+    strict: bool = bool(args.strict)
+    expect_corp: str | None = args.expect_corp
+    max_body_bytes: int = int(args.max_body_bytes)
+    max_bytes_per_chunk: int = int(args.max_bytes_per_chunk)
+    sample_chunks: int = int(args.sample_chunks)
+
+    token: str | None = args.token
+    authorization: str | None = _authorization_value(token) if token else None
+
+    manifest_url: str | None = args.manifest_url
+    base_url: str | None = args.base_url
+    if manifest_url is None:
+        _require(base_url is not None, "internal error: missing base_url/manifest_url for chunked mode")
+        manifest_url = _derive_manifest_url_from_base_url(base_url)
+
+    print("Disk streaming conformance (chunked)")
+    print(f"  MANIFEST_URL: {manifest_url}")
+    if base_url is not None:
+        print(f"  BASE_URL:     {base_url}")
+    print(f"  ORIGIN:       {origin or '(none)'}")
+    print(f"  STRICT:       {strict}")
+    print(f"  CORP:         {expect_corp or '(not required)'}")
+    print(f"  MAX_BODY_BYTES:       {max_body_bytes} ({_fmt_bytes(max_body_bytes)})")
+    print(f"  MAX_BYTES_PER_CHUNK:  {max_bytes_per_chunk} ({_fmt_bytes(max_bytes_per_chunk)})")
+    print(f"  SAMPLE_CHUNKS: {sample_chunks}")
+    if authorization is None:
+        print("  AUTH:         (none)")
+    else:
+        print("  AUTH:         provided (token hidden)")
+    print()
+
+    results: list[TestResult] = []
+
+    manifest_get, manifest_resp, manifest_json = _test_chunked_manifest_fetch(
+        manifest_url=manifest_url,
+        origin=origin,
+        authorization=authorization,
+        timeout_s=timeout_s,
+        max_body_bytes=max_body_bytes,
+    )
+    results.append(manifest_get)
+
+    manifest_schema, manifest = _test_chunked_manifest_schema(raw=manifest_json)
+    results.append(manifest_schema)
+
+    # Manifest headers.
+    results.append(
+        _test_chunked_content_type(
+            name="manifest: Content-Type is application/json",
+            resp=manifest_resp,
+            expected="application/json",
+        )
+    )
+    results.append(
+        _test_cache_control_immutable(
+            name="manifest: Cache-Control includes immutable",
+            resp=manifest_resp,
+            strict=strict,
+            require_no_transform=False,
+        )
+    )
+    results.append(
+        _test_cors_allow_origin(
+            name="manifest: CORS allows origin",
+            resp=manifest_resp,
+            origin=origin,
+        )
+    )
+    results.append(
+        _test_cors_expose_etag_if_present(
+            name="manifest: CORS exposes ETag when present",
+            resp=manifest_resp,
+            origin=origin,
+        )
+    )
+    results.append(
+        _test_corp_header(
+            name="manifest: Cross-Origin-Resource-Policy is set",
+            resp=manifest_resp,
+            expect_corp=expect_corp,
+        )
+    )
+
+    # Chunk checks.
+    if manifest is None:
+        results.append(TestResult(name="chunks: fetch sample chunks", status="SKIP", details="skipped (no valid manifest)"))
+    else:
+        max_declared = max(manifest.chunk_sizes) if manifest.chunk_sizes else 0
+        caps_ok = max_declared <= max_bytes_per_chunk and max_declared <= max_body_bytes
+        if not caps_ok:
+            results.append(
+                TestResult(
+                    name="chunks: size within safety caps",
+                    status="FAIL",
+                    details=(
+                        f"chunk size {max_declared} ({_fmt_bytes(max_declared)}) exceeds "
+                        f"--max-bytes-per-chunk ({_fmt_bytes(max_bytes_per_chunk)}) "
+                        f"or --max-body-bytes ({_fmt_bytes(max_body_bytes)}). "
+                        "Increase caps to run conformance."
+                    ),
+                )
+            )
+            results.append(
+                TestResult(
+                    name="chunks: fetch sample chunks",
+                    status="SKIP",
+                    details="skipped (safety caps too low)",
+                )
+            )
+        else:
+            results.append(
+                TestResult(
+                    name="chunks: size within safety caps",
+                    status="PASS",
+                    details=f"maxChunkSize={max_declared} ({_fmt_bytes(max_declared)})",
+                )
+            )
+
+            indices: set[int] = set()
+            if manifest.chunk_count > 0:
+                indices.add(0)
+                indices.add(manifest.chunk_count - 1)
+
+            extra_count = min(sample_chunks, max(0, manifest.chunk_count - len(indices)))
+            if extra_count > 0 and manifest.chunk_count > 2:
+                seed_material = f"{manifest.version}\n{manifest_url}".encode("utf-8")
+                seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
+                rng = random.Random(seed)
+                indices.update(rng.sample(range(1, manifest.chunk_count - 1), extra_count))
+
+            for chunk_index in sorted(indices):
+                label = str(chunk_index).zfill(manifest.chunk_index_width)
+                chunk_url = _derive_chunk_url(
+                    manifest_url=manifest_url,
+                    chunk_index=chunk_index,
+                    chunk_index_width=manifest.chunk_index_width,
+                )
+                expected_len = manifest.chunk_sizes[chunk_index]
+
+                # Fetch chunk.
+                chunk_resp: HttpResponse | None = None
+                chunk_body_ok = False
+                try:
+                    headers: dict[str, str] = {"Accept-Encoding": "identity"}
+                    if origin is not None:
+                        headers["Origin"] = origin
+                    if authorization is not None:
+                        headers["Authorization"] = authorization
+
+                    # Read up to expected_len+1 so we can detect accidental extra bytes when
+                    # Content-Length is missing.
+                    cap = min(max_body_bytes, max_bytes_per_chunk, expected_len + 1)
+                    resp = _request(
+                        url=chunk_url,
+                        method="GET",
+                        headers=headers,
+                        timeout_s=timeout_s,
+                        max_body_bytes=cap,
+                    )
+                    chunk_resp = resp
+
+                    _require(resp.status == 200, f"expected 200, got {resp.status}")
+                    if resp.body_truncated:
+                        raise TestFailure(
+                            "chunk response body was truncated by safety cap; "
+                            f"expected {expected_len} bytes but only read {len(resp.body)} bytes "
+                            f"(cap {_fmt_bytes(cap)})."
+                        )
+                    if len(resp.body) > expected_len:
+                        raise TestFailure(
+                            f"server returned more bytes than expected: expected={expected_len} got={len(resp.body)}"
+                        )
+                    _require(len(resp.body) == expected_len, f"expected body length {expected_len}, got {len(resp.body)}")
+
+                    results.append(
+                        TestResult(
+                            name=f"chunk {label}: GET returns 200 with expected body length",
+                            status="PASS",
+                            details=f"bytes={expected_len} ({_fmt_bytes(expected_len)})",
+                        )
+                    )
+                    chunk_body_ok = True
+                except TestFailure as e:
+                    results.append(
+                        TestResult(
+                            name=f"chunk {label}: GET returns 200 with expected body length",
+                            status="FAIL",
+                            details=str(e),
+                        )
+                    )
+
+                # Header checks (run even if the body check failed, when we have a response).
+                results.append(
+                    _test_chunked_content_type(
+                        name=f"chunk {label}: Content-Type is application/octet-stream",
+                        resp=chunk_resp,
+                        expected="application/octet-stream",
+                    )
+                )
+                results.append(
+                    _test_chunked_chunk_encoding(
+                        name=f"chunk {label}: Content-Encoding is absent or identity",
+                        resp=chunk_resp,
+                    )
+                )
+                results.append(
+                    _test_cache_control_immutable(
+                        name=f"chunk {label}: Cache-Control includes immutable",
+                        resp=chunk_resp,
+                        strict=strict,
+                        require_no_transform=True,
+                    )
+                )
+                results.append(
+                    _test_cors_allow_origin(
+                        name=f"chunk {label}: CORS allows origin",
+                        resp=chunk_resp,
+                        origin=origin,
+                    )
+                )
+                results.append(
+                    _test_cors_expose_etag_if_present(
+                        name=f"chunk {label}: CORS exposes ETag when present",
+                        resp=chunk_resp,
+                        origin=origin,
+                    )
+                )
+                results.append(
+                    _test_corp_header(
+                        name=f"chunk {label}: Cross-Origin-Resource-Policy is set",
+                        resp=chunk_resp,
+                        expect_corp=expect_corp,
+                    )
+                )
+
+                # Optional integrity.
+                expected_sha = manifest.chunk_sha256[chunk_index]
+                if expected_sha is None:
+                    results.append(
+                        TestResult(
+                            name=f"chunk {label}: sha256 matches manifest",
+                            status="SKIP",
+                            details="skipped (no sha256 in manifest)",
+                        )
+                    )
+                elif not chunk_body_ok or chunk_resp is None or chunk_resp.body_truncated:
+                    results.append(
+                        TestResult(
+                            name=f"chunk {label}: sha256 matches manifest",
+                            status="SKIP",
+                            details="skipped (no full chunk body)",
+                        )
+                    )
+                else:
+                    actual_sha = _sha256_hex(chunk_resp.body)
+                    if actual_sha != expected_sha:
+                        results.append(
+                            TestResult(
+                                name=f"chunk {label}: sha256 matches manifest",
+                                status="FAIL",
+                                details=f"expected={expected_sha} actual={actual_sha}",
+                            )
+                        )
+                    else:
+                        results.append(TestResult(name=f"chunk {label}: sha256 matches manifest", status="PASS"))
+
+    for result in results:
+        _print_result(result)
+
+    failed = [r for r in results if r.status == "FAIL"]
+    warned = [r for r in results if r.status == "WARN"]
+    skipped = [r for r in results if r.status == "SKIP"]
+    passed = [r for r in results if r.status == "PASS"]
+
+    print()
+    print(f"Summary: {len(passed)} passed, {len(failed)} failed, {len(warned)} warned, {len(skipped)} skipped")
+
+    return 1 if failed or (strict and warned) else 0
+
+
 def main(argv: Sequence[str]) -> int:
     args = _parse_args(argv)
+    if args.mode == "chunked":
+        return _main_chunked(args)
     base_url: str = args.base_url
     origin: str | None = args.origin
     timeout_s: float = args.timeout

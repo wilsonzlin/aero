@@ -1,5 +1,17 @@
 # Disk streaming conformance tool
 
+This repo supports two ways of delivering disk image bytes to browsers:
+
+- **Range mode**: a single object served with `Range: bytes=...` (default / legacy).
+- **Chunked mode**: `manifest.json` + `chunks/<index>.bin` objects (no `Range` header; avoids CORS preflight).
+
+This tool can validate both:
+
+- `--mode range` (default): HTTP Range endpoint checks (existing behavior)
+- `--mode chunked`: chunked disk image format conformance (see `docs/18-chunked-disk-image-format.md`)
+
+## Range mode (`--mode range`)
+
 Validates that a disk image streaming endpoint is compatible with Aero’s browser-side expectations:
 
 - `HEAD` advertises byte ranges and provides a stable `Content-Length`
@@ -51,7 +63,10 @@ You can override the cap with:
 - `--max-body-bytes`
 - `MAX_BODY_BYTES`
 
-The default is **1 MiB**.
+Defaults:
+
+- **Range mode**: **1 MiB** (enough for 1-byte range probes, while preventing full-body downloads)
+- **Chunked mode**: **8 MiB** (enough to fetch typical 4 MiB chunks)
 
 ## Usage
 
@@ -85,6 +100,42 @@ python3 tools/disk-streaming-conformance/conformance.py
 ```
 
 If you pass a token **without** whitespace (e.g. `TOKEN='eyJ...'`), the tool will assume a Bearer token and send `Authorization: Bearer <TOKEN>`.
+
+### Chunked image (manifest + chunks, no Range)
+
+Validate a chunked image using an explicit manifest URL:
+
+```bash
+python3 tools/disk-streaming-conformance/conformance.py \
+  --mode chunked \
+  --manifest-url 'https://cdn.example.com/images/demo/sha256-acde.../manifest.json' \
+  --origin 'https://app.example.com'
+```
+
+Or provide a base prefix (the tool will fetch `<base-url>/manifest.json`):
+
+```bash
+python3 tools/disk-streaming-conformance/conformance.py \
+  --mode chunked \
+  --base-url 'https://cdn.example.com/images/demo/sha256-acde...' \
+  --origin 'https://app.example.com'
+```
+
+Fetch a few extra chunks for better coverage:
+
+```bash
+python3 tools/disk-streaming-conformance/conformance.py \
+  --mode chunked \
+  --manifest-url 'https://cdn.example.com/images/demo/sha256-acde.../manifest.json' \
+  --sample-chunks 3
+```
+
+Chunked mode will verify `chunks[i].sha256` for the sampled chunks when present.
+
+Safety knobs:
+
+- `--max-body-bytes`: per-request read cap (manifest + chunk bodies)
+- `--max-bytes-per-chunk`: refuse to download chunks larger than this (default 8 MiB)
 
 ## CI notes
 
