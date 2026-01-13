@@ -29,7 +29,7 @@ impl<S: ByteStorage> Qcow2Disk<S> {
     }
 }
 
-impl<S: ByteStorage> DiskBackend for Qcow2Disk<S> {
+impl<S: ByteStorage + Send> DiskBackend for Qcow2Disk<S> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE
     }

@@ -490,7 +490,7 @@ impl<S: ByteStorage> SparseDisk<S> {
     }
 }
 
-impl<S: ByteStorage> DiskBackend for SparseDisk<S> {
+impl<S: ByteStorage + Send> DiskBackend for SparseDisk<S> {
     fn sector_size(&self) -> u32 {
         self.header.sector_size
     }

@@ -70,7 +70,7 @@ impl<S: ByteStorage> AerosparDisk<S> {
     }
 }
 
-impl<S: ByteStorage> DiskBackend for AerosparDisk<S> {
+impl<S: ByteStorage + Send> DiskBackend for AerosparDisk<S> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE
     }

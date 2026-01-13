@@ -29,7 +29,7 @@ impl<S: ByteStorage> VhdDisk<S> {
     }
 }
 
-impl<S: ByteStorage> DiskBackend for VhdDisk<S> {
+impl<S: ByteStorage + Send> DiskBackend for VhdDisk<S> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE
     }

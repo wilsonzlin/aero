@@ -40,6 +40,8 @@ impl MemoryBus for TestMem {
 const NVME_REG_CC: u64 = 0x0014;
 const NVME_REG_CSTS: u64 = 0x001c;
 const NVME_REG_AQA: u64 = 0x0024;
+const NVME_REG_ASQ: u64 = 0x0028;
+const NVME_REG_ACQ: u64 = 0x0030;
 
 const CC_EN: u32 = 1 << 0;
 const CSTS_RDY: u32 = 1 << 0;
@@ -68,6 +70,10 @@ fn nvme_enable_with_large_aqa_does_not_panic() {
 
     // Historically this could overflow in debug builds due to u16 + 1.
     ctrl.mmio_write(&mut mem, NVME_REG_AQA, 4, 0xffff_ffff);
+
+    // Canonical NVMe requires admin queue base addresses to be configured before CC.EN=1.
+    ctrl.mmio_write(&mut mem, NVME_REG_ASQ, 4, 0x1000);
+    ctrl.mmio_write(&mut mem, NVME_REG_ACQ, 4, 0x2000);
 
     // Enable with default page size (MPS=0 => 4KiB).
     ctrl.mmio_write(&mut mem, NVME_REG_CC, 4, CC_EN);

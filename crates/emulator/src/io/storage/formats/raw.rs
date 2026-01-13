@@ -88,7 +88,7 @@ impl<S: ByteStorage> RawDisk<S> {
     }
 }
 
-impl<S: ByteStorage> DiskBackend for RawDisk<S> {
+impl<S: ByteStorage + Send> DiskBackend for RawDisk<S> {
     fn sector_size(&self) -> u32 {
         self.sector_size
     }

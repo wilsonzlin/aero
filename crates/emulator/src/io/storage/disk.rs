@@ -103,6 +103,77 @@ impl<T: ByteStorage + ?Sized> ByteStorage for Box<T> {
 /// Callers are expected to use whole sectors; implementations must return
 /// `DiskError::UnalignedBuffer` when given a buffer length that is not a multiple
 /// of the sector size.
+///
+/// # Send bound
+///
+/// On native (non-wasm32) targets, disk backends must be `Send` so they can be moved into device
+/// worker threads. On wasm32, backends are often `!Send` because they wrap JS/OPFS handles, so we
+/// intentionally omit the `Send` bound there.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait DiskBackend: Send {
+    fn sector_size(&self) -> u32;
+    fn total_sectors(&self) -> u64;
+
+    /// Alias for `total_sectors()`.
+    fn capacity_sectors(&self) -> u64 {
+        self.total_sectors()
+    }
+
+    fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()>;
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()>;
+    fn flush(&mut self) -> DiskResult<()>;
+
+    /// Optional scatter-gather read variant.
+    ///
+    /// The default implementation forwards each buffer to `read_sectors`.
+    fn readv_sectors(&mut self, mut lba: u64, bufs: &mut [&mut [u8]]) -> DiskResult<()> {
+        let sector_size = self.sector_size();
+        for buf in bufs {
+            if !buf.len().is_multiple_of(sector_size as usize) {
+                return Err(DiskError::UnalignedBuffer {
+                    len: buf.len(),
+                    sector_size,
+                });
+            }
+            let sectors = (buf.len() / sector_size as usize) as u64;
+            let next_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors(),
+            })?;
+            self.read_sectors(lba, buf)?;
+            lba = next_lba;
+        }
+        Ok(())
+    }
+
+    /// Optional scatter-gather write variant.
+    ///
+    /// The default implementation forwards each buffer to `write_sectors`.
+    fn writev_sectors(&mut self, mut lba: u64, bufs: &[&[u8]]) -> DiskResult<()> {
+        let sector_size = self.sector_size();
+        for buf in bufs {
+            if !buf.len().is_multiple_of(sector_size as usize) {
+                return Err(DiskError::UnalignedBuffer {
+                    len: buf.len(),
+                    sector_size,
+                });
+            }
+            let sectors = (buf.len() / sector_size as usize) as u64;
+            let next_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: self.total_sectors(),
+            })?;
+            self.write_sectors(lba, buf)?;
+            lba = next_lba;
+        }
+        Ok(())
+    }
+}
+
+/// wasm32 build: disk backends do not need to be `Send`.
+#[cfg(target_arch = "wasm32")]
 pub trait DiskBackend {
     fn sector_size(&self) -> u32;
     fn total_sectors(&self) -> u64;
@@ -346,7 +417,7 @@ impl VirtualDrive {
         })
     }
 
-    pub fn open_auto<S: ByteStorage + 'static>(
+    pub fn open_auto<S: ByteStorage + Send + 'static>(
         mut storage: S,
         raw_sector_size: u32,
         write_cache: WriteCachePolicy,
@@ -355,7 +426,7 @@ impl VirtualDrive {
         Self::open_with_format(format, storage, raw_sector_size, write_cache)
     }
 
-    pub fn open_with_format<S: ByteStorage + 'static>(
+    pub fn open_with_format<S: ByteStorage + Send + 'static>(
         format: DiskFormat,
         storage: S,
         raw_sector_size: u32,

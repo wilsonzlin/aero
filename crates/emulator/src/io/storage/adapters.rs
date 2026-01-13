@@ -230,7 +230,7 @@ impl<B: aero_storage::StorageBackend> ByteStorage for ByteStorageFromStorageBack
     }
 }
 
-impl<D: aero_storage::VirtualDisk> DiskBackend for EmuDiskBackendFromVirtualDisk<D> {
+impl<D: aero_storage::VirtualDisk + Send> DiskBackend for EmuDiskBackendFromVirtualDisk<D> {
     fn sector_size(&self) -> u32 {
         aero_storage::SECTOR_SIZE as u32
     }
