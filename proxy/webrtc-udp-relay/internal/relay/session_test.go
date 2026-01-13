@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -160,6 +161,30 @@ func TestSession_EnforcesUDPPpsPerDest(t *testing.T) {
 	}
 	if m.Get(metrics.DropReasonRateLimited) == 0 {
 		t.Fatalf("expected rate_limited metric increment")
+	}
+}
+
+func TestSession_UDPDestBucketEvictionsMetric(t *testing.T) {
+	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
+	cfg := config.Config{
+		MaxUDPPpsPerDest:            100,
+		MaxUDPDestBucketsPerSession: 4,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, clk)
+	s, err := sm.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		if !s.HandleClientDatagram(1234, fmt.Sprintf("dest-%d", i), []byte("hi")) {
+			t.Fatalf("expected packet to be accepted")
+		}
+	}
+
+	if got, want := m.Get(metrics.UDPPerDestBucketEvictions), uint64(6); got != want {
+		t.Fatalf("%s=%d, want %d", metrics.UDPPerDestBucketEvictions, got, want)
 	}
 }
 
