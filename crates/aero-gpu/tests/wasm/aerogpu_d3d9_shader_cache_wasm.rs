@@ -364,6 +364,10 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_schema_mismatch() {
     // older cached reflection blob.
     let reflection =
         Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
+    let reflection_obj: Object = reflection
+        .clone()
+        .dyn_into()
+        .expect("cached.reflection should be an object");
     let schema_version_before = Reflect::get(&reflection, &JsValue::from_str("schemaVersion"))
         .ok()
         .and_then(|v| v.as_f64())
@@ -373,7 +377,7 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_schema_mismatch() {
         schema_version_before, 0,
         "expected persisted reflection to contain schemaVersion"
     );
-    let _ = Reflect::delete_property(&reflection, &JsValue::from_str("schemaVersion"));
+    let _ = Reflect::delete_property(&reflection_obj, &JsValue::from_str("schemaVersion"));
 
     // Second run after reset: persistent get -> hit with stale reflection, invalidate, retranslate,
     // then persistent put with updated reflection schema.
