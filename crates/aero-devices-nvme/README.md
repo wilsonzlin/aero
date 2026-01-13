@@ -11,7 +11,7 @@ This crate implements an NVMe controller with:
 - I/O queues created via admin commands
 - Commands:
   - Admin: `IDENTIFY`, `CREATE IO CQ`, `CREATE IO SQ`
-  - I/O: `READ`, `WRITE`, `FLUSH`
+  - I/O: `READ`, `WRITE`, `FLUSH`, `WRITE ZEROES`, `DATASET MANAGEMENT (DSM deallocate)`
 - DMA:
   - PRP1/PRP2 + PRP list support
   - Limited SGL support for READ/WRITE:

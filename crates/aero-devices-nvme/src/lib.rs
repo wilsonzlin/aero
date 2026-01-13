@@ -11,7 +11,7 @@
 //! - Admin queues (submission/completion)
 //! - I/O queues (submission/completion)
 //! - Admin commands: IDENTIFY, CREATE/DELETE IO SQ/CQ, GET/SET FEATURES
-//! - NVM commands: READ, WRITE, FLUSH
+//! - NVM commands: READ, WRITE, FLUSH, WRITE ZEROES, DSM (deallocate)
 //! - PRP (PRP1/PRP2 + PRP lists)
 //! - Limited SGL support for READ/WRITE (Data Block + Segment/Last Segment chaining)
 //!
@@ -2858,6 +2858,21 @@ mod tests {
 
         let vid = mem.read_u16(id_buf);
         assert_eq!(vid, 0x1b36);
+    }
+
+    #[test]
+    fn identify_controller_advertises_oncs_dsm_and_write_zeroes() {
+        let disk = TestDisk::new(1024);
+        let ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        let data = ctrl.identify_controller();
+        let oncs = u16::from_le_bytes(data[520..522].try_into().unwrap());
+        assert_ne!(oncs & (1 << 2), 0, "DSM (bit 2) should be advertised in ONCS");
+        assert_ne!(
+            oncs & (1 << 3),
+            0,
+            "Write Zeroes (bit 3) should be advertised in ONCS"
+        );
     }
 
     #[test]
