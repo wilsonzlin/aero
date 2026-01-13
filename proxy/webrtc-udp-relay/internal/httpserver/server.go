@@ -54,9 +54,9 @@ func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *Server {
 
 	handler := chain(s.mux,
 		recoverMiddleware(s.log),
+		noStoreICEHeadersMiddleware(),
 		requestIDMiddleware(),
 		requestLoggerMiddleware(s.log),
-		noStoreICEHeadersMiddleware(),
 		s.originMiddleware(),
 	)
 

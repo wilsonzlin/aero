@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -257,6 +258,30 @@ func TestICEEndpoint_NoStoreHeaders_HEAD(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	assertICENoStoreHeaders(t, resp)
+}
+
+func TestICEEndpoint_NoStoreHeaders_Panic(t *testing.T) {
+	// Ensure that if a panic happens while serving /webrtc/ice, the recovered
+	// response still includes the no-store headers.
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	}),
+		recoverMiddleware(log),
+		noStoreICEHeadersMiddleware(),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/webrtc/ice", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusInternalServerError)
 	}
 	assertICENoStoreHeaders(t, resp)
 }
