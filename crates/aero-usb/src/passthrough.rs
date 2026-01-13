@@ -1282,8 +1282,122 @@ mod tests {
         let snap_a = dev_a.snapshot_save();
         let snap_b = dev_b.snapshot_save();
         assert_eq!(snap_a, snap_b);
+        
+        // The on-wire encoding must also be stable in ordering (not just stable between two
+        // instances by chance). Decode the snapshot and ensure HashMap-backed collections are
+        // emitted in sorted order.
+        fn decode_completion_and_ep_order(bytes: &[u8]) -> (Vec<u32>, Vec<u8>) {
+            fn skip_setup(d: &mut Decoder<'_>) {
+                d.u8().unwrap();
+                d.u8().unwrap();
+                d.u16().unwrap();
+                d.u16().unwrap();
+                d.u16().unwrap();
+            }
 
-        // Optional: round-trip and ensure the canonical encoding is stable.
+            let mut d = Decoder::new(bytes);
+            let _next_id = d.u32().unwrap();
+
+            let action_count = d.u32().unwrap() as usize;
+            for _ in 0..action_count {
+                let kind = d.u8().unwrap();
+                let _id = d.u32().unwrap();
+                match kind {
+                    1 => skip_setup(&mut d), // ControlIn
+                    2 => {
+                        // ControlOut
+                        skip_setup(&mut d);
+                        let len = d.u32().unwrap() as usize;
+                        d.bytes(len).unwrap();
+                    }
+                    3 => {
+                        // BulkIn
+                        d.u8().unwrap(); // endpoint
+                        d.u32().unwrap(); // length
+                    }
+                    4 => {
+                        // BulkOut
+                        d.u8().unwrap(); // endpoint
+                        let len = d.u32().unwrap() as usize;
+                        d.bytes(len).unwrap();
+                    }
+                    other => panic!("unexpected action kind {other}"),
+                }
+            }
+
+            let completion_count = d.u32().unwrap() as usize;
+            let mut completion_ids = Vec::with_capacity(completion_count);
+            for _ in 0..completion_count {
+                let id = d.u32().unwrap();
+                completion_ids.push(id);
+                let kind = d.u8().unwrap();
+                match kind {
+                    1 => {
+                        // OkIn
+                        let len = d.u32().unwrap() as usize;
+                        d.bytes(len).unwrap();
+                    }
+                    2 => {
+                        // OkOut
+                        d.u32().unwrap();
+                    }
+                    3 => {} // Stall
+                    4 => {
+                        // Error
+                        let len = d.u32().unwrap() as usize;
+                        d.bytes(len).unwrap();
+                    }
+                    other => panic!("unexpected completion kind {other}"),
+                }
+            }
+
+            let has_control = d.bool().unwrap();
+            if has_control {
+                let _id = d.u32().unwrap();
+                d.u8().unwrap();
+                d.u8().unwrap();
+                d.u16().unwrap();
+                d.u16().unwrap();
+                d.u16().unwrap();
+                let has_data = d.bool().unwrap();
+                if has_data {
+                    let len = d.u32().unwrap() as usize;
+                    d.bytes(len).unwrap();
+                }
+            }
+
+            let ep_count = d.u32().unwrap() as usize;
+            let mut eps = Vec::with_capacity(ep_count);
+            for _ in 0..ep_count {
+                let ep = d.u8().unwrap();
+                eps.push(ep);
+                d.u32().unwrap(); // id
+                d.u32().unwrap(); // len
+            }
+
+            d.finish().unwrap();
+            (completion_ids, eps)
+        }
+
+        let (completion_ids, inflight_eps) = decode_completion_and_ep_order(&snap_a);
+        assert!(
+            completion_ids.windows(2).all(|w| w[0] < w[1]),
+            "completion IDs must be sorted: {completion_ids:?}"
+        );
+        assert_eq!(
+            completion_ids, ids,
+            "snapshot must preserve all completion IDs in sorted order"
+        );
+        assert!(
+            inflight_eps.windows(2).all(|w| w[0] < w[1]),
+            "inflight endpoints must be sorted: {inflight_eps:?}"
+        );
+        assert_eq!(
+            inflight_eps, endpoints,
+            "snapshot must preserve all inflight endpoints in sorted order"
+        );
+
+        // Round-trip and ensure the canonical encoding is stable.
         let mut loaded = UsbPassthroughDevice::new();
         loaded.snapshot_load(&snap_a).unwrap();
         assert_eq!(loaded.snapshot_save(), snap_a);
