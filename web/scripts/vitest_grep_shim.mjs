@@ -12,8 +12,18 @@ import { spawn } from "node:child_process";
 function translateArgs(argv) {
   const out = [];
   const patterns = [];
+  let runInBand = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === "--runInBand") {
+      runInBand = true;
+      continue;
+    }
+    if (arg.startsWith("--runInBand=")) {
+      const raw = arg.slice("--runInBand=".length).toLowerCase();
+      runInBand = raw !== "false" && raw !== "0";
+      continue;
+    }
     if (arg === "--grep" || arg === "-g") {
       const pattern = argv[i + 1];
       if (pattern) {
@@ -29,6 +39,12 @@ function translateArgs(argv) {
     }
     out.push(arg);
   }
+
+  if (runInBand && !out.some((v) => v.startsWith("--poolOptions.threads.singleThread"))) {
+    // Jest uses `--runInBand` to force serial execution. Vitest uses the thread pool option.
+    out.push("--poolOptions.threads.singleThread");
+  }
+
   return { args: out, patterns };
 }
 
