@@ -800,6 +800,22 @@ pub use crate::passthrough_device::UsbWebUsbPassthroughDevice;
 mod tests {
     use super::*;
 
+    fn snapshot_load_err(bytes: Vec<u8>) -> SnapshotError {
+        let res = std::panic::catch_unwind(move || {
+            let mut dev = UsbPassthroughDevice::new();
+            dev.snapshot_load(&bytes)
+        });
+        let result = res.expect("snapshot_load panicked");
+        result.expect_err("expected snapshot_load to return Err")
+    }
+
+    fn assert_invalid_field_encoding(err: SnapshotError) {
+        assert!(
+            matches!(err, SnapshotError::InvalidFieldEncoding(_)),
+            "expected InvalidFieldEncoding, got {err:?}"
+        );
+    }
+
     #[derive(Debug, Deserialize)]
     struct WireFixture {
         actions: Vec<UsbHostAction>,
@@ -1084,20 +1100,12 @@ mod tests {
         );
     }
 
-    fn assert_invalid_field_encoding(err: SnapshotError) {
-        assert!(
-            matches!(err, SnapshotError::InvalidFieldEncoding(_)),
-            "expected InvalidFieldEncoding, got {err:?}"
-        );
-    }
-
     #[test]
     fn snapshot_load_rejects_action_count_over_limit() {
         // Intentionally truncate the snapshot after `action_count`. Without the guard, this would
         // attempt to decode 1025 actions and hit UnexpectedEof.
         let bytes = Encoder::new().u32(1).u32(1025).finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1106,8 +1114,7 @@ mod tests {
         // Intentionally truncate the snapshot after `completion_count`. Without the guard, this
         // would attempt to decode 1025 completions and hit UnexpectedEof.
         let bytes = Encoder::new().u32(1).u32(0).u32(1025).finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1115,15 +1122,30 @@ mod tests {
     fn snapshot_load_rejects_ep_inflight_count_over_limit() {
         // Intentionally truncate the snapshot after `ep_count`. Without the guard, this would
         // attempt to decode 65 endpoint entries and hit UnexpectedEof.
+        let bytes = Encoder::new().u32(1).u32(0).u32(0).bool(false).u32(65).finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_invalid_action_kind_tag() {
+        // action_count=1, invalid action kind tag (0).
+        let bytes = Encoder::new().u32(1).u32(1).u8(0).u32(1).finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_invalid_completion_kind_tag() {
+        // completion_count=1, invalid completion kind tag (9).
         let bytes = Encoder::new()
             .u32(1)
             .u32(0)
-            .u32(0)
-            .bool(false)
-            .u32(65)
+            .u32(1)
+            .u32(1)
+            .u8(9)
             .finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1147,8 +1169,7 @@ mod tests {
             // data length
             .u32(MAX_DATA_BYTES + 1)
             .finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1166,8 +1187,48 @@ mod tests {
             .u8(4) // Error
             .u32(MAX_ERROR_BYTES + 1)
             .finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_invalid_utf8_error_message() {
+        // One completion with Error result and invalid UTF-8 bytes.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(1)
+            .u32(1) // completion id
+            .u8(4) // Error
+            .u32(1)
+            .u8(0xff)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_total_buffers_exceed_max_total_bytes() {
+        const MAX_DATA_BYTES: usize = 4 * 1024 * 1024;
+
+        // Four buffers at MAX_DATA_BYTES == 16MiB total are allowed; the next byte should fail the
+        // MAX_TOTAL_BYTES guard.
+        let chunk = vec![0u8; MAX_DATA_BYTES];
+
+        let mut enc = Encoder::new().u32(1).u32(5);
+        for i in 0..4u32 {
+            enc = enc
+                .u8(4) // BulkOut action
+                .u32(i + 1)
+                .u8(0x01)
+                .u32(MAX_DATA_BYTES as u32)
+                .bytes(&chunk);
+        }
+
+        // This fifth buffer would push total_bytes over MAX_TOTAL_BYTES.
+        enc = enc.u8(4).u32(99).u8(0x01).u32(1);
+        let bytes = enc.finish();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
