@@ -3664,30 +3664,19 @@ impl Machine {
     /// Notes:
     /// - ISO images must have a capacity that is a multiple of 2048 bytes.
     /// - OPFS sync access handles are worker-only; this requires running in a Dedicated Worker.
-    /// - This API is not supported in threaded WASM builds (atomics enabled) because OPFS sync
-    ///   access handles cannot be shared across wasm threads.
     #[cfg(target_arch = "wasm32")]
     pub async fn attach_ide_secondary_master_iso_opfs_existing(
         &mut self,
         path: String,
     ) -> Result<(), JsValue> {
-        #[cfg(not(target_feature = "atomics"))]
-        {
-            let backend = aero_opfs::OpfsBackend::open_existing(&path)
-                .await
-                .map_err(|e| {
-                    opfs_disk_error_to_js("Machine.attach_ide_secondary_master_iso_opfs_existing", &path, e)
-                })?;
-            let disk: Box<dyn aero_storage::VirtualDisk + Send> = Box::new(backend);
-            self.inner.attach_ide_secondary_master_iso(disk).map_err(js_error)
-        }
-
-        #[cfg(target_feature = "atomics")]
-        {
-            Err(js_error(
-                "Machine.attach_ide_secondary_master_iso_opfs_existing is not supported in threaded WASM builds (atomics enabled); OPFS sync handles cannot be shared across wasm threads",
-            ))
-        }
+        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+            .await
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.attach_ide_secondary_master_iso_opfs_existing", &path, e)
+            })?;
+        self.inner
+            .attach_ide_secondary_master_iso(Box::new(disk))
+            .map_err(js_error)
     }
 
     /// Open an existing OPFS-backed ISO image, attach it as the IDE secondary channel master ATAPI
@@ -4963,29 +4952,16 @@ impl Machine {
                         )));
                     }
 
-                    // `OpfsBackend` is the OPFS VirtualDisk wrapper that supports `Send` in
-                    // single-threaded wasm builds (required by the ATAPI/ISO adapter).
-                    #[cfg(not(target_feature = "atomics"))]
-                    {
-                        let backend = aero_opfs::OpfsBackend::open_existing(&base_image)
-                            .await
-                            .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
-                        let disk: Box<dyn aero_storage::VirtualDisk + Send> = Box::new(backend);
-                        self.inner
-                            .attach_ide_secondary_master_iso_for_restore(disk)
-                            .map_err(|e| {
-                                JsValue::from_str(&format!(
-                                    "reattach_restored_disks_from_opfs: attach failed for disk_id=1 base_image={base_image:?}: {e}"
-                                ))
-                            })?;
-                    }
-
-                    #[cfg(target_feature = "atomics")]
-                    {
-                        return Err(JsValue::from_str(
-                            "reattach_restored_disks_from_opfs: disk_id=1 (install media) is not supported in threaded WASM builds (atomics enabled); OPFS sync handles cannot be shared across wasm threads",
-                        ));
-                    }
+                    let disk = aero_opfs::OpfsSendDisk::open_existing(&base_image)
+                        .await
+                        .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
+                    self.inner
+                        .attach_ide_secondary_master_iso_for_restore(Box::new(disk))
+                        .map_err(|e| {
+                            JsValue::from_str(&format!(
+                                "reattach_restored_disks_from_opfs: attach failed for disk_id=1 base_image={base_image:?}: {e}"
+                            ))
+                        })?;
                 }
 
                 aero_machine::Machine::DISK_ID_IDE_PRIMARY_MASTER => {
