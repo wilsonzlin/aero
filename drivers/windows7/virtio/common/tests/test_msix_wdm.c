@@ -70,6 +70,7 @@ static void test_connect_validation(void)
 
     WdkTestResetIoConnectInterruptExCount();
     WdkTestResetIoDisconnectInterruptExCount();
+    WdkTestResetLastIoConnectInterruptExParams();
 
     desc = make_msg_desc(1);
 
@@ -146,11 +147,15 @@ static void test_connect_disconnect_calls_wdk_routines(void)
 
     WdkTestResetIoConnectInterruptExCount();
     WdkTestResetIoDisconnectInterruptExCount();
+    WdkTestResetLastIoConnectInterruptExParams();
 
     status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
     assert(status == STATUS_SUCCESS);
     assert(WdkTestGetIoConnectInterruptExCount() == 1);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
+    assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == &pdo);
+    assert(WdkTestGetLastIoConnectInterruptExMessageCount() == 1);
+    assert(WdkTestGetLastIoConnectInterruptExSynchronizeIrql() == desc.u.MessageInterrupt.Level);
 
     VirtioMsixDisconnect(&msix);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 1);
@@ -200,12 +205,16 @@ static void test_multivector_mapping(void)
     desc = make_msg_desc(3); /* enough for config + 2 queues */
     RtlZeroMemory(&ctx, sizeof(ctx));
 
+    WdkTestResetLastIoConnectInterruptExParams();
     status = VirtioMsixConnect(&dev, &pdo, &desc, 2, NULL, evt_config, evt_drain, &ctx, &msix);
     assert(status == STATUS_SUCCESS);
     ctx.expected_msix = &msix;
 
     assert(msix.MessageCount == 3);
     assert(msix.UsedVectorCount == 3);
+    assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == &pdo);
+    assert(WdkTestGetLastIoConnectInterruptExMessageCount() == 3);
+    assert(WdkTestGetLastIoConnectInterruptExSynchronizeIrql() == desc.u.MessageInterrupt.Level);
     assert(msix.MessageInfo != NULL);
     assert(msix.MessageInfo->MessageCount == 3);
     /* MessageData is an APIC vector in real systems; ensure it differs from message number indices. */

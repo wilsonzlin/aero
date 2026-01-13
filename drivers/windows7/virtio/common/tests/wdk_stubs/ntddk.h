@@ -487,6 +487,12 @@ VOID WdkTestResetIoConnectInterruptExCount(VOID);
 ULONG WdkTestGetIoDisconnectInterruptExCount(VOID);
 VOID WdkTestResetIoDisconnectInterruptExCount(VOID);
 
+/* Test-only introspection of the last IoConnectInterruptEx(CONNECT_MESSAGE_BASED) call. */
+PDEVICE_OBJECT WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject(VOID);
+ULONG WdkTestGetLastIoConnectInterruptExMessageCount(VOID);
+ULONG WdkTestGetLastIoConnectInterruptExSynchronizeIrql(VOID);
+VOID WdkTestResetLastIoConnectInterruptExParams(VOID);
+
 ULONG WdkTestGetKeInsertQueueDpcCount(VOID);
 ULONG WdkTestGetKeInsertQueueDpcSuccessCount(VOID);
 ULONG WdkTestGetKeInsertQueueDpcFailCount(VOID);

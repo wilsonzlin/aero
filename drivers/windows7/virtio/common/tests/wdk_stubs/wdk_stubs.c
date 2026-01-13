@@ -24,6 +24,11 @@ static ULONG g_io_connect_interrupt_count = 0;
 static ULONG g_io_disconnect_interrupt_count = 0;
 static ULONG g_io_connect_interrupt_ex_count = 0;
 static ULONG g_io_disconnect_interrupt_ex_count = 0;
+
+/* Last IoConnectInterruptEx parameters (CONNECT_MESSAGE_BASED) for unit tests. */
+static PDEVICE_OBJECT g_last_io_connect_interrupt_ex_pdo = NULL;
+static ULONG g_last_io_connect_interrupt_ex_message_count = 0;
+static ULONG g_last_io_connect_interrupt_ex_sync_irql = 0;
 static ULONG g_ke_delay_execution_thread_count = 0;
 static ULONG g_ke_stall_execution_processor_count = 0;
 static ULONG g_ke_insert_queue_dpc_count = 0;
@@ -53,6 +58,28 @@ VOID WdkTestSetIoConnectInterruptStatus(_In_ NTSTATUS Status)
 VOID WdkTestSetIoConnectInterruptExStatus(_In_ NTSTATUS Status)
 {
     g_IoConnectInterruptExStatus = Status;
+}
+
+PDEVICE_OBJECT WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject(VOID)
+{
+    return g_last_io_connect_interrupt_ex_pdo;
+}
+
+ULONG WdkTestGetLastIoConnectInterruptExMessageCount(VOID)
+{
+    return g_last_io_connect_interrupt_ex_message_count;
+}
+
+ULONG WdkTestGetLastIoConnectInterruptExSynchronizeIrql(VOID)
+{
+    return g_last_io_connect_interrupt_ex_sync_irql;
+}
+
+VOID WdkTestResetLastIoConnectInterruptExParams(VOID)
+{
+    g_last_io_connect_interrupt_ex_pdo = NULL;
+    g_last_io_connect_interrupt_ex_message_count = 0;
+    g_last_io_connect_interrupt_ex_sync_irql = 0;
 }
 
 BOOLEAN WdkMmioRead(_In_ const volatile VOID* Register, _In_ size_t Width, _Out_ ULONGLONG* ValueOut)
@@ -171,6 +198,10 @@ NTSTATUS IoConnectInterruptEx(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameter
     if (Parameters->Version != CONNECT_MESSAGE_BASED) {
         return STATUS_NOT_SUPPORTED;
     }
+
+    g_last_io_connect_interrupt_ex_pdo = Parameters->MessageBased.PhysicalDeviceObject;
+    g_last_io_connect_interrupt_ex_message_count = Parameters->MessageBased.MessageCount;
+    g_last_io_connect_interrupt_ex_sync_irql = Parameters->MessageBased.SynchronizeIrql;
 
     messageCount = Parameters->MessageBased.MessageCount;
     if (messageCount == 0 || Parameters->MessageBased.ServiceRoutine == NULL) {
