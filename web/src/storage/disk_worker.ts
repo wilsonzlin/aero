@@ -75,6 +75,7 @@ function assertValidOpfsFileName(name: string, field: string): void {
 
 const IDB_REMOTE_CHUNK_MIN_BYTES = 512 * 1024;
 const IDB_REMOTE_CHUNK_MAX_BYTES = 8 * 1024 * 1024;
+const OPFS_REMOTE_CHUNK_MAX_BYTES = 64 * 1024 * 1024;
 
 // Keep in sync with `platform/remote_disk.ts` (RemoteStreamingDisk).
 const MAX_REMOTE_BLOCK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -87,6 +88,18 @@ function assertValidIdbRemoteChunkSize(value: number, field: string): void {
   }
   if (value < IDB_REMOTE_CHUNK_MIN_BYTES || value > IDB_REMOTE_CHUNK_MAX_BYTES) {
     throw new Error(`${field} must be within ${IDB_REMOTE_CHUNK_MIN_BYTES}..${IDB_REMOTE_CHUNK_MAX_BYTES} bytes`);
+  }
+}
+
+function assertValidOpfsRemoteChunkSize(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${field} must be a positive safe integer`);
+  }
+  if (value % 512 !== 0 || !isPowerOfTwo(value)) {
+    throw new Error(`${field} must be a power of two and a multiple of 512`);
+  }
+  if (value > OPFS_REMOTE_CHUNK_MAX_BYTES) {
+    throw new Error(`${field} must be <= ${OPFS_REMOTE_CHUNK_MAX_BYTES} bytes`);
   }
 }
 
@@ -681,20 +694,23 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         typeof payload.chunkSizeBytes === "number" && Number.isFinite(payload.chunkSizeBytes) && payload.chunkSizeBytes > 0
           ? payload.chunkSizeBytes
           : defaultChunkSizeBytes;
-      if (chunkSizeBytes % 512 !== 0 || !isPowerOfTwo(chunkSizeBytes)) {
-        throw new Error("chunkSizeBytes must be a power of two and a multiple of 512");
-      }
 
       const overlayBlockSizeBytes =
         typeof payload.overlayBlockSizeBytes === "number" && Number.isFinite(payload.overlayBlockSizeBytes) && payload.overlayBlockSizeBytes > 0
           ? payload.overlayBlockSizeBytes
           : RANGE_STREAM_CHUNK_SIZE;
-      if (overlayBlockSizeBytes % 512 !== 0 || !isPowerOfTwo(overlayBlockSizeBytes)) {
-        throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
-      }
       if (cacheBackend === "idb") {
+        if (chunkSizeBytes % 512 !== 0 || !isPowerOfTwo(chunkSizeBytes)) {
+          throw new Error("chunkSizeBytes must be a power of two and a multiple of 512");
+        }
+        if (overlayBlockSizeBytes % 512 !== 0 || !isPowerOfTwo(overlayBlockSizeBytes)) {
+          throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
+        }
         assertValidIdbRemoteChunkSize(chunkSizeBytes, "chunkSizeBytes");
         assertValidIdbRemoteChunkSize(overlayBlockSizeBytes, "overlayBlockSizeBytes");
+      } else {
+        assertValidOpfsRemoteChunkSize(chunkSizeBytes, "chunkSizeBytes");
+        assertValidOpfsRemoteChunkSize(overlayBlockSizeBytes, "overlayBlockSizeBytes");
       }
 
       const urls: RemoteDiskUrls = {
@@ -812,6 +828,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         meta.cache.overlayBlockSizeBytes = next;
       }
       if (meta.cache.backend === "opfs") {
+        assertValidOpfsRemoteChunkSize(meta.cache.chunkSizeBytes, "chunkSizeBytes");
+        assertValidOpfsRemoteChunkSize(meta.cache.overlayBlockSizeBytes, "overlayBlockSizeBytes");
         assertValidOpfsFileName(meta.cache.fileName, "cacheFileName");
         assertValidOpfsFileName(meta.cache.overlayFileName, "overlayFileName");
       }
