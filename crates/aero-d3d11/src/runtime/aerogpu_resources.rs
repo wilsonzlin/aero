@@ -21,6 +21,12 @@ use crate::input_layout::{
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderStage, Sm4Program};
 
+fn device_supports_storage_buffers(device: &wgpu::Device) -> bool {
+    let limits = device.limits();
+    limits.max_storage_buffers_per_shader_stage > 0
+        && limits.max_compute_workgroups_per_dimension > 0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackingInfo {
     pub alloc_id: u32,
@@ -132,6 +138,7 @@ impl DirtyRange {
 pub struct AerogpuResourceManager {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    supports_storage_buffers: bool,
 
     buffers: HashMap<AerogpuHandle, BufferResource>,
     textures2d: HashMap<AerogpuHandle, Texture2dResource>,
@@ -141,9 +148,11 @@ pub struct AerogpuResourceManager {
 
 impl AerogpuResourceManager {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        let supports_storage_buffers = device_supports_storage_buffers(&device);
         Self {
             device,
             queue,
+            supports_storage_buffers,
             buffers: HashMap::new(),
             textures2d: HashMap::new(),
             shaders: HashMap::new(),
@@ -180,7 +189,7 @@ impl AerogpuResourceManager {
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu buffer"),
             size: size_bytes,
-            usage: map_buffer_usage_flags(usage_flags),
+            usage: map_buffer_usage_flags(usage_flags, self.supports_storage_buffers),
             mapped_at_creation: false,
         });
 
@@ -882,17 +891,18 @@ pub fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat> {
     })
 }
 
-pub fn map_buffer_usage_flags(usage_flags: u32) -> wgpu::BufferUsages {
-    // Be conservative about allowed usages: our guest buffer usage flags currently don't
-    // distinguish between "regular" buffers and SRV/UAV/structured buffers, but the SM5 shader
-    // translator will represent raw/structured resources as `var<storage>` in WGSL. wgpu validates
-    // that any buffer bound in a storage binding was created with `BufferUsages::STORAGE`.
-    //
-    // Additionally, D3D11 IA buffers can be consumed as `var<storage>` in compute prepasses (vertex
-    // pulling). Until the AeroGPU protocol grows a more precise usage bit, include STORAGE
-    // unconditionally to keep buffer creation compatible with future bindings.
-    let mut out =
-        wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE;
+pub fn map_buffer_usage_flags(
+    usage_flags: u32,
+    supports_compute: bool,
+) -> wgpu::BufferUsages {
+    let mut out = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
+    // Compute-based GS emulation (vertex pulling + expansion) and raw/structured buffer bindings
+    // represent buffers as `var<storage>` in WGSL. wgpu requires buffers used in storage bindings
+    // to be created with `BufferUsages::STORAGE`. Gate this on backend support; downlevel/WebGL2
+    // backends do not support compute/storage buffers.
+    if supports_compute {
+        out |= wgpu::BufferUsages::STORAGE;
+    }
     if (usage_flags & AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
         out |= wgpu::BufferUsages::VERTEX;
     }
@@ -1548,15 +1558,21 @@ mod tests {
 
     #[test]
     fn maps_usage_flags_conservatively() {
-        let bu = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+        let bu = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, false);
         assert!(bu.contains(wgpu::BufferUsages::COPY_SRC));
         assert!(bu.contains(wgpu::BufferUsages::COPY_DST));
         assert!(bu.contains(wgpu::BufferUsages::VERTEX));
-        assert!(bu.contains(wgpu::BufferUsages::STORAGE));
+        assert!(!bu.contains(wgpu::BufferUsages::STORAGE));
 
-        let bu = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_INDEX_BUFFER);
-        assert!(bu.contains(wgpu::BufferUsages::INDEX));
-        assert!(bu.contains(wgpu::BufferUsages::STORAGE));
+        let bu_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, true);
+        assert!(bu_compute.contains(wgpu::BufferUsages::STORAGE));
+
+        let ib = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, false);
+        assert!(ib.contains(wgpu::BufferUsages::INDEX));
+        assert!(!ib.contains(wgpu::BufferUsages::STORAGE));
+
+        let ib_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, true);
+        assert!(ib_compute.contains(wgpu::BufferUsages::STORAGE));
 
         let tu = map_texture_usage_flags(AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
         assert!(tu.contains(wgpu::TextureUsages::COPY_SRC));
@@ -1569,7 +1585,8 @@ mod tests {
         // SM5 compute shaders translate raw/structured buffers into `var<storage>` bindings in WGSL.
         // wgpu validates that any buffer used in a storage binding was created with
         // `wgpu::BufferUsages::STORAGE`, even for read-only storage buffers (SRVs).
-        assert!(map_buffer_usage_flags(0).contains(wgpu::BufferUsages::STORAGE));
+        assert!(!map_buffer_usage_flags(0, false).contains(wgpu::BufferUsages::STORAGE));
+        assert!(map_buffer_usage_flags(0, true).contains(wgpu::BufferUsages::STORAGE));
     }
 
     #[test]

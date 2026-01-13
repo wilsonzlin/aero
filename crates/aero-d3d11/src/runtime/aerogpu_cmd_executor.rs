@@ -497,6 +497,9 @@ struct BufferResource {
     buffer: wgpu::Buffer,
     size: u64,
     gpu_size: u64,
+    // Test-only: expose the computed wgpu usage flags for assertions.
+    #[cfg(test)]
+    usage: wgpu::BufferUsages,
     backing: Option<ResourceBacking>,
     dirty: Option<Range<u64>>,
 }
@@ -5640,7 +5643,7 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        let usage = map_buffer_usage_flags(usage_flags);
+        let usage = map_buffer_usage_flags(usage_flags, self.caps.supports_compute);
         let gpu_size = align_copy_buffer_size(size_bytes)?;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu buffer"),
@@ -5665,6 +5668,8 @@ impl AerogpuD3d11Executor {
             gpu_size,
             backing,
             dirty: None,
+            #[cfg(test)]
+            usage,
         };
         if res.backing.is_some() {
             res.mark_dirty(0..size_bytes);
@@ -11430,7 +11435,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn map_buffer_usage_flags(flags: u32) -> wgpu::BufferUsages {
+fn map_buffer_usage_flags(flags: u32, supports_compute: bool) -> wgpu::BufferUsages {
     let mut usage = wgpu::BufferUsages::COPY_DST;
     let mut needs_storage = flags & AEROGPU_RESOURCE_USAGE_STORAGE != 0;
     if flags & AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER != 0 {
@@ -11441,10 +11446,10 @@ fn map_buffer_usage_flags(flags: u32) -> wgpu::BufferUsages {
         usage |= wgpu::BufferUsages::INDEX;
         needs_storage = true;
     }
-    // D3D11 IA buffers are read by our compute prepasses ("vertex pulling") when emulating
-    // GS/HS/DS. WebGPU requires such buffers to be created with `STORAGE` in order to bind them
-    // as `var<storage>` in those compute pipelines.
-    if needs_storage {
+    // Compute-based GS emulation (vertex pulling + expansion) needs to read IA buffers via storage
+    // bindings. Gate this on backend support; downlevel/WebGL2 backends do not support compute and
+    // storage buffers.
+    if supports_compute && needs_storage {
         usage |= wgpu::BufferUsages::STORAGE;
     }
     if flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER != 0 {
@@ -13371,7 +13376,6 @@ fn cs_main() {
                     return;
                 }
             };
-
             let a0 = exec
                 .expansion_scratch
                 .alloc_vertex_output(&exec.device, 16)
@@ -13422,6 +13426,70 @@ fn cs_main() {
                 per_frame * 2,
                 "FLUSH must advance to the next frame segment"
             );
+        });
+    }
+
+    #[test]
+    fn create_vertex_buffer_includes_storage_when_compute_supported() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            let allocs = AllocTable::new(None).expect("AllocTable::new");
+
+            const VB_HANDLE: u32 = 1;
+            let size_bytes: u64 = 64;
+
+            // Build a CREATE_BUFFER packet for a vertex buffer with no guest backing.
+            let mut create = Vec::new();
+            create.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+            create.extend_from_slice(&40u32.to_le_bytes());
+            create.extend_from_slice(&VB_HANDLE.to_le_bytes());
+            create.extend_from_slice(&AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER.to_le_bytes());
+            create.extend_from_slice(&size_bytes.to_le_bytes());
+            create.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            create.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            create.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            assert_eq!(create.len(), 40);
+
+            // Ensure buffer creation doesn't trigger a wgpu validation error (e.g. requesting
+            // STORAGE usage on a backend that doesn't support storage buffers).
+            exec.device
+                .push_error_scope(wgpu::ErrorFilter::Validation);
+            exec.exec_create_buffer(&create, &allocs)
+                .expect("CREATE_BUFFER should succeed");
+            exec.poll_wait();
+            let err = exec.device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "CREATE_BUFFER should not produce a wgpu validation error (got {err:?})"
+            );
+
+            let buf = exec
+                .resources
+                .buffers
+                .get(&VB_HANDLE)
+                .expect("buffer should exist");
+            assert!(
+                buf.usage.contains(wgpu::BufferUsages::VERTEX),
+                "vertex buffer must include VERTEX usage"
+            );
+
+            if exec.caps.supports_compute {
+                assert!(
+                    buf.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "compute-capable backends must include STORAGE usage so vertex buffers can be read by compute-based GS emulation"
+                );
+            } else {
+                assert!(
+                    !buf.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "backends without compute/storage buffer support must not request STORAGE usage"
+                );
+            }
         });
     }
 
