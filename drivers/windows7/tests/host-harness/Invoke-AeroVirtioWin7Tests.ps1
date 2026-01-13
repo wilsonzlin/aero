@@ -819,6 +819,8 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   if ($fields.ContainsKey("messages")) { $messages = $fields["messages"] }
   elseif ($fields.ContainsKey("irq_messages")) { $messages = $fields["irq_messages"] }
   elseif ($fields.ContainsKey("msi_messages")) { $messages = $fields["msi_messages"] }
+  elseif ($fields.ContainsKey("irq_message_count")) { $messages = $fields["irq_message_count"] }
+  elseif ($fields.ContainsKey("message_count")) { $messages = $fields["message_count"] }
 
   $vectors = $null
   if ($fields.ContainsKey("vectors")) { $vectors = $fields["vectors"] }
@@ -826,12 +828,29 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   elseif ($fields.ContainsKey("vector")) { $vectors = $fields["vector"] }
   elseif ($fields.ContainsKey("irq_vector")) { $vectors = $fields["irq_vector"] }
 
-  if (-not $mode -and -not $messages -and -not $vectors) { return }
+  $msiVector = $null
+  if ($fields.ContainsKey("msi_vector")) { $msiVector = $fields["msi_vector"] }
 
-  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|INFO"
+  $msixConfigVector = $null
+  if ($fields.ContainsKey("msix_config_vector")) { $msixConfigVector = $fields["msix_config_vector"] }
+
+  $msixQueueVector = $null
+  if ($fields.ContainsKey("msix_queue_vector")) { $msixQueueVector = $fields["msix_queue_vector"] }
+  elseif ($fields.ContainsKey("msix_queue0_vector")) { $msixQueueVector = $fields["msix_queue0_vector"] }
+
+  if (-not $mode -and -not $messages -and -not $vectors -and -not $msiVector -and -not $msixConfigVector -and -not $msixQueueVector) { return }
+
+  $status = "INFO"
+  if ($line -match "\|FAIL(\||$)") { $status = "FAIL" }
+  elseif ($line -match "\|PASS(\||$)") { $status = "PASS" }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|$status"
   if ($mode) { $out += "|mode=$(Sanitize-AeroMarkerValue $mode)" }
   if ($messages) { $out += "|messages=$(Sanitize-AeroMarkerValue $messages)" }
   if ($vectors) { $out += "|vectors=$(Sanitize-AeroMarkerValue $vectors)" }
+  if ($msiVector) { $out += "|msi_vector=$(Sanitize-AeroMarkerValue $msiVector)" }
+  if ($msixConfigVector) { $out += "|msix_config_vector=$(Sanitize-AeroMarkerValue $msixConfigVector)" }
+  if ($msixQueueVector) { $out += "|msix_queue_vector=$(Sanitize-AeroMarkerValue $msixQueueVector)" }
   Write-Host $out
 }
 
