@@ -484,6 +484,10 @@ To use “stock” QEMU virtio-input frontends (`virtio-keyboard-pci` / `virtio-
 compatibility mode (`CompatDeviceKind`) so it accepts QEMU-style `ID_NAME` strings and relaxes some identification
 checks. See `docs/virtio-input-notes.md` for details.
 
+Compat mode only affects device-kind identification (keyboard vs mouse vs tablet) and relaxes some virtio-input
+config validation; it does **not** relax the underlying virtio-pci contract checks (PCI IDs/revision, BAR0 layout,
+queue sizes, etc.).
+
 Even in compat mode, the INF/runtime checks are still **contract-v1 identity gated** (modern virtio-input `DEV_1052`,
 `REV_01`); under QEMU you typically need `disable-legacy=on,x-pci-revision=0x01` for the device to bind and start.
 
