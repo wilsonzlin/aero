@@ -60,6 +60,13 @@ export interface GpuWorkerHandle {
   requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage>;
   /**
    * Debug-only: read back the *presented* pixels from the worker's output canvas (RGBA8, top-left origin).
+   *
+   * This is intended for validating presentation policy (scaling/letterboxing, sRGB/alpha, etc).
+   * It is intentionally separate from `requestScreenshot()`, which returns source framebuffer bytes
+   * for deterministic hashing.
+   *
+   * Note: the underlying worker API is best-effort; if a backend cannot read back presented
+   * output yet it may fall back to returning a source-framebuffer screenshot.
    */
   requestPresentedScreenshot(): Promise<GpuRuntimeScreenshotPresentedResponseMessage>;
   shutdown(): void;

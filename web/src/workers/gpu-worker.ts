@@ -3035,6 +3035,14 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     case "screenshot_presented": {
       const req = msg as GpuRuntimeScreenshotPresentedRequestMessage;
       void (async () => {
+        // `screenshot_presented` is debug-only: it attempts to read back the final pixels that were
+        // rendered to the canvas (post-scaling/letterboxing, post-sRGB/alpha policy, etc).
+        //
+        // This is intentionally separate from `screenshot`, which is defined as a deterministic
+        // readback of the source framebuffer bytes for hashing/tests.
+        //
+        // Best-effort: if the active presenter backend does not implement presented readback yet,
+        // we fall back to `presenter.screenshot()` (source bytes).
         const postStub = (seq?: number) => {
           const rgba8 = new Uint8Array([0, 0, 0, 255]).buffer;
           postToMain(

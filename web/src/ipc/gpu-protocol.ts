@@ -172,11 +172,11 @@ export type GpuRuntimeScreenshotRequestMessage = GpuWorkerMessageBase & {
 };
 
 /**
- * Debug-only: read back the *presented* pixels (after presentation policy such as sRGB encoding,
- * opaque-alpha, and any Y-flip conventions).
+ * Debug-only: attempt to read back the *presented* pixels (after presentation policy such as
+ * scaling/letterboxing, sRGB/alpha handling, and cursor composition).
  *
- * This is distinct from `screenshot`, which is allowed to return the source framebuffer bytes
- * (used by existing smoke tests).
+ * This is distinct from `screenshot`, which returns a deterministic readback of the **source
+ * framebuffer** bytes for hashing/tests.
  */
 export type GpuRuntimeScreenshotPresentedRequestMessage = GpuWorkerMessageBase & {
   type: "screenshot_presented";
@@ -324,8 +324,24 @@ export type GpuRuntimeScreenshotResponseMessage = GpuWorkerMessageBase & {
 export type GpuRuntimeScreenshotPresentedResponseMessage = GpuWorkerMessageBase & {
   type: "screenshot_presented";
   requestId: number;
+  /**
+   * Screenshot dimensions in **presented/canvas** pixels (post-DPR / output sizing).
+   *
+   * Note: this is a best-effort debug API; if the selected backend cannot read back
+   * presented output yet, the worker may fall back to a source-framebuffer screenshot.
+   */
   width: number;
   height: number;
+  /**
+   * RGBA8 bytes in row-major order with a top-left origin.
+   *
+   * Semantics: best-effort readback of the **presented output** pixels. This may include
+   * scaling/letterboxing, color-space/alpha policy, and cursor composition (if requested).
+   *
+   * Not suitable for deterministic hashing across browsers/GPUs.
+   *
+   * Buffer is tight-packed: `byteLength === width * height * 4`.
+   */
   rgba8: ArrayBuffer;
   origin: "top-left";
   frameSeq?: number;

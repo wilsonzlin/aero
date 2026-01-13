@@ -8,28 +8,31 @@ export interface PresenterScreenshot {
    * RGBA8 pixel bytes in row-major order with a top-left origin
    * (i.e. the first row is the top scanline).
    *
-   * ## Semantics: source framebuffer readback (NOT presented output)
+   * ## Semantics
    *
-   * `Presenter.screenshot()` is defined as a readback of the presenter's **source
-   * framebuffer**: the same RGBA8 pixels most recently passed to `present()`
-   * (or uploaded into the backend's source texture).
+   * This type is returned by two different capture paths:
    *
-   * The returned buffer is **tight-packed**: `byteLength === width * height * 4`
-   * and each row is exactly `width * 4` bytes (no per-row padding/stride).
+   * - `Presenter.screenshot()` (**deterministic source framebuffer readback**):
+   *   - Returns the same RGBA8 pixels most recently passed to `present()` (or uploaded
+   *     into the backend's source texture).
+   *   - The buffer is **tight-packed**: `byteLength === width * height * 4` and each row
+   *     is exactly `width * 4` bytes (no per-row padding/stride).
+   *   - `width/height` are the **source** framebuffer dimensions.
+   *   - Callers should NOT expect the result to include:
+   *     - scaling / filtering / integer-fit logic
+   *     - letterboxing / clearColor
+   *     - `outputWidth`/`outputHeight` or `devicePixelRatio` sizing
+   *     - sRGB encode / browser color management
+   *     - cursor composition or other overlays
+   *   - Hash-based tests rely on this contract being stable. Do not “fix” this to read back
+   *     the presented canvas output.
    *
-   * This is intentionally **not** a capture of the on-screen/presented canvas.
-   * In particular, callers should not expect the screenshot to include:
-   *
-   * - scaling / filtering / integer-fit logic
-   * - letterboxing / clearColor
-   * - `outputWidth`/`outputHeight` or `devicePixelRatio` sizing
-   *   (the screenshot `width/height` are the **source** framebuffer dimensions)
-   * - sRGB encode / browser color management
-   * - cursor composition or other overlays
-   *
-   * Hash-based tests rely on this contract being deterministic and matching the
-   * source bytes. If a "what the user sees" capture is needed, add a separate
-   * API for **presented output** readback instead of changing this one.
+   * - `Presenter.screenshotPresented()` (**debug-only presented output readback**; optional):
+   *   - Reads back the final pixels rendered to the canvas/surface **after** presentation
+   *     policy (scaling/letterboxing, sRGB/alpha policy, cursor composition, etc).
+   *   - `width/height` are the **canvas** physical pixel dimensions (post-DPR).
+   *   - This is intended for debug/validation only; it is not suitable for deterministic
+   *     hashing because it mixes presentation policy + color management concerns.
    */
   pixels: ArrayBuffer;
 }
@@ -85,10 +88,17 @@ export interface Presenter {
   /**
    * Capture a screenshot of the current frame.
    *
-   * See `PresenterScreenshot.pixels` for the contract (source framebuffer readback,
-   * not presented output).
+   * See `PresenterScreenshot.pixels` for the contract: this is the **source framebuffer**
+   * readback used for deterministic hashing (not presented output).
    */
   screenshot(): Promise<PresenterScreenshot> | PresenterScreenshot;
+  /**
+   * Debug-only: capture a screenshot of the **presented output** (canvas/surface pixels).
+   *
+   * This is useful for validating presentation policy (scaling/letterboxing, sRGB/alpha)
+   * but is intentionally separate from `screenshot()` so hash-based tests remain stable.
+   */
+  screenshotPresented?: () => Promise<PresenterScreenshot> | PresenterScreenshot;
   destroy?(): void;
 }
 
