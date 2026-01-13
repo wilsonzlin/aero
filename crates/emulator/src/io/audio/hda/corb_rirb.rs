@@ -117,10 +117,11 @@ impl Corb {
             return None;
         }
         let next_rp = (self.rp + 1) % entries;
-
         let addr = (next_rp as u64)
             .checked_mul(4)
-            .and_then(|offset| self.base().checked_add(offset));
+            .and_then(|offset| self.base().checked_add(offset))
+            // Reading a u32 touches bytes `[addr, addr + 4)`.
+            .and_then(|addr| addr.checked_add(4).map(|_| addr));
 
         // Always advance RP, even when the address overflows: otherwise we'd reattempt forever.
         self.rp = next_rp;
@@ -230,6 +231,8 @@ impl Rirb {
         if let Some(addr) = (next_wp as u64)
             .checked_mul(8)
             .and_then(|offset| self.base().checked_add(offset))
+            // Writing a u64 touches bytes `[addr, addr + 8)`.
+            .and_then(|addr| addr.checked_add(8).map(|_| addr))
         {
             let encoded = resp.encode();
             write_u64(mem, addr, encoded);
@@ -477,6 +480,7 @@ mod tests {
         assert_eq!(rirb.sts & 0x01, 0x01);
         assert_eq!(rirb.responses_since_irq, 0);
     }
+
     #[test]
     fn rirb_push_response_does_not_overflow_address_or_dma_write() {
         // Regression test: base + offset used to overflow/panic in debug builds and wrap in
@@ -506,6 +510,54 @@ mod tests {
         assert!(result.is_ok(), "push_response panicked on address overflow");
         // WP and internal bookkeeping must still advance.
         assert_eq!(rirb.wp, 16);
+        assert_eq!(rirb.responses_since_irq, 1);
+    }
+
+    #[test]
+    fn corb_pop_command_does_not_overflow_range_or_dma_read() {
+        let mut corb = Corb::new();
+        corb.mmio_write(CorbReg::Size, 1, 0x2);
+        corb.mmio_write(CorbReg::Lbase, 4, 0xFFFF_FFFF);
+        corb.mmio_write(CorbReg::Ubase, 4, 0xFFFF_FFFF);
+
+        // Force a command fetch at rp=31, which yields addr=u64::MAX-3 and overflows when
+        // computing `addr + 4` (the end of the u32 read).
+        corb.rp = 30;
+        corb.wp = 31;
+
+        let mut mem = PanicOnReadMem;
+        let result = catch_unwind(AssertUnwindSafe(|| corb.pop_command(&mut mem)));
+        assert!(result.is_ok(), "pop_command panicked on range overflow");
+        // RP must still advance so we don't retry forever.
+        assert_eq!(corb.rp, 31);
+    }
+
+    #[test]
+    fn rirb_push_response_does_not_overflow_range_or_dma_write() {
+        let mut rirb = Rirb::new();
+        rirb.mmio_write(RirbReg::Size, 1, 0x2);
+        rirb.mmio_write(RirbReg::Lbase, 4, 0xFFFF_FFFF);
+        rirb.mmio_write(RirbReg::Ubase, 4, 0xFFFF_FFFF);
+
+        // Force the next response to target wp=15, which yields addr=u64::MAX-7 and overflows
+        // when computing `addr + 8` (the end of the u64 write).
+        rirb.wp = 14;
+
+        let mut mem = PanicOnWriteMem;
+        let mut intsts = 0u32;
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            rirb.push_response(
+                &mut mem,
+                HdaVerbResponse {
+                    data: 0x1234_5678,
+                    ext: 0,
+                },
+                &mut intsts,
+            );
+        }));
+        assert!(result.is_ok(), "push_response panicked on range overflow");
+        // WP and internal bookkeeping must still advance.
+        assert_eq!(rirb.wp, 15);
         assert_eq!(rirb.responses_since_irq, 1);
     }
 }

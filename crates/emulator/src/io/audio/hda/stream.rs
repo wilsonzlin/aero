@@ -513,6 +513,19 @@ impl HdaStream {
                 );
                 continue;
             };
+            // `read_physical` reads bytes in the range `[dma_addr, dma_addr + bytes)`. Even if
+            // `dma_addr` computed successfully, guard against `dma_addr + bytes` overflowing.
+            if dma_addr.checked_add(bytes as u64).is_none() {
+                self.finish_bdl_entry(
+                    BdlEntry {
+                        addr: 0,
+                        len: 0,
+                        ioc: false,
+                    },
+                    intsts,
+                );
+                continue;
+            }
             mem.read_physical(dma_addr, &mut self.dma_scratch[..bytes]);
             audio.push(&self.dma_scratch[..bytes]);
 
@@ -572,6 +585,19 @@ impl HdaStream {
                 );
                 continue;
             };
+            // `write_physical` writes bytes in the range `[dma_addr, dma_addr + bytes)`. Even if
+            // `dma_addr` computed successfully, guard against `dma_addr + bytes` overflowing.
+            if dma_addr.checked_add(bytes as u64).is_none() {
+                self.finish_bdl_entry(
+                    BdlEntry {
+                        addr: 0,
+                        len: 0,
+                        ioc: false,
+                    },
+                    intsts,
+                );
+                continue;
+            }
 
             // Fill from capture buffer; any missing bytes remain as zero (silence).
             let read = capture.pop_into(&mut self.dma_scratch[..bytes]);
@@ -638,6 +664,15 @@ impl HdaStream {
             };
         };
         let Some(flags_addr) = addr.checked_add(12) else {
+            return BdlEntry {
+                addr: 0,
+                len: 0,
+                ioc: false,
+            };
+        };
+        // Reading the `flags` u32 touches bytes `[flags_addr, flags_addr + 4)`. Guard against
+        // `flags_addr + 4` overflowing even if the descriptor base address computed successfully.
+        if flags_addr.checked_add(4).is_none() {
             return BdlEntry {
                 addr: 0,
                 len: 0,
@@ -1135,5 +1170,88 @@ mod tests {
         stream.process(&mut mem, &mut audio, &mut intsts);
 
         assert_eq!(audio.len(), expected);
+    }
+
+    #[test]
+    fn stream_process_bdl_flags_range_overflow_does_not_touch_memory() {
+        let mut stream = HdaStream::new(StreamId::Out0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = 1;
+        stream.lvi = 0;
+
+        // With the 128-byte aligned base below, bdl_index=7 yields:
+        //   addr = base + 7*16 = u64::MAX - 15
+        //   flags_addr = addr + 12 = u64::MAX - 3
+        // Reading flags as a u32 would require computing `flags_addr + 4`, which overflows.
+        stream.bdpl = 0xFFFF_FF80;
+        stream.bdpu = 0xFFFF_FFFF;
+        stream.bdl_index = 7;
+
+        let mut mem = PanicMem;
+        let mut audio = AudioRingBuffer::new(16);
+        let mut intsts = 0u32;
+        stream.process(&mut mem, &mut audio, &mut intsts);
+        assert!(audio.is_empty());
+        assert_eq!(intsts, 0);
+    }
+
+    #[test]
+    fn stream_process_dma_range_overflow_does_not_read_buffer() {
+        let mut mem = StrictReadMem::new();
+
+        let bdl_base = 0x3000u64;
+        let entry_addr = u64::MAX - 3;
+        let entry_len = 4u32;
+        let entry_flags = 0u32;
+        mem.write(bdl_base, &entry_addr.to_le_bytes());
+        mem.write(bdl_base + 8, &entry_len.to_le_bytes());
+        mem.write(bdl_base + 12, &entry_flags.to_le_bytes());
+
+        let mut stream = HdaStream::new(StreamId::Out0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = 4;
+        stream.lvi = 0;
+        stream.bdpl = bdl_base as u32;
+        stream.bdpu = 0;
+        stream.bdl_index = 0;
+        stream.bdl_offset = 0;
+
+        let mut audio = AudioRingBuffer::new(16);
+        let mut intsts = 0u32;
+        stream.process(&mut mem, &mut audio, &mut intsts);
+        assert!(audio.is_empty());
+        assert_eq!(intsts, 0);
+    }
+
+    #[test]
+    fn stream_process_capture_dma_range_overflow_does_not_write_buffer_or_consume_capture() {
+        let mut mem = StrictReadMem::new();
+
+        let bdl_base = 0x4000u64;
+        let entry_addr = u64::MAX - 3;
+        let entry_len = 4u32;
+        let entry_flags = 0u32;
+        mem.write(bdl_base, &entry_addr.to_le_bytes());
+        mem.write(bdl_base + 8, &entry_len.to_le_bytes());
+        mem.write(bdl_base + 12, &entry_flags.to_le_bytes());
+
+        let mut stream = HdaStream::new(StreamId::In0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = 4;
+        stream.lvi = 0;
+        stream.bdpl = bdl_base as u32;
+        stream.bdpu = 0;
+        stream.bdl_index = 0;
+        stream.bdl_offset = 0;
+
+        let mut capture = AudioRingBuffer::new(16);
+        capture.push(&[1, 2, 3, 4]);
+        let before = capture.len();
+
+        let mut intsts = 0u32;
+        stream.process_capture(&mut mem, &mut capture, &mut intsts);
+
+        assert_eq!(capture.len(), before);
+        assert_eq!(intsts, 0);
     }
 }
