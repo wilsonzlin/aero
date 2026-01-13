@@ -53,7 +53,10 @@ export class WebGpuPresenterBackend implements Presenter {
   private gpu: any = null;
   private device: any = null;
   private queue: any = null;
-  private format: any = null;
+  private canvasFormat: any = null;
+  private viewFormat: any = null;
+  private srgbEncodeInShader = true;
+  private pipelineFormat: any = null;
 
   private pipeline: any = null;
   private sampler: any = null;
@@ -90,6 +93,12 @@ export class WebGpuPresenterBackend implements Presenter {
   private cursorHotY = 0;
 
   private destroyed = false;
+
+  // Keep these bit values in sync with:
+  // - `web/src/gpu/webgpu-presenter.ts`
+  // - `crates/aero-gpu/src/present.rs`
+  private static readonly FLAG_APPLY_SRGB_ENCODE = 1;
+  private static readonly FLAG_FORCE_OPAQUE_ALPHA = 4;
 
   public async init(
     canvas: OffscreenCanvas,
@@ -156,9 +165,8 @@ export class WebGpuPresenterBackend implements Presenter {
       this.opts.onError?.(new PresenterError('webgpu_device_lost', `WebGPU device lost (${reason})${message}`));
     });
 
-    this.format = gpu.getPreferredCanvasFormat?.() ?? 'bgra8unorm';
+    this.canvasFormat = gpu.getPreferredCanvasFormat?.() ?? 'bgra8unorm';
     this.configureContext();
-    this.createPipelineAndSampler();
     this.createFrameResources(width, height);
   }
 
@@ -422,9 +430,14 @@ export class WebGpuPresenterBackend implements Presenter {
     this.cursorTextureHeight = 0;
     this.pipeline = null;
     this.sampler = null;
+    this.canvasFormat = null;
+    this.viewFormat = null;
+    this.srgbEncodeInShader = true;
+    this.pipelineFormat = null;
     this.device = null;
     this.queue = null;
     this.ctx = null;
+    this.gpu = null;
     this.canvas = null;
     this.staging = null;
     this.stagingBytesPerRow = 0;
@@ -440,21 +453,72 @@ export class WebGpuPresenterBackend implements Presenter {
   }
 
   private configureContext(): void {
-    if (!this.ctx || !this.device || !this.format) return;
+    if (!this.ctx || !this.device || !this.canvasFormat) return;
     try {
       this.ctx.unconfigure?.();
     } catch {
       // Ignore.
     }
-    this.ctx.configure({
-      device: this.device,
-      format: this.format,
-      alphaMode: 'opaque',
-    });
+
+    const toSrgbFormat = (format: unknown): unknown => {
+      if (format === 'bgra8unorm') return 'bgra8unorm-srgb';
+      if (format === 'rgba8unorm') return 'rgba8unorm-srgb';
+      return null;
+    };
+
+    // Explicit presentation color policy (docs/04):
+    // - Input framebuffer is linear (`rgba8unorm`)
+    // - Output is sRGB whenever possible
+    // - Prefer an sRGB view format via `viewFormats`; fall back to shader encoding when rejected.
+    const srgbFormat = toSrgbFormat(this.canvasFormat);
+    let viewFormat: any = this.canvasFormat;
+    let srgbEncodeInShader = true;
+
+    if (srgbFormat) {
+      try {
+        (this.ctx as any).configure({
+          device: this.device,
+          format: this.canvasFormat,
+          alphaMode: 'opaque',
+          // TS libdefs may not include `viewFormats` yet.
+          viewFormats: [srgbFormat],
+        });
+        viewFormat = srgbFormat;
+        srgbEncodeInShader = false;
+      } catch {
+        // Fall back to a linear swapchain view and perform encoding in shader.
+        (this.ctx as any).configure({
+          device: this.device,
+          format: this.canvasFormat,
+          alphaMode: 'opaque',
+        });
+        viewFormat = this.canvasFormat;
+        srgbEncodeInShader = true;
+      }
+    } else {
+      (this.ctx as any).configure({
+        device: this.device,
+        format: this.canvasFormat,
+        alphaMode: 'opaque',
+      });
+      viewFormat = this.canvasFormat;
+      srgbEncodeInShader = true;
+    }
+
+    this.viewFormat = viewFormat;
+    this.srgbEncodeInShader = srgbEncodeInShader;
+
+    // Ensure the render pipeline target matches the swapchain view format.
+    if (this.pipelineFormat !== viewFormat || !this.pipeline) {
+      this.pipelineFormat = viewFormat;
+      this.createPipelineAndSampler();
+      // The pipeline layout comes from `layout: 'auto'`; rebuild bind groups against the new layout.
+      this.rebuildBindGroup();
+    }
   }
 
   private createPipelineAndSampler(): void {
-    if (!this.device) return;
+    if (!this.device || !this.viewFormat) return;
 
     const module = this.device.createShaderModule({ code: blitShaderSource });
     this.pipeline = this.device.createRenderPipeline({
@@ -466,7 +530,7 @@ export class WebGpuPresenterBackend implements Presenter {
       fragment: {
         module,
         entryPoint: 'fs_main',
-        targets: [{ format: this.format }],
+        targets: [{ format: this.viewFormat }],
       },
       primitive: {
         topology: 'triangle-list',
@@ -523,13 +587,17 @@ export class WebGpuPresenterBackend implements Presenter {
       return;
     }
 
+    const flags =
+      WebGpuPresenterBackend.FLAG_FORCE_OPAQUE_ALPHA |
+      (this.srgbEncodeInShader ? WebGpuPresenterBackend.FLAG_APPLY_SRGB_ENCODE : 0);
+
     const cursorEnable =
       this.cursorRenderEnabled && this.cursorEnabled && this.cursorWidth > 0 && this.cursorHeight > 0 ? 1 : 0;
     const cursorParams = new Int32Array([
       this.srcWidth | 0,
       this.srcHeight | 0,
       cursorEnable,
-      0,
+      flags | 0,
       this.cursorX | 0,
       this.cursorY | 0,
       this.cursorHotX | 0,
@@ -546,14 +614,55 @@ export class WebGpuPresenterBackend implements Presenter {
     const scaleMode = this.opts.scaleMode ?? 'fit';
 
     const vp = computeViewport(canvasW, canvasH, this.srcWidth, this.srcHeight, scaleMode);
-    const [r, g, b, a] = this.opts.clearColor ?? [0, 0, 0, 1];
+    const [r, g, b] = this.opts.clearColor ?? [0, 0, 0, 1];
+
+    let currentTexture: any = null;
+    let currentTextureError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        currentTexture = this.ctx.getCurrentTexture();
+        currentTextureError = null;
+        break;
+      } catch (err) {
+        currentTextureError = err;
+        if (attempt === 0) {
+          // Surface errors (Lost/Outdated) are expected. Reconfigure and retry once.
+          try {
+            this.configureContext();
+          } catch {
+            // Ignore and retry acquire; if it still fails we'll surface the original error.
+          }
+          continue;
+        }
+      }
+    }
+
+    if (!currentTexture) {
+      const message =
+        currentTextureError instanceof Error
+          ? currentTextureError.message
+          : currentTextureError
+            ? String(currentTextureError)
+            : 'Unknown error';
+      this.opts.onError?.(
+        new PresenterError('webgpu_surface_error', `WebGPU getCurrentTexture() failed: ${message}`, currentTextureError),
+      );
+      return;
+    }
+
+    const view =
+      this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
+        ? currentTexture.createView({ format: this.viewFormat as any })
+        : currentTexture.createView();
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: this.ctx.getCurrentTexture().createView(),
-          clearValue: { r, g, b, a },
+          view,
+          // Alpha is forced opaque in shader; keep clear alpha opaque too so letterboxing doesn't
+          // accidentally blend with the page background.
+          clearValue: { r, g, b, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
         },
