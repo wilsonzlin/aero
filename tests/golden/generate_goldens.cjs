@@ -3,18 +3,24 @@ const path = require('node:path');
 
 const { PNG } = require('pngjs');
 
-const { generateQuadrantsImageRGBA } = require('../playwright/scenes/quadrants_scene.cjs');
+// This script generates the committed PNG goldens under `tests/golden/`.
+//
+// CI enforces determinism by running `npm run generate:goldens` and failing if
+// `tests/golden/` has uncommitted changes afterwards. If you touch any of the
+// scene generators below, rerun this script and commit the updated PNGs.
+
+const { generateQuadrantsImageRGBA } = require('../e2e/playwright/scenes/quadrants_scene.cjs');
 const {
   VGA_TEXT_MODE_WIDTH,
   VGA_TEXT_MODE_HEIGHT,
   renderVgaTextModeSceneRGBA
-} = require('../playwright/scenes/vga_text_mode_scene.cjs');
+} = require('../e2e/playwright/scenes/vga_text_mode_scene.cjs');
 
 const {
   VBE_LFB_WIDTH,
   VBE_LFB_HEIGHT,
   renderVbeLfbColorBarsRGBA
-} = require('../playwright/scenes/vbe_lfb_scene.cjs');
+} = require('../e2e/playwright/scenes/vbe_lfb_scene.cjs');
 
 function writePng(filePath, width, height, rgba) {
   const png = new PNG({ width, height });

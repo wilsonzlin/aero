@@ -31,9 +31,16 @@ jobs:
 
       - name: Verify golden generator is up-to-date
         working-directory: ${{ steps.node-workspace.outputs.dir }}
+        shell: bash
         run: |
+          set -euo pipefail
           npm run generate:goldens
-          git diff --exit-code tests/golden
+          if ! git diff --exit-code -- tests/golden; then
+            echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
+            echo "Changed files:"
+            git status --porcelain -- tests/golden
+            exit 1
+          fi
 
       - name: Run GPU golden tests
         working-directory: ${{ steps.node-workspace.outputs.dir }}

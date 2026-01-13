@@ -510,6 +510,19 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
+      - name: Check golden images are up-to-date (determinism)
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run generate:goldens
+          if ! git diff --exit-code -- tests/golden; then
+            echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
+            echo "Changed files:"
+            git status --porcelain -- tests/golden
+            exit 1
+          fi
+
       - name: Lint (if present)
         working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run lint --if-present
