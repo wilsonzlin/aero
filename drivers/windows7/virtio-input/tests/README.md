@@ -6,7 +6,8 @@ For the consolidated end-to-end virtio-input validation plan (Rust device model 
 
 ## Host-side unit tests (portable)
 
-`hid_translate.c/h` is written to be portable so the virtio-input → HID mapping can be validated without the Windows WDK.
+`hid_translate.c/h` (and the thin `virtio_input.c/h` wrapper around it) are written to be portable so the virtio-input → HID
+mapping and report queuing behavior can be validated without the Windows WDK.
 
 Run:
 
@@ -28,6 +29,9 @@ Drop a `*_test.c` file in this directory. `tests/run.sh` will build each test in
 binary, and will automatically link `../src/<name>.c` if it exists (where `<name>` is the
 test filename without the `_test` suffix). This is intended for portable C helpers such as
 `hid_translate.c` and LED translation/parsing helpers.
+
+Some tests may depend on multiple `../src/*.c` translation units. In that case, include the
+additional sources directly from the test file.
 
 ## Manual tests
 
