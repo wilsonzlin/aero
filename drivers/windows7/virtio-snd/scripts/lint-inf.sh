@@ -313,6 +313,37 @@ section_contains_norm \
   'ntmpdriver,,aero_virtio_snd.sys' \
   "inf/aero_virtio_snd.inf must reference aero_virtio_snd.sys via NTMPDriver"
 
+note "checking WDMAudio/PortCls subdevice wiring..."
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'associatedfilters,0x00010000,%ksname_wave%,%ksname_topology%' \
+  "inf/aero_virtio_snd.inf must set AssociatedFilters = Wave,Topology"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'drivers,subclasses,,"wave,topology"' \
+  "inf/aero_virtio_snd.inf must set Drivers\\SubClasses to \"wave,topology\""
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'drivers,driver,,wdmaud.sys' \
+  "inf/aero_virtio_snd.inf must set Drivers\\Driver = wdmaud.sys"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'drivers\wave,driver,,aero_virtio_snd.sys' \
+  "inf/aero_virtio_snd.inf must wire Drivers\\\\wave -> aero_virtio_snd.sys"
+
+section_contains_norm \
+  "$INF_CONTRACT" \
+  'AeroVirtioSnd.AddReg' \
+  'drivers\topology,driver,,aero_virtio_snd.sys' \
+  "inf/aero_virtio_snd.inf must wire Drivers\\\\topology -> aero_virtio_snd.sys"
+
 note "checking bring-up toggle defaults..."
 section_contains_norm \
   "$INF_CONTRACT" \
