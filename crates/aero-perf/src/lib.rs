@@ -8,6 +8,9 @@
 //! architectural instruction even though they may iterate many times. Those
 //! iterations can be tracked separately via [`rep_iterations`].
 
+pub mod jit;
+pub mod telemetry;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

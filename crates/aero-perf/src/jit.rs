@@ -366,3 +366,4 @@ pub fn format_hud_line(jit: &JitExport) -> String {
         cap = jit.totals.cache.capacity_bytes,
     )
 }
+
