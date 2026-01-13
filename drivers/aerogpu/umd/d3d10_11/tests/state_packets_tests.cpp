@@ -346,6 +346,68 @@ bool TestSetBlendStateEmitsPacket() {
   return true;
 }
 
+bool TestSetNullBlendStateEmitsDefaultPacket() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(null blend)")) {
+    return false;
+  }
+
+  const uint32_t sample_mask = 0x12345678u;
+  D3D10DDI_HBLENDSTATE null_state{};
+  dev.device_funcs.pfnSetBlendState(dev.hDevice, null_state, /*blend_factor=*/nullptr, sample_mask);
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetBlendState(null)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()),
+             "ValidateStream(null blend)")) {
+    return false;
+  }
+
+  CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_BLEND_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_BLEND_STATE emitted (null)")) {
+    return false;
+  }
+
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_blend_state*>(dev.harness.last_stream.data() + loc.offset);
+  if (!Check(cmd->state.enable == 0u, "blend.enable default")) {
+    return false;
+  }
+  if (!Check(cmd->state.src_factor == AEROGPU_BLEND_ONE, "blend.src_factor default")) {
+    return false;
+  }
+  if (!Check(cmd->state.dst_factor == AEROGPU_BLEND_ZERO, "blend.dst_factor default")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_op == AEROGPU_BLEND_OP_ADD, "blend.blend_op default")) {
+    return false;
+  }
+  if (!Check(cmd->state.src_factor_alpha == AEROGPU_BLEND_ONE, "blend.src_factor_alpha default")) {
+    return false;
+  }
+  if (!Check(cmd->state.dst_factor_alpha == AEROGPU_BLEND_ZERO, "blend.dst_factor_alpha default")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_op_alpha == AEROGPU_BLEND_OP_ADD, "blend.blend_op_alpha default")) {
+    return false;
+  }
+  if (!Check(cmd->state.color_write_mask == 0xFu, "blend.color_write_mask default")) {
+    return false;
+  }
+  if (!Check(cmd->state.blend_constant_rgba_f32[0] == F32Bits(1.0f), "blend.constant[0] default")) {
+    return false;
+  }
+  if (!Check(cmd->state.sample_mask == sample_mask, "blend.sample_mask default")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSetRasterizerStateEmitsPacket() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(rasterizer)")) {
@@ -402,6 +464,54 @@ bool TestSetRasterizerStateEmitsPacket() {
   }
 
   dev.device_funcs.pfnDestroyRasterizerState(dev.hDevice, rs.hState);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSetNullRasterizerStateEmitsDefaultPacket() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(null rasterizer)")) {
+    return false;
+  }
+
+  D3D10DDI_HRASTERIZERSTATE null_state{};
+  dev.device_funcs.pfnSetRasterizerState(dev.hDevice, null_state);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetRasterizerState(null)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()),
+             "ValidateStream(null rasterizer)")) {
+    return false;
+  }
+
+  CmdLoc loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_RASTERIZER_STATE emitted (null)")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_rasterizer_state*>(dev.harness.last_stream.data() + loc.offset);
+  if (!Check(cmd->state.fill_mode == AEROGPU_FILL_SOLID, "raster.fill_mode default")) {
+    return false;
+  }
+  if (!Check(cmd->state.cull_mode == AEROGPU_CULL_BACK, "raster.cull_mode default")) {
+    return false;
+  }
+  if (!Check(cmd->state.front_ccw == 0u, "raster.front_ccw default")) {
+    return false;
+  }
+  if (!Check(cmd->state.scissor_enable == 0u, "raster.scissor_enable default")) {
+    return false;
+  }
+  if (!Check(cmd->state.depth_bias == 0, "raster.depth_bias default")) {
+    return false;
+  }
+  if (!Check(cmd->state.flags == AEROGPU_RASTERIZER_FLAG_NONE, "raster.flags default")) {
+    return false;
+  }
+
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -470,13 +580,66 @@ bool TestSetDepthStencilStateEmitsPacket() {
   return true;
 }
 
+bool TestSetNullDepthStencilStateEmitsDefaultPacket() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(null depth-stencil)")) {
+    return false;
+  }
+
+  D3D10DDI_HDEPTHSTENCILSTATE null_state{};
+  dev.device_funcs.pfnSetDepthStencilState(dev.hDevice, null_state, /*stencil_ref=*/0u);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after SetDepthStencilState(null)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()),
+             "ValidateStream(null depth-stencil)")) {
+    return false;
+  }
+
+  CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(),
+                              dev.harness.last_stream.size(),
+                              AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!Check(loc.hdr != nullptr, "SET_DEPTH_STENCIL_STATE emitted (null)")) {
+    return false;
+  }
+  const auto* cmd =
+      reinterpret_cast<const aerogpu_cmd_set_depth_stencil_state*>(dev.harness.last_stream.data() + loc.offset);
+  if (!Check(cmd->state.depth_enable == 1u, "dss.depth_enable default")) {
+    return false;
+  }
+  if (!Check(cmd->state.depth_write_enable == 1u, "dss.depth_write_enable default")) {
+    return false;
+  }
+  if (!Check(cmd->state.depth_func == AEROGPU_COMPARE_LESS, "dss.depth_func default")) {
+    return false;
+  }
+  if (!Check(cmd->state.stencil_enable == 0u, "dss.stencil_enable default")) {
+    return false;
+  }
+  if (!Check(cmd->state.stencil_read_mask == 0xFFu, "dss.stencil_read_mask default")) {
+    return false;
+  }
+  if (!Check(cmd->state.stencil_write_mask == 0xFFu, "dss.stencil_write_mask default")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
   bool ok = true;
   ok &= TestSetBlendStateEmitsPacket();
+  ok &= TestSetNullBlendStateEmitsDefaultPacket();
   ok &= TestSetRasterizerStateEmitsPacket();
+  ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
   ok &= TestSetDepthStencilStateEmitsPacket();
+  ok &= TestSetNullDepthStencilStateEmitsDefaultPacket();
   if (!ok) {
     return 1;
   }
