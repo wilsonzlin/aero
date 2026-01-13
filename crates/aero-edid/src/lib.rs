@@ -2,14 +2,62 @@
 
 pub const EDID_BLOCK_SIZE: usize = 128;
 
+/// Display timing information for the preferred mode encoded in the EDID.
+///
+/// Only a subset of timing parameters are exposed publicly; the generator will
+/// synthesize a full Detailed Timing Descriptor (DTD).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timing {
+    pub width: u16,
+    pub height: u16,
+    pub refresh_hz: u16,
+}
+
+impl Timing {
+    /// The legacy/default preferred timing: 1024×768 @ 60Hz.
+    pub const DEFAULT: Self = Self::new(1024, 768, 60);
+
+    pub const fn new(width: u16, height: u16, refresh_hz: u16) -> Self {
+        Self {
+            width,
+            height,
+            refresh_hz,
+        }
+    }
+
+    fn is_plausible(self) -> bool {
+        // EDID Detailed Timing Descriptors store active pixel counts as 12-bit
+        // values, and pixel clock as a 16-bit value in 10kHz units.
+        self.width != 0
+            && self.height != 0
+            && self.refresh_hz != 0
+            && (self.width as u32) <= 0x0FFF
+            && (self.height as u32) <= 0x0FFF
+    }
+}
+
 pub fn read_edid(block: u16) -> Option<[u8; EDID_BLOCK_SIZE]> {
     match block {
-        0 => Some(generate_base_edid()),
+        // Backwards compatible: block 0 is always the base EDID using the
+        // legacy 1024×768@60 preferred timing.
+        0 => Some(generate_edid(Timing::DEFAULT)),
         _ => None,
     }
 }
 
-fn generate_base_edid() -> [u8; EDID_BLOCK_SIZE] {
+/// Generate a base EDID block (128 bytes) with a configurable preferred timing.
+///
+/// The returned EDID is self-contained (extension count 0) and includes a
+/// single preferred Detailed Timing Descriptor (DTD) as the first descriptor.
+pub fn generate_edid(preferred: Timing) -> [u8; EDID_BLOCK_SIZE] {
+    // Avoid panics and avoid generating obviously invalid EDIDs if a caller
+    // passes nonsense. Fall back to the legacy mode.
+    let preferred = if preferred.is_plausible() {
+        preferred
+    } else {
+        Timing::DEFAULT
+    };
+
     let mut edid = [0u8; EDID_BLOCK_SIZE];
 
     // Header
@@ -66,17 +114,8 @@ fn generate_base_edid() -> [u8; EDID_BLOCK_SIZE] {
         0x01, 0x01, // unused
     ]);
 
-    // Detailed timing descriptor #1: 1024x768@60 (VESA DMT).
-    edid[54..72].copy_from_slice(&[
-        0x64, 0x19, // pixel clock: 65.00 MHz
-        0x00, 0x40, 0x41, // hactive=1024, hblank=320
-        0x00, 0x26, 0x30, // vactive=768, vblank=38
-        0x18, 0x88, // hsync offset=24, hsync pulse=136
-        0x36, 0x00, // vsync offset=3, vsync pulse=6
-        0x54, 0x0E, 0x11, // image size: 340mm x 270mm
-        0x00, 0x00, // borders
-        0x18, // flags: digital separate sync, -hsync, -vsync
-    ]);
+    // Detailed timing descriptor #1: preferred timing.
+    edid[54..72].copy_from_slice(&dtd_bytes_for_timing(preferred));
 
     // Detailed descriptor #2: monitor name.
     edid[72..90].copy_from_slice(&[
@@ -103,9 +142,402 @@ fn generate_base_edid() -> [u8; EDID_BLOCK_SIZE] {
     edid
 }
 
+fn align_up_u32(v: u32, align: u32) -> u32 {
+    if align == 0 {
+        return v;
+    }
+    (v + (align - 1)) / align * align
+}
+
+fn dtd_bytes_for_timing(timing: Timing) -> [u8; 18] {
+    if let Some(bytes) = known_dtd_bytes(timing) {
+        return bytes;
+    }
+    synthesize_dtd_bytes(timing)
+}
+
+fn known_dtd_bytes(t: Timing) -> Option<[u8; 18]> {
+    // These are common, standards-based timings (VESA DMT / CEA-861) encoded as
+    // EDID Detailed Timing Descriptors. Keeping these around makes the default
+    // EDID stable and ensures the most common modes look "real" to guests.
+    Some(match (t.width, t.height, t.refresh_hz) {
+        // 1024×768 @ 60Hz (VESA DMT).
+        (1024, 768, 60) => [
+            0x64, 0x19, // pixel clock: 65.00 MHz
+            0x00, 0x40, 0x41, // hactive=1024, hblank=320
+            0x00, 0x26, 0x30, // vactive=768, vblank=38
+            0x18, 0x88, // hsync offset=24, hsync pulse=136
+            0x36, 0x00, // vsync offset=3, vsync pulse=6
+            0x54, 0x0E, 0x11, // image size: 340mm x 270mm
+            0x00, 0x00, // borders
+            0x18, // flags: digital separate sync, -hsync, -vsync
+        ],
+        // 800×600 @ 60Hz (VESA DMT).
+        (800, 600, 60) => [
+            0xA0, 0x0F, // pixel clock: 40.00 MHz
+            0x20, 0x00, 0x31, // hactive=800, hblank=256
+            0x58, 0x1C, 0x20, // vactive=600, vblank=28
+            0x28, 0x80, // hsync offset=40, hsync pulse=128
+            0x14, 0x00, // vsync offset=1, vsync pulse=4
+            0x54, 0x0E, 0x11, // image size: 340mm x 270mm
+            0x00, 0x00, // borders
+            0x1E, // flags: digital separate sync, +hsync, +vsync
+        ],
+        // 640×480 @ 60Hz (VESA DMT / VGA).
+        (640, 480, 60) => [
+            0xD6, 0x09, // pixel clock: 25.18 MHz (rounded)
+            0x80, 0xA0, 0x20, // hactive=640, hblank=160
+            0xE0, 0x2D, 0x10, // vactive=480, vblank=45
+            0x10, 0x60, // hsync offset=16, hsync pulse=96
+            0xA2, 0x00, // vsync offset=10, vsync pulse=2
+            0x54, 0x0E, 0x11, // image size: 340mm x 270mm
+            0x00, 0x00, // borders
+            0x18, // flags: digital separate sync, -hsync, -vsync
+        ],
+        // 1280×1024 @ 60Hz (VESA DMT).
+        (1280, 1024, 60) => [
+            0x30, 0x2A, // pixel clock: 108.00 MHz
+            0x00, 0x98, 0x51, // hactive=1280, hblank=408
+            0x00, 0x2A, 0x40, // vactive=1024, vblank=42
+            0x30, 0x70, // hsync offset=48, hsync pulse=112
+            0x13, 0x00, // vsync offset=1, vsync pulse=3
+            0x54, 0x0E, 0x11, // image size: 340mm x 270mm
+            0x00, 0x00, // borders
+            0x1E, // flags: digital separate sync, +hsync, +vsync
+        ],
+        // 1280×720 @ 60Hz (CEA-861 720p60).
+        (1280, 720, 60) => [
+            0x01, 0x1D, // pixel clock: 74.25 MHz
+            0x00, 0x72, 0x51, // hactive=1280, hblank=370
+            0xD0, 0x1E, 0x20, // vactive=720, vblank=30
+            0x6E, 0x28, // hsync offset=110, hsync pulse=40
+            0x55, 0x00, // vsync offset=5, vsync pulse=5
+            0x54, 0x0E, 0x11, // image size: 340mm x 270mm
+            0x00, 0x00, // borders
+            0x1E, // flags: digital separate sync, +hsync, +vsync
+        ],
+        // 1920×1080 @ 60Hz (CEA-861 1080p60).
+        (1920, 1080, 60) => [
+            0x02, 0x3A, // pixel clock: 148.50 MHz
+            0x80, 0x18, 0x71, // hactive=1920, hblank=280
+            0x38, 0x2D, 0x40, // vactive=1080, vblank=45
+            0x58, 0x2C, // hsync offset=88, hsync pulse=44
+            0x45, 0x00, // vsync offset=4, vsync pulse=5
+            0x54, 0x0E, 0x11, // image size: 340mm x 270mm
+            0x00, 0x00, // borders
+            0x1E, // flags: digital separate sync, +hsync, +vsync
+        ],
+        _ => return None,
+    })
+}
+
+fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
+    // A simple, allocation-free timing synthesizer. This is intentionally
+    // conservative and aims to produce a plausible, standards-like non-reduced
+    // blanking mode.
+    //
+    // For common modes we use exact VESA/CEA timings above, which keeps the
+    // default EDID stable and makes guest OSes happier.
+    let h_active = timing.width as u32;
+    let v_active = timing.height as u32;
+    let refresh_hz = timing.refresh_hz as u32;
+
+    // Horizontal blanking: ~20% of active, at least 160px, aligned to 8px.
+    let mut h_blank = align_up_u32((h_active + 4) / 5, 8).max(160);
+    h_blank = h_blank.min(0x0FFF);
+
+    // Horizontal sync/porches (must fit within blanking).
+    let h_front_porch_min = 8;
+    let h_sync_width_min = 8;
+    let h_back_porch_min = 8;
+
+    let mut h_front_porch = align_up_u32(h_blank / 8, 8).max(h_front_porch_min);
+    let mut h_sync_width = align_up_u32(h_blank / 4, 8).max(h_sync_width_min);
+
+    // Ensure everything fits. If not, grow blanking (up to 12-bit max).
+    let mut needed = h_front_porch + h_sync_width + h_back_porch_min;
+    if needed > h_blank {
+        h_blank = align_up_u32(needed, 8).min(0x0FFF);
+    }
+    // Recompute after potential clamping.
+    needed = h_front_porch + h_sync_width + h_back_porch_min;
+    if needed > h_blank {
+        // Clamp to something that fits within 12-bit blanking; preserve
+        // invariants by shrinking sync widths first.
+        let available = h_blank.saturating_sub(h_front_porch + h_back_porch_min);
+        h_sync_width = h_sync_width.min(available).max(h_sync_width_min.min(available));
+        let available = h_blank.saturating_sub(h_sync_width + h_back_porch_min);
+        h_front_porch = h_front_porch.min(available).max(h_front_porch_min.min(available));
+    }
+
+    // Vertical blanking: ~5% of active, at least enough for porches.
+    let v_front_porch: u32 = 3;
+    let v_sync_width: u32 = 6;
+    let v_back_porch_min: u32 = 6;
+    let min_v_blank = v_front_porch + v_sync_width + v_back_porch_min;
+    let v_blank = ((v_active + 19) / 20).max(min_v_blank).min(0x0FFF);
+
+    // Totals.
+    let h_total = h_active + h_blank;
+    let v_total = v_active + v_blank;
+
+    // Pixel clock (10kHz units). Round to nearest.
+    let pixel_clock_hz = (h_total as u64)
+        .saturating_mul(v_total as u64)
+        .saturating_mul(refresh_hz as u64);
+    let mut pixel_clock_10khz = ((pixel_clock_hz + 5_000) / 10_000) as u32;
+    if pixel_clock_10khz == 0 {
+        pixel_clock_10khz = 1;
+    }
+    pixel_clock_10khz = pixel_clock_10khz.min(u16::MAX as u32);
+
+    // EDID DTD sync fields are limited in size (10-bit horizontal, 6-bit
+    // vertical). Clamp conservatively.
+    let h_sync_offset = h_front_porch.min(0x03FF);
+    let h_sync_pulse = h_sync_width.min(0x03FF);
+    let v_sync_offset = v_front_porch.min(0x003F);
+    let v_sync_pulse = v_sync_width.min(0x003F);
+
+    // Physical size: keep the legacy constant to avoid changing the default
+    // EDID bytes. These are stored as 12-bit values.
+    let h_size_mm: u32 = 340;
+    let v_size_mm: u32 = 270;
+
+    encode_dtd(
+        pixel_clock_10khz as u16,
+        h_active as u16,
+        h_blank as u16,
+        v_active as u16,
+        v_blank as u16,
+        h_sync_offset as u16,
+        h_sync_pulse as u16,
+        v_sync_offset as u16,
+        v_sync_pulse as u16,
+        h_size_mm as u16,
+        v_size_mm as u16,
+        0x1E, // flags: digital separate sync, +hsync, +vsync
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_dtd(
+    pixel_clock_10khz: u16,
+    h_active: u16,
+    h_blank: u16,
+    v_active: u16,
+    v_blank: u16,
+    h_sync_offset: u16,
+    h_sync_pulse: u16,
+    v_sync_offset: u16,
+    v_sync_pulse: u16,
+    h_size_mm: u16,
+    v_size_mm: u16,
+    flags: u8,
+) -> [u8; 18] {
+    let mut dtd = [0u8; 18];
+    dtd[0..2].copy_from_slice(&pixel_clock_10khz.to_le_bytes());
+
+    dtd[2] = (h_active & 0x00FF) as u8;
+    dtd[3] = (h_blank & 0x00FF) as u8;
+    dtd[4] = ((h_active >> 8) as u8 & 0x0F) << 4 | ((h_blank >> 8) as u8 & 0x0F);
+
+    dtd[5] = (v_active & 0x00FF) as u8;
+    dtd[6] = (v_blank & 0x00FF) as u8;
+    dtd[7] = ((v_active >> 8) as u8 & 0x0F) << 4 | ((v_blank >> 8) as u8 & 0x0F);
+
+    dtd[8] = (h_sync_offset & 0x00FF) as u8;
+    dtd[9] = (h_sync_pulse & 0x00FF) as u8;
+    dtd[10] = ((v_sync_offset & 0x000F) as u8) << 4 | ((v_sync_pulse & 0x000F) as u8);
+
+    dtd[11] = ((h_sync_offset >> 8) as u8 & 0x03) << 6
+        | ((h_sync_pulse >> 8) as u8 & 0x03) << 4
+        | ((v_sync_offset >> 4) as u8 & 0x03) << 2
+        | ((v_sync_pulse >> 4) as u8 & 0x03);
+
+    dtd[12] = (h_size_mm & 0x00FF) as u8;
+    dtd[13] = (v_size_mm & 0x00FF) as u8;
+    dtd[14] = ((h_size_mm >> 8) as u8 & 0x0F) << 4 | ((v_size_mm >> 8) as u8 & 0x0F);
+
+    // Borders.
+    dtd[15] = 0;
+    dtd[16] = 0;
+    dtd[17] = flags;
+    dtd
+}
+
 fn checksum_byte(edid: &[u8; EDID_BLOCK_SIZE]) -> u8 {
     let sum = edid[..EDID_BLOCK_SIZE - 1]
         .iter()
         .fold(0u8, |acc, &b| acc.wrapping_add(b));
     (0u8).wrapping_sub(sum)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EDID_HEADER: [u8; 8] = [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00];
+
+    fn checksum_ok(edid: &[u8; EDID_BLOCK_SIZE]) -> bool {
+        edid.iter()
+            .fold(0u8, |acc, &b| acc.wrapping_add(b))
+            == 0
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct DetailedTimingDescriptor {
+        pixel_clock_hz: u64,
+        h_active: u16,
+        h_blank: u16,
+        v_active: u16,
+        v_blank: u16,
+        h_sync_offset: u16,
+        h_sync_pulse: u16,
+        v_sync_offset: u16,
+        v_sync_pulse: u16,
+        flags: u8,
+    }
+
+    impl DetailedTimingDescriptor {
+        fn h_total(self) -> u32 {
+            self.h_active as u32 + self.h_blank as u32
+        }
+
+        fn v_total(self) -> u32 {
+            self.v_active as u32 + self.v_blank as u32
+        }
+
+        fn refresh_hz(self) -> f64 {
+            let total = self.h_total() as f64 * self.v_total() as f64;
+            if total == 0.0 {
+                return 0.0;
+            }
+            self.pixel_clock_hz as f64 / total
+        }
+    }
+
+    fn parse_dtd(bytes: &[u8]) -> Option<DetailedTimingDescriptor> {
+        assert_eq!(bytes.len(), 18);
+        let pixel_clock_10khz = u16::from_le_bytes([bytes[0], bytes[1]]);
+        if pixel_clock_10khz == 0 {
+            return None;
+        }
+
+        let h_active = bytes[2] as u16 | (((bytes[4] & 0xF0) as u16) << 4);
+        let h_blank = bytes[3] as u16 | (((bytes[4] & 0x0F) as u16) << 8);
+        let v_active = bytes[5] as u16 | (((bytes[7] & 0xF0) as u16) << 4);
+        let v_blank = bytes[6] as u16 | (((bytes[7] & 0x0F) as u16) << 8);
+
+        let h_sync_offset =
+            bytes[8] as u16 | ((((bytes[11] & 0xC0) >> 6) as u16) << 8);
+        let h_sync_pulse = bytes[9] as u16 | ((((bytes[11] & 0x30) >> 4) as u16) << 8);
+
+        let v_sync_offset = ((bytes[10] >> 4) as u16) | ((((bytes[11] & 0x0C) >> 2) as u16) << 4);
+        let v_sync_pulse = (bytes[10] & 0x0F) as u16 | (((bytes[11] & 0x03) as u16) << 4);
+
+        Some(DetailedTimingDescriptor {
+            pixel_clock_hz: pixel_clock_10khz as u64 * 10_000,
+            h_active,
+            h_blank,
+            v_active,
+            v_blank,
+            h_sync_offset,
+            h_sync_pulse,
+            v_sync_offset,
+            v_sync_pulse,
+            flags: bytes[17],
+        })
+    }
+
+    fn validate_descriptor(desc: &[u8]) {
+        assert_eq!(desc.len(), 18);
+        if let Some(dtd) = parse_dtd(desc) {
+            // Basic sanity checks that catch malformed descriptors.
+            assert!(dtd.h_active > 0);
+            assert!(dtd.v_active > 0);
+            assert!(dtd.h_blank > 0);
+            assert!(dtd.v_blank > 0);
+            assert!(dtd.pixel_clock_hz > 0);
+
+            // Sync / porches must fit within blanking.
+            assert!(dtd.h_sync_offset > 0);
+            assert!(dtd.h_sync_pulse > 0);
+            assert!(dtd.h_sync_offset as u32 + dtd.h_sync_pulse as u32 <= dtd.h_blank as u32);
+
+            assert!(dtd.v_sync_offset > 0);
+            assert!(dtd.v_sync_pulse > 0);
+            assert!(dtd.v_sync_offset as u32 + dtd.v_sync_pulse as u32 <= dtd.v_blank as u32);
+
+            // Totals should be non-zero and plausible.
+            assert!(dtd.h_total() > dtd.h_active as u32);
+            assert!(dtd.v_total() > dtd.v_active as u32);
+
+            // "Digital separate sync" should be used for a modern virtual display.
+            assert_eq!(dtd.flags & 0x18, 0x18);
+        } else {
+            // Monitor descriptor: the first 3 bytes are 0 for non-DTDs.
+            assert_eq!(&desc[0..3], &[0, 0, 0]);
+            let tag = desc[3];
+            // We currently emit:
+            // - 0xFC monitor name
+            // - 0xFD range limits
+            // - 0x10 unused (dummy) descriptor
+            assert!(
+                matches!(tag, 0xFC | 0xFD | 0x10),
+                "unexpected monitor descriptor tag: {tag:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn edid_header_and_checksum_are_valid() {
+        let edid = read_edid(0).expect("missing base EDID");
+        assert_eq!(&edid[0..8], &EDID_HEADER);
+        assert!(checksum_ok(&edid));
+
+        // The checksum byte should match our checksum function.
+        assert_eq!(edid[127], checksum_byte(&edid));
+    }
+
+    #[test]
+    fn default_edid_keeps_legacy_preferred_mode_bytes() {
+        let edid = generate_edid(Timing::DEFAULT);
+        assert_eq!(
+            &edid[54..72],
+            &[
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
+                0x0E, 0x11, 0x00, 0x00, 0x18
+            ]
+        );
+    }
+
+    #[test]
+    fn detailed_descriptors_are_well_formed() {
+        let edid = read_edid(0).expect("missing base EDID");
+        for i in 0..4usize {
+            let start = 54 + i * 18;
+            let end = start + 18;
+            validate_descriptor(&edid[start..end]);
+        }
+    }
+
+    #[test]
+    fn preferred_timing_can_be_overridden_and_parsed() {
+        // Use a CEA timing that isn't the legacy mode to exercise configurability.
+        let preferred = Timing::new(1920, 1080, 60);
+        let edid = generate_edid(preferred);
+        assert_eq!(&edid[0..8], &EDID_HEADER);
+        assert!(checksum_ok(&edid));
+
+        // The preferred mode is always encoded as DTD #1.
+        let dtd = parse_dtd(&edid[54..72]).expect("preferred DTD missing");
+        assert_eq!(dtd.h_active, preferred.width);
+        assert_eq!(dtd.v_active, preferred.height);
+
+        // Refresh rate should be close to the requested one. We allow some
+        // tolerance due to EDID pixel clock quantization (10kHz steps) and the
+        // common practice of encoding "nominal" clocks.
+        let refresh = dtd.refresh_hz();
+        assert!((refresh - preferred.refresh_hz as f64).abs() < 0.75, "refresh={refresh}");
+    }
 }
