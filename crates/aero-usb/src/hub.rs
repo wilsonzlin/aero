@@ -129,8 +129,9 @@ impl Port {
             v |= RD;
         }
         if let Some(dev) = self.device.as_ref() {
-            if dev.speed() == UsbSpeed::Low {
-                v |= LSDA;
+            match dev.speed() {
+                UsbSpeed::Low => v |= LSDA,
+                UsbSpeed::Full | UsbSpeed::High => {}
             }
         }
         if self.reset {
@@ -1570,6 +1571,40 @@ static HUB_DEVICE_DESCRIPTOR: [u8; 18] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_hub_portsc_lsda_is_set_only_for_low_speed() {
+        const LSDA: u16 = 1 << 8;
+
+        struct SpeedModel {
+            speed: UsbSpeed,
+        }
+
+        impl UsbDeviceModel for SpeedModel {
+            fn speed(&self) -> UsbSpeed {
+                self.speed
+            }
+
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+        }
+
+        for speed in [UsbSpeed::Full, UsbSpeed::Low, UsbSpeed::High] {
+            let mut hub = RootHub::new();
+            hub.attach(0, Box::new(SpeedModel { speed }));
+            let portsc = hub.read_portsc(0);
+            let expected_lsda = match speed {
+                UsbSpeed::Low => true,
+                UsbSpeed::Full | UsbSpeed::High => false,
+            };
+            assert_eq!((portsc & LSDA) != 0, expected_lsda, "speed={speed:?}");
+        }
+    }
 
     #[test]
     fn string_descriptors_are_capped_to_u8_length_and_remain_valid_utf16() {

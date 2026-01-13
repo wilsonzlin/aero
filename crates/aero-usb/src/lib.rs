@@ -60,6 +60,8 @@ use core::fmt;
 pub enum UsbSpeed {
     Full,
     Low,
+    /// USB 2.0 high-speed (480Mbps).
+    High,
 }
 
 /// USB control transfer SETUP packet.
