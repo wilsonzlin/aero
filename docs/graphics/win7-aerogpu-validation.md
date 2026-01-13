@@ -43,9 +43,9 @@ Guest OS:
 
 Test suite:
 - x86 command:
-  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=X:\\drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
 - x64 command:
-  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=X:\\drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
 
 Results summary:
 - Win7 x86: PASS=  FAIL=  SKIP=
@@ -62,6 +62,12 @@ Artifacts collected:
  - KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
  Notes:
 ```
+
+`--dbgctl=...` is optional. In packaged installs, `aerogpu_dbgctl.exe` is shipped under the AeroGPU driver directory:
+ - Guest Tools ISO/zip: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (x64) and `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (x86)
+ - CI-staged packages: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
+
+If you prefer `--dbgctl=aerogpu_dbgctl.exe`, copy the tool next to `bin\\aerogpu_test_runner.exe`.
 
 ---
 
@@ -424,6 +430,17 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 ## 5) Debug playbook (with `aerogpu_dbgctl`)
 
 `aerogpu_dbgctl` is assumed to be a small command-line tool shipped with the driver package that talks to the AeroGPU KMD via a **driver-private escape** path (`DxgkDdiEscape` via `D3DKMTEscape`).
+
+Packaged locations:
+
+- Guest Tools ISO/zip:
+  - x64: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x86: `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+- CI-staged packages (after `ci/make-catalogs.ps1`):
+  - x64: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x86: `out\\packages\\aerogpu\\x86\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+
+You can run it in-place from those directories, copy it somewhere on `PATH`, or pass the full path to callers like `aerogpu_test_runner.exe --dbgctl=<path>`.
 
 ### 5.1 Typical workflow
 
