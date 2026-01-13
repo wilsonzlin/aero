@@ -33,6 +33,7 @@ import { startSyntheticMic, type SyntheticMicSource } from '../web/src/audio/syn
 import type { AeroConfig } from '../web/src/config/aero_config';
 import { WorkerCoordinator } from '../web/src/runtime/coordinator';
 import { StatusIndex } from '../web/src/runtime/shared_layout';
+import { decodeInputBackendStatus } from '../web/src/input/input_backend_status';
 import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webusb_troubleshooting';
 
 declare global {
@@ -2032,6 +2033,68 @@ function renderAudioPanel(): HTMLElement {
   );
 }
 
+function renderInputBackendHudPanel(): HTMLElement {
+  const output = el("pre", { class: "mono", text: "Waiting for IO worker status…" });
+
+  function resolveCoordinator(): WorkerCoordinator | null {
+    const g = globalThis as unknown as { __aeroWorkerCoordinator?: unknown };
+    const candidate = g.__aeroWorkerCoordinator;
+    if (!candidate || typeof candidate !== "object") return null;
+    const maybe = candidate as { getStatusView?: unknown };
+    return typeof maybe.getStatusView === "function" ? (candidate as WorkerCoordinator) : null;
+  }
+
+  function bitsSet(v: number): number {
+    let n = v >>> 0;
+    let count = 0;
+    while (n) {
+      n &= n - 1;
+      count += 1;
+    }
+    return count;
+  }
+
+  const update = () => {
+    const coordinator = resolveCoordinator();
+    const statusView = coordinator?.getStatusView() ?? null;
+    if (!statusView) {
+      output.textContent = "Status unavailable (workers not started or SharedArrayBuffer unsupported).";
+      return;
+    }
+
+    try {
+      const kbBackendCode = Atomics.load(statusView, StatusIndex.IoInputKeyboardBackend);
+      const mouseBackendCode = Atomics.load(statusView, StatusIndex.IoInputMouseBackend);
+      const kbBackend = decodeInputBackendStatus(kbBackendCode) ?? `unknown(${kbBackendCode})`;
+      const mouseBackend = decodeInputBackendStatus(mouseBackendCode) ?? `unknown(${mouseBackendCode})`;
+
+      const virtioKbOk = Atomics.load(statusView, StatusIndex.IoInputVirtioKeyboardDriverOk) !== 0;
+      const virtioMouseOk = Atomics.load(statusView, StatusIndex.IoInputVirtioMouseDriverOk) !== 0;
+      const usbKbOk = Atomics.load(statusView, StatusIndex.IoInputUsbKeyboardOk) !== 0;
+      const usbMouseOk = Atomics.load(statusView, StatusIndex.IoInputUsbMouseOk) !== 0;
+
+      const keysHeld = Atomics.load(statusView, StatusIndex.IoInputKeyboardHeldCount) >>> 0;
+      const buttonsMask = Atomics.load(statusView, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0;
+      const buttonsHeld = bitsSet(buttonsMask & 0x1f);
+
+      output.textContent =
+        `keyboard backend: ${kbBackend}\n` +
+        `mouse backend: ${mouseBackend}\n` +
+        `virtio driver_ok: keyboard=${virtioKbOk} mouse=${virtioMouseOk}\n` +
+        `usb configured: keyboard=${usbKbOk} mouse=${usbMouseOk}\n` +
+        `held: keys=${keysHeld} mouseButtons=${buttonsHeld} mask=0x${(buttonsMask & 0x1f).toString(16)}`;
+    } catch (err) {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    }
+  };
+
+  const timer = window.setInterval(update, 200);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  update();
+
+  return el("div", { class: "panel" }, el("h2", { text: "Input backend HUD (IO worker)" }), output);
+}
+
 function renderHotspotsPanel(report: PlatformFeatureReport): HTMLElement {
   if (!report.wasmThreads) {
     return el(
@@ -3206,6 +3269,7 @@ function render(): void {
     renderOpfsPanel(),
     renderRemoteDiskPanel(),
     renderAudioPanel(),
+    renderInputBackendHudPanel(),
     renderJitSmokePanel(report),
     renderMicrophonePanel(),
     renderPerfPanel(report),

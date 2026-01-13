@@ -6,6 +6,7 @@ import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/pro
 import { RingBuffer } from "../ipc/ring_buffer";
 import { InputEventType } from "../input/event_queue";
 import { chooseKeyboardInputBackend, chooseMouseInputBackend, type InputBackend } from "../input/input_backend_selection";
+import { encodeInputBackendStatus } from "../input/input_backend_status";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
@@ -468,6 +469,8 @@ let syntheticUsbKeyboard: UsbHidPassthroughBridge | null = null;
 let syntheticUsbMouse: UsbHidPassthroughBridge | null = null;
 let syntheticUsbGamepad: UsbHidPassthroughBridge | null = null;
 let syntheticUsbHidAttached = false;
+let keyboardUsbOk = false;
+let mouseUsbOk = false;
 let syntheticUsbKeyboardPendingReport: Uint8Array | null = null;
 let syntheticUsbGamepadPendingReport: Uint8Array | null = null;
 let keyboardInputBackend: InputBackend = "ps2";
@@ -4585,6 +4588,14 @@ function startIoIpcServer(): void {
   ioServerAbort = new AbortController();
   startAudioOutTelemetryTimer();
 
+  // Publish initial input backend state for debug HUDs/tests (best-effort; the periodic tick will refresh).
+  const virtioKeyboardOk = virtioInputKeyboard?.driverOk() ?? false;
+  const virtioMouseOk = virtioInputMouse?.driverOk() ?? false;
+  maybeInitSyntheticUsbHidDevices();
+  maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
+  maybeUpdateMouseInputBackend({ virtioMouseOk });
+  publishInputBackendStatus({ virtioKeyboardOk, virtioMouseOk });
+
   const dispatchTarget: AeroIpcIoDispatchTarget = {
     portRead: (port, size) => {
       let value = 0;
@@ -4677,8 +4688,11 @@ function startIoIpcServer(): void {
       }
       mgr.tick(vmNowMs);
       flushSyntheticUsbHidPendingInputReports();
-      maybeUpdateKeyboardInputBackend({ virtioKeyboardOk: virtioInputKeyboard?.driverOk() ?? false });
-      maybeUpdateMouseInputBackend({ virtioMouseOk: virtioInputMouse?.driverOk() ?? false });
+      const virtioKeyboardOk = virtioInputKeyboard?.driverOk() ?? false;
+      const virtioMouseOk = virtioInputMouse?.driverOk() ?? false;
+      maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
+      maybeUpdateMouseInputBackend({ virtioMouseOk });
+      publishInputBackendStatus({ virtioKeyboardOk, virtioMouseOk });
       drainSyntheticUsbHidOutputReports();
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
@@ -4956,17 +4970,19 @@ function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
 }
 
 function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): void {
+  keyboardUsbOk = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbKeyboard);
   keyboardInputBackend = chooseKeyboardInputBackend({
     current: keyboardInputBackend,
     keysHeld: pressedKeyboardHidUsageCount !== 0,
     virtioOk: opts.virtioKeyboardOk && !!virtioInputKeyboard,
-    usbOk: syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbKeyboard),
+    usbOk: keyboardUsbOk,
   });
 }
 
 function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
   const ps2Available = !!(i8042Wasm || i8042Ts);
   const syntheticUsbMouseConfigured = syntheticUsbHidAttached && !!usbHid && safeSyntheticUsbHidConfigured(syntheticUsbMouse);
+  mouseUsbOk = !!usbHid && (!ps2Available || syntheticUsbMouseConfigured);
   const prevBackend = mouseInputBackend;
   const nextBackend = chooseMouseInputBackend({
     current: mouseInputBackend,
@@ -4974,7 +4990,7 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
     virtioOk: opts.virtioMouseOk && !!virtioInputMouse,
     // Use PS/2 injection until the synthetic USB mouse is configured; once configured, route via
     // the USB HID bridge to avoid duplicate devices in the guest.
-    usbOk: !!usbHid && (!ps2Available || syntheticUsbMouseConfigured),
+    usbOk: mouseUsbOk,
   });
 
   // Optional extra robustness: when we *do* switch backends, send a "buttons=0" update to the
@@ -4992,6 +5008,24 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
   }
 
   mouseInputBackend = nextBackend;
+}
+
+function publishInputBackendStatus(opts: { virtioKeyboardOk: boolean; virtioMouseOk: boolean }): void {
+  // These values are best-effort debug telemetry only; the emulator must keep running even if
+  // Atomics stores fail for any reason (e.g. status not initialized during early boot).
+  try {
+    Atomics.store(status, StatusIndex.IoInputKeyboardBackend, encodeInputBackendStatus(keyboardInputBackend));
+    Atomics.store(status, StatusIndex.IoInputMouseBackend, encodeInputBackendStatus(mouseInputBackend));
+    Atomics.store(status, StatusIndex.IoInputVirtioKeyboardDriverOk, opts.virtioKeyboardOk ? 1 : 0);
+    Atomics.store(status, StatusIndex.IoInputVirtioMouseDriverOk, opts.virtioMouseOk ? 1 : 0);
+
+    Atomics.store(status, StatusIndex.IoInputUsbKeyboardOk, keyboardUsbOk ? 1 : 0);
+    Atomics.store(status, StatusIndex.IoInputUsbMouseOk, mouseUsbOk ? 1 : 0);
+    Atomics.store(status, StatusIndex.IoInputKeyboardHeldCount, pressedKeyboardHidUsageCount | 0);
+    Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
+  } catch {
+    // ignore (best-effort)
+  }
 }
 
 function drainSyntheticUsbHidReports(): void {
@@ -5276,6 +5310,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   // transition away from PS/2 scancode injection.
   maybeUpdateKeyboardInputBackend({ virtioKeyboardOk });
   maybeUpdateMouseInputBackend({ virtioMouseOk });
+  publishInputBackendStatus({ virtioKeyboardOk, virtioMouseOk });
 
   // Forward newly queued USB HID reports into the guest-visible UHCI USB HID devices.
   drainSyntheticUsbHidReports();

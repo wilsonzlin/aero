@@ -38,6 +38,23 @@ export const StatusIndex = {
   IoInputBatchCounter: 2,
   IoInputEventCounter: 3,
 
+  // I/O worker input backend selection status (debug HUD / tests).
+  //
+  // Integer encoding contract:
+  //   0 = ps2
+  //   1 = usb
+  //   2 = virtio
+  //
+  // See `web/src/input/input_backend_status.ts`.
+  IoInputKeyboardBackend: 20,
+  IoInputMouseBackend: 21,
+  IoInputVirtioKeyboardDriverOk: 22,
+  IoInputVirtioMouseDriverOk: 23,
+  IoInputUsbKeyboardOk: 24,
+  IoInputUsbMouseOk: 25,
+  IoInputKeyboardHeldCount: 26,
+  IoInputMouseButtonsHeldMask: 27,
+
   // Audio telemetry (producer-side). Owned by the active audio producer:
   // - CPU worker (demo tone / mic loopback)
   // - I/O worker (guest HDA device during real VM runs)
