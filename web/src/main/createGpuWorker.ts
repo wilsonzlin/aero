@@ -46,6 +46,12 @@ export interface GpuWorkerHandle {
     allocTable?: ArrayBuffer,
     contextId?: number,
   ): Promise<GpuRuntimeSubmitCompleteMessage>;
+  /**
+   * Request a deterministic screenshot from the GPU worker.
+   *
+   * The returned pixels are a readback of the *source framebuffer* content
+   * (pre-scaling / pre-color-management), not a capture of the presented canvas.
+   */
   requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage>;
   shutdown(): void;
 }
