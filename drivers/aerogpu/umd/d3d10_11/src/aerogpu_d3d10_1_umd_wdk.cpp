@@ -3941,6 +3941,21 @@ static void InitUnlockArgsForMap(D3DDDICB_UNLOCK* unlock, uint32_t subresource) 
   }
 }
 
+static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch) {
+  if (!res || res->kind != ResourceKind::Texture2D) {
+    return true;
+  }
+  // Some WDK/runtime combinations omit Pitch or report 0 for non-surface allocations.
+  // Only validate when the runtime provides a non-zero pitch.
+  if (wddm_pitch == 0) {
+    return true;
+  }
+  if (res->row_pitch_bytes == 0) {
+    return false;
+  }
+  return wddm_pitch == res->row_pitch_bytes;
+}
+
 HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t map_type, uint32_t map_flags) {
   if (!dev || !res) {
     return E_INVALIDARG;
@@ -4190,6 +4205,24 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     return E_FAIL;
   }
 
+  uint32_t wddm_pitch = 0;
+  __if_exists(D3DDDICB_LOCK::Pitch) {
+    wddm_pitch = lock_cb.Pitch;
+  }
+  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
+    // Our subresource packing (and the host's interpretation of guest memory) assumes the
+    // allocation pitch matches `res->row_pitch_bytes`. If the runtime reports a different
+    // pitch, we cannot safely treat the locked pointer as a packed linear buffer.
+    D3DDDICB_UNLOCK unlock_cb = {};
+    unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
+    InitUnlockArgsForMap(&unlock_cb, lock_subresource);
+    (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
+    if (allow_storage_map && !want_read) {
+      return map_storage();
+    }
+    return E_FAIL;
+  }
+
   res->mapped_wddm_ptr = lock_cb.pData;
   res->mapped_wddm_allocation = static_cast<uint64_t>(alloc_handle);
   __if_exists(D3DDDICB_LOCK::Pitch) {
@@ -4251,8 +4284,13 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
     return;
   }
 
+  const bool pitch_mismatch =
+      (res->kind == ResourceKind::Texture2D &&
+       res->mapped_wddm_pitch != 0 &&
+       !ValidateWddmTexturePitch(res, res->mapped_wddm_pitch));
+
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
-    if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+    if (!pitch_mismatch && res->mapped_write && !res->storage.empty() && res->mapped_size) {
       const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
       const uint64_t off = res->mapped_offset;
       const uint64_t size = res->mapped_size;
@@ -4279,6 +4317,22 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
         set_error(dev, unlock_hr);
       }
     }
+  }
+
+  if (pitch_mismatch) {
+    // Fail cleanly: do not attempt to interpret offsets within the allocation when the
+    // runtime-reported pitch differs from our expected layout.
+    set_error(dev, E_FAIL);
+    res->mapped = false;
+    res->mapped_write = false;
+    res->mapped_subresource = 0;
+    res->mapped_offset = 0;
+    res->mapped_size = 0;
+    res->mapped_wddm_ptr = nullptr;
+    res->mapped_wddm_allocation = 0;
+    res->mapped_wddm_pitch = 0;
+    res->mapped_wddm_slice_pitch = 0;
+    return;
   }
 
   if (res->mapped_write && res->mapped_size != 0) {
