@@ -284,6 +284,8 @@ For diagnostics / bring-up, the driver exposes per-device registry toggles (**de
 
 Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 
+After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
+
 ## Offline / slipstream installation (optional)
 
 If you want virtio-snd to bind automatically on first boot (for example when building unattended Win7 images), see:

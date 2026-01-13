@@ -229,6 +229,7 @@ Backend layer (WaveRT ↔ virtio-snd):
   - When `AllowPollingOnly=1`, the driver may start even if INTx resource discovery/connection fails, and it will rely on polling used rings (driven by the WaveRT period timer DPC) instead of virtio ISR/DPC delivery.
   - When running without INTx, the driver also disables per-queue virtqueue interrupts as a best-effort guard against interrupt storms.
   - This is intended for early emulator/device-model bring-up and debugging; the default behavior remains INTx-strict per the Aero contract v1.
+  - After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
 Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 

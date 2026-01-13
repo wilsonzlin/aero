@@ -50,6 +50,8 @@ The legacy **I/O-port** bring-up package (`aero-virtio-snd-ioport.inf` / `virtio
 
 You can find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 
+After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
+
 - **Keep `virtio-snd.inf.disabled` in sync:** the alias INF must remain **byte-for-byte identical** to
   `aero_virtio_snd.inf` in all functional content (everything from `[Version]` onward). Only the filename and the
   leading comment/header block should differ.
