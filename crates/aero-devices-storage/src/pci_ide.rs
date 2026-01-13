@@ -1813,17 +1813,22 @@ mod tests {
 
         let device_port = ctl.primary.ports.cmd_base + ATA_REG_DEVICE;
         // Select master with head=7 (low nibble).
-        ctl.io_write(device_port, 1, 0xE7);
+        let head = 7u8;
+        ctl.io_write(device_port, 1, u32::from(0xE0 | head));
 
         let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
         let val = ctl.io_read(drive_addr_port, 1) as u8;
-        // DADR reports the *active-low* head select lines.
-        assert_eq!(val & 0x0F, 0x08);
+        // DADR encodes the active-low drive/head select lines (nDS1/nDS0/nHS3..nHS0).
+        assert_eq!(val & 0xC0, 0xC0);
+        assert_eq!(val & 0x30, 0x20, "master selected => nDS1=1, nDS0=0");
+        assert_eq!(val & 0x0F, (!head) & 0x0F);
 
         // Select slave with head=5.
-        ctl.io_write(device_port, 1, 0xF5);
+        let head = 5u8;
+        ctl.io_write(device_port, 1, u32::from(0xF0 | head));
         let val = ctl.io_read(drive_addr_port, 1) as u8;
-        assert_eq!(val & 0x10, 0x10);
-        assert_eq!(val & 0x0F, 0x0A);
+        assert_eq!(val & 0xC0, 0xC0);
+        assert_eq!(val & 0x30, 0x10, "slave selected => nDS1=0, nDS0=1");
+        assert_eq!(val & 0x0F, (!head) & 0x0F);
     }
 }
