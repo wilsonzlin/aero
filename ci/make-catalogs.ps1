@@ -197,6 +197,71 @@ function Get-TruthyEnvFlag {
   }
 }
 
+function Invoke-PackageSanitation {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [string] $PackageDir
+  )
+
+  if (-not (Test-Path -LiteralPath $PackageDir -PathType Container)) {
+    throw "PackageDir not found for sanitation: $PackageDir"
+  }
+
+  # NOTE: This runs on the staged package directory under out/packages/** (not on the build outputs).
+  # It is intended to prevent accidentally shipping debug/intermediate artifacts or secret material.
+  $debugAndIntermediateExtensions = @(
+    '.pdb', '.ipdb', '.iobj', '.obj', '.lib', '.exp', '.ilk', '.tlog', '.log', '.idb', '.map', '.lastbuildstate', '.tmp', '.cache'
+  )
+  $sourceAndProjectExtensions = @(
+    '.c', '.cc', '.cpp', '.h', '.hpp', '.idl', '.inl', '.rc', '.asm', '.s', '.vcxproj', '.sln', '.props', '.targets'
+  )
+  $forbiddenSecretExtensions = @(
+    '.pfx', '.p12', '.pvk', '.snk', '.key', '.pem', '.p8', '.pk8', '.der', '.csr'
+  )
+  $metadataFileNames = @('Thumbs.db', 'desktop.ini', '.DS_Store')
+
+  $deleteExtSet = @{}
+  foreach ($ext in @($debugAndIntermediateExtensions + $sourceAndProjectExtensions)) {
+    $deleteExtSet[$ext.ToLowerInvariant()] = $true
+  }
+
+  $forbiddenExtSet = @{}
+  foreach ($ext in $forbiddenSecretExtensions) {
+    $forbiddenExtSet[$ext.ToLowerInvariant()] = $true
+  }
+
+  $metadataNameSet = @{}
+  foreach ($name in $metadataFileNames) {
+    $metadataNameSet[$name.ToLowerInvariant()] = $true
+  }
+
+  $deletedCount = 0
+  $forbiddenPaths = New-Object System.Collections.Generic.List[string]
+
+  $files = @(Get-ChildItem -LiteralPath $PackageDir -Recurse -Force -File -ErrorAction Stop)
+  foreach ($file in $files) {
+    $ext = $file.Extension.ToLowerInvariant()
+    $name = $file.Name.ToLowerInvariant()
+
+    if ($forbiddenExtSet.ContainsKey($ext)) {
+      [void]$forbiddenPaths.Add($file.FullName)
+      continue
+    }
+
+    if ($metadataNameSet.ContainsKey($name) -or $deleteExtSet.ContainsKey($ext)) {
+      Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+      $deletedCount++
+    }
+  }
+
+  return [pscustomobject]@{
+    DeletedCount   = $deletedCount
+    ForbiddenCount = $forbiddenPaths.Count
+    ForbiddenPaths = $forbiddenPaths.ToArray()
+  }
+}
+
 $allowWdfCoInstaller = $IncludeWdfCoInstaller -or ($IncludeWdkRedist -contains 'WdfCoInstaller')
 if ($allowWdfCoInstaller) {
   Write-Host "WDK redistributables enabled: WdfCoInstaller"
@@ -728,6 +793,26 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       }
     }
 
+    $preSanitation = Invoke-PackageSanitation -PackageDir $packageDir
+    if ($preSanitation.ForbiddenCount -gt 0) {
+      Write-Host "     Sanitation: deleted $($preSanitation.DeletedCount) file(s); forbidden file(s) found: $($preSanitation.ForbiddenCount)"
+      $list = ($preSanitation.ForbiddenPaths | Sort-Object -Unique | ForEach-Object { "       - $_" }) -join "`n"
+      throw @"
+Staged driver package contains forbidden secret/private key material.
+
+Package:  $packageDir
+Driver:   $driverNameForLog
+Arch:     $arch
+
+Offending file(s):
+$list
+
+Remediation:
+- Remove private key / certificate material from the driver build outputs so it is not copied into out/packages/**.
+- If you need CI signing keys, provide them to the signing step via CI secrets (see ci/sign-drivers.ps1: AERO_DRIVER_PFX_BASE64/AERO_DRIVER_PFX_PASSWORD), not via driver package contents.
+"@
+    }
+
     if ($stampInfs) {
       Write-Host "     Stamping staged INF(s) prior to catalog generation..."
       $stampArgs = @{
@@ -744,6 +829,29 @@ foreach ($driverBuildDir in $driverBuildDirs) {
     }
 
     Invoke-Inf2Cat -Inf2CatPath $inf2catPath -PackageDir $packageDir -OsList $osListForArch
+
+    $postSanitation = Invoke-PackageSanitation -PackageDir $packageDir
+    if ($postSanitation.ForbiddenCount -gt 0) {
+      Write-Host "     Sanitation: deleted $($preSanitation.DeletedCount + $postSanitation.DeletedCount) file(s); forbidden file(s) found: $($postSanitation.ForbiddenCount)"
+      $list = ($postSanitation.ForbiddenPaths | Sort-Object -Unique | ForEach-Object { "       - $_" }) -join "`n"
+      throw @"
+Staged driver package contains forbidden secret/private key material after catalog generation.
+
+Package:  $packageDir
+Driver:   $driverNameForLog
+Arch:     $arch
+
+Offending file(s):
+$list
+
+Remediation:
+- Remove private key / certificate material from the driver build outputs so it is not copied into out/packages/**.
+- If you need CI signing keys, provide them to the signing step via CI secrets (see ci/sign-drivers.ps1: AERO_DRIVER_PFX_BASE64/AERO_DRIVER_PFX_PASSWORD), not via driver package contents.
+"@
+    }
+
+    $totalDeleted = $preSanitation.DeletedCount + $postSanitation.DeletedCount
+    Write-Host "     Sanitation: deleted $totalDeleted file(s); forbidden file(s) found: 0"
 
     $cats = Get-ChildItem -LiteralPath $packageDir -Filter '*.cat' -File -Recurse -ErrorAction SilentlyContinue
     if (-not $cats) {

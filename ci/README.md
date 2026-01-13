@@ -84,6 +84,24 @@ Runs `ci/stamp-infs.ps1` **before** calling `Inf2Cat.exe`, because catalog hashe
 Only drivers that include `drivers/<driver>/ci-package.json` are staged into `out/packages/`. This is the
 explicit opt-in gate that keeps CI driver bundles from accidentally including dev/test drivers.
 
+### Staged package sanitation (`out/packages/**`)
+
+After staging each driver+arch package directory, `ci/make-catalogs.ps1` performs a sanitation pass over the
+staged contents to keep artifacts redistributable and stable:
+
+- Deletes common debug/intermediate outputs (`.pdb`, `.obj`, `.lib`, `.log`, etc).
+- Deletes common source/project files (`.c/.cpp/.h`, `.vcxproj`, `.sln`, etc).
+- Deletes OS metadata files (`Thumbs.db`, `desktop.ini`, `.DS_Store`).
+- **Fails the build** if any likely secret/private key material is present anywhere in the staged package
+  (`.pfx`, `.pvk`, `.snk`, `.pem`, `.key`, etc). Signing keys must never be shipped inside driver packages.
+
+If you need to ship extra (non-binary) files intentionally, add them under the driver source tree and include
+them via `drivers/<driver>/ci-package.json` → `additionalFiles`.
+
+If a legitimate redistributable artifact is removed by sanitation, update the allowlist in
+`ci/make-catalogs.ps1` in a follow-up (we prefer explicit allowlist additions over copying all build outputs
+verbatim).
+
 Environment variables:
 
 - `AERO_STAMP_INFS`: `0|false|no|off` disables stamping (default is enabled).
