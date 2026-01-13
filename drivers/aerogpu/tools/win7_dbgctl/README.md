@@ -320,7 +320,8 @@ This tool currently supports JSON output for snapshot-style commands:
 - `--list-displays`
 
 Streaming/binary-output commands (`--watch-fence`, `--watch-ring`, `--wait-vblank`, `--query-scanline`, `--dump-scanout-bmp`,
-`--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-cmd`, `--read-gpa`) currently return `ok:false` in JSON mode.
+`--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-cmd`, `--read-gpa`) currently return `ok:false`
+in JSON mode.
 
 ## Build (Windows 7)
 
