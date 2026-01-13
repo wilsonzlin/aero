@@ -1030,7 +1030,14 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         const authAPIKeyPromise = waitForClose(authAPIKeyWS);
         await waitForOpen(authAPIKeyWS);
         authAPIKeyWS.send(JSON.stringify({ type: "auth", apiKey: token }));
-        authAPIKeyWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
+        // Candidate-before-offer is a deterministic "unexpected_message" rejection
+        // that only happens after authentication succeeds.
+        authAPIKeyWS.send(
+          JSON.stringify({
+            type: "candidate",
+            candidate: { candidate: "candidate:0 1 UDP 2122252543 127.0.0.1 12345 typ host" },
+          }),
+        );
         const authAPIKey = await authAPIKeyPromise;
 
         const invalidQueryWS = new WebSocket(
@@ -1043,10 +1050,13 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         const queryWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal?token=${encodeURIComponent(token)}`);
         const queryPromise = waitForClose(queryWS);
         await waitForOpen(queryWS);
-        // No auth message needed when query-string credentials are provided; send
-        // an intentionally invalid offer and assert the server rejects it as a
-        // bad message rather than "unauthorized".
-        queryWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
+        // No auth message needed when query-string credentials are provided.
+        queryWS.send(
+          JSON.stringify({
+            type: "candidate",
+            candidate: { candidate: "candidate:0 1 UDP 2122252543 127.0.0.1 12345 typ host" },
+          }),
+        );
         const query = await queryPromise;
 
         const invalidAPIKeyQueryWS = new WebSocket(
@@ -1059,7 +1069,12 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
         const apiKeyQueryWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal?apiKey=${encodeURIComponent(token)}`);
         const apiKeyQueryPromise = waitForClose(apiKeyQueryWS);
         await waitForOpen(apiKeyQueryWS);
-        apiKeyQueryWS.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "not-an-sdp" } }));
+        apiKeyQueryWS.send(
+          JSON.stringify({
+            type: "candidate",
+            candidate: { candidate: "candidate:0 1 UDP 2122252543 127.0.0.1 12345 typ host" },
+          }),
+        );
         const apiKeyQuery = await apiKeyQueryPromise;
 
         const mismatchWS = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
@@ -1090,9 +1105,9 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
     expect(res.invalid.closeCode).toBe(1008);
 
     if (res.authAPIKey.errMsg) {
-      expect(res.authAPIKey.errMsg.code).toBe("bad_message");
+      expect(res.authAPIKey.errMsg.code).toBe("unexpected_message");
     } else {
-      expect(["bad_message", "bad message", ""]).toContain(res.authAPIKey.closeReason ?? "");
+      expect(["unexpected_message", "unexpected message", ""]).toContain(res.authAPIKey.closeReason ?? "");
     }
     expect(res.authAPIKey.closeCode).toBe(1008);
 
@@ -1104,9 +1119,9 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
     expect(res.invalidQuery.closeCode).toBe(1008);
 
     if (res.query.errMsg) {
-      expect(res.query.errMsg.code).toBe("bad_message");
+      expect(res.query.errMsg.code).toBe("unexpected_message");
     } else {
-      expect(["bad_message", "bad message", ""]).toContain(res.query.closeReason ?? "");
+      expect(["unexpected_message", "unexpected message", ""]).toContain(res.query.closeReason ?? "");
     }
     expect(res.query.closeCode).toBe(1008);
 
@@ -1118,9 +1133,9 @@ test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt"
     expect(res.invalidAPIKeyQuery.closeCode).toBe(1008);
 
     if (res.apiKeyQuery.errMsg) {
-      expect(res.apiKeyQuery.errMsg.code).toBe("bad_message");
+      expect(res.apiKeyQuery.errMsg.code).toBe("unexpected_message");
     } else {
-      expect(["bad_message", "bad message", ""]).toContain(res.apiKeyQuery.closeReason ?? "");
+      expect(["unexpected_message", "unexpected message", ""]).toContain(res.apiKeyQuery.closeReason ?? "");
     }
     expect(res.apiKeyQuery.closeCode).toBe(1008);
 
