@@ -53,6 +53,14 @@ impl HotnessProfile {
         self.threshold
     }
 
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub fn len(&self) -> usize {
+        self.counters.len()
+    }
+
     pub fn counter(&self, entry_rip: u64) -> u32 {
         self.counters.get(&entry_rip).map(|e| e.count).unwrap_or(0)
     }
@@ -75,7 +83,13 @@ impl HotnessProfile {
             entry.last_hit = now;
             entry.count
         } else {
-            self.ensure_space_for_new_entry();
+            if !self.ensure_space_for_new_counter_entry() {
+                // Profile is saturated with `requested` keys (in-flight compilation or already
+                // compiled blocks). Avoid evicting them so compile requests remain de-duped; just
+                // stop tracking new RIPs until space is freed.
+                return false;
+            }
+
             self.counters.insert(
                 entry_rip,
                 CounterEntry {
@@ -107,21 +121,52 @@ impl HotnessProfile {
         self.clock
     }
 
-    fn ensure_space_for_new_entry(&mut self) {
+    /// Ensure there is room to insert a new *unrequested* counter entry.
+    ///
+    /// Returns `false` if the profile is saturated with `requested` keys (which we avoid evicting to
+    /// preserve compilation request de-duping).
+    fn ensure_space_for_new_counter_entry(&mut self) -> bool {
+        if self.counters.len() < self.capacity {
+            return true;
+        }
+
+        let Some(victim) = self.pick_victim(/*allow_requested=*/ false) else {
+            return false;
+        };
+        self.evict(victim);
+        true
+    }
+
+    /// Ensure there is room to insert a new *requested* entry.
+    ///
+    /// This prefers evicting non-requested entries first, but will fall back to evicting a
+    /// requested entry if the profile is saturated.
+    fn ensure_space_for_new_requested_entry(&mut self) {
         if self.counters.len() < self.capacity {
             return;
         }
 
-        let Some(victim) = self.pick_victim() else {
+        if let Some(victim) = self.pick_victim(/*allow_requested=*/ false) {
+            self.evict(victim);
             return;
-        };
-        self.counters.remove(&victim);
-        self.requested.remove(&victim);
+        }
+
+        if let Some(victim) = self.pick_victim(/*allow_requested=*/ true) {
+            self.evict(victim);
+        }
     }
 
-    fn pick_victim(&self) -> Option<u64> {
+    fn evict(&mut self, entry_rip: u64) {
+        self.counters.remove(&entry_rip);
+        self.requested.remove(&entry_rip);
+    }
+
+    fn pick_victim(&self, allow_requested: bool) -> Option<u64> {
         let mut victim: Option<(u32, u64, u64)> = None;
         for (&rip, entry) in &self.counters {
+            if !allow_requested && self.requested.contains(&rip) {
+                continue;
+            }
             let key = (entry.count, entry.last_hit, rip);
             if victim.map_or(true, |v| key < v) {
                 victim = Some(key);
@@ -138,7 +183,7 @@ impl HotnessProfile {
             return;
         }
 
-        self.ensure_space_for_new_entry();
+        self.ensure_space_for_new_requested_entry();
         self.counters.insert(
             entry_rip,
             CounterEntry {
@@ -154,3 +199,4 @@ impl HotnessProfile {
         self.requested.clear();
     }
 }
+
