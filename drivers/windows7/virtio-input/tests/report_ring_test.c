@@ -1,3 +1,5 @@
+// TEST_DEPS: virtio_input.c hid_translate.c
+
 #include "../src/virtio_input.h"
 
 #include <assert.h>
@@ -72,11 +74,3 @@ int main(void) {
   printf("report_ring_test: ok\n");
   return 0;
 }
-
-/*
- * tests/run.sh builds each *_test.c as a standalone translation unit. Include the
- * portable virtio-input glue and its dependencies directly so this test can be
- * built without any special-casing in the runner.
- */
-#include "../src/hid_translate.c"
-#include "../src/virtio_input.c"

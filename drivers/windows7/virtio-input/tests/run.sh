@@ -11,6 +11,17 @@ trap 'rm -rf "${build_dir}"' EXIT
 
 cflags=(-std=c11 -Wall -Wextra -Werror)
 
+append_source() {
+  local file="$1"
+  local existing
+  for existing in "${sources[@]}"; do
+    if [[ "${existing}" == "${file}" ]]; then
+      return 0
+    fi
+  done
+  sources+=("${file}")
+}
+
 compilers=()
 if [[ -n "${CC:-}" ]]; then
   compilers+=("${CC}")
@@ -54,12 +65,45 @@ for cc in "${compilers[@]}"; do
     module="${test_base%_test}"
 
     bin="${build_dir}/${test_base}.${cc_label}"
-    sources=("${test_src}")
+    sources=()
+    append_source "${test_src}"
 
     # Convention: if ../src/<name>.c exists (where <name> is the test filename
     # without the "_test" suffix), link it in automatically.
     if [[ -f "${src_dir}/${module}.c" ]]; then
-      sources+=("${src_dir}/${module}.c")
+      append_source "${src_dir}/${module}.c"
+    fi
+
+    # Optional: allow tests to declare extra translation units to link.
+    # Syntax (single line anywhere in the file):
+    #   // TEST_DEPS: foo.c bar.c
+    # or:
+    #   // TEST_DEPS: foo bar   (".c" is implied)
+    deps_line="$(sed -n 's,^//[[:space:]]*TEST_DEPS:[[:space:]]*,,p' "${test_src}" | head -n 1 || true)"
+    if [[ -n "${deps_line}" ]]; then
+      read -r -a deps <<<"${deps_line}"
+      dep_missing=""
+      for dep in "${deps[@]}"; do
+        dep_file="${dep}"
+        if [[ "${dep_file}" != *.c ]]; then
+          dep_file="${dep_file}.c"
+        fi
+        dep_path="${src_dir}/${dep_file}"
+        if [[ -f "${dep_path}" ]]; then
+          append_source "${dep_path}"
+        else
+          dep_missing="${dep_file}"
+          break
+        fi
+      done
+      if [[ -n "${dep_missing}" ]]; then
+        echo "[FAIL] build: ${test_file} (${cc_label})"
+        echo "       missing dependency: ${src_dir}/${dep_missing}" >&2
+        failed_runs=$((failed_runs + 1))
+        total_runs=$((total_runs + 1))
+        fail_list+=("BUILD ${test_file} (${cc_label})")
+        continue
+      fi
     fi
 
     echo "[BUILD] ${test_file}"

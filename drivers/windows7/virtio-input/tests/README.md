@@ -41,6 +41,13 @@ gcc -std=c11 -Wall -Wextra -Werror \
   led_translate_test.c ../src/led_translate.c && /tmp/led_translate_test
 ```
 
+```bash
+# From drivers/windows7/virtio-input/tests/
+gcc -std=c11 -Wall -Wextra -Werror \
+  -o /tmp/report_ring_test \
+  report_ring_test.c ../src/virtio_input.c ../src/hid_translate.c && /tmp/report_ring_test
+```
+
 ### Adding new host-side tests
 
 Drop a `*_test.c` file in this directory. `tests/run.sh` will build each test into a separate
@@ -48,8 +55,9 @@ binary, and will automatically link `../src/<name>.c` if it exists (where `<name
 test filename without the `_test` suffix). This is intended for portable C helpers such as
 `hid_translate.c` and LED translation/parsing helpers.
 
-Some tests may depend on multiple `../src/*.c` translation units. In that case, include the
-additional sources directly from the test file.
+Some tests may depend on multiple `../src/*.c` translation units. In that case, add a line like
+`// TEST_DEPS: foo.c bar.c` to the test source; `tests/run.sh` will link the additional
+dependencies.
 
 ## Manual tests
 
