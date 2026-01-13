@@ -3,7 +3,7 @@
 mod codec;
 mod corb_rirb;
 mod pci;
-mod regs;
+pub mod regs;
 mod stream;
 
 pub use codec::{HdaCodec, HdaVerbResponse};
