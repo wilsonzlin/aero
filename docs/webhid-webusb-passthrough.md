@@ -275,6 +275,9 @@ Semantics / guarantees:
   deviceId**. Even though WebHID `sendReport`/`sendFeatureReport` are `Promise`-based, the broker
   serializes calls per device so later reports are not started until earlier ones have settled.
   (Reports from different devices may interleave.)
+- **Unified FIFO across transports:** both the SAB output ring (`hid.ringAttach`) and the fallback
+  `postMessage` path (`hid.sendReport`) enqueue into the same per-device FIFO, so reports do not run
+  concurrently and order is preserved across transport mechanisms.
 - **Fallback on ring overflow/corruption:** the SAB rings are an optimization, not a correctness
   requirement. If a report cannot be enqueued (ring full, record too large), the I/O worker falls
   back to `postMessage` (`hid.sendReport`) for that report so guest→device reports are not silently
