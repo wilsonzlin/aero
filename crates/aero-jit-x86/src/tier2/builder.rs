@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use aero_types::{Cond, Flag, FlagSet, Width};
+use aero_x86::tier1::InstKind;
 
 use crate::tier1::ir::{
     BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId,
@@ -122,10 +123,22 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
     }
 
     fn lower_block(&mut self, id: BlockId, bb: &BasicBlock) -> Block {
-        let code_len = bb
+        // `code_len` tracks the byte span of *guest code bytes that are executed by the block* for
+        // code version guards.
+        //
+        // If the last decoded instruction is `Invalid`, Tier-1 side-exits to the interpreter at
+        // that instruction's RIP and does not execute it, so we exclude it from the covered byte
+        // range (mirroring `compiler/tier1.rs`).
+        let mut code_len: u32 = bb
             .insts
             .iter()
             .fold(0u32, |acc, inst| acc.saturating_add(inst.len as u32));
+        if let Some(last) = bb.insts.last() {
+            if matches!(last.kind, InstKind::Invalid) {
+                // Corner case: if the block is invalid at entry, code_len becomes 0.
+                code_len = code_len.saturating_sub(last.len as u32);
+            }
+        }
         let ir = translate_block(bb);
 
         let value_count: u32 = ir
