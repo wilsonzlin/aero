@@ -341,7 +341,7 @@ This subset is validated via:
 - **Host-side unit tests** under `drivers/aerogpu/umd/d3d9/tests/` (command-stream and fixed-function/FVF translation coverage).
 - **Win7 guest tests** under `drivers/aerogpu/tests/win7/` (recommended smoke tests:
   `d3d9ex_triangle`, `d3d9ex_fixedfunc_textured_triangle`, `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`,
-  `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused
+  `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, `d3d9_process_vertices_sanity`, and the DWM-focused
   `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
 ## Call tracing (bring-up / debugging)
