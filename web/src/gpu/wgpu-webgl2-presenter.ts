@@ -93,6 +93,8 @@ export class WgpuWebGl2Presenter implements Presenter {
     }
   }
 
+  // Screenshot is provided by the wasm-backed presenter and is defined as a readback
+  // of the source framebuffer bytes (not a readPixels() of the presented canvas).
   public async screenshot(): Promise<PresenterScreenshot> {
     if (!this.initialized) {
       throw new PresenterError('not_initialized', 'WgpuWebGl2Presenter.screenshot() called before init()');

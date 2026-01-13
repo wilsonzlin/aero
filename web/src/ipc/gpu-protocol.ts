@@ -270,8 +270,18 @@ export type GpuRuntimeErrorMessage = GpuWorkerMessageBase & {
 export type GpuRuntimeScreenshotResponseMessage = GpuWorkerMessageBase & {
   type: "screenshot";
   requestId: number;
+  /**
+   * Screenshot dimensions in **source framebuffer** pixels (not presented/canvas pixels).
+   */
   width: number;
   height: number;
+  /**
+   * RGBA8 bytes in row-major order with a top-left origin.
+   *
+   * Semantics: deterministic readback of the *source framebuffer* content (pre-scaling,
+   * pre-sRGB/color-management, etc). This is intentionally not a capture of "what the
+   * user sees" on the canvas.
+   */
   rgba8: ArrayBuffer;
   origin: "top-left";
   /**

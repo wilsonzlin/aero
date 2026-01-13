@@ -20,6 +20,7 @@ export interface PresenterScreenshot {
    * - scaling / filtering / integer-fit logic
    * - letterboxing / clearColor
    * - `outputWidth`/`outputHeight` or `devicePixelRatio` sizing
+   *   (the screenshot `width/height` are the **source** framebuffer dimensions)
    * - sRGB encode / browser color management
    * - cursor composition or other overlays
    *
@@ -82,6 +83,12 @@ export interface Presenter {
   ): Promise<void> | void;
   resize(width: number, height: number, dpr: number): void;
   present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): void;
+  /**
+   * Capture a screenshot of the current frame.
+   *
+   * See `PresenterScreenshot.pixels` for the contract (source framebuffer readback,
+   * not presented output).
+   */
   screenshot(): Promise<PresenterScreenshot> | PresenterScreenshot;
   destroy?(): void;
 }

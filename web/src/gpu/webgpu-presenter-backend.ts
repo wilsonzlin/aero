@@ -368,6 +368,9 @@ export class WebGpuPresenterBackend implements Presenter {
     this.renderToCanvas();
   }
 
+  // Screenshot reads back the source texture (`frameTexture`), not the presented
+  // canvas output. This avoids any scaling/color-space ambiguity and matches the
+  // deterministic hashing contract used by smoke tests.
   public async screenshot(): Promise<PresenterScreenshot> {
     if (!this.device || !this.queue || !this.frameTexture) {
       throw new PresenterError('not_initialized', 'WebGpuPresenterBackend.screenshot() called before init()');
