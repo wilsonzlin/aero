@@ -182,8 +182,10 @@ Therefore:
 This pattern is already used today:
 
  - Wrapper types: `crates/aero-storage-adapters`
- - `impl aero_devices_nvme::DiskBackend for AeroVirtualDiskAsNvmeBackend`: in `crates/aero-devices-nvme`
- - `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend`: in `crates/devices`
+ - `impl aero_devices_nvme::DiskBackend for AeroVirtualDiskAsNvmeBackend` (re-exported as
+   `aero_devices_nvme::AeroStorageDiskAdapter`): in `crates/aero-devices-nvme`
+ - `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend` (re-exported as
+   `aero_devices::storage::AeroStorageDiskAdapter`): in `crates/devices`
  - `impl aero_virtio::devices::blk::BlockBackend for Box<T: aero_storage::VirtualDisk>`: in `crates/aero-virtio`
  - Reverse adapter: `crates/devices/src/storage/mod.rs` defines `DeviceBackendAsAeroVirtualDisk`, which
    allows reusing `aero-storage` disk wrappers (cache/sparse/COW) on top of an existing

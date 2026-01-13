@@ -110,7 +110,8 @@ impl From<NvmeDiskBackend> for AeroVirtualDiskAsNvmeBackend {
 /// `aero-devices` disk backend.
 ///
 /// The actual `aero_devices::storage::DiskBackend` implementation is provided by the
-/// `aero-devices` crate.
+/// `aero-devices` crate. That crate re-exports this wrapper as
+/// `aero_devices::storage::AeroStorageDiskAdapter` for ergonomic use at call sites.
 pub struct AeroVirtualDiskAsDeviceBackend {
     disk: Mutex<Box<dyn VirtualDisk + Send>>,
 }
