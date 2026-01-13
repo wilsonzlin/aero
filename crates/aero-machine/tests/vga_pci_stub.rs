@@ -1,8 +1,5 @@
-use aero_devices::pci::PciBdf;
-use aero_gpu_vga::{
-    DisplayOutput, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT, VGA_PCI_CLASS_CODE,
-    VGA_PCI_DEVICE_ID, VGA_PCI_SUBCLASS, VGA_PCI_VENDOR_ID,
-};
+use aero_devices::pci::profile;
+use aero_gpu_vga::{DisplayOutput, VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -38,7 +35,7 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
     // this fixed BDF (`00:0c.0`, `1234:1111`) so the VBE LFB was reachable via the PCI MMIO window.
     // The stub is no longer part of the canonical contract; treat absence as a no-op for this
     // regression test.
-    let bdf = PciBdf::new(0, 0x0c, 0);
+    let bdf = profile::VGA_TRANSITIONAL_STUB.bdf;
     {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
@@ -63,17 +60,17 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
 
         let vendor_id = bus.read_config(bdf, 0x00, 2) as u16;
         let device_id = bus.read_config(bdf, 0x02, 2) as u16;
-        assert_eq!(vendor_id, VGA_PCI_VENDOR_ID);
-        assert_eq!(device_id, VGA_PCI_DEVICE_ID);
+        assert_eq!(vendor_id, profile::VGA_TRANSITIONAL_STUB.vendor_id);
+        assert_eq!(device_id, profile::VGA_TRANSITIONAL_STUB.device_id);
 
         let class_reg = bus.read_config(bdf, 0x08, 4);
         let class_code = ((class_reg >> 24) & 0xFF) as u8;
         let subclass = ((class_reg >> 16) & 0xFF) as u8;
-        assert_eq!(class_code, VGA_PCI_CLASS_CODE);
-        assert_eq!(subclass, VGA_PCI_SUBCLASS);
+        assert_eq!(class_code, profile::VGA_TRANSITIONAL_STUB.class.base_class);
+        assert_eq!(subclass, profile::VGA_TRANSITIONAL_STUB.class.sub_class);
 
         let header_type = bus.read_config(bdf, 0x0E, 1) as u8;
-        assert_eq!(header_type, 0x00);
+        assert_eq!(header_type, profile::VGA_TRANSITIONAL_STUB.header_type);
 
         let bar0 = bus.read_config(bdf, 0x10, 4);
         let bar0_base = bar0 & 0xFFFF_FFF0;

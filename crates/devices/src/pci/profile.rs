@@ -489,6 +489,18 @@ pub const AEROGPU_BARS: [PciBarProfile; 2] = [
     PciBarProfile::mem32(AEROGPU_BAR1_VRAM_INDEX, AEROGPU_VRAM_SIZE, true),
 ];
 
+/// PCI BAR layout for the Bochs/QEMU-compatible VGA "transitional" PCI stub.
+///
+/// BAR0 exposes the Bochs VBE linear framebuffer (LFB) via a 32-bit MMIO window.
+///
+/// Note: This is the historical default VRAM/LFB size used by `aero_gpu_vga::VgaDevice`.
+pub const VGA_TRANSITIONAL_STUB_BAR0_SIZE: u64 = 16 * 1024 * 1024;
+pub const VGA_TRANSITIONAL_STUB_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(
+    0,
+    VGA_TRANSITIONAL_STUB_BAR0_SIZE,
+    false,
+)];
+
 /// Virtio BAR0 offset of the "common configuration" structure.
 pub const VIRTIO_COMMON_CFG_BAR0_OFFSET: u32 = 0x0000;
 /// Virtio BAR0 size of the "common configuration" structure.
@@ -879,6 +891,30 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &RTL8139_BARS,
+    capabilities: &[],
+};
+
+/// Bochs/QEMU-compatible VGA PCI identity used as a transitional compatibility shim.
+///
+/// This PCI function exists only so firmware/OS can discover a VGA-compatible display controller
+/// and map the Bochs VBE linear framebuffer (LFB) via PCI BAR0.
+///
+/// It is *not* AeroGPU. The canonical AeroGPU contract is [`AEROGPU`].
+pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
+    name: "vga-transitional-stub",
+    // Canonical BDF used by `aero_machine::Machine` for the legacy VGA/VBE device model.
+    bdf: PciBdf::new(0, 0x0c, 0),
+    // Bochs/QEMU "Standard VGA" IDs.
+    vendor_id: 0x1234,
+    device_id: 0x1111,
+    subsystem_vendor_id: 0,
+    subsystem_id: 0,
+    revision_id: 0,
+    // VGA-compatible display controller.
+    class: PciClassCode::new(0x03, 0x00, 0x00),
+    header_type: 0x00,
+    interrupt_pin: None,
+    bars: &VGA_TRANSITIONAL_STUB_BARS,
     capabilities: &[],
 };
 

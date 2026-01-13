@@ -41,10 +41,11 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
         assert_eq!(aerogpu_device, 0x0001);
     }
 
-    // Historically the canonical machine exposed a Bochs/QEMU-style VGA PCI stub at `00:0c.0`
-    // (`1234:1111`) used only for VBE LFB routing. The canonical machine no longer relies on this,
-    // and the canonical machine now expects this BDF to be empty.
-    let vga_bdf = PciBdf::new(0, 0x0c, 0);
+    // Historically the canonical machine exposed a Bochs/QEMU-style VGA PCI stub
+    // (`1234:1111`, see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`) used only for VBE LFB
+    // routing. The canonical machine no longer relies on this, and now expects this BDF to be
+    // empty.
+    let vga_bdf = aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.bdf;
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     // Guardrail: ensure no canonical paravirtual device profile uses this BDF (even though it is
     // currently expected to be empty).
@@ -92,7 +93,7 @@ fn aerogpu_is_exposed_at_canonical_bdf_without_transitional_vga_stub_when_enable
     assert_eq!(aerogpu_device, 0x0001);
 
     // Transitional VGA stub must be absent when AeroGPU is enabled.
-    let vga_bdf = PciBdf::new(0, 0x0c, 0);
+    let vga_bdf = aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.bdf;
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     assert_eq!(
         vga_vendor, 0xFFFF,
