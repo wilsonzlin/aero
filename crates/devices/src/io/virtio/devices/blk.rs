@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use crate::io::virtio::core::{
     DescChain, GuestMemory, VirtQueue, VirtQueueError, VIRTQ_DESC_F_WRITE,
 };
@@ -14,6 +16,7 @@ pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 pub const VIRTIO_BLK_S_UNSUPP: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[deprecated(note = "use aero_virtio crate instead")]
 pub struct VirtioBlkConfig {
     /// Capacity in 512-byte sectors.
     pub capacity: u64,
@@ -28,11 +31,13 @@ struct VirtioBlkReqHeader {
     sector: u64,
 }
 
+#[deprecated(note = "use aero_virtio crate instead")]
 pub trait VirtioInterrupt {
     fn trigger(&mut self);
 }
 
 #[derive(Debug)]
+#[deprecated(note = "use aero_virtio crate instead")]
 pub struct VirtioBlkDevice {
     cfg: VirtioBlkConfig,
     drive: VirtualDrive,
