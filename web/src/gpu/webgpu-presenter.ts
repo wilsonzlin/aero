@@ -83,6 +83,7 @@ fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
  * @property {ColorSpace=} outputColorSpace
  * @property {AlphaMode=} alphaMode
  * @property {boolean=} flipY
+ * @property {((err: unknown) => void)=} onError
  */
 
 function toSrgbFormat(format: GPUTextureFormat): GPUTextureFormat | null {
@@ -141,6 +142,13 @@ export class WebGpuPresenter {
   /** @type {"opaque" | "premultiplied"} */
   _alphaMode;
 
+  /** @type {any} */
+  _uncapturedErrorDevice = null;
+  /** @type {((ev: any) => void) | null} */
+  _onUncapturedError = null;
+  /** @type {Set<string>} */
+  _seenUncapturedErrorKeys = new Set();
+
   /**
    * @param {GPUDevice} device
    * @param {GPUCanvasContext} context
@@ -168,6 +176,8 @@ export class WebGpuPresenter {
     this.srgbEncodeInShader = srgbEncodeInShader;
     this.opts = opts;
     this._alphaMode = alphaMode;
+
+    this._installUncapturedErrorHandler();
 
     const module = device.createShaderModule({ code: BLIT_WGSL });
     this.pipeline = device.createRenderPipeline({
@@ -205,6 +215,100 @@ export class WebGpuPresenter {
         { binding: 2, resource: { buffer: this.paramsBuffer } },
       ],
     });
+  }
+
+  _installUncapturedErrorHandler() {
+    this._uninstallUncapturedErrorHandler();
+    this._seenUncapturedErrorKeys.clear();
+
+    const device = this.device;
+    const handler = (ev: any) => {
+      try {
+        (ev as any).preventDefault?.();
+
+        const err = ev?.error;
+        const errorName =
+          (typeof err?.name === "string" && err.name) ||
+          (typeof err?.constructor?.name === "string" && err.constructor.name) ||
+          "";
+        const errorMessage = typeof err?.message === "string" ? err.message : "";
+        let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
+        if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
+          msg = `${errorName}: ${msg}`;
+        }
+
+        const key = `${errorName}:${msg}`;
+        if (this._seenUncapturedErrorKeys.has(key)) return;
+        this._seenUncapturedErrorKeys.add(key);
+        if (this._seenUncapturedErrorKeys.size > 128) {
+          this._seenUncapturedErrorKeys.clear();
+          this._seenUncapturedErrorKeys.add(key);
+        }
+
+        const onError = (this.opts as any)?.onError;
+        if (typeof onError === "function") {
+          onError(err ?? ev);
+        } else {
+          console.error("[WebGpuPresenter] uncapturederror", err ?? ev);
+        }
+      } catch {
+        // Best-effort diagnostics only.
+      }
+    };
+
+    this._uncapturedErrorDevice = device;
+    this._onUncapturedError = handler;
+
+    try {
+      if (typeof (device as any).addEventListener === "function") {
+        (device as any).addEventListener("uncapturederror", handler);
+        return;
+      }
+    } catch {
+      // Fall through.
+    }
+
+    try {
+      (device as any).onuncapturederror = handler;
+    } catch {
+      // Ignore.
+    }
+  }
+
+  _uninstallUncapturedErrorHandler() {
+    const device = this._uncapturedErrorDevice;
+    const handler = this._onUncapturedError;
+    if (device && handler) {
+      try {
+        (device as any).removeEventListener?.("uncapturederror", handler);
+      } catch {
+        // Ignore.
+      }
+      try {
+        if ((device as any).onuncapturederror === handler) {
+          (device as any).onuncapturederror = null;
+        }
+      } catch {
+        // Ignore.
+      }
+    }
+    this._uncapturedErrorDevice = null;
+    this._onUncapturedError = null;
+    this._seenUncapturedErrorKeys.clear();
+  }
+
+  destroy() {
+    this._uninstallUncapturedErrorHandler();
+    try {
+      (this.context as any)?.unconfigure?.();
+    } catch {
+      // Ignore.
+    }
+    try {
+      this.device?.destroy?.();
+    } catch {
+      // Ignore.
+    }
   }
 
   /**
