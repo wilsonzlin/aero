@@ -44,9 +44,9 @@ use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, PciBarDefinition, PciBarMmioHandler, PciBarMmioRouter,
-    PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice, PciEcamConfig,
-    PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
-    PciResourceAllocatorConfig, SharedPciConfigPorts,
+    MsiCapability, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice,
+    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -827,6 +827,7 @@ struct AhciPciConfigDevice {
 impl AhciPciConfigDevice {
     fn new() -> Self {
         let mut cfg = aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space();
+        cfg.add_capability(Box::new(MsiCapability::new()));
         cfg.set_bar_definition(
             aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
             PciBarDefinition::Mmio32 {
@@ -3078,22 +3079,37 @@ impl Machine {
 
                 // Keep the device model's internal PCI command state coherent so
                 // `AhciPciDevice::intx_level()` can apply COMMAND.INTX_DISABLE gating.
-                let (command, bar5_base) = self
+                let (command, bar5_base, msi_state) = self
                     .pci_cfg
                     .as_ref()
                     .map(|pci_cfg| {
                         let mut pci_cfg = pci_cfg.borrow_mut();
-                        let cfg = pci_cfg.bus_mut().device_config(bdf);
-                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let mut cfg = pci_cfg.bus_mut().device_config_mut(bdf);
+                        let command = cfg.as_ref().map(|cfg| cfg.command()).unwrap_or(0);
                         let bar5_base = cfg
+                            .as_ref()
                             .and_then(|cfg| {
                                 cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX)
                             })
                             .map(|range| range.base)
                             .unwrap_or(0);
-                        (command, bar5_base)
+                        let msi_state = cfg.as_mut().and_then(|cfg| {
+                            cfg.find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                                .map(|off| {
+                                    let base = u16::from(off);
+                                    (
+                                        cfg.read(base + 0x02, 2) as u16,
+                                        cfg.read(base + 0x04, 4),
+                                        cfg.read(base + 0x08, 4),
+                                        cfg.read(base + 0x0c, 2) as u16,
+                                        cfg.read(base + 0x10, 4),
+                                        cfg.read(base + 0x14, 4),
+                                    )
+                                })
+                        });
+                        (command, bar5_base, msi_state)
                     })
-                    .unwrap_or((0, 0));
+                    .unwrap_or((0, 0, None));
 
                 let mut ahci_dev = ahci.borrow_mut();
                 ahci_dev.config_mut().set_command(command);
@@ -3101,6 +3117,22 @@ impl Machine {
                     ahci_dev
                         .config_mut()
                         .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
+                }
+                if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
+                    if let Some(off) = ahci_dev
+                        .config_mut()
+                        .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                    {
+                        let base = u16::from(off);
+                        ahci_dev.config_mut().write(base + 0x04, 4, addr_lo);
+                        ahci_dev.config_mut().write(base + 0x08, 4, addr_hi);
+                        ahci_dev.config_mut().write(base + 0x0c, 2, u32::from(data));
+                        ahci_dev.config_mut().write(base + 0x10, 4, mask);
+                        ahci_dev.config_mut().write(base + 0x14, 4, pending);
+                        ahci_dev
+                            .config_mut()
+                            .write(base + 0x02, 2, u32::from(ctrl));
+                    }
                 }
 
                 let mut level = ahci_dev.intx_level();
@@ -3845,6 +3877,10 @@ impl Machine {
                     }
                     None => {
                         let ahci = Rc::new(RefCell::new(AhciPciDevice::new(1)));
+                        // Provide an MSI sink so the device model can inject MSI messages into the
+                        // platform LAPIC when the guest enables MSI in PCI config space.
+                        ahci.borrow_mut()
+                            .set_msi_target(Some(Box::new(interrupts.clone())));
                         // On first initialization, attach the machine's canonical disk backend to
                         // AHCI port 0 so BIOS INT13 and controller-driven access see consistent
                         // bytes by default.
@@ -4454,15 +4490,30 @@ impl Machine {
         };
 
         let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-        let (command, bar5_base) = {
+        let (command, bar5_base, msi_state) = {
             let mut pci_cfg = pci_cfg.borrow_mut();
-            let cfg = pci_cfg.bus_mut().device_config(bdf);
-            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let mut cfg = pci_cfg.bus_mut().device_config_mut(bdf);
+            let command = cfg.as_ref().map(|cfg| cfg.command()).unwrap_or(0);
             let bar5_base = cfg
+                .as_ref()
                 .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX))
                 .map(|range| range.base)
                 .unwrap_or(0);
-            (command, bar5_base)
+            let msi_state = cfg.as_mut().and_then(|cfg| {
+                cfg.find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                    .map(|off| {
+                        let base = u16::from(off);
+                        (
+                            cfg.read(base + 0x02, 2) as u16,
+                            cfg.read(base + 0x04, 4),
+                            cfg.read(base + 0x08, 4),
+                            cfg.read(base + 0x0c, 2) as u16,
+                            cfg.read(base + 0x10, 4),
+                            cfg.read(base + 0x14, 4),
+                        )
+                    })
+            });
+            (command, bar5_base, msi_state)
         };
 
         let bus_master_enabled = (command & (1 << 2)) != 0;
@@ -4472,6 +4523,20 @@ impl Machine {
         if bar5_base != 0 {
             dev.config_mut()
                 .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
+        }
+        if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
+            if let Some(off) =
+                dev.config_mut()
+                    .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+            {
+                let base = u16::from(off);
+                dev.config_mut().write(base + 0x04, 4, addr_lo);
+                dev.config_mut().write(base + 0x08, 4, addr_hi);
+                dev.config_mut().write(base + 0x0c, 2, u32::from(data));
+                dev.config_mut().write(base + 0x10, 4, mask);
+                dev.config_mut().write(base + 0x14, 4, pending);
+                dev.config_mut().write(base + 0x02, 2, u32::from(ctrl));
+            }
         }
 
         if bus_master_enabled {

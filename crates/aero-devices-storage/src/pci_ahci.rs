@@ -5,11 +5,12 @@ use std::sync::{
 
 use aero_devices::irq::IrqLine;
 use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use aero_devices::pci::{profile, PciConfigSpace, PciConfigSpaceState, PciDevice};
+use aero_devices::pci::{profile, MsiCapability, PciConfigSpace, PciConfigSpaceState, PciDevice};
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use aero_platform::interrupts::msi::MsiTrigger;
 use memory::MemoryBus;
 use memory::MmioHandler;
 
@@ -61,6 +62,8 @@ pub struct AhciPciDevice {
     config: PciConfigSpace,
     controller: AhciController,
     irq: AtomicIrqLine,
+    msi_target: Option<Box<dyn MsiTrigger>>,
+    last_irq_level: bool,
 }
 
 impl AhciPciDevice {
@@ -70,12 +73,27 @@ impl AhciPciDevice {
     pub fn new(num_ports: usize) -> Self {
         let irq = AtomicIrqLine::default();
         let controller = AhciController::new(Box::new(irq.clone()), num_ports);
-        let config = profile::SATA_AHCI_ICH9.build_config_space();
+        let mut config = profile::SATA_AHCI_ICH9.build_config_space();
+        // Expose an MSI capability so guests can opt into message-signaled interrupts.
+        config.add_capability(Box::new(MsiCapability::new()));
         Self {
             config,
             controller,
             irq,
+            msi_target: None,
+            last_irq_level: false,
         }
+    }
+
+    /// Configure the target used for MSI interrupt delivery.
+    ///
+    /// Platform integrations should provide a sink that injects the programmed MSI message into the
+    /// guest LAPIC (e.g. `PlatformInterrupts` in APIC mode).
+    ///
+    /// When no target is configured, the device falls back to legacy INTx signalling even if the
+    /// guest enables MSI in PCI config space.
+    pub fn set_msi_target(&mut self, target: Option<Box<dyn MsiTrigger>>) {
+        self.msi_target = target;
     }
 
     pub fn attach_drive(&mut self, port: usize, drive: AtaDrive) {
@@ -97,12 +115,48 @@ impl AhciPciDevice {
         // calling the trait method here (it would recurse).
         self.config.set_command(0);
         self.controller.reset();
+        self.last_irq_level = self.irq.level();
+    }
+
+    fn msi_enabled(&self) -> bool {
+        self.config
+            .capability::<MsiCapability>()
+            .is_some_and(|cap| cap.enabled())
+    }
+
+    fn msi_active(&self) -> bool {
+        self.msi_target.is_some() && self.msi_enabled()
+    }
+
+    fn service_interrupts(&mut self) {
+        let level = self.irq.level();
+
+        // MSI delivery is edge-triggered; fire only on a rising edge of the internal interrupt
+        // condition. (INTx remains level-triggered via `intx_level()`.)
+        if level && !self.last_irq_level {
+            if let (Some(target), Some(msi)) = (
+                self.msi_target.as_mut(),
+                self.config.capability_mut::<MsiCapability>(),
+            ) {
+                // Ignore the return value: if the guest masked the vector, the capability will set
+                // its pending bit and we should not fall back to INTx while MSI is enabled.
+                let _ = msi.trigger(&mut **target);
+            }
+        }
+
+        self.last_irq_level = level;
     }
 
     /// Returns the current level of the device's legacy INTx line.
     ///
     /// This is already gated by the PCI Command register's Interrupt Disable bit (bit 10).
     pub fn intx_level(&self) -> bool {
+        // When MSI is enabled and the platform provided an MSI sink, suppress legacy INTx so
+        // interrupts are not delivered twice.
+        if self.msi_active() {
+            return false;
+        }
+
         // PCI command bit 10 disables legacy INTx assertion.
         let intx_disabled = (self.config.command() & (1 << 10)) != 0;
         if intx_disabled {
@@ -206,6 +260,10 @@ impl AhciPciDevice {
             let merged = (current & !be_mask) | (write_val & be_mask);
             self.controller.write_u32(word_off, merged);
         }
+
+        // MMIO writes may change interrupt enable/status bits; service MSI edge detection after the
+        // operation completes.
+        self.service_interrupts();
     }
 
     /// Processes pending AHCI commands (DMA) using the provided guest physical memory bus.
@@ -222,6 +280,7 @@ impl AhciPciDevice {
         }
 
         self.controller.process(mem);
+        self.service_interrupts();
     }
 }
 
@@ -270,6 +329,7 @@ impl IoSnapshot for AhciPciDevice {
     fn save_state(&self) -> Vec<u8> {
         const TAG_PCI: u16 = 1;
         const TAG_CONTROLLER: u16 = 2;
+        const TAG_LAST_IRQ_LEVEL: u16 = 3;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -282,12 +342,18 @@ impl IoSnapshot for AhciPciDevice {
 
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
 
+        w.field_bytes(
+            TAG_LAST_IRQ_LEVEL,
+            Encoder::new().bool(self.last_irq_level).finish(),
+        );
+
         w.finish()
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_PCI: u16 = 1;
         const TAG_CONTROLLER: u16 = 2;
+        const TAG_LAST_IRQ_LEVEL: u16 = 3;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -318,6 +384,17 @@ impl IoSnapshot for AhciPciDevice {
             ));
         };
         self.controller.load_state(buf)?;
+
+        if let Some(buf) = r.bytes(TAG_LAST_IRQ_LEVEL) {
+            let mut d = Decoder::new(buf);
+            self.last_irq_level = d.bool()?;
+            d.finish()?;
+        } else {
+            // Older snapshots didn't include edge-tracking state for MSI. Default to the restored
+            // controller's current interrupt condition so restore does not spuriously generate an
+            // MSI edge on the next tick.
+            self.last_irq_level = self.irq.level();
+        }
 
         Ok(())
     }

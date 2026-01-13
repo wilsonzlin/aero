@@ -10,8 +10,8 @@ use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciBdf, PciConfigPorts, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    bios_post, register_pci_config_ports, MsiCapability, PciBarDefinition, PciBdf, PciConfigPorts,
+    PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -153,6 +153,7 @@ struct AhciPciConfigDevice {
 impl AhciPciConfigDevice {
     fn new() -> Self {
         let mut config = aero_devices::pci::profile::SATA_AHCI_ICH9.build_config_space();
+        config.add_capability(Box::new(MsiCapability::new()));
         config.set_bar_definition(
             AHCI_ABAR_BAR_INDEX,
             PciBarDefinition::Mmio32 {
@@ -1409,6 +1410,10 @@ impl PcPlatform {
             let bdf = profile.bdf;
 
             let ahci = Rc::new(RefCell::new(AhciPciDevice::new(1)));
+            // Provide an MSI sink so the device model can inject message-signaled interrupts when
+            // the guest enables MSI in PCI config space.
+            ahci.borrow_mut()
+                .set_msi_target(Some(Box::new(interrupts.clone())));
             // Attach a small in-memory disk by default so guests see a SATA device without any
             // additional host-side wiring. Callers can override this by attaching their own disk
             // via `PcPlatform::attach_ahci_disk_port0`.
@@ -1426,19 +1431,49 @@ impl PcPlatform {
                     bdf,
                     pin: PciInterruptPin::IntA,
                     query_level: Box::new(move |pc| {
-                        let command = {
+                        let (command, msi_state) = {
                             let mut pci_cfg = pc.pci_cfg.borrow_mut();
                             pci_cfg
                                 .bus_mut()
-                                .device_config(bdf)
-                                .map(|cfg| cfg.command())
-                                .unwrap_or(0)
+                                .device_config_mut(bdf)
+                                .map(|cfg| {
+                                    let command = cfg.command();
+                                    let msi = cfg
+                                        .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                                        .map(|off| {
+                                            let base = u16::from(off);
+                                            (
+                                                cfg.read(base + 0x02, 2) as u16,
+                                                cfg.read(base + 0x04, 4),
+                                                cfg.read(base + 0x08, 4),
+                                                cfg.read(base + 0x0c, 2) as u16,
+                                                cfg.read(base + 0x10, 4),
+                                                cfg.read(base + 0x14, 4),
+                                            )
+                                        });
+                                    (command, msi)
+                                })
+                                .unwrap_or((0, None))
                         };
 
                         // Keep device-side gating consistent when the same device model is also used
                         // outside the platform (e.g. in unit tests).
                         let mut ahci = ahci_for_intx.borrow_mut();
                         ahci.config_mut().set_command(command);
+                        if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
+                            if let Some(off) =
+                                ahci.config_mut()
+                                    .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                            {
+                                let base = u16::from(off);
+                                ahci.config_mut().write(base + 0x04, 4, addr_lo);
+                                ahci.config_mut().write(base + 0x08, 4, addr_hi);
+                                ahci.config_mut().write(base + 0x0c, 2, u32::from(data));
+                                ahci.config_mut().write(base + 0x10, 4, mask);
+                                ahci.config_mut().write(base + 0x14, 4, pending);
+                                ahci.config_mut().write(base + 0x02, 2, u32::from(ctrl));
+                            }
+                        }
 
                         ahci.intx_level()
                     }),
@@ -2248,13 +2283,29 @@ impl PcPlatform {
         };
 
         let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-        let command = {
+        let (command, msi_state) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             pci_cfg
                 .bus_mut()
-                .device_config(bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
+                .device_config_mut(bdf)
+                .map(|cfg| {
+                    let command = cfg.command();
+                    let msi = cfg
+                        .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                        .map(|off| {
+                            let base = u16::from(off);
+                            (
+                                cfg.read(base + 0x02, 2) as u16,
+                                cfg.read(base + 0x04, 4),
+                                cfg.read(base + 0x08, 4),
+                                cfg.read(base + 0x0c, 2) as u16,
+                                cfg.read(base + 0x10, 4),
+                                cfg.read(base + 0x14, 4),
+                            )
+                        });
+                    (command, msi)
+                })
+                .unwrap_or((0, None))
         };
 
         // Keep the device's internal view of the PCI command register in sync so it can apply
@@ -2262,6 +2313,20 @@ impl PcPlatform {
         {
             let mut ahci = ahci.borrow_mut();
             ahci.config_mut().set_command(command);
+            if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
+                if let Some(off) = ahci
+                    .config_mut()
+                    .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+                {
+                    let base = u16::from(off);
+                    ahci.config_mut().write(base + 0x04, 4, addr_lo);
+                    ahci.config_mut().write(base + 0x08, 4, addr_hi);
+                    ahci.config_mut().write(base + 0x0c, 2, u32::from(data));
+                    ahci.config_mut().write(base + 0x10, 4, mask);
+                    ahci.config_mut().write(base + 0x14, 4, pending);
+                    ahci.config_mut().write(base + 0x02, 2, u32::from(ctrl));
+                }
+            }
         }
 
         // Only allow the device to DMA when Bus Mastering is enabled (PCI command bit 2).

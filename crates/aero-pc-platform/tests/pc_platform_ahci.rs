@@ -2,6 +2,7 @@ use aero_devices::pci::profile::{
     AHCI_ABAR_BAR_INDEX, AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE, SATA_AHCI_ICH9,
 };
 use aero_devices::pci::{PciDevice, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices_storage::ata::{ATA_CMD_IDENTIFY, ATA_CMD_READ_DMA_EXT};
 use aero_interrupts::apic::IOAPIC_MMIO_BASE;
 use aero_pc_platform::PcPlatform;
@@ -34,7 +35,10 @@ fn write_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
         4,
         cfg_addr(bus, device, function, offset),
     );
-    pc.io.write(PCI_CFG_DATA_PORT, 2, u32::from(value));
+    // PCI config mechanism #1 exposes `0xCFC..=0xCFF` as the data window; the low 2 bits of the
+    // config-space offset are encoded in the I/O port number.
+    pc.io
+        .write(PCI_CFG_DATA_PORT + u16::from(offset & 3), 2, u32::from(value));
 }
 
 fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8, value: u32) {
@@ -44,6 +48,39 @@ fn write_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset:
         cfg_addr(bus, device, function, offset),
     );
     pc.io.write(PCI_CFG_DATA_PORT, 4, value);
+}
+
+fn read_cfg_u8(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    let aligned = offset & 0xFC;
+    let shift = (offset & 3) * 8;
+    ((read_cfg_u32(pc, bus, device, function, aligned) >> shift) & 0xFF) as u8
+}
+
+fn read_cfg_u16(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u16 {
+    let aligned = offset & 0xFC;
+    let shift = (offset & 2) * 8;
+    ((read_cfg_u32(pc, bus, device, function, aligned) >> shift) & 0xFFFF) as u16
+}
+
+fn find_capability(
+    pc: &mut PcPlatform,
+    bus: u8,
+    device: u8,
+    function: u8,
+    cap_id: u8,
+) -> Option<u8> {
+    let mut offset = read_cfg_u8(pc, bus, device, function, 0x34);
+    let mut seen = [false; 256];
+    while offset != 0 && !seen[offset as usize] {
+        seen[offset as usize] = true;
+        let id = read_cfg_u8(pc, bus, device, function, offset);
+        let next = read_cfg_u8(pc, bus, device, function, offset.wrapping_add(1));
+        if id == cap_id {
+            return Some(offset);
+        }
+        offset = next;
+    }
+    None
 }
 
 fn read_ahci_bar5_base(pc: &mut PcPlatform) -> u64 {
@@ -877,4 +914,86 @@ fn pc_platform_routes_ahci_intx_via_ioapic_in_apic_mode() {
 
     pc.interrupts.borrow_mut().eoi(vector as u8);
     assert_eq!(pc.interrupts.borrow().get_pending(), None);
+}
+
+#[test]
+fn pc_platform_ahci_delivers_msi_when_enabled_and_suppresses_intx() {
+    let mut pc = PcPlatform::new_with_ahci(2 * 1024 * 1024);
+
+    // Switch the platform into APIC mode so `get_pending()` reflects LAPIC state.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let cap = find_capability(&mut pc, bdf.bus, bdf.device, bdf.function, PCI_CAP_ID_MSI)
+        .expect("AHCI PCI function should expose an MSI capability");
+
+    // Program MSI address/data (single-vector, fixed delivery).
+    let vector: u16 = 0x0066;
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x04, 0xFEE0_0000);
+    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x08, 0);
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x0c, vector);
+
+    // Enable MSI (bit 0 of Message Control).
+    let ctrl = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, cap + 0x02);
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        cap + 0x02,
+        ctrl | 0x0001,
+    );
+
+    // Reprogram BAR5 within the platform's PCI MMIO window for determinism.
+    let abar: u64 = 0xE100_0000;
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        AHCI_ABAR_CFG_OFFSET,
+        abar as u32,
+    );
+
+    // Enable memory decoding + bus mastering so MMIO works and DMA is permitted.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0006);
+
+    // Program HBA + port 0 registers and issue an IDENTIFY DMA command.
+    let clb = 0x1000u64;
+    let fb = 0x2000u64;
+    let ctba = 0x3000u64;
+    let identify_buf = 0x4000u64;
+
+    pc.memory
+        .write_u32(abar + PORT_BASE + PORT_REG_CLB, clb as u32);
+    pc.memory
+        .write_u32(abar + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    pc.memory.write_u32(abar + PORT_BASE + PORT_REG_FB, fb as u32);
+    pc.memory
+        .write_u32(abar + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+
+    pc.memory.write_u32(abar + HBA_GHC, GHC_AE | GHC_IE);
+    pc.memory
+        .write_u32(abar + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    pc.memory
+        .write_u32(abar + PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+    write_cmd_header(&mut pc, clb, 0, ctba, 1, false);
+    write_cfis(&mut pc, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut pc, ctba, 0, identify_buf, SECTOR_SIZE as u32);
+
+    pc.memory.write_u32(abar + PORT_BASE + PORT_REG_CI, 1);
+    pc.process_ahci();
+
+    // AHCI should signal the interrupt via MSI into the LAPIC.
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // And legacy INTx should be suppressed so the platform INTx router does not double-deliver.
+    let ahci = pc.ahci.as_ref().expect("AHCI should be enabled").clone();
+    assert!(
+        !ahci.borrow().intx_level(),
+        "INTx should not be asserted when MSI is enabled"
+    );
 }

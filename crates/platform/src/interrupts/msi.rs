@@ -1,5 +1,7 @@
 use super::router::PlatformInterrupts;
 use aero_interrupts::apic::LocalApic;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MsiMessage {
@@ -74,6 +76,14 @@ impl MsiTrigger for PlatformInterrupts {
         if dest == self.lapic_apic_id() || dest == 0xFF {
             self.lapic_inject_fixed(vector);
         }
+    }
+}
+
+// Allow shared `PlatformInterrupts` handles (`Rc<RefCell<...>>`) to be used as MSI sinks by device
+// models without requiring platform-specific wrapper types.
+impl MsiTrigger for Rc<RefCell<PlatformInterrupts>> {
+    fn trigger_msi(&mut self, message: MsiMessage) {
+        self.borrow_mut().trigger_msi(message);
     }
 }
 

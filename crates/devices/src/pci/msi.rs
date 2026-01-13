@@ -74,7 +74,7 @@ impl MsiCapability {
     /// - The pending bit is cleared when the device successfully delivers a message.
     /// - The pending bit is *not* automatically re-delivered on unmask; callers should
     ///   re-trigger if they rely on that behavior.
-    pub fn trigger(&mut self, platform: &mut impl MsiTrigger) -> bool {
+    pub fn trigger<T: MsiTrigger + ?Sized>(&mut self, platform: &mut T) -> bool {
         if !self.enabled {
             return false;
         }
