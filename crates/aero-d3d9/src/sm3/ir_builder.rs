@@ -613,19 +613,6 @@ fn collect_used_input_regs_op(op: &IrOp, out: &mut BTreeSet<u32>) {
             collect_used_input_regs_src(src2, out);
             collect_used_input_regs_modifiers(modifiers, out);
         }
-        IrOp::Select {
-            dst,
-            cond,
-            src_ge,
-            src_lt,
-            modifiers,
-        } => {
-            collect_used_input_regs_dst(dst, out);
-            collect_used_input_regs_src(cond, out);
-            collect_used_input_regs_src(src_ge, out);
-            collect_used_input_regs_src(src_lt, out);
-            collect_used_input_regs_modifiers(modifiers, out);
-        }
         IrOp::TexSample {
             dst,
             coord,
@@ -808,19 +795,6 @@ fn remap_input_regs_in_op(op: &mut IrOp, remap: &HashMap<u32, u32>) {
             remap_input_regs_in_src(src0, remap);
             remap_input_regs_in_src(src1, remap);
             remap_input_regs_in_src(src2, remap);
-            remap_input_regs_in_modifiers(modifiers, remap);
-        }
-        IrOp::Select {
-            dst,
-            cond,
-            src_ge,
-            src_lt,
-            modifiers,
-        } => {
-            remap_input_regs_in_dst(dst, remap);
-            remap_input_regs_in_src(cond, remap);
-            remap_input_regs_in_src(src_ge, remap);
-            remap_input_regs_in_src(src_lt, remap);
             remap_input_regs_in_modifiers(modifiers, remap);
         }
         IrOp::TexSample {
