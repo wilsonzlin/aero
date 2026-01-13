@@ -57,7 +57,7 @@ export interface GpuWorkerHandle {
    * The returned pixels are a readback of the *source framebuffer* content
    * (pre-scaling / pre-color-management), not a capture of the presented canvas.
    */
-  requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage>;
+  requestScreenshot(opts?: { includeCursor?: boolean }): Promise<GpuRuntimeScreenshotResponseMessage>;
   /**
    * Debug-only: read back the *presented* pixels from the worker's output canvas (RGBA8, top-left origin).
    *
@@ -68,7 +68,7 @@ export interface GpuWorkerHandle {
    * Note: the underlying worker API is best-effort; if a backend cannot read back presented
    * output yet it may fall back to returning a source-framebuffer screenshot.
    */
-  requestPresentedScreenshot(): Promise<GpuRuntimeScreenshotPresentedResponseMessage>;
+  requestPresentedScreenshot(opts?: { includeCursor?: boolean }): Promise<GpuRuntimeScreenshotPresentedResponseMessage>;
   shutdown(): void;
 }
 
@@ -351,11 +351,17 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     );
   }
 
-  function requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage> {
+  function requestScreenshot(opts?: { includeCursor?: boolean }): Promise<GpuRuntimeScreenshotResponseMessage> {
     return ready.then(
       () => {
         const requestId = nextRequestId++;
-        worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot", requestId });
+        const includeCursor = opts?.includeCursor === true;
+        worker.postMessage({
+          ...GPU_MESSAGE_BASE,
+          type: "screenshot",
+          requestId,
+          ...(includeCursor ? { includeCursor: true } : {}),
+        });
         return new Promise<GpuRuntimeScreenshotResponseMessage>((resolve, reject) => {
           screenshotRequests.set(requestId, { resolve, reject });
         });
@@ -364,11 +370,19 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     );
   }
 
-  function requestPresentedScreenshot(): Promise<GpuRuntimeScreenshotPresentedResponseMessage> {
+  function requestPresentedScreenshot(
+    opts?: { includeCursor?: boolean },
+  ): Promise<GpuRuntimeScreenshotPresentedResponseMessage> {
     return ready.then(
       () => {
         const requestId = nextRequestId++;
-        worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot_presented", requestId });
+        const includeCursor = opts?.includeCursor === true;
+        worker.postMessage({
+          ...GPU_MESSAGE_BASE,
+          type: "screenshot_presented",
+          requestId,
+          ...(includeCursor ? { includeCursor: true } : {}),
+        });
         return new Promise<GpuRuntimeScreenshotPresentedResponseMessage>((resolve, reject) => {
           presentedScreenshotRequests.set(requestId, { resolve, reject });
         });
