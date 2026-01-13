@@ -221,6 +221,95 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
 }
 
 #[test]
+fn package_outputs_include_optional_tools_dir_and_exclude_build_artifacts() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let drivers_dir = testdata.join("drivers");
+    let spec_path = testdata.join("spec.json");
+
+    let guest_tools_src = testdata.join("guest-tools");
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
+
+    // Optional guest-side tools should be packaged under `tools/...` when present.
+    fs::create_dir_all(guest_tools_tmp.path().join("tools/x86"))?;
+    fs::create_dir_all(guest_tools_tmp.path().join("tools/amd64"))?;
+    fs::write(
+        guest_tools_tmp.path().join("tools/x86/foo.exe"),
+        b"dummy tool (x86)\n",
+    )?;
+    fs::write(
+        guest_tools_tmp.path().join("tools/amd64/foo.exe"),
+        b"dummy tool (amd64)\n",
+    )?;
+    // Common build artifacts should be excluded by default.
+    fs::write(
+        guest_tools_tmp.path().join("tools/amd64/foo.pdb"),
+        b"dummy pdb\n",
+    )?;
+
+    let out1 = tempfile::tempdir()?;
+    let out2 = tempfile::tempdir()?;
+
+    let config1 = aero_packager::PackageConfig {
+        drivers_dir: drivers_dir.clone(),
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out1.path().to_path_buf(),
+        spec_path: spec_path.clone(),
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+    let config2 = aero_packager::PackageConfig {
+        out_dir: out2.path().to_path_buf(),
+        ..config1.clone()
+    };
+
+    let outputs1 = aero_packager::package_guest_tools(&config1)?;
+    let outputs2 = aero_packager::package_guest_tools(&config2)?;
+
+    // Deterministic outputs: byte-identical ISO/zip/manifest.
+    assert_eq!(fs::read(&outputs1.iso_path)?, fs::read(&outputs2.iso_path)?);
+    assert_eq!(fs::read(&outputs1.zip_path)?, fs::read(&outputs2.zip_path)?);
+    assert_eq!(
+        fs::read(&outputs1.manifest_path)?,
+        fs::read(&outputs2.manifest_path)?
+    );
+
+    let iso_bytes = fs::read(&outputs1.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+    for required in ["tools/x86/foo.exe", "tools/amd64/foo.exe"] {
+        assert!(
+            tree.contains(required),
+            "ISO is missing required tools file: {required}"
+        );
+    }
+    assert!(
+        !tree.contains("tools/amd64/foo.pdb"),
+        "unexpected build artifact packaged: tools/amd64/foo.pdb"
+    );
+
+    let zip_file = fs::File::open(&outputs1.zip_path)?;
+    let mut zip = zip::ZipArchive::new(zip_file)?;
+    let mut zip_paths = BTreeSet::new();
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        zip_paths.insert(entry.name().to_string());
+    }
+    assert!(zip_paths.contains("tools/x86/foo.exe"));
+    assert!(zip_paths.contains("tools/amd64/foo.exe"));
+    assert!(!zip_paths.contains("tools/amd64/foo.pdb"));
+
+    Ok(())
+}
+
+#[test]
 fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");

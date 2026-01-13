@@ -12,6 +12,7 @@ It provides:
 - `certs\`: optional public certificate(s) needed to validate driver signatures (for test-signed/custom-signed drivers; may be empty for WHQL/production-signed media)
 - `drivers\`: PnP driver packages for x86 + amd64 (at minimum `.inf/.sys/.cat`, plus any INF-referenced payload files such as UMD/coinstaller `*.dll`)
 - `config\`: expected device IDs (PCI VEN/DEV pairs) used for boot-critical pre-seeding (generated; see below)
+- `tools\`: optional guest-side helper utilities (debugging, selftests, diagnostics) shipped alongside the media (see below)
 
 ## Regenerating `config/devices.cmd` (repo developers)
 
@@ -38,6 +39,28 @@ For a broader drift check across the Windows device contract + Guest Tools + pac
 ```bash
 cargo run -p device-contract-validator --locked
 ```
+
+## Optional `tools\` directory (extra utilities)
+
+Guest Tools media can optionally ship additional **guest-side utilities** (for example `aerogpu_dbgctl.exe` or other debugging/selftest binaries) without placing them inside any driver package directory.
+
+If the input Guest Tools tree contains a `tools\` directory, `tools/packaging/aero_packager` will package it recursively into the ISO/zip under `tools\...`.
+
+Recommended layout:
+
+```
+tools\
+  x86\
+    <32-bit tools>
+  amd64\
+    <64-bit tools>
+```
+
+Notes:
+
+- Common host/build artifacts (for example `*.pdb`, `*.obj`, `*.ilk`, `*.lib`) are excluded by default to keep the packaged outputs small and deterministic.
+- Hidden files/directories and OS metadata files (for example `.DS_Store`, `__MACOSX`, `Thumbs.db`, `desktop.ini`) are ignored.
+- Private key material (`*.pfx`, `*.pvk`, `*.snk`, `*.key`, `*.pem`) is refused (packaging fails).
 
 ## `setup.cmd`
 

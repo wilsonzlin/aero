@@ -420,6 +420,45 @@ fn collect_files(
         });
     }
 
+    // Optional: extra guest-side tools / utilities (e.g. debug/selftest helpers).
+    //
+    // These are packaged verbatim under `tools/...` so they can ship alongside Guest Tools media
+    // without being part of any driver package directory.
+    let tools_dir = config.guest_tools_dir.join("tools");
+    if tools_dir.is_dir() {
+        let allowlist = DriverFileAllowlist::default();
+        for entry in walkdir::WalkDir::new(&tools_dir)
+            .follow_links(false)
+            .sort_by_file_name()
+        {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            // Keep the same safety filters as the driver tree:
+            // - refuse private key material
+            // - skip hidden files/dirs + host metadata
+            // - exclude build artifacts by default
+            let rel = entry
+                .path()
+                .strip_prefix(&config.guest_tools_dir)
+                .expect("walkdir under guest_tools_dir");
+            let rel_str = path_to_slash(rel);
+            if !should_include_driver_file(entry.path(), &rel_str, &allowlist)
+                .with_context(|| format!("filter guest tools file {}", entry.path().display()))?
+            {
+                continue;
+            }
+
+            out.push(FileToPackage {
+                rel_path: rel_str,
+                bytes: fs::read(entry.path())
+                    .with_context(|| format!("read {}", entry.path().display()))?,
+            });
+        }
+    }
+
     // Drivers.
     for (arch_out, drivers) in [("x86", &driver_plan.x86), ("amd64", &driver_plan.amd64)] {
         for driver in drivers {
