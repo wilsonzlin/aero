@@ -60,40 +60,8 @@ pub use crate::io::storage::backends::opfs::{
 /// - `FileSystemFileHandle.prototype.createSyncAccessHandle` exists
 ///
 /// On non-wasm targets this always returns `false`.
-#[cfg(target_arch = "wasm32")]
 pub fn opfs_sync_access_supported() -> bool {
-    use crate::platform::storage::opfs as opfs_platform;
-    use js_sys::Reflect;
-    use wasm_bindgen::JsValue;
-
-    if !opfs_platform::is_opfs_supported() {
-        return false;
-    }
-    if !opfs_platform::is_worker_scope() {
-        return false;
-    }
-
-    // `FileSystemFileHandle` is an interface; in browsers that implement the File System Access
-    // APIs it is typically exposed as a global interface object with a `.prototype`.
-    let global = js_sys::global();
-    let ctor = match Reflect::get(&global, &JsValue::from_str("FileSystemFileHandle")) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let proto = match Reflect::get(&ctor, &JsValue::from_str("prototype")) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let method = match Reflect::get(&proto, &JsValue::from_str("createSyncAccessHandle")) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    method.is_function()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn opfs_sync_access_supported() -> bool {
-    false
+    crate::platform::storage::opfs::opfs_sync_access_supported()
 }
 
 // wasm-bindgen-test defaults to running under Node. OPFS requires a browser environment,
@@ -129,11 +97,7 @@ mod opfs_sync_access_supported_tests {
             let Some(proto) = proto else {
                 return false;
             };
-            let method = Reflect::get(&proto, &JsValue::from_str("createSyncAccessHandle")).ok();
-            let Some(method) = method else {
-                return false;
-            };
-            method.is_function()
+            Reflect::has(&proto, &JsValue::from_str("createSyncAccessHandle")).unwrap_or(false)
         }
 
         #[wasm_bindgen_test]
