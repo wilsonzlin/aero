@@ -4760,8 +4760,21 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
         return STATUS_SUCCESS;
     }
 
+    if (pinned->Type != D3DKMDT_RMT_GRAPHICS) {
+        sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return STATUS_SUCCESS;
+    }
+
     const ULONG width = pinned->Format.Graphics.PrimSurfSize.cx;
     const ULONG height = pinned->Format.Graphics.PrimSurfSize.cy;
+    const D3DDDIFORMAT fmt = pinned->Format.Graphics.PixelFormat;
+
+    if (!AeroGpuIsSupportedVidPnPixelFormat(fmt)) {
+        sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
+        vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
+        return STATUS_SUCCESS;
+    }
 
     if (width == 0 || height == 0 || width > 16384u || height > 16384u || width > (0xFFFFFFFFu / 4u)) {
         sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
