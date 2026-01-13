@@ -36,6 +36,7 @@ This implementation started as “minimum viable triangle”, but it now include
 ### Still stubbed / known gaps (incl. protocol-limited)
 
 - Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
+- D3D11-only features outside FL10_0 (compute/tessellation/UAV) are unsupported; related DDIs should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
 - MRT: the protocol supports up to `AEROGPU_MAX_RENDER_TARGETS` (8), but the D3D10/11 UMD currently only forwards RT0.
 - D3D10/D3D10.1 state binding remains stubbed in the Win7 WDK builds: `SetBlendState` / `SetRasterizerState` / `SetDepthStencilState` are currently no-op stubs on those DDIs (state is only forwarded on the D3D11 DDI path).
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
