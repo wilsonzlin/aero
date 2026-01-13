@@ -290,6 +290,26 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		}
 	})
 
+	t.Run("invalid", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("X-API-Key", "wrong")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		}
+		assertICENoStoreHeaders(t, resp)
+		if m.Get(metrics.AuthFailure) != 2 {
+			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 2)
+		}
+	})
+
 	t.Run("valid header", func(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
 		if err != nil {
@@ -375,6 +395,27 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		assertICENoStoreHeaders(t, resp)
 		if m.Get(metrics.AuthFailure) != 1 {
 			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 1)
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		badToken := makeJWT("wrong-secret")
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+badToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		}
+		assertICENoStoreHeaders(t, resp)
+		if m.Get(metrics.AuthFailure) != 2 {
+			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 2)
 		}
 	})
 
