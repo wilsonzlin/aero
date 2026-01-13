@@ -1475,3 +1475,139 @@ fn decodes_buffer_srv_and_uav_declarations() {
         ]
     );
 }
+
+#[test]
+fn decodes_ld_structured() {
+    let mut body = Vec::<u32>::new();
+
+    // ld_structured r0, r1.x, r2.x, t0
+    let index = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let offset = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let mut ld_structured =
+        vec![opcode_token(OPCODE_LD_STRUCTURED, (1 + 2 + index.len() + offset.len() + 2) as u32)];
+    ld_structured.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld_structured.extend_from_slice(&index);
+    ld_structured.extend_from_slice(&offset);
+    ld_structured.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ld_structured);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::LdStructured {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            index: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            offset: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 2,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            buffer: BufferRef { slot: 0 },
+        }
+    );
+}
+
+#[test]
+fn decodes_store_structured_with_mask() {
+    let mut body = Vec::<u32>::new();
+
+    // store_structured u0.xy, r0.x, r1.x, r2
+    let uav = uav_operand(0, WriteMask(0b0011));
+    let index = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let offset = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let value = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut store_structured = vec![opcode_token(
+        OPCODE_STORE_STRUCTURED,
+        (1 + uav.len() + index.len() + offset.len() + value.len()) as u32,
+    )];
+    store_structured.extend_from_slice(&uav);
+    store_structured.extend_from_slice(&index);
+    store_structured.extend_from_slice(&offset);
+    store_structured.extend_from_slice(&value);
+    body.extend_from_slice(&store_structured);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::StoreStructured {
+            uav: UavRef { slot: 0 },
+            index: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            offset: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            value: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 2,
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            mask: WriteMask(0b0011),
+        }
+    );
+}

@@ -731,8 +731,8 @@ pub fn decode_instruction(
         OPCODE_SAMPLE | OPCODE_SAMPLE_L => decode_sample_like(opcode, saturate, &mut r),
         OPCODE_LD => decode_ld(saturate, &mut r),
         OPCODE_LD_RAW => decode_ld_raw(saturate, &mut r),
-        OPCODE_STORE_RAW => decode_store_raw(&mut r),
         OPCODE_LD_STRUCTURED => decode_ld_structured(saturate, &mut r),
+        OPCODE_STORE_RAW => decode_store_raw(&mut r),
         OPCODE_STORE_STRUCTURED => decode_store_structured(&mut r),
         other => {
             // Structural fallback for sample/sample_l when opcode IDs differ.
