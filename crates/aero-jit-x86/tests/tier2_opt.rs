@@ -564,9 +564,73 @@ fn boolean_simplify_collapses_triple_negation_on_non_boolean_values() {
         assert_eq!(base_state, opt_state);
         assert_eq!(
             opt_state.cpu.gpr[Gpr::Rbx.as_u8() as usize],
-            (rax == 0) as u64
-        );
-    }
+             (rax == 0) as u64
+         );
+     }
+}
+
+#[test]
+fn strength_reduction_mul_pow2_to_shl() {
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::Mul,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(8),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(1)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let env = RuntimeEnv::default();
+    let mut baseline_state = T2State::default();
+    baseline_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    baseline_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1234_5678_9abc_def0;
+    let mut optimized_state = baseline_state.clone();
+    let mut bus0 = SimpleBus::new(65536);
+    let mut bus1 = bus0.clone();
+
+    let baseline = run_trace(&trace, &env, &mut bus0, &mut baseline_state, 1);
+
+    let mut optimized = trace.clone();
+    let out = optimize_trace(&mut optimized, &OptConfig::default());
+
+    assert!(
+        optimized
+            .iter_instrs()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::Shl, .. })),
+        "expected strength reduction to produce a Shl"
+    );
+    assert!(
+        !optimized
+            .iter_instrs()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::Mul, .. })),
+        "expected strength reduction to remove Mul"
+    );
+
+    let opt = run_trace_with_cached_regs(
+        &optimized,
+        &env,
+        &mut bus1,
+        &mut optimized_state,
+        1,
+        &out.regalloc.cached,
+    );
+
+    assert_eq!(baseline.exit, opt.exit);
+    assert_eq!(baseline_state, optimized_state);
+    assert_eq!(bus0.mem(), bus1.mem());
 }
 
 #[test]
