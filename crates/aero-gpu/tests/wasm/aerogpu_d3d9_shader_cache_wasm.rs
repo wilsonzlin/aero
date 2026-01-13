@@ -4,7 +4,7 @@ use crate::common;
 use aero_gpu::AerogpuD3d9Executor;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
-use js_sys::{Map, Object, Reflect};
+use js_sys::{Array, Map, Object, Reflect};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -316,4 +316,98 @@ async fn d3d9_executor_uses_persistent_shader_cache_on_wasm() {
     assert_eq!(put_calls, 1);
     // The cache wrapper is recreated on reset, so it should reopen the persistent cache.
     assert_eq!(open_calls, 2);
+}
+
+#[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_reflection_schema_mismatch() {
+    // Install a minimal stub `AeroPersistentGpuCache` so the Rust wasm persistent cache wrapper
+    // can exercise invalidation + retry behavior when cached reflection metadata is stale.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let vs_bytes = assemble_vs_pos_only();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &vs_bytes);
+    let stream = writer.finish();
+
+    // First run: persistent get -> miss, translate, then persistent put.
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(
+        keys.length(),
+        1,
+        "expected a single shader entry to be persisted"
+    );
+    let key = keys.get(0);
+    let cached = map.get(&key);
+    assert!(
+        !cached.is_undefined() && !cached.is_null(),
+        "expected persisted cache entry to exist"
+    );
+
+    // Confirm the reflection includes a non-zero schemaVersion and then delete it to simulate an
+    // older cached reflection blob.
+    let reflection =
+        Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
+    let schema_version_before = Reflect::get(&reflection, &JsValue::from_str("schemaVersion"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_ne!(
+        schema_version_before, 0,
+        "expected persisted reflection to contain schemaVersion"
+    );
+    let _ = Reflect::delete_property(&reflection, &JsValue::from_str("schemaVersion"));
+
+    // Second run after reset: persistent get -> hit with stale reflection, invalidate, retranslate,
+    // then persistent put with updated reflection schema.
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+
+    // 1st run: get+put
+    // 2nd run: get (hit stale) + delete + get (miss) + put (retranslated)
+    assert_eq!(
+        get_calls, 3,
+        "expected invalidate+retry to re-check persistence"
+    );
+    assert_eq!(
+        put_calls, 2,
+        "expected retranslation to be persisted after invalidation"
+    );
+    assert_eq!(delete_calls, 1, "expected stale cached entry to be deleted");
+
+    let cached_after = map.get(&key);
+    let reflection_after = Reflect::get(&cached_after, &JsValue::from_str("reflection"))
+        .expect("get cached_after.reflection");
+    let schema_version_after = Reflect::get(&reflection_after, &JsValue::from_str("schemaVersion"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_eq!(
+        schema_version_after, schema_version_before,
+        "expected retranslation to restore schemaVersion after invalidation"
+    );
 }
