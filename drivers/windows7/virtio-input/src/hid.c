@@ -123,8 +123,8 @@ NTSTATUS VirtioInputHandleHidIoctl(
         /*
          * Some newer HIDCLASS consumers query a "collection descriptor" separately
          * from the report descriptor. For virtio-input devices we expose a single
-         * top-level collection per PDO (keyboard or mouse), so returning the same
-         * bytes as IOCTL_HID_GET_REPORT_DESCRIPTOR is sufficient and keeps the
+         * top-level collection per PDO (keyboard/mouse/tablet), so returning the
+         * same bytes as IOCTL_HID_GET_REPORT_DESCRIPTOR is sufficient and keeps the
          * implementation compatible with older WDKs where the IOCTL isn't defined.
          */
         if (devCtx->DeviceKind == VioInputDeviceKindKeyboard) {
@@ -133,6 +133,9 @@ NTSTATUS VirtioInputHandleHidIoctl(
         } else if (devCtx->DeviceKind == VioInputDeviceKindMouse) {
             status = VirtioInputWriteRequestOutputBuffer(
                 Request, VirtioInputMouseReportDescriptor, VirtioInputMouseReportDescriptorLength, &bytesReturned);
+        } else if (devCtx->DeviceKind == VioInputDeviceKindTablet) {
+            status = VirtioInputWriteRequestOutputBuffer(
+                Request, VirtioInputTabletReportDescriptor, VirtioInputTabletReportDescriptorLength, &bytesReturned);
         } else {
             status = STATUS_DEVICE_NOT_READY;
         }
@@ -153,6 +156,7 @@ NTSTATUS VirtioInputHandleHidIoctl(
         break;
     }
 
+#ifdef IOCTL_HID_GET_COLLECTION_INFORMATION
     case IOCTL_HID_GET_COLLECTION_INFORMATION: {
         HID_COLLECTION_INFORMATION info;
         RtlZeroMemory(&info, sizeof(info));
@@ -170,6 +174,7 @@ NTSTATUS VirtioInputHandleHidIoctl(
         status = VirtioInputWriteRequestOutputBuffer(Request, &info, sizeof(info), &bytesReturned);
         break;
     }
+#endif
 
     case IOCTL_HID_GET_STRING: {
         ULONG stringId;
