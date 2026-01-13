@@ -1400,6 +1400,41 @@ static void test_set_config_msix_vector_device_refuses(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_set_config_msix_vector_readback_mismatch(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    /*
+     * Simulate a device that writes a non-NO_VECTOR value but reads back a
+     * different vector (mismatch).
+     */
+    sim.msix_config_write_override = 1;
+    sim.msix_config_write_override_value = 5;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciSetConfigMsixVector(&dev, 7);
+    assert(st == STATUS_IO_DEVICE_ERROR);
+    assert(sim.msix_config == 5);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_set_queue_msix_vector_success_and_disable(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -1462,6 +1497,10 @@ static void test_set_queue_msix_vector_write_order(void)
     sim.num_queues = 1;
     sim.queues[0].queue_size = 8;
 
+    /* Validate queue_select serialization expectations (Dev->CommonCfgLock). */
+    sim.enforce_queue_select_lock = 1;
+    sim.queue_select_lock = &dev.CommonCfgLock;
+
     VirtioPciModernMmioSimInstall(&sim);
 
     st = VirtioPciSetQueueMsixVector(&dev, 0, 1);
@@ -1470,6 +1509,9 @@ static void test_set_queue_msix_vector_write_order(void)
     assert(sim.common_cfg_write_count == 2);
     assert(sim.common_cfg_write_offsets[0] == 0x16); /* queue_select */
     assert(sim.common_cfg_write_offsets[1] == 0x1a); /* queue_msix_vector */
+
+    assert(sim.queue_select_lock_check_count != 0);
+    assert(sim.queue_select_lock_violation_count == 0);
 
     VirtioPciModernMmioSimUninstall();
 }
@@ -1508,6 +1550,79 @@ static void test_set_queue_msix_vector_device_refuses(void)
     /* Disabling must still succeed. */
     st = VirtioPciSetQueueMsixVector(&dev, 0, VIRTIO_PCI_MSI_NO_VECTOR);
     assert(st == STATUS_SUCCESS);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_set_queue_msix_vector_readback_mismatch(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+
+    /* Mismatched vector read-back (but not NO_VECTOR). */
+    sim.queue_msix_vector_write_override = 1;
+    sim.queue_msix_vector_write_override_value = 4;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciSetQueueMsixVector(&dev, 0, 9);
+    assert(st == STATUS_IO_DEVICE_ERROR);
+    assert(sim.queues[0].queue_msix_vector == 4);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
+static void test_set_queue_msix_vector_out_of_range_not_found(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+    sim.queues[0].queue_msix_vector = 0x1234;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciSetQueueMsixVector(&dev, /*QueueIndex=*/1, /*Vector=*/6);
+    assert(st == STATUS_NOT_FOUND);
+
+    /* Must not clobber other queues. */
+    assert(sim.queues[0].queue_msix_vector == 0x1234);
+
+    /* queue_msix_vector should not be written when queue_size==0. */
+    assert(sim.common_cfg_write_count == 1);
+    assert(sim.common_cfg_write_offsets[0] == 0x16); /* queue_select */
 
     VirtioPciModernMmioSimUninstall();
 }
@@ -2564,9 +2679,12 @@ int main(void)
     test_setup_queue_out_of_range_not_found();
     test_set_config_msix_vector_success_and_disable();
     test_set_config_msix_vector_device_refuses();
+    test_set_config_msix_vector_readback_mismatch();
     test_set_queue_msix_vector_success_and_disable();
     test_set_queue_msix_vector_write_order();
     test_set_queue_msix_vector_device_refuses();
+    test_set_queue_msix_vector_readback_mismatch();
+    test_set_queue_msix_vector_out_of_range_not_found();
     test_misc_null_safe_behaviour();
     test_read_device_config_success();
     test_read_device_config_generation_retry_succeeds();

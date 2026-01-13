@@ -85,6 +85,23 @@ typedef struct VIRTIO_PCI_MODERN_MMIO_SIM {
 
     uint16_t common_cfg_write_offsets[VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_WRITES];
     size_t common_cfg_write_count;
+
+    /*
+     * Selector serialization checks (contract §1.5.0).
+     *
+     * Virtio-pci modern uses selector registers (e.g. queue_select) that require
+     * software-side serialization. The miniport code is expected to guard these
+     * accesses with Dev->CommonCfgLock.
+     *
+     * When enforce_queue_select_lock is set, MMIO accesses to queue_select and
+     * per-queue common_cfg registers (offsets 0x16..0x34) will be checked
+     * against the provided queue_select_lock. Any access observed while the
+     * lock is not held increments queue_select_lock_violation_count.
+     */
+    const volatile KSPIN_LOCK* queue_select_lock;
+    uint8_t enforce_queue_select_lock;
+    size_t queue_select_lock_check_count;
+    size_t queue_select_lock_violation_count;
 } VIRTIO_PCI_MODERN_MMIO_SIM;
 
 void VirtioPciModernMmioSimInit(VIRTIO_PCI_MODERN_MMIO_SIM* sim,

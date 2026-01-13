@@ -34,6 +34,36 @@ static VOID mmio_store(volatile VOID* p, size_t width, ULONGLONG v)
     }
 }
 
+static void mmio_sim_check_queue_select_lock(size_t off)
+{
+    const volatile KSPIN_LOCK* lock;
+    LONG held;
+
+    if (g_sim == NULL) {
+        return;
+    }
+
+    if (g_sim->enforce_queue_select_lock == 0 || g_sim->queue_select_lock == NULL) {
+        return;
+    }
+
+    /*
+     * Per-queue common_cfg registers require the queue_select selector and must
+     * be serialized by the driver. See VIRTIO_PCI_DEVICE::CommonCfgLock.
+     */
+    if (off < 0x16 || off > 0x34) {
+        return;
+    }
+
+    g_sim->queue_select_lock_check_count++;
+
+    lock = g_sim->queue_select_lock;
+    held = __atomic_load_n((const LONG*)&lock->locked, __ATOMIC_ACQUIRE);
+    if (held == 0) {
+        g_sim->queue_select_lock_violation_count++;
+    }
+}
+
 static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Width, ULONGLONG* ValueOut)
 {
     const volatile uint8_t* reg_u8;
@@ -56,6 +86,7 @@ static BOOLEAN virtio_modern_mmio_read(const volatile VOID* Register, size_t Wid
             size_t off;
 
             off = (size_t)((uintptr_t)reg_u8 - (uintptr_t)base);
+            mmio_sim_check_queue_select_lock(off);
 
             switch (off) {
                 case 0x00: /* device_feature_select */
@@ -354,6 +385,7 @@ static BOOLEAN virtio_modern_mmio_write(volatile VOID* Register, size_t Width, U
             size_t off;
 
             off = (size_t)((uintptr_t)reg_u8 - (uintptr_t)base);
+            mmio_sim_check_queue_select_lock(off);
 
             if (g_sim->common_cfg_write_count < VIRTIO_PCI_MODERN_MMIO_SIM_MAX_COMMON_CFG_WRITES) {
                 g_sim->common_cfg_write_offsets[g_sim->common_cfg_write_count++] = (uint16_t)off;
