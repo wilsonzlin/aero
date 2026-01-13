@@ -292,8 +292,9 @@ VirtIoSndHwResetDeviceForTeardown(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 /*
  * Poll all relevant virtqueues for used entries and deliver completions.
  *
- * This is intended for bring-up/debug environments where INTx cannot be wired up
- * and the driver must operate in a polling-only configuration.
+ * This is intended for bring-up/debug environments where no usable interrupt
+ * mechanism is available (neither MSI/MSI-X nor INTx) and the driver must
+ * operate in a polling-only configuration.
  *
  * IRQL: <= DISPATCH_LEVEL.
  */
