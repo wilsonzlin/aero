@@ -79,3 +79,59 @@ fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
     });
 }
 
+#[test]
+fn expansion_scratch_grows_when_segment_is_full() {
+    pollster::block_on(async {
+        let exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let device = exec.device();
+
+        // Keep the segment small so we can deterministically trigger growth without allocating huge
+        // buffers on test adapters.
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
+            label: Some("expansion_scratch growth test"),
+            frames_in_flight: 2,
+            per_frame_size: 512,
+            ..ExpansionScratchDescriptor::default()
+        });
+
+        // First allocation fits in the initial segment/buffer.
+        let first = scratch.alloc_vertex_output(device, 16).unwrap();
+        let initial_cap = scratch.per_frame_capacity().expect("allocator initialized");
+
+        // Second allocation does not fit once we account for storage-buffer alignment; this forces
+        // the allocator to grow by allocating a larger backing buffer and switching to it.
+        let second = scratch.alloc_vertex_output(device, 400).unwrap();
+        let grown_cap = scratch.per_frame_capacity().expect("allocator initialized");
+
+        assert!(
+            grown_cap > initial_cap,
+            "per-frame capacity must grow (initial={initial_cap} grown={grown_cap})"
+        );
+        assert!(
+            !Arc::ptr_eq(&first.buffer, &second.buffer),
+            "growth must switch to a new backing buffer"
+        );
+        assert_eq!(second.offset, 0, "allocations in a fresh buffer start at offset 0");
+
+        // Advancing frames should use the new buffer and the next segment.
+        scratch.begin_frame();
+        let third = scratch.alloc_vertex_output(device, 16).unwrap();
+        assert!(
+            Arc::ptr_eq(&second.buffer, &third.buffer),
+            "allocator must continue using the grown backing buffer"
+        );
+        assert!(
+            third.offset >= grown_cap && third.offset < grown_cap * 2,
+            "frame1 allocation must be inside segment1 of the grown buffer (offset={} grown_cap={})",
+            third.offset,
+            grown_cap
+        );
+    });
+}
