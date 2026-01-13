@@ -15,6 +15,15 @@ import {
 } from "./scanout_state";
 
 describe("ipc/scanout_state", () => {
+  it("wrapScanoutState rejects invalid byte offsets", () => {
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+
+    expect(() => wrapScanoutState(scanoutSab, -4)).toThrow(RangeError);
+    expect(() => wrapScanoutState(scanoutSab, 2)).toThrow(RangeError);
+    // Any positive aligned offset into a minimum-sized SAB would exceed bounds.
+    expect(() => wrapScanoutState(scanoutSab, 4)).toThrow(RangeError);
+  });
+
   it("wrapScanoutState validates size and publish wraps across the busy-bit boundary", () => {
     const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
     const words = wrapScanoutState(scanoutSab, 0);
@@ -45,6 +54,105 @@ describe("ipc/scanout_state", () => {
     });
     expect(g2 >>> 0).toBe(0);
     expect((g2 & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+  });
+
+  it("snapshot retries when generation changes mid-read", () => {
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+    const words = wrapScanoutState(scanoutSab, 0);
+
+    const genStart = 123;
+    const genNext = (genStart + 1) >>> 0;
+
+    // Initial payload (generation N).
+    Atomics.store(words, ScanoutStateIndex.GENERATION, genStart | 0);
+    Atomics.store(words, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_WDDM | 0);
+    Atomics.store(words, ScanoutStateIndex.BASE_PADDR_LO, 11);
+    Atomics.store(words, ScanoutStateIndex.BASE_PADDR_HI, 22);
+    Atomics.store(words, ScanoutStateIndex.WIDTH, 33);
+    Atomics.store(words, ScanoutStateIndex.HEIGHT, 44);
+    Atomics.store(words, ScanoutStateIndex.PITCH_BYTES, 55);
+    Atomics.store(words, ScanoutStateIndex.FORMAT, SCANOUT_FORMAT_B8G8R8X8 | 0);
+
+    const originalLoad = Atomics.load;
+    let generationLoads = 0;
+    let didFlipGeneration = false;
+
+    // Force a generation flip right before the first loop's final generation read.
+    (Atomics as unknown as { load: typeof Atomics.load }).load = ((arr: Int32Array, idx: number): number => {
+      if (arr === words && idx === ScanoutStateIndex.GENERATION) {
+        generationLoads += 1;
+        if (generationLoads === 2) {
+          // Simulate writer publishing a new generation between the two generation reads.
+          Atomics.store(words, ScanoutStateIndex.BASE_PADDR_LO, 111);
+          Atomics.store(words, ScanoutStateIndex.BASE_PADDR_HI, 222);
+          Atomics.store(words, ScanoutStateIndex.WIDTH, 333);
+          Atomics.store(words, ScanoutStateIndex.HEIGHT, 444);
+          Atomics.store(words, ScanoutStateIndex.PITCH_BYTES, 555);
+          Atomics.store(words, ScanoutStateIndex.GENERATION, genNext | 0);
+          didFlipGeneration = true;
+        }
+      }
+      return originalLoad(arr, idx);
+    }) as typeof Atomics.load;
+
+    try {
+      const snap = snapshotScanoutState(words);
+      expect(didFlipGeneration).toBe(true);
+      // Two generation reads per loop, so a forced retry implies >=4 loads.
+      expect(generationLoads).toBe(4);
+      expect(snap.generation >>> 0).toBe(genNext);
+      expect((snap.generation & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+      expect(snap.source).toBe(SCANOUT_SOURCE_WDDM);
+      expect(snap.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
+      expect(snap.basePaddrLo).toBe(111);
+      expect(snap.basePaddrHi).toBe(222);
+      expect(snap.width).toBe(333);
+      expect(snap.height).toBe(444);
+      expect(snap.pitchBytes).toBe(555);
+    } finally {
+      (Atomics as unknown as { load: typeof Atomics.load }).load = originalLoad;
+    }
+  });
+
+  it("snapshot will not return while the busy bit is set", () => {
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+    const words = wrapScanoutState(scanoutSab, 0);
+
+    const stableGen = 42;
+    // Pretend a writer is in progress by setting the busy bit.
+    Atomics.store(words, ScanoutStateIndex.GENERATION, (stableGen | SCANOUT_STATE_GENERATION_BUSY_BIT) | 0);
+    Atomics.store(words, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_WDDM | 0);
+    Atomics.store(words, ScanoutStateIndex.BASE_PADDR_LO, 1);
+    Atomics.store(words, ScanoutStateIndex.BASE_PADDR_HI, 2);
+    Atomics.store(words, ScanoutStateIndex.WIDTH, 3);
+    Atomics.store(words, ScanoutStateIndex.HEIGHT, 4);
+    Atomics.store(words, ScanoutStateIndex.PITCH_BYTES, 5);
+    Atomics.store(words, ScanoutStateIndex.FORMAT, SCANOUT_FORMAT_B8G8R8X8 | 0);
+
+    const originalLoad = Atomics.load;
+    let generationLoads = 0;
+
+    // After snapshot observes the busy bit once, clear it so snapshot can complete.
+    (Atomics as unknown as { load: typeof Atomics.load }).load = ((arr: Int32Array, idx: number): number => {
+      const v = originalLoad(arr, idx);
+      if (arr === words && idx === ScanoutStateIndex.GENERATION) {
+        generationLoads += 1;
+        if (generationLoads === 1) {
+          // Writer releases lock and publishes the final generation.
+          Atomics.store(words, ScanoutStateIndex.GENERATION, stableGen | 0);
+        }
+      }
+      return v;
+    }) as typeof Atomics.load;
+
+    try {
+      const snap = snapshotScanoutState(words);
+      expect(generationLoads).toBe(3);
+      expect((snap.generation & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+      expect(snap.generation >>> 0).toBe(stableGen);
+    } finally {
+      (Atomics as unknown as { load: typeof Atomics.load }).load = originalLoad;
+    }
   });
 
   it("snapshot observes coherent state while another worker publishes updates", async () => {
