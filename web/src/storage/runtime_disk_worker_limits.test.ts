@@ -225,4 +225,86 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
     expect(String(benchResp.error.message)).toMatch(String(RUNTIME_DISK_MAX_IO_BYTES));
     expect(readCalls).toBe(0);
   });
+
+  it("rejects unaligned read() requests before calling into the disk", async () => {
+    const posted: any[] = [];
+    let readCalls = 0;
+
+    const disk: AsyncSectorDisk = {
+      sectorSize: 512,
+      capacityBytes: 1024 * 1024,
+      async readSectors() {
+        readCalls += 1;
+      },
+      async writeSectors() {},
+      async flush() {},
+    };
+
+    const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "open",
+      payload: { spec: { kind: "local", meta: {} as any } },
+    } satisfies RuntimeDiskRequestMessage);
+
+    const openResp = posted.shift();
+    expect(openResp.ok).toBe(true);
+    const handle = openResp.result.handle as number;
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 2,
+      op: "read",
+      payload: { handle, lba: 0, byteLength: 1 },
+    } satisfies RuntimeDiskRequestMessage);
+
+    const readResp = posted.shift();
+    expect(readResp.ok).toBe(false);
+    expect(String(readResp.error.message)).toMatch(/unaligned length/i);
+    expect(readCalls).toBe(0);
+  });
+
+  it("rejects unaligned write() requests before calling into the disk", async () => {
+    const posted: any[] = [];
+    let writeCalls = 0;
+
+    const disk: AsyncSectorDisk = {
+      sectorSize: 512,
+      capacityBytes: 1024 * 1024,
+      async readSectors() {},
+      async writeSectors() {
+        writeCalls += 1;
+      },
+      async flush() {},
+    };
+
+    const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "open",
+      payload: { spec: { kind: "local", meta: {} as any } },
+    } satisfies RuntimeDiskRequestMessage);
+
+    const openResp = posted.shift();
+    expect(openResp.ok).toBe(true);
+    const handle = openResp.result.handle as number;
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 2,
+      op: "write",
+      payload: { handle, lba: 0, data: new Uint8Array(1) },
+    } satisfies RuntimeDiskRequestMessage);
+
+    const writeResp = posted.shift();
+    expect(writeResp.ok).toBe(false);
+    expect(String(writeResp.error.message)).toMatch(/unaligned length/i);
+    expect(writeCalls).toBe(0);
+  });
 });

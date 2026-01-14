@@ -1265,6 +1265,8 @@ export class RuntimeDiskWorker {
         if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`read too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
+        assertSectorAligned(byteLength, entry.disk.sectorSize);
+        checkedOffset(lba, byteLength, entry.disk.sectorSize);
         const buf = new Uint8Array(byteLength);
         const start = performance.now();
         entry.io.reads++;
@@ -1324,6 +1326,8 @@ export class RuntimeDiskWorker {
         if (data.byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`write too large: ${data.byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
+        assertSectorAligned(data.byteLength, entry.disk.sectorSize);
+        checkedOffset(lba, data.byteLength, entry.disk.sectorSize);
         const start = performance.now();
         entry.io.writes++;
         entry.io.bytesWritten += data.byteLength;
