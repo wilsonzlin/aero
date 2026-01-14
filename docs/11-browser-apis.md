@@ -332,7 +332,8 @@ function initializeMemory() {
     //
     // Note: on the canonical PC/Q35 platform, guest physical RAM is not a single contiguous range:
     // there is an ECAM + PCI/MMIO hole below 4 GiB, and any remaining RAM is remapped above 4 GiB.
-    // The runtime `guestToLinear` helper enforces this piecewise mapping and rejects hole accesses.
+    // The runtime `guestToLinear` helper (implemented via `web/src/arch/guest_ram_translate.ts`)
+    // enforces this piecewise mapping and rejects hole accesses.
     const guestToLinearAddr = (paddr) => guestToLinear(shared.guestLayout, paddr);
 
     // `segments` contains:
