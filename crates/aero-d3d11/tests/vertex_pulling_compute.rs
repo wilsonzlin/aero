@@ -647,11 +647,10 @@ fn compute_can_vertex_pull_unorm8x2_and_unorm10_10_10_2_formats() {
         // v0 R10G10B10A2 = (r=1023, g=0, b=512, a=3)
         push_u32(&mut vb, 0xE000_03FF);
 
-        // v1 R8G8 = (0, 255)
-        vb.push(0u8);
-        vb.push(255u8);
-        vb.push(0u8);
-        vb.push(0u8);
+        vb.extend_from_slice(&[
+            // v1 R8G8 = (0, 255)
+            0u8, 255u8, 0u8, 0u8,
+        ]);
         // v1 R10G10B10A2 = (r=0, g=1023, b=1023, a=0)
         push_u32(&mut vb, 0x3FFF_FC00);
 
