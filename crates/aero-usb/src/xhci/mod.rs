@@ -677,7 +677,7 @@ impl XhciController {
         trb.set_cycle(true);
         trb.set_trb_type(TrbType::CommandCompletionEvent);
         trb.set_slot_id(slot_id);
-        self.queue_event(trb);
+        self.post_event(trb);
     }
 
     /// Resolve an attached USB device by xHCI topology information.
@@ -1076,7 +1076,10 @@ impl XhciController {
     /// Queue an event TRB for delivery through the guest-configured event ring.
     pub fn post_event(&mut self, trb: Trb) {
         if self.pending_events.len() >= MAX_PENDING_EVENTS {
-            return;
+            // Keep the queue bounded even if the guest never configures an event ring.
+            // Prefer newer events by dropping the oldest entry and tracking the loss.
+            self.pending_events.pop_front();
+            self.dropped_event_trbs += 1;
         }
         self.pending_events.push_back(trb);
     }
@@ -1450,11 +1453,6 @@ impl XhciController {
                 // Treat USBSTS as RW1C. Writing 1 clears the bit.
                 let write_val = merge(0);
                 self.usbsts &= !write_val;
-
-                // If events are still pending, keep the interrupt asserted.
-                if !self.pending_events.is_empty() {
-                    self.usbsts |= regs::USBSTS_EINT;
-                }
             }
             regs::REG_CRCR_LO => {
                 let lo = merge(self.crcr as u32) as u64;
@@ -1534,16 +1532,7 @@ impl XhciController {
 
     fn queue_port_status_change_event(&mut self, port: usize) {
         let port_id = (port + 1) as u8;
-        self.queue_event(make_port_status_change_event_trb(port_id));
-    }
-
-    fn queue_event(&mut self, trb: Trb) {
-        if self.pending_events.len() >= MAX_PENDING_EVENTS {
-            self.pending_events.pop_front();
-            self.dropped_event_trbs += 1;
-        }
-        self.pending_events.push_back(trb);
-        self.usbsts |= regs::USBSTS_EINT;
+        self.post_event(make_port_status_change_event_trb(port_id));
     }
 
     fn process_endpoint(

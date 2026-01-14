@@ -1,24 +1,16 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aero_usb::xhci::trb::{Trb, TrbType};
+use aero_usb::xhci::interrupter::{IMAN_IE, IMAN_IP};
+use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{
     regs, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR, PORTSC_PRC,
 };
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
-#[derive(Default)]
-struct PanicMem;
+mod util;
 
-impl MemoryBus for PanicMem {
-    fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
-        panic!("unexpected DMA read");
-    }
-
-    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
-        panic!("unexpected DMA write");
-    }
-}
+use util::TestMemory;
 
 #[derive(Clone)]
 struct DummyDevice {
@@ -53,11 +45,50 @@ fn assert_portsc_not(portsc: u32, bit: u32) {
     );
 }
 
+fn write_erst_entry(mem: &mut TestMemory, erstba: u64, seg_base: u64, seg_size_trbs: u32) {
+    MemoryBus::write_u64(mem, erstba, seg_base);
+    MemoryBus::write_u32(mem, erstba + 8, seg_size_trbs);
+    MemoryBus::write_u32(mem, erstba + 12, 0);
+}
+
+fn drain_event(xhci: &mut XhciController, mem: &mut TestMemory, ring_base: u64, index: u64) -> Trb {
+    assert_eq!(xhci.pending_event_count(), 1);
+    xhci.service_event_ring(mem);
+    assert_eq!(xhci.pending_event_count(), 0);
+
+    let ev = Trb::read_from(mem, ring_base + index * (TRB_LEN as u64));
+    assert!(ev.cycle());
+    assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
+
+    assert!(xhci.interrupter0().interrupt_pending());
+    assert!(xhci.irq_level());
+
+    // Acknowledge the interrupt by clearing IMAN.IP.
+    xhci.mmio_write(mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
+    assert!(!xhci.interrupter0().interrupt_pending());
+    assert!(!xhci.irq_level());
+
+    ev
+}
+
 #[test]
 fn xhci_ports_attach_reset_and_events() {
     let mut xhci = XhciController::new();
-    let mut mem = PanicMem;
+    let mut mem = TestMemory::new(0x20_000);
     let portsc_off = regs::port::portsc_offset(0);
+
+    // Configure interrupter 0 with a single-segment event ring so PSC events can be delivered
+    // via guest memory.
+    let erstba = 0x1000;
+    let ring_base = 0x2000;
+    write_erst_entry(&mut mem, erstba, ring_base, 8);
+
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     let reset_count = Rc::new(Cell::new(0));
     xhci.attach_device(
@@ -71,10 +102,8 @@ fn xhci_ports_attach_reset_and_events() {
     assert_portsc_has(portsc, PORTSC_CCS);
     assert_portsc_has(portsc, PORTSC_CSC);
 
-    // Attach should generate a Port Status Change Event TRB.
-    let ev = xhci.pop_pending_event().expect("expected event after attach");
-    assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
+    let ev = drain_event(&mut xhci, &mut mem, ring_base, 0);
+    let port_id = ((ev.parameter >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
 
     // Clear CSC via write-1-to-clear.
@@ -97,12 +126,8 @@ fn xhci_ports_attach_reset_and_events() {
     assert_portsc_has(portsc, PORTSC_PEC);
     assert_portsc_has(portsc, PORTSC_PRC);
 
-    // Reset completion should also generate a port status change event.
-    let ev = xhci
-        .pop_pending_event()
-        .expect("expected event after reset completion");
-    assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
+    let ev = drain_event(&mut xhci, &mut mem, ring_base, 1);
+    let port_id = ((ev.parameter >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
 
     // Clear PEC/PRC so we can observe a second reset completion while the port is already enabled.
@@ -112,11 +137,8 @@ fn xhci_ports_attach_reset_and_events() {
     xhci.mmio_write(&mut mem, portsc_off, 4, PORTSC_PR);
     assert_eq!(reset_count.get(), 2, "device reset should be called twice");
 
-    let ev = xhci
-        .pop_pending_event()
-        .expect("expected event after reset begin (enabled port)");
-    assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
+    let ev = drain_event(&mut xhci, &mut mem, ring_base, 2);
+    let port_id = ((ev.parameter >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
 
     // Wait for reset completion. PEC is already set, so PRC must drive the PSC event.
@@ -129,15 +151,10 @@ fn xhci_ports_attach_reset_and_events() {
     assert_portsc_has(portsc, PORTSC_PED);
     assert_portsc_has(portsc, PORTSC_PRC);
 
-    let ev = xhci
-        .pop_pending_event()
-        .expect("expected event after reset completion (enabled port)");
-    assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
-    let port_id = ((ev.dword0() >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
+    let ev = drain_event(&mut xhci, &mut mem, ring_base, 3);
+    let port_id = ((ev.parameter >> regs::PSC_EVENT_PORT_ID_SHIFT) & 0xff) as u8;
     assert_eq!(port_id, 1);
-
-    // No extra events.
-    assert_eq!(xhci.pop_pending_event(), None);
+    assert_eq!(xhci.pending_event_count(), 0);
 
     // Sanity: TRB is stable POD.
     let _trb_layout: Trb = ev;
