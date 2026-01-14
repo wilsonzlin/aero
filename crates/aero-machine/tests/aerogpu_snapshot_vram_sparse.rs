@@ -87,7 +87,10 @@ fn aerogpu_snapshot_vram_sparse_page_list_tracks_only_non_zero_pages() {
     assert_ne!(bar1_base, 0);
 
     // Clear the legacy VRAM snapshot prefix (V2 encoding snapshots at most `DEFAULT_VRAM_SIZE`).
-    let zero_chunk = vec![0u8; 64 * 1024];
+    //
+    // Use a large chunk size to keep this test fast; the goal is to normalize VRAM, not stress the
+    // MMIO path.
+    let zero_chunk = vec![0u8; 1024 * 1024];
     let vram_len = aero_gpu_vga::DEFAULT_VRAM_SIZE;
     for offset in (0..vram_len).step_by(zero_chunk.len()) {
         let len = (vram_len - offset).min(zero_chunk.len());
