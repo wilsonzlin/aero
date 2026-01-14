@@ -171,8 +171,8 @@ async function main(): Promise<void> {
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
 
-    // Small guest RAM (but note wasm32 runtime reserves 128MiB).
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    // Keep guest RAM small (but note the wasm32 runtime reserves a fixed 128MiB region).
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 2 });
     const views = createSharedMemoryViews(segments);
 
     if (!views.scanoutStateI32) {
