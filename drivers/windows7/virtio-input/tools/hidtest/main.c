@@ -7011,6 +7011,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.list_only) {
+        free_selected_device(&dev);
         return 0;
     }
 
