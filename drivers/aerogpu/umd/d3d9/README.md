@@ -267,14 +267,15 @@ The current implementation targets:
 
 ### Core rendering / formats
 
-- **Render targets**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`
+- **Render targets / swapchain backbuffers**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`,
+  `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
 - **Depth/stencil**: `D3DFMT_D24S8`
 - **Mipmapped textures**: 2D textures with `Levels > 1` are supported for common uncompressed formats.
   `pfnGenerateMipSubLevels` is implemented as a CPU downsample for `A8R8G8B8` / `X8R8G8B8` / `A8B8G8R8`
   (see `device_generate_mip_sub_levels()` in `src/aerogpu_d3d9_driver.cpp`; validated by `d3d9_mipmapped_texture_smoke`).
-- **Legacy sampled texture formats** (via shader sampling + `UpdateTexture`): `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
+- **Packed 16-bit RGB formats** (textures and swapchain backbuffers): `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
   (validated by `d3d9ex_texture_16bit_formats`; `d3d9_texture_16bit_sampling` additionally exercises `R5G6B5` and optionally `A1R5G5B5`).
-  16-bit RGB formats are exposed for texture sampling only (not render targets). `X1R5G5B5` is treated as alpha=1 when sampling.
+  `X1R5G5B5` is treated as alpha=1 when sampling.
 - **BC/DXT textures**: `D3DFMT_DXT1..DXT5` are only exposed when the active device reports
   ABI minor `>= 2` via `KMTQAITYPE_UMDRIVERPRIVATE` (`aerogpu_umd_private_v1.device_abi_version_u32`).
   - When unsupported, `GetCaps(GETFORMAT*)` omits them and `CreateResource` rejects them to avoid emitting
@@ -370,7 +371,7 @@ Limitations (bring-up):
 
 - **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs and a narrow stage0 `D3DTSS_*` subset, rather than generating full fixed-function shaders from texture stage state / lighting / fog / etc (stages `> 0` ignored).
 - **Shader int/bool constants are cached only:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks, but do not currently emit constant updates into the AeroGPU command stream.
-- **Bring-up no-ops:** `pfnSetConvolutionMonoKernel`, `pfnGenerateMipSubLevels`, and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
+- **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
 
 ### Validation
 
@@ -465,7 +466,6 @@ These DDIs are treated as benign no-ops for bring-up (returning `S_OK`). They ar
 `(stub)` in trace output (so they do not trigger `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`).
 
 - `pfnSetConvolutionMonoKernel`
-- `pfnGenerateMipSubLevels`
 - `pfnSetDialogBoxMode`
 - `pfnComposeRects` (`device_compose_rects()` in `src/aerogpu_d3d9_driver.cpp`)
 
