@@ -392,12 +392,12 @@ fn define_mmio_exit(store: &mut Store<HostState>, linker: &mut Linker<HostState>
         .unwrap();
 }
 
-fn run_wasm_inner(
+fn run_wasm_inner_with_prefilled_tlbs(
     block: &aero_jit_x86::tier1::ir::IrBlock,
     cpu: CpuState,
     ram: Vec<u8>,
     ram_size: u64,
-    prefill_tlb: Option<(u64, u64)>,
+    prefill_tlbs: &[(u64, u64)],
     options: Tier1WasmOptions,
 ) -> (u64, CpuState, Vec<u8>, HostState) {
     let wasm = Tier1WasmCodegen::new().compile_block_with_options(block, options);
@@ -423,7 +423,7 @@ fn run_wasm_inner(
     };
     ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
 
-    if let Some((vaddr, tlb_data)) = prefill_tlb {
+    for &(vaddr, tlb_data) in prefill_tlbs {
         let vpn = vaddr >> PAGE_SHIFT;
         let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
         let entry_addr = (JIT_CTX_PTR as usize)
@@ -464,6 +464,27 @@ fn run_wasm_inner(
     let got_ram = got_mem[ram_base as usize..ram_base as usize + ram.len()].to_vec();
     let host_state = *store.data();
     (next_rip, got_cpu, got_ram, host_state)
+}
+
+fn run_wasm_inner(
+    block: &aero_jit_x86::tier1::ir::IrBlock,
+    cpu: CpuState,
+    ram: Vec<u8>,
+    ram_size: u64,
+    prefill_tlb: Option<(u64, u64)>,
+    options: Tier1WasmOptions,
+) -> (u64, CpuState, Vec<u8>, HostState) {
+    match prefill_tlb {
+        Some(entry) => run_wasm_inner_with_prefilled_tlbs(
+            block,
+            cpu,
+            ram,
+            ram_size,
+            &[entry],
+            options,
+        ),
+        None => run_wasm_inner_with_prefilled_tlbs(block, cpu, ram, ram_size, &[], options),
+    }
 }
 
 fn run_wasm_inner_with_code_version_table(
@@ -976,6 +997,114 @@ fn tier1_inline_tlb_cross_page_store_can_use_fastpath_when_enabled() {
     );
 
     assert!(host_state.mmu_translate_calls <= 2);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_hits_prefilled_tlb_entries() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x2000];
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+    // Pre-fill both pages into the inline TLB so the split-access fast-path doesn't need to call
+    // `mmu_translate`.
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = (addr & PAGE_BASE_MASK) | flags;
+    let page1_vaddr = 0x1000u64;
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | flags;
+
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
+
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_hits_prefilled_tlb_entries() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = (addr & PAGE_BASE_MASK) | flags;
+    let page1_vaddr = 0x1000u64;
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | flags;
+
+    let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        &[(addr, page0_data), (page1_vaddr, page1_data)],
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmu_translate_calls, 0);
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
