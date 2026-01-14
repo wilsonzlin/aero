@@ -307,15 +307,19 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
   - `wgsl_texldp_emits_projective_divide`
   - `wgsl_texldd_emits_texture_sample_grad`
   - `wgsl_vs_texld_emits_texture_sample_level`
+  - `wgsl_texldl_emits_texture_sample_level_explicit_lod`
   - `wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord`
   - `wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x`
   - `wgsl_dcl_1d_sampler_texldd_emits_texture_sample_grad_x`
+  - `wgsl_dcl_1d_sampler_texldl_emits_texture_sample_level_x_lod`
   - `wgsl_dcl_cube_sampler_emits_texture_cube_and_xyz_coords`
   - `wgsl_dcl_volume_sampler_emits_texture_3d_and_xyz_coords`
   - `wgsl_dcl_cube_sampler_texldp_emits_projective_divide_xyz`
   - `wgsl_dcl_volume_sampler_texldp_emits_projective_divide_xyz`
   - `wgsl_dcl_cube_sampler_texldd_emits_texture_sample_grad_xyz`
   - `wgsl_dcl_volume_sampler_texldd_emits_texture_sample_grad_xyz`
+  - `wgsl_dcl_cube_sampler_texldl_emits_texture_sample_level_xyz_lod`
+  - `wgsl_dcl_volume_sampler_texldl_emits_texture_sample_level_xyz_lod`
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`
 - `crates/aero-d3d9/tests/sm3_wgsl_tex.rs`
