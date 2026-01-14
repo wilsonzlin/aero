@@ -1588,6 +1588,7 @@ fn wgsl_defb_if_compiles() {
     // initialized in `fs_main`). Accept either form but ensure the constant value is preserved.
     assert!(
         wgsl.contains("const b0: vec4<bool> = vec4<bool>(true, true, true, true);")
+            || wgsl.contains("const b0 = vec4<bool>(true, true, true, true);")
             || wgsl.contains("b0 = vec4<bool>(true, true, true, true);"),
         "{wgsl}"
     );
@@ -1649,6 +1650,7 @@ fn wgsl_defi_loop_breakc_compiles() {
     // `fs_main`. Accept either form but ensure the constant value is preserved.
     assert!(
         wgsl.contains("const i0: vec4<i32> = vec4<i32>(1, 0, 0, 0);")
+            || wgsl.contains("const i0 = vec4<i32>(1, 0, 0, 0);")
             || wgsl.contains("i0 = vec4<i32>(1, 0, 0, 0);"),
         "{wgsl}"
     );
