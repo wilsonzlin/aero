@@ -629,6 +629,21 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_dbgctl_createallocation_desc"), 56);
   assert.equal(size("aerogpu_escape_dump_createallocation_inout"), 32 + 32 * 56);
 
+  // Coverage guard: Escape structs are driver-private, but should remain stable.
+  // Ensure the C ABI dump helper is kept in sync with `aerogpu_escape.h` + `aerogpu_dbgctl_escape.h`.
+  const escapeHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_escape.h");
+  const dbgctlEscapeHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h");
+  assertNameSetEq(
+    [...abi.sizes.keys()].filter((name) => name.startsWith("aerogpu_escape_") || name.startsWith("aerogpu_dbgctl_")),
+    [
+      ...parseCStructDefNames(escapeHeader),
+      ...parseCStructDefNames(dbgctlEscapeHeader),
+      // Alias typedef in `aerogpu_dbgctl_escape.h`.
+      "aerogpu_escape_dump_vblank_inout",
+    ],
+    "Escape ABI struct coverage",
+  );
+
   // Coverage guard: `aerogpu_pci.h` currently defines constants/enums only (no ABI structs).
   // If this changes, the TS mirror + ABI dump helper must be updated accordingly.
   assertNameSetEq([], parseCStructDefNames(pciHeader), "aerogpu_pci.h struct coverage");
@@ -1369,6 +1384,18 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"), 1n);
+
+  // Coverage guard: keep the C ABI dump helper in sync with the Escape headers.
+  const expectedEscapeConsts = [
+    ...parseCDefineConstNames(escapeHeader),
+    ...parseCDefineConstNames(dbgctlEscapeHeader),
+    ...parseCEnumConstNames(dbgctlEscapeHeader, "enum aerogpu_dbgctl_ring_format", "AEROGPU_DBGCTL_RING_FORMAT_"),
+    ...parseCEnumConstNames(dbgctlEscapeHeader, "enum aerogpu_dbgctl_selftest_error", "AEROGPU_DBGCTL_SELFTEST_"),
+  ];
+  const seenEscapeConsts = [...abi.consts.keys()].filter(
+    (name) => name.startsWith("AEROGPU_ESCAPE_") || name.startsWith("AEROGPU_DBGCTL_"),
+  );
+  assertNameSetEq(seenEscapeConsts, expectedEscapeConsts, "Escape ABI constant coverage");
 
   // -------------------------- Exhaustive ABI constant coverage --------------------------
   //

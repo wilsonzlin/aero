@@ -4415,6 +4415,59 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"),
         1
     );
+
+    // -------------------------- Escape header coverage guards --------------------------
+    //
+    // The Escape ABI is driver-private but should remain stable across x86/x64. These checks ensure:
+    // - The C ABI dump helper emits every struct size defined by the Escape headers.
+    // - The C ABI dump helper emits every constant defined by the Escape headers.
+    let escape_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_escape.h");
+    let dbgctl_escape_header_path =
+        repo_root().join("drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h");
+
+    let mut expected_escape_structs = parse_c_struct_def_names(&escape_header_path);
+    expected_escape_structs.extend(parse_c_struct_def_names(&dbgctl_escape_header_path));
+    // Alias typedef in `aerogpu_dbgctl_escape.h`.
+    expected_escape_structs.push("aerogpu_escape_dump_vblank_inout".to_string());
+
+    let seen_escape_structs: Vec<String> = abi
+        .sizes
+        .keys()
+        .filter(|name| name.starts_with("aerogpu_escape_") || name.starts_with("aerogpu_dbgctl_"))
+        .cloned()
+        .collect();
+
+    assert_name_set_eq(
+        seen_escape_structs,
+        expected_escape_structs,
+        "Escape ABI struct coverage",
+    );
+
+    let mut expected_escape_consts = parse_c_define_const_names(&escape_header_path);
+    expected_escape_consts.extend(parse_c_define_const_names(&dbgctl_escape_header_path));
+    expected_escape_consts.extend(parse_c_enum_const_names(
+        &dbgctl_escape_header_path,
+        "enum aerogpu_dbgctl_ring_format",
+        "AEROGPU_DBGCTL_RING_FORMAT_",
+    ));
+    expected_escape_consts.extend(parse_c_enum_const_names(
+        &dbgctl_escape_header_path,
+        "enum aerogpu_dbgctl_selftest_error",
+        "AEROGPU_DBGCTL_SELFTEST_",
+    ));
+
+    let seen_escape_consts: Vec<String> = abi
+        .consts
+        .keys()
+        .filter(|name| name.starts_with("AEROGPU_ESCAPE_") || name.starts_with("AEROGPU_DBGCTL_"))
+        .cloned()
+        .collect();
+
+    assert_name_set_eq(
+        seen_escape_consts,
+        expected_escape_consts,
+        "Escape ABI constant coverage",
+    );
 }
 
 #[test]
