@@ -438,8 +438,8 @@ impl AeroGpuPciDevice {
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                     if self.bus_master_enabled() {
                         self.executor.flush_pending_fences(&mut self.regs, mem);
-                        self.update_irq_level();
                     }
+                    self.update_irq_level();
                     self.publish_legacy_scanout_state();
                 } else if !old_enable && new_enable {
                     // WDDM claims scanout by programming the scanout registers and then
