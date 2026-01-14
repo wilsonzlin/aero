@@ -432,9 +432,10 @@ try {
 
     Write-Host "Packing $name (from $up)..."
 
+    # Keep ordering stable and consistent with the manifest `targets` field.
     $targets = @(
-      @{ Id = "win7-amd64"; ArchCandidates = $ArchCandidatesAmd64; DestDir = (Join-Path $win7Amd64 $name) },
-      @{ Id = "win7-x86"; ArchCandidates = $ArchCandidatesX86; DestDir = (Join-Path $win7X86 $name) }
+      @{ Id = "win7-x86"; ArchCandidates = $ArchCandidatesX86; DestDir = (Join-Path $win7X86 $name) },
+      @{ Id = "win7-amd64"; ArchCandidates = $ArchCandidatesAmd64; DestDir = (Join-Path $win7Amd64 $name) }
     )
 
     $includedTargets = @()
