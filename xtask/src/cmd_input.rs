@@ -204,7 +204,8 @@ Options:
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
   --with-wasm            Also run host-side `aero-wasm` input integration smoke tests (no wasm-pack; does not require `node_modules`).
-  --node-dir <path>     Override the Node workspace directory for the web unit-test step (same as AERO_NODE_DIR).
+  --node-dir <path>     Override the Node workspace directory for the web unit-test step (same as AERO_NODE_DIR / AERO_WEB_DIR).
+  --web-dir <path>      Alias for --node-dir.
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
