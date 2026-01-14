@@ -245,6 +245,7 @@ impl AeroGpuPciDevice {
             return;
         }
 
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         self.maybe_publish_scanout_state(self.vga.active_scanout_update());
     }
 

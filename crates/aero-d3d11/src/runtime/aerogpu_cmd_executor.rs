@@ -9351,13 +9351,9 @@ impl AerogpuD3d11Executor {
                 ShaderStage::Vertex => "vs_main",
                 ShaderStage::Pixel => "fs_main",
                 ShaderStage::Compute => "cs_main",
-                // These stages are currently accepted-but-ignored by the shader cache path
-                // (PersistedShaderStage::Ignored). They should be filtered above via
-                // `artifact.stage.to_stage() == None`, but keep the match exhaustive for future
-                // shader-stage support.
-                ShaderStage::Geometry => "gs_main",
-                ShaderStage::Hull => "hs_main",
-                ShaderStage::Domain => "ds_main",
+                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                    unreachable!("ignored shader stage should have returned earlier: {stage:?}")
+                }
             };
 
             let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(

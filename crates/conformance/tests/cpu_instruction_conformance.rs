@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]

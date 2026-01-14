@@ -4303,7 +4303,7 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
     ranges.truncate(out_len);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use std::sync::{Mutex, OnceLock};
 

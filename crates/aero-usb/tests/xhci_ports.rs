@@ -215,7 +215,7 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
         &mut mem,
         regs::REG_INTR0_ERDP_HI,
         4,
-        (ring_base >> 32) as u32,
+        ((ring_base as u64) >> 32) as u32,
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 

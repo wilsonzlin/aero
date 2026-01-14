@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_storage::{
     detect_format, DiskError, DiskFormat, DiskImage, MemBackend, Qcow2Disk, RawDisk,
     StorageBackend, VhdDisk, VirtualDisk, SECTOR_SIZE,

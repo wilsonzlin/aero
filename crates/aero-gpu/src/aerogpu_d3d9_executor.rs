@@ -521,7 +521,6 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
         }
         let bit = 1u16 << idx;
         used |= bit;
-
         // Match the encoding described in `Shader::sampler_dim_key`.
         let dim_code = if line.contains("texture_cube<") {
             1u32
@@ -532,7 +531,9 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
         } else {
             0u32
         };
-        sampler_dim_key |= dim_code << (idx * 2);
+        let shift = idx * 2;
+        sampler_dim_key &= !(0b11 << shift);
+        sampler_dim_key |= dim_code << shift;
     }
 
     (used, sampler_dim_key)
@@ -10448,7 +10449,7 @@ mod d3d9 {
     pub const D3DCULL_CCW: u32 = 3;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::{
         build_alpha_test_wgsl_variant, cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error,

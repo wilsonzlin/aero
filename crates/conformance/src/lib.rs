@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 //! Differential/conformance testing for instruction semantics.
 //!
 //! This crate runs small, deterministic instruction corpora in two backends:

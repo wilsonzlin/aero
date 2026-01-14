@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::sync::OnceLock;
 
 use aero_auth_tokens::{verify_gateway_session_token, verify_hs256_jwt};

@@ -2465,6 +2465,7 @@ Signature="$Windows NT$"
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn inf_text_decoding_supports_utf16le_without_bom() -> Result<()> {
         let tmp = tempfile::tempdir().expect("create tempdir");
         let path = tmp.path().join("test.inf");

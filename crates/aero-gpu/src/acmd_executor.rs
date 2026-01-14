@@ -478,7 +478,7 @@ fn is_bc_format(format: u32) -> bool {
         || format == AerogpuFormat::BC7RgbaUnormSrgb as u32
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
