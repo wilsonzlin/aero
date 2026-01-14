@@ -258,6 +258,72 @@ async function sniffContainerFormatForRawOpen(file: File): Promise<"aerospar" | 
   return null;
 }
 
+function sniffContainerFormatForRawOpenFromBytes(
+  head: Uint8Array,
+  tail: Uint8Array | null,
+  sizeBytes: number,
+): "aerospar" | "qcow2" | "vhd" | null {
+  if (bytesEqualPrefix(head, AEROSPARSE_MAGIC)) {
+    if (head.byteLength < 12) return "aerospar";
+    try {
+      const version = new DataView(head.buffer, head.byteOffset, head.byteLength).getUint32(8, true);
+      if (version === 1) return "aerospar";
+    } catch {
+      return "aerospar";
+    }
+  }
+
+  if (bytesEqualPrefix(head, QCOW2_MAGIC)) {
+    if (sizeBytes < 72) return "qcow2";
+    if (head.byteLength < 8) return "qcow2";
+    try {
+      const version = new DataView(head.buffer, head.byteOffset, head.byteLength).getUint32(4, false);
+      if (version === 2 || version === 3) return "qcow2";
+    } catch {
+      return "qcow2";
+    }
+  }
+
+  if (sizeBytes < 512) {
+    if (bytesEqualPrefix(head, VHD_COOKIE)) return "vhd";
+    return null;
+  }
+
+  if (tail && looksLikeVhdFooterBytes(tail, sizeBytes)) return "vhd";
+  if (head.byteLength === 512 && looksLikeVhdFooterBytes(head, sizeBytes)) {
+    const dv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    const diskType = dv.getUint32(60, false);
+    if (diskType === 2) {
+      const currentSize = Number(dv.getBigUint64(48, false));
+      const required = currentSize + 1024;
+      if (Number.isSafeInteger(required) && sizeBytes >= required) return "vhd";
+      return null;
+    }
+    return "vhd";
+  }
+
+  return null;
+}
+
+async function sniffContainerFormatForIdbRawOpen(disk: AsyncSectorDisk, sizeBytes: number): Promise<"aerospar" | "qcow2" | "vhd" | null> {
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) return null;
+  if (sizeBytes < 512) return null;
+
+  const head = new Uint8Array(512);
+  await disk.readSectors(0, head);
+
+  let tail: Uint8Array | null = null;
+  if (sizeBytes >= 512 && sizeBytes % 512 === 0) {
+    const lba = (sizeBytes - 512) / 512;
+    if (Number.isSafeInteger(lba) && lba >= 0) {
+      tail = new Uint8Array(512);
+      await disk.readSectors(lba, tail);
+    }
+  }
+
+  return sniffContainerFormatForRawOpenFromBytes(head, tail, sizeBytes);
+}
+
 async function bestEffortDeleteLegacyRemoteRangeCache(imageId: string, version: string): Promise<void> {
   try {
     const legacyCacheKey = await RemoteCacheManager.deriveCacheKey({ imageId, version, deliveryType: "range" });
@@ -947,18 +1013,29 @@ async function openDiskFromMetadata(
     throw new Error(`unsupported IndexedDB disk format ${localMeta.format} (convert to aerospar first)`);
   }
   const disk = await IdbChunkDisk.open(localMeta.id, localMeta.sizeBytes);
-  return {
-    disk,
-    readOnly,
-    backendSnapshot: {
-      kind: "local",
-      backend: "idb",
-      key: localMeta.id,
-      format: localMeta.format,
-      diskKind: localMeta.kind,
-      sizeBytes: localMeta.sizeBytes,
-    },
-  };
+  try {
+    const detected = await sniffContainerFormatForIdbRawOpen(disk, localMeta.sizeBytes);
+    if (detected) {
+      throw new Error(
+        `disk format mismatch: metadata says ${localMeta.format} but disk bytes look like ${detected} (convert to aerospar first)`,
+      );
+    }
+    return {
+      disk,
+      readOnly,
+      backendSnapshot: {
+        kind: "local",
+        backend: "idb",
+        key: localMeta.id,
+        format: localMeta.format,
+        diskKind: localMeta.kind,
+        sizeBytes: localMeta.sizeBytes,
+      },
+    };
+  } catch (err) {
+    await disk.close?.();
+    throw err;
+  }
 }
 
 async function loadSha256Manifest(
@@ -1076,7 +1153,18 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
       throw new Error(`unsupported IndexedDB disk format ${backend.format} (convert to aerospar first)`);
     }
     const disk = await IdbChunkDisk.open(backend.key, backend.sizeBytes);
-    return { disk, readOnly: entry.readOnly, backendSnapshot: backend };
+    try {
+      const detected = await sniffContainerFormatForIdbRawOpen(disk, backend.sizeBytes);
+      if (detected) {
+        throw new Error(
+          `disk format mismatch: snapshot says ${backend.format} but disk bytes look like ${detected} (convert to aerospar first)`,
+        );
+      }
+      return { disk, readOnly: entry.readOnly, backendSnapshot: backend };
+    } catch (err) {
+      await disk.close?.();
+      throw err;
+    }
   }
 
   // Remote base image with cache + overlay.
