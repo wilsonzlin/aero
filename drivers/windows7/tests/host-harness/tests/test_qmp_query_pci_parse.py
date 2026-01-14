@@ -70,6 +70,26 @@ class QmpQueryPciParsingTests(unittest.TestCase):
         self.assertEqual(devs[0].device_id, 0x1042)
         self.assertEqual(devs[0].revision, 0x01)
 
+    def test_parses_bare_hex_string_fields(self) -> None:
+        h = self.harness
+        query = [
+            {
+                "devices": [
+                    {
+                        # Some QEMU builds (and some text dumps) may omit a 0x prefix.
+                        "vendor_id": "1af4",
+                        "device_id": "0x1041",
+                        "revision": "01",
+                    },
+                ]
+            }
+        ]
+        devs = h._iter_qmp_query_pci_devices(query)
+        self.assertEqual(len(devs), 1)
+        self.assertEqual(devs[0].vendor_id, 0x1AF4)
+        self.assertEqual(devs[0].device_id, 0x1041)
+        self.assertEqual(devs[0].revision, 0x01)
+
     def test_parses_nested_id_object(self) -> None:
         h = self.harness
         query = [
