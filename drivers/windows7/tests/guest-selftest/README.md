@@ -16,8 +16,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Enable with `--expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`).
     - When enabled, the virtio-blk test **FAIL**s if the miniport reports it is still operating in **INTx**
       mode (expected **MSI/MSI-X**).
-    - Useful when running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors`) or when
-      validating MSI/MSI-X support end-to-end.
+    - Useful when running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors` or per-device
+      `--virtio-<dev>-vectors`) or when validating MSI/MSI-X support end-to-end.
   - Issue a SCSI pass-through `REPORT_LUNS` (0xA0) command (via `IOCTL_SCSI_PASS_THROUGH_DIRECT`) and validate a sane
     single-LUN response.
   - Create a temporary file on a **virtio-backed volume** and perform:
