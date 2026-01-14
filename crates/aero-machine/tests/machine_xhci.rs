@@ -2,6 +2,7 @@
 
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::USB_XHCI_QEMU;
 use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::usb::xhci::regs;
@@ -305,6 +306,83 @@ fn xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
         xhci.borrow().irq_level(),
         false,
         "xHCI INTx should be suppressed while MSI is active"
+    );
+}
+
+#[test]
+fn xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep the test focused on PCI + xHCI.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Enable BAR0 MMIO decode + bus mastering.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    let bar0_base = m.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Locate MSI-X capability + table offset.
+    let msix_cap = find_capability(&mut m, bdf, PCI_CAP_ID_MSIX)
+        .expect("xHCI should expose an MSI-X capability in PCI config space");
+    let table = cfg_read(&mut m, bdf, msix_cap + 0x04, 4);
+    let table_bir = (table & 0x7) as u8;
+    let table_offset = table & !0x7;
+    assert_eq!(table_bir, 0, "xHCI MSI-X table should be in BAR0");
+
+    // Program MSI-X table entry 0: dest = BSP (APIC ID 0), vector = 0x66.
+    let vector: u8 = 0x66;
+    let entry0 = bar0_base + u64::from(table_offset);
+    m.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    m.write_physical_u32(entry0 + 0x04, 0);
+    m.write_physical_u32(entry0 + 0x08, u32::from(vector));
+    m.write_physical_u32(entry0 + 0x0c, 0); // unmasked
+
+    // Enable MSI-X (control bit 15).
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl | (1 << 15)));
+
+    // The machine owns the canonical config space, so tick once to mirror MSI-X state into the
+    // xHCI model before triggering an interrupt.
+    m.tick_platform(1);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    let xhci = m.xhci().expect("xHCI should be enabled");
+    xhci.borrow_mut().raise_event_interrupt();
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+    assert_eq!(
+        xhci.borrow().irq_level(),
+        false,
+        "xHCI INTx should be suppressed while MSI-X is active"
     );
 }
 
