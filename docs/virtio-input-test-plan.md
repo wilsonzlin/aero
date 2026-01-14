@@ -407,6 +407,8 @@ The Aero contract v1 requires INTx and permits MSI-X as an optional enhancement.
 intentionally exercising MSI-X code paths under QEMU), the guest selftest may emit:
 
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=intx/msix/unknown|messages=<n>|mapping=...|used_vectors=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|...`
+  - If the diagnostics IOCTL is unavailable/unsupported, the marker is emitted as `SKIP|reason=ioctl_not_supported|...`
+    by default (or `FAIL|reason=...|...` when the guest selftest is provisioned with `--require-input-msix`).
 
 To make MSI-X a **hard harness requirement** (end-to-end, guest-reported effective mode):
 

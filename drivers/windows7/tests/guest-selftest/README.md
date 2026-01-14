@@ -151,6 +151,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Optional interrupt-mode diagnostics (`virtio-input-msix`):
     - The selftest queries the virtio-input HID minidriver for its interrupt configuration via a diagnostics IOCTL and emits:
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix|unknown>|messages=<n>|mapping=...|used_vectors=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|...`.
+    - If the diagnostics IOCTL is unavailable/unsupported, the marker is emitted as `SKIP|reason=ioctl_not_supported|...`
+      by default (or `FAIL|reason=...|...` when `--require-input-msix` is enabled).
     - This marker is informational by default (so older configurations that fall back to INTx can still PASS overall).
     - Use `--require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`) to make the selftest **FAIL**
       when virtio-input is not using MSI-X (mode != `msix`).
