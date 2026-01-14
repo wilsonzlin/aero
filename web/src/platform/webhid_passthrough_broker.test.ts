@@ -567,6 +567,118 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     }
   });
 
+  it("drops queued hid:sendReport tasks when per-device pending queue exceeds maxPendingDeviceSends", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      const target = new TestTarget();
+      // Keep the cap small so the test can exercise dropping deterministically.
+      const manager = new WebHidPassthroughManager({ hid: null, target, maxPendingDeviceSends: 1 });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const first = deferred<void>();
+      device.sendReport.mockImplementationOnce(() => first.promise);
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 1,
+        data: new Uint8Array([1]).buffer,
+      });
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 2,
+        data: new Uint8Array([2]).buffer,
+      });
+
+      // This third send should be dropped because the pending queue is at the cap (1).
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 3,
+        data: new Uint8Array([3]).buffer,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+      first.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+      expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("responds with an error when hid:getFeatureReport arrives while the per-device pending queue is full", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target, maxPendingDeviceSends: 1 });
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const first = deferred<void>();
+      device.sendReport.mockImplementationOnce(() => first.promise);
+
+      // Stall the queue runner on the first sendReport and fill the pending queue with one task.
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 1,
+        data: new Uint8Array([1]).buffer,
+      });
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 2,
+        data: new Uint8Array([2]).buffer,
+      });
+
+      manager.handleWorkerMessage({
+        type: "hid:getFeatureReport",
+        deviceId,
+        requestId: 99,
+        reportId: 7,
+      });
+
+      const resEntry = target.posted.find(
+        (p) => p.message.type === "hid:featureReportResult" && (p.message as any).requestId === 99,
+      );
+      expect(resEntry).toBeTruthy();
+      expect(resEntry!.message).toMatchObject({
+        deviceId,
+        requestId: 99,
+        reportId: 7,
+        ok: false,
+      });
+      expect((resEntry!.message as any).error).toMatch(/Too many pending HID report tasks/i);
+      expect(device.receiveFeatureReport).not.toHaveBeenCalled();
+
+      first.resolve(undefined);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("writes inputreport events into the configured SAB ring instead of posting hid:inputReport messages", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

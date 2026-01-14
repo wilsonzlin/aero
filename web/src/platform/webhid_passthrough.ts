@@ -110,18 +110,36 @@ function getBrowserSiteSettingsUrl(): string {
 const NOOP_TARGET: HidPassthroughTarget = { postMessage: () => {} };
 const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
 const UNKNOWN_FEATURE_REPORT_HARD_CAP_BYTES = 4096;
+// WebHID requires per-device serialization. If a device call stalls and the guest keeps sending,
+// the per-device queue can otherwise grow without bound. Keep this large enough to absorb bursts,
+// but bounded to prevent unbounded memory growth.
+const DEFAULT_MAX_PENDING_SENDS_PER_DEVICE = 1024;
+const OUTPUT_SEND_DROP_WARN_INTERVAL_MS = 5000;
+
+function assertPositiveSafeInteger(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`invalid ${name}: ${value}`);
+  }
+  return value;
+}
 
 export class WebHidPassthroughManager {
   readonly #hid: HidLike | null;
   readonly #target: HidPassthroughTarget;
   readonly #externalHubPortCount: number;
   readonly #reservedExternalHubPorts: number;
+  readonly #maxPendingSendsPerDevice: number;
+  readonly #maxPendingSendsTotal: number;
 
   // WebHID output/feature report sends must be serialized per physical device. Multiple sendReport
   // requests can arrive back-to-back from the I/O worker; queue them per `deviceId` so they execute
   // in guest order without stalling other devices.
   readonly #outputReportQueueByDeviceId = new Map<string, HidOutputReportSendTask[]>();
   readonly #outputReportRunnerTokenByDeviceId = new Map<string, number>();
+  #pendingOutputReportSendTotal = 0;
+  #outputSendDropped = 0;
+  readonly #outputSendDroppedByDeviceId = new Map<string, number>();
+  readonly #outputSendDropWarnedAtByDeviceId = new Map<string, number>();
   #nextOutputReportRunnerToken = 1;
 
   #inputReportRing: RingBuffer | null = null;
@@ -154,6 +172,18 @@ export class WebHidPassthroughManager {
       target?: HidPassthroughTarget;
       externalHubPortCount?: number;
       reservedExternalHubPorts?: number;
+      /**
+       * Maximum number of queued (not yet running) WebHID output/feature tasks per device.
+       */
+      maxPendingDeviceSends?: number;
+      /**
+       * Legacy alias for {@link maxPendingDeviceSends}.
+       */
+      maxPendingSendsPerDevice?: number;
+      /**
+       * Optional global cap across all devices; defaults to unlimited.
+       */
+      maxPendingSendsTotal?: number;
     } = {},
   ) {
     this.#hid = options.hid ?? getNavigatorHid();
@@ -183,6 +213,25 @@ export class WebHidPassthroughManager {
       const clamped = Math.max(UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT - 1, base | 0);
       return Math.max(0, Math.min(this.#externalHubPortCount, Math.min(255, clamped)));
     })();
+
+    const maxPendingDeviceSends = options.maxPendingDeviceSends;
+    const maxPendingSendsPerDevice = options.maxPendingSendsPerDevice;
+    if (
+      maxPendingDeviceSends !== undefined &&
+      maxPendingSendsPerDevice !== undefined &&
+      maxPendingDeviceSends !== maxPendingSendsPerDevice
+    ) {
+      throw new Error("maxPendingDeviceSends and maxPendingSendsPerDevice must match");
+    }
+    const maxPending = maxPendingDeviceSends ?? maxPendingSendsPerDevice;
+    this.#maxPendingSendsPerDevice =
+      maxPending === undefined
+        ? DEFAULT_MAX_PENDING_SENDS_PER_DEVICE
+        : assertPositiveSafeInteger("maxPendingDeviceSends", maxPending);
+    this.#maxPendingSendsTotal =
+      options.maxPendingSendsTotal === undefined
+        ? Number.POSITIVE_INFINITY
+        : assertPositiveSafeInteger("maxPendingSendsTotal", options.maxPendingSendsTotal);
 
     if (this.#hid) {
       this.#onConnect = () => {
@@ -221,26 +270,60 @@ export class WebHidPassthroughManager {
     this.#featureReportSizeWarned.clear();
     this.#outputReportQueueByDeviceId.clear();
     this.#outputReportRunnerTokenByDeviceId.clear();
+    this.#pendingOutputReportSendTotal = 0;
+    this.#outputSendDropped = 0;
+    this.#outputSendDroppedByDeviceId.clear();
+    this.#outputSendDropWarnedAtByDeviceId.clear();
     this.#listeners.clear();
   }
 
-  #enqueueOutputReportSend(deviceId: string, task: HidOutputReportSendTask): void {
+  #warnOutputSendDrop(deviceId: string): void {
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const lastWarn = this.#outputSendDropWarnedAtByDeviceId.get(deviceId);
+    if (lastWarn !== undefined && now - lastWarn < OUTPUT_SEND_DROP_WARN_INTERVAL_MS) return;
+    this.#outputSendDropWarnedAtByDeviceId.set(deviceId, now);
+
+    const dropped = this.#outputSendDroppedByDeviceId.get(deviceId) ?? 0;
+    const pending = this.#outputReportQueueByDeviceId.get(deviceId)?.length ?? 0;
+    console.warn(
+      `[webhid] Dropping queued HID report tasks for deviceId=${deviceId} (pending=${pending} maxPendingDeviceSends=${this.#maxPendingSendsPerDevice} dropped=${dropped})`,
+    );
+  }
+
+  #recordOutputSendDrop(deviceId: string): void {
+    this.#outputSendDropped += 1;
+    this.#outputSendDroppedByDeviceId.set(deviceId, (this.#outputSendDroppedByDeviceId.get(deviceId) ?? 0) + 1);
+    this.#warnOutputSendDrop(deviceId);
+  }
+
+  #enqueueOutputReportSend(deviceId: string, task: HidOutputReportSendTask): boolean {
+    const queueLen = this.#outputReportQueueByDeviceId.get(deviceId)?.length ?? 0;
+    // Drop policy: drop newest when at/over the cap. This preserves FIFO ordering for already-queued
+    // reports and keeps memory bounded when the guest spams reports or a WebHID Promise never resolves.
+    if (queueLen >= this.#maxPendingSendsPerDevice || this.#pendingOutputReportSendTotal >= this.#maxPendingSendsTotal) {
+      this.#recordOutputSendDrop(deviceId);
+      return false;
+    }
+
     let queue = this.#outputReportQueueByDeviceId.get(deviceId);
     if (!queue) {
       queue = [];
       this.#outputReportQueueByDeviceId.set(deviceId, queue);
     }
     queue.push(task);
-    if (this.#outputReportRunnerTokenByDeviceId.has(deviceId)) return;
+    this.#pendingOutputReportSendTotal += 1;
+    if (this.#outputReportRunnerTokenByDeviceId.has(deviceId)) return true;
     const token = this.#nextOutputReportRunnerToken++;
     this.#outputReportRunnerTokenByDeviceId.set(deviceId, token);
     void this.#runOutputReportSendQueue(deviceId, token);
+    return true;
   }
 
   #dequeueOutputReportSend(deviceId: string): HidOutputReportSendTask | null {
     const queue = this.#outputReportQueueByDeviceId.get(deviceId);
     if (!queue || queue.length === 0) return null;
     const task = queue.shift()!;
+    this.#pendingOutputReportSendTotal = Math.max(0, this.#pendingOutputReportSendTotal - 1);
     if (queue.length === 0) {
       this.#outputReportQueueByDeviceId.delete(deviceId);
     }
@@ -332,7 +415,7 @@ export class WebHidPassthroughManager {
 
       // Serialize receiveFeatureReport relative to sendReport/sendFeatureReport calls for the same
       // physical device, matching WebHID ordering expectations.
-      this.#enqueueOutputReportSend(deviceId, async () => {
+      const queued = this.#enqueueOutputReportSend(deviceId, async () => {
         const current = this.#attachedDevices.find((d) => d.deviceId === deviceId);
         if (!current) {
           reply({
@@ -422,6 +505,16 @@ export class WebHidPassthroughManager {
           });
         }
       });
+      if (!queued) {
+        reply({
+          type: "hid:featureReportResult",
+          deviceId,
+          requestId,
+          reportId,
+          ok: false,
+          error: "Too many pending HID report tasks for this device.",
+        });
+      }
     }
   }
 
@@ -751,8 +844,14 @@ export class WebHidPassthroughManager {
   async detachDevice(device: HIDDevice): Promise<void> {
     const deviceId = this.#deviceIds.get(device);
     if (!deviceId) return;
+    const pending = this.#outputReportQueueByDeviceId.get(deviceId)?.length;
+    if (pending) {
+      this.#pendingOutputReportSendTotal = Math.max(0, this.#pendingOutputReportSendTotal - pending);
+    }
     this.#outputReportQueueByDeviceId.delete(deviceId);
     this.#outputReportRunnerTokenByDeviceId.delete(deviceId);
+    this.#outputSendDroppedByDeviceId.delete(deviceId);
+    this.#outputSendDropWarnedAtByDeviceId.delete(deviceId);
     this.#inputReportExpectedPayloadBytes.delete(deviceId);
     this.#featureReportExpectedPayloadBytes.delete(deviceId);
     this.#featureReportSizeWarned.delete(deviceId);
