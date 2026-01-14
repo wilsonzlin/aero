@@ -9189,12 +9189,33 @@ impl AerogpuD3d11Executor {
 
                             if pipeline_bindings.group_bindings[group_index].is_empty() {
                                 if current_bind_groups[group_index].is_none() {
-                                    let entries: [BindGroupCacheEntry<'_>; 0] = [];
-                                    let bg = self.bind_group_cache.get_or_create(
-                                        &self.device,
-                                        &pipeline_bindings.group_layouts[group_index],
-                                        &entries,
-                                    );
+                                    let layout = &pipeline_bindings.group_layouts[group_index];
+                                    let bg = if layout.hash == self.empty_bind_group_layout_hash {
+                                        self.empty_bind_group.clone()
+                                    } else if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                                        if let (Some(bg), Some(hash)) = (
+                                            self.passthrough_vs_dummy_bind_group.as_ref(),
+                                            self.passthrough_vs_dummy_bind_group_layout_hash,
+                                        ) {
+                                            if layout.hash == hash {
+                                                bg.clone()
+                                            } else {
+                                                bail!(
+                                                    "render pass: group({group_u32}) has no reflection bindings but uses unexpected bind group layout (layout_hash={:016x})",
+                                                    layout.hash
+                                                );
+                                            }
+                                        } else {
+                                            bail!(
+                                                "render pass: group({group_u32}) requires an internal passthrough VS dummy bind group, but it is not available on this backend"
+                                            );
+                                        }
+                                    } else {
+                                        bail!(
+                                            "render pass: group({group_u32}) has no reflection bindings but uses a non-empty bind group layout (layout_hash={:016x})",
+                                            layout.hash
+                                        );
+                                    };
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
                                     current_bind_groups[group_index] = Some(ptr);
@@ -9503,12 +9524,33 @@ impl AerogpuD3d11Executor {
 
                             if pipeline_bindings.group_bindings[group_index].is_empty() {
                                 if current_bind_groups[group_index].is_none() {
-                                    let entries: [BindGroupCacheEntry<'_>; 0] = [];
-                                    let bg = self.bind_group_cache.get_or_create(
-                                        &self.device,
-                                        &pipeline_bindings.group_layouts[group_index],
-                                        &entries,
-                                    );
+                                    let layout = &pipeline_bindings.group_layouts[group_index];
+                                    let bg = if layout.hash == self.empty_bind_group_layout_hash {
+                                        self.empty_bind_group.clone()
+                                    } else if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                                        if let (Some(bg), Some(hash)) = (
+                                            self.passthrough_vs_dummy_bind_group.as_ref(),
+                                            self.passthrough_vs_dummy_bind_group_layout_hash,
+                                        ) {
+                                            if layout.hash == hash {
+                                                bg.clone()
+                                            } else {
+                                                bail!(
+                                                    "render pass: group({group_u32}) has no reflection bindings but uses unexpected bind group layout (layout_hash={:016x})",
+                                                    layout.hash
+                                                );
+                                            }
+                                        } else {
+                                            bail!(
+                                                "render pass: group({group_u32}) requires an internal passthrough VS dummy bind group, but it is not available on this backend"
+                                            );
+                                        }
+                                    } else {
+                                        bail!(
+                                            "render pass: group({group_u32}) has no reflection bindings but uses a non-empty bind group layout (layout_hash={:016x})",
+                                            layout.hash
+                                        );
+                                    };
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
                                     current_bind_groups[group_index] = Some(ptr);
@@ -19546,6 +19588,58 @@ mod tests {
                 "unexpected wgpu validation error while creating expanded draw pipeline: {err:?}"
             );
             res.expect("expanded draw pipeline creation should succeed with trimmed PS outputs");
+        });
+    }
+
+    #[test]
+    fn expanded_draw_internal_bind_group_does_not_create_invalid_empty_bind_group() {
+        // Regression test: the expanded-draw/passthrough-VS path extends the pipeline layout with a
+        // non-empty internal bind group (@group(3) / BINDING_INTERNAL_EXPANDED_VERTICES), but does
+        // not add any `Binding` metadata. The executor must still create a compatible bind group
+        // (using dummy resources) rather than calling `create_bind_group` with zero entries.
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            if !exec.supports_compute() {
+                // Passthrough VS uses storage-buffer vertex pulling; this requires storage buffers,
+                // which are only available on compute-capable backends.
+                skip_or_panic(module_path!(), "compute unsupported");
+                return;
+            }
+
+            let empty_bindings: &[crate::Binding] = &[];
+            let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(empty_bindings)],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )
+            .expect("should build empty pipeline bindings");
+
+            extend_pipeline_bindings_for_passthrough_vs(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                &mut pipeline_bindings,
+            )
+            .expect("should extend pipeline bindings for passthrough VS");
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let _ = exec
+                .build_stage_bind_groups(ShaderStage::Geometry, &pipeline_bindings)
+                .expect("bind groups should build");
+            exec.device.poll(wgpu::Maintain::Wait);
+            let err = exec.device.pop_error_scope().await;
+
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while building bind groups: {err:?}"
+            );
         });
     }
 
