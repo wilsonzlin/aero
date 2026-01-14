@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use aero_shared::scanout_state::{
-    ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
+    ScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8,
+    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
 };
 use emulator::devices::aerogpu_regs::mmio;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
@@ -122,4 +123,54 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
     assert_eq!(snap1.height, 0);
     assert_eq!(snap1.pitch_bytes, 0);
     assert_eq!(snap1.format, SCANOUT_FORMAT_B8G8R8X8);
+}
+
+#[test]
+fn preserves_bgra_and_srgb_scanout_formats_in_shared_state() {
+    let mut mem = DummyMemory;
+    let scanout = Arc::new(ScanoutState::new());
+
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0, 0);
+    dev.set_scanout_state(Some(scanout.clone()));
+    // Enable PCI MMIO decode so BAR0 writes are accepted.
+    dev.config_write(0x04, 2, 1 << 1);
+
+    // Program scanout0 registers as a guest would.
+    let fb_gpa: u64 = 0x1234_5678_9abc_def0;
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 800);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 600);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 800 * 4);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);
+
+    // BGRA should be preserved (alpha-capable).
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8A8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    let snap = scanout.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8A8);
+
+    // sRGB variants should preserve the sRGB discriminant in the shared state (layout-compatible).
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8UnormSrgb as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8_SRGB);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8A8UnormSrgb as u32,
+    );
+    let snap = scanout.snapshot();
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
 }
