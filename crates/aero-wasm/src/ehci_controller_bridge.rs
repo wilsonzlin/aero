@@ -20,7 +20,6 @@ use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
-use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::EhciController;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
@@ -118,54 +117,6 @@ fn detach_device_at_path(ctrl: &mut EhciController, path: &[u8]) -> Result<(), J
         Err(UsbHubAttachError::NoDevice) => Ok(()),
         Err(e) => Err(map_attach_error(e)),
     }
-}
-
-fn find_webusb_passthrough_device(
-    dev: &mut AttachedUsbDevice,
-) -> Option<UsbWebUsbPassthroughDevice> {
-    let model_any = dev.model() as &dyn core::any::Any;
-    if let Some(webusb) = model_any.downcast_ref::<UsbWebUsbPassthroughDevice>() {
-        return Some(webusb.clone());
-    }
-
-    if let Some(hub) = dev.as_hub_mut() {
-        for port in 0..hub.num_ports() {
-            if let Some(child) = hub.downstream_device_mut(port) {
-                if let Some(found) = find_webusb_passthrough_device(child) {
-                    return Some(found);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn recover_webusb_passthrough_device(ctrl: &mut EhciController) -> Option<UsbWebUsbPassthroughDevice> {
-    // Prefer the reserved root port.
-    let hub = ctrl.hub_mut();
-    let preferred = WEBUSB_ROOT_PORT as usize;
-    if preferred < hub.num_ports() {
-        if let Some(mut dev) = hub.port_device_mut(preferred) {
-            if let Some(found) = find_webusb_passthrough_device(&mut dev) {
-                return Some(found);
-            }
-        }
-    }
-
-    // Fall back to scanning the full topology in case older snapshots attached the device elsewhere.
-    for port in 0..hub.num_ports() {
-        if port == preferred {
-            continue;
-        }
-        if let Some(mut dev) = hub.port_device_mut(port) {
-            if let Some(found) = find_webusb_passthrough_device(&mut dev) {
-                return Some(found);
-            }
-        }
-    }
-
-    None
 }
 
 /// WASM export: reusable EHCI controller model for the browser I/O worker.
@@ -460,23 +411,25 @@ impl EhciControllerBridge {
         // snapshot. Reset any restored devices so the guest will re-emit host actions.
         self.ctrl.reset_host_state_for_restore();
 
-        // Recover an owned handle to a restored WebUSB passthrough device so the bridge can continue
-        // draining actions / pushing completions after snapshot restore.
-        self.webusb = recover_webusb_passthrough_device(&mut self.ctrl);
-        self.webusb_connected = self.webusb.is_some();
-        if self.webusb_connected {
-            // Normalize legacy snapshots that may have attached the passthrough device at a
-            // different root port.
-            //
-            // Root port 0 is now reserved for the external hub topology manager (synthetic HID +
-            // WebHID). Ensuring the restored device lives on the reserved WebUSB port avoids
-            // clobbering the external hub after restore.
-            self.webusb_connected = crate::ehci_webusb_topology::set_ehci_webusb_connected(
-                &mut self.ctrl,
-                &mut self.webusb,
-                true,
-            );
+        // Ensure WebUSB passthrough topology + bridge bookkeeping are consistent after snapshot
+        // restore.
+        //
+        // Important details:
+        // - Older snapshots may have attached the WebUSB device on a different root port. Use the
+        //   same helper as `set_connected()` so we normalize it back onto the reserved port and
+        //   detach any stray instances.
+        // - Preserve any existing `self.webusb` handle when the snapshot does not include a WebUSB
+        //   device so action IDs remain monotonic across restore (matches UHCI/xHCI semantics).
+        let has_webusb =
+            !crate::ehci_webusb_topology::collect_ehci_webusb_devices(&mut self.ctrl).is_empty();
+        if has_webusb {
+            // Prefer the restored WebUSB device state (including monotonic action IDs) over any
+            // stale handle that existed before restore. Clearing the handle ensures
+            // `set_connected(true)` adopts the restored instance, even for legacy snapshots that
+            // attached it on a non-reserved root port.
+            self.webusb = None;
         }
+        self.set_connected(has_webusb);
         if let Some(dev) = self.webusb.as_ref() {
             // Ensure the recovered handle also has its host-side promise bookkeeping cleared.
             dev.reset_host_state_for_restore();
