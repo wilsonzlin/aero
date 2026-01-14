@@ -147,7 +147,9 @@ where
             if max_storage_buffers_per_shader_stage == 0
                 && matches!(
                     binding.kind,
-                    crate::BindingKind::SrvBuffer { .. } | crate::BindingKind::UavBuffer { .. }
+                    crate::BindingKind::SrvBuffer { .. }
+                        | crate::BindingKind::UavBuffer { .. }
+                        | crate::BindingKind::ExpansionStorageBuffer { .. }
                 )
             {
                 bail!(
@@ -237,11 +239,16 @@ where
         for binding in group.values() {
             let is_uniform_buffer =
                 matches!(binding.kind, crate::BindingKind::ConstantBuffer { .. });
-            let is_sampled_texture = matches!(binding.kind, crate::BindingKind::Texture2D { .. });
+            let is_sampled_texture = matches!(
+                binding.kind,
+                crate::BindingKind::Texture2D { .. } | crate::BindingKind::Texture2DArray { .. }
+            );
             let is_sampler = matches!(binding.kind, crate::BindingKind::Sampler { .. });
             let is_storage_buffer = matches!(
                 binding.kind,
-                crate::BindingKind::SrvBuffer { .. } | crate::BindingKind::UavBuffer { .. }
+                crate::BindingKind::SrvBuffer { .. }
+                    | crate::BindingKind::UavBuffer { .. }
+                    | crate::BindingKind::ExpansionStorageBuffer { .. }
             );
             let is_storage_texture = matches!(
                 binding.kind,
