@@ -10,6 +10,7 @@ fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
+    use std::fmt;
     use std::fs::File;
     use std::io::{self, BufWriter, Write};
     use std::path::{Path, PathBuf};
@@ -122,6 +123,16 @@ mod native {
         CdFirst,
     }
 
+    impl fmt::Display for BootMode {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                BootMode::Hdd => f.write_str("hdd"),
+                BootMode::Cdrom => f.write_str("cdrom"),
+                BootMode::CdFirst => f.write_str("cd-first"),
+            }
+        }
+    }
+
     pub fn main() -> Result<()> {
         let args = Args::parse();
 
@@ -145,7 +156,10 @@ mod native {
             }
         });
         if matches!(boot_mode, BootMode::Cdrom | BootMode::CdFirst) && args.install_iso.is_none() {
-            bail!("--boot={boot_mode:?} requires --install-iso");
+            bail!("--boot={boot_mode} requires --install-iso");
+        }
+        if matches!(boot_mode, BootMode::Hdd | BootMode::CdFirst) && args.disk.is_none() {
+            bail!("--boot={boot_mode} requires --disk");
         }
 
         // Use the canonical PC platform defaults so the CLI is useful for full-system boot images.
