@@ -77,7 +77,9 @@ export function packRgba8RectToAlignedBuffer(
 
   const rowBytes = w * 4;
   const bytesPerRow = alignUp(rowBytes, 256);
-  const total = bytesPerRow * h;
+  // WebGPU does not require padding the final row out to `bytesPerRow`.
+  // (See `GPUImageDataLayout` size checks: only rows *before* the last one need full stride.)
+  const total = bytesPerRow * (h - 1) + rowBytes;
 
   let buffer = staging;
   if (!buffer || buffer.byteLength < total) {
@@ -88,6 +90,8 @@ export function packRgba8RectToAlignedBuffer(
     const srcOff = (top + row) * srcStrideBytes + left * 4;
     const dstOff = row * bytesPerRow;
     buffer.set(src.subarray(srcOff, srcOff + rowBytes), dstOff);
+    // Intermediate rows need stride padding. For the last row, `total` may stop at `rowBytes`
+    // so this fill range naturally becomes empty after clamping.
     buffer.fill(0, dstOff + rowBytes, dstOff + bytesPerRow);
   }
 

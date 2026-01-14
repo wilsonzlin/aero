@@ -24,7 +24,8 @@ function makeSyntheticRgbaImage(width: number, height: number, strideBytes: numb
 function expectedPackedRect(rect: Rect): { bytesPerRow: number; bytes: Uint8Array } {
   const rowBytes = rect.w * 4;
   const bytesPerRow = alignUp(rowBytes, 256);
-  const out = new Uint8Array(bytesPerRow * rect.h);
+  // WebGPU does not require the last row to be padded out to `bytesPerRow`.
+  const out = new Uint8Array(bytesPerRow * (rect.h - 1) + rowBytes);
   for (let row = 0; row < rect.h; row += 1) {
     for (let col = 0; col < rect.w; col += 1) {
       const x = rect.x + col;

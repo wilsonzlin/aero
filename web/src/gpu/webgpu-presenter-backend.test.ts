@@ -175,7 +175,7 @@ describe("WebGpuPresenterBackend presentDirtyRects", () => {
 
     // 128px wide rect => rowBytes=512, bytesPerRow=512, height=128 => 512*128 bytes.
     expect(data0.byteLength).toBe(512 * 128);
-    // 1px wide rect => rowBytes=4, bytesPerRow=256, height=1 => 256 bytes.
-    expect(data1.byteLength).toBe(256);
+    // 1px wide rect => rowBytes=4, bytesPerRow=256, height=1 => 4 bytes (no last-row padding required).
+    expect(data1.byteLength).toBe(4);
   });
 });
