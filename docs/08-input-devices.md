@@ -122,6 +122,7 @@ In the production worker runtime, input is typically translated into USB HID rep
   - buttons: `UsbHidBridge.mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `UsbHidBridge.mouse_wheel(delta)` (`delta > 0` = wheel up)
   - horizontal wheel: `UsbHidBridge.mouse_hwheel(delta)` (`delta > 0` = wheel right; optional for older WASM builds)
+  - combined: `UsbHidBridge.mouse_wheel2(wheel, hwheel)` (single report; optional for older WASM builds)
 - Gamepad: `UsbHidBridge.gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
 
 See [`USB HID (Optional)`](#usb-hid-optional) for the guest-visible external hub topology + reserved ports.

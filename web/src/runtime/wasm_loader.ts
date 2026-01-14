@@ -1523,6 +1523,17 @@ export interface WasmApi {
         mouse_move(dx: number, dy: number): void;
         mouse_buttons(buttons: number): void;
         mouse_wheel(delta: number): void;
+        /**
+         * Inject both vertical and horizontal wheel deltas in a single report frame.
+         *
+         * Optional for older WASM builds.
+         */
+        mouse_wheel2?(wheel: number, hwheel: number): void;
+        /**
+         * Inject a horizontal wheel delta (AC Pan).
+         *
+         * Optional for older WASM builds.
+         */
         mouse_hwheel?(delta: number): void;
         gamepad_report(packedLo: number, packedHi: number): void;
         drain_next_keyboard_report(): Uint8Array | null;
