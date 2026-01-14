@@ -28,12 +28,13 @@ pub(crate) fn parse_signature(fourcc: FourCc, bytes: &[u8]) -> Result<DxbcSignat
         param_offset: u32,
         entry_size: usize,
     ) -> Result<DxbcSignature, DxbcError> {
-        let table_bytes = (param_count as usize)
-            .checked_mul(entry_size)
-            .ok_or(DxbcError::InvalidChunk {
-                fourcc,
-                reason: "parameter count overflow",
-            })?;
+        let table_bytes =
+            (param_count as usize)
+                .checked_mul(entry_size)
+                .ok_or(DxbcError::InvalidChunk {
+                    fourcc,
+                    reason: "parameter count overflow",
+                })?;
 
         let table_start = param_offset as usize;
         if table_start.checked_add(table_bytes).is_none() || table_start + table_bytes > bytes.len()
@@ -87,14 +88,10 @@ pub(crate) fn parse_signature(fourcc: FourCc, bytes: &[u8]) -> Result<DxbcSignat
 
     match parse_signature_with_entry_size(fourcc, bytes, param_count, param_offset, primary_size) {
         Ok(sig) => Ok(sig),
-        Err(err_primary) => parse_signature_with_entry_size(
-            fourcc,
-            bytes,
-            param_count,
-            param_offset,
-            fallback_size,
-        )
-        .or(Err(err_primary)),
+        Err(err_primary) => {
+            parse_signature_with_entry_size(fourcc, bytes, param_count, param_offset, fallback_size)
+                .or(Err(err_primary))
+        }
     }
 }
 
@@ -102,7 +99,9 @@ pub(crate) fn parse_signature(fourcc: FourCc, bytes: &[u8]) -> Result<DxbcSignat
 mod tests {
     use super::*;
 
-    use crate::test_utils::{build_signature_chunk_v0, build_signature_chunk_v1, SignatureEntryDesc};
+    use crate::test_utils::{
+        build_signature_chunk_v0, build_signature_chunk_v1, SignatureEntryDesc,
+    };
 
     #[test]
     fn parses_v0_layout_even_when_fourcc_is_isg1() {
