@@ -106,6 +106,75 @@ fn temp_register_is_not_emitted_for_disabled_stages() {
 }
 
 #[test]
+fn colorop_disable_disables_stage_even_if_alphaop_enabled() {
+    // D3D9 stage disabling is keyed off COLOROP; ALPHAOP should not be able to “keep the stage
+    // alive” once COLOROP is DISABLE.
+    let mut stages_a = [TextureStageState::default(); 8];
+    stages_a[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+    // Stage1: COLOROP disables pipeline, but ALPHAOP is enabled (should still be ignored).
+    stages_a[1] = TextureStageState {
+        color_op: TextureOp::Disable,
+        alpha_op: TextureOp::Modulate,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Diffuse,
+        ..Default::default()
+    };
+    stages_a[2] = TextureStageState {
+        color_op: TextureOp::Add,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Current,
+        color_arg2: TextureArg::Texture,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let mut stages_b = stages_a;
+    stages_b[2].color_op = TextureOp::Subtract;
+
+    let desc_a = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (1 << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_a,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_b = FixedFunctionShaderDesc {
+        stages: stages_b,
+        ..desc_a.clone()
+    };
+
+    assert_eq!(
+        desc_a.state_hash(),
+        desc_b.state_hash(),
+        "stages after COLOROP=Disable must not influence the hash, even if ALPHAOP is enabled"
+    );
+
+    let wgsl = generate_fixed_function_shaders(&desc_a).fragment_wgsl;
+    assert!(
+        !wgsl.contains("let tex1_color"),
+        "unexpected stage1 emission:\n{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("let tex2_color"),
+        "unexpected stage2 emission:\n{wgsl}"
+    );
+}
+
+#[test]
 fn state_hash_includes_texcoord_index_texture_transform_and_result_target() {
     let base_stage = TextureStageState {
         color_op: TextureOp::SelectArg1,
