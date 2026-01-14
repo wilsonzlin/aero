@@ -15,7 +15,10 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
     if (!api) throw new Error("__aeroTest missing");
     if (api.error) throw new Error(api.error);
     if (api.pass !== true) {
-      throw new Error(`hash mismatch: got=${api.hash ?? "none"} expected=${api.expectedHash ?? "none"}`);
+      throw new Error(
+        `wddm scanout mismatch: presented got=${api.hash ?? "none"} expected=${api.expectedHash ?? "none"} ` +
+          `source got=${api.sourceHash ?? "none"} expected=${api.expectedSourceHash ?? "none"}`,
+      );
     }
 
     const samples = api.samplePixels ? await api.samplePixels() : null;
