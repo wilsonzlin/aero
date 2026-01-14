@@ -228,15 +228,16 @@ cargo xtask input --rust-only
 # Also run the canonical machine integration tests (snapshot + USB container wiring).
 cargo xtask input --machine
 
-# Also run the targeted WASM USB bridge regression test (runs in Node; does not require `node_modules`).
+# Also run the targeted WASM USB bridge regression tests (runs in Node; does not require `node_modules`).
 cargo xtask input --wasm --rust-only
 
 # Also run the aero-wasm input backend integration smoke test (virtio-input + synthetic USB HID injection).
 # This is a host-side Rust test (does not use wasm-pack) and can be run without `node_modules`.
 cargo xtask input --rust-only --with-wasm
 
-# Targeted WASM USB bridge regression test (runs in Node).
+# Targeted WASM USB bridge regression tests (run in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
+wasm-pack test --node crates/aero-wasm --test xhci_webusb_bridge
 
 # Note: `wasm-pack test` currently builds *all* `crates/aero-wasm` integration tests, even if you
 # pass `--test ...`. This means compile errors in unrelated WASM tests (e.g. other bridge tests)
