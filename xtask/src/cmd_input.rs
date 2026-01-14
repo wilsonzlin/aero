@@ -431,6 +431,14 @@ mod tests {
     use std::collections::HashSet;
     use std::fs;
 
+    fn assert_deduped(label: &str, items: &[&'static str]) {
+        assert!(!items.is_empty(), "{label} should not be empty");
+        let mut seen = HashSet::new();
+        for &item in items {
+            assert!(seen.insert(item), "duplicate entry in {label}: {item}");
+        }
+    }
+
     #[test]
     fn parse_args_rejects_rust_only_with_e2e() {
         let err = parse_args(vec!["--rust-only".into(), "--e2e".into()])
@@ -582,6 +590,20 @@ mod tests {
                 "duplicate Playwright spec path in INPUT_E2E_SPECS: {spec}"
             );
         }
+    }
+
+    #[test]
+    fn focused_xtask_input_lists_are_deduped() {
+        assert_deduped("AERO_USB_FOCUSED_TESTS", AERO_USB_FOCUSED_TESTS);
+        assert!(
+            AERO_USB_FOCUSED_TESTS.contains(&"usb2_companion_routing"),
+            "expected usb2_companion_routing to remain part of the focused aero-usb subset"
+        );
+
+        assert_deduped("AERO_MACHINE_FOCUSED_TESTS", AERO_MACHINE_FOCUSED_TESTS);
+        assert_deduped("WASM_PACK_TESTS", WASM_PACK_TESTS);
+        assert_deduped("AERO_WASM_INPUT_TESTS", AERO_WASM_INPUT_TESTS);
+        assert_deduped("WEB_UNIT_TEST_PATHS", WEB_UNIT_TEST_PATHS);
     }
 
     #[test]
