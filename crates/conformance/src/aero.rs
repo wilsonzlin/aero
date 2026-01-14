@@ -4,6 +4,8 @@ use aero_cpu_core::interp::tier0::exec::{self, StepExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState as CoreState};
 use aero_cpu_core::{AssistReason, CpuBus, Exception};
+#[cfg(feature = "qemu-reference")]
+use aero_cpu_core::CpuCore;
 
 use crate::corpus::TestCase;
 use crate::{CpuState, ExecOutcome, Fault};
@@ -119,7 +121,7 @@ impl AeroBackend {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    fault = Some(map_exception(e, self.mem_fault_signal));
+                    fault = Some(map_tier0_exception(e, self.mem_fault_signal));
                     break;
                 }
             }
