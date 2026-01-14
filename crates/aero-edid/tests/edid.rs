@@ -107,6 +107,39 @@ fn parse_range_limits(bytes: &[u8]) -> Option<RangeLimits> {
     })
 }
 
+fn parse_standard_timing(bytes: [u8; 2]) -> Option<(u16, u16, u16)> {
+    // EDID uses 0x01,0x01 to represent "unused".
+    if bytes == [0x01, 0x01] {
+        return None;
+    }
+
+    // Horizontal resolution in pixels: (byte0 + 31) * 8.
+    let h_active = (bytes[0] as u16 + 31) * 8;
+    if h_active == 0 {
+        return None;
+    }
+
+    let aspect = bytes[1] >> 6;
+    let v_active = match aspect {
+        // 00: 16:10
+        0 => (h_active as u32 * 10 / 16) as u16,
+        // 01: 4:3
+        1 => (h_active as u32 * 3 / 4) as u16,
+        // 10: 5:4
+        2 => (h_active as u32 * 4 / 5) as u16,
+        // 11: 16:9
+        3 => (h_active as u32 * 9 / 16) as u16,
+        _ => return None,
+    };
+
+    let refresh = (bytes[1] & 0x3F) as u16 + 60;
+    Some((h_active, v_active, refresh))
+}
+
+fn standard_timings(edid: &[u8; aero_edid::EDID_BLOCK_SIZE]) -> [(u8, u8); 8] {
+    core::array::from_fn(|i| (edid[38 + i * 2], edid[38 + i * 2 + 1]))
+}
+
 #[test]
 fn generate_edid_preferred_mode_is_sane() {
     let preferred = aero_edid::Timing::new(1920, 1080, 60);
@@ -241,4 +274,40 @@ fn generate_edid_rejects_excessive_horizontal_frequency() {
             0x11, 0x00, 0x00, 0x18
         ]
     );
+}
+
+#[test]
+fn standard_timings_include_preferred_when_encodable() {
+    let preferred = aero_edid::Timing::new(1920, 1080, 60);
+    let edid = aero_edid::generate_edid(preferred);
+    let timings = standard_timings(&edid);
+
+    let first = parse_standard_timing([timings[0].0, timings[0].1]).expect("std timing #0 missing");
+    assert_eq!(first, (1920, 1080, 60));
+
+    // Legacy modes should still be present.
+    let mut decoded = [(0u16, 0u16, 0u16); 8];
+    let mut n = 0usize;
+    for &(a, b) in timings.iter() {
+        if let Some(t) = parse_standard_timing([a, b]) {
+            if n < decoded.len() {
+                decoded[n] = t;
+                n += 1;
+            }
+        }
+    }
+    assert!(decoded[..n].contains(&(1024, 768, 60)));
+    assert!(decoded[..n].contains(&(800, 600, 60)));
+    assert!(decoded[..n].contains(&(640, 480, 60)));
+}
+
+#[test]
+fn standard_timings_fallback_to_legacy_when_preferred_not_encodable() {
+    // 1366 is not a multiple of 8, so it cannot be represented as an EDID standard timing.
+    let preferred = aero_edid::Timing::new(1366, 768, 60);
+    let edid = aero_edid::generate_edid(preferred);
+    let timings = standard_timings(&edid);
+
+    let first = parse_standard_timing([timings[0].0, timings[0].1]).expect("std timing #0 missing");
+    assert_eq!(first, (1024, 768, 60));
 }
