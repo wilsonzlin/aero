@@ -265,6 +265,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                         Sm4Inst::Ret => "ret",
                         Sm4Inst::Add { .. } => "add",
                         Sm4Inst::Mov { .. } => "mov",
+                        _ => "unsupported",
                     },
                 });
             }
@@ -530,6 +531,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                         Sm4Inst::Ret => "ret",
                         Sm4Inst::Add { .. } => "add",
                         Sm4Inst::Mov { .. } => "mov",
+                        _ => "unsupported",
                     },
                 });
             }
@@ -592,6 +594,7 @@ fn bump_reg_max(reg: RegisterRef, max_temp_reg: &mut i32, max_output_reg: &mut i
     match reg.file {
         RegFile::Temp => *max_temp_reg = (*max_temp_reg).max(reg.index as i32),
         RegFile::Output => *max_output_reg = (*max_output_reg).max(reg.index as i32),
+        RegFile::OutputDepth => {}
         RegFile::Input => {}
     }
 }
@@ -685,6 +688,13 @@ fn emit_src_vec4(
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("r{}", reg.index),
             RegFile::Output => format!("o{}", reg.index),
+            RegFile::OutputDepth => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                })
+            }
             RegFile::Input => {
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
