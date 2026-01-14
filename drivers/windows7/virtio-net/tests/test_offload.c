@@ -541,6 +541,35 @@ static void test_ipv4_tcp_lso(void)
     assert(info.IpVersion == 4);
 }
 
+static void test_ipv4_tcp_lso_partial_headers(void)
+{
+    /* Only Ethernet+IPv4+TCP headers are present, but total_len claims a larger packet. */
+    uint8_t pkt[14 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1460;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4);
+    assert(hdr.HdrLen == (uint16_t)(14 + 20 + 20));
+    assert(hdr.GsoSize == 1460);
+    assert(hdr.CsumStart == (uint16_t)(14 + 20));
+    assert(hdr.CsumOffset == 16);
+    assert(info.HeadersLen == (uint16_t)(14 + 20 + 20));
+}
+
 static void test_ipv4_tcp_options_lso(void)
 {
     /* TCP header data offset = 6 (24 bytes). */
@@ -618,6 +647,35 @@ static void test_ipv6_tcp_lso(void)
     assert(hdr.CsumStart == (uint16_t)(14 + 40));
     assert(hdr.CsumOffset == 16);
     assert(info.IpVersion == 6);
+}
+
+static void test_ipv6_tcp_lso_partial_headers(void)
+{
+    /* Only Ethernet+IPv6+TCP headers are present, but payload_len claims a larger packet. */
+    uint8_t pkt[14 + 40 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_PARSE_INFO info;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x86DD);
+    build_ipv6_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 40);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1440;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, &info);
+    assert(res == AEROVNET_OFFLOAD_OK);
+
+    assert(hdr.Flags == AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6);
+    assert(hdr.HdrLen == (uint16_t)(14 + 40 + 20));
+    assert(hdr.GsoSize == 1440);
+    assert(hdr.CsumStart == (uint16_t)(14 + 40));
+    assert(hdr.CsumOffset == 16);
+    assert(info.HeadersLen == (uint16_t)(14 + 40 + 20));
 }
 
 static void test_ipv4_fragment_rejected(void)
@@ -752,9 +810,11 @@ int main(void)
     test_ipv4_qinq_udp_checksum_only();
     test_ipv4_ip_options_tcp_checksum_only();
     test_ipv4_tcp_lso();
+    test_ipv4_tcp_lso_partial_headers();
     test_ipv4_tcp_options_lso();
     test_ipv4_qinq_tcp_lso();
     test_ipv6_tcp_lso();
+    test_ipv6_tcp_lso_partial_headers();
     test_ipv4_fragment_rejected();
     test_ipv4_fragment_udp_rejected();
     test_ipv6_fragment_rejected();
