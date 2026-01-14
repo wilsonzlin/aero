@@ -775,6 +775,45 @@ static void TestGetUsedClearsOutputsOnNotFound(void)
 	ASSERT_TRUE(st == STATUS_INVALID_PARAMETER);
 	ASSERT_TRUE(cookie_out == NULL);
 	ASSERT_EQ_U32(len_out, 0);
+	/* The implementation should skip the corrupted entry to avoid infinite loops. */
+	ASSERT_EQ_U16(vq->last_used_idx, 1);
+
+	FreeAligned(ring);
+	free(vq);
+}
+
+static void TestGetUsedRejectsCorruptUsedIdxJump(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+	const size_t dma_align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+	void *cookie_out = (void *)0xDEADBEEF;
+	UINT32 len_out = 0xCAFECAFE;
+	NTSTATUS st;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	/*
+	 * Simulate a buggy/malicious device that advances used->idx far beyond what
+	 * is possible given the queue size.
+	 */
+	VirtioWriteU16((volatile UINT16 *)&vq->used->idx, 0x0100);
+
+	st = VirtqSplitGetUsed(vq, &cookie_out, &len_out);
+	ASSERT_TRUE(st == STATUS_IO_DEVICE_ERROR);
+	ASSERT_TRUE(cookie_out == NULL);
+	ASSERT_EQ_U32(len_out, 0);
+	/* last_used_idx should be resynchronized to avoid unbounded drain loops. */
+	ASSERT_EQ_U16(vq->last_used_idx, 0x0100);
 
 	FreeAligned(ring);
 	free(vq);
@@ -1033,6 +1072,7 @@ int main(void)
 	TestIndirectDescriptors();
 	TestIndirectPoolExhaustionFallsBackToDirect();
 	TestGetUsedClearsOutputsOnNotFound();
+	TestGetUsedRejectsCorruptUsedIdxJump();
 	TestCorruptFreeHeadOutOfRange();
 	TestCorruptFreeListNextOutOfRangeRollsBack();
 	TestCorruptFreeListUnexpectedNoDescMidAllocRollsBack();

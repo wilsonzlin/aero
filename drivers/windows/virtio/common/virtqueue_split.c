@@ -539,6 +539,7 @@ BOOLEAN VirtqSplitHasUsed(const VIRTQ_SPLIT *vq)
 NTSTATUS VirtqSplitGetUsed(VIRTQ_SPLIT *vq, void **cookie_out, UINT32 *len_out)
 {
 	UINT16 used_idx;
+	UINT16 pending;
 	UINT16 slot;
 	UINT32 id;
 	UINT32 len;
@@ -563,6 +564,22 @@ NTSTATUS VirtqSplitGetUsed(VIRTQ_SPLIT *vq, void **cookie_out, UINT32 *len_out)
 		return STATUS_NOT_FOUND;
 	}
 
+	pending = (UINT16)(used_idx - vq->last_used_idx);
+	if (pending > vq->qsz) {
+		/*
+		 * A well-behaved device cannot advance used->idx by more than the queue
+		 * size: it cannot complete more buffers than the driver has made
+		 * available. If this invariant is violated, treat it as device/ring
+		 * corruption.
+		 *
+		 * Resynchronize last_used_idx to the observed used->idx so callers that
+		 * drain in a loop (e.g. in an interrupt/DPC path) don't spin for an
+		 * unbounded amount of time.
+		 */
+		vq->last_used_idx = used_idx;
+		return STATUS_IO_DEVICE_ERROR;
+	}
+
 	/*
 	 * Ensure the used ring entry (and device-written buffers) are visible
 	 * after observing used->idx advancing.
@@ -577,6 +594,11 @@ NTSTATUS VirtqSplitGetUsed(VIRTQ_SPLIT *vq, void **cookie_out, UINT32 *len_out)
 	}
 
 	if (id >= vq->qsz) {
+		/*
+		 * Corrupted used ring entry. Skip it so callers don't get stuck
+		 * repeatedly reading the same bad element forever.
+		 */
+		vq->last_used_idx = (UINT16)(vq->last_used_idx + 1);
 		return STATUS_INVALID_PARAMETER;
 	}
 
