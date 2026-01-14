@@ -13531,6 +13531,13 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                 if (mmioFence != 0) {
                     AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
+                } else if (mmioCount != cachedMmioCount) {
+                    /*
+                     * If this is a *new* device-reported error payload but the device does not provide
+                     * an associated fence (ERROR_FENCE==0), explicitly clear the cached fence so
+                     * powered-down QUERY_ERROR calls do not report a stale fence from a prior error.
+                     */
+                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, 0);
                 }
             }
 
@@ -13541,17 +13548,19 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              * values.
              */
             if (mmioCount != 0) {
-                if (mmioCode != 0) {
-                    out->error_code = mmioCode;
-                } else if (out->error_code == 0) {
-                    /*
-                     * Defensive: if the device reports a non-zero error payload count but an empty/unknown
-                     * error_code, treat it as INTERNAL so dbgctl tooling does not interpret it as "no error".
-                     */
-                    out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
-                }
+                /*
+                 * If the device reports an error payload, treat ERROR_CODE==0 as "unknown" and surface
+                 * it as INTERNAL. This is more informative than preserving an old cached code.
+                 */
+                out->error_code = (mmioCode != 0) ? mmioCode : (ULONG)AEROGPU_ERROR_INTERNAL;
                 if (mmioFence != 0) {
                     out->error_fence = (uint64_t)mmioFence;
+                } else if (mmioCount != cachedMmioCount) {
+                    /*
+                     * New error payload without a fence: avoid reporting a stale cached fence that may
+                     * refer to an unrelated prior error.
+                     */
+                    out->error_fence = 0;
                 }
                 out->error_count = mmioCount;
             }
