@@ -3224,9 +3224,12 @@ def main() -> int:
             "(INTx-only mode disables MSI-X by forcing vectors=0)."
         )
 
-    if virtio_disable_msix and need_msix_check:
-        parser.error("--virtio-disable-msix is incompatible with --require-virtio-*-msix (MSI-X is disabled).")
-    if virtio_disable_msix and bool(getattr(args, "require_virtio_input_msix", False)):
+    # `--require-virtio-{net,blk,snd}-msix` uses a host-side QMP MSI-X-enabled check, while
+    # `--require-virtio-input-msix` is a guest marker check. Both are incompatible with INTx-only
+    # mode, since `--virtio-disable-msix` disables message interrupts by forcing `vectors=0`.
+    if virtio_disable_msix and (
+        need_msix_check or bool(getattr(args, "require_virtio_input_msix", False))
+    ):
         parser.error("--virtio-disable-msix is incompatible with --require-virtio-*-msix (MSI-X is disabled).")
 
     if args.require_intx and args.require_msi:
