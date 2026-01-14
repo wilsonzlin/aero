@@ -4593,7 +4593,7 @@ def main() -> int:
                             result_code = 1
                             break
                         if args.require_no_blk_recovery:
-                            msg = _check_no_blk_recovery_requirement(tail)
+                            msg = _check_no_blk_recovery_requirement(tail, blk_test_line=virtio_blk_marker_line)
                             if msg is not None:
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
@@ -5621,7 +5621,7 @@ def main() -> int:
                                 result_code = 1
                                 break
                             if args.require_no_blk_recovery:
-                                msg = _check_no_blk_recovery_requirement(tail)
+                                msg = _check_no_blk_recovery_requirement(tail, blk_test_line=virtio_blk_marker_line)
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -6864,8 +6864,13 @@ def _virtio_blk_recovery_failure_message(counters: dict[str, int]) -> str:
     return " ".join(parts)
 
 
-def _check_no_blk_recovery_requirement(tail: bytes, *, threshold: int = 0) -> Optional[str]:
-    counters = _try_parse_virtio_blk_recovery_counters(tail)
+def _check_no_blk_recovery_requirement(
+    tail: bytes,
+    *,
+    threshold: int = 0,
+    blk_test_line: Optional[str] = None,
+) -> Optional[str]:
+    counters = _try_parse_virtio_blk_recovery_counters(tail, blk_test_line=blk_test_line)
     if counters is None:
         return None
     if _virtio_blk_recovery_is_nonzero(counters, threshold=threshold):

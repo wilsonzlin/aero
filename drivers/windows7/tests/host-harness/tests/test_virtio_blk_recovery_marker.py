@@ -67,7 +67,32 @@ class VirtioBlkRecoveryMarkerTests(unittest.TestCase):
         self.assertIsNotNone(msg)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
 
+    def test_gate_uses_preparsed_blk_marker_line(self) -> None:
+        # Simulate the harness tail buffer not containing the virtio-blk marker (e.g. truncated),
+        # but the caller still providing the last observed virtio-blk marker line.
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        blk_line = (
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|abort_srb=0|reset_device_srb=0|"
+            "reset_bus_srb=0|pnp_srb=0|ioctl_reset=2"
+        )
+        msg = self.harness._check_no_blk_recovery_requirement(tail, blk_test_line=blk_line)
+        self.assertIsNotNone(msg)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
+
+    def test_emit_uses_preparsed_blk_marker_line(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        blk_line = (
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|abort_srb=0|reset_device_srb=1|"
+            "reset_bus_srb=2|pnp_srb=3|ioctl_reset=4"
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.harness._emit_virtio_blk_recovery_host_marker(tail, blk_test_line=blk_line)
+        self.assertEqual(
+            buf.getvalue().strip(),
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=0|reset_device_srb=1|reset_bus_srb=2|pnp_srb=3|ioctl_reset=4",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
