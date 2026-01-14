@@ -2314,6 +2314,182 @@ bool TestApplyStateBlockUploadsTextureFactorConstantWhenUsed() {
   return true;
 }
 
+bool TestApplyStateBlockUploadsWvpConstantsForTransformChanges() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // Apply a simple transform so WVP upload is deterministic.
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+
+  constexpr float tx_a = 2.0f;
+  constexpr float ty_a = 3.0f;
+  constexpr float tz_a = 0.0f;
+  constexpr float tx_b = 5.0f;
+  constexpr float ty_b = 6.0f;
+  constexpr float tz_b = 0.0f;
+  const float expected_wvp_cols_b[16] = {
+      1.0f, 0.0f, 0.0f, tx_b,
+      0.0f, 1.0f, 0.0f, ty_b,
+      0.0f, 0.0f, 1.0f, tz_b,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+
+  D3DMATRIX world_a = identity;
+  world_a.m[3][0] = tx_a;
+  world_a.m[3][1] = ty_a;
+  world_a.m[3][2] = tz_a;
+  D3DMATRIX world_b = identity;
+  world_b.m[3][0] = tx_b;
+  world_b.m[3][1] = ty_b;
+  world_b.m[3][2] = tz_b;
+
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_a);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=A)")) {
+    return false;
+  }
+
+  const VertexXyzDiffuse tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
+      {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
+      {-1.0f, 1.0f, 0.0f, 0xFF0000FFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(baseline draw)")) {
+    return false;
+  }
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_b);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore A before applying the state block.
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_a);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=A) restore")) {
+    DeleteSb();
+    return false;
+  }
+
+  // Isolate ApplyStateBlock command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(WORLD=B)")) {
+    DeleteSb();
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock transform)")) {
+    DeleteSb();
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "ApplyStateBlock emits no CREATE_SHADER_DXBC (transform-only)")) {
+    DeleteSb();
+    return false;
+  }
+
+  size_t uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(expected_wvp_cols_b);
+    if (!Check(hdr->size_bytes >= need, "SET_SHADER_CONSTANTS_F contains payload (ApplyStateBlock WVP)")) {
+      DeleteSb();
+      return false;
+    }
+    const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (!Check(std::memcmp(payload, expected_wvp_cols_b, sizeof(expected_wvp_cols_b)) == 0,
+               "ApplyStateBlock uploads expected WVP columns")) {
+      DeleteSb();
+      return false;
+    }
+    ++uploads;
+  }
+  if (!Check(uploads == 1, "ApplyStateBlock uploads WVP constants exactly once")) {
+    DeleteSb();
+    return false;
+  }
+
+  DeleteSb();
+  return true;
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -14814,6 +14990,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockUploadsTextureFactorConstantWhenUsed()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockUploadsWvpConstantsForTransformChanges()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
