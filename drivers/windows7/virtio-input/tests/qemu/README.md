@@ -347,6 +347,10 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    ```bat
    hidtest.exe --counters
    hidtest.exe --reset-counters
+
+   REM Reset and immediately verify a clean snapshot:
+   hidtest.exe --reset-counters --counters
+   hidtest.exe --reset-counters --counters-json
    ```
    Note: `--reset-counters` requires opening the HID interface with write access; if it fails, rerun elevated.
    For how to interpret the counters output (normal increments vs drops/overruns), see:
