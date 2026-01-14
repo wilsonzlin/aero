@@ -958,8 +958,25 @@ pub fn synthesize_webhid_report_descriptor(
 #[wasm_bindgen]
 pub fn mem_store_u32(offset: u32, value: u32) {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
-        core::ptr::write_unaligned(offset as *mut u32, value);
+    {
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // wasm linear memory is backed by a `SharedArrayBuffer`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = offset as *const AtomicU8;
+            let bytes = value.to_le_bytes();
+            for (i, byte) in bytes.into_iter().enumerate() {
+                // Safety: the caller is responsible for providing a valid linear-memory offset;
+                // `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        #[cfg(not(target_feature = "atomics"))]
+        unsafe {
+            core::ptr::write_unaligned(offset as *mut u32, value);
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -973,8 +990,28 @@ pub fn mem_store_u32(offset: u32, value: u32) {
 #[wasm_bindgen]
 pub fn mem_load_u32(offset: u32) -> u32 {
     #[cfg(target_arch = "wasm32")]
-    unsafe {
-        core::ptr::read_unaligned(offset as *const u32)
+    {
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = offset as *const AtomicU8;
+            // Safety: the caller is responsible for providing a valid linear-memory offset;
+            // `AtomicU8` has alignment 1.
+            let bytes = unsafe {
+                [
+                    (&*src.add(0)).load(Ordering::Relaxed),
+                    (&*src.add(1)).load(Ordering::Relaxed),
+                    (&*src.add(2)).load(Ordering::Relaxed),
+                    (&*src.add(3)).load(Ordering::Relaxed),
+                ]
+            };
+            u32::from_le_bytes(bytes)
+        }
+
+        #[cfg(not(target_feature = "atomics"))]
+        unsafe {
+            core::ptr::read_unaligned(offset as *const u32)
+        }
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

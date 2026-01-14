@@ -59,17 +59,34 @@ pub unsafe fn render_rgba8888_raw(
             let g = y_u32.wrapping_add(g_off) & 0xff;
             let b = (x_u32 ^ y_u32).wrapping_add(b_off) & 0xff;
 
-            // Write `[r, g, b, 255]` in little-endian form.
-            //
-            // WASM linear memory is specified as little-endian, so `to_le()` is
-            // a no-op on wasm32 and keeps host-side tests consistent on any
-            // endianness.
-            let rgba = (r | (g << 8) | (b << 16) | (0xff << 24)).to_le();
-            unsafe {
-                core::ptr::write_unaligned(
-                    dst.add(row_base + x * BYTES_PER_PIXEL) as *mut u32,
-                    rgba,
-                );
+            let pixel_ptr = unsafe { dst.add(row_base + x * BYTES_PER_PIXEL) };
+
+            // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB
+            // when writing into a shared `WebAssembly.Memory`.
+            #[cfg(target_feature = "atomics")]
+            {
+                use core::sync::atomic::{AtomicU8, Ordering};
+                let dst = pixel_ptr as *const AtomicU8;
+                let bytes = [r as u8, g as u8, b as u8, 0xFF];
+                for (i, byte) in bytes.into_iter().enumerate() {
+                    // Safety: `dst` is in-bounds (validated by the caller) and `AtomicU8` has
+                    // alignment 1.
+                    unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+                }
+            }
+
+            // Non-atomic builds: write a packed u32 for speed.
+            #[cfg(not(target_feature = "atomics"))]
+            {
+                // Write `[r, g, b, 255]` in little-endian form.
+                //
+                // WASM linear memory is specified as little-endian, so `to_le()` is
+                // a no-op on wasm32 and keeps host-side tests consistent on any
+                // endianness.
+                let rgba = (r | (g << 8) | (b << 16) | (0xff << 24)).to_le();
+                unsafe {
+                    core::ptr::write_unaligned(pixel_ptr as *mut u32, rgba);
+                }
             }
         }
     }
