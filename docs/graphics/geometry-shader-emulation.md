@@ -152,9 +152,11 @@ Current limitations (high-level):
     translator subset.
   - Other input topologies (line, strip, adjacency) still use the built-in synthetic expansion WGSL
     prepass.
-- The prepass does not execute the guest VS DXBC yet. For the current translated-GS paths, the GS
-  `v#[]` inputs are populated directly from IA vertex buffers via vertex pulling (so shaders that
-  rely on non-trivial VS outputs are not supported yet).
+- VS-as-compute feeding for GS inputs is still incomplete:
+  - The point-list translated-GS prepass path fills GS `v#[]` inputs directly from IA vertex buffers
+    via vertex pulling (passthrough-style VS/GS combinations only).
+  - The triangle-list translated-GS prepass path prefers a minimal VS-as-compute feeding path so the
+    GS observes VS output registers, but it is still a small subset (simple VS expected).
 - HS/DS are still scaffolding-only (no real HS/DS DXBC execution yet).
 
 Test pointers:
