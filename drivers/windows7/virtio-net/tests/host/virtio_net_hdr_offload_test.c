@@ -676,6 +676,89 @@ static int test_ipv6_hopbyhop_tcp(void) {
   return 0;
 }
 
+static int test_ipv6_ah_tcp(void) {
+  /* Ethernet + IPv6 + AH + TCP + 4-byte payload */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=32, next=AH(51), hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x00, 0x20, 0x33, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* AH header: next=TCP, payload_len=0 (8 bytes total) */
+      0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      /* TCP header */
+      0x1f, 0x90, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x10, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+      /* payload */
+      0x01, 0x02, 0x03, 0x04,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U16(Info.L3Offset, 14);
+  ASSERT_EQ_U16(Info.L3Len, 48);
+  ASSERT_EQ_U8(Info.L4Proto, 6);
+  ASSERT_EQ_U16(Info.L4Offset, 62);
+  ASSERT_EQ_U16(Info.L4Len, 20);
+  ASSERT_EQ_U16(Info.PayloadOffset, 82);
+  ASSERT_EQ_U16(Info.CsumStart, 62);
+  ASSERT_EQ_U16(Info.CsumOffset, 16);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  return 0;
+}
+
+static int test_ipv6_ah_udp(void) {
+  /* Ethernet + IPv6 + AH + UDP + 4-byte payload */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=20, next=AH(51), hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x00, 0x14, 0x33, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* AH header: next=UDP, payload_len=0 (8 bytes total) */
+      0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      /* UDP header */
+      0x04, 0xd2, 0x16, 0x2e, 0x00, 0x0c, 0x00, 0x00,
+      /* payload */
+      0x01, 0x02, 0x03, 0x04,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U16(Info.L3Offset, 14);
+  ASSERT_EQ_U16(Info.L3Len, 48);
+  ASSERT_EQ_U8(Info.L4Proto, 17);
+  ASSERT_EQ_U16(Info.L4Offset, 62);
+  ASSERT_EQ_U16(Info.L4Len, 8);
+  ASSERT_EQ_U16(Info.PayloadOffset, 70);
+  ASSERT_EQ_U16(Info.CsumStart, 62);
+  ASSERT_EQ_U16(Info.CsumOffset, 6);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  return 0;
+}
+
 static int test_ipv6_no_next_header(void) {
   /* Ethernet + IPv6 + No Next Header, payload_len=0 */
   static const uint8_t Frame[] = {
@@ -1414,6 +1497,8 @@ int main(void) {
   rc |= test_ipv6_tcp_no_vlan();
   rc |= test_ipv6_hopbyhop_tcp();
   rc |= test_ipv6_hopbyhop_udp();
+  rc |= test_ipv6_ah_tcp();
+  rc |= test_ipv6_ah_udp();
   rc |= test_ipv6_no_next_header();
   rc |= test_vlan_tagged_ipv4_tcp();
   rc |= test_qinq_tagged_ipv4_tcp();
