@@ -112,6 +112,7 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
     // Program table entry 0 with an xAPIC message targeting vector 0x61.
     let vector = 0x61u32;
     let table_offset = u64::from(table & !0x7);
+    let pba_offset = u64::from(pba & !0x7);
     let entry0 = bar0_base + table_offset;
     m.write_physical_u32(entry0 + 0x0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x4, 0);
@@ -235,6 +236,29 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
         interrupts.borrow().get_pending(),
         None,
         "expected no MSI-X delivery while MSI-X is function-masked"
+    );
+
+    let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to be set while function-masked"
+    );
+
+    // Clear MSI-X Function Mask and ensure any pending vector is delivered (no need for additional
+    // device work once unmasked).
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 14)));
+    m.poll_network();
+    assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
+    interrupts.borrow_mut().acknowledge(vector as u8);
+    interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(interrupts.borrow().get_pending(), None);
+    let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to be cleared after unmask + delivery"
     );
 
     // Disable MSI-X via PCI config space (without BAR0 MMIO). The machine should mirror the MSI-X
