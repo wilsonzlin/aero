@@ -44,6 +44,7 @@ def _synthetic_setup_text(
     include_installed_media_state: bool = True,
 ) -> str:
     lines: list[str] = []
+    check_mode_block: list[str] = []
     if include_cdd_base_path:
         lines.append(r"HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase")
 
@@ -91,13 +92,13 @@ def _synthetic_setup_text(
         lines.append("call :require_admin_stdout")
 
     if include_check_mode:
-        lines.append(r":check_mode")
+        check_mode_block.append(r":check_mode")
         if include_check_mode_temp_root:
-            lines.append(r'set "INSTALL_ROOT=%TEMP%\AeroGuestToolsCheck"')
+            check_mode_block.append(r'set "INSTALL_ROOT=%TEMP%\AeroGuestToolsCheck"')
         if include_check_mode_validate_cert_payload:
-            lines.append(r"call :validate_cert_payload")
+            check_mode_block.append(r"call :validate_cert_payload")
         if check_mode_extra_line:
-            lines.append(check_mode_extra_line)
+            check_mode_block.append(check_mode_extra_line)
 
     if include_skipstorage_flag:
         lines.append("/skipstorage")
@@ -179,6 +180,11 @@ def _synthetic_setup_text(
                 "installed-media.txt",
             ]
         )
+
+    # Place :check_mode at the end so the label block does not accidentally include
+    # install-mode logic (which would make the synthetic fixture fail /check invariants).
+    if include_check_mode:
+        lines.extend(check_mode_block)
 
     return "\n".join(lines) + "\n"
 

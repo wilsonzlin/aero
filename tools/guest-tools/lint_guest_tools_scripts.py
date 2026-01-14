@@ -335,9 +335,9 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="Wires /verify-media flag to verify_media_preflight",
             expected_hint='If "%ARG_VERIFY_MEDIA%"=="1" (...) call :verify_media_preflight',
-            predicate=_regex(
+            predicate=lambda text: _regex(
                 r'(?is)if\s+"%ARG_VERIFY_MEDIA%"\s*==\s*"1"\s*\([\s\S]*?call\s+:?verify_media_preflight\b'
-            ),
+            )(_strip_label_block(text, "check_mode")),
         ),
         Invariant(
             description="Supports /check (or /validate) dry-run validation mode (no system changes)",
