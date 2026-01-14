@@ -3320,6 +3320,9 @@ struct VirtioBlkResetTestResult {
   bool performed = false;
   bool skipped_not_supported = false;
   std::string fail_reason;
+  DWORD win32_error = ERROR_SUCCESS;
+  std::optional<uint32_t> counter_before;
+  std::optional<uint32_t> counter_after;
 };
 
 static bool VirtioBlkResetSmokeIo(Logger& log, const std::wstring& base_dir, DWORD* out_err, const char** out_stage) {
@@ -3399,11 +3402,13 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
     log.Logf("virtio-blk-reset: unable to open PhysicalDrive%lu err=%lu",
              static_cast<unsigned long>(target.disk_number), static_cast<unsigned long>(open_err));
     out.fail_reason = "open_physical_drive_failed";
+    out.win32_error = open_err;
     return out;
   }
 
   const auto before_opt = QueryAerovblkMiniportInfo(log, pd);
   if (!before_opt.has_value()) {
+    out.win32_error = GetLastError();
     CloseHandle(pd);
     out.fail_reason = "miniport_query_before_failed";
     return out;
@@ -3411,18 +3416,17 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
   if (!ValidateAerovblkMiniportInfo(log, *before_opt)) {
     CloseHandle(pd);
     out.fail_reason = "miniport_info_before_invalid";
+    out.win32_error = ERROR_INVALID_DATA;
     return out;
   }
 
-  uint32_t ioctl_reset_before = 0;
-  bool have_ioctl_reset_before = false;
   if (before_opt->returned_len >= kIoctlResetCountEnd) {
-    ioctl_reset_before = before_opt->info.IoctlResetCount;
-    have_ioctl_reset_before = true;
+    out.counter_before = before_opt->info.IoctlResetCount;
   }
 
   bool performed = false;
   const bool reset_ok = ForceAerovblkMiniportReset(log, pd, &performed);
+  if (!reset_ok) out.win32_error = GetLastError();
   CloseHandle(pd);
 
   if (!reset_ok) {
@@ -3433,6 +3437,7 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
     out.ok = true;
     out.performed = false;
     out.skipped_not_supported = true;
+    out.win32_error = ERROR_NOT_SUPPORTED;
     return out;
   }
   out.performed = true;
@@ -3464,6 +3469,7 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
     log.Logf("virtio-blk-reset: smoke IO failed stage=%s err=%lu", last_stage,
              static_cast<unsigned long>(last_err));
     out.fail_reason = "post_reset_io_failed";
+    out.win32_error = last_err;
     return out;
   }
 
@@ -3471,6 +3477,7 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
   AerovblkQueryInfoResult after{};
   bool after_ok = false;
   DWORD last_open_err = ERROR_SUCCESS;
+  DWORD last_query_err = ERROR_SUCCESS;
   for (int attempt = 0; attempt < 5; attempt++) {
     DWORD err = ERROR_SUCCESS;
     HANDLE pd2 = TryOpenPhysicalDriveForIoctl(target.disk_number, &err);
@@ -3480,6 +3487,7 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
       continue;
     }
     const auto q = QueryAerovblkMiniportInfo(log, pd2);
+    if (!q.has_value()) last_query_err = GetLastError();
     CloseHandle(pd2);
     if (!q.has_value()) {
       Sleep(200);
@@ -3496,18 +3504,24 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
   if (!after_ok) {
     log.Logf("virtio-blk-reset: miniport query after reset failed err=%lu", static_cast<unsigned long>(last_open_err));
     out.fail_reason = "miniport_query_after_failed";
+    out.win32_error = last_query_err != ERROR_SUCCESS ? last_query_err : last_open_err;
     return out;
   }
 
-  if (have_ioctl_reset_before && after.returned_len >= kIoctlResetCountEnd) {
-    const uint32_t after_count = after.info.IoctlResetCount;
-    if (after_count < ioctl_reset_before + 1) {
+  if (after.returned_len >= kIoctlResetCountEnd) {
+    out.counter_after = after.info.IoctlResetCount;
+  }
+
+  if (out.counter_before.has_value() && out.counter_after.has_value()) {
+    const uint32_t after_count = *out.counter_after;
+    if (after_count < *out.counter_before + 1) {
       log.Logf("virtio-blk-reset: ioctl_reset_count did not increment before=%lu after=%lu",
-               static_cast<unsigned long>(ioctl_reset_before), static_cast<unsigned long>(after_count));
+               static_cast<unsigned long>(*out.counter_before), static_cast<unsigned long>(after_count));
       out.fail_reason = "ioctl_reset_count_not_incremented";
+      out.win32_error = ERROR_INVALID_DATA;
       return out;
     }
-    log.Logf("virtio-blk-reset: ioctl_reset_count before=%lu after=%lu", static_cast<unsigned long>(ioctl_reset_before),
+    log.Logf("virtio-blk-reset: ioctl_reset_count before=%lu after=%lu", static_cast<unsigned long>(*out.counter_before),
              static_cast<unsigned long>(after_count));
   } else {
     log.LogLine("virtio-blk-reset: ioctl_reset_count not available");
@@ -10908,20 +10922,31 @@ int wmain(int argc, wchar_t** argv) {
 
   if (opt.test_blk_reset) {
     if (!blk.ok) {
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=blk_test_failed");
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=blk_test_failed|err=0");
       all_ok = false;
     } else if (const auto target = SelectVirtioBlkSelection(log, opt); !target.has_value()) {
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=resolve_target_failed");
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=resolve_target_failed|err=0");
       all_ok = false;
     } else {
       const auto reset = VirtioBlkResetTest(log, *target);
       if (reset.skipped_not_supported) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|performed=0|reason=not_supported");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported");
       } else if (reset.ok) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1");
+        const std::string counter_before = reset.counter_before.has_value()
+                                               ? std::to_string(static_cast<unsigned long>(*reset.counter_before))
+                                               : "not_supported";
+        const std::string counter_after = reset.counter_after.has_value()
+                                              ? std::to_string(static_cast<unsigned long>(*reset.counter_after))
+                                              : "not_supported";
+        std::string marker = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=";
+        marker += counter_before;
+        marker += "|counter_after=";
+        marker += counter_after;
+        log.LogLine(marker);
       } else {
-        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=%s",
-                 reset.fail_reason.empty() ? "unknown" : reset.fail_reason.c_str());
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=%s|err=%lu",
+                 reset.fail_reason.empty() ? "unknown" : reset.fail_reason.c_str(),
+                 static_cast<unsigned long>(reset.win32_error));
         all_ok = false;
       }
     }

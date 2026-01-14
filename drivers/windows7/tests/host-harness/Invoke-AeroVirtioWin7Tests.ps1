@@ -820,6 +820,8 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)] [bool]$RequirePerTestMarkers = $true,
     # When true, require the guest virtio-net-udp marker to PASS.
     [Parameter(Mandatory = $false)] [bool]$RequireVirtioNetUdpPass = $true,
+    # When true, require the guest virtio-blk-reset marker to PASS (not SKIP/FAIL/missing).
+    [Parameter(Mandatory = $false)] [bool]$RequireVirtioBlkResetPass = $false,
     # If true, a virtio-snd device was attached, so the virtio-snd selftest must actually run and pass
     # (not be skipped via --disable-snd).
     [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass,
@@ -831,9 +833,6 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)] [bool]$RequireVirtioBlkResizePass = $false,
     # Delta in MiB to grow the virtio-blk backing device when RequireVirtioBlkResizePass is enabled.
     [Parameter(Mandatory = $false)] [int]$VirtioBlkResizeDeltaMiB = 64,
-    # If true, require the optional virtio-blk-reset marker to PASS.
-    [Parameter(Mandatory = $false)]
-    [bool]$RequireVirtioBlkResetPass = $false,
     # If true, require the optional virtio-input-events marker to PASS (host will inject events via QMP).
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
@@ -970,6 +969,18 @@ function Wait-AeroSelftestResult {
   $sawVirtioNetLinkFlapSkip = $false
   $didNetLinkFlap = $false
 
+  function Test-VirtioBlkResetRequirement {
+    param(
+      [Parameter(Mandatory = $true)] [string]$Tail
+    )
+    if (-not $RequireVirtioBlkResetPass) { return $null }
+
+    if ($sawVirtioBlkResetFail) { return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $Tail } }
+    if ($sawVirtioBlkResetPass) { return $null }
+    if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $Tail } }
+    return @{ Result = "MISSING_VIRTIO_BLK_RESET"; Tail = $Tail }
+  }
+
   function Test-VirtioInputMsixRequirement {
     param(
       [Parameter(Mandatory = $true)] [string]$Tail
@@ -1089,6 +1100,19 @@ function Wait-AeroSelftestResult {
       }
       if (-not $sawVirtioBlkResetFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL") {
         $sawVirtioBlkResetFail = $true
+      }
+      if (-not $sawVirtioBlkResetPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|PASS") {
+        $sawVirtioBlkResetPass = $true
+      }
+      if (-not $sawVirtioBlkResetSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|SKIP") {
+        $sawVirtioBlkResetSkip = $true
+      }
+      if (-not $sawVirtioBlkResetFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL") {
+        $sawVirtioBlkResetFail = $true
+      }
+      if ($RequireVirtioBlkResetPass) {
+        if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioBlkResetFail) { return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $tail } }
       }
       if (-not $sawVirtioInputPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
         $sawVirtioInputPass = $true
@@ -1481,6 +1505,8 @@ function Wait-AeroSelftestResult {
 
           $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
           if ($null -ne $msixCheck) { return $msixCheck }
+          $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
+          if ($null -ne $blkResetCheck) { return $blkResetCheck }
           return @{ Result = "PASS"; Tail = $tail }
         }
 
@@ -1565,6 +1591,8 @@ function Wait-AeroSelftestResult {
                 }
                 $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
                 if ($null -ne $msixCheck) { return $msixCheck }
+                $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
+                if ($null -ne $blkResetCheck) { return $blkResetCheck }
                 return @{ Result = "PASS"; Tail = $tail }
               }
               if ($sawVirtioSndDuplexSkip) {
@@ -1658,6 +1686,8 @@ function Wait-AeroSelftestResult {
 
         $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
         if ($null -ne $msixCheck) { return $msixCheck }
+        $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
+        if ($null -ne $blkResetCheck) { return $blkResetCheck }
         return @{ Result = "PASS"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
@@ -6419,7 +6449,11 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_BLK_RESET_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped but -WithBlkReset was enabled (ensure the guest supports AEROVBLK_IOCTL_FORCE_RESET)"
+      $reason = "unknown"
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|SKIP\\|reason=([^\\|\\r\\n]+)") {
+        $reason = $Matches[1]
+      }
+      Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ($reason) but -WithBlkReset was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

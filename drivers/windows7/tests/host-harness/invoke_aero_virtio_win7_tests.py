@@ -2131,11 +2131,9 @@ def _virtio_snd_buffer_limits_required_failure_message(
 
 def _virtio_blk_reset_skip_failure_message(tail: bytes) -> str:
     # virtio-blk miniport reset marker:
-    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1
-    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|performed=0|reason=not_supported
-    marker = _try_extract_last_marker_line(
-        tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|"
-    )
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported
+    marker = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|")
     if marker is not None:
         fields = _parse_marker_kv_fields(marker)
         reason = fields.get("reason")
@@ -2199,6 +2197,33 @@ def _virtio_input_led_required_failure_message(tail: bytes) -> Optional[str]:
         "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led PASS marker while --with-input-led was enabled "
         "(provision the guest with --test-input-led)"
     )
+
+
+def _virtio_blk_reset_required_failure_message(
+    tail: bytes,
+    *,
+    saw_pass: bool = False,
+    saw_fail: bool = False,
+    saw_skip: bool = False,
+) -> Optional[str]:
+    """
+    Enforce that virtio-blk-reset ran and PASSed.
+
+    Returns:
+        A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
+    """
+    # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
+    # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
+    if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS" in tail:
+        return None
+    if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL" in tail:
+        return (
+            "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while "
+            "--with-blk-reset was enabled"
+        )
+    if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP" in tail:
+        return _virtio_blk_reset_skip_failure_message(tail)
+    return _virtio_blk_reset_missing_failure_message()
 
 
 @lru_cache(maxsize=None)
@@ -5307,6 +5332,22 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if need_blk_reset:
+                            try:
+                                reset_tail = serial_log.read_bytes()
+                            except Exception:
+                                reset_tail = tail
+                            msg = _virtio_blk_reset_required_failure_message(
+                                reset_tail,
+                                saw_pass=saw_virtio_blk_reset_pass,
+                                saw_fail=saw_virtio_blk_reset_fail,
+                                saw_skip=saw_virtio_blk_reset_skip,
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         if need_msix_check and not msix_checked:
                             assert qmp_endpoint is not None
                             msg = _require_virtio_msix_check_failure_message(
@@ -6616,6 +6657,22 @@ def main() -> int:
                                             "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
                                             file=sys.stderr,
                                         )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if need_blk_reset:
+                                try:
+                                    reset_tail = serial_log.read_bytes()
+                                except Exception:
+                                    reset_tail = tail
+                                msg = _virtio_blk_reset_required_failure_message(
+                                    reset_tail,
+                                    saw_pass=saw_virtio_blk_reset_pass,
+                                    saw_fail=saw_virtio_blk_reset_fail,
+                                    saw_skip=saw_virtio_blk_reset_skip,
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
