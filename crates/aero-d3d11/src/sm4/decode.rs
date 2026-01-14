@@ -1143,6 +1143,18 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Break)
         }
+        OPCODE_LOOP => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Loop)
+        }
+        OPCODE_ENDLOOP => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::EndLoop)
+        }
+        OPCODE_CONTINUE => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::Continue)
+        }
         OPCODE_BFREV => {
             let mut dst = decode_dst(&mut r)?;
             dst.saturate = saturate;

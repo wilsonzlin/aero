@@ -1303,7 +1303,11 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             Sm4Inst::If { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Discard { cond, .. } => scan_src_regs(cond, &mut scan_reg),
             Sm4Inst::Clip { src } => scan_src_regs(src, &mut scan_reg),
-            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
+            Sm4Inst::Else
+            | Sm4Inst::EndIf
+            | Sm4Inst::Loop
+            | Sm4Inst::EndLoop
+            | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst: _, src }
             | Sm4Inst::Itof { dst: _, src }
             | Sm4Inst::Utof { dst: _, src }
@@ -1501,7 +1505,11 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
         match inst {
             Sm4Inst::If { cond, .. } => scan_src(cond),
             Sm4Inst::Discard { cond, .. } => scan_src(cond),
-            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
+            Sm4Inst::Else
+            | Sm4Inst::EndIf
+            | Sm4Inst::Loop
+            | Sm4Inst::EndLoop
+            | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst: _, src }
             | Sm4Inst::Itof { dst: _, src }
             | Sm4Inst::Utof { dst: _, src }
@@ -2811,7 +2819,11 @@ fn scan_resources(
             Sm4Inst::If { cond, .. } => scan_src(cond)?,
             Sm4Inst::Discard { cond, .. } => scan_src(cond)?,
             Sm4Inst::Clip { src } => scan_src(src)?,
-            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
+            Sm4Inst::Else
+            | Sm4Inst::EndIf
+            | Sm4Inst::Loop
+            | Sm4Inst::EndLoop
+            | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
             Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src(cond)?;
@@ -3273,7 +3285,11 @@ fn emit_temp_and_output_decls(
             Sm4Inst::Clip { src } => {
                 scan_src_regs(src, &mut scan_reg);
             }
-            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
+            Sm4Inst::Else
+            | Sm4Inst::EndIf
+            | Sm4Inst::Loop
+            | Sm4Inst::EndLoop
+            | Sm4Inst::Continue => {}
             Sm4Inst::Mov { dst, src } => {
                 scan_reg(dst.reg);
                 scan_src_regs(src, &mut scan_reg);
@@ -3818,13 +3834,33 @@ fn emit_instructions(
                 cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
             }
             Sm4Inst::Break => {
-                let Some(CfFrame::Case) = cf_stack.last() else {
-                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_case && !inside_loop {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
                         inst_index,
-                        opcode: "break".to_owned(),
+                        expected: "loop or switch case".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
                     });
-                };
+                }
                 w.line("break;");
+            }
+            Sm4Inst::Continue => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                w.line("continue;");
             }
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;

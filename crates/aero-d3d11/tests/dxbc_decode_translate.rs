@@ -1047,6 +1047,71 @@ fn decodes_and_translates_if_else_endif() {
 }
 
 #[test]
+fn decodes_and_translates_loop_with_break_and_continue() {
+    // Minimal ps_5_0 containing:
+    //   loop
+    //     if_nz v0.x
+    //       break
+    //     else
+    //       continue
+    //     endif
+    //   endloop
+    //   ret
+    let mut body = Vec::<u32>::new();
+
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    let cond = reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XXXX);
+    body.push(opcode_token_with_test(
+        OPCODE_IF,
+        1 + cond.len() as u32,
+        1, // non-zero
+    ));
+    body.extend_from_slice(&cond);
+
+    body.push(opcode_token(OPCODE_BREAK, 1));
+    body.push(opcode_token(OPCODE_ELSE, 1));
+    body.push(opcode_token(OPCODE_CONTINUE, 1));
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b0001)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Loop)),
+        "expected Loop instruction in decoded module: {:#?}",
+        module.instructions
+    );
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Continue)),
+        "expected Continue instruction in decoded module: {:#?}",
+        module.instructions
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("loop {"), "{}", translated.wgsl);
+    assert!(translated.wgsl.contains("break;"), "{}", translated.wgsl);
+    assert!(translated.wgsl.contains("continue;"), "{}", translated.wgsl);
+}
+
+#[test]
 fn decodes_and_translates_uaddc_shader_from_dxbc() {
     let mut body = Vec::<u32>::new();
 

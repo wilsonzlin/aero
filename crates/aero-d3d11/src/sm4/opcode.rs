@@ -120,6 +120,18 @@ pub const OPCODE_USHR: u32 = 0x73;
 
 /// `break` (structured break out of `loop`/`switch`).
 pub const OPCODE_BREAK: u32 = 0x2d;
+/// `loop` (begin structured loop).
+///
+/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_LOOP`.
+pub const OPCODE_LOOP: u32 = 0x2f;
+/// `endloop` (end structured loop).
+///
+/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_ENDLOOP`.
+pub const OPCODE_ENDLOOP: u32 = 0x30;
+/// `continue` (structured continue to the next loop iteration).
+///
+/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_CONTINUE`.
+pub const OPCODE_CONTINUE: u32 = 0x31;
 /// `switch` (structured switch statement).
 pub const OPCODE_SWITCH: u32 = 0x35;
 /// `case` (case label within a `switch`).
@@ -444,6 +456,9 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_IBFE => Some("ibfe"),
         OPCODE_CUSTOMDATA => Some("customdata"),
         OPCODE_BREAK => Some("break"),
+        OPCODE_LOOP => Some("loop"),
+        OPCODE_ENDLOOP => Some("endloop"),
+        OPCODE_CONTINUE => Some("continue"),
         OPCODE_SWITCH => Some("switch"),
         OPCODE_CASE => Some("case"),
         OPCODE_DEFAULT => Some("default"),

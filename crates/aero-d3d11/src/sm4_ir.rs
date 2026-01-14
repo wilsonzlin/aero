@@ -765,6 +765,8 @@ pub enum Sm4Inst {
     EndSwitch,
     /// Structured `break` instruction (break out of `loop`/`switch`).
     Break,
+    /// Structured `continue` instruction (continue the innermost `loop`).
+    Continue,
     /// `bufinfo` on a raw SRV buffer (e.g. `ByteAddressBuffer.GetDimensions`).
     ///
     /// Output packing:
