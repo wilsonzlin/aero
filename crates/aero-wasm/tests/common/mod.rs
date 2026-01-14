@@ -98,7 +98,7 @@ impl GuestRegion {
         let addr = self.abs(paddr, byte_len);
         // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region exists.
         unsafe {
-            core::slice::from_raw_parts_mut(addr as *mut u8, byte_len as usize).fill(value);
+            core::ptr::write_bytes(addr as *mut u8, value, byte_len as usize);
         }
     }
 

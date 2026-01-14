@@ -76,6 +76,10 @@ impl UsbDeviceModel for SimpleInDevice {
 #[wasm_bindgen_test]
 fn uhci_controller_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let mut ctrl = UhciControllerBridge::new(guest_base, guest_size).unwrap();
     // Enable PCI bus mastering so the bridge is allowed to DMA into the guest schedule.
@@ -107,10 +111,9 @@ fn uhci_controller_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
     ctrl.step_frame();
 
     assert!(ctrl.irq_asserted());
-    unsafe {
-        let bytes = core::slice::from_raw_parts((guest_base + 0x4000) as *const u8, 4);
-        assert_eq!(bytes, b"ABCD");
-    }
+    let mut got = [0u8; 4];
+    guest.read_into(0x4000, &mut got);
+    assert_eq!(&got, b"ABCD");
 
     let usbcmd = ctrl.io_read(REG_USBCMD, 2);
     let usbsts = ctrl.io_read(REG_USBSTS, 2);

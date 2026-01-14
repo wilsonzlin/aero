@@ -413,8 +413,10 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
 fn virtio_snd_pci_bridge_delivers_speaker_jack_event_queued_before_eventq_buffers_are_posted() {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let mut bridge =
         VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
@@ -486,13 +488,13 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_queued_before_eventq_buffer
     bridge.mmio_write(COMMON + 0x1c, 2, 1); // queue_enable
 
     // Post a single 8-byte writable event buffer (virtio-snd events are 8 bytes).
-    guest[buf as usize..buf as usize + 8].fill(0xAA);
-    write_desc(guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
-    write_u16(guest, avail, 0);
-    write_u16(guest, avail + 2, 1);
-    write_u16(guest, avail + 4, 0);
-    write_u16(guest, used, 0);
-    write_u16(guest, used + 2, 0);
+    guest.fill(buf, 8, 0xAA);
+    write_desc(&guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 1);
+    guest.write_u16(avail + 4, 0);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
 
     // Notify queue 1. notify_mult is 4 in `VirtioPciDevice`.
     let notify_off = bridge.mmio_read(COMMON + 0x1e, 2) as u32;
@@ -502,15 +504,17 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_queued_before_eventq_buffer
         u32::from(VIRTIO_SND_QUEUE_EVENT),
     );
 
-    assert_eq!(read_u16(guest, used + 2), 1);
-    assert_eq!(read_u32(guest, used + 8), 8);
+    assert_eq!(guest.read_u16(used + 2), 1);
+    assert_eq!(guest.read_u32(used + 8), 8);
     let expected_connected = {
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_CONNECTED.to_le_bytes());
         evt[4..8].copy_from_slice(&JACK_ID_SPEAKER.to_le_bytes());
         evt
     };
-    assert_eq!(&guest[buf as usize..buf as usize + 8], &expected_connected);
+    let mut got_evt = [0u8; 8];
+    guest.read_into(buf, &mut got_evt);
+    assert_eq!(&got_evt, &expected_connected);
 }
 
 #[wasm_bindgen_test]

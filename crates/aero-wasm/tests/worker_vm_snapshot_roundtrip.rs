@@ -122,11 +122,14 @@ fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
     let mut vm2 = WorkerVmSnapshot::new(dst_base, dst_size).expect("new WorkerVmSnapshot #2");
     let restored = vm2.restore_snapshot(&snapshot).expect("restore_snapshot");
 
-    unsafe {
-        let mem = core::slice::from_raw_parts(dst_base as *const u8, dst_size as usize);
-        for (i, b) in mem.iter().enumerate() {
-            assert_eq!(*b, pattern_byte(i), "RAM mismatch at offset {i}");
-        }
+    let guest = common::GuestRegion {
+        base: dst_base,
+        size: dst_size,
+    };
+    let mut buf = vec![0u8; dst_size as usize];
+    guest.read_into(0, &mut buf);
+    for (i, b) in buf.iter().enumerate() {
+        assert_eq!(*b, pattern_byte(i), "RAM mismatch at offset {i}");
     }
 
     let restored_cpu_val = Reflect::get(&restored, &JsValue::from_str("cpu")).unwrap();

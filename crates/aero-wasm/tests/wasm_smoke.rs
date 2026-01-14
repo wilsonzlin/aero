@@ -146,6 +146,10 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
     // Synthetic guest memory region: allocate outside the wasm heap to keep wasm-pack tests from
     // exhausting the bounded `runtime_alloc` heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x9000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let mut ctrl =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
@@ -199,13 +203,9 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
 
     ctrl.step_frames(1);
 
-    let out = unsafe {
-        core::slice::from_raw_parts(
-            guest_abs(guest_base, guest_size, 0x4000, 4) as *const u8,
-            4,
-        )
-    };
-    assert_eq!(out, b"ABCD");
+    let mut out = [0u8; 4];
+    guest.read_into(0x4000, &mut out);
+    assert_eq!(&out, b"ABCD");
     // Hardware should advance the QH element pointer as TDs complete.
     assert_eq!(
         read_u32_guest(guest_base, guest_size, 0x2004),
@@ -234,6 +234,10 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
     // Synthetic guest memory region: allocate outside the wasm heap to keep wasm-pack tests from
     // exhausting the bounded `runtime_alloc` heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x9000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
 
     let mut ctrl =
         UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
@@ -286,14 +290,11 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
         1,
         "expected FRNUM to advance even when PCI BME is clear"
     );
+    let mut buf = [0u8; 4];
+    guest.read_into(0x4000, &mut buf);
     assert_eq!(
-        unsafe {
-            core::slice::from_raw_parts(
-                guest_abs(guest_base, guest_size, 0x4000, 4) as *const u8,
-                4,
-            )
-        },
-        &[0xEE, 0xEE, 0xEE, 0xEE],
+        &buf,
+        &[0xEE; 4],
         "expected schedule DMA to be blocked without PCI BME"
     );
     assert_eq!(
@@ -314,13 +315,9 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
     // Once bus mastering is enabled, the schedule should execute and populate the buffer.
     ctrl.set_pci_command(PCI_COMMAND_BME);
     ctrl.step_frames(1);
+    guest.read_into(0x4000, &mut buf);
     assert_eq!(
-        unsafe {
-            core::slice::from_raw_parts(
-                guest_abs(guest_base, guest_size, 0x4000, 4) as *const u8,
-                4,
-            )
-        },
+        &buf,
         b"ABCD"
     );
 }
