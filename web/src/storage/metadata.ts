@@ -192,18 +192,33 @@ export function isLocalDisk(meta: DiskImageMetadata): meta is LocalDiskImageMeta
 export function upgradeDiskMetadata(record: unknown): DiskImageMetadata | undefined {
   if (!record || typeof record !== "object") return undefined;
   const r = record as Partial<DiskImageMetadata> & { source?: unknown };
+  // Treat persisted metadata as untrusted. Only accept discriminants from own properties so
+  // prototype pollution (e.g. `Object.prototype.source = "remote"`) cannot change how legacy
+  // records are interpreted.
+  const source = hasOwnProp(r, "source") ? r.source : undefined;
 
-  if (r.source === "remote") {
+  if (source === "remote") {
     const remote = r as RemoteDiskImageMetadata;
     // Backfill default remote cache limit for older metadata that predated `cacheLimitBytes`.
     // `undefined` means "use default limit".
     const cache = (remote as Partial<RemoteDiskImageMetadata>).cache as RemoteDiskImageMetadata["cache"] | undefined;
-    if (cache && (cache as { cacheLimitBytes?: unknown }).cacheLimitBytes === undefined) {
-      cache.cacheLimitBytes = DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES;
+    if (
+      cache &&
+      // Ignore inherited values (prototype pollution); `cacheLimitBytes` must be an own property.
+      (!hasOwnProp(cache, "cacheLimitBytes") || (cache as { cacheLimitBytes?: unknown }).cacheLimitBytes === undefined)
+    ) {
+      // Use `defineProperty` so we can override non-writable inherited properties (e.g. if the
+      // global prototype is polluted with a read-only `cacheLimitBytes`).
+      Object.defineProperty(cache, "cacheLimitBytes", {
+        value: DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     return remote;
   }
-  if (r.source === "local") return r as LocalDiskImageMetadata;
+  if (source === "local") return r as LocalDiskImageMetadata;
 
   // v1 records had no `source` field. Treat them as local disks.
   const maybeV1 = record as Partial<DiskImageMetadataV1>;
@@ -226,7 +241,7 @@ export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerS
 
   if (!parsed || typeof parsed !== "object") return { state: emptyState(), migrated: false };
   const raw = parsed as Partial<DiskManagerStateV1 & DiskManagerState>;
-  const version = raw.version;
+  const version = hasOwnProp(raw, "version") ? raw.version : undefined;
 
   if (version !== 1 && version !== METADATA_VERSION) return { state: emptyState(), migrated: false };
 
@@ -235,10 +250,10 @@ export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerS
   const out: DiskManagerState = {
     version: METADATA_VERSION,
     disks: {},
-    mounts: normalizeMountConfig(raw.mounts),
+    mounts: normalizeMountConfig(hasOwnProp(raw, "mounts") ? raw.mounts : undefined),
   };
 
-  const disks = raw.disks;
+  const disks = hasOwnProp(raw, "disks") ? raw.disks : undefined;
   if (disks && typeof disks === "object") {
     for (const [key, value] of Object.entries(disks as Record<string, unknown>)) {
       // v2 -> v2+backfill: older remote disk records may be missing `cache.cacheLimitBytes`.
@@ -246,8 +261,12 @@ export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerS
       // rewritten with explicit defaults.
       if (!migrated && value && typeof value === "object") {
         const maybe = value as { source?: unknown; cache?: unknown };
-        if (maybe.source === "remote" && maybe.cache && typeof maybe.cache === "object") {
-          if (!("cacheLimitBytes" in (maybe.cache as object))) {
+        const source = hasOwnProp(maybe, "source") ? maybe.source : undefined;
+        const cache = hasOwnProp(maybe, "cache") ? maybe.cache : undefined;
+        if (source === "remote" && cache && typeof cache === "object") {
+          // Ignore inherited values (prototype pollution). We want to rewrite metadata when
+          // `cacheLimitBytes` is missing as an own property so the on-disk JSON is self-contained.
+          if (!hasOwnProp(cache, "cacheLimitBytes")) {
             migrated = true;
           }
         }

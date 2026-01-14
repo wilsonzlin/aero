@@ -99,6 +99,23 @@ describe("disk metadata schema migration", () => {
     expect(upgraded).toMatchObject({ id: "d2", backend: "idb", fileName: "d2.img" });
   });
 
+  it("ignores inherited source discriminants when upgrading disk metadata", () => {
+    const proto = { source: "remote" };
+    const v1Disk = Object.create(proto) as any;
+    v1Disk.id = "d2";
+    v1Disk.name = "disk2.img";
+    v1Disk.backend = "idb";
+    v1Disk.kind = "hdd";
+    v1Disk.format = "raw";
+    v1Disk.fileName = "d2.img";
+    v1Disk.sizeBytes = 2048;
+    v1Disk.createdAtMs = 123;
+ 
+    const upgraded = upgradeDiskMetadata(v1Disk);
+    expect(upgraded).toBeDefined();
+    expect(upgraded!.source).toBe("local");
+  });
+
   it("backfills remote disk cacheLimitBytes default when missing", () => {
     const legacyRemote = {
       source: "remote",
@@ -127,6 +144,39 @@ describe("disk metadata schema migration", () => {
     expect(upgraded?.source).toBe("remote");
     if (upgraded?.source !== "remote") throw new Error("expected remote disk");
     expect(upgraded.cache.cacheLimitBytes).toBe(DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES);
+  });
+
+  it("backfills remote disk cacheLimitBytes when inherited via prototype pollution", () => {
+    const protoCache = { cacheLimitBytes: 123 };
+    const cache = Object.create(protoCache) as any;
+    cache.chunkSizeBytes = 1024;
+    cache.backend = "opfs";
+    cache.fileName = "cache.aerospar";
+    cache.overlayFileName = "overlay.aerospar";
+    cache.overlayBlockSizeBytes = 1024;
+
+    const legacyRemote = {
+      source: "remote",
+      id: "r1",
+      name: "Remote",
+      kind: "cd",
+      format: "iso",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+      remote: {
+        imageId: "img1",
+        version: "v1",
+        delivery: "range",
+        urls: { url: "https://example.invalid/disk.iso" },
+      },
+      cache,
+    };
+
+    const upgraded = upgradeDiskMetadata(legacyRemote);
+    expect(upgraded?.source).toBe("remote");
+    if (upgraded?.source !== "remote") throw new Error("expected remote disk");
+    expect(upgraded.cache.cacheLimitBytes).toBe(DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES);
+    expect(Object.prototype.hasOwnProperty.call(upgraded.cache, "cacheLimitBytes")).toBe(true);
   });
 
   it("backfills remote disk cacheLimitBytes in OPFS metadata.json and marks migrated", () => {
@@ -165,6 +215,57 @@ describe("disk metadata schema migration", () => {
     expect(meta?.source).toBe("remote");
     if (meta?.source !== "remote") throw new Error("expected remote disk");
     expect(meta.cache.cacheLimitBytes).toBe(DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES);
+  });
+
+  it("backfills remote disk cacheLimitBytes even when Object.prototype is polluted", () => {
+    const legacyRemote = {
+      source: "remote",
+      id: "r1",
+      name: "Remote",
+      kind: "cd",
+      format: "iso",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+      remote: {
+        imageId: "img1",
+        version: "v1",
+        delivery: "range",
+        urls: { url: "https://example.invalid/disk.iso" },
+      },
+      cache: {
+        chunkSizeBytes: 1024,
+        backend: "opfs",
+        fileName: "cache.aerospar",
+        overlayFileName: "overlay.aerospar",
+        overlayBlockSizeBytes: 1024,
+      },
+    };
+
+    const v2 = {
+      version: METADATA_VERSION,
+      disks: { r1: legacyRemote },
+      mounts: {},
+    };
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "cacheLimitBytes");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "cacheLimitBytes", { value: 123, configurable: true });
+      const { state, migrated } = upgradeDiskManagerStateJson(JSON.stringify(v2));
+      expect(migrated).toBe(true);
+      const meta = state.disks.r1;
+      expect(meta?.source).toBe("remote");
+      if (meta?.source !== "remote") throw new Error("expected remote disk");
+      expect(meta.cache.cacheLimitBytes).toBe(DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES);
+      expect(Object.prototype.hasOwnProperty.call(meta.cache, "cacheLimitBytes")).toBe(true);
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "cacheLimitBytes", existing);
+      else delete (Object.prototype as any).cacheLimitBytes;
+    }
   });
 
   it("upgrades existing IndexedDB records when opening the DiskManager DB", async () => {
