@@ -142,6 +142,12 @@ Minimum supported commands:
   - `B5G6R5_UNORM`
   - `B5G5R5A1_UNORM`
 
+  Format semantics:
+  - `*X8*` formats do not carry alpha. When converting to RGBA for BMP/PNG output,
+    dbgctl treats the unused "X" byte as fully opaque (`A=0xFF`).
+  - `*_SRGB` variants have identical byte layout to their UNORM counterparts; dbgctl
+    does not apply any sRGB↔linear conversion when dumping (bytes are copied as-is).
+
 - `aerogpu_dbgctl --dump-scanout-png C:\scanout.png`  
   Same as `--dump-scanout-bmp`, but writes a PNG (RGBA8). The encoder uses stored (uncompressed) deflate blocks for simplicity,
   so the PNG may be slightly larger than the BMP.

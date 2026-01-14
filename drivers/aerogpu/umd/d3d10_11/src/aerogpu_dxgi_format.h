@@ -154,6 +154,9 @@ inline bool SupportsSrgbFormats(const T* dev_or_adapter) {
   // ABI 1.2 adds explicit sRGB format variants. When running against an older
   // host/device ABI, map sRGB DXGI formats to UNORM equivalents so the command
   // stream stays compatible.
+  //
+  // Note: sRGB variants are byte-layout-identical to their UNORM counterparts;
+  // only the color space interpretation differs.
   const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
   if (!adapter || !adapter->umd_private_valid) {
     return false;
