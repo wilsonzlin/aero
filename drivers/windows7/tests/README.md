@@ -230,8 +230,9 @@ Note:
   - For stock QEMU transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`), also pass `--allow-virtio-snd-transitional` and
     install the legacy virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
-  `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
-  detection is performed). Use `--disable-snd-capture` to skip capture-only checks while still exercising playback.
+  `--require-snd-capture` is set. Use `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`) to run
+  the capture smoke test (otherwise only endpoint detection is performed). Use `--disable-snd-capture` to skip
+  capture-only checks while still exercising playback.
   - When capture is enabled, the selftest also emits a `virtio-snd-format` INFO marker reporting the render + capture
     shared-mode mix formats (useful when running against non-contract virtio-snd devices that negotiate optional
     formats/rates).

@@ -826,11 +826,12 @@ $readmeVirtioInputCompatNotes
     - To skip capture-only checks (while still exercising playback), generate this media with `-DisableSndCapture` (adds `--disable-snd-capture`).
       Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd-capture to PASS (not SKIP).
    - To run the virtio-snd capture smoke test (and enable the full-duplex regression test):
-     - Newer `aero-virtio-selftest.exe` binaries run capture/duplex automatically whenever virtio-snd is present.
-     - For older selftest binaries, generate this media with `-TestSndCapture` (adds `--test-snd-capture`). This script also
-       defaults `-TestSndCapture` on when virtio-snd is being required/tested, unless capture is explicitly disabled.
-       - Use `-RequireSndCapture` to fail if no capture endpoint exists.
-       - Use `-RequireNonSilence` to fail if only silence is captured.
+      - Newer `aero-virtio-selftest.exe` binaries run capture/duplex automatically whenever virtio-snd is present.
+      - For older selftest binaries, generate this media with `-TestSndCapture` (adds `--test-snd-capture`; env var equivalent:
+        `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`). This script also
+        defaults `-TestSndCapture` on when virtio-snd is being required/tested, unless capture is explicitly disabled.
+        - Use `-RequireSndCapture` to fail if no capture endpoint exists.
+        - Use `-RequireNonSilence` to fail if only silence is captured.
    - To run the virtio-snd buffer limits stress test (required when running the host harness with
       `-WithSndBufferLimits` / `--with-snd-buffer-limits`), generate this media with `-TestSndBufferLimits`
       (adds `--test-snd-buffer-limits` to the scheduled task; env var equivalent: `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`).
