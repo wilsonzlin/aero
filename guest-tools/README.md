@@ -116,7 +116,7 @@ Designed for the standard flow:
 - `C:\AeroGuestTools\install.log`
 - `C:\AeroGuestTools\installed-driver-packages.txt` (for best-effort uninstall)
 - `C:\AeroGuestTools\installed-certs.txt` (for best-effort uninstall)
-- `C:\AeroGuestTools\installed-media.txt` (records which Guest Tools ISO/zip build ran `setup.cmd`; used by `verify.ps1` to detect “mixed media” issues)
+- `C:\AeroGuestTools\installed-media.txt` (records which Guest Tools ISO/zip build ran `setup.cmd`; used by `setup.cmd`, `uninstall.cmd`, and `verify.ps1` to detect installed-vs-current “mixed media” issues)
 - `C:\AeroGuestTools\storage-preseed.skipped.txt` (only when `/skipstorage` is used)
 
 ### Usage
@@ -185,6 +185,8 @@ Optional flags:
   If any file is missing or has a SHA-256 mismatch, setup exits with code `14` and prints remediation guidance:
   "replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions".
   Tip: combine with validation-only mode to avoid installation side effects: `setup.cmd /check /verify-media`.
+  
+  Note: `/verify-media` runs before the Administrator/elevation check. You can use it to validate the ISO/zip contents before elevating, but installation still requires Administrator (unless combined with `/check`).
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  
