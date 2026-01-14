@@ -33,7 +33,7 @@ pub trait UsbHub {
     /// Returns a mutable reference to a reachable downstream device with the given USB address.
     ///
     /// Implementations should only consider devices behind ports that are connected and enabled
-    /// (and powered, if modelled).
+    /// (and powered, if modelled), and should treat suspended ports as unreachable until resumed.
     fn downstream_device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice>;
 
     /// Returns the device currently attached to `port`, if any.
