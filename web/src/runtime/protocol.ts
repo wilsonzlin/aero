@@ -66,7 +66,14 @@ export type WorkerInitMessage = {
    * This typically equals `vram.byteLength` when `vram` is present.
    */
   vramSizeBytes?: number;
-  vgaFramebuffer: SharedArrayBuffer;
+  /**
+   * Legacy VGA/demo framebuffer SharedArrayBuffer.
+   *
+   * Deprecated: legacy scanout now uses `sharedFramebuffer` (and the unified `ScanoutState`),
+   * so most callers should omit this. Retained as an optional field for back-compat with
+   * older harnesses that still plumb a dedicated VGA framebuffer buffer.
+   */
+  vgaFramebuffer?: SharedArrayBuffer;
   /**
    * Shared scanout descriptor used to select which framebuffer is currently presented.
    *
