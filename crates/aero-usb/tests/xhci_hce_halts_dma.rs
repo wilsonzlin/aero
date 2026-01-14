@@ -113,6 +113,14 @@ fn xhci_tick_1ms_with_dma_does_not_dma_after_host_controller_error_even_with_run
     xhci.mmio_write(regs::REG_CRCR_HI, 4, crcr_addr >> 32);
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
+    // Sanity check: without HCE, tick-driven DMA should touch guest memory.
+    mem.reset_counts();
+    xhci.tick_1ms_with_dma(&mut mem);
+    assert!(
+        mem.reads > 0 || mem.writes > 0,
+        "expected tick-driven DMA before HCE is latched"
+    );
+
     force_hce(&mut xhci, &mut mem);
 
     // With HCE latched, even `tick_1ms_with_dma` must not touch guest memory (DMA-on-RUN probe +
@@ -188,6 +196,15 @@ fn xhci_tick_does_not_dma_after_host_controller_error_even_with_active_endpoint(
         .expect("missing active endpoints field");
     let count = u32::from_le_bytes(active[0..4].try_into().unwrap());
     assert_eq!(count, 1, "expected one queued active endpoint");
+
+    // Sanity check: with RUN set and without HCE, the transfer tick should DMA-read the queued TRB
+    // (even though the device NAKs the transfer, so the endpoint remains active).
+    mem.reset_counts();
+    xhci.tick(&mut mem);
+    assert!(
+        mem.reads > 0 || mem.writes > 0,
+        "expected transfer-ring DMA before HCE is latched"
+    );
 
     force_hce(&mut xhci, &mut mem);
 
