@@ -3,7 +3,8 @@ use std::sync::Arc;
 use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_shared::scanout_state::{
-    ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_VBE_LFB,
+    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_VBE_LFB,
+    SCANOUT_SOURCE_WDDM,
 };
 use pretty_assertions::assert_eq;
 
@@ -74,3 +75,42 @@ fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb() {
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 }
 
+#[test]
+fn boot_sector_int10_vbe_does_not_override_wddm_scanout_state() {
+    let boot = build_int10_vbe_set_mode_boot_sector();
+
+    let scanout_state = Arc::new(ScanoutState::new());
+
+    let mut m = Machine::new(MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        // Keep the test output deterministic.
+        enable_serial: false,
+        enable_i8042: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    m.set_scanout_state(Some(scanout_state.clone()));
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    // Simulate WDDM claiming scanout after the machine has reset.
+    scanout_state.publish(ScanoutStateUpdate {
+        source: SCANOUT_SOURCE_WDDM,
+        base_paddr_lo: 0x1234,
+        base_paddr_hi: 0,
+        width: 800,
+        height: 600,
+        pitch_bytes: 800 * 4,
+        format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+    let generation_before = scanout_state.snapshot().generation;
+
+    run_until_halt(&mut m);
+
+    // INT 10h legacy mode sets must not steal scanout after WDDM has taken ownership.
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.generation, generation_before);
+}

@@ -11,7 +11,7 @@ fn enable_aerogpu_requires_enable_pc_platform() {
 
     assert!(matches!(
         Machine::new(cfg),
-        Err(MachineError::AerogpuRequiresPcPlatform)
+        Err(MachineError::AeroGpuRequiresPcPlatform)
     ));
 }
 
@@ -26,6 +26,6 @@ fn enable_aerogpu_conflicts_with_enable_vga() {
 
     assert!(matches!(
         Machine::new(cfg),
-        Err(MachineError::AerogpuConflictsWithVga)
+        Err(MachineError::AeroGpuConflictsWithVga)
     ));
 }

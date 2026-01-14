@@ -490,10 +490,9 @@ pub enum MachineError {
     VirtioBlkRequiresPcPlatform,
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
+    AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
-    AerogpuRequiresPcPlatform,
-    AerogpuConflictsWithVga,
     MultipleNicsEnabled,
 }
 
@@ -533,20 +532,17 @@ impl fmt::Display for MachineError {
             MachineError::UhciRequiresPcPlatform => {
                 write!(f, "enable_uhci requires enable_pc_platform=true")
             }
+            MachineError::AeroGpuConflictsWithVga => {
+                write!(
+                    f,
+                    "cannot enable both enable_aerogpu and enable_vga (choose exactly one GPU device)"
+                )
+            }
             MachineError::E1000RequiresPcPlatform => {
                 write!(f, "enable_e1000 requires enable_pc_platform=true")
             }
             MachineError::VirtioNetRequiresPcPlatform => {
                 write!(f, "enable_virtio_net requires enable_pc_platform=true")
-            }
-            MachineError::AerogpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
-            }
-            MachineError::AerogpuConflictsWithVga => {
-                write!(
-                    f,
-                    "cannot enable both enable_aerogpu and enable_vga (choose exactly one GPU device)"
-                )
             }
             MachineError::MultipleNicsEnabled => write!(
                 f,
@@ -2996,10 +2992,10 @@ impl Machine {
         }
         if cfg.enable_aerogpu {
             if !cfg.enable_pc_platform {
-                return Err(MachineError::AerogpuRequiresPcPlatform);
+                return Err(MachineError::AeroGpuRequiresPcPlatform);
             }
             if cfg.enable_vga {
-                return Err(MachineError::AerogpuConflictsWithVga);
+                return Err(MachineError::AeroGpuConflictsWithVga);
             }
         }
         if (cfg.enable_ahci || cfg.enable_nvme || cfg.enable_ide || cfg.enable_virtio_blk)
