@@ -696,7 +696,8 @@ Notes:
 
 - `AEROGPU_TOPOLOGY_TRIANGLEFAN` remains for the D3D9 path; D3D11 does not emit triangle fans.
 - Adjacency/patch topologies require the compute-expansion pipeline (GS/HS/DS emulation). Until
-   that is implemented, the direct render path rejects these topologies at draw time.
+  that is implemented, the runtime MUST reject draws using these topologies deterministically
+  (rendering “something” with the wrong topology is not acceptable because it silently misrenders).
 
 ### 2) Compute-expansion runtime pipeline
 
@@ -710,7 +711,8 @@ A draw uses compute expansion when **any** of the following are true:
 In the fully-general design, adjacency and patchlist topologies also route through this path even
 if GS/HS/DS are unbound (so the runtime can surface deterministic validation/errors and implement
 fixed-function tessellation semantics). Today, adjacency and patchlist topologies are accepted by
-`SET_PRIMITIVE_TOPOLOGY` but rejected at draw time until the emulation kernels land.
+`SET_PRIMITIVE_TOPOLOGY` but SHOULD be rejected at draw time until the adjacency/patch emulation
+kernels land.
 
 Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).
 
