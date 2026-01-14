@@ -106,6 +106,14 @@ fn aerogpu_snapshot_preserves_pending_cursor_fb_gpa_lo_until_hi_commit() {
         "LO register readback should reflect the pending write"
     );
 
+    // Cursor base should remain stable until the HI write commits.
+    vm.display_present();
+    assert_eq!(
+        vm.display_framebuffer(),
+        &[0xFFFF_0000],
+        "cursor should keep using the committed base until the HI write commits"
+    );
+
     let snap = vm.take_snapshot_full().unwrap();
 
     let mut restored = Machine::new(cfg).unwrap();
@@ -124,6 +132,13 @@ fn aerogpu_snapshot_preserves_pending_cursor_fb_gpa_lo_until_hi_commit() {
         restored.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO)),
         cursor_b as u32,
         "pending LO write should survive snapshot restore so a subsequent HI write commits correctly"
+    );
+
+    restored.display_present();
+    assert_eq!(
+        restored.display_framebuffer(),
+        &[0xFFFF_0000],
+        "after restore, cursor should still use the committed base until the HI write commits"
     );
 
     // Commit the update with the HI write. If snapshot restore drops the pending LO value, this
