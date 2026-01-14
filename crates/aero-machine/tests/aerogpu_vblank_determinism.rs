@@ -1,19 +1,6 @@
-use aero_devices::pci::PciBdf;
 use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use pretty_assertions::assert_eq;
-
-fn aerogpu_bar0_base(m: &Machine) -> u64 {
-    let pci_cfg = m
-        .pci_config_ports()
-        .expect("pc platform must be enabled for AeroGPU");
-    let mut pci_cfg = pci_cfg.borrow_mut();
-    let bus = pci_cfg.bus_mut();
-
-    let bdf = PciBdf::new(0, 0x07, 0);
-    let bar0 = bus.read_config(bdf, 0x10, 4);
-    u64::from(bar0 & 0xFFFF_FFF0)
-}
 
 fn read_u32(m: &mut Machine, bar0: u64, reg: u32) -> u32 {
     m.read_physical_u32(bar0 + u64::from(reg))
@@ -46,11 +33,9 @@ fn aerogpu_vblank_is_deterministic_and_survives_snapshot_restore() {
     };
 
     let mut m = Machine::new(cfg.clone()).unwrap();
-    let bar0 = aerogpu_bar0_base(&m);
-    assert_ne!(
-        bar0, 0,
-        "AeroGPU BAR0 should be assigned during PCI BIOS POST"
-    );
+    let bar0 = m
+        .aerogpu_bar0_base()
+        .expect("AeroGPU BAR0 should be assigned during PCI BIOS POST");
 
     let period_ns = read_u32(
         &mut m,
