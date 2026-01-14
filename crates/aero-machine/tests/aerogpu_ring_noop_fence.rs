@@ -187,4 +187,68 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
         !interrupts.borrow().gsi_level(gsi),
         "expected AeroGPU INTx to deassert after IRQ_ACK"
     );
+
+    // ---------------------------------------------------------------------
+    // RING_CONTROL.RESET semantics: head := tail, completed fence cleared, IRQ cleared.
+    // ---------------------------------------------------------------------
+
+    // Program a second submission in slot 1 and ring the doorbell (do not ACK the IRQ yet).
+    let desc1_gpa = desc_gpa + u64::from(entry_stride_bytes);
+    let signal_fence2 = signal_fence.wrapping_add(1);
+
+    m.write_physical_u32(desc1_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc1_gpa + 4, 0); // flags
+    m.write_physical_u32(desc1_gpa + 8, 0); // context_id
+    m.write_physical_u32(desc1_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
+    m.write_physical_u64(desc1_gpa + 16, cmd_gpa);
+    m.write_physical_u32(desc1_gpa + 24, 4); // cmd_size_bytes
+    m.write_physical_u32(desc1_gpa + 28, 0);
+    m.write_physical_u64(desc1_gpa + 32, 0); // alloc_table_gpa
+    m.write_physical_u32(desc1_gpa + 40, 0); // alloc_table_size_bytes
+    m.write_physical_u32(desc1_gpa + 44, 0);
+    m.write_physical_u64(desc1_gpa + 48, signal_fence2);
+    m.write_physical_u64(desc1_gpa + 56, 0);
+
+    // Advance the ring tail to include the new submission.
+    m.write_physical_u32(ring_gpa + 28, 2); // tail
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+    m.poll_pci_intx_lines();
+
+    let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
+    assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, pci::AEROGPU_IRQ_FENCE);
+    assert!(
+        interrupts.borrow().gsi_level(gsi),
+        "expected AeroGPU INTx to assert again after second fence completion"
+    );
+
+    // Create an out-of-sync ring state (head != tail) and then reset it.
+    m.write_physical_u32(ring_gpa + 28, 5); // tail
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
+        pci::AEROGPU_RING_CONTROL_RESET,
+    );
+    m.process_aerogpu();
+    m.poll_pci_intx_lines();
+
+    // Reset sets head := tail.
+    assert_eq!(m.read_physical_u32(ring_gpa + 24), 5);
+
+    // Completed fence reset to 0 (MMIO + fence page).
+    let completed_fence = (u64::from(
+        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
+    ) << 32)
+        | u64::from(m.read_physical_u32(
+            bar0 + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO),
+        ));
+    assert_eq!(completed_fence, 0);
+    assert_eq!(m.read_physical_u64(fence_gpa + 8), 0);
+
+    // Reset clears IRQ status and deasserts the line even without an explicit IRQ_ACK.
+    let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
+    assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
+    assert!(
+        !interrupts.borrow().gsi_level(gsi),
+        "expected AeroGPU INTx to deassert after ring reset"
+    );
 }

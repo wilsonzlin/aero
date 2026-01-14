@@ -1229,36 +1229,6 @@ impl PciDevice for NvmePciConfigDevice {
     }
 }
 
-struct AeroGpuPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AeroGpuPciConfigDevice {
-    fn new() -> Self {
-        let cfg = aero_devices::pci::profile::AEROGPU.build_config_space();
-        // Guardrail: AeroGPU BAR0 is defined as a 64KiB MMIO window in the canonical profile.
-        debug_assert_eq!(
-            cfg.bar_definition(0),
-            Some(PciBarDefinition::Mmio32 {
-                size: 64 * 1024,
-                prefetchable: false,
-            }),
-            "unexpected AeroGPU BAR0 definition (expected 64KiB MMIO32)"
-        );
-        Self { cfg }
-    }
-}
-
-impl PciDevice for AeroGpuPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
 struct E1000PciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -5324,13 +5294,6 @@ impl Machine {
                     .borrow_mut()
                     .bus_mut()
                     .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
-            }
-            if self.cfg.enable_aerogpu {
-                // Canonical AeroGPU PCI identity (config-space only stub for now).
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    aero_devices::pci::profile::AEROGPU.bdf,
-                    Box::new(AeroGpuPciConfigDevice::new()),
-                );
             }
 
             // PCI INTx router.
