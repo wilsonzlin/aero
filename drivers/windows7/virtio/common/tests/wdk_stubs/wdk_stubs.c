@@ -44,6 +44,27 @@ static ULONG g_test_auto_complete_dpc_inflight_after_delay_calls = 0;
 static WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK g_test_ke_insert_queue_dpc_hook = NULL;
 static PVOID g_test_ke_insert_queue_dpc_hook_ctx = NULL;
 
+/*
+ * Controllable HalGetBusDataByOffset(PCIConfiguration) stub state.
+ *
+ * virtio_pci_contract.c reads the first 0x30 bytes of PCI config space and
+ * expects HalGetBusDataByOffset() to return the requested length on success.
+ */
+typedef struct _WDK_TEST_PCI_CFG_ENTRY {
+    BOOLEAN InUse;
+    ULONG BusNumber;
+    ULONG SlotNumber;
+    UCHAR Cfg[256];
+    ULONG CfgLen;
+    ULONG BytesRead;
+} WDK_TEST_PCI_CFG_ENTRY;
+
+enum {
+    WDK_TEST_PCI_CFG_MAX_ENTRIES = 8,
+};
+
+static WDK_TEST_PCI_CFG_ENTRY g_test_pci_cfg_entries[WDK_TEST_PCI_CFG_MAX_ENTRIES];
+
 VOID WdkSetMmioHandlers(_In_opt_ WDK_MMIO_READ_HANDLER ReadHandler, _In_opt_ WDK_MMIO_WRITE_HANDLER WriteHandler)
 {
     g_mmio_read_handler = ReadHandler;
@@ -433,9 +454,230 @@ ULONGLONG KeQueryInterruptTime(VOID)
     return g_interrupt_time_100ns;
 }
 
+VOID WdkTestPciReset(VOID)
+{
+    memset(g_test_pci_cfg_entries, 0, sizeof(g_test_pci_cfg_entries));
+}
+
+VOID WdkTestPciSetSlotConfig(_In_ ULONG BusNumber,
+                             _In_ ULONG SlotNumber,
+                             _In_reads_bytes_(CfgLen) const VOID* Cfg,
+                             _In_ ULONG CfgLen,
+                             _In_ ULONG BytesRead)
+{
+    size_t i;
+    WDK_TEST_PCI_CFG_ENTRY* slot = NULL;
+    ULONG copy_len;
+
+    if (Cfg == NULL || CfgLen == 0) {
+        return;
+    }
+
+    /* Update existing entry if present. */
+    for (i = 0; i < (size_t)WDK_TEST_PCI_CFG_MAX_ENTRIES; i++) {
+        if (g_test_pci_cfg_entries[i].InUse != FALSE && g_test_pci_cfg_entries[i].BusNumber == BusNumber &&
+            g_test_pci_cfg_entries[i].SlotNumber == SlotNumber) {
+            slot = &g_test_pci_cfg_entries[i];
+            break;
+        }
+    }
+
+    /* Otherwise allocate a new entry. */
+    if (slot == NULL) {
+        for (i = 0; i < (size_t)WDK_TEST_PCI_CFG_MAX_ENTRIES; i++) {
+            if (g_test_pci_cfg_entries[i].InUse == FALSE) {
+                slot = &g_test_pci_cfg_entries[i];
+                break;
+            }
+        }
+    }
+
+    if (slot == NULL) {
+        /* Test suite exceeded stub capacity. */
+        abort();
+    }
+
+    memset(slot, 0, sizeof(*slot));
+    slot->InUse = TRUE;
+    slot->BusNumber = BusNumber;
+    slot->SlotNumber = SlotNumber;
+
+    copy_len = CfgLen;
+    if (copy_len > (ULONG)sizeof(slot->Cfg)) {
+        copy_len = (ULONG)sizeof(slot->Cfg);
+    }
+
+    memcpy(slot->Cfg, Cfg, copy_len);
+    slot->CfgLen = copy_len;
+    slot->BytesRead = BytesRead;
+}
+
+ULONG HalGetBusDataByOffset(BUS_DATA_TYPE BusDataType,
+                            ULONG BusNumber,
+                            ULONG SlotNumber,
+                            PVOID Buffer,
+                            ULONG Offset,
+                            ULONG Length)
+{
+    size_t i;
+    WDK_TEST_PCI_CFG_ENTRY* slot = NULL;
+    ULONG available;
+    ULONG bytes_to_copy;
+
+    (void)BusDataType;
+
+    if (Buffer == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i < (size_t)WDK_TEST_PCI_CFG_MAX_ENTRIES; i++) {
+        if (g_test_pci_cfg_entries[i].InUse != FALSE && g_test_pci_cfg_entries[i].BusNumber == BusNumber &&
+            g_test_pci_cfg_entries[i].SlotNumber == SlotNumber) {
+            slot = &g_test_pci_cfg_entries[i];
+            break;
+        }
+    }
+
+    if (slot == NULL) {
+        return 0;
+    }
+
+    if (Offset >= slot->CfgLen) {
+        return 0;
+    }
+
+    available = slot->CfgLen - Offset;
+    bytes_to_copy = slot->BytesRead;
+    if (bytes_to_copy > Length) {
+        bytes_to_copy = Length;
+    }
+    if (bytes_to_copy > available) {
+        bytes_to_copy = available;
+    }
+
+    memcpy(Buffer, slot->Cfg + Offset, bytes_to_copy);
+    return bytes_to_copy;
+}
+
+NTSTATUS IoGetDeviceProperty(PDEVICE_OBJECT DeviceObject,
+                             DEVICE_REGISTRY_PROPERTY DeviceProperty,
+                             ULONG BufferLength,
+                             PVOID PropertyBuffer,
+                             ULONG* ResultLength)
+{
+    ULONG v;
+    ULONG len;
+    NTSTATUS st;
+
+    if (DeviceObject == NULL || ResultLength == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    v = 0;
+    len = (ULONG)sizeof(ULONG);
+    st = STATUS_SUCCESS;
+
+    switch (DeviceProperty) {
+    case DevicePropertyBusNumber:
+        v = DeviceObject->BusNumber;
+        st = DeviceObject->BusNumberStatus;
+        if (DeviceObject->BusNumberResultLength != 0) {
+            len = DeviceObject->BusNumberResultLength;
+        }
+        break;
+    case DevicePropertyAddress:
+        v = DeviceObject->Address;
+        st = DeviceObject->AddressStatus;
+        if (DeviceObject->AddressResultLength != 0) {
+            len = DeviceObject->AddressResultLength;
+        }
+        break;
+    default:
+        *ResultLength = 0;
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    *ResultLength = len;
+
+    if (!NT_SUCCESS(st)) {
+        return st;
+    }
+
+    if (PropertyBuffer == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (BufferLength < len) {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    /* Only the ULONG-sized bus/address values are modeled by this stub. */
+    {
+        ULONG copy_len;
+        copy_len = len;
+        if (copy_len > (ULONG)sizeof(v)) {
+            copy_len = (ULONG)sizeof(v);
+        }
+        memcpy(PropertyBuffer, &v, copy_len);
+    }
+    return STATUS_SUCCESS;
+}
+
+static char* WdkDbgPrintExSanitizeFormatString(const char* Format)
+{
+    const char* needle = "%!STATUS!";
+    const char* repl = "0x%08x";
+    const char* p;
+    size_t count;
+    size_t needle_len;
+    size_t repl_len;
+    size_t new_len;
+    char* out;
+    char* w;
+
+    if (Format == NULL) {
+        return NULL;
+    }
+
+    needle_len = strlen(needle);
+    repl_len = strlen(repl);
+
+    count = 0;
+    p = Format;
+    while ((p = strstr(p, needle)) != NULL) {
+        count++;
+        p += needle_len;
+    }
+
+    if (count == 0) {
+        return NULL;
+    }
+
+    new_len = strlen(Format) + count * (repl_len - needle_len) + 1;
+    out = (char*)malloc(new_len);
+    if (out == NULL) {
+        return NULL;
+    }
+
+    w = out;
+    p = Format;
+    while (*p != '\0') {
+        if (strncmp(p, needle, needle_len) == 0) {
+            memcpy(w, repl, repl_len);
+            w += repl_len;
+            p += needle_len;
+        } else {
+            *w++ = *p++;
+        }
+    }
+    *w = '\0';
+    return out;
+}
+
 ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Format, ...)
 {
     va_list ap;
+    char* sanitized_fmt;
 
     (void)ComponentId;
     (void)Level;
@@ -447,8 +689,19 @@ ULONG DbgPrintEx(_In_ ULONG ComponentId, _In_ ULONG Level, _In_ const char* Form
     /* Keep output available when running tests with --output-on-failure. */
     g_dbg_print_ex_count++;
     va_start(ap, Format);
-    (void)vfprintf(stderr, Format, ap);
+    sanitized_fmt = NULL;
+    if (strstr(Format, "%!STATUS!") != NULL) {
+        sanitized_fmt = WdkDbgPrintExSanitizeFormatString(Format);
+        if (sanitized_fmt == NULL) {
+            /* Unknown / WDK-specific format string: avoid UB in vfprintf. */
+            (void)fputs(Format, stderr);
+            va_end(ap);
+            return 0;
+        }
+    }
+    (void)vfprintf(stderr, sanitized_fmt != NULL ? sanitized_fmt : Format, ap);
     va_end(ap);
+    free(sanitized_fmt);
     return 0;
 }
 

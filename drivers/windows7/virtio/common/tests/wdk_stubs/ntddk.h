@@ -34,6 +34,7 @@ typedef const UCHAR* PCUCHAR;
 typedef uint64_t ULONGLONG;
 typedef uintptr_t ULONG_PTR;
 typedef uintptr_t UINT_PTR;
+typedef unsigned int UINT;
 
 #ifndef TRUE
 #define TRUE ((BOOLEAN)1u)
@@ -51,6 +52,7 @@ typedef int32_t NTSTATUS;
 #define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBu)
 #define STATUS_INSUFFICIENT_RESOURCES ((NTSTATUS)0xC000009Au)
 #define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023u)
+#define STATUS_DEVICE_DATA_ERROR ((NTSTATUS)0xC000009Cu)
 #define STATUS_DEVICE_CONFIGURATION_ERROR ((NTSTATUS)0xC0000182u)
 #define STATUS_IO_TIMEOUT ((NTSTATUS)0xC00000B5u)
 #define STATUS_NOT_FOUND ((NTSTATUS)0xC0000225u)
@@ -76,10 +78,48 @@ typedef struct _LARGE_INTEGER {
     int64_t QuadPart;
 } LARGE_INTEGER, *PLARGE_INTEGER;
 
-/* Device object (opaque in tests). */
+/* Device object (minimal model for host tests). */
 typedef struct _DEVICE_OBJECT {
-    int unused;
+    ULONG BusNumber;
+    ULONG Address;
+
+    /* Per-property status overrides (STATUS_SUCCESS / 0 means success). */
+    NTSTATUS BusNumberStatus;
+    NTSTATUS AddressStatus;
+
+    /* Per-property result lengths (0 means sizeof(ULONG)). */
+    ULONG BusNumberResultLength;
+    ULONG AddressResultLength;
 } DEVICE_OBJECT, *PDEVICE_OBJECT;
+
+/* HalGetBusDataByOffset (subset: PCI configuration space). */
+typedef enum _BUS_DATA_TYPE {
+    ConfigurationSpaceUndefined = 0,
+    Cmos = 1,
+    EisaConfiguration = 2,
+    Pos = 3,
+    CbusConfiguration = 4,
+    PCIConfiguration = 5,
+} BUS_DATA_TYPE;
+
+ULONG HalGetBusDataByOffset(BUS_DATA_TYPE BusDataType,
+                            ULONG BusNumber,
+                            ULONG SlotNumber,
+                            PVOID Buffer,
+                            ULONG Offset,
+                            ULONG Length);
+
+/* IoGetDeviceProperty (subset: bus number + address). */
+typedef enum _DEVICE_REGISTRY_PROPERTY {
+    DevicePropertyBusNumber = 0,
+    DevicePropertyAddress = 1,
+} DEVICE_REGISTRY_PROPERTY;
+
+NTSTATUS IoGetDeviceProperty(PDEVICE_OBJECT DeviceObject,
+                             DEVICE_REGISTRY_PROPERTY DeviceProperty,
+                             ULONG BufferLength,
+                             PVOID PropertyBuffer,
+                             ULONG* ResultLength);
 
 /* Interrupt descriptor bits */
 #define CmResourceTypeInterrupt 2u
@@ -95,10 +135,13 @@ typedef struct _DEVICE_OBJECT {
 #define _Inout_
 #define _In_opt_
 #define _Inout_opt_
+#define _In_reads_(x)
+#define _In_reads_opt_(x)
 #define _In_reads_bytes_(x)
 #define _In_reads_bytes_opt_(x)
 #define _Out_writes_(x)
 #define _Out_writes_bytes_(x)
+#define _Out_writes_bytes_opt_(x)
 #define _Must_inspect_result_
 #define _Out_
 #define _Out_opt_
@@ -525,3 +568,16 @@ typedef VOID (*WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK)(_Inout_ PKDPC Dpc,
                                                  _In_opt_ PVOID Context);
 VOID WdkTestSetKeInsertQueueDpcHook(_In_opt_ WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK Hook, _In_opt_ PVOID Context);
 VOID WdkTestClearKeInsertQueueDpcHook(VOID);
+
+/*
+ * Test-only helpers for controlling the HalGetBusDataByOffset PCI config-space
+ * stub.
+ *
+ * These are not part of the real WDK API.
+ */
+VOID WdkTestPciReset(VOID);
+VOID WdkTestPciSetSlotConfig(_In_ ULONG BusNumber,
+                             _In_ ULONG SlotNumber,
+                             _In_reads_bytes_(CfgLen) const VOID* Cfg,
+                             _In_ ULONG CfgLen,
+                             _In_ ULONG BytesRead);
