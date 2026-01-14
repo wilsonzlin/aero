@@ -232,6 +232,25 @@ typedef struct _AEROGPU_DISPLAY_MODE_CONFIG {
 
 static AEROGPU_DISPLAY_MODE_CONFIG g_AeroGpuDisplayModeConfig = {0, 0, 0, 0};
 
+/*
+ * Dbgctl escape gating.
+ *
+ * READ_GPA and MAP_SHARED_HANDLE are debug-only and potentially unsafe. Gate them behind
+ * registry-controlled flags under the miniport service key:
+ *   HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters
+ *     - EnableReadGpaEscape (REG_DWORD)
+ *     - EnableMapSharedHandleEscape (REG_DWORD)
+ *
+ * Default is disabled (0 / missing value).
+ */
+static ULONG g_AeroGpuEnableReadGpaEscape = 0;
+static ULONG g_AeroGpuEnableMapSharedHandleEscape = 0;
+
+#if DBG
+static LONG g_AeroGpuBlockedReadGpaEscapeCount = 0;
+static LONG g_AeroGpuBlockedMapSharedHandleEscapeCount = 0;
+#endif
+
 static __forceinline BOOLEAN AeroGpuModeWithinMax(_In_ ULONG Width, _In_ ULONG Height)
 {
     if (Width == 0 || Height == 0) {
@@ -432,6 +451,9 @@ static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING Re
     g_AeroGpuDisplayModeConfig.MaxWidth = 0;
     g_AeroGpuDisplayModeConfig.MaxHeight = 0;
 
+    g_AeroGpuEnableReadGpaEscape = 0;
+    g_AeroGpuEnableMapSharedHandleEscape = 0;
+
     if (!RegistryPath || !RegistryPath->Buffer || RegistryPath->Length == 0) {
         return;
     }
@@ -458,8 +480,10 @@ static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING Re
     ULONG prefH = 0;
     ULONG maxW = 0;
     ULONG maxH = 0;
+    ULONG enableReadGpa = 0;
+    ULONG enableMapSharedHandle = 0;
 
-    RTL_QUERY_REGISTRY_TABLE table[5];
+    RTL_QUERY_REGISTRY_TABLE table[7];
     RtlZeroMemory(table, sizeof(table));
 
     table[0].Flags = RTL_QUERY_REGISTRY_DIRECT;
@@ -477,6 +501,14 @@ static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING Re
     table[3].Flags = RTL_QUERY_REGISTRY_DIRECT;
     table[3].Name = L"MaxHeight";
     table[3].EntryContext = &maxH;
+
+    table[4].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    table[4].Name = L"EnableReadGpaEscape";
+    table[4].EntryContext = &enableReadGpa;
+
+    table[5].Flags = RTL_QUERY_REGISTRY_DIRECT;
+    table[5].Name = L"EnableMapSharedHandleEscape";
+    table[5].EntryContext = &enableMapSharedHandle;
 
     (void)RtlQueryRegistryValues(RTL_QUERY_REGISTRY_ABSOLUTE, path, table, NULL, NULL);
 
@@ -508,9 +540,17 @@ static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING Re
     g_AeroGpuDisplayModeConfig.MaxWidth = maxW;
     g_AeroGpuDisplayModeConfig.MaxHeight = maxH;
 
+    g_AeroGpuEnableReadGpaEscape = (enableReadGpa != 0) ? 1u : 0u;
+    g_AeroGpuEnableMapSharedHandleEscape = (enableMapSharedHandle != 0) ? 1u : 0u;
+
 #if DBG
     if (prefW != 0 || prefH != 0 || maxW != 0 || maxH != 0) {
         AEROGPU_LOG("display config: Preferred=%lux%lu Max=%lux%lu", prefW, prefH, maxW, maxH);
+    }
+    if (g_AeroGpuEnableReadGpaEscape != 0 || g_AeroGpuEnableMapSharedHandleEscape != 0) {
+        AEROGPU_LOG("dbgctl escape config: EnableReadGpaEscape=%lu EnableMapSharedHandleEscape=%lu",
+                    g_AeroGpuEnableReadGpaEscape,
+                    g_AeroGpuEnableMapSharedHandleEscape);
     }
 #endif
 }
@@ -9212,6 +9252,26 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
     aerogpu_escape_header* hdr = (aerogpu_escape_header*)pEscape->pPrivateDriverData;
     if (hdr->version != AEROGPU_ESCAPE_VERSION) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    /*
+     * Gate debug-only escapes that can leak data or pin arbitrary kernel objects.
+     *
+     * Return STATUS_NOT_SUPPORTED so guest-side tests can treat these as optional.
+     */
+    if (hdr->op == AEROGPU_ESCAPE_OP_READ_GPA && g_AeroGpuEnableReadGpaEscape == 0) {
+        AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedReadGpaEscapeCount,
+                                4,
+                                "blocked dbgctl escape READ_GPA (EnableReadGpaEscape=0) pid=%p",
+                                PsGetCurrentProcessId());
+        return STATUS_NOT_SUPPORTED;
+    }
+    if (hdr->op == AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE && g_AeroGpuEnableMapSharedHandleEscape == 0) {
+        AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedMapSharedHandleEscapeCount,
+                                4,
+                                "blocked dbgctl escape MAP_SHARED_HANDLE (EnableMapSharedHandleEscape=0) pid=%p",
+                                PsGetCurrentProcessId());
         return STATUS_NOT_SUPPORTED;
     }
 

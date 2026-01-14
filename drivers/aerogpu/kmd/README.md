@@ -452,20 +452,24 @@ are defined in `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`.
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 
  - `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
- - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
-     - For `AEROGPU_DBGCTL_RING_FORMAT_AGPU`, the v2 dump returns a recent **tail window** of descriptors ending at `tail - 1`
-       (newest is `desc[desc_count - 1]`) so tooling/tests can observe recently completed submissions even when the pending
-       `[head, tail)` region is drained quickly.
+  - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
+      - For `AEROGPU_DBGCTL_RING_FORMAT_AGPU`, the v2 dump returns a recent **tail window** of descriptors ending at `tail - 1`
+        (newest is `desc[desc_count - 1]`) so tooling/tests can observe recently completed submissions even when the pending
+        `[head, tail)` region is drained quickly.
   - `AEROGPU_ESCAPE_OP_READ_GPA` (see `aerogpu_dbgctl_escape.h`)
-       - debug-only: allows bring-up tooling to read **bounded** slices of guest physical memory for GPU-owned buffers
+      - debug-only: allows bring-up tooling to read **bounded** slices of guest physical memory for GPU-owned buffers
         (used by `aerogpu_dbgctl.exe --read-gpa`, `--dump-scanout-bmp`/`--dump-scanout-png`, `--dump-cursor-bmp`/`--dump-cursor-png`,
         and `--dump-last-submit` (alias: `--dump-last-cmd`))
+      - disabled by default (returns `STATUS_NOT_SUPPORTED` unless explicitly enabled)
+        - enable via `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableReadGpaEscape` (REG_DWORD=1)
       - safety: the KMD enforces a hard maximum payload per call and restricts reads to driver-tracked GPU-related regions
         (e.g. pending submission buffers, ring/fence, scanout/cursor framebuffers). It is not intended to be a generic
-       physical-memory read primitive.
+        physical-memory read primitive.
   - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` (see `aerogpu_dbgctl_escape.h`)
   - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)
   - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (see `aerogpu_dbgctl_escape.h`)
+      - disabled by default (returns `STATUS_NOT_SUPPORTED` unless explicitly enabled)
+       - enable via `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableMapSharedHandleEscape` (REG_DWORD=1)
   - `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
 
 These are intended for a small user-mode tool to validate KMD↔emulator communication early.
