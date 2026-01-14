@@ -1334,3 +1334,160 @@ fn vs_as_compute_respects_instance_step_rate() {
         assert_eq!(vecs, expected);
     });
 }
+
+#[test]
+fn vs_as_compute_instance_step_rate_is_based_on_absolute_instance_id() {
+    // Regression test for D3D-style instance data semantics:
+    // - `VertexPullingDrawParams.first_instance` (aka StartInstanceLocation) shifts the instance ID.
+    // - Instance step-rate division is applied after this shift.
+    //
+    // With step_rate=2:
+    // - InstanceID 0/1 => element0
+    // - InstanceID 2/3 => element1
+    //
+    // Therefore starting at `first_instance=1` should still use element0 for the first drawn
+    // instance.
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
+            "aero-d3d11 VS-as-compute instance step-rate base-instance test device",
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return;
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        // ILAY: one per-instance float attribute with step rate 2.
+        let mut ilay = Vec::new();
+        push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut ilay, 1); // element_count
+        push_u32(&mut ilay, 0); // reserved0
+                                 // Element: semantic hash + index are arbitrary as long as signature matches.
+        push_u32(&mut ilay, 0xDEAD_BEEFu32);
+        push_u32(&mut ilay, 0);
+        push_u32(&mut ilay, 41); // DXGI_FORMAT_R32_FLOAT
+        push_u32(&mut ilay, 0); // input_slot
+        push_u32(&mut ilay, 0); // aligned_byte_offset
+        push_u32(&mut ilay, 1); // per-instance
+        push_u32(&mut ilay, 2); // instance_data_step_rate = 2
+        let layout = InputLayoutDesc::parse(&ilay).unwrap();
+
+        let signature = [VsInputSignatureElement {
+            semantic_name_hash: 0xDEAD_BEEF,
+            semantic_index: 0,
+            input_register: 0,
+            mask: 0x1, // x
+            shader_location: 0,
+        }];
+
+        let stride = 4u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).unwrap();
+
+        // Provide three instance elements (instance IDs 0..=5).
+        let mut vb_bytes = Vec::new();
+        vb_bytes.extend_from_slice(&10.0f32.to_le_bytes());
+        vb_bytes.extend_from_slice(&20.0f32.to_le_bytes());
+        vb_bytes.extend_from_slice(&30.0f32.to_le_bytes());
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute instance-step-rate base-instance vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let ia_uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams {
+                first_instance: 1,
+                ..VertexPullingDrawParams::default()
+            },
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute instance-step-rate base-instance ia uniform"),
+            size: ia_uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+        let invocations_per_instance = 1u32;
+        let instance_count = 4u32;
+
+        let cfg = VsAsComputeConfig {
+            control_point_count: 1,
+            out_reg_count: 1,
+            indexed: false,
+        };
+        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+        let vs_out_regs = alloc_vs_out_regs(
+            &mut scratch,
+            &device,
+            invocations_per_instance,
+            instance_count,
+            cfg.out_reg_count,
+        )
+        .unwrap();
+
+        let bg = pipeline
+            .create_bind_group_group3(
+                &device,
+                &pulling,
+                &[&vb],
+                wgpu::BufferBinding {
+                    buffer: &ia_uniform,
+                    offset: 0,
+                    size: None,
+                },
+                None,
+                None,
+                &vs_out_regs,
+            )
+            .unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VS-as-compute instance-step-rate base-instance encoder"),
+        });
+        pipeline
+            .dispatch(&mut encoder, invocations_per_instance, instance_count, &bg)
+            .unwrap();
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_back_buffer(
+            &device,
+            &queue,
+            vs_out_regs.buffer.as_ref(),
+            vs_out_regs.offset,
+            vs_out_regs.size,
+        )
+        .await
+        .unwrap();
+        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
+        let vecs = unpack_vec4_u32_as_f32(&words);
+
+        // Absolute InstanceID sequence is [1,2,3,4] due to first_instance=1.
+        // Divide-by-2 step rate => element indices [0,1,1,2].
+        let expected: Vec<[f32; 4]> = vec![
+            [10.0, 0.0, 0.0, 1.0],
+            [20.0, 0.0, 0.0, 1.0],
+            [20.0, 0.0, 0.0, 1.0],
+            [30.0, 0.0, 0.0, 1.0],
+        ];
+        assert_eq!(vecs, expected);
+    });
+}
