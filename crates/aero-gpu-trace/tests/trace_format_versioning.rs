@@ -49,6 +49,35 @@ fn read_u64_le(bytes: &[u8], off: usize) -> u64 {
 }
 
 #[test]
+fn read_records_in_range_rejects_invalid_ranges() {
+    let bytes = minimal_trace_bytes(0);
+    let file_len = bytes.len() as u64;
+
+    // start > end
+    {
+        let mut reader = TraceReader::open(Cursor::new(bytes.clone())).expect("TraceReader::open");
+        let err = reader.read_records_in_range(10, 9).unwrap_err();
+        assert!(matches!(err, TraceReadError::RecordOutOfBounds));
+    }
+
+    // end beyond file length
+    {
+        let mut reader = TraceReader::open(Cursor::new(bytes.clone())).expect("TraceReader::open");
+        let err = reader.read_records_in_range(0, file_len + 1).unwrap_err();
+        assert!(matches!(err, TraceReadError::RecordOutOfBounds));
+    }
+
+    // start beyond file length
+    {
+        let mut reader = TraceReader::open(Cursor::new(bytes)).expect("TraceReader::open");
+        let err = reader
+            .read_records_in_range(file_len + 1, file_len + 1)
+            .unwrap_err();
+        assert!(matches!(err, TraceReadError::RecordOutOfBounds));
+    }
+}
+
+#[test]
 fn writer_rejects_aerogpu_submission_in_container_v1() {
     let meta = TraceMeta::new("test", 0);
     let mut writer = TraceWriter::new(Vec::<u8>::new(), &meta).expect("TraceWriter::new");
