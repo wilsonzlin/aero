@@ -34,6 +34,13 @@ const INTERRUPT_OUT_EP: u8 = 0x01;
 const DEFAULT_MAX_PACKET_SIZE: u16 = 64;
 const DEFAULT_MAX_PENDING_INPUT_REPORTS: usize = 256;
 const DEFAULT_MAX_PENDING_OUTPUT_REPORTS: usize = 256;
+/// Hard upper bound for the pending report queues.
+///
+/// The passthrough device can be configured by the host and also stores these limits in snapshots.
+/// Clamp them to a reasonable maximum so corrupted/malicious snapshots cannot inflate queue sizes
+/// to unbounded values (which would allow excessive allocations during restore or subsequent
+/// runtime use).
+const HARD_MAX_PENDING_REPORTS: usize = 1024;
 
 /// Upper bound for host-provided input reports when the report ID is not present in the parsed
 /// descriptor.
@@ -667,14 +674,14 @@ impl UsbHidPassthrough {
     }
 
     fn set_max_pending_input_reports(&mut self, max: usize) {
-        self.max_pending_input_reports = max.max(1);
+        self.max_pending_input_reports = max.clamp(1, HARD_MAX_PENDING_REPORTS);
         while self.pending_input_reports.len() > self.max_pending_input_reports {
             self.pending_input_reports.pop_front();
         }
     }
 
     fn set_max_pending_output_reports(&mut self, max: usize) {
-        self.max_pending_output_reports = max.max(1);
+        self.max_pending_output_reports = max.clamp(1, HARD_MAX_PENDING_REPORTS);
         while self.pending_output_reports.len() > self.max_pending_output_reports {
             self.pending_output_reports.pop_front();
         }
@@ -1920,10 +1927,10 @@ impl IoSnapshot for UsbHidPassthrough {
         self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
 
         if let Some(max) = r.u32(TAG_MAX_PENDING_INPUT_REPORTS)? {
-            self.max_pending_input_reports = (max as usize).max(1);
+            self.max_pending_input_reports = (max as usize).clamp(1, HARD_MAX_PENDING_REPORTS);
         }
         if let Some(max) = r.u32(TAG_MAX_PENDING_OUTPUT_REPORTS)? {
-            self.max_pending_output_reports = (max as usize).max(1);
+            self.max_pending_output_reports = (max as usize).clamp(1, HARD_MAX_PENDING_REPORTS);
         }
 
         if let Some(buf) = r.bytes(TAG_PENDING_INPUT_REPORTS) {
@@ -3436,6 +3443,84 @@ mod tests {
 
         match dev.load_state(&snapshot) {
             Err(SnapshotError::InvalidFieldEncoding("pending input reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_pending_input_reports_count_over_hard_limit() {
+        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 8;
+        const TAG_PENDING_INPUT_REPORTS: u16 = 10;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_u32(TAG_MAX_PENDING_INPUT_REPORTS, u32::MAX);
+            w.field_bytes(
+                TAG_PENDING_INPUT_REPORTS,
+                Encoder::new()
+                    .u32((HARD_MAX_PENDING_REPORTS as u32) + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("pending input reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_pending_output_reports_count_over_hard_limit() {
+        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 9;
+        const TAG_PENDING_OUTPUT_REPORTS: u16 = 14;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_u32(TAG_MAX_PENDING_OUTPUT_REPORTS, u32::MAX);
+            w.field_bytes(
+                TAG_PENDING_OUTPUT_REPORTS,
+                Encoder::new()
+                    .u32((HARD_MAX_PENDING_REPORTS as u32) + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("pending output reports")) => {}
             other => panic!("expected InvalidFieldEncoding, got {other:?}"),
         }
     }
