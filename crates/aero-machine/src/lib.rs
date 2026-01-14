@@ -4113,14 +4113,6 @@ Track progress: docs/21-smp.md\n\
         self.vga.clone()
     }
 
-    /// Returns the BIOS-reported Bochs VBE linear framebuffer (LFB) base address.
-    ///
-    /// This is the physical address guests observe via the VBE mode info block (e.g. `int 0x10,
-    /// ax=0x4F01`) and should stay coherent with the active display wiring (legacy VGA vs AeroGPU).
-    pub fn vbe_lfb_base(&self) -> u64 {
-        u64::from(self.bios.video.vbe.lfb_base)
-    }
-
     /// Returns the PIIX3-compatible IDE controller, if present.
     pub fn ide(&self) -> Option<Rc<RefCell<Piix3IdePciDevice>>> {
         self.ide.clone()
