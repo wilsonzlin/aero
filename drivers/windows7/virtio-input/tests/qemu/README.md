@@ -333,18 +333,19 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 
 4. (Optional) send a keyboard LED output report:
    ```bat
-   hidtest.exe --keyboard --led 0x02
+   # 0x1F sets all 5 HID boot keyboard LED bits (Num/Caps/Scroll/Compose/Kana).
+   hidtest.exe --keyboard --led 0x1F
    ```
    This validates that the device exposes an output report and accepts writes. (In a VM there may not be a physical LED to observe.)
 
 5. (Optional) send a keyboard LED output report via `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`):
    ```bat
-   hidtest.exe --keyboard --led-hidd 0x02
+   hidtest.exe --keyboard --led-hidd 0x1F
    ```
 
 6. (Optional) send a keyboard LED output report via `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)`:
    ```bat
-   hidtest.exe --keyboard --led-ioctl-set-output 0x02
+   hidtest.exe --keyboard --led-ioctl-set-output 0x1F
    ```
 
 7. (Optional) query/reset driver diagnostics counters:

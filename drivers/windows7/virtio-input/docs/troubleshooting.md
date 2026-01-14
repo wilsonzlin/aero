@@ -180,8 +180,9 @@ Try the following in the Windows 7 guest:
    ```
 2. If an LED write fails, try a different output method:
    ```bat
-   hidtest.exe --keyboard --led-hidd 0x02
-   hidtest.exe --keyboard --led-ioctl-set-output 0x02
+   # 0x1F sets all 5 HID boot keyboard LED bits (Num/Caps/Scroll/Compose/Kana).
+   hidtest.exe --keyboard --led-hidd 0x1F
+   hidtest.exe --keyboard --led-ioctl-set-output 0x1F
    ```
 3. If you only want to read input reports, avoid write access entirely:
    ```bat
