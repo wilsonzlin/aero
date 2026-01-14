@@ -342,6 +342,9 @@ export class WorkerCoordinator {
   //
   // `activeDiskImage` is deprecated as a VM-mode toggle now that disks are selected via
   // DiskManager + `setBootDisks`. Prefer `vmRuntime` + boot disk mounts.
+  //
+  // We still treat `activeDiskImage` as a best-effort legacy fallback *until*
+  // `setBootDisks` has been called so older callers can keep working.
   private audioRingBufferOwnerOverride: RingBufferOwner | null = null;
   private micRingBufferOwnerOverride: RingBufferOwner | null = null;
 
@@ -1173,9 +1176,16 @@ export class WorkerCoordinator {
   private defaultAudioRingBufferOwner(): RingBufferOwner {
     // Machine runtime: audio devices live in the IO worker, regardless of disk state.
     if (this.activeConfig?.vmRuntime === "machine") return "io";
-    // Legacy demo mode (no boot disk): the CPU worker runs the tone/loopback demos.
-    // Legacy VM mode (boot disk mounted): audio devices live in the IO worker.
-    const hasBootDisk = !!this.bootDisks?.hdd || !!this.bootDisks?.cd;
+    // Legacy demo mode: the CPU worker runs the tone/loopback demos.
+    //
+    // Legacy VM mode: audio devices live in the IO worker.
+    //
+    // Prefer boot disk selection (DiskManager + `setBootDisks`) when available; fall back to
+    // `activeDiskImage` for older call sites that still use it as a VM/demo toggle.
+    const hasBootDisk =
+      this.bootDisks !== null
+        ? !!this.bootDisks.hdd || !!this.bootDisks.cd
+        : !!this.activeConfig?.activeDiskImage;
     return hasBootDisk ? "io" : "cpu";
   }
 
@@ -1188,7 +1198,10 @@ export class WorkerCoordinator {
     if (this.activeConfig?.vmRuntime === "machine") return "io";
     // Legacy demo mode: loopback demo consumes mic samples in CPU worker.
     // Legacy VM mode: microphone is consumed by the IO worker device model.
-    const hasBootDisk = !!this.bootDisks?.hdd || !!this.bootDisks?.cd;
+    const hasBootDisk =
+      this.bootDisks !== null
+        ? !!this.bootDisks.hdd || !!this.bootDisks.cd
+        : !!this.activeConfig?.activeDiskImage;
     return hasBootDisk ? "io" : "cpu";
   }
 

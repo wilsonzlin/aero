@@ -436,6 +436,47 @@ describe("runtime/coordinator", () => {
     expect(ioMic?.ringBuffer).toBe(null);
   });
 
+  it("forwards audio/mic rings to IO only in legacy VM mode when activeDiskImage is set (compat)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: "disk.img",
+      vmRuntime: "legacy",
+      logLevel: "info",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+
+    const audioSab = new SharedArrayBuffer(1024);
+    coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
+
+    const cpuAudio = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+    const ioAudio = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+    expect(cpuAudio?.type).toBe("setAudioRingBuffer");
+    expect(cpuAudio?.ringBuffer).toBe(null);
+    expect(ioAudio?.type).toBe("setAudioRingBuffer");
+    expect(ioAudio?.ringBuffer).toBe(audioSab);
+
+    const micSab = new SharedArrayBuffer(256);
+    coordinator.setMicrophoneRingBuffer(micSab, 48_000);
+
+    const cpuMic = lastMessageOfType(cpuWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
+    const ioMic = lastMessageOfType(ioWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
+    expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
+    expect(cpuMic?.ringBuffer).toBe(null);
+    expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
+    expect(ioMic?.ringBuffer).toBe(micSab);
+  });
+
   it("forwards audio/mic rings to IO only in legacy VM mode by default (SPSC)", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
