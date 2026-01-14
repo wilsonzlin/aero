@@ -8094,8 +8094,8 @@ bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
     return false;
   }
 
-  constexpr uint32_t kLightingStart = 244u;
-  constexpr uint32_t kLightingVec4 = 10u;
+  constexpr uint32_t kLightingStart = 208u;
+  constexpr uint32_t kLightingVec4 = 29u;
   if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
              "lighting constant upload emitted once")) {
     return false;
@@ -8106,28 +8106,53 @@ bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
     return false;
   }
 
-  const float expected[40] = {
-      // c244..c246: identity world*view 3x3 columns.
+  const float expected[kLightingVec4 * 4] = {
+      // c208..c210: identity world*view columns 0..2 (w contains translation).
       1.0f, 0.0f, 0.0f, 0.0f,
       0.0f, 1.0f, 0.0f, 0.0f,
       0.0f, 0.0f, 1.0f, 0.0f,
-      // c247: light direction in view space (negated).
+
+      // Directional slot0 (c211..c213): light direction (vertex->light), diffuse, ambient.
       0.0f, 0.0f, 1.0f, 0.0f,
-      // c248..c249: light diffuse/ambient.
       1.0f, 0.0f, 0.0f, 1.0f,
       0.0f, 0.5f, 0.0f, 1.0f,
-      // c250..c252: material diffuse/ambient/emissive.
+
+      // Directional slot1..slot3: unused.
+      0.0f, 0.0f, 0.0f, 0.0f, // c214
+      0.0f, 0.0f, 0.0f, 0.0f, // c215
+      0.0f, 0.0f, 0.0f, 0.0f, // c216
+      0.0f, 0.0f, 0.0f, 0.0f, // c217
+      0.0f, 0.0f, 0.0f, 0.0f, // c218
+      0.0f, 0.0f, 0.0f, 0.0f, // c219
+      0.0f, 0.0f, 0.0f, 0.0f, // c220
+      0.0f, 0.0f, 0.0f, 0.0f, // c221
+      0.0f, 0.0f, 0.0f, 0.0f, // c222
+
+      // Point slot0..slot1: unused.
+      0.0f, 0.0f, 0.0f, 0.0f, // c223
+      0.0f, 0.0f, 0.0f, 0.0f, // c224
+      0.0f, 0.0f, 0.0f, 0.0f, // c225
+      0.0f, 0.0f, 0.0f, 0.0f, // c226
+      0.0f, 0.0f, 0.0f, 0.0f, // c227
+      0.0f, 0.0f, 0.0f, 0.0f, // c228
+      0.0f, 0.0f, 0.0f, 0.0f, // c229
+      0.0f, 0.0f, 0.0f, 0.0f, // c230
+      0.0f, 0.0f, 0.0f, 0.0f, // c231
+      0.0f, 0.0f, 0.0f, 0.0f, // c232
+
+      // c233..c235: material diffuse/ambient/emissive.
       0.5f, 0.5f, 0.5f, 1.0f,
       0.25f, 0.25f, 0.25f, 1.0f,
       0.0f, 0.0f, 0.0f, 0.0f,
-      // c253: global ambient (ARGB blue -> RGBA {0,0,1,1}).
+
+      // c236: global ambient (ARGB blue -> RGBA {0,0,1,1}).
       0.0f, 0.0f, 1.0f, 1.0f,
   };
-  for (size_t i = 0; i < 40; ++i) {
+  for (size_t i = 0; i < kLightingVec4 * 4; ++i) {
     // Compare numerically (treat -0.0 == 0.0) instead of bitwise comparing.
     if (payload[i] != expected[i]) {
       std::fprintf(stderr, "Lighting constants mismatch:\n");
-      for (size_t j = 0; j < 40; ++j) {
+      for (size_t j = 0; j < kLightingVec4 * 4; ++j) {
         std::fprintf(stderr, "  [%02zu] got=%f expected=%f\n", j, payload[j], expected[j]);
       }
       return Check(false, "lighting constant payload matches expected values");
@@ -8185,8 +8210,9 @@ bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
   if (!Check(payload != nullptr, "lighting payload present (ambient changed)")) {
     return false;
   }
-  if (!Check(payload[9 * 4 + 0] == 1.0f && payload[9 * 4 + 1] == 0.0f &&
-             payload[9 * 4 + 2] == 0.0f && payload[9 * 4 + 3] == 1.0f,
+  constexpr uint32_t kGlobalAmbientRel = (236u - kLightingStart);
+  if (!Check(payload[kGlobalAmbientRel * 4 + 0] == 1.0f && payload[kGlobalAmbientRel * 4 + 1] == 0.0f &&
+             payload[kGlobalAmbientRel * 4 + 2] == 0.0f && payload[kGlobalAmbientRel * 4 + 3] == 1.0f,
              "global ambient constant reflects new D3DRS_AMBIENT value")) {
     return false;
   }
@@ -8221,9 +8247,102 @@ bool TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty() {
   if (!Check(payload != nullptr, "lighting payload present (light direction changed)")) {
     return false;
   }
-  if (!Check(payload[3 * 4 + 0] == 0.0f && payload[3 * 4 + 1] == 0.0f &&
-             payload[3 * 4 + 2] == -1.0f && payload[3 * 4 + 3] == 0.0f,
+  constexpr uint32_t kLight0DirRel = (211u - kLightingStart);
+  if (!Check(payload[kLight0DirRel * 4 + 0] == 0.0f && payload[kLight0DirRel * 4 + 1] == 0.0f &&
+             payload[kLight0DirRel * 4 + 2] == -1.0f && payload[kLight0DirRel * 4 + 3] == 0.0f,
              "light direction constant reflects updated light direction")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffusePacksMultipleLights() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Configure two enabled directional lights.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    std::memset(&dev->lights[0], 0, sizeof(dev->lights[0]));
+    dev->lights[0].Type = D3DLIGHT_DIRECTIONAL;
+    dev->lights[0].Direction = {0.0f, 0.0f, -1.0f};
+    dev->lights[0].Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+    dev->lights[0].Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+    dev->light_valid[0] = true;
+    dev->light_enabled[0] = TRUE;
+
+    std::memset(&dev->lights[1], 0, sizeof(dev->lights[1]));
+    dev->lights[1].Type = D3DLIGHT_DIRECTIONAL;
+    dev->lights[1].Direction = {0.0f, 0.0f, -1.0f};
+    dev->lights[1].Diffuse = {0.0f, 1.0f, 0.0f, 1.0f};
+    dev->lights[1].Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+    dev->light_valid[1] = true;
+    dev->light_enabled[1] = TRUE;
+
+    dev->material_valid = true;
+    dev->material.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+    dev->material.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+    dev->material.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    dev->fixedfunc_lighting_dirty = true;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(two directional lights)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(two directional lights)")) {
+    return false;
+  }
+
+  constexpr uint32_t kLightingStart = 208u;
+  constexpr uint32_t kLightingVec4 = 29u;
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
+             "two lights: lighting constant upload emitted once")) {
+    return false;
+  }
+  const float* payload = FindVsConstantsPayload(buf, len, kLightingStart, kLightingVec4);
+  if (!Check(payload != nullptr, "two lights: payload present")) {
+    return false;
+  }
+
+  // Slot1 diffuse (c215) should reflect the second directional light's diffuse.
+  constexpr uint32_t kLight1DiffuseRel = (215u - kLightingStart);
+  if (!Check(payload[kLight1DiffuseRel * 4 + 0] == 0.0f &&
+                 payload[kLight1DiffuseRel * 4 + 1] == 1.0f &&
+                 payload[kLight1DiffuseRel * 4 + 2] == 0.0f &&
+                 payload[kLight1DiffuseRel * 4 + 3] == 1.0f,
+             "two lights: second directional light diffuse packed into slot1")) {
     return false;
   }
 
@@ -8310,6 +8429,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseEmitsLightingConstantsAndTracksDirty()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffusePacksMultipleLights()) {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders()) {

@@ -646,38 +646,40 @@ static constexpr uint32_t kVsWvpPosNormalDiffuseTex1[] = {
 };
 
 // vs_2_0 (lit; XYZ|NORMAL|DIFFUSE):
-//   def c254, 0,0,0,0
-//   dp4 oPos.x, v0, c240
-//   dp4 oPos.y, v0, c241
-//   dp4 oPos.z, v0, c242
-//   dp4 oPos.w, v0, c243
-//   dp3 r0.x, v1, c244      ; normal.x (view space)
-//   dp3 r0.y, v1, c245      ; normal.y
-//   dp3 r0.z, v1, c246      ; normal.z
-//   dp3 r1, r0, r0          ; length^2
-//   rsq r1, r1              ; 1/sqrt(len2)
-//   mul r0, r0, r1          ; normalize
-//   dp3 r2, r0, c247        ; ndotl
-//   max r2, r2, c254        ; clamp to 0
-//   mul r3, c248, c250      ; lightDiffuse * materialDiffuse
-//   mul r3, r3, r2          ; * ndotl
-//   add r4, c253, c249      ; globalAmbient + lightAmbient
-//   mul r4, r4, c251        ; * materialAmbient
-//   add r5, r3, r4          ; diffuse + ambient
-//   mul r5, r5, v2          ; * vertex diffuse
-//   add r5, r5, c252        ; + emissive
-//   mov oD0, r5
-//   mov oT0, v0
-//   end
+//
+// Bounded fixed-function lighting subset (D3D9 bring-up):
+// - global ambient (D3DRS_AMBIENT)
+// - material diffuse/ambient/emissive
+// - up to 4 directional lights (packed)
+// - up to 2 point/spot lights (packed) with:
+//   - constant attenuation (1/att0)
+//   - range clamp based on dist^2 (max(1 - dist^2/range^2, 0))
+//
+// The constant register layout is described by `kFixedfuncLightingStartRegister`
+// in `aerogpu_d3d9_driver.cpp`.
 static constexpr uint32_t kVsWvpLitPosNormalDiffuse[] = {
     0xFFFE0200u, // vs_2_0
 
     0x06000051u, // def (5 operands)
+    0x200F00FDu, // c253.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+
+    0x06000051u, // def
     0x200F00FEu, // c254.xyzw
     0x00000000u, // 0.0
     0x00000000u, // 0.0
     0x00000000u, // 0.0
     0x00000000u, // 0.0
+
+    0x06000051u, // def
+    0x200F00FFu, // c255.xyzw
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
 
     0x04000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
@@ -702,17 +704,17 @@ static constexpr uint32_t kVsWvpLitPosNormalDiffuse[] = {
     0x04000008u, // dp3
     0x00010000u, // r0.x
     0x10E40001u, // v1.xyz (normal)
-    0x20E400F4u, // c244.xyz
+    0x20E400D0u, // c208.xyz
 
     0x04000008u, // dp3
     0x00020000u, // r0.y
     0x10E40001u, // v1.xyz
-    0x20E400F5u, // c245.xyz
+    0x20E400D1u, // c209.xyz
 
     0x04000008u, // dp3
     0x00040000u, // r0.z
     0x10E40001u, // v1.xyz
-    0x20E400F6u, // c246.xyz
+    0x20E400D2u, // c210.xyz
 
     0x04000008u, // dp3
     0x000F0001u, // r1.xyzw
@@ -728,54 +730,353 @@ static constexpr uint32_t kVsWvpLitPosNormalDiffuse[] = {
     0x00E40000u, // r0.xyzw
     0x00E40001u, // r1.xyzw
 
-    0x04000008u, // dp3
-    0x000F0002u, // r2.xyzw
-    0x00E40000u, // r0.xyzw
-    0x20E400F7u, // c247.xyz
+    // View-space position (r6.xyz): dp4(v0, world*view colN)
+    0x04000009u, // dp4
+    0x00010006u, // r6.x
+    0x10E40000u, // v0.xyzw
+    0x20E400D0u, // c208.xyzw
 
-    0x0400000Bu, // max (3 operands)
+    0x04000009u, // dp4
+    0x00020006u, // r6.y
+    0x10E40000u, // v0.xyzw
+    0x20E400D1u, // c209.xyzw
+
+    0x04000009u, // dp4
+    0x00040006u, // r6.z
+    0x10E40000u, // v0.xyzw
+    0x20E400D2u, // c210.xyzw
+
+    // Accumulators: r2 = diffuseSum, r3 = ambientSum
+    0x03000001u, // mov
+    0x000F0002u, // r2.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    0x03000001u, // mov
+    0x000F0003u, // r3.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    // -------------------------------------------------------------------------
+    // Directional lights (up to 4)
+    // -------------------------------------------------------------------------
+
+    // Light 0: c211=dir, c212=diffuse, c213=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D3u, // c211.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400D4u, // c212.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
     0x000F0002u, // r2.xyzw
     0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D5u, // c213.xyzw
+
+    // Light 1: c214=dir, c215=diffuse, c216=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D6u, // c214.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400D7u, // c215.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D8u, // c216.xyzw
+
+    // Light 2: c217=dir, c218=diffuse, c219=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D9u, // c217.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DAu, // c218.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DBu, // c219.xyzw
+
+    // Light 3: c220=dir, c221=diffuse, c222=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400DCu, // c220.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DDu, // c221.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DEu, // c222.xyzw
+
+    // -------------------------------------------------------------------------
+    // Point lights (up to 2)
+    // -------------------------------------------------------------------------
+
+    // Point 0: c223=pos, c224=diffuse, c225=ambient, c226=inv_att0, c227=inv_range2
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400DFu, // c223.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    // attenuation = inv_att0 * max(1 - dist2*inv_range2, 0)
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E3u, // c227.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw (1)
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
     0x20E400FEu, // c254.xyzw (0)
 
     0x04000005u, // mul
-    0x000F0003u, // r3.xyzw
-    0x20E400F8u, // c248.xyzw
-    0x20E400FAu, // c250.xyzw
-
-    0x04000005u, // mul
-    0x000F0003u, // r3.xyzw
-    0x00E40003u, // r3.xyzw
-    0x00E40002u, // r2.xyzw
-
-    0x04000002u, // add
-    0x000F0004u, // r4.xyzw
-    0x20E400FDu, // c253.xyzw
-    0x20E400F9u, // c249.xyzw
-
-    0x04000005u, // mul
-    0x000F0004u, // r4.xyzw
-    0x00E40004u, // r4.xyzw
-    0x20E400FBu, // c251.xyzw
-
-    0x04000002u, // add
     0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E2u, // c226.xyzw
+
+    // diffuseSum += lightDiffuse * ndotl * attenuation
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E0u, // c224.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // ambientSum += lightAmbient * attenuation
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E1u, // c225.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
     0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // Point 1: c228=pos, c229=diffuse, c230=ambient, c231=inv_att0, c232=inv_range2
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400E4u, // c228.xyzw
     0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw
 
     0x04000005u, // mul
     0x000F0005u, // r5.xyzw
     0x00E40005u, // r5.xyzw
+    0x20E400E8u, // c232.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E7u, // c231.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E5u, // c229.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E6u, // c230.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // -------------------------------------------------------------------------
+    // Apply material + global ambient and output final lit color
+    // -------------------------------------------------------------------------
+
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400E9u, // c233.xyzw (mat diffuse)
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400ECu, // c236.xyzw (global ambient)
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400EAu, // c234.xyzw (mat ambient)
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40003u, // r3.xyzw
+
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
     0x10E40002u, // v2.xyzw (vertex diffuse)
 
     0x04000002u, // add
-    0x000F0005u, // r5.xyzw
-    0x00E40005u, // r5.xyzw
-    0x20E400FCu, // c252.xyzw (emissive)
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400EBu, // c235.xyzw (emissive)
 
     0x03000001u, // mov
     0x500F0000u, // oD0.xyzw
-    0x00E40005u, // r5.xyzw
+    0x00E40002u, // r2.xyzw
 
     0x03000001u, // mov
     0x600F0000u, // oT0.xyzw
@@ -790,11 +1091,25 @@ static constexpr uint32_t kVsWvpLitPosNormalDiffuseTex1[] = {
     0xFFFE0200u, // vs_2_0
 
     0x06000051u, // def (5 operands)
+    0x200F00FDu, // c253.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+
+    0x06000051u, // def
     0x200F00FEu, // c254.xyzw
     0x00000000u, // 0.0
     0x00000000u, // 0.0
     0x00000000u, // 0.0
     0x00000000u, // 0.0
+
+    0x06000051u, // def
+    0x200F00FFu, // c255.xyzw
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
 
     0x04000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
@@ -819,17 +1134,17 @@ static constexpr uint32_t kVsWvpLitPosNormalDiffuseTex1[] = {
     0x04000008u, // dp3
     0x00010000u, // r0.x
     0x10E40001u, // v1.xyz
-    0x20E400F4u, // c244.xyz
+    0x20E400D0u, // c208.xyz
 
     0x04000008u, // dp3
     0x00020000u, // r0.y
     0x10E40001u, // v1.xyz
-    0x20E400F5u, // c245.xyz
+    0x20E400D1u, // c209.xyz
 
     0x04000008u, // dp3
     0x00040000u, // r0.z
     0x10E40001u, // v1.xyz
-    0x20E400F6u, // c246.xyz
+    0x20E400D2u, // c210.xyz
 
     0x04000008u, // dp3
     0x000F0001u, // r1.xyzw
@@ -845,54 +1160,339 @@ static constexpr uint32_t kVsWvpLitPosNormalDiffuseTex1[] = {
     0x00E40000u, // r0.xyzw
     0x00E40001u, // r1.xyzw
 
-    0x04000008u, // dp3
+    // View-space position (r6.xyz): dp4(v0, world*view colN)
+    0x04000009u, // dp4
+    0x00010006u, // r6.x
+    0x10E40000u, // v0.xyzw
+    0x20E400D0u, // c208.xyzw
+
+    0x04000009u, // dp4
+    0x00020006u, // r6.y
+    0x10E40000u, // v0.xyzw
+    0x20E400D1u, // c209.xyzw
+
+    0x04000009u, // dp4
+    0x00040006u, // r6.z
+    0x10E40000u, // v0.xyzw
+    0x20E400D2u, // c210.xyzw
+
+    // Accumulators: r2 = diffuseSum, r3 = ambientSum
+    0x03000001u, // mov
     0x000F0002u, // r2.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x03000001u, // mov
+    0x000F0003u, // r3.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    // Directional light 0
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
     0x00E40000u, // r0.xyzw
-    0x20E400F7u, // c247.xyz
+    0x20E400D3u, // c211.xyz
 
     0x0400000Bu, // max
-    0x000F0002u, // r2.xyzw
-    0x00E40002u, // r2.xyzw
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
     0x20E400FEu, // c254.xyzw
 
     0x04000005u, // mul
-    0x000F0003u, // r3.xyzw
-    0x20E400F8u, // c248.xyzw
-    0x20E400FAu, // c250.xyzw
+    0x000F0008u, // r8.xyzw
+    0x20E400D4u, // c212.xyzw
+    0x00E40005u, // r5.xyzw
 
-    0x04000005u, // mul
-    0x000F0003u, // r3.xyzw
-    0x00E40003u, // r3.xyzw
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
     0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D5u, // c213.xyzw
+
+    // Directional light 1
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D6u, // c214.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400D7u, // c215.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D8u, // c216.xyzw
+
+    // Directional light 2
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D9u, // c217.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DAu, // c218.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DBu, // c219.xyzw
+
+    // Directional light 3
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400DCu, // c220.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DDu, // c221.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DEu, // c222.xyzw
+
+    // Point light 0
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw
 
     0x04000002u, // add
     0x000F0004u, // r4.xyzw
-    0x20E400FDu, // c253.xyzw
-    0x20E400F9u, // c249.xyzw
+    0x20E400DFu, // c223.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
 
     0x04000005u, // mul
     0x000F0004u, // r4.xyzw
     0x00E40004u, // r4.xyzw
-    0x20E400FBu, // c251.xyzw
+    0x00E40007u, // r7.xyzw
 
-    0x04000002u, // add
-    0x000F0005u, // r5.xyzw
-    0x00E40003u, // r3.xyzw
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
     0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw
 
     0x04000005u, // mul
     0x000F0005u, // r5.xyzw
     0x00E40005u, // r5.xyzw
+    0x20E400E3u, // c227.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E2u, // c226.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E0u, // c224.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E1u, // c225.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // Point light 1
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400E4u, // c228.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E8u, // c232.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E7u, // c231.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E5u, // c229.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E6u, // c230.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // Apply material + global ambient
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400E9u, // c233.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400ECu, // c236.xyzw
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400EAu, // c234.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40003u, // r3.xyzw
+
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
     0x10E40002u, // v2.xyzw
 
     0x04000002u, // add
-    0x000F0005u, // r5.xyzw
-    0x00E40005u, // r5.xyzw
-    0x20E400FCu, // c252.xyzw
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400EBu, // c235.xyzw
 
     0x03000001u, // mov
     0x500F0000u, // oD0.xyzw
-    0x00E40005u, // r5.xyzw
+    0x00E40002u, // r2.xyzw
 
     0x03000001u, // mov
     0x600F0000u, // oT0.xyzw

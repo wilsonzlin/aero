@@ -3003,17 +3003,43 @@ constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
 
 // Fixed-function lighting constant register block.
 //
+// Fixed-function D3D9 lighting is computed in view space. The lit fixed-function
+// VS variants therefore need:
+// - world*view columns for transforming normals and positions into view space,
+// - a bounded set of enabled lights (directional + point), and
+// - material + global ambient terms.
+//
 // Layout (float4 registers; uploaded only when the lit VS variant is active):
-//   c244..c246: columns of the row-major world*view 3x3 (normal transform; w=0)
-//   c247: light direction in view space (vector from vertex to light; w=0)
-//   c248: light diffuse (RGBA)
-//   c249: light ambient (RGBA)
-//   c250: material diffuse (RGBA)
-//   c251: material ambient (RGBA)
-//   c252: material emissive (RGBA)
-//   c253: global ambient from D3DRS_AMBIENT (RGBA)
-constexpr uint32_t kFixedfuncLightingStartRegister = 244u;
-constexpr uint32_t kFixedfuncLightingVec4Count = 10u;
+//
+//   c208..c210: columns 0..2 of the row-major world*view matrix.
+//               - xyz: 3x3 basis for normal transform
+//               - w: translation (m41/m42/m43) so dp4(v, cN) yields view-space
+//                 position components (v.w is 1 for XYZ FVFs)
+//
+//   Directional lights (up to 4; packed from the enabled light set):
+//     c211..c222: 4 * {dir_view, diffuse, ambient}
+//       - dir_view.xyz is the vector from vertex -> light in view space (w=0)
+//
+//   Point/spot lights (up to 2; packed from the enabled light set):
+//     c223..c232: 2 * {pos_view, diffuse, ambient, inv_att0, inv_range2}
+//       - pos_view.xyz is the light position in view space (w=1)
+//       - inv_att0 is 1 / max(att0, eps) replicated across xyzw
+//       - inv_range2 is 1 / (range^2) replicated across xyzw (0 => no range clamp)
+//
+//   Material + global ambient:
+//     c233: material diffuse (RGBA)
+//     c234: material ambient (RGBA)
+//     c235: material emissive (RGBA)
+//     c236: global ambient from D3DRS_AMBIENT (RGBA)
+//
+// This layout intentionally stays in a high constant register range so switching
+// between fixed-function and user shaders is less likely to trample app-provided
+// constants. Lighting uploads are additionally gated so they are only performed
+// for the full fixed-function fallback pipeline (no user VS/PS bound).
+constexpr uint32_t kFixedfuncLightingStartRegister = 208u;
+constexpr uint32_t kFixedfuncLightingVec4Count = 29u;
+constexpr uint32_t kFixedfuncMaxDirectionalLights = 4u;
+constexpr uint32_t kFixedfuncMaxPointLights = 2u;
 
 // D3DTRANSFORMSTATETYPE numeric values (d3d9types.h). Use local constants so we
 // can key off them even when building without the Windows SDK/WDK.
@@ -5572,54 +5598,138 @@ static HRESULT ensure_fixedfunc_lighting_constants_locked(Device* dev) {
     return S_OK;
   }
 
-  // Fixed-function D3D9 lighting is computed in view space. We therefore:
-  // - transform normals by world*view (3x3)
-  // - transform the directional light vector by view (3x3)
-  float world_view[16] = {};
-  d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0], dev->transform_matrices[kD3dTransformView], world_view);
-
-  // Upload:
-  //   c244..c246 = columns of world_view[0..2][0..2] (w=0)
-  //   c247 = directional light vector in view space (w=0)
-  //   c248..c249 = light diffuse/ambient
-  //   c250..c252 = material diffuse/ambient/emissive
-  //   c253 = global ambient from D3DRS_AMBIENT
   float regs[kFixedfuncLightingVec4Count * 4u] = {};
+
+  // Fixed-function D3D9 lighting is computed in view space. We therefore:
+  // - transform normals and positions by world*view
+  // - transform light directions/positions by view
+  float world_view[16] = {};
+  d3d9_mul_mat4_row_major(dev->transform_matrices[kD3dTransformWorld0],
+                          dev->transform_matrices[kD3dTransformView],
+                          world_view);
+
+  // c208..c210: world*view columns 0..2 (w contains translation).
   for (uint32_t c = 0; c < 3; ++c) {
     regs[c * 4u + 0] = world_view[0 * 4u + c];
     regs[c * 4u + 1] = world_view[1 * 4u + c];
     regs[c * 4u + 2] = world_view[2 * 4u + c];
-    regs[c * 4u + 3] = 0.0f;
+    regs[c * 4u + 3] = world_view[3 * 4u + c];
   }
 
-  // Light 0 (directional only).
-  float light_dir_view[4] = {};
-  float light_diffuse[4] = {};
-  float light_ambient[4] = {};
-  if (dev->light_enabled[0] && dev->light_valid[0] && dev->lights[0].Type == D3DLIGHT_DIRECTIONAL) {
-    const D3DLIGHT9& l = dev->lights[0];
+  const auto write_reg = [&](uint32_t reg_index, const float v[4]) {
+    if (reg_index < kFixedfuncLightingStartRegister) {
+      return;
+    }
+    const uint32_t rel = reg_index - kFixedfuncLightingStartRegister;
+    if (rel >= kFixedfuncLightingVec4Count) {
+      return;
+    }
+    std::memcpy(&regs[rel * 4u], v, 4u * sizeof(float));
+  };
 
-    // Transform direction into view space (row-vector * view3x3).
-    const float* view = dev->transform_matrices[kD3dTransformView];
-    const float dx = l.Direction.x;
-    const float dy = l.Direction.y;
-    const float dz = l.Direction.z;
-    const float dir_view_x = dx * view[0 * 4u + 0] + dy * view[1 * 4u + 0] + dz * view[2 * 4u + 0];
-    const float dir_view_y = dx * view[0 * 4u + 1] + dy * view[1 * 4u + 1] + dz * view[2 * 4u + 1];
-    const float dir_view_z = dx * view[0 * 4u + 2] + dy * view[1 * 4u + 2] + dz * view[2 * 4u + 2];
+  const float* view = dev->transform_matrices[kD3dTransformView];
 
-    // Shader expects vector from vertex to light, so negate D3D9's "light direction" (light rays).
-    light_dir_view[0] = -dir_view_x;
-    light_dir_view[1] = -dir_view_y;
-    light_dir_view[2] = -dir_view_z;
-    light_dir_view[3] = 0.0f;
+  // Pack enabled lights into a bounded fixed-function subset so lighting state
+  // changes don't cause shader variant churn. The lit VS unrolls a fixed number
+  // of light slots and unused slots are represented by zero-valued constants.
+  uint32_t dir_slot = 0;
+  uint32_t point_slot = 0;
 
-    d3d9_colorvalue_to_float4(l.Diffuse, light_diffuse);
-    d3d9_colorvalue_to_float4(l.Ambient, light_ambient);
+  for (uint32_t i = 0; i < Device::kMaxLights; ++i) {
+    if (!dev->light_enabled[i] || !dev->light_valid[i]) {
+      continue;
+    }
+    const D3DLIGHT9& l = dev->lights[i];
+
+    if (l.Type == D3DLIGHT_DIRECTIONAL) {
+      if (dir_slot >= kFixedfuncMaxDirectionalLights) {
+        continue;
+      }
+      // Normalize direction (best-effort) and transform into view space.
+      float dx = l.Direction.x;
+      float dy = l.Direction.y;
+      float dz = l.Direction.z;
+      const float len2 = dx * dx + dy * dy + dz * dz;
+      if (len2 > 0.0f) {
+        const float inv_len = 1.0f / std::sqrt(len2);
+        dx *= inv_len;
+        dy *= inv_len;
+        dz *= inv_len;
+      }
+      float dir_view_x = dx * view[0 * 4u + 0] + dy * view[1 * 4u + 0] + dz * view[2 * 4u + 0];
+      float dir_view_y = dx * view[0 * 4u + 1] + dy * view[1 * 4u + 1] + dz * view[2 * 4u + 1];
+      float dir_view_z = dx * view[0 * 4u + 2] + dy * view[1 * 4u + 2] + dz * view[2 * 4u + 2];
+
+      // Shader expects vector from vertex to light, so negate D3D9's "light direction" (light rays).
+      float dir_view[4] = {-dir_view_x, -dir_view_y, -dir_view_z, 0.0f};
+      const float dir_len2 = dir_view[0] * dir_view[0] + dir_view[1] * dir_view[1] + dir_view[2] * dir_view[2];
+      if (dir_len2 > 0.0f) {
+        const float inv_len = 1.0f / std::sqrt(dir_len2);
+        dir_view[0] *= inv_len;
+        dir_view[1] *= inv_len;
+        dir_view[2] *= inv_len;
+      }
+
+      float diffuse[4] = {};
+      float ambient[4] = {};
+      d3d9_colorvalue_to_float4(l.Diffuse, diffuse);
+      d3d9_colorvalue_to_float4(l.Ambient, ambient);
+
+      const uint32_t base = 211u + dir_slot * 3u;
+      write_reg(base + 0u, dir_view);
+      write_reg(base + 1u, diffuse);
+      write_reg(base + 2u, ambient);
+
+      ++dir_slot;
+      continue;
+    }
+
+    if (l.Type == D3DLIGHT_POINT || l.Type == D3DLIGHT_SPOT) {
+      if (point_slot >= kFixedfuncMaxPointLights) {
+        continue;
+      }
+
+      // Transform position into view space (row-vector * view).
+      const float px = l.Position.x;
+      const float py = l.Position.y;
+      const float pz = l.Position.z;
+      const float pos_view_x =
+          px * view[0 * 4u + 0] + py * view[1 * 4u + 0] + pz * view[2 * 4u + 0] + view[3 * 4u + 0];
+      const float pos_view_y =
+          px * view[0 * 4u + 1] + py * view[1 * 4u + 1] + pz * view[2 * 4u + 1] + view[3 * 4u + 1];
+      const float pos_view_z =
+          px * view[0 * 4u + 2] + py * view[1 * 4u + 2] + pz * view[2 * 4u + 2] + view[3 * 4u + 2];
+      const float pos_view[4] = {pos_view_x, pos_view_y, pos_view_z, 1.0f};
+
+      float diffuse[4] = {};
+      float ambient[4] = {};
+      d3d9_colorvalue_to_float4(l.Diffuse, diffuse);
+      d3d9_colorvalue_to_float4(l.Ambient, ambient);
+
+      // Bring-up subset: constant attenuation (1/att0) and range clamp based on dist^2.
+      constexpr float kEps = 1e-6f;
+      const float att0 = (l.Attenuation0 > kEps) ? l.Attenuation0 : 1.0f;
+      const float inv_att0_s = 1.0f / att0;
+      const float inv_att0[4] = {inv_att0_s, inv_att0_s, inv_att0_s, inv_att0_s};
+
+      float inv_range2_s = 0.0f;
+      if (l.Range > kEps) {
+        const float r2 = l.Range * l.Range;
+        inv_range2_s = (r2 > kEps) ? (1.0f / r2) : 0.0f;
+      }
+      const float inv_range2[4] = {inv_range2_s, inv_range2_s, inv_range2_s, inv_range2_s};
+
+      const uint32_t base = 223u + point_slot * 5u;
+      write_reg(base + 0u, pos_view);
+      write_reg(base + 1u, diffuse);
+      write_reg(base + 2u, ambient);
+      write_reg(base + 3u, inv_att0);
+      write_reg(base + 4u, inv_range2);
+
+      ++point_slot;
+      continue;
+    }
   }
-  std::memcpy(&regs[3 * 4u], light_dir_view, sizeof(light_dir_view));
-  std::memcpy(&regs[4 * 4u], light_diffuse, sizeof(light_diffuse));
-  std::memcpy(&regs[5 * 4u], light_ambient, sizeof(light_ambient));
 
   // Material.
   float mat_diffuse[4] = {};
@@ -5630,15 +5740,15 @@ static HRESULT ensure_fixedfunc_lighting_constants_locked(Device* dev) {
     d3d9_colorvalue_to_float4(dev->material.Ambient, mat_ambient);
     d3d9_colorvalue_to_float4(dev->material.Emissive, mat_emissive);
   }
-  std::memcpy(&regs[6 * 4u], mat_diffuse, sizeof(mat_diffuse));
-  std::memcpy(&regs[7 * 4u], mat_ambient, sizeof(mat_ambient));
-  std::memcpy(&regs[8 * 4u], mat_emissive, sizeof(mat_emissive));
+  write_reg(233u, mat_diffuse);
+  write_reg(234u, mat_ambient);
+  write_reg(235u, mat_emissive);
 
   // Global ambient (D3DRS_AMBIENT, numeric value 26).
   float global_ambient[4] = {};
   constexpr uint32_t kD3dRsAmbient = 26u;
   d3d9_argb_to_float4(dev->render_states[kD3dRsAmbient], global_ambient);
-  std::memcpy(&regs[9 * 4u], global_ambient, sizeof(global_ambient));
+  write_reg(236u, global_ambient);
 
   const float* cached = dev->vs_consts_f + static_cast<size_t>(kFixedfuncLightingStartRegister) * 4u;
   if (std::memcmp(cached, regs, sizeof(regs)) == 0) {
@@ -5669,6 +5779,11 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
   constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
   const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
+  // Fixed-function lighting must only affect the full fixed-function fallback
+  // pipeline (no user VS/PS bound). When user shaders are bound, keep lighting
+  // state cached-only and avoid clobbering app constants.
+  const bool full_fixedfunc = (dev->user_vs == nullptr && dev->user_ps == nullptr);
+  const bool fixedfunc_lighting_active = lighting_enabled && full_fixedfunc;
   const bool fvf_xyzrhw = fixedfunc_fvf_is_xyzrhw(dev->fvf);
 
   // MVP behavior: if the app requests fixed-function lighting but the active FVF
@@ -5678,7 +5793,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   // Note: pre-transformed vertices (D3DFVF_XYZRHW*) are already lit; D3DRS_LIGHTING
   // is ignored by D3D9 for these FVFs, so do not reject them just because lighting
   // happens to be enabled.
-  if (lighting_enabled && !fvf_xyzrhw && !fixedfunc_fvf_has_normal(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+  if (lighting_enabled && full_fixedfunc && !fvf_xyzrhw && !fixedfunc_fvf_has_normal(dev->fvf)) {
     return D3DERR_INVALIDCALL;
   }
 
@@ -5773,24 +5888,24 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       needs_lighting = lighting_enabled;
       break;
     case kSupportedFvfXyzNormalDiffuse:
-      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_diffuse_lit : &dev->fixedfunc_vs_xyz_normal_diffuse;
+      vs_slot = fixedfunc_lighting_active ? &dev->fixedfunc_vs_xyz_normal_diffuse_lit : &dev->fixedfunc_vs_xyz_normal_diffuse;
       ps_slot = &dev->fixedfunc_ps;
       fvf_decl = dev->fvf_vertex_decl_xyz_normal_diffuse;
-      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormalDiffuse : fixedfunc::kVsWvpPosNormalDiffuse;
-      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuse))
+      vs_bytes = fixedfunc_lighting_active ? fixedfunc::kVsWvpLitPosNormalDiffuse : fixedfunc::kVsWvpPosNormalDiffuse;
+      vs_size = fixedfunc_lighting_active ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuse))
                                  : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuse));
       needs_matrix = true;
-      needs_lighting = lighting_enabled;
+      needs_lighting = fixedfunc_lighting_active;
       break;
     case kSupportedFvfXyzNormalDiffuseTex1:
-      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit : &dev->fixedfunc_vs_xyz_normal_diffuse_tex1;
+      vs_slot = fixedfunc_lighting_active ? &dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit : &dev->fixedfunc_vs_xyz_normal_diffuse_tex1;
       ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
       fvf_decl = dev->fvf_vertex_decl_xyz_normal_diffuse_tex1;
-      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormalDiffuseTex1 : fixedfunc::kVsWvpPosNormalDiffuseTex1;
-      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1))
+      vs_bytes = fixedfunc_lighting_active ? fixedfunc::kVsWvpLitPosNormalDiffuseTex1 : fixedfunc::kVsWvpPosNormalDiffuseTex1;
+      vs_size = fixedfunc_lighting_active ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1))
                                  : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseTex1));
       needs_matrix = true;
-      needs_lighting = lighting_enabled;
+      needs_lighting = fixedfunc_lighting_active;
       break;
     default:
       return D3DERR_INVALIDCALL;
@@ -5868,6 +5983,8 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
   }
   constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
   const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
+  const bool full_fixedfunc = (dev->user_vs == nullptr && dev->user_ps == nullptr);
+  const bool fixedfunc_lighting_active = lighting_enabled && full_fixedfunc;
   const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
   switch (fvf_base) {
     case kSupportedFvfXyzrhwDiffuse:
@@ -5883,13 +6000,13 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
     case kSupportedFvfXyzTex1:
       return dev->fixedfunc_vs_xyz_tex1;
     case kSupportedFvfXyzNormal:
-      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_lit : dev->fixedfunc_vs_xyz_normal;
+      return fixedfunc_lighting_active ? dev->fixedfunc_vs_xyz_normal_lit : dev->fixedfunc_vs_xyz_normal;
     case kSupportedFvfXyzNormalTex1:
-      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_tex1_lit : dev->fixedfunc_vs_xyz_normal_tex1;
+      return fixedfunc_lighting_active ? dev->fixedfunc_vs_xyz_normal_tex1_lit : dev->fixedfunc_vs_xyz_normal_tex1;
     case kSupportedFvfXyzNormalDiffuse:
-      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_diffuse_lit : dev->fixedfunc_vs_xyz_normal_diffuse;
+      return fixedfunc_lighting_active ? dev->fixedfunc_vs_xyz_normal_diffuse_lit : dev->fixedfunc_vs_xyz_normal_diffuse;
     case kSupportedFvfXyzNormalDiffuseTex1:
-      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit : dev->fixedfunc_vs_xyz_normal_diffuse_tex1;
+      return fixedfunc_lighting_active ? dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit : dev->fixedfunc_vs_xyz_normal_diffuse_tex1;
     default:
       return nullptr;
   }
@@ -16654,9 +16771,7 @@ HRESULT device_set_light_impl(D3DDDI_HDEVICE hDevice, IndexT index, const LightT
   std::lock_guard<std::mutex> lock(dev->mutex);
   std::memcpy(&dev->lights[idx], pLight, sizeof(dev->lights[idx]));
   dev->light_valid[idx] = true;
-  if (idx == 0) {
-    dev->fixedfunc_lighting_dirty = true;
-  }
+  dev->fixedfunc_lighting_dirty = true;
   stateblock_record_light_locked(dev, idx, dev->lights[idx], dev->light_valid[idx]);
   return trace.ret(S_OK);
 }
@@ -16719,9 +16834,7 @@ HRESULT device_light_enable_impl(D3DDDI_HDEVICE hDevice, IndexT index, BoolT ena
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->light_enabled[idx] = d3d9_to_u32(enabled) ? TRUE : FALSE;
-  if (idx == 0) {
-    dev->fixedfunc_lighting_dirty = true;
-  }
+  dev->fixedfunc_lighting_dirty = true;
   stateblock_record_light_enable_locked(dev, idx, dev->light_enabled[idx]);
   return trace.ret(S_OK);
 }

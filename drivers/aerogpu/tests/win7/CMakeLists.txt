@@ -261,6 +261,16 @@ aerogpu_add_win7_test(d3d9_fixedfunc_lighting_directional
 )
 target_link_libraries(d3d9_fixedfunc_lighting_directional PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9_fixedfunc_lighting_multi_directional
+  d3d9_fixedfunc_lighting_multi_directional/main.cpp
+)
+target_link_libraries(d3d9_fixedfunc_lighting_multi_directional PRIVATE user32 gdi32 d3d9)
+
+aerogpu_add_win7_test(d3d9_fixedfunc_lighting_point
+  d3d9_fixedfunc_lighting_point/main.cpp
+)
+target_link_libraries(d3d9_fixedfunc_lighting_point PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_fixedfunc_textured_triangle
   d3d9ex_fixedfunc_textured_triangle/main.cpp
 )

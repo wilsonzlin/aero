@@ -454,8 +454,8 @@ FVF-derived input layouts for user shaders:
 Not yet implemented for **fixed-function emulation** (examples; expected by some fixed-function apps):
 
 - Fixed-function specular (`D3DFVF_SPECULAR`, `D3DRS_SPECULARENABLE`, `D3DMATERIAL9.Specular/Power`)
-- Multiple lights / non-directional lights (point/spot): `SetLight`/`LightEnable` are cached for `Get*`/state blocks,
-  but only **directional light 0** is consumed by the bring-up fixed-function lighting path.
+- More complete fixed-function lighting (spot cone falloff, `Attenuation1/2`, more lights, etc). The bring-up path
+  implements only a small bounded subset (see “Limitations (bring-up)” below).
 - Vertex blending / indexed vertex blending (`D3DFVF_XYZB*`, `D3DRS_VERTEXBLEND`, `D3DRS_INDEXEDVERTEXBLENDENABLE`, etc)
 - Multiple texture coordinate sets (`D3DFVF_TEX2+`)
 - Full stage-state-driven fixed-function emulation (stage1+ texture combiners, fog, fixed-function lighting, etc). Stage0 has a guarded partial emulation path (see “Limitations (bring-up)” below).
@@ -517,10 +517,15 @@ Limitations (bring-up):
 - Fixed-function lighting/material is implemented only for a **minimal subset**:
   - gated by `D3DRS_LIGHTING` (off = unlit behavior),
   - uses `D3DRS_AMBIENT` as a global ambient term,
-  - consumes **directional light 0** only (`SetLight(0)` + `LightEnable(0, TRUE)`),
+  - consumes a bounded set of enabled lights (packed from `SetLight`/`LightEnable` state):
+    - up to 4 directional lights
+    - up to 2 point lights (spot treated as point; no cone falloff)
   - consumes `D3DMATERIAL9` diffuse/ambient/emissive (`SetMaterial`),
-  - computes a simple per-vertex `N·L` diffuse term and passes the lit vertex color to the pixel shader.
-  Other lights/types and specular are cached-only and ignored by the fixed-function shaders.
+  - computes a simple per-vertex `N·L` diffuse term and passes the lit vertex color to the pixel shader,
+  - point lights use constant attenuation (`1/Attenuation0`) and a range clamp based on `dist²` (`max(1 - dist²/range², 0)`).
+  Specular, spot cone attenuation, and linear/quadratic attenuation are not implemented yet.
+  Note: lighting is only applied for the full fixed-function fallback pipeline (no user VS/PS bound); in shader-stage
+  interop paths the light state is cached-only.
 - The fixed-function fallback's `TEX1` path consumes a single set of texture coordinates (`TEXCOORD0`) and uses the first
   two components as `(u, v)`. `TEXCOORD0` may be declared as `float1/2/3/4` via `D3DFVF_TEXCOORDSIZE*` (extra components
   are ignored; `float1` implies `v=0`). Multiple texture coordinate sets still require user shaders (layout translation is
@@ -541,13 +546,13 @@ Limitations (bring-up):
     - If no texture is bound to stage0, the UMD avoids selecting a texture-sampling shader even if the cached stage state references `TEXTURE` (stage0 is treated as disabled/passthrough diffuse).
   - Stages `> 0` are cached only for `Get*`/state blocks and are ignored by the fixed-function shader selection for now.
 - Fixed-function lighting/material beyond the minimal subset above is cached-only (for `Get*` and state blocks) and is not
-  forwarded into shader generation (multiple lights, point/spot, specular, etc).
+  forwarded into shader generation (specular, spot cone falloff, additional attenuation terms, more lights, etc).
 
 ### Known limitations / next steps
 
 - **Fixed-function pipeline is still limited:** `ensure_fixedfunc_pipeline_locked()` synthesizes a small `ps_2_0` token stream for the supported subset of stage0 texture stage state (see above).
   - The pixel shader bytecode is generated at runtime by a tiny “ps_2_0 token builder” in `src/aerogpu_d3d9_driver.cpp` (no offline shader generation step is required).
-  - Stage1+ texture stage state, fog, and more complete fixed-function lighting (multiple lights/specular/etc) are still TODOs.
+  - Stage1+ texture stage state, fog, and more complete fixed-function lighting (specular, spot cones, more lights, etc) are still TODOs.
 - **Shader int/bool constants are supported:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks and emit constant updates into the AeroGPU command stream (`AEROGPU_CMD_SET_SHADER_CONSTANTS_I/B`).
 - **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via
   `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
@@ -563,6 +568,7 @@ This subset is validated via:
   `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
   `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
   `d3d9_fixedfunc_textured_wvp`, `d3d9_fixedfunc_wvp_triangle`, `d3d9_fixedfunc_lighting_directional`,
+  `d3d9_fixedfunc_lighting_multi_directional`, `d3d9_fixedfunc_lighting_point`,
   `d3d9_shader_stage_interop`, `d3d9ex_ps_only_triangle`,
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
   `d3d9_process_vertices_sanity`, `d3d9_process_vertices_smoke`,

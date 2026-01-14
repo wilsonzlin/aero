@@ -18810,8 +18810,8 @@ bool TestFixedFuncXyzNormalStateBlockApplyReuploadsLightingConstants() {
     return false;
   }
 
-  constexpr uint32_t kLightingStartReg = 244u;
-  constexpr uint32_t kLightingVec4Count = 10u;
+  constexpr uint32_t kLightingStartReg = 208u;
+  constexpr uint32_t kLightingVec4Count = 29u;
   const CmdLoc lighting_consts =
       FindLastShaderConstsFBefore(buf, len, draw.offset, AEROGPU_SHADER_STAGE_VERTEX, kLightingStartReg, kLightingVec4Count);
   if (!Check(lighting_consts.hdr != nullptr, "ApplyStateBlock triggers lighting constant upload")) {
@@ -18824,10 +18824,11 @@ bool TestFixedFuncXyzNormalStateBlockApplyReuploadsLightingConstants() {
   }
   const float* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
   constexpr float kEps = 1e-6f;
-  if (!Check(std::fabs(payload[9 * 4 + 0] - 1.0f) < kEps &&
-                 std::fabs(payload[9 * 4 + 1] - 0.0f) < kEps &&
-                 std::fabs(payload[9 * 4 + 2] - 0.0f) < kEps &&
-                 std::fabs(payload[9 * 4 + 3] - 1.0f) < kEps,
+  constexpr uint32_t kGlobalAmbientRel = (236u - kLightingStartReg);
+  if (!Check(std::fabs(payload[kGlobalAmbientRel * 4 + 0] - 1.0f) < kEps &&
+                 std::fabs(payload[kGlobalAmbientRel * 4 + 1] - 0.0f) < kEps &&
+                 std::fabs(payload[kGlobalAmbientRel * 4 + 2] - 0.0f) < kEps &&
+                 std::fabs(payload[kGlobalAmbientRel * 4 + 3] - 1.0f) < kEps,
              "global ambient constant reflects state-block-applied D3DRS_AMBIENT")) {
     return false;
   }
