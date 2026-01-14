@@ -86,11 +86,11 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // This helps libFuzzer reach deeper decode/IR paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let mode = seed.get(6).copied().unwrap_or(0) % 5;
+    let mode = seed.get(6).copied().unwrap_or(0) % 6;
     let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) && mode != 2;
-    // For the `mova`/relative-constant and `loop` modes, force SM3 so address/loop registers are
-    // valid and we reach deeper structured-control-flow IR paths more reliably.
-    let major = if mode == 2 || mode == 4 {
+    // For the `mova`/relative-constant, `loop`, and `predicate` modes, force SM3 so address/loop
+    // registers are valid and we reach deeper structured-control-flow IR paths more reliably.
+    let major = if mode == 2 || mode == 4 || mode == 5 {
         3u32
     } else {
         2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1)
@@ -251,7 +251,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
         },
 
         // Loop + breakc to exercise structured looping IR.
-        _ => {
+        4 => {
             // loop aL#, i#
             let loop_reg_idx = seed.get(13).copied().unwrap_or(0) % 4;
             let ctrl_reg_idx = seed.get(14).copied().unwrap_or(0) % 4;
@@ -275,6 +275,26 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
 
             // endloop
             tokens.push(opcode_token(29, 0, 0));
+        }
+
+        // Predication + setp to exercise predicate decoding and IR modifiers.
+        _ => {
+            // setp p0.x, src0, src1 (comparison op in opcode_token[16..19])
+            let p0 = dst_token(19, 0, 0x1);
+            let cmp = (seed.get(13).copied().unwrap_or(0) & 0x7) as u32;
+            tokens.push(opcode_token(78, 3, 0) | (cmp << 16));
+            tokens.push(p0);
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // Predicated add dst, src0, src1, p0.x (optionally negated).
+            let pred_neg = seed.get(14).copied().unwrap_or(0) & 1;
+            let pred_token = src_token(19, 0, 0x00, pred_neg);
+            tokens.push(opcode_token(2, 4, mod_bits) | 0x1000_0000);
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+            tokens.push(pred_token);
         }
     };
 
