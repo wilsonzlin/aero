@@ -301,8 +301,11 @@ Goal: ensure there is exactly one place in-tree implementing raw/qcow2/vhd/spars
      `aero_devices::storage::DeviceBackendAsAeroVirtualDisk`,
      `aero_devices_nvme::NvmeBackendAsAeroVirtualDisk`).
 5. virtio-blk: keep `aero_storage::VirtualDisk` as the wiring boundary and treat backend traits as
-   device-internal (adapt at the edge). (Optional cleanup) Evaluate consolidating virtio-blk device
-   models on fewer backend traits:
+   device-internal (adapt at the edge). Concretely, prefer wiring:
+   - `aero_virtio::devices::blk::VirtioBlkDisk` (canonical disk-backed virtio-blk device type alias), or
+   - `aero_devices::storage::VirtualDrive::new_from_aero_virtual_disk` (for the `aero-devices` stack)
+
+   (Optional cleanup) Evaluate consolidating virtio-blk device models on fewer backend traits:
     - `aero_devices::storage::DiskBackend`
     - `aero_virtio::devices::blk::BlockBackend`
     In both cases, keep `aero_storage::VirtualDisk` as the common “disk image” boundary and adapt.

@@ -26,6 +26,9 @@
 //! For convenience, `aero-virtio` also provides `aero_virtio::devices::blk::VirtioBlkDisk` as the
 //! canonical “disk-backed virtio-blk device” type alias (`VirtioBlk<Box<dyn VirtualDisk>>`).
 //!
+//! Similarly, the `aero-devices` stack provides `aero_devices::storage::VirtualDrive::new_from_aero_virtual_disk`
+//! for wiring a boxed `VirtualDisk` into its device-model backend trait.
+//!
 //! `aero-virtio` provides a blanket impl so a boxed `VirtualDisk` can be used directly as a virtio
 //! backend:
 //!
