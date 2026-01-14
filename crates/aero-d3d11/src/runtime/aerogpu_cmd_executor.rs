@@ -8161,28 +8161,30 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
 
+        // The compute-prepass draw path is used for GS/HS/DS emulation (and topology fallbacks).
+        // Make sure the backend supports the required compute + indirect draw capabilities before
+        // attempting any of the prepass plumbing.
+        self.validate_gs_hs_ds_emulation_capabilities()?;
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
 
         // Tessellation (HS/DS) and geometry-shader emulation share this compute-prepass entrypoint.
         //
-        // Even on backends that do support compute, unit tests may force these capability flags
-        // off. Validate them here so the emulation path fails with a clear error rather than
-        // silently proceeding.
-        self.validate_gs_hs_ds_emulation_capabilities()?;
-
+        // Patchlist topologies can be routed through the placeholder compute prepass, but explicit
+        // HS/DS bindings are only partially validated today.
         if self.state.hs.is_some() && self.state.ds.is_none() {
             bail!("tessellation draw requires a bound DS (HS is bound without DS)");
         }
         if self.state.ds.is_some() && self.state.hs.is_none() {
             bail!("tessellation draw requires a bound HS (DS is bound without HS)");
         }
+        if self.state.hs.is_some() && self.state.ds.is_some() {
+            bail!("tessellation (HS/DS) compute expansion is not wired up yet");
+        }
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
         // wired up yet, so for now treat HS/DS-bound draws as part of the generic compute-prepass
         // placeholder path so apps that accidentally bind tessellation stages (or select patchlist
         // topologies) do not crash.
-
-        self.validate_gs_hs_ds_emulation_capabilities()?;
 
         let Some(next) = stream.iter.peek() else {
             return Ok(());
@@ -23425,7 +23427,6 @@ mod tests {
                 include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
             const DXBC_PS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
-
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
                 RT,
@@ -25402,14 +25403,14 @@ fn hs_main() {
 
             let cp_wgsl = format!(
                 r#"
- struct Params {{
-     value: vec4<f32>,
- }};
- 
- @group(3) @binding({cb0}) var<uniform> params: Params;
- @group(3) @binding({vs_out}) var<storage, read_write> vs_out_regs: array<vec4<f32>>;
- @group(3) @binding({hs_out}) var<storage, read_write> hs_out_regs: array<vec4<f32>>;
- 
+struct Params {{
+    value: vec4<f32>,
+}};
+
+@group(3) @binding({cb0}) var<uniform> params: Params;
+@group(3) @binding({vs_out}) var<storage, read_write> vs_out_regs: array<vec4<f32>>;
+@group(3) @binding({hs_out}) var<storage, read_write> hs_out_regs: array<vec4<f32>>;
+
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
     let cp = id.x;
@@ -26301,8 +26302,6 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
             const DXBC_PS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
-            const DXBC_GS_PASSTHROUGH: &[u8] =
-                include_bytes!("../../tests/fixtures/gs_passthrough.dxbc");
 
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
@@ -26319,9 +26318,11 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             );
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
             writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
-            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
+            // Bind a non-zero GS handle to force the compute-prepass path, but don't create the GS
+            // shader. This keeps the test on the placeholder GS prepass implementation (which does
+            // not require an input layout / vertex buffers).
             writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
             writer.draw(3, 1, 0, 0);
             let stream = writer.finish();
