@@ -11,6 +11,8 @@ license = "MIT OR Apache-2.0"
 wasm-threaded = ["dep:aero-shared", "memory/wasm-threaded", "aero-gpu-vga/wasm-threaded"]
 # Enables the native wgpu-based AeroGPU execution backend.
 aerogpu-wgpu-backend = ["aero-devices-gpu/wgpu-backend"]
+# Compatibility alias (matches `aero-devices-gpu`).
+wgpu-backend = ["aerogpu-wgpu-backend"]
 
 [dependencies]
 aero-cpu-core = { path = "../aero-cpu-core" }
