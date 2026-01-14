@@ -835,6 +835,8 @@ fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
 
     // Inject non-default EP0 control TD state.
     ctrl.ep0_control_td[usize::from(slot_id)] = super::ControlTdState {
+        td_start: None,
+        td_cursor: None,
         data_expected: 42,
         data_transferred: 7,
         completion_code: CompletionCode::TrbError,
@@ -850,6 +852,8 @@ fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
 
     // Reset Endpoint should also clear any pending TD tracking.
     ctrl.ep0_control_td[usize::from(slot_id)] = super::ControlTdState {
+        td_start: None,
+        td_cursor: None,
         data_expected: 123,
         data_transferred: 456,
         completion_code: CompletionCode::StallError,

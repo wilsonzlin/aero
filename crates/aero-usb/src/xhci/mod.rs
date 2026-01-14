@@ -309,6 +309,18 @@ struct ActiveEndpoint {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ControlTdState {
+    /// When `Some`, a control TD is currently in-flight and this cursor points at the first TRB of
+    /// the TD (the Setup Stage TRB).
+    ///
+    /// xHCI's architectural TR Dequeue Pointer is only advanced once the TD completes, so we keep
+    /// the committed endpoint ring cursor pinned here while we process the Data/Status stages.
+    td_start: Option<RingCursor>,
+    /// Current internal dequeue cursor within the in-flight control TD.
+    ///
+    /// Unlike `td_start`, this cursor is allowed to advance between Setup/Data/Status TRBs so the
+    /// controller can make forward progress. On NAK, this cursor is left pointing at the TRB that
+    /// should be retried.
+    td_cursor: Option<RingCursor>,
     data_expected: usize,
     data_transferred: usize,
     completion_code: CompletionCode,
@@ -317,6 +329,8 @@ struct ControlTdState {
 impl Default for ControlTdState {
     fn default() -> Self {
         Self {
+            td_start: None,
+            td_cursor: None,
             data_expected: 0,
             data_transferred: 0,
             completion_code: CompletionCode::Success,
@@ -2083,15 +2097,15 @@ impl XhciController {
             };
         }
 
-        let Some(mut ring) = slot.transfer_rings[0] else {
+        let Some(committed_ring) = slot.transfer_rings[0] else {
             return EndpointOutcome::idle();
         };
 
-        let mut control_td = self
-            .ep0_control_td
-            .get(slot_idx)
-            .copied()
-            .unwrap_or_default();
+        let mut control_td = self.ep0_control_td.get(slot_idx).copied().unwrap_or_default();
+
+        // Use the in-flight cursor when a control TD is partially completed (e.g. DATA/STATUS stage
+        // is NAKed). Otherwise start from the committed dequeue pointer.
+        let mut ring = control_td.td_cursor.unwrap_or(committed_ring);
 
         let mut events: Vec<Trb> = Vec::new();
         let mut trbs_consumed = 0usize;
@@ -2102,11 +2116,13 @@ impl XhciController {
                 return EndpointOutcome::idle();
             };
 
-            while trbs_consumed < trb_budget {
+                while trbs_consumed < trb_budget {
                 let item = match ring.peek(mem, RING_STEP_BUDGET) {
                     RingPoll::Ready(item) => item,
                     RingPoll::NotReady => {
-                        keep_active = false;
+                        // If a TD is already in progress, keep the endpoint active so we continue
+                        // polling until the guest finishes writing the remaining stage TRBs.
+                        keep_active = control_td.td_start.is_some();
                         break;
                     }
                     RingPoll::Err(_) => {
@@ -2121,6 +2137,9 @@ impl XhciController {
                 match trb.trb_type() {
                     TrbType::SetupStage => {
                         control_td = ControlTdState::default();
+                        // Pin the committed dequeue pointer at the start of the TD until the
+                        // Status Stage completes.
+                        control_td.td_start = Some(ring);
 
                         let setup_bytes = trb.parameter.to_le_bytes();
                         let setup = SetupPacket::from_bytes(setup_bytes);
@@ -2129,6 +2148,8 @@ impl XhciController {
                             UsbOutResult::Ack => CompletionCode::Success,
                             UsbOutResult::Nak => {
                                 keep_active = true;
+                                // Do not advance the transfer ring. Retry the setup stage later.
+                                control_td.td_cursor = Some(ring);
                                 break;
                             }
                             UsbOutResult::Stall => CompletionCode::StallError,
@@ -2142,6 +2163,7 @@ impl XhciController {
                             break;
                         }
                         trbs_consumed += 1;
+                        control_td.td_cursor = Some(ring);
 
                         if trb.ioc() || completion != CompletionCode::Success {
                             events.push(make_transfer_event_trb(
@@ -2174,7 +2196,7 @@ impl XhciController {
                             break;
                         }
 
-                        let dir_in = (trb.control & Trb::CONTROL_DIR) != 0;
+                        let dir_in = trb.dir_in();
                         let idt = (trb.control & TRB_CTRL_IDT) != 0;
                         if idt && requested_len > 8 {
                             let completion = CompletionCode::TrbError;
@@ -2223,6 +2245,7 @@ impl XhciController {
                                 }
                                 UsbInResult::Nak => {
                                     keep_active = true;
+                                    control_td.td_cursor = Some(ring);
                                     break;
                                 }
                                 UsbInResult::Stall => (CompletionCode::StallError, 0),
@@ -2235,6 +2258,7 @@ impl XhciController {
                                     UsbOutResult::Ack => (CompletionCode::Success, requested_len),
                                     UsbOutResult::Nak => {
                                         keep_active = true;
+                                        control_td.td_cursor = Some(ring);
                                         break;
                                     }
                                     UsbOutResult::Stall => (CompletionCode::StallError, 0),
@@ -2248,6 +2272,7 @@ impl XhciController {
                                     UsbOutResult::Ack => (CompletionCode::Success, requested_len),
                                     UsbOutResult::Nak => {
                                         keep_active = true;
+                                        control_td.td_cursor = Some(ring);
                                         break;
                                     }
                                     UsbOutResult::Stall => (CompletionCode::StallError, 0),
@@ -2265,6 +2290,7 @@ impl XhciController {
                             break;
                         }
                         trbs_consumed += 1;
+                        control_td.td_cursor = Some(ring);
 
                         // Short Packet is reported as the *TD completion* (StatusStage) in most
                         // control-transfer flows. Only generate an event at the DataStage TRB when
@@ -2284,7 +2310,7 @@ impl XhciController {
                         }
                     }
                     TrbType::StatusStage => {
-                        let dir_in = (trb.control & Trb::CONTROL_DIR) != 0;
+                        let dir_in = trb.dir_in();
 
                         let status_completion = if dir_in {
                             match device.handle_in(0, 0) {
@@ -2297,6 +2323,7 @@ impl XhciController {
                                 }
                                 UsbInResult::Nak => {
                                     keep_active = true;
+                                    control_td.td_cursor = Some(ring);
                                     break;
                                 }
                                 UsbInResult::Stall => CompletionCode::StallError,
@@ -2307,6 +2334,7 @@ impl XhciController {
                                 UsbOutResult::Ack => CompletionCode::Success,
                                 UsbOutResult::Nak => {
                                     keep_active = true;
+                                    control_td.td_cursor = Some(ring);
                                     break;
                                 }
                                 UsbOutResult::Stall => CompletionCode::StallError,
@@ -2355,10 +2383,26 @@ impl XhciController {
         }
 
         // Persist the updated ring cursor + control TD bookkeeping.
+        //
+        // xHCI dequeue-pointer semantics:
+        // - While a control TD is in-flight, the architectural TR Dequeue Pointer is pinned at the
+        //   TD start (`td_start`).
+        // - The internal cursor (`td_cursor`) advances as we process stage TRBs, and is used for
+        //   retries after NAK without duplicating work.
+        // - Once the Status Stage completes, `control_td` is reset to its default (no TD in
+        //   progress) and we commit the current cursor (`ring`) as the new dequeue pointer.
         if let Some(slot) = self.slots.get_mut(slot_idx) {
-            slot.transfer_rings[0] = Some(ring);
+            slot.transfer_rings[0] = match control_td.td_start {
+                Some(start) => Some(start),
+                None => Some(ring),
+            };
         }
         if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+            if control_td.td_start.is_some() {
+                control_td.td_cursor = Some(ring);
+            } else {
+                control_td.td_cursor = None;
+            }
             *state = control_td;
         }
         for ev in events {
