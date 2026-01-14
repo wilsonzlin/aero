@@ -83,6 +83,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         // Keep this list intentionally small to stay in-scope for input/USB changes and to keep
         // CI/dev runs fast. Developers can add extra Playwright args after `--`.
         cmd.args([
+            "tests/e2e/input_batch_malformed.spec.ts",
             "tests/e2e/input_capture.spec.ts",
             "tests/e2e/input_capture_io_worker.spec.ts",
             "tests/e2e/io_worker_i8042.spec.ts",
