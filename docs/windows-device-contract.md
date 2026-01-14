@@ -247,9 +247,12 @@ Examples (illustrative) INF model entries:
 %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 
 ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
+; Canonical INF is SUBSYS-gated (no generic fallback):
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+;
+; Optional strict revision-gated generic fallback (no SUBSYS) is provided via the legacy alias INF:
+; %AeroVirtioInput.DeviceDesc%  = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
 ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
 ; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
@@ -257,9 +260,10 @@ Examples (illustrative) INF model entries:
 
 ; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
 ; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
-; - Expected to remain byte-for-byte identical to `aero_virtio_input.inf` from the first section header (`[Version]`) onward
-;   (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-; - Does not change HWID matching behavior.
+; - Allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the
+;   opt-in strict generic fallback entry above (no SUBSYS).
+; - Outside those models sections, expected to remain byte-for-byte identical (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+; - Changes HWID matching behavior by adding the fallback, so do not install both INFs at the same time.
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
