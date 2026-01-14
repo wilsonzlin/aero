@@ -186,20 +186,21 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
   // WebGPU validation/pipeline errors can surface asynchronously as uncaptured errors rather than thrown exceptions.
   // Surface them for bench debugging, but dedupe so repeated validation errors don't flood the console.
   const seenUncapturedErrorKeys = new Set<string>();
-  const uncapturedErrorHandler = (ev: any) => {
+  const uncapturedErrorHandler = (ev: unknown) => {
     try {
-      (ev as any).preventDefault?.();
+      (ev as { preventDefault?: () => void } | null | undefined)?.preventDefault?.();
     } catch {
       // Ignore.
     }
 
-    const err = ev?.error;
+    const err = (ev as { error?: unknown } | null | undefined)?.error;
+    const ctor = err && typeof err === "object" ? (err as { constructor?: unknown }).constructor : undefined;
+    const ctorName = typeof ctor === "function" ? ctor.name : "";
     const errorName =
-      (typeof err?.name === "string" && err.name) ||
-      (err && typeof err === "object" && typeof (err as any).constructor?.name === "string"
-        ? (err as any).constructor.name
-        : "");
-    const errorMessage = typeof err?.message === "string" ? err.message : "";
+      (err && typeof err === "object" && typeof (err as { name?: unknown }).name === "string" ? (err as { name: string }).name : "") ||
+      ctorName;
+    const errorMessage =
+      err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : "";
     let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
     if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
       msg = `${errorName}: ${msg}`;
@@ -213,10 +214,15 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
     console.error("[webgpu-bench] uncapturederror", err ?? ev);
   };
   try {
-    if (typeof (device as any).addEventListener === "function") {
-      (device as any).addEventListener("uncapturederror", uncapturedErrorHandler);
+    const addEventListener = (device as unknown as { addEventListener?: unknown }).addEventListener;
+    if (typeof addEventListener === "function") {
+      (addEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
+        device,
+        "uncapturederror",
+        uncapturedErrorHandler,
+      );
     } else {
-      (device as any).onuncapturederror = uncapturedErrorHandler;
+      (device as unknown as { onuncapturederror?: unknown }).onuncapturederror = uncapturedErrorHandler;
     }
   } catch {
     // Best-effort.
@@ -492,13 +498,21 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
     queryResolveBuffer?.destroy();
     (querySet as unknown as { destroy?: () => void } | null)?.destroy?.();
     try {
-      (device as any)?.removeEventListener?.("uncapturederror", uncapturedErrorHandler);
+      const removeEventListener = (device as unknown as { removeEventListener?: unknown }).removeEventListener;
+      if (typeof removeEventListener === "function") {
+        (removeEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
+          device,
+          "uncapturederror",
+          uncapturedErrorHandler,
+        );
+      }
     } catch {
       // Ignore.
     }
     try {
-      if ((device as any)?.onuncapturederror === uncapturedErrorHandler) {
-        (device as any).onuncapturederror = null;
+      const anyDevice = device as unknown as { onuncapturederror?: unknown };
+      if (anyDevice.onuncapturederror === uncapturedErrorHandler) {
+        anyDevice.onuncapturederror = null;
       }
     } catch {
       // Ignore.

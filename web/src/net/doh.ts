@@ -95,16 +95,19 @@ export async function resolveAOverDohJson(
   }
   if (!json || typeof json !== "object") return null;
 
-  const answer = (json as any).Answer as Array<any> | undefined;
-  if (!answer || !Array.isArray(answer)) return null;
+  const answerRaw = (json as Record<string, unknown>)["Answer"];
+  if (!Array.isArray(answerRaw)) return null;
 
-  const firstA = answer.find((a) => a && a.type === 1 && typeof a.data === "string");
-  if (!firstA) return null;
+  for (const entry of answerRaw) {
+    if (!entry || typeof entry !== "object") continue;
+    const rec = entry as Record<string, unknown>;
+    if (rec["type"] === 1 && typeof rec["data"] === "string") {
+      const ttl = typeof rec["TTL"] === "number" ? rec["TTL"] : 60;
+      return { address: rec["data"], ttl };
+    }
+  }
 
-  return {
-    address: firstA.data,
-    ttl: typeof firstA.TTL === "number" ? firstA.TTL : 60,
-  };
+  return null;
 }
 
 function randomUint16(): number {

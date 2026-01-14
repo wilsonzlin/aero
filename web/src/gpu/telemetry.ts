@@ -383,10 +383,14 @@ export class GpuTelemetry {
 // Optional global registration to make it easy for benchmark pages and ad-hoc
 // debugging to access the implementation without a bundler.
 if (typeof globalThis !== "undefined") {
-  const g = globalThis as any;
-  if (!g.AeroGpuTelemetry) {
+  const g = globalThis as unknown as { AeroGpuTelemetry?: unknown };
+  const existing = g.AeroGpuTelemetry;
+  if (!existing || typeof existing !== "object") {
     g.AeroGpuTelemetry = { GpuTelemetry };
-  } else if (!g.AeroGpuTelemetry.GpuTelemetry) {
-    g.AeroGpuTelemetry.GpuTelemetry = GpuTelemetry;
+  } else {
+    const record = existing as Record<string, unknown>;
+    if (!record["GpuTelemetry"]) {
+      record["GpuTelemetry"] = GpuTelemetry;
+    }
   }
 }

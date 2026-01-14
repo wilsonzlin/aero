@@ -26,8 +26,9 @@ function flipImageVertically(pixels: Uint8Array, width: number, height: number):
 
 function glEnumToString(gl: WebGL2RenderingContext, value: number): string {
   // Best-effort mapping for debugging; falls back to numeric.
-  for (const key of Object.keys(gl) as Array<keyof WebGL2RenderingContext>) {
-    if (typeof (gl as any)[key] === 'number' && (gl as any)[key] === value) return String(key);
+  const record = gl as unknown as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (typeof record[key] === 'number' && record[key] === value) return String(key);
   }
   return `0x${value.toString(16)}`;
 }
@@ -65,7 +66,7 @@ export class RawWebGl2Presenter implements Presenter {
 
   private isContextLost = false;
   private onContextLost: ((ev: Event) => void) | null = null;
-  private onContextRestored: (() => void) | null = null;
+  private onContextRestored: ((ev: Event) => void) | null = null;
 
   private cursorImage: Uint8Array | null = null;
   private cursorWidth = 0;
@@ -109,13 +110,13 @@ export class RawWebGl2Presenter implements Presenter {
     this.gl = gl;
 
     // Events are dispatched on the canvas.
-    this.onContextLost = (ev: Event) => {
+    const onContextLost = (ev: Event) => {
       // A context loss is recoverable only if we preventDefault.
-      (ev as any).preventDefault?.();
+      ev.preventDefault();
       this.isContextLost = true;
       this.opts.onError?.(new PresenterError('webgl_context_lost', 'WebGL context lost'));
     };
-    this.onContextRestored = () => {
+    const onContextRestored = (_ev: Event) => {
       this.isContextLost = false;
       try {
         this.recreateResources();
@@ -125,10 +126,13 @@ export class RawWebGl2Presenter implements Presenter {
         );
       }
     };
+    this.onContextLost = onContextLost;
+    this.onContextRestored = onContextRestored;
 
     try {
-      (canvas as any).addEventListener('webglcontextlost', this.onContextLost, { passive: false } as any);
-      (canvas as any).addEventListener('webglcontextrestored', this.onContextRestored);
+      const target = canvas as unknown as EventTarget;
+      target.addEventListener('webglcontextlost', onContextLost, { passive: false });
+      target.addEventListener('webglcontextrestored', onContextRestored);
     } catch {
       // Some OffscreenCanvas implementations do not expose these events; ignore.
     }
@@ -358,8 +362,9 @@ export class RawWebGl2Presenter implements Presenter {
     const canvas = this.canvas;
     if (canvas) {
       try {
-        if (this.onContextLost) (canvas as any).removeEventListener('webglcontextlost', this.onContextLost);
-        if (this.onContextRestored) (canvas as any).removeEventListener('webglcontextrestored', this.onContextRestored);
+        const target = canvas as unknown as EventTarget;
+        if (this.onContextLost) target.removeEventListener('webglcontextlost', this.onContextLost);
+        if (this.onContextRestored) target.removeEventListener('webglcontextrestored', this.onContextRestored);
       } catch {
         // Ignore.
       }
@@ -398,7 +403,7 @@ export class RawWebGl2Presenter implements Presenter {
   public debugLoseContext(): boolean {
     const gl = this.gl;
     if (!gl) return false;
-    const ext = gl.getExtension('WEBGL_lose_context') as any;
+    const ext = gl.getExtension('WEBGL_lose_context') as unknown as { loseContext?: () => void } | null;
     if (!ext || typeof ext.loseContext !== 'function') return false;
     ext.loseContext();
     return true;
@@ -412,7 +417,7 @@ export class RawWebGl2Presenter implements Presenter {
   public debugRestoreContext(): boolean {
     const gl = this.gl;
     if (!gl) return false;
-    const ext = gl.getExtension('WEBGL_lose_context') as any;
+    const ext = gl.getExtension('WEBGL_lose_context') as unknown as { restoreContext?: () => void } | null;
     if (!ext || typeof ext.restoreContext !== 'function') return false;
     ext.restoreContext();
     return true;
@@ -502,11 +507,12 @@ export class RawWebGl2Presenter implements Presenter {
     // Deterministic presentation: we do manual sRGB encoding in the blit shader, so ensure
     // fixed-function framebuffer sRGB conversion (when present) is disabled to avoid double-gamma.
     const srgbWriteControl = gl.getExtension('EXT_sRGB_write_control') as { FRAMEBUFFER_SRGB_EXT?: number } | null;
+    const framebufferSrgb = (gl as unknown as { FRAMEBUFFER_SRGB?: unknown }).FRAMEBUFFER_SRGB;
     const framebufferSrgbCap =
-      typeof (gl as any).FRAMEBUFFER_SRGB === 'number'
-        ? ((gl as any).FRAMEBUFFER_SRGB as number)
+      typeof framebufferSrgb === 'number'
+        ? framebufferSrgb
         : typeof srgbWriteControl?.FRAMEBUFFER_SRGB_EXT === 'number'
-          ? (srgbWriteControl.FRAMEBUFFER_SRGB_EXT as number)
+          ? srgbWriteControl.FRAMEBUFFER_SRGB_EXT
           : null;
     if (typeof framebufferSrgbCap === 'number') {
       gl.disable(framebufferSrgbCap);

@@ -433,21 +433,29 @@ export class DiskManager {
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        channel.port2.onmessage = (event: MessageEvent<any>) => {
-          const msg = event.data as any;
-          if (!msg || typeof msg !== "object") return;
-          if (msg.type === "chunk" && msg.chunk instanceof Uint8Array) {
-            controller.enqueue(msg.chunk as Uint8Array);
+        channel.port2.onmessage = (event: MessageEvent<unknown>) => {
+          const data = event.data;
+          if (!data || typeof data !== "object") return;
+          const msg = data as Record<string, unknown>;
+
+          const type = msg["type"];
+          if (type === "chunk") {
+            const chunk = msg["chunk"];
+            if (chunk instanceof Uint8Array) {
+              controller.enqueue(chunk);
+            }
             return;
           }
-          if (msg.type === "done") {
+
+          if (type === "done") {
             controller.close();
-            doneResolve({ checksumCrc32: msg.checksumCrc32 });
+            const checksumRaw = msg["checksumCrc32"];
+            doneResolve({ checksumCrc32: typeof checksumRaw === "string" ? checksumRaw : String(checksumRaw ?? "") });
             channel.port2.close();
             return;
           }
-          if (msg.type === "error") {
-            const raw = msg.error as unknown;
+          if (type === "error") {
+            const raw = msg["error"];
             const message =
               raw &&
               typeof raw === "object" &&
@@ -496,13 +504,13 @@ export class DiskManager {
     const handle = await this.exportDiskStream(id, options);
     const fileName = options?.suggestedName ?? defaultExportFileName(handle.meta, !!options?.gzip);
 
-    const showSaveFilePicker = (globalThis as any).showSaveFilePicker as
-      | ((options?: any) => Promise<any>)
-      | undefined;
+    const showSaveFilePicker = (globalThis as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
 
     try {
       if (typeof showSaveFilePicker === "function") {
-        const pickerHandle = await showSaveFilePicker({ suggestedName: fileName });
+        const pickerHandle = await (showSaveFilePicker as (options?: { suggestedName?: string }) => Promise<FileSystemFileHandle>)(
+          { suggestedName: fileName },
+        );
         let writable: FileSystemWritableFileStream;
         let truncateFallback = false;
         try {

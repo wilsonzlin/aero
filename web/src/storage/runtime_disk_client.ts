@@ -9,7 +9,6 @@ import type {
   SharedArrayBufferRange,
   SharedArrayBufferSlice,
   RuntimeDiskRequestMessage,
-  RuntimeDiskResponseMessage,
 } from "./runtime_disk_protocol";
 import { normalizeDiskOpenSpec } from "./runtime_disk_protocol";
 
@@ -52,15 +51,21 @@ export class RuntimeDiskClient {
       });
 
     this.worker.onmessage = (event) => {
-      const msg = event.data as Partial<RuntimeDiskResponseMessage>;
-      if (!msg || msg.type !== "response" || typeof msg.requestId !== "number") return;
-      const entry = this.pending.get(msg.requestId);
+      const data = event.data as unknown;
+      if (!data || typeof data !== "object") return;
+      const msg = data as Record<string, unknown>;
+      if (msg["type"] !== "response") return;
+      const requestId = msg["requestId"];
+      if (typeof requestId !== "number") return;
+
+      const entry = this.pending.get(requestId);
       if (!entry) return;
-      this.pending.delete(msg.requestId);
-      if (msg.ok) {
-        entry.resolve((msg as any).result);
-      } else {
-        const raw = (msg as any).error as unknown;
+      this.pending.delete(requestId);
+
+      if (msg["ok"] === true) {
+        entry.resolve(msg["result"]);
+      } else if (msg["ok"] === false) {
+        const raw = msg["error"];
         const message =
           raw && typeof raw === "object" && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
             ? (raw as { message: string }).message
@@ -105,11 +110,11 @@ export class RuntimeDiskClient {
     }
   }
 
-  private request<T>(op: RuntimeDiskRequestMessage["op"], payload: any, transfer?: Transferable[]): Promise<T> {
+  private request<T>(op: RuntimeDiskRequestMessage["op"], payload: unknown, transfer?: Transferable[]): Promise<T> {
     const requestId = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
-      const msg: RuntimeDiskRequestMessage = { type: "request", requestId, op, payload } as any;
+      const msg = { type: "request", requestId, op, payload } as unknown as RuntimeDiskRequestMessage;
       try {
         this.worker.postMessage(msg, transfer ?? []);
       } catch (err) {
@@ -160,7 +165,7 @@ export class RuntimeDiskClient {
           // Some ArrayBuffers (e.g. WebAssembly.Memory.buffer) are non-transferable even though
           // they are not SharedArrayBuffer. If the transfer fails, fall back to copying so the
           // write still succeeds.
-          const errName = err instanceof DOMException ? err.name : (err as any)?.name;
+          const errName = err instanceof DOMException ? err.name : (err as { name?: unknown } | null | undefined)?.name;
           if (errName === "DataCloneError") {
             const buf = data.slice();
             return this.request("write", { handle, lba, data: buf }, [buf.buffer]).then(() => undefined);
@@ -205,7 +210,7 @@ export class RuntimeDiskClient {
       return this.request("restoreFromSnapshot", { state }, [buffer])
         .then(() => undefined)
         .catch((err) => {
-          const errName = err instanceof DOMException ? err.name : (err as any)?.name;
+          const errName = err instanceof DOMException ? err.name : (err as { name?: unknown } | null | undefined)?.name;
           if (errName === "DataCloneError") {
             const buf = state.slice();
             return this.request("restoreFromSnapshot", { state: buf }, [buf.buffer]).then(() => undefined);

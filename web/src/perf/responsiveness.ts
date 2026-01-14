@@ -361,7 +361,7 @@ export class ResponsivenessTracker {
           this.longTaskLastEndMs = entry.startTime + dur;
         }
       });
-      this.longTaskObserver.observe({ type: 'longtask', buffered: true } as any);
+      this.longTaskObserver.observe({ type: 'longtask', buffered: true });
       this.capabilities.longtask = true;
     } catch {
       this.longTaskObserver = undefined;
@@ -383,11 +383,12 @@ export class ResponsivenessTracker {
           recordMs(this.eventTiming, entry.duration);
         }
       });
-      this.eventTimingObserver.observe({
+      const observeOpts: PerformanceObserverInit & { durationThreshold?: number } = {
         type: 'event',
         buffered: true,
         durationThreshold: this.eventTimingDurationThresholdMs,
-      } as any);
+      };
+      this.eventTimingObserver.observe(observeOpts);
       this.capabilities.eventTiming = true;
     } catch {
       this.eventTimingObserver = undefined;

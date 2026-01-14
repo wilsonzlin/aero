@@ -13,7 +13,8 @@ interface ThreadSupport {
 
 function detectThreadSupport(): ThreadSupport {
   // `crossOriginIsolated` is required for SharedArrayBuffer on the web.
-  if (!(globalThis as any).crossOriginIsolated) {
+  const coi = (globalThis as unknown as { crossOriginIsolated?: unknown }).crossOriginIsolated;
+  if (coi !== true) {
     return {
       supported: false,
       reason: "crossOriginIsolated is false (missing COOP/COEP headers); SharedArrayBuffer is unavailable",

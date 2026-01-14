@@ -140,21 +140,7 @@ export class WgpuWebGl2Presenter implements Presenter {
       }
       const message = err instanceof Error ? err.message : err != null ? String(err) : '';
       const suffix = message ? `: ${message}` : '';
-      const cause =
-        err instanceof Error
-          ? { name: err.name, message: err.message, stack: err.stack }
-          : err && typeof (err as any).message === 'string'
-            ? {
-                name:
-                  typeof (err as any).name === 'string'
-                    ? (err as any).name
-                    : typeof (err as any).constructor?.name === 'string'
-                      ? (err as any).constructor.name
-                      : 'Error',
-                message: (err as any).message,
-                stack: typeof (err as any).stack === 'string' ? (err as any).stack : undefined,
-              }
-            : err;
+      const cause = sanitizePresenterErrorCause(err);
       throw new PresenterError('wgpu_present_failed', `Failed to present frame via wgpu WebGL2 presenter${suffix}`, cause);
     }
   }
@@ -219,21 +205,7 @@ export class WgpuWebGl2Presenter implements Presenter {
       }
       const message = err instanceof Error ? err.message : err != null ? String(err) : '';
       const suffix = message ? `: ${message}` : '';
-      const cause =
-        err instanceof Error
-          ? { name: err.name, message: err.message, stack: err.stack }
-          : err && typeof (err as any).message === 'string'
-            ? {
-                name:
-                  typeof (err as any).name === 'string'
-                    ? (err as any).name
-                    : typeof (err as any).constructor?.name === 'string'
-                      ? (err as any).constructor.name
-                      : 'Error',
-                message: (err as any).message,
-                stack: typeof (err as any).stack === 'string' ? (err as any).stack : undefined,
-              }
-            : err;
+      const cause = sanitizePresenterErrorCause(err);
       throw new PresenterError(
         'wgpu_present_failed',
         `Failed to present dirty rects via wgpu WebGL2 presenter${suffix}`,
@@ -405,6 +377,32 @@ export class WgpuWebGl2Presenter implements Presenter {
     }
     return new Uint8Array(view.buffer, view.byteOffset, byteLength);
   }
+}
+
+function sanitizePresenterErrorCause(err: unknown): unknown {
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message, stack: err.stack };
+  }
+
+  if (err && typeof err === 'object') {
+    const rec = err as Record<string, unknown>;
+    const message = rec['message'];
+    if (typeof message === 'string') {
+      const nameRaw = rec['name'];
+      let name = typeof nameRaw === 'string' ? nameRaw : 'Error';
+      if (name === 'Error') {
+        const ctor = rec['constructor'];
+        if (typeof ctor === 'function' && typeof ctor.name === 'string') {
+          name = ctor.name;
+        }
+      }
+      const stackRaw = rec['stack'];
+      const stack = typeof stackRaw === 'string' ? stackRaw : undefined;
+      return { name, message, stack };
+    }
+  }
+
+  return err;
 }
 
 function tryReadWasmPresentsSucceeded(): number | null {

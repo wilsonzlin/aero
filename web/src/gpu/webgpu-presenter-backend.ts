@@ -21,6 +21,17 @@ function bgraToRgbaInPlace(bytes: Uint8Array) {
     bytes[i + 2] = b;
   }
 }
+
+const webGpuGlobals = globalThis as unknown as {
+  GPUTextureUsage?: {
+    TEXTURE_BINDING?: number;
+    COPY_DST?: number;
+    COPY_SRC?: number;
+    RENDER_ATTACHMENT?: number;
+  };
+  GPUBufferUsage?: { COPY_DST?: number; MAP_READ?: number; UNIFORM?: number };
+  GPUMapMode?: { READ?: number };
+};
 export class WebGpuPresenterBackend implements Presenter {
   public readonly backend = 'webgpu' as const;
 
@@ -104,13 +115,14 @@ export class WebGpuPresenterBackend implements Presenter {
       const outputHeight = this.opts.outputHeight ?? height;
       this.resizeCanvas(outputWidth, outputHeight, dpr);
 
-      const gpu = (navigator as any).gpu;
+      const gpu = (navigator as unknown as { gpu?: GPU }).gpu;
       if (!gpu) {
         throw new PresenterError('webgpu_unavailable', 'WebGPU is not available in this environment');
       }
       this.gpu = gpu;
 
-      const isHeadless = /HeadlessChrome/.test((navigator as any).userAgent ?? '');
+      const userAgent = (navigator as unknown as { userAgent?: unknown }).userAgent;
+      const isHeadless = /HeadlessChrome/.test(typeof userAgent === 'string' ? userAgent : '');
       // Prefer the fallback adapter in headless/test runs for stability and deterministic output.
       // (We still try the "high-performance" path as a backup so real browsers can use hardware.)
       let adapter = await gpu.requestAdapter?.(
@@ -135,7 +147,7 @@ export class WebGpuPresenterBackend implements Presenter {
       this.device = device;
       this.queue = device.queue;
 
-      const ctx = (canvas as any).getContext('webgpu') as any;
+      const ctx = (canvas as unknown as { getContext: (type: string) => unknown }).getContext('webgpu');
       if (!ctx) {
         throw new PresenterError('webgpu_context_unavailable', 'Failed to create a WebGPU canvas context');
       }
@@ -312,8 +324,7 @@ export class WebGpuPresenterBackend implements Presenter {
     this.cursorHeight = h;
 
     const usage =
-      ((globalThis as any).GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) |
-      ((globalThis as any).GPUTextureUsage?.COPY_DST ?? 0x02);
+      (webGpuGlobals.GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) | (webGpuGlobals.GPUTextureUsage?.COPY_DST ?? 0x02);
 
     // Reallocate when dimensions change (bind groups cannot be updated in place).
     const needsRealloc =
@@ -377,7 +388,7 @@ export class WebGpuPresenterBackend implements Presenter {
 
     const readback = this.device.createBuffer({
       size: bufferSize,
-      usage: ((globalThis as any).GPUBufferUsage?.COPY_DST ?? 0x08) | ((globalThis as any).GPUBufferUsage?.MAP_READ ?? 0x01),
+      usage: (webGpuGlobals.GPUBufferUsage?.COPY_DST ?? 0x08) | (webGpuGlobals.GPUBufferUsage?.MAP_READ ?? 0x01),
     });
 
     const encoder = this.device.createCommandEncoder();
@@ -389,7 +400,7 @@ export class WebGpuPresenterBackend implements Presenter {
 
     this.queue.submit([encoder.finish()]);
 
-    const mapModeRead = (globalThis as any).GPUMapMode?.READ ?? 0x0001;
+    const mapModeRead = webGpuGlobals.GPUMapMode?.READ ?? 0x0001;
     await readback.mapAsync(mapModeRead);
 
     const mapped = new Uint8Array(readback.getMappedRange());
@@ -436,7 +447,7 @@ export class WebGpuPresenterBackend implements Presenter {
 
     const readback = this.device.createBuffer({
       size: bufferSize,
-      usage: ((globalThis as any).GPUBufferUsage?.COPY_DST ?? 0x08) | ((globalThis as any).GPUBufferUsage?.MAP_READ ?? 0x01),
+      usage: (webGpuGlobals.GPUBufferUsage?.COPY_DST ?? 0x08) | (webGpuGlobals.GPUBufferUsage?.MAP_READ ?? 0x01),
     });
 
     const cursorEnable =
@@ -500,7 +511,7 @@ export class WebGpuPresenterBackend implements Presenter {
     try {
       view =
         this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
-          ? currentTexture.createView({ format: this.viewFormat as any })
+          ? currentTexture.createView({ format: this.viewFormat })
           : currentTexture.createView();
     } catch (err) {
       viewError = err;
@@ -567,7 +578,7 @@ export class WebGpuPresenterBackend implements Presenter {
 
     this.queue.submit([encoder.finish()]);
 
-    const mapModeRead = (globalThis as any).GPUMapMode?.READ ?? 0x0001;
+    const mapModeRead = webGpuGlobals.GPUMapMode?.READ ?? 0x0001;
     await readback.mapAsync(mapModeRead);
     const mapped = new Uint8Array(readback.getMappedRange());
 
@@ -641,15 +652,18 @@ export class WebGpuPresenterBackend implements Presenter {
         if (this.device !== device) return;
 
         // Best-effort: avoid double-reporting (console + diagnostics) when the event is cancelable.
-        (ev as any).preventDefault?.();
+        ev?.preventDefault?.();
 
-        const err = ev?.error;
+        const err = (ev as { error?: unknown } | undefined)?.error;
+        const ctor = err && typeof err === 'object' ? (err as { constructor?: unknown }).constructor : undefined;
+        const ctorName = typeof ctor === 'function' ? ctor.name : '';
         const errorName =
-          (typeof err?.name === 'string' && err.name) ||
-          (err && typeof err === 'object' && typeof (err as any).constructor?.name === 'string'
-            ? (err as any).constructor.name
-            : '');
-        const errorMessage = typeof err?.message === 'string' ? err.message : '';
+          (err && typeof err === 'object' && typeof (err as { name?: unknown }).name === 'string' ? (err as { name: string }).name : '') ||
+          ctorName;
+        const errorMessage =
+          err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string'
+            ? (err as { message: string }).message
+            : '';
         let msg = errorMessage || (err != null ? String(err) : 'WebGPU uncaptured error');
         if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
           msg = `${errorName}: ${msg}`;
@@ -670,7 +684,9 @@ export class WebGpuPresenterBackend implements Presenter {
           name: errorName || undefined,
           message: errorMessage || msg,
         };
-        if (typeof err?.stack === 'string') details.stack = err.stack;
+        if (err && typeof err === 'object' && typeof (err as { stack?: unknown }).stack === 'string') {
+          details.stack = (err as { stack: string }).stack;
+        }
 
         this.opts.onError?.(new PresenterError('webgpu_uncaptured_error', msg, details));
       } catch {
@@ -692,7 +708,7 @@ export class WebGpuPresenterBackend implements Presenter {
 
     // Fall back to the older onuncapturederror IDL if needed.
     try {
-      (device as any).onuncapturederror = handler;
+      (device as unknown as { onuncapturederror?: unknown }).onuncapturederror = handler;
     } catch {
       // Ignore.
     }
@@ -708,8 +724,9 @@ export class WebGpuPresenterBackend implements Presenter {
         // Ignore.
       }
       try {
-        if ((device as any).onuncapturederror === handler) {
-          (device as any).onuncapturederror = null;
+        const anyDevice = device as unknown as { onuncapturederror?: unknown };
+        if (anyDevice.onuncapturederror === handler) {
+          anyDevice.onuncapturederror = null;
         }
       } catch {
         // Ignore.
@@ -734,8 +751,8 @@ export class WebGpuPresenterBackend implements Presenter {
       // Ignore.
     }
 
-    const renderUsage = (globalThis as any).GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10;
-    const copySrcUsage = (globalThis as any).GPUTextureUsage?.COPY_SRC ?? 0x01;
+    const renderUsage = webGpuGlobals.GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10;
+    const copySrcUsage = webGpuGlobals.GPUTextureUsage?.COPY_SRC ?? 0x01;
 
     const toSrgbFormat = (format: unknown): unknown => {
       if (format === 'bgra8unorm') return 'bgra8unorm-srgb';
@@ -756,7 +773,7 @@ export class WebGpuPresenterBackend implements Presenter {
     if (isSrgbFormat(this.canvasFormat)) {
       // Some future implementations may return an sRGB canvas format directly.
       // In that case, the surface itself will perform encoding; do not double-encode in shader.
-      (this.ctx as any).configure({
+      this.ctx.configure({
         device: this.device,
         format: this.canvasFormat,
         usage: renderUsage | copySrcUsage,
@@ -766,7 +783,7 @@ export class WebGpuPresenterBackend implements Presenter {
       srgbEncodeInShader = false;
     } else if (srgbFormat) {
       try {
-        (this.ctx as any).configure({
+        this.ctx.configure({
           device: this.device,
           format: this.canvasFormat,
           usage: renderUsage | copySrcUsage,
@@ -778,7 +795,7 @@ export class WebGpuPresenterBackend implements Presenter {
         srgbEncodeInShader = false;
       } catch {
         // Fall back to a linear swapchain view and perform encoding in shader.
-        (this.ctx as any).configure({
+        this.ctx.configure({
           device: this.device,
           format: this.canvasFormat,
           usage: renderUsage | copySrcUsage,
@@ -788,7 +805,7 @@ export class WebGpuPresenterBackend implements Presenter {
         srgbEncodeInShader = true;
       }
     } else {
-      (this.ctx as any).configure({
+      this.ctx.configure({
         device: this.device,
         format: this.canvasFormat,
         usage: renderUsage | copySrcUsage,
@@ -853,9 +870,9 @@ export class WebGpuPresenterBackend implements Presenter {
     this.dirtyRectStaging = null;
 
     const usage =
-      ((globalThis as any).GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) |
-      ((globalThis as any).GPUTextureUsage?.COPY_DST ?? 0x02) |
-      ((globalThis as any).GPUTextureUsage?.COPY_SRC ?? 0x01);
+      (webGpuGlobals.GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) |
+      (webGpuGlobals.GPUTextureUsage?.COPY_DST ?? 0x02) |
+      (webGpuGlobals.GPUTextureUsage?.COPY_SRC ?? 0x01);
 
     this.frameTexture = this.device.createTexture({
       size: { width, height, depthOrArrayLayers: 1 },
@@ -952,7 +969,7 @@ export class WebGpuPresenterBackend implements Presenter {
     try {
       view =
         this.viewFormat && this.canvasFormat && this.viewFormat !== this.canvasFormat
-          ? currentTexture.createView({ format: this.viewFormat as any })
+          ? currentTexture.createView({ format: this.viewFormat })
           : currentTexture.createView();
     } catch (err) {
       viewError = err;
@@ -1025,15 +1042,14 @@ export class WebGpuPresenterBackend implements Presenter {
 
     if (!this.cursorUniformBuffer) {
       const usage =
-        ((globalThis as any).GPUBufferUsage?.UNIFORM ?? 0x10) | ((globalThis as any).GPUBufferUsage?.COPY_DST ?? 0x08);
+        (webGpuGlobals.GPUBufferUsage?.UNIFORM ?? 0x10) | (webGpuGlobals.GPUBufferUsage?.COPY_DST ?? 0x08);
       // CursorUniforms is 3x vec4<i32> = 48 bytes.
       this.cursorUniformBuffer = this.device.createBuffer({ size: 48, usage });
     }
 
     if (!this.cursorTexture || !this.cursorView) {
       const usage =
-        ((globalThis as any).GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) |
-        ((globalThis as any).GPUTextureUsage?.COPY_DST ?? 0x02);
+        (webGpuGlobals.GPUTextureUsage?.TEXTURE_BINDING ?? 0x04) | (webGpuGlobals.GPUTextureUsage?.COPY_DST ?? 0x02);
       this.cursorTexture = this.device.createTexture({
         size: { width: 1, height: 1, depthOrArrayLayers: 1 },
         format: 'rgba8unorm',

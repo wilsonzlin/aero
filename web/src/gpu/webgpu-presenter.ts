@@ -105,6 +105,8 @@ function bgraToRgbaInPlace(bytes: Uint8Array) {
   }
 }
 
+type CanvasConfig = GPUCanvasConfiguration & { viewFormats?: GPUTextureFormat[] };
+
 export class WebGpuPresenter {
   /** @type {GPUDevice} */
   device;
@@ -220,17 +222,18 @@ export class WebGpuPresenter {
     this._seenUncapturedErrorKeys.clear();
 
     const device = this.device;
-    const handler = (ev: any) => {
+    const handler = (ev: unknown) => {
       try {
-        (ev as any).preventDefault?.();
+        (ev as { preventDefault?: () => void } | null | undefined)?.preventDefault?.();
 
-        const err = ev?.error;
+        const err = (ev as { error?: unknown } | null | undefined)?.error;
+        const ctor = err && typeof err === "object" ? (err as { constructor?: unknown }).constructor : undefined;
+        const ctorName = typeof ctor === "function" ? ctor.name : "";
         const errorName =
-          (typeof err?.name === "string" && err.name) ||
-          (err && typeof err === "object" && typeof (err as any).constructor?.name === "string"
-            ? (err as any).constructor.name
-            : "");
-        const errorMessage = typeof err?.message === "string" ? err.message : "";
+          (err && typeof err === "object" && typeof (err as { name?: unknown }).name === "string" ? (err as { name: string }).name : "") ||
+          ctorName;
+        const errorMessage =
+          err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : "";
         let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
         if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
           msg = `${errorName}: ${msg}`;
@@ -244,7 +247,7 @@ export class WebGpuPresenter {
           this._seenUncapturedErrorKeys.add(key);
         }
 
-        const onError = (this.opts as any)?.onError;
+        const onError = (this.opts as { onError?: unknown } | null | undefined)?.onError;
         if (typeof onError === "function") {
           onError(err ?? ev);
         } else {
@@ -259,8 +262,13 @@ export class WebGpuPresenter {
     this._onUncapturedError = handler;
 
     try {
-      if (typeof (device as any).addEventListener === "function") {
-        (device as any).addEventListener("uncapturederror", handler);
+      const addEventListener = (device as unknown as { addEventListener?: unknown }).addEventListener;
+      if (typeof addEventListener === "function") {
+        (addEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
+          device,
+          "uncapturederror",
+          handler,
+        );
         return;
       }
     } catch {
@@ -268,7 +276,7 @@ export class WebGpuPresenter {
     }
 
     try {
-      (device as any).onuncapturederror = handler;
+      (device as unknown as { onuncapturederror?: unknown }).onuncapturederror = handler;
     } catch {
       // Ignore.
     }
@@ -279,13 +287,21 @@ export class WebGpuPresenter {
     const handler = this._onUncapturedError;
     if (device && handler) {
       try {
-        (device as any).removeEventListener?.("uncapturederror", handler);
+        const removeEventListener = (device as unknown as { removeEventListener?: unknown }).removeEventListener;
+        if (typeof removeEventListener === "function") {
+          (removeEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
+            device,
+            "uncapturederror",
+            handler,
+          );
+        }
       } catch {
         // Ignore.
       }
       try {
-        if ((device as any).onuncapturederror === handler) {
-          (device as any).onuncapturederror = null;
+        const anyDevice = device as unknown as { onuncapturederror?: unknown };
+        if (anyDevice.onuncapturederror === handler) {
+          anyDevice.onuncapturederror = null;
         }
       } catch {
         // Ignore.
@@ -299,7 +315,7 @@ export class WebGpuPresenter {
   destroy() {
     this._uninstallUncapturedErrorHandler();
     try {
-      (this.context as any)?.unconfigure?.();
+      (this.context as unknown as { unconfigure?: () => void }).unconfigure?.();
     } catch {
       // Ignore.
     }
@@ -328,7 +344,7 @@ export class WebGpuPresenter {
       const requiredFeatures = (opts.requiredFeatures ?? []) as GPUFeatureName[];
       device =
         requiredFeatures.length > 0 ? await adapter.requestDevice({ requiredFeatures }) : await adapter.requestDevice();
-      context = (canvas as any).getContext("webgpu");
+      context = (canvas as unknown as { getContext(type: "webgpu"): GPUCanvasContext | null }).getContext("webgpu");
       if (!context) throw new Error("Canvas WebGPU context not available");
 
       const resolvedOpts = {
@@ -354,18 +370,19 @@ export class WebGpuPresenter {
       if (resolvedOpts.outputColorSpace === "srgb" && srgbFormat) {
         try {
           // TS libdefs lag behind WebGPU; `viewFormats` is standard but may not be in types.
-          (context as any).configure({
+          const config: CanvasConfig = {
             device,
             format: canvasFormat,
             usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
             alphaMode,
             viewFormats: [srgbFormat],
-          });
+          };
+          context.configure(config);
           viewFormat = srgbFormat;
           srgbEncodeInShader = false; // GPU will encode when writing to the sRGB view.
         } catch {
           // Fall back to a linear view and do encoding in shader.
-          (context as any).configure({
+          context.configure({
             device,
             format: canvasFormat,
             usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
@@ -375,7 +392,7 @@ export class WebGpuPresenter {
           srgbEncodeInShader = true;
         }
       } else {
-        (context as any).configure({
+        context.configure({
           device,
           format: canvasFormat,
           usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
@@ -398,12 +415,12 @@ export class WebGpuPresenter {
     } catch (err) {
       // Best-effort cleanup so tests / validation pages can retry without leaking GPU devices.
       try {
-        (context as any)?.unconfigure?.();
+        (context as unknown as { unconfigure?: () => void } | null)?.unconfigure?.();
       } catch {
         // Ignore.
       }
       try {
-        (device as any)?.destroy?.();
+        (device as unknown as { destroy?: () => void } | null)?.destroy?.();
       } catch {
         // Ignore.
       }
@@ -417,7 +434,7 @@ export class WebGpuPresenter {
    * WebGPU canvases generally require calling `configure()` again on resize.
    */
   reconfigureCanvas() {
-    const config: any = {
+    const config: CanvasConfig = {
       device: this.device,
       format: this.canvasFormat,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
@@ -426,7 +443,7 @@ export class WebGpuPresenter {
     if (this.viewFormat !== this.canvasFormat) {
       config.viewFormats = [this.viewFormat];
     }
-    (this.context as any).configure(config);
+    this.context.configure(config);
   }
 
   /**
@@ -488,7 +505,7 @@ export class WebGpuPresenter {
     const view =
       this.viewFormat === this.canvasFormat
         ? currentTexture.createView()
-        : currentTexture.createView({ format: this.viewFormat as any });
+        : currentTexture.createView({ format: this.viewFormat });
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -522,9 +539,8 @@ export class WebGpuPresenter {
   async presentAndReadbackRgba8(): Promise<Uint8Array> {
     if (!this.srcTex) throw new Error("presentAndReadbackRgba8() called before setSourceRgba8()");
 
-    const canvas = this.canvas as any;
-    const width = (canvas.width ?? 0) as number;
-    const height = (canvas.height ?? 0) as number;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
 
     // WebGPU requires bytesPerRow to be a multiple of 256.
     const unpaddedBytesPerRow = width * 4;
@@ -543,7 +559,7 @@ export class WebGpuPresenter {
     const view =
       this.viewFormat === this.canvasFormat
         ? currentTexture.createView()
-        : currentTexture.createView({ format: this.viewFormat as any });
+        : currentTexture.createView({ format: this.viewFormat });
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({

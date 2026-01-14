@@ -110,7 +110,7 @@ export const startFrameScheduler = ({
 
   let overlay: DebugOverlay | null = null;
   if (showDebugOverlay) {
-    overlay = new DebugOverlay(() => lastTelemetry as any, {
+    overlay = new DebugOverlay(() => lastTelemetry, {
       parent: overlayParent,
       toggleKey: debugOverlayToggleKey,
     });
@@ -177,7 +177,8 @@ export const startFrameScheduler = ({
       // Forward structured GPU worker diagnostics to the console for visibility during dev/testing.
       // (These events are also useful for telemetry pipelines; keeping them structured avoids
       // parsing fragile string logs.)
-      const evs = Array.isArray((typed as any).events) ? ((typed as any).events as any[]) : [];
+      const rawEvents = (typed as unknown as { events?: unknown }).events;
+      const evs = Array.isArray(rawEvents) ? (rawEvents as unknown[]) : [];
       if (evs.length > 0) {
         if (lastTelemetry && typeof lastTelemetry === "object") {
           lastTelemetry = { ...(lastTelemetry as Record<string, unknown>), gpuEvents: evs };
@@ -186,10 +187,16 @@ export const startFrameScheduler = ({
         }
 
         for (const ev of evs) {
-          const sev = typeof ev?.severity === "string" ? ev.severity : "error";
-          const cat = typeof ev?.category === "string" ? ev.category : "Unknown";
-          const message = typeof ev?.message === "string" ? ev.message : String(ev?.message ?? "gpu event");
-          const details = ev?.details;
+          if (!ev || typeof ev !== "object") {
+            console.error("gpu-worker[Unknown]", String(ev));
+            continue;
+          }
+
+          const record = ev as Record<string, unknown>;
+          const sev = typeof record["severity"] === "string" ? record["severity"] : "error";
+          const cat = typeof record["category"] === "string" ? record["category"] : "Unknown";
+          const message = typeof record["message"] === "string" ? record["message"] : String(record["message"] ?? "gpu event");
+          const details = record["details"];
           const prefix = `gpu-worker[${cat}]`;
           switch (sev) {
             case "info":

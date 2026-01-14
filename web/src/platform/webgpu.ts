@@ -57,23 +57,25 @@ export async function requestWebGpuDevice(
     ? customUncapturedHandler!
     : (error: unknown) => console.error("[webgpu] uncapturederror", error);
   const seenErrorKeys = new Set<string>();
-  const uncapturedHandler = (ev: any) => {
+  const uncapturedHandler = (ev: unknown) => {
     try {
       // Avoid double-reporting when cancelable.
-      (ev as any).preventDefault?.();
+      (ev as { preventDefault?: () => void } | null | undefined)?.preventDefault?.();
     } catch {
       // Ignore.
     }
-    const error = ev?.error ?? ev;
+    const eventError = (ev as { error?: unknown } | null | undefined)?.error;
+    const error = eventError ?? ev;
     if (!hasCustomUncapturedHandler) {
       // Avoid flooding the console with the same validation error over and over.
-      const err = ev?.error;
+      const err = eventError;
+      const ctor = err && typeof err === "object" ? (err as { constructor?: unknown }).constructor : undefined;
+      const ctorName = typeof ctor === "function" ? ctor.name : "";
       const errorName =
-        (typeof err?.name === "string" && err.name) ||
-        (err && typeof err === "object" && typeof (err as any).constructor?.name === "string"
-          ? (err as any).constructor.name
-          : "");
-      const errorMessage = typeof err?.message === "string" ? err.message : "";
+        (err && typeof err === "object" && typeof (err as { name?: unknown }).name === "string" ? (err as { name: string }).name : "") ||
+        ctorName;
+      const errorMessage =
+        err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : "";
       let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
       if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
         msg = `${errorName}: ${msg}`;
@@ -94,10 +96,15 @@ export async function requestWebGpuDevice(
     }
   };
   try {
-    if (typeof (device as any).addEventListener === "function") {
-      (device as any).addEventListener("uncapturederror", uncapturedHandler);
+    const addEventListener = (device as unknown as { addEventListener?: unknown }).addEventListener;
+    if (typeof addEventListener === "function") {
+      (addEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
+        device,
+        "uncapturederror",
+        uncapturedHandler,
+      );
     } else {
-      (device as any).onuncapturederror = uncapturedHandler;
+      (device as unknown as { onuncapturederror?: unknown }).onuncapturederror = uncapturedHandler;
     }
   } catch {
     // Best-effort; ignore.

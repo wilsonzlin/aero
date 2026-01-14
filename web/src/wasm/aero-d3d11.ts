@@ -9,7 +9,8 @@ interface ThreadSupport {
 }
 
 function detectThreadSupport(): ThreadSupport {
-  if (!(globalThis as any).crossOriginIsolated) return { supported: false };
+  const coi = (globalThis as unknown as { crossOriginIsolated?: unknown }).crossOriginIsolated;
+  if (coi !== true) return { supported: false };
   if (typeof SharedArrayBuffer === "undefined") return { supported: false };
   if (typeof Atomics === "undefined") return { supported: false };
   if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") return { supported: false };
@@ -94,4 +95,3 @@ export async function run_d3d11_shader_cache_demo(capsHash?: string | null): Pro
   const mod = requireLoaded();
   return (await mod.run_d3d11_shader_cache_demo(capsHash ?? null)) as unknown;
 }
-

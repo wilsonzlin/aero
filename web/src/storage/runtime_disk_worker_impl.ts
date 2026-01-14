@@ -1237,7 +1237,7 @@ export class RuntimeDiskWorker {
   private async handleRequest(msg: RuntimeDiskRequestMessage): Promise<void> {
     switch (msg.op) {
       case "open": {
-        const payload = this.normalizeOpenPayload((msg as any).payload);
+        const payload = this.normalizeOpenPayload(msg.payload);
         const spec = normalizeDiskOpenSpec(payload.spec);
         const entry = await this.openDisk(spec, payload.mode ?? "cow", payload.overlayBlockSizeBytes);
         const handle = this.nextHandle++;
@@ -1345,21 +1345,21 @@ export class RuntimeDiskWorker {
       }
 
       case "readInto": {
-        const { handle, lba } = msg.payload as any;
+        const { handle, lba, byteLength: byteLengthRaw, dest } = msg.payload;
         const entry = await this.requireDisk(handle);
 
-        const byteLength = requireSafeNonNegativeInteger((msg.payload as any).byteLength, "byteLength");
+        const byteLength = requireSafeNonNegativeInteger(byteLengthRaw, "byteLength");
         if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`readInto too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
         assertSectorAligned(byteLength, entry.disk.sectorSize);
         checkedOffset(lba, byteLength, entry.disk.sectorSize);
 
-        const dest = (msg.payload as any).dest;
         if (!dest || typeof dest !== "object") {
           throw new Error("invalid dest");
         }
-        const { view } = createSabView((dest as any).sab, (dest as any).offsetBytes, byteLength, "dest");
+        const destRecord = dest as Record<string, unknown>;
+        const { view } = createSabView(destRecord["sab"], destRecord["offsetBytes"], byteLength, "dest");
 
         const start = performance.now();
         entry.io.reads++;
@@ -1404,22 +1404,22 @@ export class RuntimeDiskWorker {
       }
 
       case "writeFrom": {
-        const { handle, lba } = msg.payload as any;
+        const { handle, lba, src } = msg.payload;
         const entry = await this.requireDisk(handle);
         if (entry.readOnly) throw new Error("disk is read-only");
 
-        const src = (msg.payload as any).src;
         if (!src || typeof src !== "object") {
           throw new Error("invalid src");
         }
-        const byteLength = requireSafeNonNegativeInteger((src as any).byteLength, "src.byteLength");
+        const srcRecord = src as Record<string, unknown>;
+        const byteLength = requireSafeNonNegativeInteger(srcRecord["byteLength"], "src.byteLength");
         if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`writeFrom too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
         assertSectorAligned(byteLength, entry.disk.sectorSize);
         checkedOffset(lba, byteLength, entry.disk.sectorSize);
 
-        const { view } = createSabView((src as any).sab, (src as any).offsetBytes, byteLength, "src");
+        const { view } = createSabView(srcRecord["sab"], srcRecord["offsetBytes"], byteLength, "src");
 
         const start = performance.now();
         entry.io.writes++;
@@ -1527,14 +1527,14 @@ export class RuntimeDiskWorker {
         const { handle } = msg.payload;
         const entry = await this.requireDisk(handle);
 
-        const totalBytes = requireSafeNonNegativeInteger((msg.payload as any).totalBytes, "totalBytes");
-        const chunkBytesRaw = (msg.payload as any).chunkBytes;
+        const totalBytes = requireSafeNonNegativeInteger(msg.payload.totalBytes, "totalBytes");
+        const chunkBytesRaw = msg.payload.chunkBytes;
         const chunkBytes = chunkBytesRaw === undefined ? undefined : requireSafeNonNegativeInteger(chunkBytesRaw, "chunkBytes");
         if (chunkBytes !== undefined && chunkBytes > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`bench chunkBytes too large: ${chunkBytes} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
 
-        const mode = (msg.payload as any).mode;
+        const mode = msg.payload.mode;
         const selected = mode ?? "rw";
         if (selected !== "read" && selected !== "write" && selected !== "rw") {
           throw new Error(`invalid mode=${String(selected)}`);

@@ -84,16 +84,16 @@ function toErrorString(err: unknown): string {
   }
 }
 
-function createChunkBuffer(bytes: number): Uint8Array {
-  const buf = new Uint8Array(bytes);
+function createChunkBuffer(bytes: number): Uint8Array<ArrayBuffer> {
+  const buf = new Uint8Array(new ArrayBuffer(bytes));
   for (let i = 0; i < buf.length; i++) {
     buf[i] = i & 0xff;
   }
   return buf;
 }
 
-function createBlockBuffer(bytes: number): Uint8Array {
-  const buf = new Uint8Array(bytes);
+function createBlockBuffer(bytes: number): Uint8Array<ArrayBuffer> {
+  const buf = new Uint8Array(new ArrayBuffer(bytes));
   for (let i = 0; i < buf.length; i++) {
     buf[i] = (i * 31) & 0xff;
   }
@@ -157,9 +157,10 @@ async function runOpfsBench(params: {
   let accessHandle: any | undefined;
 
   try {
-    if (typeof (fileHandle as any).createSyncAccessHandle === "function") {
+    const createSyncAccessHandle = (fileHandle as unknown as { createSyncAccessHandle?: unknown }).createSyncAccessHandle;
+    if (typeof createSyncAccessHandle === "function") {
       try {
-        accessHandle = await (fileHandle as any).createSyncAccessHandle();
+        accessHandle = await (createSyncAccessHandle as (this: unknown) => Promise<unknown>).call(fileHandle);
         apiMode = "sync_access_handle";
       } catch (err) {
         warnings.push(`OPFS sync access handle unavailable: ${toErrorString(err)}`);
@@ -305,7 +306,7 @@ async function runOpfsBench(params: {
     const block = createBlockBuffer(BLOCK_4K);
 
     if (warmupBytes > 0) {
-      const warmupWriter = await (fileHandle as any).createWritable();
+      const warmupWriter = await fileHandle.createWritable();
       for (let offset = 0; offset < warmupBytes; offset += chunkBytes) {
         const size = Math.min(chunkBytes, warmupBytes - offset);
         await warmupWriter.write(size === chunkBytes ? chunk : chunk.subarray(0, size));
@@ -322,7 +323,7 @@ async function runOpfsBench(params: {
     const writeRuns: StorageBenchThroughputRun[] = [];
     for (let i = 0; i < params.config.seq_runs; i++) {
       const start = performance.now();
-      const writer = await (fileHandle as any).createWritable();
+      const writer = await fileHandle.createWritable();
       for (let offset = 0; offset < totalBytes; offset += chunkBytes) {
         const size = Math.min(chunkBytes, totalBytes - offset);
         await writer.write(size === chunkBytes ? chunk : chunk.subarray(0, size));
@@ -387,11 +388,11 @@ async function runOpfsBench(params: {
     if (params.config.include_random_write) {
       const randomWriteRuns: StorageBenchLatencyRun[] = [];
       for (let run = 0; run < params.config.random_runs; run++) {
-        let writer: any;
+        let writer: FileSystemWritableFileStream;
         try {
-          writer = await (fileHandle as any).createWritable({ keepExistingData: true });
+          writer = await fileHandle.createWritable({ keepExistingData: true });
         } catch {
-          writer = await (fileHandle as any).createWritable();
+          writer = await fileHandle.createWritable();
         }
         const rand = createRandomSource(params.config.random_seed, 4000 + run);
         const latencies: number[] = [];
