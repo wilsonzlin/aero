@@ -11,6 +11,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderStage, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
@@ -73,16 +74,12 @@ fn push_bind_shaders(stream: &mut Vec<u8>, vs: u32, ps: u32, cs: u32, gs: u32) {
     // Encode the append-only `BIND_SHADERS` extension so the executor sees `{gs,hs,ds}` via the
     // canonical decoder (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
     //
-    // In the extended form, the trailing handles are authoritative and `reserved0` should be 0.
-    let start = begin_cmd(stream, AerogpuCmdOpcode::BindShaders as u32);
-    stream.extend_from_slice(&vs.to_le_bytes());
-    stream.extend_from_slice(&ps.to_le_bytes());
-    stream.extend_from_slice(&cs.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0 (unused for extended packet)
-    stream.extend_from_slice(&gs.to_le_bytes()); // gs (extension)
-    stream.extend_from_slice(&0u32.to_le_bytes()); // hs (extension)
-    stream.extend_from_slice(&0u32.to_le_bytes()); // ds (extension)
-    end_cmd(stream, start);
+    // Use `AerogpuCmdWriter` here so packet sizing/padding stays correct and consistent across
+    // tests/fixtures.
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_ex(vs, ps, cs, gs, /* hs */ 0, /* ds */ 0);
+    let packet_stream = w.finish();
+    stream.extend_from_slice(&packet_stream[AerogpuCmdStreamHeader::SIZE_BYTES..]);
 }
 
 fn push_create_texture2d(stream: &mut Vec<u8>, texture: u32) {
