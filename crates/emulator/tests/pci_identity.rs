@@ -11,8 +11,8 @@ use aero_devices::pci::profile::HDA_ICH6;
 #[cfg(feature = "legacy-audio")]
 use emulator::io::audio::hda::HdaPciDevice;
 use emulator::io::pci::PciDevice as EmuPciDevice;
-use emulator::io::storage::ide::IdeController;
 use emulator::io::storage::disk::MemDisk;
+use emulator::io::storage::ide::IdeController;
 use emulator::io::storage::nvme::{NvmeController, NvmePciDevice};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 
@@ -164,6 +164,6 @@ fn nvme_pci_config_matches_canonical_profile() {
 
 #[test]
 fn ide_pci_config_matches_canonical_profile() {
-    let mut dev = IdeController::new();
-    assert_basic_identity(|off, size| dev.config_mut().read(off, size), IDE_PIIX3);
+    let dev = IdeController::new(0xC000);
+    assert_basic_identity(|off, size| dev.config_read(off, size), IDE_PIIX3);
 }

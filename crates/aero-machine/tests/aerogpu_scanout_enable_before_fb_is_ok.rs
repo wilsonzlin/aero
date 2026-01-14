@@ -44,8 +44,11 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
-            .device_config(profile::AEROGPU.bdf)
+            .device_config_mut(profile::AEROGPU.bdf)
             .expect("AeroGPU PCI function missing");
+        // Scanout reads behave like device-initiated DMA; enable PCI Bus Master Enable (BME) so the
+        // host-side `display_present()` path can legally read from guest RAM.
+        cfg.set_command(cfg.command() | (1 << 2));
         cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
 
