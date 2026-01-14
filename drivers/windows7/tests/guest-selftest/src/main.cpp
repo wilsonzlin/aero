@@ -10753,6 +10753,7 @@ static void PrintUsage() {
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
       "  --require-input-msix      Fail if virtio-input is not using MSI-X interrupts\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1)\n"
       "  --test-input-events-extended  Also test modifiers/buttons/wheel via additional markers:\n"
       "                           virtio-input-events-modifiers/buttons/wheel\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1)\n"
@@ -10775,6 +10776,7 @@ static void PrintUsage() {
        "  --require-non-silence     Fail capture smoke test if only silence is captured\n"
        "  --allow-virtio-snd-transitional  Also accept legacy PCI\\VEN_1AF4&DEV_1018\n"
       "  --require-net-msix        Fail if virtio-net is not using MSI-X (default: allow INTx)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -10980,6 +10982,9 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!opt.test_input_led && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_LED")) {
     opt.test_input_led = true;
+  }
+  if (!opt.require_input_msix && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX")) {
+    opt.require_input_msix = true;
   }
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
