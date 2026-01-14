@@ -878,15 +878,13 @@ impl D3D11Runtime {
                 label: Some("aero-d3d11 shader module"),
                 source: wgpu::ShaderSource::Wgsl(wgsl.into()),
             });
-        self.resources
-            .shaders
-            .insert(
-                shader_id,
-                ShaderModuleResource {
-                    module,
-                    wgsl: wgsl.to_owned(),
-                },
-            );
+        self.resources.shaders.insert(
+            shader_id,
+            ShaderModuleResource {
+                module,
+                wgsl: wgsl.to_owned(),
+            },
+        );
         Ok(())
     }
 
@@ -919,31 +917,102 @@ impl D3D11Runtime {
             .get(&fs_shader)
             .ok_or_else(|| anyhow!("unknown shader module {fs_shader}"))?;
 
+        // WebGPU requires the vertex output interface to exactly match the fragment input
+        // interface. D3D shaders often export extra varyings (so a single VS can be reused with
+        // multiple PS variants), and pixel shaders may declare inputs they never read.
+        //
+        // To preserve D3D behavior (and satisfy WebGPU validation), trim the stage interface:
+        // - Drop unused PS inputs when the VS does not output them.
+        // - Drop unused VS outputs that the PS does not declare.
+        let ps_declared_inputs = super::wgsl_link::locations_in_struct(&fs.wgsl, "PsIn")?;
+        let vs_outputs = super::wgsl_link::locations_in_struct(&vs.wgsl, "VsOut")?;
+        let ps_can_trim_inputs = fs.wgsl.contains("struct PsIn {")
+            && fs.wgsl.contains("fn fs_main(")
+            && fs.wgsl.contains("input: PsIn");
+        let vs_can_trim_outputs = vs.wgsl.contains("struct VsOut {")
+            && vs.wgsl.contains("fn vs_main(")
+            && vs.wgsl.contains("var out: VsOut");
+        let mut ps_link_locations = ps_declared_inputs.clone();
+
+        let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
+            .difference(&vs_outputs)
+            .copied()
+            .collect();
+        if ps_can_trim_inputs && !ps_missing_locations.is_empty() {
+            let ps_used_locations = super::wgsl_link::referenced_ps_input_locations(&fs.wgsl);
+            let used_missing: Vec<u32> = ps_missing_locations
+                .intersection(&ps_used_locations)
+                .copied()
+                .collect();
+            if let Some(&loc) = used_missing.first() {
+                bail!("fragment shader reads @location({loc}), but VS does not output it");
+            }
+            ps_link_locations = ps_declared_inputs
+                .intersection(&vs_outputs)
+                .copied()
+                .collect();
+        }
+
+        let mut linked_fs_wgsl = std::borrow::Cow::Borrowed(fs.wgsl.as_str());
+        if ps_can_trim_inputs && ps_link_locations != ps_declared_inputs {
+            linked_fs_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                    linked_fs_wgsl.as_ref(),
+                    &ps_link_locations,
+                ));
+        }
+
         // WebGPU requires every fragment `@location(N)` output to have a corresponding
         // `ColorTargetState` at index N. This runtime protocol only exposes a single color target
         // (RT0) in `CreateRenderPipeline`, but real D3D shaders may declare additional MRT outputs.
         // D3D discards writes to unbound RTV slots; emulate this by trimming outputs to location 0.
         let keep_output_locations = BTreeSet::from([0u32]);
-        let declared_outputs = super::wgsl_link::declared_ps_output_locations(&fs.wgsl)?;
+        let declared_outputs =
+            super::wgsl_link::declared_ps_output_locations(linked_fs_wgsl.as_ref())?;
         let missing_outputs: BTreeSet<u32> = declared_outputs
             .difference(&keep_output_locations)
             .copied()
             .collect();
 
-        let trimmed_fs_module = if missing_outputs.is_empty() {
+        if !missing_outputs.is_empty() {
+            linked_fs_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                    linked_fs_wgsl.as_ref(),
+                    &keep_output_locations,
+                ));
+        }
+
+        let trimmed_fs_module = if linked_fs_wgsl.as_ref() == fs.wgsl.as_str() {
             None
         } else {
-            let trimmed_wgsl =
-                super::wgsl_link::trim_ps_outputs_to_locations(&fs.wgsl, &keep_output_locations);
+            let wgsl = linked_fs_wgsl.into_owned();
             Some(
                 self.device
                     .create_shader_module(wgpu::ShaderModuleDescriptor {
                         label: Some("aero-d3d11 trimmed fragment shader"),
-                        source: wgpu::ShaderSource::Wgsl(trimmed_wgsl.into()),
+                        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
                     }),
             )
         };
         let fs_module_for_pipeline = trimmed_fs_module.as_ref().unwrap_or(&fs.module);
+
+        let trimmed_vs_module = if vs_can_trim_outputs
+            && ps_link_locations.is_subset(&vs_outputs)
+            && vs_outputs != ps_link_locations
+        {
+            let trimmed_vs_wgsl =
+                super::wgsl_link::trim_vs_outputs_to_locations(&vs.wgsl, &ps_link_locations);
+            Some(
+                self.device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("aero-d3d11 trimmed vertex shader"),
+                        source: wgpu::ShaderSource::Wgsl(trimmed_vs_wgsl.into()),
+                    }),
+            )
+        } else {
+            None
+        };
+        let vs_module_for_pipeline = trimmed_vs_module.as_ref().unwrap_or(&vs.module);
 
         let color_format = map_texture_format(color_format)?;
         let depth_stencil = if depth_format == DxgiFormat::Unknown {
@@ -1054,7 +1123,7 @@ impl D3D11Runtime {
                     label: Some("aero-d3d11 render pipeline"),
                     layout: Some(pipeline_layout.as_ref()),
                     vertex: wgpu::VertexState {
-                        module: &vs.module,
+                        module: vs_module_for_pipeline,
                         entry_point: "vs_main",
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         buffers: &vertex_buffers,
@@ -2231,14 +2300,18 @@ mod tests {
 
             // Baseline: the untrimmed shader should fail validation when paired with a single
             // color target.
-            let vs = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("d3d11 runtime mrt baseline vs"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
-            });
-            let fs = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("d3d11 runtime mrt baseline fs"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
-            });
+            let vs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime mrt baseline vs"),
+                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
+                });
+            let fs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime mrt baseline fs"),
+                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
+                });
             let layout = rt
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2248,30 +2321,32 @@ mod tests {
                 });
 
             rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let _ = rt.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("d3d11 runtime mrt baseline pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &vs,
-                    entry_point: "vs_main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &fs,
-                    entry_point: "fs_main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
+            let _ = rt
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("d3d11 runtime mrt baseline pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs,
+                        entry_point: "vs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs,
+                        entry_point: "fs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
             rt.device.poll(wgpu::Maintain::Wait);
             let err = rt.device.pop_error_scope().await;
             assert!(
@@ -2300,6 +2375,142 @@ mod tests {
             rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
             rt.execute(&writer.finish())
                 .expect("runtime should create pipeline with trimmed outputs");
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while creating trimmed pipeline: {err:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn create_render_pipeline_trims_stage_interface_to_match() {
+        // Regression test: WebGPU requires vertex outputs and fragment inputs to line up by
+        // `@location`. D3D shaders may declare unused PS inputs or export extra VS varyings.
+        //
+        // The runtime should trim unused PS inputs and extra VS outputs to satisfy validation.
+        pollster::block_on(async {
+            let mut rt = match D3D11Runtime::new_for_tests().await {
+                Ok(rt) => rt,
+                Err(err) => {
+                    eprintln!("skipping {}: wgpu unavailable ({err:#})", module_path!());
+                    return;
+                }
+            };
+
+            let vs_wgsl = r#"
+                struct VsOut {
+                    @builtin(position) pos: vec4<f32>,
+                    @location(0) o0: vec4<f32>,
+                    @location(2) o2: vec4<f32>,
+                };
+
+                @vertex
+                fn vs_main(@builtin(vertex_index) idx: u32) -> VsOut {
+                    var out: VsOut;
+                    var pos = array<vec2<f32>, 3>(
+                        vec2<f32>(-1.0, -1.0),
+                        vec2<f32>( 3.0, -1.0),
+                        vec2<f32>(-1.0,  3.0),
+                    );
+                    out.pos = vec4<f32>(pos[idx], 0.0, 1.0);
+                    out.o0 = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+                    out.o2 = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            let fs_wgsl = r#"
+                struct PsIn {
+                    @location(0) v0: vec4<f32>,
+                    @location(1) v1: vec4<f32>,
+                };
+
+                @fragment
+                fn fs_main(input: PsIn) -> @location(0) vec4<f32> {
+                    // `v1` is declared but unused (mirrors D3D pixel shaders that declare
+                    // interpolators they never read).
+                    return input.v0;
+                }
+            "#;
+
+            // Baseline: the untrimmed stage interface should fail validation.
+            let vs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime stage-link baseline vs"),
+                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
+                });
+            let fs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime stage-link baseline fs"),
+                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
+                });
+            let layout = rt
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("d3d11 runtime stage-link baseline layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let _ = rt
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("d3d11 runtime stage-link baseline pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs,
+                        entry_point: "vs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs,
+                        entry_point: "fs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(
+                err.is_some(),
+                "untrimmed stage interface should fail validation, but got: {err:?}"
+            );
+
+            // Now go through the D3D11 runtime command path; the runtime should trim the stage
+            // interface and pipeline creation should succeed without validation errors.
+            let mut writer = CmdWriter::new();
+            writer.create_shader_module_wgsl(1, vs_wgsl);
+            writer.create_shader_module_wgsl(2, fs_wgsl);
+            writer.create_render_pipeline(
+                3,
+                RenderPipelineDesc {
+                    vs_shader: 1,
+                    fs_shader: 2,
+                    color_format: DxgiFormat::R8G8B8A8Unorm,
+                    depth_format: DxgiFormat::Unknown,
+                    topology: PrimitiveTopology::TriangleList,
+                    vertex_buffers: &[],
+                    bindings: &[],
+                },
+            );
+
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            rt.execute(&writer.finish())
+                .expect("runtime should create pipeline with trimmed interface");
             rt.device.poll(wgpu::Maintain::Wait);
             let err = rt.device.pop_error_scope().await;
             assert!(
