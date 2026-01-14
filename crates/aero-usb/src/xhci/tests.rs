@@ -1641,7 +1641,9 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     assert_eq!(mem.read_trb(event_ring_base + TRB_LEN as u64), ev1_before);
 
     // Guest consumes the first event, leaving index 1 unconsumed.
-    restored.interrupter0.write_erdp(event_ring_base + TRB_LEN as u64);
+    restored
+        .interrupter0
+        .write_erdp(event_ring_base + TRB_LEN as u64);
     restored.service_event_ring(&mut mem);
     assert_eq!(restored.pending_event_count(), 0);
 

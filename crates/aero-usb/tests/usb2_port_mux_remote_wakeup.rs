@@ -246,7 +246,11 @@ fn ehci_remote_wakeup_enters_resume_state_through_external_hub() {
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(portsc & PORTSC_SUSP, 0, "expected root port to be suspended");
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "expected root port to be suspended"
+    );
 
     // Inject a keypress while suspended. This should request remote wakeup.
     keyboard.key_event(0x04, true); // HID usage for KeyA.

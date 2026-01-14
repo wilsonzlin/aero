@@ -581,7 +581,13 @@ fn xhci_msix_function_mask_defers_delivery_until_unmasked() {
     // Clear Function Mask and tick the machine so xHCI services interrupts again. The pending vector
     // should be delivered and the PBA bit cleared.
     let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 14)));
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl & !(1 << 14)),
+    );
     m.tick_platform(1_000_000);
 
     assert_eq!(

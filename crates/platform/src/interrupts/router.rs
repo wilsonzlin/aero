@@ -505,7 +505,7 @@ impl PlatformInterrupts {
     pub fn cpu_count(&self) -> usize {
         self.lapics.len()
     }
- 
+
     /// Iterate over all local APICs (LAPICs) in APIC ID order.
     ///
     /// The platform stores LAPICs as `Arc<LocalApic>` to allow machine integrations to hold stable

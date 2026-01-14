@@ -93,7 +93,5 @@ fn detects_vsync_present_packets() {
         let end = off + buf.len();
         buf.copy_from_slice(&stream_copy[off..end]);
     };
-    assert!(
-        cmd_stream_has_vsync_present_reader(read, base_gpa, stream.len() as u32).unwrap(),
-    );
+    assert!(cmd_stream_has_vsync_present_reader(read, base_gpa, stream.len() as u32).unwrap(),);
 }

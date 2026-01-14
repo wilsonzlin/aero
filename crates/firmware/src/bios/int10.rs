@@ -207,8 +207,9 @@ impl Bios {
 
                         let base = u64::from(self.video.vbe.lfb_base);
                         let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
-                        let off =
-                            u64::from(y).saturating_mul(pitch).saturating_add(u64::from(x));
+                        let off = u64::from(y)
+                            .saturating_mul(pitch)
+                            .saturating_add(u64::from(x));
                         if let Some(addr) = base.checked_add(off) {
                             memory.write_u8(addr, cpu.al());
                         }
@@ -271,8 +272,9 @@ impl Bios {
 
                         let base = u64::from(self.video.vbe.lfb_base);
                         let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
-                        let off =
-                            u64::from(y).saturating_mul(pitch).saturating_add(u64::from(x));
+                        let off = u64::from(y)
+                            .saturating_mul(pitch)
+                            .saturating_add(u64::from(x));
                         if let Some(addr) = base.checked_add(off) {
                             cpu.set_al(memory.read_u8(addr));
                         } else {

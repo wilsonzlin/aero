@@ -1081,10 +1081,7 @@ mod tests {
         fn reset(&self) {}
 
         fn table_ptr_len(&self) -> (*mut u32, usize) {
-            (
-                core::ptr::NonNull::<u32>::dangling().as_ptr(),
-                self.len(),
-            )
+            (core::ptr::NonNull::<u32>::dangling().as_ptr(), self.len())
         }
     }
 

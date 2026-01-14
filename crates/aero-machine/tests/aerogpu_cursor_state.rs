@@ -111,9 +111,6 @@ fn aerogpu_cursor_state_publishes_after_hi_commit() {
     assert_eq!(snap2.width, 32);
     assert_eq!(snap2.height, 32);
     assert_eq!(snap2.pitch_bytes, 32 * 4);
-    assert_eq!(
-        snap2.format,
-        CURSOR_FORMAT_B8G8R8A8
-    );
+    assert_eq!(snap2.format, CURSOR_FORMAT_B8G8R8A8);
     assert_eq!(snap2.base_paddr(), cursor_gpa);
 }

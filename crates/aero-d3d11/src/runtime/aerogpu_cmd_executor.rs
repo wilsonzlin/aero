@@ -3942,7 +3942,8 @@ impl AerogpuD3d11Executor {
 
         // Scratch allocations that are bound as uniform buffers must respect WebGPU's uniform buffer
         // offset alignment.
-        let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(16);
+        let uniform_align =
+            (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(16);
 
         let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
         let expanded_vertex_alloc: ExpansionScratchAlloc;

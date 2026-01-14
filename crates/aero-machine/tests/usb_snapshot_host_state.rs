@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_machine::{Machine, MachineConfig};
-use aero_usb::hub::UsbHubDevice;
 use aero_usb::hid::UsbHidPassthroughHandle;
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbWebUsbPassthroughDevice};
 
 fn queue_webusb_control_in_action(dev: &UsbWebUsbPassthroughDevice) {
