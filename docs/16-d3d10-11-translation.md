@@ -431,9 +431,16 @@ The current SM5 translation + binding model supports the D3D11-era buffer view t
 Remaining gaps (planned follow-ups) include:
 
 - **Thread group shared memory** (`groupshared`) mapping to WGSL `var<workgroup>`.
-- **Typed UAV textures** (`RWTexture*` / `u#` storage textures) and the required format plumbing.
-- **Atomics** (`Interlocked*`) and the necessary WGSL atomic type mapping.
-- **Explicit ordering/barriers** (D3D UAV barriers, `GroupMemoryBarrier*` / `DeviceMemoryBarrier*` semantics).
+
+- **Typed UAV textures**: partially supported (write-only `RWTexture2D`-style stores via
+  `texture_storage_2d`), but limited to a small set of DXGI formats (see
+  `StorageTextureFormat` in `crates/aero-d3d11/src/shader_translate.rs`).
+
+- **Atomics**: partially supported (e.g. basic `InterlockedAdd` on UAV buffers), but the full
+  `Interlocked*` family and more complex UAV/structured patterns are still missing.
+
+- **Explicit ordering/barriers**: partially supported via SM5 `sync` (`GroupMemoryBarrier*` /
+  `DeviceMemoryBarrier*`), but fence-only variants do not have a perfect WGSL mapping today.
 
 ---
 
