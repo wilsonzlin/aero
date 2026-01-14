@@ -1,7 +1,7 @@
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignatureParameter, FourCC,
-    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst, Sm4Module, SrcKind,
-    SrcOperand, Swizzle, WriteMask,
+    OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4CmpOp, Sm4Inst, Sm4Module,
+    SrcKind, SrcOperand, Swizzle, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -171,6 +171,59 @@ fn hs_patch_constants_route_tess_factors_to_compact_buffer() {
             .wgsl
             .contains("hs_store_patch_constants(hs_out_base + 1u"),
         "tess-factor register o1 should not be written into hs_patch_constants:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn hs_phase_split_ignores_ret_inside_loop() {
+    // Regression test: HS phase splitting should only treat a *top-level* `ret` as the boundary
+    // between control-point and patch-constant phases.
+    //
+    // If we accidentally split at a `ret` nested inside a `loop`, the patch-constant phase would
+    // begin with `endloop` and fail to translate due to malformed control flow.
+    let pcsg_params = vec![sig_param("FOO", 0, 0, 0b0001)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&[])),
+        (FOURCC_PCG1, build_signature_chunk(&pcsg_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Hull,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // Control-point phase starts.
+            Sm4Inst::Loop,
+            // Ensure `ret` appears inside a loop (not nested in an if) before the true phase
+            // boundary.
+            Sm4Inst::BreakC {
+                op: Sm4CmpOp::Eq,
+                a: src_imm([0.0, 0.0, 0.0, 0.0]),
+                b: src_imm([0.0, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::Ret,
+            Sm4Inst::EndLoop,
+            // End of control-point phase (top-level ret).
+            Sm4Inst::Ret,
+            // Patch-constant phase: write a dummy output.
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::X),
+                src: src_imm([42.0, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("fn hs_patch_constants"),
+        "expected hull patch-constant entry point to be emitted:\n{}",
         translated.wgsl
     );
 }

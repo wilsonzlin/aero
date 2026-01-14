@@ -882,14 +882,22 @@ fn translate_hs(
     io_cp.hs_inputs = hs_inputs.clone();
     io_pc.hs_inputs = hs_inputs;
 
-    // Split the linear instruction stream into two phases using the first top-level `ret` as a
-    // boundary. FXC emits separate `ret`s per phase in common SM5 hull shaders.
+    // Split the linear instruction stream into two phases using the first *top-level* `ret` as a
+    // boundary (i.e. not nested inside any structured control-flow construct).
+    //
+    // FXC emits separate `ret`s per phase in common SM5 hull shaders, but the instruction stream
+    // may also contain early `ret`s inside loops/switches; those should not be treated as phase
+    // boundaries.
     let mut depth = 0u32;
     let mut split_at: Option<usize> = None;
     for (i, inst) in module.instructions.iter().enumerate() {
         match inst {
-            Sm4Inst::If { .. } | Sm4Inst::IfC { .. } => depth += 1,
-            Sm4Inst::EndIf => depth = depth.saturating_sub(1),
+            Sm4Inst::If { .. } | Sm4Inst::IfC { .. } | Sm4Inst::Loop | Sm4Inst::Switch { .. } => {
+                depth += 1
+            }
+            Sm4Inst::EndIf | Sm4Inst::EndLoop | Sm4Inst::EndSwitch => {
+                depth = depth.saturating_sub(1)
+            }
             _ => {}
         }
         if depth == 0 && matches!(inst, Sm4Inst::Ret) {

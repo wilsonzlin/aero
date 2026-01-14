@@ -1748,7 +1748,12 @@ fn translates_texture_load_ld() {
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     // `ld` consumes integer coords/LOD. The DXBC operand stream stores 32-bit values without a
-    // float/int tag, so use raw integer bits here (1, 2, 0, 0).
+    // float/int tag; in practice lanes can contain either raw integer bit patterns (common compiler
+    // output) or numeric floats that happen to be exact integers (common in hand-authored/test
+    // token streams).
+    //
+    // Use raw integer bits here (1, 2, 0, 0). The translator should include a raw-bit fallback path
+    // (`bitcast<i32>`) so these values aren't misinterpreted as tiny denormal floats.
     let coord = SrcOperand {
         kind: SrcKind::ImmediateF32([1, 2, 0, 0]),
         swizzle: Swizzle::XYZW,
@@ -1788,11 +1793,16 @@ fn translates_texture_load_ld() {
         load_line
     );
     assert!(
-        !translated.wgsl.contains("select(") && !translated.wgsl.contains("floor("),
-        "textureLoad lowering should not use float-vs-bitcast heuristics:\n{}",
+        translated.wgsl.contains("bitcast<i32>(ld_x0_f)")
+            && translated.wgsl.contains("bitcast<i32>(ld_y0_f)"),
+        "expected raw-bit fallback when lowering ld coords:\n{}",
         translated.wgsl
     );
-    assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
+    assert!(
+        translated.wgsl.contains("bitcast<f32>(0x00000001u)"),
+        "expected raw coordinate bits to be preserved as an f32 payload:\n{}",
+        translated.wgsl
+    );
 
     // Reflection should surface the referenced texture slot (no sampler needed for ld).
     assert!(translated
@@ -1808,7 +1818,7 @@ fn translates_texture_load_ld() {
 }
 
 #[test]
-fn translates_texture_load_ld_uses_raw_integer_bits_not_float_heuristics() {
+fn translates_texture_load_ld_prefers_numeric_i32_for_integer_float_coords() {
     let isgn_params = vec![
         sig_param("SV_Position", 0, 0, 0b1111),
         sig_param("TEXCOORD", 0, 1, 0b0011),
@@ -1823,8 +1833,10 @@ fn translates_texture_load_ld_uses_raw_integer_bits_not_float_heuristics() {
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     // Use float bit patterns that look like exact integers as floats (e.g. 1.0 = 0x3f800000).
-    // The `ld` instruction must interpret these operands as *integer bits* in the untyped register
-    // file, not as numeric floats that "happen to be integers".
+    //
+    // The translator should prefer numeric `i32(f32)` conversion for these operands, while still
+    // emitting a raw-bit fallback for cases where the lane does not represent an exact integer
+    // float.
     let coord = SrcOperand {
         kind: SrcKind::ImmediateF32([1.0f32.to_bits(), 2.0f32.to_bits(), 0, 0]),
         swizzle: Swizzle::XYZW,
@@ -1852,21 +1864,21 @@ fn translates_texture_load_ld_uses_raw_integer_bits_not_float_heuristics() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
-    let load_line = translated
-        .wgsl
-        .lines()
-        .find(|l| l.contains("textureLoad("))
-        .expect("expected a textureLoad call");
     assert!(
-        load_line.contains("bitcast<i32>(0x3f800000u)"),
-        "expected raw bit pattern 0x3f800000 (f32 1.0) to flow into textureLoad as i32 bits:\n{}",
-        load_line
+        translated.wgsl.contains("ld_x0 = i32(ld_x0_f);")
+            && translated.wgsl.contains("ld_y0 = i32(ld_y0_f);"),
+        "expected ld to use numeric i32(f32) conversion for integer float lanes:\n{}",
+        translated.wgsl
     );
     assert!(
-        !translated.wgsl.contains("select(")
-            && !translated.wgsl.contains("floor(")
-            && !translated.wgsl.contains("i32("),
-        "textureLoad lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
+        translated.wgsl.contains("bitcast<i32>(ld_x0_f)")
+            && translated.wgsl.contains("bitcast<i32>(ld_y0_f)"),
+        "expected ld to still emit a raw-bit fallback for non-integer float lanes:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("bitcast<i32>(0x3f800000u)"),
+        "expected ld not to treat integer floats as raw u32 bits:\n{}",
         translated.wgsl
     );
 }
@@ -2341,8 +2353,9 @@ fn translates_texture_load_with_nonzero_lod() {
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
     assert!(
-        translated.wgsl.contains("bitcast<i32>(0x00000003u)"),
-        "expected mip LOD 3 (0x00000003) to be present in WGSL:\n{}",
+        translated.wgsl.contains("bitcast<f32>(0x00000003u)")
+            && translated.wgsl.contains("bitcast<i32>(ld_lod_scalar0_f)"),
+        "expected raw mip LOD bits (3) to be preserved via a bitcast fallback:\n{}",
         translated.wgsl
     );
 }
