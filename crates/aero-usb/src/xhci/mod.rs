@@ -2156,8 +2156,10 @@ impl XhciController {
             return;
         }
         self.active_endpoint_pending[slot_idx][ep_idx] = true;
-        self.active_endpoints
-            .push_back(ActiveEndpoint { slot_id, endpoint_id });
+        self.active_endpoints.push_back(ActiveEndpoint {
+            slot_id,
+            endpoint_id,
+        });
     }
 
     /// Process active endpoints.
@@ -2968,11 +2970,11 @@ impl XhciController {
                 .endpoint_state(ep_addr)
                 .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
 
-             exec.poll_endpoint(mem, ep_addr);
+            exec.poll_endpoint(mem, ep_addr);
 
-             let after = exec
-                 .endpoint_state(ep_addr)
-                 .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
+            let after = exec
+                .endpoint_state(ep_addr)
+                .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
 
             // If the endpoint stalled or faulted, the transfer executor marks it as halted, but the
             // architectural Endpoint Context state field is controller-owned. Mirror the halted
@@ -2983,7 +2985,8 @@ impl XhciController {
             let exec_halted = exec.endpoint_state(ep_addr).is_some_and(|st| st.halted);
             if exec_halted {
                 // Avoid clobbering Stopped/other states; only transition Running->Halted.
-                if let Some(state) = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id)
+                if let Some(state) =
+                    self.read_endpoint_state_from_context(mem, slot_id, endpoint_id)
                 {
                     if matches!(state, context::EndpointState::Running) {
                         self.write_endpoint_state_to_context(
@@ -2996,10 +2999,10 @@ impl XhciController {
                 }
             }
 
-             // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
-             // Pointer field so guests that inspect the Device Context observe progress.
-             let trbs_consumed = if before != after { 1 } else { 0 };
-             if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) =
+            // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
+            // Pointer field so guests that inspect the Device Context observe progress.
+            let trbs_consumed = if before != after { 1 } else { 0 };
+            if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) =
                 (before, after)
             {
                 if before_ptr != after_ptr || before_cycle != after_cycle {
@@ -3057,8 +3060,7 @@ impl XhciController {
             // Keep the endpoint active if the next TRB is ready (or we're waiting on an inflight
             // device completion).
             let keep_active = exec.endpoint_state(ep_addr).is_some_and(|st| {
-                !st.halted
-                    && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle
+                !st.halted && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle
             });
 
             self.transfer_executors[slot_idx] = Some(exec);

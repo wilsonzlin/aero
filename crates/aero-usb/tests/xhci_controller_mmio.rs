@@ -189,9 +189,11 @@ fn xhci_controller_config_and_dnctrl_roundtrip_and_reset() {
     ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1234_5678);
 
     // CONFIG has reserved bits and clamps MaxSlotsEn to HCSPARAMS1.MaxSlots.
-    let expected_config =
-        ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
-    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), expected_config);
+    let expected_config = ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4),
+        expected_config
+    );
     assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0x1234_5678);
 
     // Host controller reset should clear operational register state.
@@ -272,9 +274,13 @@ fn xhci_controller_tick_dma_dword_is_snapshotted() {
     let mut restored = XhciController::new();
     restored.load_state(&bytes).expect("load snapshot");
     let restored_bytes = restored.save_state();
-    let restored_r = SnapshotReader::parse(&restored_bytes, *b"XHCI").expect("parse restored snapshot");
+    let restored_r =
+        SnapshotReader::parse(&restored_bytes, *b"XHCI").expect("parse restored snapshot");
     assert_eq!(
-        restored_r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
+        restored_r
+            .u64(TAG_TIME_MS)
+            .expect("read time_ms")
+            .unwrap_or(0),
         1
     );
     assert_eq!(
@@ -311,7 +317,10 @@ fn xhci_controller_tick_dma_dword_is_gated_by_dma_enabled() {
     let bytes = ctrl.save_state();
     let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
     assert_eq!(r.u64(TAG_TIME_MS).unwrap().unwrap_or(0), 2);
-    assert_eq!(r.u32(TAG_LAST_TICK_DMA_DWORD).unwrap().unwrap_or(0), 0xdead_beef);
+    assert_eq!(
+        r.u32(TAG_LAST_TICK_DMA_DWORD).unwrap().unwrap_or(0),
+        0xdead_beef
+    );
 }
 
 #[test]
@@ -576,7 +585,10 @@ fn xhci_endpoint_doorbell_does_not_process_transfers_without_dma() {
 
     let mut slot_ctx = SlotContext::default();
     slot_ctx.set_root_hub_port_number(1);
-    assert_eq!(ctrl.address_device(completion.slot_id, slot_ctx), completion);
+    assert_eq!(
+        ctrl.address_device(completion.slot_id, slot_ctx),
+        completion
+    );
 
     // Configure a plausible endpoint ring cursor for EP1 IN (device context index 3). Leave DCBAAP
     // cleared so the endpoint-state gating logic falls back to controller-local cursor state.
@@ -694,13 +706,15 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
         restored.mmio_read(&mut mem, regs::REG_DNCTRL, 4),
         0x1122_3344
     );
-    let expected_config =
-        ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
+    let expected_config = ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
     assert_eq!(
         restored.mmio_read(&mut mem, regs::REG_CONFIG, 4),
         expected_config
     );
-    assert_eq!(restored.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 8);
+    assert_eq!(
+        restored.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff,
+        8
+    );
     assert!(restored.irq_level());
 }
 
