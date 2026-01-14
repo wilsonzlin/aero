@@ -3346,7 +3346,8 @@ def main() -> int:
 
         # Vector resolution is derived from the global/per-device flags. In dry-run mode we do not
         # probe QEMU to validate that the running build supports the `vectors` property, so the argv
-        # printed here may differ from the non-dry-run harness (which will ignore unsupported overrides).
+        # printed here may differ from a real harness run: in non-dry-run mode the harness performs a
+        # `-device <name>,help` preflight and fails fast if `vectors` isn't supported.
         def _fmt_vectors(name: str, value: Optional[int], flag: str) -> str:
             if name == "snd" and not args.enable_virtio_snd:
                 return f"{name}=disabled"
@@ -3646,7 +3647,6 @@ def main() -> int:
                     device_arg = _get_qemu_virtio_sound_device_arg(
                         args.qemu_system, disable_legacy=True, pci_revision=aero_pci_rev
                     )
-                    snd_device = _detect_virtio_snd_device(args.qemu_system)
                     snd_device = _detect_virtio_snd_device(args.qemu_system)
                     device_arg = _qemu_device_arg_maybe_add_vectors(
                         args.qemu_system,
