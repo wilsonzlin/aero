@@ -87,11 +87,11 @@ impl ReferenceBackend {
             BackendKind::Host => {
                 #[cfg(all(target_arch = "x86_64", unix))]
                 {
-                    return self.host.as_ref().expect("host backend present").memory_base();
+                    self.host.as_ref().expect("host backend present").memory_base()
                 }
                 #[cfg(not(all(target_arch = "x86_64", unix)))]
                 {
-                    return 0;
+                    0
                 }
             }
             #[cfg(feature = "qemu-reference")]
@@ -104,15 +104,15 @@ impl ReferenceBackend {
             BackendKind::Host => {
                 #[cfg(all(target_arch = "x86_64", unix))]
                 {
-                    return self.host.as_mut().expect("host backend present").execute(case);
+                    self.host.as_mut().expect("host backend present").execute(case)
                 }
                 #[cfg(not(all(target_arch = "x86_64", unix)))]
                 {
-                    return ExecOutcome {
+                    ExecOutcome {
                         state: CpuState::default(),
                         memory: Vec::new(),
                         fault: Some(Fault::Unsupported("host executor requires x86_64 + unix")),
-                    };
+                    }
                 }
             }
             #[cfg(feature = "qemu-reference")]
