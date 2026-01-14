@@ -228,6 +228,7 @@ async fn cors_headers_are_present_on_rejected_pathological_image_ids() {
 
     // Chunked endpoints share the same image id length guard and must still include CORS headers.
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method(Method::GET)
