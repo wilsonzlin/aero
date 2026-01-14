@@ -268,6 +268,91 @@ void test_xyz_diffuse_inplace_overlap_safe() {
   assert(c1 == 0x22222222u);
 }
 
+void test_xyz_diffuse_tex1_inplace_overlap_safe() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  dev.transform_matrices[256][12] = 1.0f;
+
+  // Single buffer used as both src (XYZ|DIFFUSE|TEX1, stride 24) and dst
+  // (XYZRHW|DIFFUSE|TEX1, stride 28). The destination range overlaps the source
+  // range, so ProcessVertices must stage the source slice before writing.
+  Resource buf;
+  buf.kind = ResourceKind::Buffer;
+  buf.size_bytes = 56; // 2 * 28 bytes of output
+  buf.storage.resize(56);
+  std::memset(buf.storage.data(), 0, buf.storage.size());
+
+  // Source vertex 0: x=0, uv=(0.1,0.2)
+  write_f32(buf.storage, 0, 0.0f);
+  write_f32(buf.storage, 4, 0.0f);
+  write_f32(buf.storage, 8, 0.0f);
+  write_u32(buf.storage, 12, 0x11111111u);
+  write_f32(buf.storage, 16, 0.1f);
+  write_f32(buf.storage, 20, 0.2f);
+  // Source vertex 1: x=2, uv=(0.3,0.4)
+  write_f32(buf.storage, 24, 2.0f);
+  write_f32(buf.storage, 28, 0.0f);
+  write_f32(buf.storage, 32, 0.0f);
+  write_u32(buf.storage, 36, 0x22222222u);
+  write_f32(buf.storage, 40, 0.3f);
+  write_f32(buf.storage, 44, 0.4f);
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0, 20, kDeclTypeFloat2, kDeclMethodDefault, kDeclUsageTexCoord, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &buf;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 24;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 2;
+  pv.hDestBuffer.pDrvPrivate = &buf;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 28;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  // Vertex 0: x=99.5, uv copied.
+  assert(std::fabs(read_f32(buf.storage, 0) - 99.5f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, 4) - 49.5f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, 8) - 0.0f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, 12) - 1.0f) < 1e-4f);
+  uint32_t c0 = 0;
+  std::memcpy(&c0, buf.storage.data() + 16, 4);
+  assert(c0 == 0x11111111u);
+  assert(std::fabs(read_f32(buf.storage, 20) - 0.1f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, 24) - 0.2f) < 1e-4f);
+
+  // Vertex 1: x=199.5, uv copied.
+  const size_t v1 = 28;
+  assert(std::fabs(read_f32(buf.storage, v1 + 0) - 199.5f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, v1 + 4) - 49.5f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, v1 + 8) - 0.0f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, v1 + 12) - 1.0f) < 1e-4f);
+  uint32_t c1 = 0;
+  std::memcpy(&c1, buf.storage.data() + v1 + 16, 4);
+  assert(c1 == 0x22222222u);
+  assert(std::fabs(read_f32(buf.storage, v1 + 20) - 0.3f) < 1e-4f);
+  assert(std::fabs(read_f32(buf.storage, v1 + 24) - 0.4f) < 1e-4f);
+}
+
 void test_xyz_diffuse_z_stays_ndc() {
   Adapter adapter;
   Device dev(&adapter);
@@ -662,6 +747,7 @@ int main() {
   aerogpu::test_xyz_diffuse();
   aerogpu::test_xyz_diffuse_padded_dest_stride();
   aerogpu::test_xyz_diffuse_inplace_overlap_safe();
+  aerogpu::test_xyz_diffuse_tex1_inplace_overlap_safe();
   aerogpu::test_xyz_diffuse_z_stays_ndc();
   aerogpu::test_xyz_diffuse_tex1();
   aerogpu::test_xyz_diffuse_offsets();
