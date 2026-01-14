@@ -103,6 +103,13 @@ constexpr uint32_t kD3dTransformView = 2u;
 constexpr uint32_t kD3dTransformProjection = 3u;
 constexpr uint32_t kD3dTransformWorld0 = 256u;
 
+// Fixed-function WVP constant block used by the D3D9 UMD
+// (`kFixedfuncMatrixStartRegister`/`kFixedfuncMatrixVec4Count` in
+// `src/aerogpu_d3d9_driver.cpp`). Keep local numeric constants so these tests
+// remain portable (they build without the Windows SDK/WDK).
+constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
+constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
+
 // Fixed-function lighting constant block used by the D3D9 UMD
 // (`kFixedfuncLightingStartRegister`/`kFixedfuncLightingVec4Count` in
 // `src/aerogpu_d3d9_driver.cpp`). Keep local numeric constants so these tests
@@ -1105,7 +1112,7 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -1195,7 +1202,9 @@ bool TestFvfXyzDiffuseWvpUploadNotDuplicatedByFirstDraw() {
   size_t wvp_uploads = 0;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX ||
+        sc->start_register != kFixedfuncMatrixStartRegister ||
+        sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -1295,7 +1304,9 @@ bool TestFvfXyzDiffuseRedundantSetTransformDoesNotReuploadWvp() {
   size_t wvp_uploads = 0;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX ||
+        sc->start_register != kFixedfuncMatrixStartRegister ||
+        sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -1392,7 +1403,9 @@ bool TestFvfXyzDiffuseMultiplyTransformEagerUploadNotDuplicatedByFirstDraw() {
   size_t wvp_uploads = 0;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX ||
+        sc->start_register != kFixedfuncMatrixStartRegister ||
+        sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -1450,7 +1463,7 @@ bool TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber() {
   if (!Check(ValidateStream(buf, len), "ValidateStream(initial XYZ|DIFFUSE)")) {
     return false;
   }
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240, /*vec4_count=*/4) == 1,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
              "initial draw emits one WVP constant upload")) {
     return false;
   }
@@ -1464,8 +1477,9 @@ bool TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber() {
   // If the app writes overlapping VS constants (c240..c243), the fixed-function WVP
   // constants must be treated as clobbered and re-uploaded.
   const float junk_vec4[4] = {123.0f, 456.0f, 789.0f, 1011.0f};
-  hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice, kD3dShaderStageVs, /*start_reg=*/240, junk_vec4, 1);
-  if (!Check(hr == S_OK, "SetShaderConstF(VS, c240, 1)")) {
+  hr = cleanup.device_funcs.pfnSetShaderConstF(
+      cleanup.hDevice, kD3dShaderStageVs, /*start_reg=*/kFixedfuncMatrixStartRegister, junk_vec4, 1);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, fixedfunc WVP start, 1)")) {
     return false;
   }
   {
@@ -1487,7 +1501,7 @@ bool TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber() {
   if (!Check(ValidateStream(buf, len), "ValidateStream(after const clobber)")) {
     return false;
   }
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240, /*vec4_count=*/4) == 1,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
              "WVP constant upload re-emitted after const clobber")) {
     return false;
   }
@@ -1536,7 +1550,7 @@ bool TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber() {
   if (!Check(ValidateStream(buf, len), "ValidateStream(after VS unbind)")) {
     return false;
   }
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240, /*vec4_count=*/4) == 1,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
              "WVP constant upload re-emitted after switching back from user VS")) {
     return false;
   }
@@ -1609,7 +1623,9 @@ bool TestFvfXyzDiffuseRedundantSetFvfDoesNotReuploadWvp() {
   size_t wvp_uploads = 0;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX ||
+        sc->start_register != kFixedfuncMatrixStartRegister ||
+        sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -2069,7 +2085,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -3301,7 +3317,7 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -3602,7 +3618,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -3893,7 +3909,7 @@ bool TestFvfXyzTex1EmitsTransformConstantsAndDecl() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -4108,7 +4124,7 @@ bool TestFvfXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -4343,7 +4359,7 @@ bool TestVertexDeclXyzTex1InfersFvfAndUploadsWvp() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -4634,7 +4650,9 @@ bool TestVertexDeclXyzTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   bool saw_wvp_constants = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX ||
+        sc->start_register != kFixedfuncMatrixStartRegister ||
+        sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -4932,7 +4950,7 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndKeepsDecl() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -5242,7 +5260,7 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndKeepsDecl() {
     if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
       continue;
     }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->start_register != kFixedfuncMatrixStartRegister || sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
@@ -5969,7 +5987,9 @@ bool TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp() {
   bool saw_wvp = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 240 && sc->vec4_count == 4) {
+    if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX &&
+        sc->start_register == kFixedfuncMatrixStartRegister &&
+        sc->vec4_count == kFixedfuncMatrixVec4Count) {
       saw_wvp = true;
       break;
     }
@@ -6469,7 +6489,9 @@ bool TestPsOnlyInteropVertexDeclXyzTex1SynthesizesVsAndUploadsWvp() {
   bool saw_identity_wvp = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX ||
+        sc->start_register != kFixedfuncMatrixStartRegister ||
+        sc->vec4_count != kFixedfuncMatrixVec4Count) {
       continue;
     }
     const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(kIdentityCols);
@@ -8770,7 +8792,7 @@ bool TestFvfXyzNormalEmitsLightingConstants() {
     return false;
   }
 
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240u, /*vec4_count=*/4u) == 1,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
              "WVP constant upload emitted once")) {
     return false;
   }
@@ -8783,7 +8805,7 @@ bool TestFvfXyzNormalEmitsLightingConstants() {
     return false;
   }
 
-  const float* wvp = FindVsConstantsPayload(buf, len, /*start_register=*/240u, /*vec4_count=*/4u);
+  const float* wvp = FindVsConstantsPayload(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count);
   if (!Check(wvp != nullptr, "WVP constants payload present")) {
     return false;
   }
@@ -8887,7 +8909,7 @@ bool TestFvfXyzNormalTex1EmitsLightingConstants() {
     return false;
   }
 
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240u, /*vec4_count=*/4u) == 1,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) == 1,
              "WVP constant upload emitted once (TEX1)")) {
     return false;
   }
