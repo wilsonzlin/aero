@@ -619,4 +619,7 @@ In particular:
     `MaxNpatchTessellationLevel` (currently 64.0) to avoid unbounded tessellation requests.
   - `D3DDEVCAPS_NPATCHES` and `D3DDEVCAPS_QUINTICRTPATCHES` are not advertised.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
-  guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `supports_bc_formats()`). 
+  guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `supports_bc_formats()`).
+- **TextureOpCaps**: the fixed-function fallback path can interpret a small stage0 `D3DTSS_*` subset (including a few ops
+  beyond what is advertised in caps), but `GetCaps().TextureOpCaps` is intentionally conservative so apps don't assume
+  full fixed-function combiner coverage (see the `TextureOpCaps` comment in `aerogpu_d3d9_caps.cpp`).
