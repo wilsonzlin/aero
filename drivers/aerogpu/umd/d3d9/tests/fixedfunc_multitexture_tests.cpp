@@ -44,6 +44,8 @@ constexpr uint32_t kD3dTaDiffuse = 0u;
 constexpr uint32_t kD3dTaCurrent = 1u;
 constexpr uint32_t kD3dTaTexture = 2u;
 constexpr uint32_t kD3dTaTFactor = 3u;
+constexpr uint32_t kD3dTaComplement = 0x10u;
+constexpr uint32_t kD3dTaAlphaReplicate = 0x20u;
  
 // Pixel shader instruction token (ps_2_0).
 constexpr uint32_t kPsOpMov = 0x03000001u;
@@ -5927,6 +5929,183 @@ bool TestFixedfuncUnboundStage0TextureTruncatesWhenStage0UsesTextureInAlphaOnly(
   return true;
 }
 
+bool TestFixedfuncTextureArgumentComplementUsesCompSourceModifier() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Stage0: CURRENT = ~tex0 (complement). This should lower to a source token using SrcMod::Comp.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(
+      cleanup.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture | kD3dTaComplement);
+  if (!Check(hr == S_OK, "TSS stage0 COLORARG1=TEXTURE|COMPLEMENT")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAARG1=DIFFUSE")) {
+    return false;
+  }
+
+  // Ensure the stage chain ends deterministically.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(texture complement)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) == 1, "texture complement => PS contains exactly 1 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x1u, "texture complement => PS texld uses sampler s0")) {
+      return false;
+    }
+    // `src_temp(reg=0, mod=COMP)` token: (6 << 24) | (0xE4 << 16) | 0.
+    if (!Check(CountToken(dev->ps, 0x06E40000u) >= 1, "texture complement => uses COMP source modifier")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, 0x00E40000u) == 0, "texture complement => does not use unmodified texture source")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestFixedfuncTextureArgumentAlphaReplicateUsesWwwSwizzle() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Stage0: CURRENT = tex0.a (replicated to all channels). This should lower to a source token swizzled to WWWW.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(
+      cleanup.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture | kD3dTaAlphaReplicate);
+  if (!Check(hr == S_OK, "TSS stage0 COLORARG1=TEXTURE|ALPHAREPLICATE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAARG1=DIFFUSE")) {
+    return false;
+  }
+
+  // Ensure the stage chain ends deterministically.
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 1, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "TSS stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(texture alpha replicate)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) == 1, "texture alpha replicate => PS contains exactly 1 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x1u, "texture alpha replicate => PS texld uses sampler s0")) {
+      return false;
+    }
+    // `src_temp(reg=0, swz=WWWW)` token: (0xFF << 16) | 0.
+    if (!Check(CountToken(dev->ps, 0x00FF0000u) >= 1, "texture alpha replicate => uses WWWW swizzle")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, 0x00E40000u) == 0,
+               "texture alpha replicate => does not use unmodified texture swizzle")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncUnboundStage0TextureDoesNotTruncateWhenStage0DoesNotSample() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -7892,6 +8071,12 @@ int main() {
     return 1;
   }
   if (!TestFixedfuncUnboundStage0TextureTruncatesWhenStage0UsesTextureInAlphaOnly()) {
+    return 1;
+  }
+  if (!TestFixedfuncTextureArgumentComplementUsesCompSourceModifier()) {
+    return 1;
+  }
+  if (!TestFixedfuncTextureArgumentAlphaReplicateUsesWwwSwizzle()) {
     return 1;
   }
   if (!TestFixedfuncUnboundStage0TextureDoesNotTruncateWhenStage0DoesNotSample()) {
