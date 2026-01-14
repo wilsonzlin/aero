@@ -2570,6 +2570,59 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_all_truncated_prefixes_of_valid_snapshot() {
+        // Build a representative, valid snapshot (includes actions, completions, control inflight,
+        // and endpoint inflight entries), then ensure that every truncated prefix:
+        // - does not panic
+        // - fails with SnapshotError::UnexpectedEof
+        let mut dev = UsbPassthroughDevice::new();
+        let setup = SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0,
+            w_value: 0,
+            w_index: 0,
+            w_length: 1,
+        };
+        assert_eq!(
+            dev.handle_control_request(setup, Some(&[0xaa])),
+            ControlResponse::Nak
+        );
+        assert_eq!(
+            dev.handle_out_transfer(0x02, &[0x11]),
+            UsbOutResult::Nak
+        );
+        assert_eq!(dev.handle_in_transfer(0x81, 2), UsbInResult::Nak);
+        let bulk_in_id = dev.ep_inflight.get(&0x81).expect("ep inflight").id;
+        dev.push_completion(UsbHostCompletion::BulkIn {
+            id: bulk_in_id,
+            result: UsbHostCompletionIn::Success { data: vec![0xde] },
+        });
+
+        let bytes = dev.snapshot_save();
+        let mut loaded = UsbPassthroughDevice::new();
+        loaded.snapshot_load(&bytes).unwrap();
+        assert_eq!(loaded.snapshot_save(), bytes);
+
+        for prefix_len in 0..bytes.len() {
+            let prefix = bytes[..prefix_len].to_vec();
+            let res = std::panic::catch_unwind(move || {
+                let mut tmp = UsbPassthroughDevice::new();
+                tmp.snapshot_load(&prefix)
+            });
+            let result = res.unwrap_or_else(|_| {
+                panic!("snapshot_load panicked for truncated prefix length {prefix_len}")
+            });
+            let err = result
+                .expect_err(&format!("expected snapshot_load to fail for prefix {prefix_len}"));
+            assert_eq!(
+                err,
+                SnapshotError::UnexpectedEof,
+                "prefix length {prefix_len}"
+            );
+        }
+    }
+
+    #[test]
     fn snapshot_save_is_deterministic_independent_of_hashmap_order() {
         let mut dev_a = UsbPassthroughDevice::new();
         let mut dev_b = UsbPassthroughDevice::new();
