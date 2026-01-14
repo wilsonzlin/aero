@@ -78,11 +78,13 @@ fn aerogpu_scanout0_enable_publishes_wddm_scanout_state() {
     assert_eq!(snap.height, 600);
     assert_eq!(snap.pitch_bytes, 800 * 4);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+    let gen1 = snap.generation;
 
     // Disabling scanout should release WDDM scanout ownership and revert to the legacy descriptor.
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
     m.process_aerogpu();
     let snap2 = scanout_state.snapshot();
+    assert_ne!(snap2.generation, gen1);
     assert_eq!(snap2.source, SCANOUT_SOURCE_LEGACY_TEXT);
     assert_eq!(snap2.width, 0);
     assert_eq!(snap2.height, 0);
