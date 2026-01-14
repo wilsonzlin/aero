@@ -110,6 +110,9 @@ exclude = [
     # `crates/legacy/*` are reference-only; keep them out of the workspace so they don't
     # block workspace-wide builds, but mark them as excluded so they can still be built
     # directly via `--manifest-path` without Cargo treating them as a missing workspace member.
+    # D3D9 shader helper crate (thin wrapper; kept out of the workspace to avoid name collision with
+    # the legacy/reference `aero-d3d9-shader` parser under `crates/legacy/`).
+    "crates/aero-d3d9-shader",
     "crates/legacy/aero-emulator",
     "crates/legacy/aero-vm",
     "crates/legacy/vm",
