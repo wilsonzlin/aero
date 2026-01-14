@@ -10,13 +10,16 @@ test images where you want input working immediately).
 >
 > - Keyboard/mouse (`aero_virtio_input.inf`):
 >   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (subsystem-qualified)
->   - strict generic fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>   - Note: the canonical keyboard/mouse INF is intentionally **SUBSYS-only** (no generic fallback HWID).
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
 > - Legacy filename alias (`virtio-input.inf.disabled` → rename to `virtio-input.inf`):
->   - Filename-only alias for workflows/tools that still reference `virtio-input.inf`.
->   - Expected to stay byte-for-byte identical to `aero_virtio_input.inf` from the first section header (`[Version]`) onward
->     (only the banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
->   - Disabled by default; do **not** stage/install it alongside `aero_virtio_input.inf` (they match the same HWIDs).
+>   - Exists for compatibility with workflows/tools that still reference `virtio-input.inf`.
+>   - Adds an opt-in strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`.
+>   - Allowed to diverge from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the
+>     fallback entry; outside the models sections it is expected to stay in sync (see
+>     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+>   - Disabled by default; do **not** stage/install it alongside `aero_virtio_input.inf` (install only one of the two
+>     filenames at a time).
 
 The commands below assume you already have a **built driver package directory** containing:
 
