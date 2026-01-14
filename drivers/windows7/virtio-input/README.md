@@ -91,14 +91,20 @@ You need the following tools in `PATH` (usually by opening a WDK Developer Comma
 
 ## Hardware IDs (PnP IDs)
 
-The canonical INF (`inf/aero_virtio_input.inf`) intentionally matches only **Aero contract v1** hardware IDs:
+The in-tree INFs intentionally match only **Aero contract v1** hardware IDs:
 
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
-- `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-- `PCI\VEN_1AF4&DEV_1052&REV_01` (fallback for environments that do not expose the Aero subsystem IDs)
+- `inf/aero_virtio_input.inf`:
+  - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
+  - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
+- `inf/aero_virtio_tablet.inf`:
+  - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
 
-The two subsystem-gated IDs use distinct `DeviceDesc` strings, so **keyboard and mouse appear as separate named devices**
-in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
+The subsystem-gated IDs use distinct `DeviceDesc` strings, so keyboard/mouse/tablet appear as separate named devices in
+Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**).
+
+If your environment does not expose the Aero subsystem IDs, the legacy alias INF `inf/virtio-input.inf.disabled`
+includes a fallback `PCI\VEN_1AF4&DEV_1052&REV_01` match (rename it to `virtio-input.inf` to enable it). Keep in mind
+that shipping multiple overlapping INFs that match the same device can lead to confusing install behavior.
 
 It does **not** match:
 
@@ -419,7 +425,7 @@ virtio-input appears as a **PCI virtio** function. In QEMU this is typically cre
 All of these use the virtio-input transport and should enumerate with `VEN_1AF4` and a virtio-input device ID.
 
 - **Aero contract v1 / modern virtio-pci:** `DEV_1052` (what this in-tree driver package binds to)
-- **Virtio transitional ID space:** `DEV_1011` (defined by the virtio spec, but **not** matched by `inf/aero_virtio_input.inf`)
+- **Virtio transitional ID space:** `DEV_1011` (defined by the virtio spec, but **not** matched by the in-tree INFs)
 
 For contract-v1 testing under QEMU, you typically want:
 
@@ -427,11 +433,13 @@ For contract-v1 testing under QEMU, you typically want:
 - `x-pci-revision=0x01` (so the device matches the `REV_01` contract major version / INF HWID gate)
 
 Note: QEMU’s virtio-input devices typically report `ID_NAME` strings like `"QEMU Virtio Keyboard"`. This driver is
-**contract-first** and expects the Aero contract strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`). If the
-device reports a different `ID_NAME`, the driver will fail to start with Code 10 (`STATUS_NOT_SUPPORTED`).
+**contract-first** and expects the Aero contract strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"` /
+`"Aero Virtio Tablet"`). If the device does not match, the driver will fail to start with Code 10
+(`STATUS_NOT_SUPPORTED`).
 
-Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`) and is **not supported** by the in-tree Aero
-Win7 virtio-input driver package (contract v1 is keyboard + mouse only).
+Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). It is supported by this driver, but binds via
+the separate tablet INF (`inf/aero_virtio_tablet.inf`) and requires the device to advertise `ABS_X`/`ABS_Y` and
+`ABS_INFO` so coordinates can be scaled into the HID range.
 
 ## Testing
 
@@ -451,8 +459,8 @@ The packaged ZIP includes guest-side helper scripts (`INSTALL_CERT.cmd`, `INSTAL
 
 ## Known limitations
 This driver intentionally implements a **minimal, contract-first** subset of virtio-input sufficient
-for Windows 7 keyboard + mouse input via the HID stack, plus a small set of
-optional extensions that are implemented in-tree (consumer/media keys).
+for Windows 7 keyboard, mouse, and tablet (absolute pointer) input via the HID stack, plus a small set of optional
+extensions that are implemented in-tree (consumer/media keys).
 
 ### Virtio-input functionality (guest-visible)
 
@@ -465,7 +473,7 @@ optional extensions that are implemented in-tree (consumer/media keys).
 | Mouse horizontal wheel (`EV_REL`: `REL_HWHEEL`) | **Supported** | Mapped to HID **Consumer / AC Pan** (signed 8-bit). |
 | Mouse buttons (`EV_KEY`: `BTN_*`) | **Supported** | 8-button HID bitmask (ReportID `2`, buttons 1–8). See mapping table below. |
 | Keyboard LED output (Windows → driver → device) | **Supported** | HID output report (ReportID `1`) is translated to virtio-input `EV_LED` events on `statusq` (Num/Caps/Scroll + Compose/Kana bits). Device may ignore LED state per contract. |
-| Tablet / absolute pointer (`EV_ABS`) | **Not supported** | The in-tree Aero contract v1 virtio-input driver targets keyboard + mouse only. |
+| Tablet / absolute pointer (`EV_ABS` → HID absolute pointer, ReportID `4`) | **Supported** | Absolute X/Y are emitted as 16-bit values and are scaled using `ABS_INFO` min/max into the HID logical range (`0..32767`). Buttons/touch are supported when the device advertises `EV_KEY` button codes. |
 | Multi-touch | **Not supported** | No multi-touch HID collections or contact tracking. |
 | System control keys (power/sleep/wake) | **Not supported** | No HID System Control reports. |
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
@@ -474,6 +482,7 @@ Device kind / report descriptor selection:
 
 - `DeviceKind==Keyboard` exposes ReportID `1` (keyboard + LED output) and ReportID `3` (Consumer Control).
 - `DeviceKind==Mouse` exposes ReportID `2` (mouse).
+- `DeviceKind==Tablet` exposes ReportID `4` (tablet / absolute pointer).
 
 `DeviceKind` is derived from virtio `ID_NAME` and cross-checked against the PCI subsystem device ID when present.
 
@@ -518,7 +527,10 @@ This driver is built for the **Aero contract v1** device model (`AERO-W7-VIRTIO`
 It expects the contract `ID_NAME` / `ID_DEVIDS` values and will refuse to start if the device does not match (typically
 Code 10 / `STATUS_NOT_SUPPORTED`).
 
-Under QEMU, you typically also need `disable-legacy=on,x-pci-revision=0x01` for the device to bind and start.
+Stock QEMU `virtio-*-pci` devices are not Aero contract compliant out of the box (they typically emit different
+`ID_NAME` strings, and may not use the Aero subsystem IDs). For this driver to bind and start under QEMU, you must use
+an Aero contract-compliant device model (or configure/patch QEMU to satisfy the contract); at minimum this typically
+includes `disable-legacy=on,x-pci-revision=0x01` plus the contract `ID_NAME`/`ID_DEVIDS` values.
 
 For authoritative PCI-ID and contract rules, see:
 
