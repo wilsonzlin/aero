@@ -165,6 +165,60 @@ async fn get_image_data_with_if_none_match_returns_304() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_images_with_if_none_match_returns_304_and_includes_cors_headers() {
+    let (app, _dir) = setup_app().await;
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let etag = res.headers()[header::ETAG].to_str().unwrap().to_string();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let _json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/images")
+                .header(header::IF_NONE_MATCH, etag.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(res.headers()[header::ETAG].to_str().unwrap(), etag);
+    assert_eq!(
+        res.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-cache"
+    );
+    assert_eq!(
+        res.headers()["access-control-allow-origin"].to_str().unwrap(),
+        "*"
+    );
+    assert_eq!(
+        res.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control"
+    );
+
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn head_image_data_includes_etag_last_modified_and_accept_ranges() {
     let (app, _dir) = setup_app().await;
 
