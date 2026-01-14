@@ -245,13 +245,17 @@ Examples (illustrative) INF model entries:
 ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
-; Optional legacy alias virtio-input.inf (checked in disabled-by-default as `virtio-input.inf.disabled`)
-; Exists for compatibility with workflows/tools that still reference `virtio-input.inf`, and to provide an opt-in strict
-; revision-gated generic fallback HWID match when subsystem IDs are not exposed/recognized:
-;   %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
-; Allowed to diverge from `aero_virtio_input.inf` in the models sections; outside of the models sections it is expected to
-; stay in sync (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+; aero_virtio_tablet.inf (optional tablet / absolute pointer)
+; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
+%AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
+
+; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
+; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
+; - Expected to remain byte-for-byte identical to `aero_virtio_input.inf` from the first section header (`[Version]`) onward
+;   (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+; - Does not change HWID matching behavior.
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
