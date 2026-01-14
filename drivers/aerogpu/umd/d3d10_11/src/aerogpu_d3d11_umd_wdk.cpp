@@ -2333,7 +2333,8 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
                                 bool is_ds,
                                 bool is_shared,
                                 bool want_primary,
-                                uint32_t pitch_bytes) -> HRESULT {
+                                uint32_t pitch_bytes,
+                                aerogpu_wddm_alloc_priv_v2* out_priv) -> HRESULT {
     if (!pDesc->pAllocationInfo) {
       return E_INVALIDARG;
     }
@@ -2430,6 +2431,9 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     const bool have_priv_out = ConsumeWddmAllocPrivV2(alloc_info[0].pPrivateDriverData,
                                                       static_cast<UINT>(alloc_info[0].PrivateDriverDataSize),
                                                       &priv_out);
+    if (out_priv) {
+      *out_priv = priv_out;
+    }
     if (have_priv_out && priv_out.alloc_id != 0) {
       alloc_id = priv_out.alloc_id;
     }
@@ -2713,7 +2717,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
     res->is_shared = is_shared;
-    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0);
+    HRESULT hr = allocate_one(alloc_size, cpu_visible, is_rt, is_ds, is_shared, is_primary, 0, nullptr);
     if (FAILED(hr)) {
       SetError(dev, hr);
       res->~Resource();
@@ -2866,11 +2870,65 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
     res->is_shared = is_shared;
-    HRESULT hr = allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes);
+    aerogpu_wddm_alloc_priv_v2 alloc_priv = {};
+    HRESULT hr =
+        allocate_one(total_bytes, cpu_visible, is_rt, is_ds, is_shared, is_primary, res->row_pitch_bytes, &alloc_priv);
     if (FAILED(hr)) {
       SetError(dev, hr);
       res->~Resource();
       return hr;
+    }
+
+    // If the KMD returns a different pitch (via the private driver data blob),
+    // update our internal + protocol-visible layout before uploading any data.
+    //
+    // This keeps the host's `CREATE_TEXTURE2D.row_pitch_bytes` interpretation in
+    // sync with the actual guest backing memory layout and avoids silent row
+    // corruption when the Win7 runtime/KMD chooses a different pitch.
+    uint32_t alloc_pitch = alloc_priv.row_pitch_bytes;
+    if (alloc_pitch == 0 && !AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(alloc_priv.reserved0)) {
+      alloc_pitch = static_cast<uint32_t>(alloc_priv.reserved0 & 0xFFFFFFFFu);
+    }
+    if (alloc_pitch != 0 && alloc_pitch != res->row_pitch_bytes) {
+      LogTexture2DPitchMismatchRateLimited("CreateResource11",
+                                           res,
+                                           /*subresource=*/0,
+                                           res->row_pitch_bytes,
+                                           alloc_pitch);
+      if (alloc_pitch < row_bytes) {
+        SetError(dev, E_INVALIDARG);
+        deallocate_if_needed();
+        res->~Resource();
+        return E_INVALIDARG;
+      }
+
+      std::vector<Texture2DSubresourceLayout> updated_layouts;
+      uint64_t updated_total_bytes = 0;
+      if (!build_texture2d_subresource_layouts(aer_fmt,
+                                               res->width,
+                                               res->height,
+                                               res->mip_levels,
+                                               res->array_size,
+                                               alloc_pitch,
+                                               &updated_layouts,
+                                               &updated_total_bytes)) {
+        SetError(dev, E_FAIL);
+        deallocate_if_needed();
+        res->~Resource();
+        return E_FAIL;
+      }
+
+      const uint64_t backing_size = alloc_priv.size_bytes ? static_cast<uint64_t>(alloc_priv.size_bytes) : total_bytes;
+      if (updated_total_bytes == 0 || updated_total_bytes > backing_size || updated_total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(dev, E_INVALIDARG);
+        deallocate_if_needed();
+        res->~Resource();
+        return E_INVALIDARG;
+      }
+
+      res->row_pitch_bytes = alloc_pitch;
+      res->tex2d_subresources = std::move(updated_layouts);
+      total_bytes = updated_total_bytes;
     }
 
     try {
