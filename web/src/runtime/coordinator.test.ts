@@ -121,6 +121,11 @@ describe("runtime/coordinator", () => {
   it("spawns the machine CPU worker via start() when vmRuntime=machine", () => {
     const coordinator = new WorkerCoordinator();
 
+    // Avoid kicking off the full worker event loops / wasm precompile in this unit test;
+    // we only care about the worker entrypoint selection.
+    (coordinator as any).eventLoop = vi.fn(async () => {});
+    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+
     coordinator.start(
       {
         vmRuntime: "machine",
@@ -155,6 +160,59 @@ describe("runtime/coordinator", () => {
     expect(String(cpuWorker.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
     coordinator.stop();
+  });
+
+  it("preserves the machine CPU worker entrypoint across full restarts", () => {
+    vi.useFakeTimers();
+    const coordinator = new WorkerCoordinator();
+
+    // Stub out heavyweight background tasks; we only care about which worker URL is chosen.
+    (coordinator as any).eventLoop = vi.fn(async () => {});
+    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+
+    coordinator.start(
+      {
+        vmRuntime: "machine",
+        guestMemoryMiB: 1,
+        vramMiB: 1,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      },
+      {
+        platformFeatures: {
+          crossOriginIsolated: true,
+          sharedArrayBuffer: true,
+          wasmSimd: true,
+          wasmThreads: true,
+          webgpu: true,
+          webusb: false,
+          webhid: false,
+          webgl2: true,
+          opfs: true,
+          opfsSyncAccessHandle: false,
+          audioWorklet: true,
+          offscreenCanvas: true,
+          jit_dynamic_wasm: true,
+        },
+      },
+    );
+
+    const cpuWorkerBefore = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(String(cpuWorkerBefore.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+
+    // Trigger a full restart (the path used for non-restartable worker failures like CPU/IO).
+    (coordinator as any).scheduleFullRestart("test_full_restart");
+    vi.runAllTimers();
+
+    const cpuWorkerAfter = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(cpuWorkerAfter).not.toBe(cpuWorkerBefore);
+    expect(String(cpuWorkerAfter.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.stop();
+    vi.useRealTimers();
   });
 
   it("treats net as restartable without requiring a full VM restart", () => {
