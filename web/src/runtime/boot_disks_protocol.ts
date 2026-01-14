@@ -41,12 +41,13 @@ function isObjectLikeRecord(value: unknown): value is Record<string, unknown> {
   */
 export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage | null {
   if (!isObjectLikeRecord(msg)) return null;
-  const rec = msg as Partial<SetBootDisksMessage> & { type?: unknown };
+  const rec = msg as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(rec, "type")) return null;
   if (rec.type !== "setBootDisks") return null;
 
   // Mount IDs are the only fields used outside the disk metadata. Normalize to a plain object and
   // accept only string values so downstream code can treat them as opaque IDs without re-validating.
-  const mountsRaw = (rec as { mounts?: unknown }).mounts;
+  const mountsRaw = Object.prototype.hasOwnProperty.call(rec, "mounts") ? rec.mounts : undefined;
   const mounts: MountConfig = {};
   const sanitizeMountId = (value: unknown): string | undefined => {
     if (typeof value !== "string") return undefined;
@@ -73,10 +74,12 @@ export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage 
     return raw as DiskImageMetadata;
   };
 
-  const hdd = normalizeDiskMeta((rec as { hdd?: unknown }).hdd, "hdd");
-  const cd = normalizeDiskMeta((rec as { cd?: unknown }).cd, "cd");
+  const hddRaw = Object.prototype.hasOwnProperty.call(rec, "hdd") ? rec.hdd : undefined;
+  const cdRaw = Object.prototype.hasOwnProperty.call(rec, "cd") ? rec.cd : undefined;
+  const hdd = normalizeDiskMeta(hddRaw, "hdd");
+  const cd = normalizeDiskMeta(cdRaw, "cd");
 
-  const bootDeviceRaw = (rec as { bootDevice?: unknown }).bootDevice;
+  const bootDeviceRaw = Object.prototype.hasOwnProperty.call(rec, "bootDevice") ? rec.bootDevice : undefined;
   const bootDevice = bootDeviceRaw === "hdd" || bootDeviceRaw === "cdrom" ? bootDeviceRaw : undefined;
 
   return bootDevice ? { type: "setBootDisks", mounts, hdd, cd, bootDevice } : { type: "setBootDisks", mounts, hdd, cd };

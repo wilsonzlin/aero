@@ -21,6 +21,10 @@ describe("runtime/boot_disks_protocol", () => {
       expect(normalizeSetBootDisksMessage({ type: "other" })).toBeNull();
     });
 
+    it("requires type to be an own property", () => {
+      expect(normalizeSetBootDisksMessage(Object.create({ type: "setBootDisks" }))).toBeNull();
+    });
+
     it("normalizes missing/invalid fields to empty defaults", () => {
       expect(normalizeSetBootDisksMessage({ type: "setBootDisks" })).toEqual({
         type: "setBootDisks",
@@ -90,6 +94,17 @@ describe("runtime/boot_disks_protocol", () => {
         hdd: null,
         cd: null,
       });
+    });
+
+    it("ignores inherited top-level mounts/disk metadata fields", () => {
+      const msg = Object.create({
+        mounts: { hddId: "hdd0" },
+        hdd: { source: "local", id: "hdd0", kind: "hdd" },
+        bootDevice: "hdd",
+      }) as Record<string, unknown>;
+      // Only `type` is an own property; all other fields are inherited and must be ignored.
+      msg.type = "setBootDisks";
+      expect(normalizeSetBootDisksMessage(msg)).toEqual({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
     });
 
     it("accepts valid bootDevice values and drops invalid ones", () => {
