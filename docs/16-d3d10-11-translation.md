@@ -453,7 +453,8 @@ bring up correctness incrementally:
   - Initial P1b limitations (explicit):
     - no stream-out / transform feedback (`CreateGeometryShaderWithStreamOutput`),
     - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
-    - no adjacency input primitives (`lineadj`, `triadj`),
+    - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported;
+      the runtime must reject them deterministically until the adjacency path is implemented,
     - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
     - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
     - output ordering is implementation-defined unless we add a deterministic prefix-sum mode (affects
