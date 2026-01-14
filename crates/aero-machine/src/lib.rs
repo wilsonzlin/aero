@@ -12478,6 +12478,7 @@ impl snapshot::SnapshotTarget for Machine {
             self.ensure_uhci_synthetic_usb_hid_topology();
 
             const NS_PER_MS: u64 = 1_000_000;
+            let data = state.data;
 
             // Canonical encoding: `DeviceId::USB` stores a `USBC` wrapper that nests guest-visible
             // controller snapshots (UHCI/EHCI/xHCI) plus the machine's host-side sub-ms tick
@@ -12490,9 +12491,10 @@ impl snapshot::SnapshotTarget for Machine {
             self.uhci_ns_remainder = 0;
             self.ehci_ns_remainder = 0;
             self.xhci_ns_remainder = 0;
-            if matches!(state.data.get(8..12), Some(id) if id == b"USBC") {
+            let inner_id = data.get(8..12).and_then(|id| <[u8; 4]>::try_from(id).ok());
+            if inner_id == Some(*b"USBC") {
                 let mut wrapper = MachineUsbSnapshot::default();
-                if wrapper.load_state(&state.data).is_ok() {
+                if wrapper.load_state(&data).is_ok() {
                     saw_xhci_state_in_snapshot = wrapper.xhci.is_some();
 
                     if let Some(uhci_state) = wrapper.uhci.as_deref() {
@@ -12539,10 +12541,10 @@ impl snapshot::SnapshotTarget for Machine {
                 // snapshot (`UHCP` / `EHCP` / `XHCP`) directly under `DeviceId::USB`, without a
                 // `USBC` wrapper. Best-effort apply the blob to any matching controller present in
                 // the target machine.
-                match state.data.get(8..12) {
-                    Some(id) if id == b"UHCP" => {
+                match inner_id.as_ref().map(|id| &id[..]) {
+                    Some(b"UHCP") => {
                         if let Some(uhci) = &self.uhci {
-                            let _ = uhci.borrow_mut().load_state(&state.data);
+                            let _ = uhci.borrow_mut().load_state(&data);
                         } else {
                             #[cfg(not(target_arch = "wasm32"))]
                             eprintln!(
@@ -12550,9 +12552,22 @@ impl snapshot::SnapshotTarget for Machine {
                             );
                         }
                     }
-                    Some(id) if id == b"EHCP" => {
+                    Some(b"UHCI") => {
+                        if let Some(uhci) = &self.uhci {
+                            let mut uhci = uhci.borrow_mut();
+                            if uhci.controller_mut().load_state(&data).is_ok() {
+                                uhci.controller_mut().reset_host_state_for_restore();
+                            }
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            eprintln!(
+                                "warning: snapshot contains legacy UHCI USB payload but machine has UHCI disabled; ignoring"
+                            );
+                        }
+                    }
+                    Some(b"EHCP") => {
                         if let Some(ehci) = &self.ehci {
-                            let _ = ehci.borrow_mut().load_state(&state.data);
+                            let _ = ehci.borrow_mut().load_state(&data);
                         } else {
                             #[cfg(not(target_arch = "wasm32"))]
                             eprintln!(
@@ -12560,11 +12575,48 @@ impl snapshot::SnapshotTarget for Machine {
                             );
                         }
                     }
-                    Some(id) if id == b"XHCP" => {
+                    Some(b"EHCI") => {
+                        if let Some(ehci) = &self.ehci {
+                            let mut ehci = ehci.borrow_mut();
+                            if ehci.controller_mut().load_state(&data).is_ok() {
+                                ehci.controller_mut().reset_host_state_for_restore();
+                            }
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            eprintln!(
+                                "warning: snapshot contains legacy EHCI USB payload but machine has EHCI disabled; ignoring"
+                            );
+                        }
+                    }
+                    Some(b"XHCP") => {
                         saw_xhci_state_in_snapshot = true;
                         match &self.xhci {
                             Some(xhci) => {
-                                let _ = xhci.borrow_mut().load_state(&state.data);
+                                let _ = xhci.borrow_mut().load_state(&data);
+                            }
+                            None => {
+                                // SnapshotTarget::restore_device_states cannot return a `Result`,
+                                // so defer this config mismatch as a post-restore error.
+                                self.restore_error = Some(snapshot::SnapshotError::Corrupt(
+                                    "snapshot contains xHCI state but enable_xhci is false",
+                                ));
+                            }
+                        }
+                    }
+                    Some(b"XHCI") => {
+                        saw_xhci_state_in_snapshot = true;
+                        match &self.xhci {
+                            Some(xhci) => {
+                                // The xHCI PCI wrapper stores additional host-side interrupt edge
+                                // state (`last_irq_level`). Reuse the wrapper's `load_state` logic
+                                // by embedding the controller TLV blob in a minimal `XHCP`
+                                // snapshot.
+                                const TAG_XHCI_CONTROLLER: u16 = 4;
+                                let version = <XhciPciDevice as IoSnapshot>::DEVICE_VERSION;
+                                let mut w = SnapshotWriter::new(*b"XHCP", version);
+                                w.field_bytes(TAG_XHCI_CONTROLLER, data);
+                                let bytes = w.finish();
+                                let _ = xhci.borrow_mut().load_state(&bytes);
                             }
                             None => {
                                 // SnapshotTarget::restore_device_states cannot return a `Result`,
@@ -12577,13 +12629,13 @@ impl snapshot::SnapshotTarget for Machine {
                     }
                     _ => {
                         if let Some(uhci) = &self.uhci {
-                            let _ = uhci.borrow_mut().load_state(&state.data);
+                            let _ = uhci.borrow_mut().load_state(&data);
                         }
                         if let Some(ehci) = &self.ehci {
-                            let _ = ehci.borrow_mut().load_state(&state.data);
+                            let _ = ehci.borrow_mut().load_state(&data);
                         }
                         if let Some(xhci) = &self.xhci {
-                            let _ = xhci.borrow_mut().load_state(&state.data);
+                            let _ = xhci.borrow_mut().load_state(&data);
                         }
                     }
                 }
