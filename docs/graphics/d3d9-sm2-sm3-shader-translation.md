@@ -3,18 +3,50 @@
 This doc is a small “don’t duplicate work” scratchpad for the D3D9 Shader Model 2/3
 translator (`crates/aero-d3d9/src/sm3/`).
 
-For the broader “scratchpad task ID → implementation/test” audit doc, see:
-- `docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md`
+It tracks task-level status for shader bytecode → IR → WGSL lowering work.
+
+For the broader “scratchpad task ID → implementation/test” audit, see
+[`task-489-sm3-dxbc-sharedsurface-audit.md`](./task-489-sm3-dxbc-sharedsurface-audit.md).
 
 ## Task status
 
-| Task | Status | What | Where | Tests |
-|------|--------|------|-------|-------|
-| 401 | ✅ DONE | Texture sampling lowering (`texld`/`texldp`/`texldd`/`texldl`) via `IrOp::TexSample`, plus sampler binding emission and bind layout population (`bind_group_layout.{sampler_group,sampler_bindings,sampler_texture_types}`). Bind contract: group(0)=constants, group(1)=VS samplers, group(2)=PS samplers; for sampler `sN`, bindings are `(2*N, 2*N+1)` for `(texture, sampler)`. | `crates/aero-d3d9/src/sm3/wgsl.rs` | `crates/aero-d3d9/tests/sm3_wgsl.rs` |
-| 402 | ✅ DONE | `texkill` lowering (`discard` if any component `< 0`) and predication semantics (predicated `texkill` nests under an `if`). | `crates/aero-d3d9/src/sm3/{ir_builder.rs,wgsl.rs}` | `crates/aero-d3d9/tests/sm3_wgsl.rs` |
+### Task 401 — Texture sampling lowering (`texld`/`texldp`/`texldd`/`texldl`)
+
+**Status:** ✅ Done
+
+**What:** Texture sampling lowering via `IrOp::TexSample`, plus texture/sampler binding emission and
+bind layout population (`bind_group_layout.{sampler_group,sampler_bindings,sampler_texture_types}`).
+
+**Where:**
+- `crates/aero-d3d9/src/sm3/wgsl.rs`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs` (core texld/texldp/texldd/texldl + sampler `dcl_*` texture-type coverage)
+- `crates/aero-d3d9/tests/sm3_wgsl_tex.rs` (additional sampler-type coverage)
+
+**Binding contract (AeroGPU + translators):**
+- `@group(0)` — constants buffer shared by VS/PS
+- `@group(1)` — VS samplers/textures
+- `@group(2)` — PS samplers/textures
+- For sampler `sN`, bindings are `(2*N, 2*N+1)` for `(texture, sampler)`
+
+### Task 402 — `texkill` semantics + predication
+
+**Status:** ✅ Done
+
+**What:** `texkill` lowering (`discard` if **any** component `< 0`) and correct predication behavior
+(predicated `texkill` must be nested under an `if`).
+
+**Where:**
+- `crates/aero-d3d9/src/sm3/ir_builder.rs` (`Opcode::TexKill`)
+- `crates/aero-d3d9/src/sm3/wgsl.rs` (`Stmt::Discard`)
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs`
+  - `wgsl_texkill_is_conditional`
+  - `wgsl_predicated_texkill_is_nested_under_if`
 
 ## Remaining / known limitations (true delta)
 
 - Sampler state mapping (filtering, address modes, LOD bias, etc.) is handled in the runtime pipeline setup,
   not in the SM2/SM3 WGSL generator. Comparison samplers / depth-compare sampling are not modeled here yet.
-
