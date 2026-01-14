@@ -168,10 +168,10 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
 
     # Last resort: recursive search under tools\ (layout may vary between packagers).
     $toolsDir = Join-Path $scriptDir "tools"
-    if (Test-Path $toolsDir) {
+    if (Test-Path -LiteralPath $toolsDir -PathType Container -ErrorAction SilentlyContinue) {
         try {
             $searched += ($toolsDir + " (recursive search)")
-            $hit = Get-ChildItem -Path $toolsDir -Recurse -Filter aerogpu_dbgctl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ErrorAction SilentlyContinue
+            $hit = Get-ChildItem -LiteralPath $toolsDir -Recurse -Filter aerogpu_dbgctl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ErrorAction SilentlyContinue
             if ($hit -and $hit.FullName) {
                 return @{ found = $true; path = ("" + $hit.FullName); searched = $searched }
             }
@@ -302,7 +302,7 @@ function Load-GuestToolsConfig([string]$scriptDir) {
         vars = @{}
     }
 
-    if (-not (Test-Path $cfgFile)) { return $result }
+    if (-not (Test-Path -LiteralPath $cfgFile -PathType Leaf -ErrorAction SilentlyContinue)) { return $result }
 
     $result.found = $true
     $cmd = 'call "' + $cfgFile + '" >nul 2>&1 & set AERO_'
@@ -1261,7 +1261,7 @@ $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.24"
+         version = "2.5.25"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -2002,10 +2002,10 @@ try {
 try {
     $certDir = Join-Path $scriptDir "certs"
     $certFiles = @()
-    if (Test-Path $certDir) {
-        $certFiles += (Get-ChildItem -Path $certDir -Recurse -Filter *.cer -ErrorAction SilentlyContinue)
-        $certFiles += (Get-ChildItem -Path $certDir -Recurse -Filter *.crt -ErrorAction SilentlyContinue)
-        $certFiles += (Get-ChildItem -Path $certDir -Recurse -Filter *.p7b -ErrorAction SilentlyContinue)
+    if (Test-Path -LiteralPath $certDir -PathType Container -ErrorAction SilentlyContinue) {
+        $certFiles += (Get-ChildItem -LiteralPath $certDir -Recurse -Filter *.cer -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -LiteralPath $certDir -Recurse -Filter *.crt -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -LiteralPath $certDir -Recurse -Filter *.p7b -ErrorAction SilentlyContinue)
     }
 
     $policy = $gtSigningPolicy
@@ -2383,7 +2383,7 @@ try {
         guest_tools_root = $scriptDir
         arch = $arch
         drivers_root = $driversRoot
-        drivers_root_exists = (Test-Path $driversRoot)
+        drivers_root_exists = (Test-Path -LiteralPath $driversRoot -PathType Container -ErrorAction SilentlyContinue)
         driver_folders = @()
         total_driver_folders = 0
         total_inf_files = 0
@@ -2396,18 +2396,18 @@ try {
     $sumText = ""
     $details = @()
 
-    if (-not (Test-Path $driversRoot)) {
+    if (-not (Test-Path -LiteralPath $driversRoot -PathType Container -ErrorAction SilentlyContinue)) {
         $status = "WARN"
         $sumText = "drivers\\" + $arch + " not found under the Guest Tools root; packaged driver inventory unavailable."
         $details += "If you are running verify.ps1 from a copied/extracted folder, ensure you copied the full Guest Tools media (including drivers/)."
     } else {
-        $folders = Get-ChildItem -Path $driversRoot -ErrorAction Stop | Where-Object { $_.PSIsContainer }
+        $folders = Get-ChildItem -LiteralPath $driversRoot -ErrorAction Stop | Where-Object { $_.PSIsContainer }
         $summary.total_driver_folders = $folders.Count
 
         foreach ($folder in $folders) {
-            $infFiles = Get-ChildItem -Path $folder.FullName -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
-            $sysFiles = Get-ChildItem -Path $folder.FullName -Recurse -Filter *.sys -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
-            $catFiles = Get-ChildItem -Path $folder.FullName -Recurse -Filter *.cat -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
+            $infFiles = Get-ChildItem -LiteralPath $folder.FullName -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
+            $sysFiles = Get-ChildItem -LiteralPath $folder.FullName -Recurse -Filter *.sys -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
+            $catFiles = Get-ChildItem -LiteralPath $folder.FullName -Recurse -Filter *.cat -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
 
             $infMeta = @()
             foreach ($inf in $infFiles) {
@@ -2710,13 +2710,13 @@ try {
 
     $certSearchDirs = @($scriptDir)
     $certDir = Join-Path $scriptDir "certs"
-    if (Test-Path $certDir) { $certSearchDirs += $certDir }
+    if (Test-Path -LiteralPath $certDir -PathType Container -ErrorAction SilentlyContinue) { $certSearchDirs += $certDir }
 
     $certFiles = @()
     foreach ($dir in $certSearchDirs) {
-        $certFiles += (Get-ChildItem -Path $dir -Filter *.cer -ErrorAction SilentlyContinue)
-        $certFiles += (Get-ChildItem -Path $dir -Filter *.crt -ErrorAction SilentlyContinue)
-        $certFiles += (Get-ChildItem -Path $dir -Filter *.p7b -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -LiteralPath $dir -Filter *.cer -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -LiteralPath $dir -Filter *.crt -ErrorAction SilentlyContinue)
+        $certFiles += (Get-ChildItem -LiteralPath $dir -Filter *.p7b -ErrorAction SilentlyContinue)
     }
 
     # If Guest Tools setup was run, it records installed cert thumbprints under
@@ -3768,7 +3768,7 @@ try {
                 $scanLimit = [int]$toolsData.file_inventory_limit
                 $scanLimitPlus = $scanLimit + 1
                 $items = @(
-                    Get-ChildItem -Path $toolsDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErrors |
+                    Get-ChildItem -LiteralPath $toolsDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErrors |
                         Where-Object { -not $_.PSIsContainer } |
                         Select-Object -First $scanLimitPlus -ErrorAction SilentlyContinue
                 )
