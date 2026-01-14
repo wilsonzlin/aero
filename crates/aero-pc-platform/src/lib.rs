@@ -253,33 +253,27 @@ impl PciDevice for E1000PciConfigDevice {
 
 struct VirtioBlkPciConfigDevice {
     config: aero_devices::pci::PciConfigSpace,
-    msix: Option<VirtioMsixConfig>,
+    enable_msix: bool,
 }
 
 impl VirtioBlkPciConfigDevice {
-    fn new(msix: Option<VirtioMsixConfig>) -> Self {
+    fn new(enable_msix: bool) -> Self {
         // The upstream virtio PCI profiles include MSI-X by default, but the PC platform keeps
         // virtio MSI-X behind a runtime config knob (`PcPlatformConfig::enable_virtio_msix`) so
         // existing INTx-only integrations can remain stable.
-        //
-        // Build a config space that contains only the vendor-specific virtio capabilities, and
-        // then optionally layer MSI-X on top.
-        let profile = aero_devices::pci::profile::VIRTIO_BLK;
-        let profile_no_msix = aero_devices::pci::profile::PciDeviceProfile {
-            capabilities: &aero_devices::pci::profile::VIRTIO_VENDOR_CAPS,
-            ..profile
+
+        let base_profile = aero_devices::pci::profile::VIRTIO_BLK;
+        let profile = if enable_msix {
+            base_profile
+        } else {
+            aero_devices::pci::profile::PciDeviceProfile {
+                capabilities: &aero_devices::pci::profile::VIRTIO_VENDOR_CAPS,
+                ..base_profile
+            }
         };
-        let mut config = profile_no_msix.build_config_space();
-        if let Some(msix) = msix {
-            config.add_capability(Box::new(MsixCapability::new(
-                msix.table_size,
-                msix.table_bir,
-                msix.table_offset,
-                msix.pba_bir,
-                msix.pba_offset,
-            )));
-        }
-        Self { config, msix }
+
+        let config = profile.build_config_space();
+        Self { config, enable_msix }
     }
 }
 
@@ -293,17 +287,8 @@ impl PciDevice for VirtioBlkPciConfigDevice {
     }
 
     fn reset(&mut self) {
-        *self = Self::new(self.msix);
+        *self = Self::new(self.enable_msix);
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct VirtioMsixConfig {
-    table_size: u16,
-    table_bir: u8,
-    table_offset: u32,
-    pba_bir: u8,
-    pba_offset: u32,
 }
 
 struct NvmePciConfigDevice {
@@ -1996,23 +1981,7 @@ impl PcPlatform {
                 });
             }
 
-            let msix_cfg = if config.enable_virtio_msix {
-                virtio_blk
-                    .borrow()
-                    .config()
-                    .capability::<MsixCapability>()
-                    .map(|msix| VirtioMsixConfig {
-                        table_size: msix.table_size(),
-                        table_bir: msix.table_bir(),
-                        table_offset: msix.table_offset(),
-                        pba_bir: msix.pba_bir(),
-                        pba_offset: msix.pba_offset(),
-                    })
-            } else {
-                None
-            };
-
-            let mut dev = VirtioBlkPciConfigDevice::new(msix_cfg);
+            let mut dev = VirtioBlkPciConfigDevice::new(config.enable_virtio_msix);
             pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
             pci_cfg
                 .borrow_mut()
