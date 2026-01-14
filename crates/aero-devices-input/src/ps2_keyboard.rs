@@ -264,8 +264,10 @@ impl IoSnapshot for Ps2Keyboard {
             let bytes = d.bytes(len)?;
             d.finish()?;
 
-            let drop = len.saturating_sub(MAX_OUTPUT_BYTES);
-            for &byte in bytes.iter().skip(drop) {
+            // Snapshot may contain an oversized output queue; keep only the last
+            // `MAX_OUTPUT_BYTES` bytes to avoid unbounded memory use.
+            let start = bytes.len().saturating_sub(MAX_OUTPUT_BYTES);
+            for &byte in &bytes[start..] {
                 self.push_out(byte);
             }
         }

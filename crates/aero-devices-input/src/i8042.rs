@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
 use crate::ps2_keyboard::Ps2Keyboard;
@@ -950,17 +950,23 @@ impl IoSnapshot for I8042Controller {
         if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            // Pending output entries are fixed-width (value + source). If a snapshot contains more
+            // entries than the runtime queue supports, skip the oldest entries in bulk so restore
+            // time stays bounded.
             let drop = count.saturating_sub(MAX_PENDING_OUTPUT);
-            for idx in 0..count {
+            if drop != 0 {
+                let drop_bytes = drop
+                    .checked_mul(2)
+                    .ok_or(SnapshotError::InvalidFieldEncoding("pending output"))?;
+                d.bytes(drop_bytes)?;
+            }
+            for _ in 0..count.min(MAX_PENDING_OUTPUT) {
                 let value = d.u8()?;
                 let source = match d.u8()? {
                     1 => OutputSource::Keyboard,
                     2 => OutputSource::Mouse,
                     _ => OutputSource::Controller,
                 };
-                if idx < drop {
-                    continue;
-                }
                 self.push_pending_output(OutputByte { value, source });
             }
             d.finish()?;
