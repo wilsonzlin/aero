@@ -285,6 +285,9 @@ dev-dependencies that significantly slow compilation.
 # Generate the synthetic boot fixtures used by the tests (committed output is checked in CI).
 cargo xtask fixtures
 
+# Verify the committed fixture outputs are up-to-date (this is what CI runs).
+cargo xtask fixtures --check
+
 # Download + patch FreeDOS 1.4 floppy image (written under gitignored test-images/).
 bash ./scripts/prepare-freedos.sh
 
