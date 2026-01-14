@@ -78,6 +78,69 @@ describe("InputCapture wheel handling", () => {
     });
   });
 
+  it("accumulates small DOM_DELTA_PIXEL horizontal wheel deltas into discrete steps", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+
+      // Simulate the canvas being focused.
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+
+      // 20px per event in DOM_DELTA_PIXEL mode -> 0.2 "clicks" per event (see input_capture.ts).
+      for (let i = 0; i < 4; i++) {
+        const ev = {
+          deltaX: 20,
+          deltaY: 0,
+          deltaMode: 0,
+          preventDefault,
+          stopPropagation,
+          timeStamp: i,
+        } as unknown as WheelEvent;
+        (capture as any).handleWheel(ev);
+        expect((capture as any).queue.size).toBe(0);
+      }
+
+      const ev = {
+        deltaX: 20,
+        deltaY: 0,
+        deltaMode: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 5,
+      } as unknown as WheelEvent;
+      (capture as any).handleWheel(ev);
+      expect((capture as any).queue.size).toBe(1);
+
+      capture.flushNow();
+
+      expect(preventDefault).toHaveBeenCalledTimes(5);
+      expect(stopPropagation).toHaveBeenCalledTimes(5);
+
+      expect(posted).toHaveLength(1);
+      const msg = posted[0] as { buffer: ArrayBuffer };
+      const words = decodeFirstEventWords(msg.buffer);
+
+      expect(words[0]).toBe(1); // count
+      expect(words[2]).toBe(InputEventType.MouseWheel);
+      expect(words[4]).toBe(0);
+      expect(words[5]).toBe(1); // deltaX > 0 => wheel right
+    });
+  });
+
   it("preserves fractional wheel deltas across events (no per-event truncation)", () => {
     withStubbedDocument(() => {
       const canvas = {

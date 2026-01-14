@@ -5814,13 +5814,17 @@ function handleInputBatch(buffer: ArrayBuffer): void {
             if (dz !== 0 || dx !== 0) virtioMouse.injectWheel2(dz, dx);
           }
         } else if (mouseInputBackend === "ps2") {
-          if (i8042Wasm) {
-            i8042Wasm.injectMouseWheel(dz);
-          } else if (i8042Ts) {
-            i8042Ts.injectMouseWheel(dz);
+          if (dz !== 0) {
+            if (i8042Wasm) {
+              i8042Wasm.injectMouseWheel(dz);
+            } else if (i8042Ts) {
+              i8042Ts.injectMouseWheel(dz);
+            }
           }
         } else {
-          usbHid?.mouse_wheel(dz);
+          if (dz !== 0) {
+            usbHid?.mouse_wheel(dz);
+          }
         }
         break;
       }
