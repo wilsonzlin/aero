@@ -1272,6 +1272,20 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(b, &mut scan_reg);
                 scan_src_regs(c, &mut scan_reg);
             }
+            Sm4Inst::Rcp { dst: _, src }
+            | Sm4Inst::Rsq { dst: _, src }
+            | Sm4Inst::IAbs { dst: _, src }
+            | Sm4Inst::INeg { dst: _, src }
+            | Sm4Inst::Not { dst: _, src }
+            | Sm4Inst::Bfrev { dst: _, src }
+            | Sm4Inst::CountBits { dst: _, src }
+            | Sm4Inst::FirstbitHi { dst: _, src }
+            | Sm4Inst::FirstbitLo { dst: _, src }
+            | Sm4Inst::FirstbitShi { dst: _, src } => scan_src_regs(src, &mut scan_reg),
+            Sm4Inst::Cmp { a, b, .. } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+            }
             Sm4Inst::Bfi {
                 width,
                 offset,
@@ -1293,20 +1307,6 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(width, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(src, &mut scan_reg);
-            }
-            Sm4Inst::Rcp { dst: _, src }
-            | Sm4Inst::Rsq { dst: _, src }
-            | Sm4Inst::IAbs { dst: _, src }
-            | Sm4Inst::INeg { dst: _, src }
-            | Sm4Inst::Not { dst: _, src }
-            | Sm4Inst::Bfrev { dst: _, src }
-            | Sm4Inst::CountBits { dst: _, src }
-            | Sm4Inst::FirstbitHi { dst: _, src }
-            | Sm4Inst::FirstbitLo { dst: _, src }
-            | Sm4Inst::FirstbitShi { dst: _, src } => scan_src_regs(src, &mut scan_reg),
-            Sm4Inst::Cmp { a, b, .. } => {
-                scan_src_regs(a, &mut scan_reg);
-                scan_src_regs(b, &mut scan_reg);
             }
             Sm4Inst::Sample {
                 dst: _,
