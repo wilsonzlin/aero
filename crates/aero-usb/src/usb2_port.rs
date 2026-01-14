@@ -636,6 +636,37 @@ enum RemoteWakeBehavior {
 }
 
 impl PortLogic {
+    /// Poll for remote wakeup from an attached device while a USB2 mux port is suspended.
+    ///
+    /// Unlike UHCI/EHCI root hub ports, muxed ports model downstream wake propagation as purely
+    /// electrical: intermediate hubs do not need DEVICE_REMOTE_WAKEUP enabled for the resume
+    /// signal to reach the upstream controller. We therefore "look through" hubs and poll their
+    /// downstream devices directly, bypassing [`UsbDeviceModel::poll_remote_wakeup`] on the hub
+    /// itself (which may be gated on the hub's DEVICE_REMOTE_WAKEUP feature in non-mux paths).
+    fn poll_remote_wakeup_passthrough(model: &mut dyn UsbDeviceModel) -> bool {
+        // If this device is a hub, remote wake is driven by the ultimate downstream device. Scan
+        // through the topology and treat any downstream wake as a wake on this port.
+        if let Some(hub) = model.as_hub_mut() {
+            let mut wake = false;
+            let port_count = hub.num_ports();
+            for port in 0..port_count {
+                let Some(child) = hub.downstream_device_mut(port) else {
+                    continue;
+                };
+                if Self::poll_remote_wakeup_passthrough(child.model_mut()) {
+                    wake = true;
+                }
+            }
+            if wake {
+                return true;
+            }
+            // No downstream wake observed; fall back to any hub-local wake signals.
+            return model.poll_remote_wakeup();
+        }
+
+        model.poll_remote_wakeup()
+    }
+
     fn new() -> Self {
         Self {
             connected: false,
@@ -890,7 +921,7 @@ impl PortLogic {
 
         if self.enabled && self.suspended && !self.resuming {
             if let Some(dev) = dev.as_mut() {
-                if dev.model_mut().poll_remote_wakeup() {
+                if Self::poll_remote_wakeup_passthrough(dev.model_mut()) {
                     match remote_wake {
                         RemoteWakeBehavior::ResumeDetect => {
                             self.resume_detect = true;
