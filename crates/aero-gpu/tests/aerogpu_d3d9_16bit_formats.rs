@@ -91,7 +91,7 @@ fn enc_dst(reg_type: u8, reg_num: u16, mask: u8) -> u32 {
 }
 
 fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
-    let token = (opcode as u32) | ((params.len() as u32) << 24);
+    let token = (opcode as u32) | (((params.len() as u32) + 1) << 24);
     let mut v = vec![token];
     v.extend_from_slice(params);
     v

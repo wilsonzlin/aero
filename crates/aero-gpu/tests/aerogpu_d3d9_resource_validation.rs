@@ -22,7 +22,7 @@ fn enc_dst(reg_type: u8, reg_num: u16, mask: u8) -> u32 {
 }
 
 fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
-    let token = (opcode as u32) | ((params.len() as u32) << 24);
+    let token = (opcode as u32) | (((params.len() as u32) + 1) << 24);
     let mut v = vec![token];
     v.extend_from_slice(params);
     v
@@ -723,7 +723,9 @@ fn d3d9_create_texture2d_rejects_array_layers_not_one() {
     let stream = writer.finish();
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected CREATE_TEXTURE2D with array_layers!=1 to be rejected"),
-        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("array_layers != 1"), "{msg}"),
+        Err(AerogpuD3d9Error::Validation(msg)) => {
+            assert!(msg.contains("array_layers is not supported"), "{msg}")
+        }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }
