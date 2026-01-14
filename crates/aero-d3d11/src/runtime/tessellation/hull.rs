@@ -1,13 +1,88 @@
 use std::sync::Arc;
 
-use aero_gpu::bindings::bind_group_cache::BindGroupCache;
+use aero_gpu::bindings::bind_group_cache::{BindGroupCache, BufferId, TextureViewId};
 use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
+use aero_gpu::bindings::samplers::CachedSampler;
 use aero_gpu::pipeline_cache::PipelineCache;
 use aero_gpu::pipeline_key::{ComputePipelineKey, PipelineLayoutKey};
 use anyhow::{anyhow, bail, Result};
 
 use crate::runtime::pipeline_layout_cache::PipelineLayoutCache as PipelineLayoutCacheLocal;
 use crate::runtime::reflection_bindings;
+
+#[derive(Debug)]
+struct InternalBufferCopy {
+    binding: u32,
+    id: BufferId,
+    buffer: Arc<wgpu::Buffer>,
+    size: u64,
+}
+
+struct InternalBufferOverrides<'a, P> {
+    base: &'a P,
+    copies: &'a [InternalBufferCopy],
+}
+
+impl<P: reflection_bindings::BindGroupResourceProvider> reflection_bindings::BindGroupResourceProvider
+    for InternalBufferOverrides<'_, P>
+{
+    fn constant_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        self.base.constant_buffer(slot)
+    }
+
+    fn constant_buffer_scratch(&self, slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+        self.base.constant_buffer_scratch(slot)
+    }
+
+    fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        self.base.texture2d(slot)
+    }
+
+    fn sampler(&self, slot: u32) -> Option<&CachedSampler> {
+        self.base.sampler(slot)
+    }
+
+    fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        self.base.srv_buffer(slot)
+    }
+
+    fn uav_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        self.base.uav_buffer(slot)
+    }
+
+    fn internal_buffer(&self, binding: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        if let Some(copy) = self.copies.iter().find(|c| c.binding == binding) {
+            return Some(reflection_bindings::BufferBinding {
+                id: copy.id,
+                buffer: copy.buffer.as_ref(),
+                offset: 0,
+                size: Some(copy.size),
+                total_size: copy.size,
+            });
+        }
+        self.base.internal_buffer(binding)
+    }
+
+    fn uav_texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        self.base.uav_texture2d(slot)
+    }
+
+    fn dummy_uniform(&self) -> &wgpu::Buffer {
+        self.base.dummy_uniform()
+    }
+
+    fn dummy_storage(&self) -> &wgpu::Buffer {
+        self.base.dummy_storage()
+    }
+
+    fn dummy_texture_view(&self) -> &wgpu::TextureView {
+        self.base.dummy_texture_view()
+    }
+
+    fn default_sampler(&self) -> &CachedSampler {
+        self.base.default_sampler()
+    }
+}
 
 /// Metadata for a compute kernel that implements one hull-shader phase.
 #[derive(Debug, Clone, Copy)]
@@ -120,11 +195,109 @@ pub(in crate::runtime) fn dispatch_hull_phases(
         "HS patch constant",
     )?;
 
+    if cp_workgroups_x == 0 && pc_workgroups_x == 0 {
+        return Ok(());
+    }
+
     // Helper to build pipeline layout + bind groups for a single kernel.
     let mut build_kernel = |kernel: HullKernel<'_>| -> Result<(
         Vec<Arc<wgpu::BindGroup>>,
         *const wgpu::ComputePipeline,
     )> {
+        // wgpu/WebGPU tracks buffer usage hazards per *buffer*, not per bound range. The expansion
+        // scratch allocator sub-allocates multiple logical buffers from a single backing buffer, so
+        // a kernel that reads one subrange (`var<storage, read>`) while writing another subrange
+        // (`var<storage, read_write>`) would trigger a `ResourceUsageConflict`.
+        //
+        // Avoid this by copying any read-only internal bindings that alias a read-write binding
+        // into a temporary buffer, and bind that copy instead.
+        let storage_align = (device.limits().min_storage_buffer_offset_alignment as u64).max(1);
+        let max_storage_binding_size = device.limits().max_storage_buffer_binding_size as u64;
+
+        let mut write_buffers: Vec<*const wgpu::Buffer> = Vec::new();
+        let mut read_only_bindings: Vec<(u32, reflection_bindings::BufferBinding<'_>)> = Vec::new();
+
+        for binding in kernel.bindings {
+            let crate::BindingKind::ExpansionStorageBuffer { read_only } = &binding.kind else {
+                continue;
+            };
+            let bound = provider.internal_buffer(binding.binding).ok_or_else(|| {
+                anyhow!(
+                    "{}: missing expansion-internal buffer @group({}) @binding({})",
+                    kernel.label,
+                    binding.group,
+                    binding.binding
+                )
+            })?;
+            if *read_only {
+                read_only_bindings.push((binding.binding, bound));
+            } else {
+                write_buffers.push(bound.buffer as *const wgpu::Buffer);
+            }
+        }
+
+        let mut copies: Vec<InternalBufferCopy> = Vec::new();
+        for (binding_num, bound) in read_only_bindings {
+            let buf_ptr = bound.buffer as *const wgpu::Buffer;
+            if !write_buffers.iter().any(|&p| p == buf_ptr) {
+                continue;
+            }
+
+            let offset = bound.offset;
+            let total_size = bound.total_size;
+            if offset >= total_size || (offset != 0 && !offset.is_multiple_of(storage_align)) {
+                bail!(
+                    "{}: invalid expansion-internal buffer @binding({binding_num}) (offset={offset} total_size={total_size} storage_align={storage_align})",
+                    kernel.label
+                );
+            }
+
+            let remaining = total_size - offset;
+            let requested = bound.size.unwrap_or(remaining).min(remaining);
+            let mut bind_size = requested.min(max_storage_binding_size);
+            bind_size -= bind_size % 4;
+            if bind_size == 0 {
+                bail!(
+                    "{}: invalid expansion-internal buffer @binding({binding_num}) (computed bind_size=0)",
+                    kernel.label
+                );
+            }
+
+            if !offset.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                || !bind_size.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+            {
+                bail!(
+                    "{}: internal buffer copy requires COPY_BUFFER_ALIGNMENT={} (binding={binding_num} offset={offset} size={bind_size})",
+                    kernel.label,
+                    wgpu::COPY_BUFFER_ALIGNMENT
+                );
+            }
+
+            let buffer = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aero-d3d11 HS internal read-only alias copy"),
+                size: bind_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            encoder.copy_buffer_to_buffer(bound.buffer, offset, buffer.as_ref(), 0, bind_size);
+
+            // Use a unique bind-group cache ID for this temporary buffer. The high bit keeps these
+            // IDs disjoint from executor-managed buffer IDs (which live in lower ranges).
+            let ptr_id = Arc::as_ptr(&buffer) as usize as u64;
+            let id = BufferId((1u64 << 63) | (ptr_id & ((1u64 << 63) - 1)));
+            copies.push(InternalBufferCopy {
+                binding: binding_num,
+                id,
+                buffer,
+                size: bind_size,
+            });
+        }
+
+        let provider = InternalBufferOverrides {
+            base: provider,
+            copies: &copies,
+        };
+
         let mut bindings_info = reflection_bindings::build_pipeline_bindings_info(
             device,
             bind_group_layout_cache,
@@ -166,7 +339,7 @@ pub(in crate::runtime) fn dispatch_hull_phases(
                     bind_group_cache,
                     &bindings_info.group_layouts[group_index],
                     &bindings_info.group_bindings[group_index],
-                    provider,
+                    &provider,
                 )?;
                 bind_groups.push(bg);
             }

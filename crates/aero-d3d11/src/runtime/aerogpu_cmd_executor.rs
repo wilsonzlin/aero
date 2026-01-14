@@ -81,6 +81,11 @@ use super::vertex_pulling::{
 };
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
+/// Sentinel D3D vertex buffer slot used for synthesized/dummy vertex buffer bindings.
+///
+/// This is only used when a draw is missing an input layout but still needs to progress through
+/// the render-pass path (e.g. for tests that validate render-pass lifetime semantics).
+const DUMMY_VERTEX_BUFFER_SLOT: u32 = u32::MAX;
 // D3D11 exposes 128 SRV slots per stage. Our shader translation keeps the D3D register index as the
 // WGSL/WebGPU binding number (samplers live at an offset), so the executor must accept and track
 // slots up to 127 even if only a smaller subset is used by a given shader.
@@ -1378,6 +1383,7 @@ pub struct AerogpuD3d11Executor {
 
     dummy_uniform: wgpu::Buffer,
     dummy_storage: wgpu::Buffer,
+    dummy_vertex: wgpu::Buffer,
     dummy_texture_view: wgpu::TextureView,
 
     /// Cache of internal dummy color targets for depth-only render passes.
@@ -1584,6 +1590,19 @@ impl AerogpuD3d11Executor {
             mapped.fill(0);
         }
         dummy_storage.unmap();
+
+        let dummy_vertex = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu_cmd dummy vertex buffer"),
+            // Large enough for small draws with a handful of `vec4<f32>` inputs.
+            size: 256 * 1024,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let mut mapped = dummy_vertex.slice(..).get_mapped_range_mut();
+            mapped.fill(0);
+        }
+        dummy_vertex.unmap();
         let pipeline_cache = PipelineCache::new(PipelineCacheConfig::default(), caps);
 
         let mut sampler_cache = SamplerCache::new();
@@ -1718,6 +1737,7 @@ impl AerogpuD3d11Executor {
             tessellation: TessellationRuntime::default(),
             dummy_uniform,
             dummy_storage,
+            dummy_vertex,
             dummy_texture_view,
             depth_only_dummy_color_targets: HashMap::new(),
             sampler_cache,
@@ -6643,6 +6663,12 @@ impl AerogpuD3d11Executor {
         let mut current_pipeline_ptr: *const wgpu::RenderPipeline = strip_pipeline_ptr;
 
         for (wgpu_slot, d3d_slot) in wgpu_slot_to_d3d_slot.iter().copied().enumerate() {
+            if d3d_slot == DUMMY_VERTEX_BUFFER_SLOT {
+                let buf_ptr: *const wgpu::Buffer = &self.dummy_vertex;
+                let buf = unsafe { &*buf_ptr };
+                pass.set_vertex_buffer(wgpu_slot as u32, buf.slice(..));
+                continue;
+            }
             let slot = d3d_slot as usize;
             let Some(vb) = self.state.vertex_buffers.get(slot).and_then(|v| *v) else {
                 bail!("input layout requires vertex buffer slot {d3d_slot}");
@@ -13566,6 +13592,11 @@ impl AerogpuD3d11Executor {
         stage: ShaderStage,
         pipeline_bindings: &reflection_bindings::PipelineBindingsInfo,
     ) -> Result<Vec<Arc<wgpu::BindGroup>>> {
+        // `PipelineBindingsInfo` normally keeps `group_layouts` and `group_bindings` consistent:
+        // empty binding tables should correspond to empty layouts. The expanded-draw passthrough VS
+        // path is a notable exception: we extend the pipeline layout to include the reserved
+        // internal/emulation group (`@group(3)`) with an internal storage-buffer binding, but the
+        // binding list stays empty because the executor fills it in separately.
         let mut bind_groups: Vec<Arc<wgpu::BindGroup>> =
             Vec::with_capacity(pipeline_bindings.group_layouts.len());
 
@@ -16062,7 +16093,6 @@ fn build_vertex_buffers_for_pipeline(
             wgpu_slot_to_d3d_slot: Vec::new(),
         });
     }
-
     // GS-emulation-output draws use a generated passthrough VS that performs vertex pulling from a
     // storage buffer (the post-GS output vertex buffer). This bypasses the conventional input
     // layout mapping and does not bind any vertex buffers via WebGPU vertex attributes.
@@ -16079,8 +16109,54 @@ fn build_vertex_buffers_for_pipeline(
             wgpu_slot_to_d3d_slot: Vec::new(),
         });
     }
+
     let Some(layout_handle) = state.input_layout else {
-        bail!("draw without input layout");
+        if vs_signature.is_empty() {
+            // No signature information and no input layout: treat as a zero-input draw (best-effort
+            // to keep the render-pass path running).
+            return Ok(BuiltVertexState {
+                vertex_buffers: Vec::new(),
+                vertex_buffer_keys: Vec::new(),
+                wgpu_slot_to_d3d_slot: Vec::new(),
+            });
+        }
+        // D3D11 draw calls can still reach the driver with an unset input layout (e.g. application
+        // bugs, or tests that only validate render pass semantics). Rejecting these draws early
+        // prevents the executor from exercising render-pass-internal state updates, so instead we
+        // synthesize a simple packed vertex buffer layout and bind a dummy vertex buffer.
+        //
+        // The translated WGSL represents vertex inputs as `vec4<f32>` locations, so use
+        // `Float32x4` for each declared input and pack them tightly into a single vertex buffer.
+        let mut sig_sorted: Vec<VsInputSignatureElement> = vs_signature.to_vec();
+        sig_sorted.sort_by_key(|e| e.shader_location);
+
+        let mut attributes: Vec<wgpu::VertexAttribute> = Vec::with_capacity(sig_sorted.len());
+        for (i, elem) in sig_sorted.iter().enumerate() {
+            let offset = (i as u64)
+                .checked_mul(16)
+                .ok_or_else(|| anyhow!("VS input attribute offset overflows u64"))?;
+            attributes.push(wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset,
+                shader_location: elem.shader_location,
+            });
+        }
+
+        let stride: u64 = (attributes.len() as u64)
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("VS input stride overflows u64"))?
+            .max(16);
+        let vb = VertexBufferLayoutOwned {
+            array_stride: stride,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes,
+        };
+        let key = (&vb.as_wgpu()).into();
+        return Ok(BuiltVertexState {
+            vertex_buffers: vec![vb],
+            vertex_buffer_keys: vec![key],
+            wgpu_slot_to_d3d_slot: vec![DUMMY_VERTEX_BUFFER_SLOT],
+        });
     };
     let layout = resources
         .input_layouts

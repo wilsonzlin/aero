@@ -815,7 +815,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
 
             let layout_debug = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("tess test layout debug"),
-                size: 4,
+                // `layout_pass::wgsl_tessellation_layout_pass` enables debug counters in tests, so
+                // the storage struct is at least 16 bytes.
+                size: 16,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
