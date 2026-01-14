@@ -14,15 +14,14 @@ use aero_gpu::pipeline_key::{
     ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
 };
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
-use aero_gpu::{
-    expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8,
-    pack_rgba8_to_b5g5r5a1_unorm, pack_rgba8_to_b5g6r5_unorm,
-};
 use aero_gpu::GpuCapabilities;
+use aero_gpu::{
+    expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
+    pack_rgba8_to_b5g6r5_unorm,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
-    decode_cmd_bind_shaders_payload_le, decode_cmd_create_input_layout_blob_le,
-    decode_cmd_create_shader_dxbc_payload_le,
+    decode_cmd_bind_shaders_payload_le, decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
+    decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
     AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuShaderStage,
     AEROGPU_CLEAR_COLOR,
@@ -608,7 +607,9 @@ enum CmdPrimitiveTopology {
     TriangleStripAdj,
 
     // D3D11 patchlists (HS/DS input).
-    PatchList { control_points: u8 },
+    PatchList {
+        control_points: u8,
+    },
 }
 
 impl CmdPrimitiveTopology {
@@ -2121,7 +2122,9 @@ impl AerogpuD3d11Executor {
                         let src_start = row as usize * padded_bpr_usize;
                         let src_end = src_start
                             .checked_add(staging_unpadded_bpr_usize)
-                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                            .ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: src row end overflows usize")
+                            })?;
                         let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
                         })?;
@@ -2136,9 +2139,8 @@ impl AerogpuD3d11Executor {
 
                         match plan.transform {
                             TextureWritebackTransform::Direct { force_opaque_alpha } => {
-                                let row_bytes = row_bytes
-                                    .get(..guest_unpadded_bpr_usize)
-                                    .ok_or_else(|| {
+                                let row_bytes =
+                                    row_bytes.get(..guest_unpadded_bpr_usize).ok_or_else(|| {
                                         anyhow!("COPY_TEXTURE2D: staging buffer too small for row")
                                     })?;
                                 if force_opaque_alpha {
@@ -2149,7 +2151,9 @@ impl AerogpuD3d11Executor {
                                         .write(dst_gpa, &converted_row)
                                         .map_err(anyhow_guest_mem)?;
                                 } else {
-                                    guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                                    guest_mem
+                                        .write(dst_gpa, row_bytes)
+                                        .map_err(anyhow_guest_mem)?;
                                 }
                             }
                             TextureWritebackTransform::B5G6R5 => {
@@ -2256,7 +2260,9 @@ impl AerogpuD3d11Executor {
                         let src_start = row as usize * padded_bpr_usize;
                         let src_end = src_start
                             .checked_add(staging_unpadded_bpr_usize)
-                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                            .ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: src row end overflows usize")
+                            })?;
                         let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
                         })?;
@@ -2271,9 +2277,8 @@ impl AerogpuD3d11Executor {
 
                         match plan.transform {
                             TextureWritebackTransform::Direct { force_opaque_alpha } => {
-                                let row_bytes = row_bytes
-                                    .get(..guest_unpadded_bpr_usize)
-                                    .ok_or_else(|| {
+                                let row_bytes =
+                                    row_bytes.get(..guest_unpadded_bpr_usize).ok_or_else(|| {
                                         anyhow!("COPY_TEXTURE2D: staging buffer too small for row")
                                     })?;
                                 if force_opaque_alpha {
@@ -2284,7 +2289,9 @@ impl AerogpuD3d11Executor {
                                         .write(dst_gpa, &converted_row)
                                         .map_err(anyhow_guest_mem)?;
                                 } else {
-                                    guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                                    guest_mem
+                                        .write(dst_gpa, row_bytes)
+                                        .map_err(anyhow_guest_mem)?;
                                 }
                             }
                             TextureWritebackTransform::B5G6R5 => {
@@ -2427,6 +2434,7 @@ impl AerogpuD3d11Executor {
         if !has_color_targets && self.state.depth_stencil.is_none() {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
+        let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
 
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
@@ -3042,8 +3050,63 @@ impl AerogpuD3d11Executor {
                     .map(|tex| (tex.desc.width, tex.desc.height))
             });
 
-        let (color_attachments, depth_stencil_attachment) =
-            build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?;
+        let ds_info: Option<(u32, u32, *const wgpu::TextureView, wgpu::TextureFormat)> =
+            if depth_only_pass {
+                let ds_id = self
+                    .state
+                    .depth_stencil
+                    .expect("depth_only_pass implies depth_stencil.is_some()");
+                let ds_tex = self
+                    .resources
+                    .textures
+                    .get(&ds_id)
+                    .ok_or_else(|| anyhow!("unknown depth stencil texture {ds_id}"))?;
+                Some((
+                    ds_tex.desc.width,
+                    ds_tex.desc.height,
+                    &ds_tex.view as *const wgpu::TextureView,
+                    ds_tex.desc.format,
+                ))
+            } else {
+                None
+            };
+
+        let dummy_color_view: Option<wgpu::TextureView> = ds_info
+            .as_ref()
+            .map(|(w, h, _, _)| self.depth_only_dummy_color_view(*w, *h));
+
+        let (color_attachments, depth_stencil_attachment) = if depth_only_pass {
+            let (_ds_w, _ds_h, ds_view_ptr, ds_format) =
+                ds_info.expect("depth_only_pass implies ds_info.is_some()");
+            let view = dummy_color_view.as_ref().expect("dummy view exists");
+            let color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Discard,
+                },
+            })];
+
+            // SAFETY: textures are not created/destroyed while recording the draw, so the view
+            // pointer remains valid for the lifetime of this render pass.
+            let ds_view = unsafe { &*ds_view_ptr };
+            let format = ds_format;
+            let depth_stencil_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+                view: ds_view,
+                depth_ops: texture_format_has_depth(format).then_some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: texture_format_has_stencil(format).then_some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+            });
+            (color_attachments, depth_stencil_attachment)
+        } else {
+            build_render_pass_attachments(&self.resources, &self.state, wgpu::LoadOp::Load)?
+        };
 
         self.encoder_has_commands = true;
         {
@@ -3395,9 +3458,8 @@ impl AerogpuD3d11Executor {
 
         // Create local texture views so we can continue mutating `self` while the render pass is
         // active.
-        let mut color_views: Vec<Option<wgpu::TextureView>> = Vec::with_capacity(
-            self.state.render_targets.len() + usize::from(depth_only_pass),
-        );
+        let mut color_views: Vec<Option<wgpu::TextureView>> =
+            Vec::with_capacity(self.state.render_targets.len() + usize::from(depth_only_pass));
         for &tex_id in &self.state.render_targets {
             let Some(tex_id) = tex_id else {
                 color_views.push(None);
@@ -4392,7 +4454,10 @@ impl AerogpuD3d11Executor {
                     let Some(next_key) = next.wgpu_topology_for_direct_draw() else {
                         break;
                     };
-                    let Some(cur_key) = self.state.primitive_topology.wgpu_topology_for_direct_draw()
+                    let Some(cur_key) = self
+                        .state
+                        .primitive_topology
+                        .wgpu_topology_for_direct_draw()
                     else {
                         break;
                     };
@@ -6196,10 +6261,9 @@ impl AerogpuD3d11Executor {
                         bytes_per_row,
                         data,
                     )?;
-                    let rgba_bpr = desc
-                        .width
-                        .checked_mul(4)
-                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow"))?;
+                    let rgba_bpr = desc.width.checked_mul(4).ok_or_else(|| {
+                        anyhow!("UPLOAD_RESOURCE: B5 expanded bytes_per_row overflow")
+                    })?;
                     write_texture_linear(
                         &self.queue,
                         &tex.texture,
@@ -6702,9 +6766,7 @@ impl AerogpuD3d11Executor {
         }
 
         if writeback && !aerogpu_format_supports_writeback_dst(dst_format_u32) {
-            bail!(
-                "COPY_TEXTURE2D: WRITEBACK_DST is not supported for dst format {dst_format_u32}"
-            );
+            bail!("COPY_TEXTURE2D: WRITEBACK_DST is not supported for dst format {dst_format_u32}");
         }
 
         let src_w = mip_extent(src_desc.width, src_mip_level);
@@ -10495,8 +10557,8 @@ fn get_or_create_render_pipeline_for_state<'a>(
         build_gs_passthrough_vertex_state(device, state, &ps_link_locations)?
     };
 
-    let depth_only_pass = state.render_targets.iter().all(|rt| rt.is_none())
-        && state.depth_stencil.is_some();
+    let depth_only_pass =
+        state.render_targets.iter().all(|rt| rt.is_none()) && state.depth_stencil.is_some();
 
     let mut color_targets = if depth_only_pass {
         Vec::with_capacity(1)
@@ -10814,33 +10876,59 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     let vb_layout = vertex_buffer.as_wgpu();
     let vb_key: aero_gpu::pipeline_key::VertexBufferLayoutKey = (&vb_layout).into();
 
-    let mut color_targets: Vec<Option<ColorTargetKey>> = Vec::with_capacity(state.render_targets.len());
-    let mut color_target_states = Vec::with_capacity(state.render_targets.len());
-    for &rt in &state.render_targets {
-        let Some(rt) = rt else {
-            color_targets.push(None);
-            color_target_states.push(None);
-            continue;
-        };
-        let tex = resources
-            .textures
-            .get(&rt)
-            .ok_or_else(|| anyhow!("unknown render target texture {rt}"))?;
-        let mut write_mask = state.color_write_mask;
-        if aerogpu_format_is_x8(tex.format_u32) {
-            write_mask &= !wgpu::ColorWrites::ALPHA;
-        }
+    let depth_only_pass =
+        state.render_targets.iter().all(|rt| rt.is_none()) && state.depth_stencil.is_some();
+
+    let mut color_targets = if depth_only_pass {
+        Vec::with_capacity(1)
+    } else {
+        Vec::with_capacity(state.render_targets.len())
+    };
+    let mut color_target_states = if depth_only_pass {
+        Vec::with_capacity(1)
+    } else {
+        Vec::with_capacity(state.render_targets.len())
+    };
+
+    if depth_only_pass {
         let ct = wgpu::ColorTargetState {
-            format: tex.desc.format,
-            blend: state.blend,
-            write_mask,
+            format: DEPTH_ONLY_DUMMY_COLOR_FORMAT,
+            blend: None,
+            write_mask: wgpu::ColorWrites::empty(),
         };
         color_targets.push(Some(ColorTargetKey {
             format: ct.format,
-            blend: ct.blend.map(Into::into),
+            blend: None,
             write_mask: ct.write_mask,
         }));
         color_target_states.push(Some(ct));
+    } else {
+        for &rt in &state.render_targets {
+            let Some(rt) = rt else {
+                color_targets.push(None);
+                color_target_states.push(None);
+                continue;
+            };
+            let tex = resources
+                .textures
+                .get(&rt)
+                .ok_or_else(|| anyhow!("unknown render target texture {rt}"))?;
+            let mut write_mask = state.color_write_mask;
+            if aerogpu_format_is_x8(tex.format_u32) {
+                write_mask &= !wgpu::ColorWrites::ALPHA;
+            }
+            let ct = wgpu::ColorTargetState {
+                format: tex.desc.format,
+                blend: state.blend,
+                write_mask,
+            };
+            color_targets.push(Some(ColorTargetKey {
+                format: ct.format,
+                blend: ct.blend.map(Into::into),
+                write_mask: ct.write_mask,
+            }));
+            color_target_states.push(Some(ct));
+        }
     }
 
     let depth_stencil_state = if let Some(ds_id) = state.depth_stencil {
@@ -10886,7 +10974,9 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     };
     let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
 
-    let topology = state.primitive_topology.validate_direct_draw()?;
+    // The compute prepass emits expanded triangle-list geometry regardless of the original D3D11
+    // primitive topology (patchlists + adjacency are not directly expressible in WebGPU).
+    let topology = wgpu::PrimitiveTopology::TriangleList;
     let key = RenderPipelineKey {
         vertex_shader,
         fragment_shader,
@@ -11406,7 +11496,9 @@ fn map_aerogpu_texture_format(format_u32: u32, bc_enabled: bool) -> Result<wgpu:
         }
         // wgpu/WebGPU does not expose 16-bit packed B5 formats; represent them as RGBA8 and
         // expand/pack on CPU upload/writeback paths.
-        AEROGPU_FORMAT_B5G6R5_UNORM | AEROGPU_FORMAT_B5G5R5A1_UNORM => wgpu::TextureFormat::Rgba8Unorm,
+        AEROGPU_FORMAT_B5G6R5_UNORM | AEROGPU_FORMAT_B5G5R5A1_UNORM => {
+            wgpu::TextureFormat::Rgba8Unorm
+        }
         AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB | AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB => {
             wgpu::TextureFormat::Bgra8UnormSrgb
         }
@@ -11756,7 +11848,9 @@ fn expand_b5_texture_to_rgba8(
             anyhow!("B5 expand: source too small for row {row} (start={src_start} end={src_end})")
         })?;
         let dst_row = out.get_mut(dst_start..dst_end).ok_or_else(|| {
-            anyhow!("B5 expand: dst buffer too small for row {row} (start={dst_start} end={dst_end})")
+            anyhow!(
+                "B5 expand: dst buffer too small for row {row} (start={dst_start} end={dst_end})"
+            )
         })?;
 
         match b5_format {
@@ -12158,9 +12252,9 @@ fn anyhow_guest_mem(err: GuestMemoryError) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_gpu::guest_memory::VecGuestMemory;
     use aero_gpu::pipeline_key::{ComputePipelineKey, PipelineLayoutKey};
     use aero_gpu::GpuError;
-    use aero_gpu::guest_memory::VecGuestMemory;
     use aero_protocol::aerogpu::aerogpu_cmd::{
         AerogpuCmdOpcode, AerogpuPrimitiveTopology, AerogpuShaderStage,
     };
@@ -12305,7 +12399,10 @@ mod tests {
                 }
             };
             let Some(adapter) = adapter else {
-                skip_or_panic(module_path!(), "wgpu unavailable (no suitable adapter found)");
+                skip_or_panic(
+                    module_path!(),
+                    "wgpu unavailable (no suitable adapter found)",
+                );
                 return;
             };
 
@@ -12746,11 +12843,13 @@ fn main() {
             // to return `GpuError::Unsupported(\"compute\")` without invoking the pipeline builder
             // (and therefore without calling into wgpu compute APIs).
             let AerogpuD3d11Executor {
-                device, queue, backend, ..
+                device,
+                queue,
+                backend,
+                ..
             } = exec;
-            let mut exec = AerogpuD3d11Executor::new_with_supports_compute(
-                device, queue, backend, false,
-            );
+            let mut exec =
+                AerogpuD3d11Executor::new_with_supports_compute(device, queue, backend, false);
 
             // Register a compute shader module so that if the compute-capability check ever stops
             // short-circuiting, the pipeline builder would be invoked (and the test would panic).
