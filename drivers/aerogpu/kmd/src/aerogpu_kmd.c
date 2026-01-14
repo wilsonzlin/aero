@@ -4678,6 +4678,17 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
             }
         }
 
+        /*
+         * Some device models treat RING_CONTROL.RESET as a momentary edge, while others may latch
+         * the bit until the driver clears it. Ensure we leave the v1 ring enabled after resume by
+         * explicitly writing ENABLE once the virtual reset bookkeeping is complete.
+         */
+        if (oldState != DxgkDevicePowerStateD0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1 &&
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG)) &&
+            adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, AEROGPU_RING_CONTROL_ENABLE);
+        }
+
         /* Reset vblank tracking so GetScanLine doesn't consume stale timestamps across resume. */
         InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankSeq, 0);
         InterlockedExchange64((volatile LONGLONG*)&adapter->LastVblankTimeNs, 0);
