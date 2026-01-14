@@ -31,10 +31,10 @@ pub const LEGACY_VGA_PADDR_BASE: u64 = 0xA_0000;
 pub const LEGACY_VGA_PADDR_END: u64 = 0xC_0000;
 
 /// PCI BAR index for the AeroGPU MMIO registers window (BAR0).
-pub const AEROGPU_PCI_BAR0_INDEX: u8 = 0;
+pub const AEROGPU_PCI_BAR0_INDEX: u8 = profile::AEROGPU_BAR0_INDEX;
 
 /// PCI BAR index for the AeroGPU VRAM aperture (BAR1).
-pub const AEROGPU_PCI_BAR1_INDEX: u8 = 1;
+pub const AEROGPU_PCI_BAR1_INDEX: u8 = profile::AEROGPU_BAR1_VRAM_INDEX;
 
 #[derive(Clone, Debug)]
 pub struct AeroGpuDeviceConfig {
