@@ -928,6 +928,24 @@ impl AeroGpuMmioDevice {
         self.clock = Some(clock);
     }
 
+    fn mark_backend_completed_fence(&mut self, fence: u64) {
+        if fence == 0 {
+            return;
+        }
+
+        // `HashSet::insert` may allocate; reserve fallibly to avoid aborting on OOM.
+        if self.backend_completed_fences.try_reserve(1).is_err() {
+            // If we cannot track fence completions, fail closed: surface an error and complete all
+            // pending fences so the guest cannot deadlock waiting for work the host can no longer
+            // track.
+            self.record_error(pci::AerogpuErrorCode::Backend, fence);
+            self.flush_pending_fences();
+            return;
+        }
+
+        self.backend_completed_fences.insert(fence);
+    }
+
     pub(crate) fn enable_submission_bridge(&mut self) {
         // The submission bridge routes execution out-of-process (e.g. browser GPU worker). Ensure
         // we are not simultaneously using an in-process command backend.
@@ -942,6 +960,15 @@ impl AeroGpuMmioDevice {
         // legacy "no-op backend" policy must not become permanently stuck behind the new
         // "external executor must confirm completion" behaviour. Mark already-queued fences as
         // completed so they can drain under the new rules.
+        if self
+            .backend_completed_fences
+            .try_reserve(self.pending_fence_completions.len())
+            .is_err()
+        {
+            self.record_error(pci::AerogpuErrorCode::Backend, 0);
+            self.flush_pending_fences();
+            return;
+        }
         for fence in &self.pending_fence_completions {
             if fence.fence_value != 0 {
                 self.backend_completed_fences.insert(fence.fence_value);
@@ -998,7 +1025,7 @@ impl AeroGpuMmioDevice {
                     .any(|pending| pending.fence_value == fence)
             {
                 self.record_error(pci::AerogpuErrorCode::Backend, fence);
-                self.backend_completed_fences.insert(fence);
+                self.mark_backend_completed_fence(fence);
             }
         }
     }
@@ -1087,7 +1114,7 @@ impl AeroGpuMmioDevice {
             return;
         }
 
-        self.backend_completed_fences.insert(fence);
+        self.mark_backend_completed_fence(fence);
 
         // Completing a fence may unblock one or more immediate fence entries that are waiting at the
         // front of the queue. Vblank-paced fences still require a vblank edge.
@@ -1712,7 +1739,7 @@ impl AeroGpuMmioDevice {
             // host does not need to re-send fence completions after toggling COMMAND.BME.
             if !self.pending_backend_fence_completions.is_empty() {
                 while let Some(fence) = self.pending_backend_fence_completions.pop_front() {
-                    self.backend_completed_fences.insert(fence);
+                    self.mark_backend_completed_fence(fence);
                 }
                 self.process_pending_fences_on_doorbell();
             }
@@ -1954,7 +1981,7 @@ impl AeroGpuMmioDevice {
             if completion.error.is_some() {
                 self.record_error(pci::AerogpuErrorCode::Backend, completion.fence);
             }
-            self.backend_completed_fences.insert(completion.fence);
+            self.mark_backend_completed_fence(completion.fence);
         }
 
         // Completing a fence may unblock one or more immediate fence entries that are waiting at the
@@ -2033,7 +2060,7 @@ impl AeroGpuMmioDevice {
                     // Fatal backend failure: surface the error but do not wedge fence progress.
                     let _ = err;
                     self.record_error(pci::AerogpuErrorCode::Backend, desc.signal_fence);
-                    self.backend_completed_fences.insert(desc.signal_fence);
+                    self.mark_backend_completed_fence(desc.signal_fence);
                 }
             }
         }
@@ -2106,7 +2133,7 @@ impl AeroGpuMmioDevice {
             if self.backend.is_none()
                 && (!self.submission_bridge_enabled || !valid_desc || !queued_for_external)
             {
-                self.backend_completed_fences.insert(desc.signal_fence);
+                self.mark_backend_completed_fence(desc.signal_fence);
             }
         } else {
             // Duplicate fence value: merge into the most recently queued fence entry. This
