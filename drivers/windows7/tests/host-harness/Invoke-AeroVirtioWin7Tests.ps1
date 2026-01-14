@@ -1808,6 +1808,48 @@ function Try-EmitAeroVirtioSndEventqMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioSndFormatMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-snd-format marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+  $toks = $line.Split("|")
+
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|$status"
+  foreach ($k in @("render", "capture")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -3314,6 +3356,7 @@ try {
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndEventqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioSndFormatMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
   switch ($result.Result) {
