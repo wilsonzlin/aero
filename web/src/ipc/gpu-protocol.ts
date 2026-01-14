@@ -285,6 +285,10 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
    * E820 layout remaps the "high" portion of RAM above 4 GiB, leaving an ECAM/PCI hole below
    * 4 GiB. The worker must translate guest physical addresses back into the contiguous guest RAM
    * backing store before indexing the `Uint8Array` view supplied via `WorkerInitMessage.guestMemory`.
+   *
+   * Translation helpers:
+   * - `web/src/arch/guest_ram_translate.ts` (raw `ramBytes`-based helpers)
+   * - `web/src/runtime/shared_layout.ts` (thin wrappers for `GuestRamLayout`)
    */
   allocTable?: ArrayBuffer;
 };

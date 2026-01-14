@@ -6,6 +6,10 @@
 // guest RAM is non-contiguous once it exceeds the PCIe ECAM base (`0xB000_0000`) due to the
 // ECAM/PCI/MMIO hole + high-RAM remap above 4 GiB; servers must translate GPAs back into their
 // flat guest-RAM backing store before indexing a `Uint8Array`.
+//
+// Translation helpers:
+// - `web/src/arch/guest_ram_translate.ts` (raw `ramBytes`-based helpers)
+// - `web/src/runtime/shared_layout.ts` (thin wrappers for `GuestRamLayout`)
 
 export type Command =
   | { kind: "nop"; seq: number }
