@@ -189,6 +189,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     if let Ok((cmd_sc, _data)) =
                         cmd::decode_cmd_set_shader_constants_f_payload_le(packet_bytes)
                     {
+                        let _ = cmd_sc.resolved_stage();
                         let _ = cmd::decode_stage_ex(cmd_sc.stage, cmd_sc.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(cmd_sc.stage, cmd_sc.reserved0);
                         let _ = cmd::resolve_stage(cmd_sc.stage, cmd_sc.reserved0);
@@ -219,6 +220,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             u32::from_le_bytes(pkt.payload[0..4].try_into().unwrap());
                         let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
                         let _ = cmd::decode_stage_ex(shader_stage, reserved0);
+                        let _ = cmd::resolve_stage(shader_stage, reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(shader_stage, reserved0);
                     }
                 }
@@ -226,6 +228,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     if let Ok((cmd_samplers, _handles)) = pkt.decode_set_samplers_payload_le() {
                         let _ =
                             cmd::decode_stage_ex(cmd_samplers.shader_stage, cmd_samplers.reserved0);
+                        let _ = cmd::resolve_stage(cmd_samplers.shader_stage, cmd_samplers.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(
                             cmd_samplers.shader_stage,
                             cmd_samplers.reserved0,
@@ -250,6 +253,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         if let Some(stage_ex) = stage_ex {
                             let _ = cmd::encode_stage_ex(stage_ex);
                         }
+                        let _ = cmd::resolve_stage(cmd_hdr.shader_stage, cmd_hdr.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(
                             cmd_hdr.shader_stage,
                             cmd_hdr.reserved0,
@@ -269,6 +273,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         pkt.decode_set_shader_resource_buffers_payload_le()
                     {
                         let _ = cmd::decode_stage_ex(cmd_srv.shader_stage, cmd_srv.reserved0);
+                        let _ = cmd::resolve_stage(cmd_srv.shader_stage, cmd_srv.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(
                             cmd_srv.shader_stage,
                             cmd_srv.reserved0,
@@ -284,6 +289,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         pkt.decode_set_unordered_access_buffers_payload_le()
                     {
                         let _ = cmd::decode_stage_ex(cmd_uav.shader_stage, cmd_uav.reserved0);
+                        let _ = cmd::resolve_stage(cmd_uav.shader_stage, cmd_uav.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(
                             cmd_uav.shader_stage,
                             cmd_uav.reserved0,
@@ -1057,16 +1063,14 @@ fuzz_target!(|data: &[u8]| {
         cmd::AerogpuCmdOpcode::CreateShaderDxbc as u32,
         CREATE_SHADER_DXBC_SYNTH_SIZE_BYTES,
     ) {
-        if let Some(dxbc_size_bytes) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
-            dxbc_size_bytes.copy_from_slice(&(SYNTH_DXBC_BYTES as u32).to_le_bytes());
-        }
-        // Exercise stage_ex decoding: set `stage=COMPUTE` (sentinel) and stash the extended stage
-        // value in `reserved0`.
         if let Some(stage) = cmd_synth.get_mut(pkt + 12..pkt + 16) {
             stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
         }
-        if let Some(stage_ex) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
-            stage_ex.copy_from_slice(&(cmd::AerogpuShaderStageEx::Geometry as u32).to_le_bytes());
+        if let Some(dxbc_size_bytes) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
+            dxbc_size_bytes.copy_from_slice(&(SYNTH_DXBC_BYTES as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(stage_ex_seed0 as u32).to_le_bytes());
         }
     }
 
@@ -1862,7 +1866,7 @@ fuzz_target!(|data: &[u8]| {
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Hull, /*slot=*/ 1, tex_handle);
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Domain, /*slot=*/ 2, tex_handle);
     w.set_samplers_ex(
-        cmd::AerogpuShaderStageEx::Geometry,
+        cmd::AerogpuShaderStageEx::Hull,
         /*start_slot=*/ 0,
         &[stage_ex_sampler_handle],
     );
