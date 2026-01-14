@@ -66,6 +66,19 @@ fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
     to_bytes(&words)
 }
 
+fn assemble_ps3_dcl_1d_s0() -> Vec<u8> {
+    // ps_3_0 with a `dcl_1d s0` (Texture1D) declaration.
+    let mut words = vec![0xFFFF_0300];
+    // Texture type is encoded in opcode_token[16..20] for SM2/3 `dcl`.
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        1u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    words.push(0x0000_FFFF);
+    to_bytes(&words)
+}
+
 fn assemble_ps3_dcl_volume_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl_volume s0` (3D texture) declaration.
     let mut words = vec![0xFFFF_0300];
@@ -240,6 +253,26 @@ fn d3d9_create_shader_dxbc_accepts_cube_sampler_declaration() {
     };
 
     let ps_bytes = assemble_ps3_dcl_cube_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => {}
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_create_shader_dxbc_accepts_1d_sampler_declaration() {
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
+    };
+
+    // Accepting `dcl_1d` does not imply full 1D texture binding support in the command protocol;
+    // the executor will bind a dummy 1D texture for declared 1D samplers.
+    let ps_bytes = assemble_ps3_dcl_1d_s0();
     let mut writer = AerogpuCmdWriter::new();
     writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
     let stream = writer.finish();
