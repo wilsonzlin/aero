@@ -1226,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.16"
+         version = "2.5.17"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1370,6 +1370,8 @@ try {
         $mRead = Read-TextFileWithEncodingDetectionEx $manifestPath
         $raw = $mRead.text
         $mediaIntegrity.manifest_encoding = $mRead.encoding
+        if ($mediaIntegrity.manifest_sha256) { $mDetails += ("manifest_sha256=" + $mediaIntegrity.manifest_sha256) }
+        if ($mediaIntegrity.manifest_encoding) { $mDetails += ("manifest_encoding=" + $mediaIntegrity.manifest_encoding) }
         if ($mediaIntegrity.manifest_encoding -and ($mediaIntegrity.manifest_encoding -ne "utf-8") -and ($mediaIntegrity.manifest_encoding -ne "utf-8-bom")) {
             $mStatus = Merge-Status $mStatus "WARN"
             $mDetails += ("WARN: manifest.json encoding detected as " + $mediaIntegrity.manifest_encoding + " (expected UTF-8).")
