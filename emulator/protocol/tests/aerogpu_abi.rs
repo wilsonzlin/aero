@@ -35,8 +35,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
-    parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR,
-    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE,
+    parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuErrorCode, AerogpuFormat,
+    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE,
     AEROGPU_FEATURE_TRANSFER, AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC,
     AEROGPU_MMIO_REG_DOORBELL, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
@@ -2606,16 +2606,16 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_completed_fence"),
         24
     );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 32);
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"),
-        32
+        40
     );
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"),
-        36
+        44
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 40);
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 44);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "total_submissions"),
         48
@@ -2830,6 +2830,11 @@ fn rust_layout_matches_c_headers() {
 
     let expected_pci_consts = {
         let mut names = parse_c_define_const_names(&pci_header_path);
+        names.extend(parse_c_enum_const_names(
+            &pci_header_path,
+            "enum aerogpu_error_code",
+            "AEROGPU_ERROR_",
+        ));
         names.extend(parse_c_enum_const_names(
             &pci_header_path,
             "enum aerogpu_format",
@@ -3332,6 +3337,32 @@ fn rust_layout_matches_c_headers() {
         &mut pci_consts_seen,
         "AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES",
         pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64,
+    );
+
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ERROR_NONE",
+        AerogpuErrorCode::None as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ERROR_CMD_DECODE",
+        AerogpuErrorCode::CmdDecode as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ERROR_OOB",
+        AerogpuErrorCode::Oob as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ERROR_BACKEND",
+        AerogpuErrorCode::Backend as u64,
+    );
+    check_const(
+        &mut pci_consts_seen,
+        "AEROGPU_ERROR_INTERNAL",
+        AerogpuErrorCode::Internal as u64,
     );
 
     check_const(

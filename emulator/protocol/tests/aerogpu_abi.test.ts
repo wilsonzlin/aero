@@ -1217,6 +1217,7 @@ test("TypeScript layout matches C headers", () => {
   // `drivers/aerogpu/protocol/` must be reflected in the TS mirrors in `emulator/protocol/aerogpu/`.
   const expectedPciConsts = [
     ...parseCDefineConstNames(pciHeader),
+    ...parseCEnumConstNames(pciHeader, "enum aerogpu_error_code", "AEROGPU_ERROR_"),
     ...parseCEnumConstNames(pciHeader, "enum aerogpu_format", "AEROGPU_FORMAT_"),
   ].sort();
   const expectedRingConsts = [
@@ -1260,6 +1261,14 @@ test("TypeScript layout matches C headers", () => {
       assert.ok(actual !== undefined, `missing TS AerogpuFormat binding for ${name} (${key})`);
       pciSeen.push(name);
       assert.equal(BigInt(actual), expected, `format value for ${name}`);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_ERROR_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_ERROR_/, ""));
+      const actual = (aerogpuPci.AerogpuErrorCode as unknown as Record<string, number>)[key];
+      assert.ok(actual !== undefined, `missing TS AerogpuErrorCode binding for ${name} (${key})`);
+      pciSeen.push(name);
+      assert.equal(BigInt(actual), expected, `error code value for ${name}`);
       continue;
     }
     throw new Error(`unhandled aerogpu_pci.h constant: ${name}`);
