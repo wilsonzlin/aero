@@ -32,7 +32,7 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
   - Optional (wanted):
     - `VIRTIO_F_RING_EVENT_IDX` (opportunistic: suppress kicks/interrupts when supported)
     - `VIRTIO_NET_F_CSUM`, `VIRTIO_NET_F_GUEST_CSUM` (checksum offloads / RX checksum reporting)
-    - `VIRTIO_NET_F_HOST_TSO4`, `VIRTIO_NET_F_HOST_TSO6` (TSO/LSO)
+    - `VIRTIO_NET_F_GSO`, `VIRTIO_NET_F_HOST_TSO4`, `VIRTIO_NET_F_HOST_TSO6` (TSO/LSO)
     - `VIRTIO_NET_F_HOST_ECN` (ECN/CWR semantics for TSO; uses `virtio_net_hdr.gso_type` ECN bit)
     - `VIRTIO_NET_F_MRG_RXBUF` (mergeable receive buffers; use 12-byte RX/TX header and allow RX frames to span multiple buffers)
     - `VIRTIO_NET_F_CTRL_VQ` + `VIRTIO_NET_F_CTRL_MAC_ADDR` / `VIRTIO_NET_F_CTRL_VLAN` (optional control virtqueue for runtime MAC/VLAN commands)
@@ -67,6 +67,7 @@ implementations (notably QEMU) may.
 When the host offers them and Windows enables NDIS offloads, this driver can negotiate and use:
 
 - `VIRTIO_NET_F_CSUM`
+- `VIRTIO_NET_F_GSO`
 - `VIRTIO_NET_F_GUEST_CSUM` (RX checksum status reporting via `virtio_net_hdr.flags`)
 - `VIRTIO_NET_F_HOST_TSO4`
 - `VIRTIO_NET_F_HOST_TSO6`

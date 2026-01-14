@@ -2489,9 +2489,16 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // - request the optional control virtqueue so we can issue runtime MAC/VLAN
   //   commands when supported (including RX mode toggles via CTRL_RX).
   // - MRG_RXBUF: allow a single received packet to span multiple buffers.
-  WantedFeatures = AEROVNET_FEATURE_RING_EVENT_IDX | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 |
-                   VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX |
-                   VIRTIO_NET_F_CTRL_RX_EXTRA | VIRTIO_NET_F_MRG_RXBUF;
+  //
+  // Note: virtio-net uses VIRTIO_NET_F_GSO as a generic gate for the GSO fields
+  // in `struct virtio_net_hdr` (gso_type/gso_size/hdr_len). Negotiate it
+  // opportunistically so TSO/LSO works on implementations that require the bit
+  // in addition to the per-protocol TSO feature bits (e.g.
+  // VIRTIO_NET_F_HOST_TSO4/6).
+  WantedFeatures = AEROVNET_FEATURE_RING_EVENT_IDX | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_GSO |
+                   VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_CTRL_VQ |
+                   VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX | VIRTIO_NET_F_CTRL_RX_EXTRA |
+                   VIRTIO_NET_F_MRG_RXBUF;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -2507,8 +2514,10 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   // Offload support depends on negotiated virtio-net features.
   Adapter->TxChecksumSupported = (Adapter->GuestFeatures & VIRTIO_NET_F_CSUM) ? TRUE : FALSE;
-  Adapter->TxTsoV4Supported = (Adapter->TxChecksumSupported && (Adapter->GuestFeatures & VIRTIO_NET_F_HOST_TSO4)) ? TRUE : FALSE;
-  Adapter->TxTsoV6Supported = (Adapter->TxChecksumSupported && (Adapter->GuestFeatures & VIRTIO_NET_F_HOST_TSO6)) ? TRUE : FALSE;
+  Adapter->TxTsoV4Supported =
+      (Adapter->TxChecksumSupported && (Adapter->GuestFeatures & VIRTIO_NET_F_GSO) && (Adapter->GuestFeatures & VIRTIO_NET_F_HOST_TSO4)) ? TRUE : FALSE;
+  Adapter->TxTsoV6Supported =
+      (Adapter->TxChecksumSupported && (Adapter->GuestFeatures & VIRTIO_NET_F_GSO) && (Adapter->GuestFeatures & VIRTIO_NET_F_HOST_TSO6)) ? TRUE : FALSE;
 
   // Enable all negotiated offloads by default; NDIS can toggle them via OID_TCP_OFFLOAD_PARAMETERS.
   Adapter->TxChecksumV4Enabled = Adapter->TxChecksumSupported;
