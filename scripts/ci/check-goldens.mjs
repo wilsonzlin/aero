@@ -27,8 +27,13 @@ function fail(message) {
 
 try {
   run("npm run check:node");
+} catch {
+  fail("error: failed to run Node version check (`npm run check:node`).");
+}
+
+try {
   run("npm run generate:goldens");
-} catch (err) {
+} catch {
   fail("error: failed to run golden generator (`npm run generate:goldens`).");
 }
 

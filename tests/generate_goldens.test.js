@@ -12,7 +12,7 @@ function formatSpawnFailure(cmd, args, res) {
   return `command failed: ${joined} (status=${res.status})${extra}\n\nstdout:\n${res.stdout}\n\nstderr:\n${res.stderr}`;
 }
 
-test("npm run generate:goldens exits 0 and does not modify tracked goldens", () => {
+test("npm run check:goldens exits 0 and does not modify tracked goldens", () => {
   const res = spawnSync("npm", ["run", "check:goldens"], {
     cwd: repoRoot,
     encoding: "utf8",
