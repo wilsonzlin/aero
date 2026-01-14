@@ -133,3 +133,50 @@ fn triangle_integer_barycentrics_are_normalized_for_common_levels() {
         }
     }
 }
+
+#[test]
+fn triangle_integer_common_levels_match_spec_invariants() {
+    // This test mirrors the task-spec invariants directly on a small set of representative
+    // tessellation factors so failures are easy to diagnose.
+    const EPS: f32 = 1e-5;
+
+    for n in [1u32, 2, 3, 4, 16] {
+        let expected_vc = ((n as u64 + 1) * (n as u64 + 2) / 2) as u32;
+        let expected_ic = ((n as u64) * (n as u64) * 3) as u32;
+
+        let vc = tri_integer_vertex_count(n);
+        assert_eq!(vc, expected_vc, "vertex_count formula mismatch for n={n}");
+
+        let indices = tri_integer_indices_cw(n);
+        assert_eq!(
+            indices.len(),
+            expected_ic as usize,
+            "index_count formula mismatch for n={n}"
+        );
+
+        // Index range.
+        for (idx_i, &idx) in indices.iter().enumerate() {
+            assert!(
+                idx < vc,
+                "index out of range for n={n}: indices[{idx_i}]={idx} vertex_count={vc}"
+            );
+        }
+
+        // Barycentric normalization.
+        for v in 0..vc {
+            let ijk = tri_integer_vertex_ijk(n, v);
+            assert_eq!(
+                ijk.i + ijk.j + ijk.k,
+                n,
+                "i+j+k must equal n for n={n}, v={v}: {ijk:?}"
+            );
+
+            let inv = 1.0 / n as f32;
+            let sum = ijk.i as f32 * inv + ijk.j as f32 * inv + ijk.k as f32 * inv;
+            assert!(
+                (sum - 1.0).abs() <= EPS,
+                "float barycentrics must sum to 1 (n={n}, v={v}, ijk={ijk:?}, sum={sum})"
+            );
+        }
+    }
+}
