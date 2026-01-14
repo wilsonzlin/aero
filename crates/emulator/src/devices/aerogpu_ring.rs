@@ -11,6 +11,34 @@ mod tests {
     use super::*;
     use crate::devices::aerogpu_regs::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR};
 
+    #[test]
+    fn ring_types_are_reexported_from_aero_devices_gpu() {
+        let hdr = aero_devices_gpu::ring::AeroGpuRingHeader {
+            magic: AEROGPU_RING_MAGIC,
+            abi_version: (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR,
+            size_bytes: AEROGPU_RING_HEADER_SIZE_BYTES as u32,
+            entry_count: 0,
+            entry_stride_bytes: 0,
+            flags: 0,
+            head: 0,
+            tail: 0,
+        };
+        let _: AeroGpuRingHeader = hdr;
+
+        let desc = aero_devices_gpu::ring::AeroGpuSubmitDesc {
+            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa: 0,
+            cmd_size_bytes: 0,
+            alloc_table_gpa: 0,
+            alloc_table_size_bytes: 0,
+            signal_fence: 0,
+        };
+        let _: AeroGpuSubmitDesc = desc;
+    }
+
     fn make_valid_header_with_abi(abi_version: u32) -> AeroGpuRingHeader {
         let entry_count = 8;
         let entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES;
