@@ -79,12 +79,13 @@ Keyboard: PCI device 1af4:1052
   - `inf/aero_virtio_input.inf` (keyboard/mouse + strict fallback):
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-    - `PCI\VEN_1AF4&DEV_1052&REV_01` (revision-gated generic fallback)
+    - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict revision-gated generic fallback)
   - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`
   - Legacy filename alias `inf/virtio-input.inf.disabled` (disabled by default; rename to `virtio-input.inf` to enable):
     - Compatibility filename for workflows/tools that still reference `virtio-input.inf`.
-    - Expected to be byte-for-byte identical to `inf/aero_virtio_input.inf` from `[Version]` onward (see `../scripts/check-inf-alias.py`).
+    - Expected to be byte-for-byte identical to `inf/aero_virtio_input.inf` from `[Version]` onward
+      (only banner/comments may differ; see `../scripts/check-inf-alias.py`).
   This avoids binding to non-contract virtio-input devices (no `REV_01`, wrong DEV, etc).
   The tablet INF is more specific (`SUBSYS_0012...`), so it wins over the generic fallback
   when both driver packages are present.
@@ -120,8 +121,8 @@ The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) includes a strict
 fallback entry, Device Manager will show **Aero VirtIO Input Device**.
 
 The legacy alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable) exists primarily as a
-legacy filename alias. It is expected to be byte-for-byte identical to `aero_virtio_input.inf` from `[Version]`
-onward (see `../scripts/check-inf-alias.py`).
+legacy filename alias. It is expected to be byte-for-byte identical to `aero_virtio_input.inf` from `[Version]` onward
+(only banner/comments may differ; see `../scripts/check-inf-alias.py`).
 
 Topology notes:
 
