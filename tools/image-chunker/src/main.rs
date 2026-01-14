@@ -4258,6 +4258,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publish_rejects_zero_concurrency() {
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        args.concurrency = 0;
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("--concurrency must be > 0"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_rejects_zero_retries() {
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        args.retries = 0;
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("--retries must be > 0"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn publish_rejects_too_many_chunks() -> Result<()> {
         // Chunk count compatibility limit is enforced before any network calls. Create a sparse raw
         // image large enough that chunkCount would exceed MAX_COMPAT_CHUNK_COUNT when chunkSize is
