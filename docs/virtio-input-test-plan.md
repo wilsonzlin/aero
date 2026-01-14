@@ -297,6 +297,11 @@ In Device Manager after install/reboot:
 
 - Tool source/build instructions: [`drivers/windows7/virtio-input/tools/hidtest/README.md`](../drivers/windows7/virtio-input/tools/hidtest/README.md)
 
+Tip: `hidtest.exe --counters` can help diagnose “input buffered while no pending READ_REPORT IRPs” behavior:
+
+- `PendingRingDepth`/`PendingRingDrops`: READ_REPORT backlog in `DEVICE_CONTEXT.PendingReportRing[]` (primary buffering layer).
+- Compare with `ReportRingDepth`/`ReportRingDrops`: translation-layer ring (`virtio_input_device.report_ring`).
+
 After the driver is installed and confirmed working, you can optionally disable PS/2 in QEMU (`-machine ...,i8042=off`) to ensure you are not accidentally testing the emulated PS/2 devices. Only do this once you have a known-good virtio-input driver; otherwise you may lose input in the guest.
 
 ### 3.4 Expected pass/fail signals (Windows 7)
