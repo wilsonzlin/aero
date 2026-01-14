@@ -1961,6 +1961,13 @@ impl AeroGpuMmioDevice {
             }
         }
 
+        // If vblank pacing is disabled (either by configuration or by disabling scanout), do not
+        // allow any vsync-paced fences to remain blocked forever once their backend work has
+        // completed. This mirrors the emulator device model's `flush_pending_fences` behavior.
+        if self.vblank_interval_ns.is_none() || !self.scanout0_enable {
+            self.flush_pending_fences();
+        }
+
         // If vblank-paced work completed without a doorbell (or scanout was disabled while a vsync fence
         // was pending), ensure the fence page is still updated.
         self.write_fence_page_if_dirty(mem, dma_enabled);
@@ -2236,7 +2243,20 @@ impl AeroGpuMmioDevice {
     }
 
     fn flush_pending_fences(&mut self) {
-        while let Some(fence) = self.pending_fence_completions.pop_front() {
+        // If vblank pacing is disabled (either by configuration or by disabling scanout), do not
+        // allow vsync-paced fences to remain blocked forever. Complete as many fences as possible
+        // in-order, but still respect backend/external completion for in-flight work.
+        loop {
+            let Some(front) = self.pending_fence_completions.front() else {
+                break;
+            };
+            if !self.backend_completed_fences.contains(&front.fence_value) {
+                break;
+            }
+            let fence = self
+                .pending_fence_completions
+                .pop_front()
+                .expect("front was Some");
             self.backend_completed_fences.remove(&fence.fence_value);
             self.complete_fence(fence.fence_value, fence.wants_irq);
         }
@@ -2429,11 +2449,9 @@ impl AeroGpuMmioDevice {
                 // release WDDM ownership back to legacy VGA/VBE until reset.
                 if self.scanout0_enable && !new_enable {
                     // Disabling scanout stops vblank scheduling, drops any pending vblank IRQ, and
-                    // flushes any vsync-paced fences.
+                    // halts vblank-paced fence completion.
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-                    // Do not leave any vsync-paced fences blocked forever once scanout is disabled.
-                    self.flush_pending_fences();
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;

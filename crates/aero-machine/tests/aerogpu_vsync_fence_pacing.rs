@@ -591,6 +591,111 @@ fn pending_vsync_fence_is_flushed_when_scanout_is_disabled() {
 }
 
 #[test]
+fn disabling_scanout_does_not_flush_vsync_fences_while_pci_bme_is_disabled() {
+    let mut m = new_test_machine();
+    let (bdf, bar0) = setup_pci_and_get_bar0(&mut m);
+
+    let ring_gpa = 0x10000u64;
+    let fence_gpa = 0x20000u64;
+    let cmd_gpa = 0x30000u64;
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+    let cmd_stream = writer.finish();
+    m.write_physical(cmd_gpa, &cmd_stream);
+
+    let ring_size_bytes =
+        write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 1);
+    let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
+    let signal_fence = 1u64;
+    write_submit_desc(
+        &mut m,
+        desc_gpa,
+        cmd_gpa,
+        cmd_stream.len() as u32,
+        signal_fence,
+        0,
+    );
+
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
+        (ring_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES),
+        ring_size_bytes,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
+        pci::AEROGPU_RING_CONTROL_ENABLE,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO),
+        fence_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_HI),
+        (fence_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+
+    // Consume the vsynced submission; the fence should remain pending until a vblank edge (or until
+    // vblank pacing is disabled).
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+
+    assert_eq!(
+        read_mmio_u64(
+            &mut m,
+            bar0,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+        ),
+        0
+    );
+
+    // Disable bus mastering, then disable scanout. The device must not complete fences (or DMA the
+    // fence page) while COMMAND.BME=0.
+    let mut command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    command &= !(1 << 2); // COMMAND.BME
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
+
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
+    m.process_aerogpu();
+
+    assert_eq!(
+        read_mmio_u64(
+            &mut m,
+            bar0,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+        ),
+        0
+    );
+    assert_eq!(m.read_physical_u64(fence_gpa + 8), 0);
+
+    // Re-enable bus mastering and process; the device should now flush the vsync fence completion.
+    command |= 1 << 2;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
+    m.process_aerogpu();
+
+    assert_eq!(
+        read_mmio_u64(
+            &mut m,
+            bar0,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+        ),
+        signal_fence
+    );
+    assert_eq!(m.read_physical_u64(fence_gpa + 8), signal_fence);
+}
+
+#[test]
 fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank() {
     let mut m = new_test_machine();
     let (_bdf, bar0) = setup_pci_and_get_bar0(&mut m);
