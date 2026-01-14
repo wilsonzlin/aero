@@ -976,7 +976,9 @@ impl UhciRuntime {
             if let Some(hub_state) = self.with_external_hub(|hub| hub.save_state()) {
                 // This should never fail because `hub_state` was produced by our own snapshot
                 // implementation, but keep it best-effort so snapshotting cannot panic.
-                if let Ok(ports) = Self::external_hub_ports_with_snapshot_devices(&hub_state) {
+                if let Ok(ports) =
+                    Self::external_hub_ports_with_snapshot_devices(&hub_state, state.port_count)
+                {
                     external_hub_ports_with_devices = Some(ports);
                 }
                 w.field_bytes(TAG_EXTERNAL_HUB_STATE, hub_state);
@@ -1487,13 +1489,22 @@ impl UhciRuntime {
         // they are attached and reattach them after snapshot reset so the hub snapshot can load their
         // dynamic state.
         if let Some(hub_state) = hub_state_bytes {
+            let Some(expected_port_count) = hub_port_count else {
+                self.reset_for_snapshot_restore();
+                return Err(js_error(
+                    "UHCI runtime snapshot includes external hub state but no hub port count is present",
+                ));
+            };
             // Only reattach passthrough devices that the external hub snapshot expects to exist.
             //
             // `UsbHubDevice::load_state` restores the `connected` flag from the snapshot regardless
             // of whether a device is actually attached in memory. If we blindly attach all JS-owned
             // passthrough devices here, we can end up with "hidden" devices (device present but
             // connected=false) that later reappear after an upstream hub bus reset.
-            let expected_ports = match Self::external_hub_ports_with_snapshot_devices(hub_state) {
+            let expected_ports = match Self::external_hub_ports_with_snapshot_devices(
+                hub_state,
+                expected_port_count,
+            ) {
                 Ok(ports) => ports,
                 Err(err) => {
                     self.reset_for_snapshot_restore();
@@ -1579,7 +1590,10 @@ impl UhciRuntime {
 }
 
 impl UhciRuntime {
-    fn external_hub_ports_with_snapshot_devices(hub_state: &[u8]) -> Result<Vec<u8>, JsValue> {
+    fn external_hub_ports_with_snapshot_devices(
+        hub_state: &[u8],
+        expected_port_count: u8,
+    ) -> Result<Vec<u8>, JsValue> {
         const TAG_PORTS: u16 = 6;
 
         let r = SnapshotReader::parse(hub_state, UsbHubDevice::DEVICE_ID).map_err(|e| {
@@ -1599,19 +1613,32 @@ impl UhciRuntime {
         };
 
         let mut d = Decoder::new(buf);
-        let port_records = d.vec_bytes().map_err(|e| {
+        let count = d.u32().map_err(|e| {
             js_error(&format!(
                 "Invalid UHCI runtime snapshot external hub state: {e}"
             ))
         })?;
-        d.finish().map_err(|e| {
-            js_error(&format!(
-                "Invalid UHCI runtime snapshot external hub state: {e}"
-            ))
-        })?;
+        let count = count as usize;
+        let expected = expected_port_count as usize;
+        if count != expected {
+            return Err(js_error(&format!(
+                "UHCI runtime snapshot external hub port count mismatch (ports list has {count} entries, expected {expected})"
+            )));
+        }
 
         let mut ports = Vec::new();
-        for (idx, rec) in port_records.iter().enumerate() {
+        for idx in 0..count {
+            let rec_len = d.u32().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })? as usize;
+            let rec = d.bytes(rec_len).map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {e}"
+                ))
+            })?;
+
             let mut pd = Decoder::new(rec);
             // Keep this in sync with `UsbHubDevice::save_state` (`crates/aero-usb/src/hub.rs`).
             let _connected = pd.bool().map_err(|e| {
@@ -1694,6 +1721,11 @@ impl UhciRuntime {
                 ports.push(port);
             }
         }
+        d.finish().map_err(|e| {
+            js_error(&format!(
+                "Invalid UHCI runtime snapshot external hub state: {e}"
+            ))
+        })?;
 
         Ok(ports)
     }

@@ -306,6 +306,44 @@ fn uhci_runtime_snapshot_rejects_too_many_passthrough_hid_records() {
 }
 
 #[wasm_bindgen_test]
+fn uhci_runtime_snapshot_rejects_external_hub_port_count_mismatch() {
+    // `UHRT` snapshots embed an `UHUB` snapshot for the external hub. A corrupted snapshot could
+    // encode a ports vector with an absurd `count` and force long decode loops in the runtime's
+    // pre-attachment scan (`external_hub_ports_with_snapshot_devices`).
+    //
+    // The runtime should require the ports vector length to match the declared hub port count so it
+    // can reject such snapshots early and keep parsing work bounded.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x1000);
+    let mut runtime = UhciRuntime::new(guest_base, guest_size).expect("UhciRuntime::new ok");
+
+    const TAG_CONTROLLER: u16 = 1;
+    const TAG_EXTERNAL_HUB_PORT_COUNT: u16 = 3;
+    const TAG_EXTERNAL_HUB_STATE: u16 = 4;
+
+    // External hub snapshot: encode a port list with count=2, but the UHRT wrapper claims the hub
+    // has only 1 port.
+    const HUB_TAG_PORTS: u16 = 6;
+    let mut hub_w = SnapshotWriter::new(*b"UHUB", SnapshotVersion::new(1, 0));
+    hub_w.field_bytes(HUB_TAG_PORTS, Encoder::new().u32(2).finish());
+    let hub_state = hub_w.finish();
+
+    let mut w = SnapshotWriter::new(*b"UHRT", SnapshotVersion::new(1, 0));
+    w.field_bytes(TAG_CONTROLLER, Vec::new());
+    w.field_u8(TAG_EXTERNAL_HUB_PORT_COUNT, 1);
+    w.field_bytes(TAG_EXTERNAL_HUB_STATE, hub_state);
+
+    let snapshot = w.finish();
+    let err = runtime
+        .load_state(&snapshot)
+        .expect_err("expected snapshot restore to reject hub port count mismatch");
+    let msg = js_error_message(&err);
+    assert!(
+        msg.contains("external hub port count mismatch"),
+        "unexpected error message: {msg}"
+    );
+}
+
+#[wasm_bindgen_test]
 fn webusb_uhci_bridge_does_not_reuse_action_ids_across_disconnect_reconnect() {
     let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x8000);
     let fl_base = install_control_in_schedule(guest_base);
