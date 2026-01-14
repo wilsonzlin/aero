@@ -537,12 +537,6 @@ mod tests {
 
     #[test]
     fn opcode_name_includes_integer_ops() {
-        assert_eq!(opcode_name(OPCODE_IABS), Some("iabs"));
-        assert_eq!(opcode_name(OPCODE_INEG), Some("ineg"));
-        assert_eq!(opcode_name(OPCODE_IMIN), Some("imin"));
-        assert_eq!(opcode_name(OPCODE_IMAX), Some("imax"));
-        assert_eq!(opcode_name(OPCODE_UMIN), Some("umin"));
-        assert_eq!(opcode_name(OPCODE_UMAX), Some("umax"));
         assert_eq!(opcode_name(OPCODE_IADD), Some("iadd"));
         assert_eq!(opcode_name(OPCODE_ISUB), Some("isub"));
         assert_eq!(opcode_name(OPCODE_IMUL), Some("imul"));
@@ -553,6 +547,12 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_ISHL), Some("ishl"));
         assert_eq!(opcode_name(OPCODE_ISHR), Some("ishr"));
         assert_eq!(opcode_name(OPCODE_USHR), Some("ushr"));
+        assert_eq!(opcode_name(OPCODE_IABS), Some("iabs"));
+        assert_eq!(opcode_name(OPCODE_INEG), Some("ineg"));
+        assert_eq!(opcode_name(OPCODE_IMIN), Some("imin"));
+        assert_eq!(opcode_name(OPCODE_IMAX), Some("imax"));
+        assert_eq!(opcode_name(OPCODE_UMIN), Some("umin"));
+        assert_eq!(opcode_name(OPCODE_UMAX), Some("umax"));
         assert_eq!(opcode_name(OPCODE_IEQ), Some("ieq"));
         assert_eq!(opcode_name(OPCODE_IGE), Some("ige"));
         assert_eq!(opcode_name(OPCODE_ILT), Some("ilt"));
