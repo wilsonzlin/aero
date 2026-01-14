@@ -2,8 +2,8 @@ use aero_d3d11::binding_model::BINDING_BASE_TEXTURE;
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
-    translate_sm4_module_to_wgsl, BindingKind, DxbcFile, FourCC, ShaderSignatures, Sm4Inst,
-    Sm4Program, WriteMask,
+    translate_sm4_module_to_wgsl, BindingKind, DxbcFile, FourCC, ShaderSignatures, Sm4Decl,
+    Sm4Inst, Sm4Program, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -122,6 +122,13 @@ fn decodes_and_translates_resinfo_for_texture2d() {
     assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
 
     let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::ResourceTexture2D { slot: 0 })),
+        "expected decoder to emit ResourceTexture2D decl for t0"
+    );
     assert!(matches!(module.instructions[0], Sm4Inst::ResInfo { .. }));
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())

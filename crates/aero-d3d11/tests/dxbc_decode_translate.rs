@@ -301,7 +301,6 @@ fn translates_packed_signature_params_by_merging_masks() {
 fn decodes_and_translates_sample_shader_from_dxbc() {
     const DCL_INPUT: u32 = 0x100;
     const DCL_OUTPUT: u32 = 0x101;
-    const DCL_RESOURCE: u32 = 0x102;
     const DCL_SAMPLER: u32 = 0x103;
 
     let mut body = Vec::<u32>::new();
@@ -312,10 +311,10 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
     // dcl_output o0.xyzw
     body.push(opcode_token(DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
-    // dcl_resource_texture2d t0 (dimension token ignored by our decl decoder)
+    // dcl_resource_texture2d t0 (dimension token identifies Texture2D)
     let tex_decl = reg_src(OPERAND_TYPE_RESOURCE, &[0], Swizzle::XYZW);
     body.push(opcode_token(
-        DCL_RESOURCE,
+        OPCODE_DCL_RESOURCE,
         1 + tex_decl.len() as u32 + 1, /* + dimension token */
     ));
     body.extend_from_slice(&tex_decl);
@@ -422,7 +421,6 @@ fn decodes_and_translates_sample_shader_from_dxbc() {
 fn decodes_and_translates_ld_shader_from_dxbc() {
     const DCL_INPUT: u32 = 0x100;
     const DCL_OUTPUT: u32 = 0x101;
-    const DCL_RESOURCE: u32 = 0x102;
 
     let mut body = Vec::<u32>::new();
 
@@ -432,10 +430,10 @@ fn decodes_and_translates_ld_shader_from_dxbc() {
     // dcl_output o0.xyzw
     body.push(opcode_token(DCL_OUTPUT, 3));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
-    // dcl_resource_texture2d t0 (dimension token ignored by our decl decoder)
+    // dcl_resource_texture2d t0 (dimension token identifies Texture2D)
     let tex_decl = reg_src(OPERAND_TYPE_RESOURCE, &[0], Swizzle::XYZW);
     body.push(opcode_token(
-        DCL_RESOURCE,
+        OPCODE_DCL_RESOURCE,
         1 + tex_decl.len() as u32 + 1, /* + dimension token */
     ));
     body.extend_from_slice(&tex_decl);
