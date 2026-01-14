@@ -1,6 +1,7 @@
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::device::{AttachedUsbDevice, UsbOutResult};
 use aero_usb::hid::passthrough::UsbHidPassthroughHandle;
-use aero_usb::{SetupPacket, UsbInResult};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 
 const USB_REQUEST_SET_CONFIGURATION: u8 = 0x09;
 const HID_REQUEST_GET_REPORT: u8 = 0x01;
@@ -299,4 +300,75 @@ fn feature_report_completion_error_stalls() {
     assert!(handle.fail_feature_report_request(req.request_id, req.report_id));
 
     assert_eq!(dev.handle_in(0, 64), UsbInResult::Timeout);
+}
+
+#[test]
+fn snapshot_restore_requeues_inflight_feature_report_request() {
+    let report = sample_feature_report_descriptor_with_id();
+    let mut dev = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report.clone(),
+        false,
+        None,
+        None,
+        None,
+    );
+
+    let setup = SetupPacket {
+        bm_request_type: 0xa1,
+        b_request: HID_REQUEST_GET_REPORT,
+        w_value: (3u16 << 8) | 7u16,
+        w_index: 0,
+        w_length: 4,
+    };
+
+    assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+    let req = dev
+        .pop_feature_report_request()
+        .expect("expected queued feature report request");
+
+    // Snapshot after the host has drained the request queue but before it has completed the host
+    // read.
+    let snapshot = dev.save_state();
+
+    let mut restored = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report,
+        false,
+        None,
+        None,
+        None,
+    );
+    restored
+        .load_state(&snapshot)
+        .expect("snapshot restore should succeed");
+
+    // After restore, the in-flight request should be re-queued so the host runtime can discover it
+    // again.
+    assert_eq!(
+        restored.handle_control_request(setup, None),
+        ControlResponse::Nak
+    );
+    let req2 = restored
+        .pop_feature_report_request()
+        .expect("expected re-queued request after snapshot restore");
+    assert_eq!(req2, req);
+
+    assert!(restored.complete_feature_report_request(
+        req2.request_id,
+        req2.report_id,
+        &[0xAA, 0xBB, 0xCC]
+    ));
+    assert_eq!(
+        restored.handle_control_request(setup, None),
+        ControlResponse::Data(vec![7, 0xAA, 0xBB, 0xCC])
+    );
 }

@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec;
@@ -2052,6 +2052,43 @@ impl IoSnapshot for UsbHidPassthrough {
                 self.feature_report_requests_failed.insert(report_id, request_id);
             }
             d.finish()?;
+        }
+
+        // `pop_feature_report_request` drains the host request queue destructively. If a snapshot is
+        // taken after the host has popped a feature report request (but before completing it), the
+        // queue may be empty while `feature_report_requests_pending` still contains the in-flight
+        // request. If we restore that state as-is, the guest will keep NAKing forever because the
+        // host runtime no longer has a way to rediscover the request.
+        //
+        // Make snapshot restore deterministic by re-queuing any in-flight requests so the host can
+        // service them again after restore.
+        for req in &self.feature_report_request_queue {
+            self.feature_report_requests_pending
+                .entry(req.report_id)
+                .or_insert(req.request_id);
+        }
+        self.feature_report_requests_failed
+            .retain(|report_id, request_id| {
+                self.feature_report_requests_pending.get(report_id) == Some(request_id)
+            });
+
+        self.feature_report_request_queue.retain(|req| {
+            self.feature_report_requests_pending.get(&req.report_id) == Some(&req.request_id)
+        });
+
+        let mut queued = BTreeSet::<u32>::new();
+        for req in &self.feature_report_request_queue {
+            queued.insert(req.request_id);
+        }
+        for (&report_id, &request_id) in &self.feature_report_requests_pending {
+            if queued.contains(&request_id) {
+                continue;
+            }
+            self.feature_report_request_queue
+                .push_back(UsbHidPassthroughFeatureReportRequest {
+                    request_id,
+                    report_id,
+                });
         }
 
         Ok(())
