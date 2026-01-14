@@ -1771,9 +1771,14 @@ fn decode_report_map(
     if count > MAX_REPORTS {
         return Err(SnapshotError::InvalidFieldEncoding(what));
     }
+    let mut seen = [false; MAX_REPORTS];
     let mut total = 0usize;
     for _ in 0..count {
-        d.u8()?; // report_id
+        let report_id = d.u8()?;
+        if seen[report_id as usize] {
+            return Err(SnapshotError::InvalidFieldEncoding(what));
+        }
+        seen[report_id as usize] = true;
         let len = d.u32()? as usize;
         if len > MAX_REPORT_BYTES {
             return Err(SnapshotError::InvalidFieldEncoding(what));
@@ -3846,6 +3851,48 @@ mod tests {
             // Exceed the total budget; omit payload bytes so the loader must fail before reading.
             enc.u8(9).u32(1).finish()
         };
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_bytes(TAG_LAST_INPUT_REPORTS, reports);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("last input reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_duplicate_last_input_report_ids() {
+        const TAG_LAST_INPUT_REPORTS: u16 = 11;
+
+        let reports = Encoder::new()
+            .u32(2)
+            .u8(1)
+            .u32(1)
+            .u8(0xaa)
+            .u8(1) // duplicate report id
+            .u32(1)
+            .u8(0xbb)
+            .finish();
 
         let snapshot = {
             let mut w = SnapshotWriter::new(
