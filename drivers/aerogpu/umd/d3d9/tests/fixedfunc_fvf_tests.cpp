@@ -66,6 +66,11 @@ constexpr uint32_t kD3dTaTFactor = 3u;
 // D3DRS_* render state IDs (from d3d9types.h).
 constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
 
+// D3DTRANSFORMSTATETYPE numeric values (from d3d9types.h).
+constexpr uint32_t kD3dTransformView = 2u;
+constexpr uint32_t kD3dTransformProjection = 3u;
+constexpr uint32_t kD3dTransformWorld0 = 256u;
+
 bool Check(bool cond, const char* msg) {
   if (!cond) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
@@ -706,19 +711,31 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
       decl_ok = (blob.size() == sizeof(expected_decl)) &&
                 (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
     }
-
-    // Set a simple world translation; view/projection defaults are identity.
-    constexpr uint32_t kD3dTransformWorld0 = 256u;
-    float* m = dev->transform_matrices[kD3dTransformWorld0];
-    std::memset(m, 0, 16 * sizeof(float));
-    m[0] = 1.0f;
-    m[5] = 1.0f;
-    m[10] = 1.0f;
-    m[15] = 1.0f;
-    m[12] = tx;
-    m[13] = ty;
-    m[14] = tz;
-    dev->fixedfunc_matrix_dirty = true;
+  }
+  // Set a simple world translation; view/projection are identity.
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[3][0] = tx;
+  world.m[3][1] = ty;
+  world.m[3][2] = tz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
   }
   if (!Check(expected_input_layout != 0, "SetFVF XYZ|DIFFUSE created internal input layout")) {
     return false;
@@ -1166,19 +1183,31 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
       decl_ok = (blob.size() == sizeof(expected_decl)) &&
                 (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
     }
-
-    // Set a simple world translation; view/projection defaults are identity.
-    constexpr uint32_t kD3dTransformWorld0 = 256u;
-    float* m = dev->transform_matrices[kD3dTransformWorld0];
-    std::memset(m, 0, 16 * sizeof(float));
-    m[0] = 1.0f;
-    m[5] = 1.0f;
-    m[10] = 1.0f;
-    m[15] = 1.0f;
-    m[12] = tx;
-    m[13] = ty;
-    m[14] = tz;
-    dev->fixedfunc_matrix_dirty = true;
+  }
+  // Set a simple world translation; view/projection are identity.
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[3][0] = tx;
+  world.m[3][1] = ty;
+  world.m[3][2] = tz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
   }
   if (!Check(expected_input_layout != 0, "SetFVF XYZ|DIFFUSE|TEX1 created internal input layout")) {
     return false;
@@ -1476,19 +1505,31 @@ bool TestFvfXyzTex1EmitsTransformConstantsAndDecl() {
       decl_ok = (blob.size() == sizeof(expected_decl)) &&
                 (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
     }
-
-    // Set a simple world translation; view/projection defaults are identity.
-    constexpr uint32_t kD3dTransformWorld0 = 256u;
-    float* m = dev->transform_matrices[kD3dTransformWorld0];
-    std::memset(m, 0, 16 * sizeof(float));
-    m[0] = 1.0f;
-    m[5] = 1.0f;
-    m[10] = 1.0f;
-    m[15] = 1.0f;
-    m[12] = tx;
-    m[13] = ty;
-    m[14] = tz;
-    dev->fixedfunc_matrix_dirty = true;
+  }
+  // Set a simple world translation; view/projection are identity.
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[3][0] = tx;
+  world.m[3][1] = ty;
+  world.m[3][2] = tz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
   }
   if (!Check(expected_input_layout != 0, "SetFVF XYZ|TEX1 created internal input layout")) {
     return false;
@@ -1944,19 +1985,30 @@ bool TestVertexDeclXyzTex1InfersFvfAndUploadsWvp() {
       0.0f, 0.0f, 1.0f, tz,
       0.0f, 0.0f, 0.0f, 1.0f,
   };
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTransformWorld0 = 256u;
-    float* m = dev->transform_matrices[kD3dTransformWorld0];
-    std::memset(m, 0, 16 * sizeof(float));
-    m[0] = 1.0f;
-    m[5] = 1.0f;
-    m[10] = 1.0f;
-    m[15] = 1.0f;
-    m[12] = tx;
-    m[13] = ty;
-    m[14] = tz;
-    dev->fixedfunc_matrix_dirty = true;
+  // Set a simple world translation; view/projection are identity.
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX world = identity;
+  world.m[3][0] = tx;
+  world.m[3][1] = ty;
+  world.m[3][2] = tz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
   }
 
   D3DDDI_HRESOURCE hTex{};
