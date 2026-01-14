@@ -1,6 +1,7 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
 
+#include <algorithm>
 #include <d3d9.h>
 
 using aerogpu_test::ComPtr;
@@ -12,62 +13,18 @@ struct Vertex {
   float nx;
   float ny;
   float nz;
-  DWORD color;
 };
 
-static void DumpBytesToFile(const char* test_name,
-                            aerogpu_test::TestReporter* reporter,
-                            const wchar_t* file_name,
-                            const void* data,
-                            UINT byte_count) {
-  if (!file_name || !data || byte_count == 0) {
-    return;
-  }
-  const std::wstring dir = aerogpu_test::GetModuleDir();
-  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
-  HANDLE h =
-      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-  if (h == INVALID_HANDLE_VALUE) {
-    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
-                               test_name,
-                               file_name,
-                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
-    return;
-  }
-  DWORD written = 0;
-  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
-    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
-                               test_name,
-                               file_name,
-                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
-  } else {
-    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
-                               test_name,
-                               (unsigned)byte_count,
-                               path.c_str());
-    if (reporter) {
-      reporter->AddArtifactPathW(path);
-    }
-  }
-  CloseHandle(h);
-}
+static int AbsInt(int v) { return v < 0 ? -v : v; }
 
-static void DumpTightBgra32(const char* test_name,
-                            aerogpu_test::TestReporter* reporter,
-                            const wchar_t* file_name,
-                            const void* data,
-                            int row_pitch,
-                            int width,
-                            int height) {
-  if (!data || width <= 0 || height <= 0 || row_pitch < width * 4) {
-    return;
-  }
-  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
-  for (int y = 0; y < height; ++y) {
-    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
-    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
-  }
-  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
+static bool ColorWithinTolerance(D3DCOLOR got, D3DCOLOR expected, int tol) {
+  const int gr = (int)((got >> 16) & 0xFFu);
+  const int gg = (int)((got >> 8) & 0xFFu);
+  const int gb = (int)((got >> 0) & 0xFFu);
+  const int er = (int)((expected >> 16) & 0xFFu);
+  const int eg = (int)((expected >> 8) & 0xFFu);
+  const int eb = (int)((expected >> 0) & 0xFFu);
+  return AbsInt(gr - er) <= tol && AbsInt(gg - eg) <= tol && AbsInt(gb - eb) <= tol;
 }
 
 static D3DMATRIX MakeIdentityMatrix() {
@@ -80,27 +37,7 @@ static D3DMATRIX MakeIdentityMatrix() {
   return m;
 }
 
-static D3DMATRIX MakeScaleTranslateMatrix(float sx, float sy, float sz, float tx, float ty, float tz) {
-  D3DMATRIX m;
-  ZeroMemory(&m, sizeof(m));
-  m._11 = sx;
-  m._22 = sy;
-  m._33 = sz;
-  m._44 = 1.0f;
-  m._41 = tx;
-  m._42 = ty;
-  m._43 = tz;
-  return m;
-}
-
-static int Brightness(D3DCOLOR c) {
-  const int r = (int)((c >> 16) & 0xFFu);
-  const int g = (int)((c >> 8) & 0xFFu);
-  const int b = (int)((c >> 0) & 0xFFu);
-  return r + g + b;
-}
-
-static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
+static int RunD3D9FixedfuncLightingDirectional(int argc, char** argv) {
   const char* kTestName = "d3d9_fixedfunc_lighting_directional";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
@@ -143,8 +80,8 @@ static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
   const int kWidth = 256;
   const int kHeight = 256;
 
-  HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9FixedFuncLightingDirectional",
-                                              L"AeroGPU D3D9 FixedFunc Lighting Directional",
+  HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9FixedfuncLightingDirectional",
+                                              L"AeroGPU D3D9 Fixedfunc Lighting (Directional)",
                                               kWidth,
                                               kHeight,
                                               !hidden);
@@ -173,7 +110,11 @@ static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
   DWORD create_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
   hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, create_flags, &pp, NULL, dev.put());
   if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx (HWVP required)", hr);
+    create_flags = D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
+    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, create_flags, &pp, NULL, dev.put());
+  }
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
@@ -220,6 +161,10 @@ static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
     }
   }
 
+  // Fixed-function path.
+  dev->SetVertexShader(NULL);
+  dev->SetPixelShader(NULL);
+
   D3DVIEWPORT9 vp;
   ZeroMemory(&vp, sizeof(vp));
   vp.X = 0;
@@ -233,54 +178,39 @@ static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetViewport", hr);
   }
 
-  // Fixed-function (no user shaders).
-  hr = dev->SetVertexShader(NULL);
+  // Render state.
+  hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_NORMAL);
   if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetVertexShader(NULL)", hr);
-  }
-  hr = dev->SetPixelShader(NULL);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetPixelShader(NULL)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF(D3DFVF_XYZ|D3DFVF_NORMAL)", hr);
   }
 
   dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
   dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
   dev->SetRenderState(D3DRS_ZENABLE, FALSE);
-  dev->SetRenderState(D3DRS_COLORVERTEX, TRUE);
   dev->SetRenderState(D3DRS_LIGHTING, TRUE);
-  dev->SetRenderState(D3DRS_AMBIENT, 0);
+  dev->SetRenderState(D3DRS_AMBIENT, 0xFF202020u);
 
-  // Force stage0 to use vertex diffuse (no texturing).
   dev->SetTexture(0, NULL);
   dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2);
   dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
   dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
 
-  // Place the object into clip space via WORLD; view/proj remain identity.
-  const D3DMATRIX world = MakeScaleTranslateMatrix(0.25f, 0.25f, 1.0f, -1.0f, -1.0f, 0.0f);
-  const D3DMATRIX view = MakeIdentityMatrix();
-  const D3DMATRIX proj = MakeIdentityMatrix();
-  hr = dev->SetTransform(D3DTS_WORLD, &world);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(WORLD)", hr);
-  }
-  hr = dev->SetTransform(D3DTS_VIEW, &view);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(VIEW)", hr);
-  }
-  hr = dev->SetTransform(D3DTS_PROJECTION, &proj);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetTransform(PROJECTION)", hr);
-  }
+  const D3DMATRIX identity = MakeIdentityMatrix();
+  dev->SetTransform(D3DTS_WORLD, &identity);
+  dev->SetTransform(D3DTS_VIEW, &identity);
+  dev->SetTransform(D3DTS_PROJECTION, &identity);
 
+  // Material + light (MVP subset: ambient+diffuse, directional light 0).
   D3DMATERIAL9 mat;
   ZeroMemory(&mat, sizeof(mat));
-  mat.Diffuse.r = 1.0f;
-  mat.Diffuse.g = 1.0f;
-  mat.Diffuse.b = 1.0f;
+  mat.Diffuse.r = 0.5f;
+  mat.Diffuse.g = 0.0f;
+  mat.Diffuse.b = 0.0f;
   mat.Diffuse.a = 1.0f;
+  mat.Ambient.r = 1.0f;
+  mat.Ambient.g = 1.0f;
+  mat.Ambient.b = 1.0f;
   mat.Ambient.a = 1.0f;
-  mat.Emissive.a = 1.0f;
   hr = dev->SetMaterial(&mat);
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetMaterial", hr);
@@ -289,49 +219,71 @@ static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
   D3DLIGHT9 light;
   ZeroMemory(&light, sizeof(light));
   light.Type = D3DLIGHT_DIRECTIONAL;
+  light.Direction.x = 0.0f;
+  light.Direction.y = 0.0f;
+  light.Direction.z = -1.0f;
   light.Diffuse.r = 1.0f;
   light.Diffuse.g = 1.0f;
   light.Diffuse.b = 1.0f;
   light.Diffuse.a = 1.0f;
-  light.Ambient.a = 1.0f;
-  light.Direction.x = 0.0f;
-  light.Direction.y = 0.0f;
-  light.Direction.z = -1.0f;
   hr = dev->SetLight(0, &light);
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetLight(0)", hr);
   }
   hr = dev->LightEnable(0, TRUE);
   if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::LightEnable(0, TRUE)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::LightEnable(0,TRUE)", hr);
   }
 
-  Vertex verts[3];
-  verts[0].x = 2.0f;
-  verts[0].y = 2.0f;
-  verts[0].z = 0.5f;
-  verts[0].nx = 0.0f;
-  verts[0].ny = 0.0f;
-  verts[0].nz = 1.0f;
-  verts[0].color = 0xFFFFFFFFu;
+  // Triangle in clip space (identity WVP). Use a moderately large triangle that
+  // covers the center pixel but not the corners.
+  const Vertex tri[3] = {
+      {-0.8f, 0.8f, 0.5f, 0.0f, 0.0f, 1.0f},
+      {-0.8f, -0.8f, 0.5f, 0.0f, 0.0f, 1.0f},
+      {0.8f, 0.0f, 0.5f, 0.0f, 0.0f, 1.0f},
+  };
 
-  verts[1].x = 6.0f;
-  verts[1].y = 2.0f;
-  verts[1].z = 0.5f;
-  verts[1].nx = 0.0f;
-  verts[1].ny = 0.0f;
-  verts[1].nz = 1.0f;
-  verts[1].color = 0xFFFFFFFFu;
+  ComPtr<IDirect3DVertexBuffer9> vb;
+  hr = dev->CreateVertexBuffer(sizeof(tri), 0, D3DFVF_XYZ | D3DFVF_NORMAL, D3DPOOL_DEFAULT, vb.put(), NULL);
+  if (FAILED(hr) || !vb) {
+    return reporter.FailHresult("CreateVertexBuffer(XYZ|NORMAL)", FAILED(hr) ? hr : E_FAIL);
+  }
+  void* vb_data = NULL;
+  hr = vb->Lock(0, sizeof(tri), &vb_data, 0);
+  if (FAILED(hr) || !vb_data) {
+    return reporter.FailHresult("IDirect3DVertexBuffer9::Lock", FAILED(hr) ? hr : E_FAIL);
+  }
+  memcpy(vb_data, tri, sizeof(tri));
+  vb->Unlock();
 
-  verts[2].x = 4.0f;
-  verts[2].y = 6.0f;
-  verts[2].z = 0.5f;
-  verts[2].nx = 0.0f;
-  verts[2].ny = 0.0f;
-  verts[2].nz = 1.0f;
-  verts[2].color = 0xFFFFFFFFu;
+  hr = dev->SetStreamSource(0, vb.get(), 0, sizeof(Vertex));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetStreamSource", hr);
+  }
 
-  // Read-back targets.
+  const DWORD kClear = D3DCOLOR_XRGB(0, 0, 255);
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClear, 1.0f, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::Clear", hr);
+  }
+
+  hr = dev->BeginScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::BeginScene", hr);
+  }
+
+  hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 1);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("IDirect3DDevice9Ex::DrawPrimitive", hr);
+  }
+
+  hr = dev->EndScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::EndScene", hr);
+  }
+
+  // Read back before PresentEx (DISCARD swap effect makes post-Present contents undefined).
   ComPtr<IDirect3DSurface9> backbuffer;
   hr = dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backbuffer.put());
   if (FAILED(hr)) {
@@ -355,172 +307,59 @@ static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
     return reporter.FailHresult("CreateOffscreenPlainSurface", hr);
   }
 
-  auto RenderAndReadCenter = [&](const D3DVECTOR& dir,
-                                 std::vector<uint8_t>* out_tight_bgra32,
-                                 D3DCOLOR* out_center) -> int {
-    if (out_center) {
-      *out_center = 0;
-    }
-    if (out_tight_bgra32) {
-      out_tight_bgra32->clear();
-    }
-
-    light.Direction = dir;
-    hr = dev->SetLight(0, &light);
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDirect3DDevice9Ex::SetLight(0) direction", hr);
-    }
-
-    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, 0xFF000000u, 1.0f, 0);
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDirect3DDevice9Ex::Clear", hr);
-    }
-
-    hr = dev->BeginScene();
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDirect3DDevice9Ex::BeginScene", hr);
-    }
-
-    hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE);
-    if (FAILED(hr)) {
-      dev->EndScene();
-      return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF", hr);
-    }
-
-    hr = dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
-    if (FAILED(hr)) {
-      dev->EndScene();
-      return reporter.FailHresult("IDirect3DDevice9Ex::DrawPrimitiveUP", hr);
-    }
-
-    hr = dev->EndScene();
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDirect3DDevice9Ex::EndScene", hr);
-    }
-
-    // Read back before PresentEx: discard swap effect makes post-present contents undefined.
-    hr = dev->GetRenderTargetData(backbuffer.get(), sysmem.get());
-    if (FAILED(hr)) {
-      return reporter.FailHresult("GetRenderTargetData", hr);
-    }
-
-    D3DLOCKED_RECT lr;
-    ZeroMemory(&lr, sizeof(lr));
-    hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDirect3DSurface9::LockRect", hr);
-    }
-
-    const int cx = (int)desc.Width / 2;
-    const int cy = (int)desc.Height / 2;
-    const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
-    if (out_center) {
-      *out_center = center;
-    }
-
-    if (out_tight_bgra32) {
-      out_tight_bgra32->resize((size_t)desc.Width * (size_t)desc.Height * 4u, 0);
-      for (UINT y = 0; y < desc.Height; ++y) {
-        const uint8_t* src_row = (const uint8_t*)lr.pBits + (size_t)y * (size_t)lr.Pitch;
-        memcpy(&(*out_tight_bgra32)[(size_t)y * (size_t)desc.Width * 4u],
-               src_row,
-               (size_t)desc.Width * 4u);
-      }
-    }
-
-    sysmem->UnlockRect();
-    return 0;
-  };
-
-  D3DCOLOR center_lit = 0;
-  D3DCOLOR center_dark = 0;
-  std::vector<uint8_t> lit_img;
-  std::vector<uint8_t> dark_img;
-
-  const D3DVECTOR dir_lit = {0.0f, 0.0f, -1.0f};
-  const D3DVECTOR dir_dark = {0.0f, 0.0f, 1.0f};
-
-  int rc = RenderAndReadCenter(dir_lit, dump ? &lit_img : NULL, &center_lit);
-  if (rc != 0) {
-    return rc;
-  }
-  rc = RenderAndReadCenter(dir_dark, dump ? &dark_img : NULL, &center_dark);
-  if (rc != 0) {
-    return rc;
+  hr = dev->GetRenderTargetData(backbuffer.get(), sysmem.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetRenderTargetData", hr);
   }
 
-  const int b_lit = Brightness(center_lit);
-  const int b_dark = Brightness(center_dark);
-  const int kDelta = 200;
-  if (!(b_lit > b_dark + kDelta) || b_lit < 400 || b_dark > 64) {
+  D3DLOCKED_RECT lr;
+  ZeroMemory(&lr, sizeof(lr));
+  hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DSurface9::LockRect", hr);
+  }
+
+  const int cx = (int)desc.Width / 2;
+  const int cy = (int)desc.Height / 2;
+  const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
+  const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
+
+  // Expected output:
+  //   out = material_ambient * global_ambient + material_diffuse * light_diffuse * ndotl
+  // With:
+  //   global_ambient = (0.125, 0.125, 0.125)
+  //   material_ambient = (1,1,1)
+  //   material_diffuse = (0.5,0,0)
+  //   light_diffuse = (1,1,1)
+  //   ndotl = 1 (normal=(0,0,1), light_dir=(0,0,-1))
+  const DWORD kExpected = D3DCOLOR_XRGB(159, 32, 32);
+  const int kTol = 12;
+  const bool center_ok = ColorWithinTolerance(center, kExpected, kTol);
+  const bool corner_ok = ColorWithinTolerance(corner, kClear, kTol);
+  if (!center_ok || !corner_ok) {
     if (dump) {
-      // Dump both frames.
       std::string err;
-      const std::wstring lit_bmp =
-          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9_fixedfunc_lighting_directional_lit.bmp");
-      const std::wstring dark_bmp =
-          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9_fixedfunc_lighting_directional_dark.bmp");
-
-      if (!lit_img.empty()) {
-        if (aerogpu_test::WriteBmp32BGRA(lit_bmp,
-                                         (int)desc.Width,
-                                         (int)desc.Height,
-                                         &lit_img[0],
-                                         (int)desc.Width * 4,
-                                         &err)) {
-          reporter.AddArtifactPathW(lit_bmp);
-        } else {
-          aerogpu_test::PrintfStdout("INFO: %s: lit BMP dump failed: %s", kTestName, err.c_str());
-        }
-        DumpBytesToFile(kTestName,
-                        &reporter,
-                        L"d3d9_fixedfunc_lighting_directional_lit.bin",
-                        &lit_img[0],
-                        (UINT)lit_img.size());
-      }
-      if (!dark_img.empty()) {
-        err.clear();
-        if (aerogpu_test::WriteBmp32BGRA(dark_bmp,
-                                         (int)desc.Width,
-                                         (int)desc.Height,
-                                         &dark_img[0],
-                                         (int)desc.Width * 4,
-                                         &err)) {
-          reporter.AddArtifactPathW(dark_bmp);
-        } else {
-          aerogpu_test::PrintfStdout("INFO: %s: dark BMP dump failed: %s", kTestName, err.c_str());
-        }
-        DumpBytesToFile(kTestName,
-                        &reporter,
-                        L"d3d9_fixedfunc_lighting_directional_dark.bin",
-                        &dark_img[0],
-                        (UINT)dark_img.size());
-      }
-
-      if (lit_img.empty() || dark_img.empty()) {
-        // Fallback: dump current sysmem surface if we didn't capture tight buffers.
-        D3DLOCKED_RECT lr;
-        ZeroMemory(&lr, sizeof(lr));
-        if (SUCCEEDED(sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY))) {
-          DumpTightBgra32(kTestName,
-                          &reporter,
-                          L"d3d9_fixedfunc_lighting_directional.bin",
-                          lr.pBits,
-                          (int)lr.Pitch,
-                          (int)desc.Width,
-                          (int)desc.Height);
-          sysmem->UnlockRect();
-        }
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9_fixedfunc_lighting_directional.bmp");
+      if (aerogpu_test::WriteBmp32BGRA(bmp_path, (int)desc.Width, (int)desc.Height, lr.pBits, (int)lr.Pitch, &err)) {
+        reporter.AddArtifactPathW(bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
       }
     }
-
-    return reporter.Fail("lighting mismatch: center_lit=0x%08lX (b=%d) center_dark=0x%08lX (b=%d) expected b_lit > b_dark + %d",
-                         (unsigned long)center_lit,
-                         b_lit,
-                         (unsigned long)center_dark,
-                         b_dark,
-                         kDelta);
+    sysmem->UnlockRect();
+    return reporter.Fail(
+        "pixel mismatch (tol=%d): center(%d,%d)=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
+        kTol,
+        cx,
+        cy,
+        (unsigned long)center,
+        (unsigned long)kExpected,
+        (unsigned long)corner,
+        (unsigned long)kClear);
   }
+
+  sysmem->UnlockRect();
 
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
   if (FAILED(hr)) {
@@ -532,7 +371,8 @@ static int RunD3D9FixedFuncLightingDirectional(int argc, char** argv) {
 
 int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
-  int rc = RunD3D9FixedFuncLightingDirectional(argc, argv);
+  int rc = RunD3D9FixedfuncLightingDirectional(argc, argv);
+  // Give the window a moment to appear for manual observation when running interactively.
   Sleep(30);
   return rc;
 }

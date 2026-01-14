@@ -405,6 +405,8 @@ Supported FVF combinations (bring-up subset):
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform)
+  - `D3DFVF_XYZ | D3DFVF_NORMAL` (WVP transform; optional fixed-function lighting)
+  - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (WVP transform; optional fixed-function lighting)
   - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (WVP transform; optional fixed-function lighting)
   - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform; optional fixed-function lighting)
 
@@ -412,7 +414,8 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 
 - `fixedfunc_supported_fvf()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1` /
   `kSupportedFvfXyzrhwTex1` / `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1` /
-  `kSupportedFvfXyzTex1` / `kSupportedFvfXyzNormalDiffuse` / `kSupportedFvfXyzNormalDiffuseTex1`
+  `kSupportedFvfXyzTex1` / `kSupportedFvfXyzNormal` / `kSupportedFvfXyzNormalTex1` /
+  `kSupportedFvfXyzNormalDiffuse` / `kSupportedFvfXyzNormalDiffuseTex1`
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE (+ optional TEX1) variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
 - Stage0 fixed-function PS generation: `fixedfunc_stage0_key_locked()` + `ensure_fixedfunc_pixel_shader_locked()` (`fixedfunc_ps20` token builder)
@@ -495,8 +498,8 @@ Limitations (bring-up):
     `rhw==0`); `z` is passed through as D3D9 NDC depth (`0..1`) and currently ignores viewport `MinZ`/`MaxZ`.
 - For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the bring-up path uses internal WVP vertex shaders with a reserved VS
   constant range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
-  - For `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`, the bring-up path also applies the minimal fixed-function
-    lighting subset below when `D3DRS_LIGHTING` is enabled.
+  - For `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`, the bring-up path also applies the minimal fixed-function lighting
+    subset below when `D3DRS_LIGHTING` is enabled.
   (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
 - Fixed-function lighting/material is implemented only for a **minimal subset**:
   - gated by `D3DRS_LIGHTING` (off = unlit behavior),

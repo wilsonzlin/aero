@@ -2894,6 +2894,8 @@ constexpr uint32_t kSupportedFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 // Minimal lighting bring-up: XYZ + NORMAL + DIFFUSE (+ optional TEX1).
+constexpr uint32_t kSupportedFvfXyzNormal = kD3dFvfXyz | kD3dFvfNormal;
+constexpr uint32_t kSupportedFvfXyzNormalTex1 = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzNormalDiffuse = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzNormalDiffuseTex1 = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse | kD3dFvfTex1;
 
@@ -2925,6 +2927,8 @@ constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
     case kSupportedFvfXyzDiffuse:
     case kSupportedFvfXyzDiffuseTex1:
     case kSupportedFvfXyzTex1:
+    case kSupportedFvfXyzNormal:
+    case kSupportedFvfXyzNormalTex1:
     case kSupportedFvfXyzNormalDiffuse:
     case kSupportedFvfXyzNormalDiffuseTex1:
       return true;
@@ -2942,7 +2946,9 @@ constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
 
 constexpr bool fixedfunc_fvf_has_normal(uint32_t fvf) {
   const uint32_t base = fixedfunc_fvf_base(fvf);
-  return (base == kSupportedFvfXyzNormalDiffuse) ||
+  return (base == kSupportedFvfXyzNormal) ||
+         (base == kSupportedFvfXyzNormalTex1) ||
+         (base == kSupportedFvfXyzNormalDiffuse) ||
          (base == kSupportedFvfXyzNormalDiffuseTex1);
 }
 
@@ -3057,6 +3063,15 @@ uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
         return 0u;
       }
       return 12u + dim * 4u;
+    }
+    case kSupportedFvfXyzNormal:
+      return 24u;
+    case kSupportedFvfXyzNormalTex1: {
+      const uint32_t dim = fvf_decode_texcoord_size(fvf, 0);
+      if (dim < 1u || dim > 4u) {
+        return 0u;
+      }
+      return 12u + 12u + dim * 4u;
     }
     case kSupportedFvfXyzNormalDiffuse:
       return 28u;
@@ -5639,6 +5654,13 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
   const bool lighting_enabled = dev->render_states[kD3dRsLighting] != 0;
 
+  // MVP behavior: if the app requests fixed-function lighting but the active FVF
+  // does not carry normals, fail cleanly instead of silently falling back to the
+  // unlit shader variants.
+  if (lighting_enabled && !fixedfunc_fvf_has_normal(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    return D3DERR_INVALIDCALL;
+  }
+
   // Stage0 texture stage state is only relevant to the fixed-function *pixel*
   // stage. When a user pixel shader is bound (PS-only interop path), stage state
   // must not cause spurious INVALIDCALL failures.
@@ -5708,6 +5730,26 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_bytes = fixedfunc::kVsTransformPosWhiteTex1;
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1));
       needs_matrix = true;
+      break;
+    case kSupportedFvfXyzNormal:
+      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_lit : &dev->fixedfunc_vs_xyz_normal;
+      ps_slot = &dev->fixedfunc_ps;
+      fvf_decl = dev->fvf_vertex_decl_xyz_normal;
+      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormal : fixedfunc::kVsWvpPosNormalWhite;
+      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormal))
+                                 : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalWhite));
+      needs_matrix = true;
+      needs_lighting = lighting_enabled;
+      break;
+    case kSupportedFvfXyzNormalTex1:
+      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_tex1_lit : &dev->fixedfunc_vs_xyz_normal_tex1;
+      ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+      fvf_decl = dev->fvf_vertex_decl_xyz_normal_tex1;
+      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormalTex1 : fixedfunc::kVsWvpPosNormalWhiteTex0;
+      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalTex1))
+                                 : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalWhiteTex0));
+      needs_matrix = true;
+      needs_lighting = lighting_enabled;
       break;
     case kSupportedFvfXyzNormalDiffuse:
       vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_diffuse_lit : &dev->fixedfunc_vs_xyz_normal_diffuse;
@@ -5819,6 +5861,10 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
       return dev->fixedfunc_vs_xyz_diffuse_tex1;
     case kSupportedFvfXyzTex1:
       return dev->fixedfunc_vs_xyz_tex1;
+    case kSupportedFvfXyzNormal:
+      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_lit : dev->fixedfunc_vs_xyz_normal;
+    case kSupportedFvfXyzNormalTex1:
+      return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_tex1_lit : dev->fixedfunc_vs_xyz_normal_tex1;
     case kSupportedFvfXyzNormalDiffuse:
       return lighting_enabled ? dev->fixedfunc_vs_xyz_normal_diffuse_lit : dev->fixedfunc_vs_xyz_normal_diffuse;
     case kSupportedFvfXyzNormalDiffuseTex1:
@@ -9619,6 +9665,26 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fvf_vertex_decl_xyz_tex1;
       dev->fvf_vertex_decl_xyz_tex1 = nullptr;
     }
+    if (dev->fvf_vertex_decl_xyz_normal) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_normal->handle);
+      delete dev->fvf_vertex_decl_xyz_normal;
+      dev->fvf_vertex_decl_xyz_normal = nullptr;
+    }
+    if (dev->fvf_vertex_decl_xyz_normal_tex1) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_normal_tex1->handle);
+      delete dev->fvf_vertex_decl_xyz_normal_tex1;
+      dev->fvf_vertex_decl_xyz_normal_tex1 = nullptr;
+    }
+    if (dev->fvf_vertex_decl_xyz_normal_diffuse) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_normal_diffuse->handle);
+      delete dev->fvf_vertex_decl_xyz_normal_diffuse;
+      dev->fvf_vertex_decl_xyz_normal_diffuse = nullptr;
+    }
+    if (dev->fvf_vertex_decl_xyz_normal_diffuse_tex1) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_normal_diffuse_tex1->handle);
+      delete dev->fvf_vertex_decl_xyz_normal_diffuse_tex1;
+      dev->fvf_vertex_decl_xyz_normal_diffuse_tex1 = nullptr;
+    }
     // Additional internal FVF-derived declarations for the programmable pipeline.
     for (auto& it : dev->fvf_vertex_decl_cache) {
       VertexDecl* decl = it.second;
@@ -9658,6 +9724,46 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_tex1_nodiffuse->handle);
       delete dev->fixedfunc_vs_tex1_nodiffuse;
       dev->fixedfunc_vs_tex1_nodiffuse = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal->handle);
+      delete dev->fixedfunc_vs_xyz_normal;
+      dev->fixedfunc_vs_xyz_normal = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal_tex1) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal_tex1->handle);
+      delete dev->fixedfunc_vs_xyz_normal_tex1;
+      dev->fixedfunc_vs_xyz_normal_tex1 = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal_lit) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal_lit->handle);
+      delete dev->fixedfunc_vs_xyz_normal_lit;
+      dev->fixedfunc_vs_xyz_normal_lit = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal_tex1_lit) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal_tex1_lit->handle);
+      delete dev->fixedfunc_vs_xyz_normal_tex1_lit;
+      dev->fixedfunc_vs_xyz_normal_tex1_lit = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal_diffuse) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal_diffuse->handle);
+      delete dev->fixedfunc_vs_xyz_normal_diffuse;
+      dev->fixedfunc_vs_xyz_normal_diffuse = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal_diffuse_tex1) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal_diffuse_tex1->handle);
+      delete dev->fixedfunc_vs_xyz_normal_diffuse_tex1;
+      dev->fixedfunc_vs_xyz_normal_diffuse_tex1 = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal_diffuse_lit) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal_diffuse_lit->handle);
+      delete dev->fixedfunc_vs_xyz_normal_diffuse_lit;
+      dev->fixedfunc_vs_xyz_normal_diffuse_lit = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit->handle);
+      delete dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit;
+      dev->fixedfunc_vs_xyz_normal_diffuse_tex1_lit = nullptr;
     }
     // Stage0 cache entries can alias the same Shader* (e.g. if two different keys
     // map to the same fallback bytecode). Deduplicate deletes so device teardown
@@ -13978,6 +14084,16 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
         implied_fvf = kSupportedFvfXyzDiffuse;
       }
 
+      // XYZ | NORMAL:
+      //   POSITION float3 @0
+      //   NORMAL   float3 @12
+      //   END
+      const bool e1_xyz_normal_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeFloat3) &&
+                                    (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageNormal) && (e1.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_normal_ok) {
+        implied_fvf = kSupportedFvfXyzNormal;
+      }
+
       // XYZ | TEX1:
       //   POSITION float3 @0
       //   TEXCOORD0 float{1,2,3,4} @12
@@ -14026,13 +14142,25 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
         implied_fvf = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1 | fvf_texcoord_size_bits(tex_dim_e2, 0);
       }
 
+      // XYZ | NORMAL | TEX1:
+      //   POSITION float3 @0
+      //   NORMAL   float3 @12
+      //   TEXCOORD0 float{1,2,3,4} @24
+      //   END
+      const bool e1_xyz_normal_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeFloat3) &&
+                                    (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageNormal) && (e1.UsageIndex == 0);
+      const bool e2_xyz_normal_tex_ok =
+          (e2.Stream == 0) && (e2.Offset == 24) && (tex_dim_e2 != 0) && (e2.Method == kD3dDeclMethodDefault) &&
+          (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_normal_ok && e2_xyz_normal_tex_ok && is_end(e3)) {
+        implied_fvf = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfTex1 | fvf_texcoord_size_bits(tex_dim_e2, 0);
+      }
+
       // XYZ | NORMAL | DIFFUSE:
       //   POSITION float3 @0
       //   NORMAL   float3 @12
       //   COLOR0   D3DCOLOR @24
       //   END
-      const bool e1_xyz_normal_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeFloat3) &&
-                                    (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageNormal) && (e1.UsageIndex == 0);
       const bool e2_xyz_color_ok = (e2.Stream == 0) && (e2.Offset == 24) && (e2.Type == kD3dDeclTypeD3dColor) &&
                                    (e2.Method == kD3dDeclMethodDefault) && (e2.Usage == kD3dDeclUsageColor) && (e2.UsageIndex == 0);
       if (e0_xyz_ok && e1_xyz_normal_ok && e2_xyz_color_ok && is_end(e3)) {
@@ -14253,6 +14381,31 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
             dev->fvf_vertex_decl_xyz_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
           }
           decl = dev->fvf_vertex_decl_xyz_tex1;
+          break;
+        }
+        case kSupportedFvfXyzNormal: {
+          if (!dev->fvf_vertex_decl_xyz_normal) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+                {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_xyz_normal = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_xyz_normal;
+          break;
+        }
+        case kSupportedFvfXyzNormalTex1: {
+          if (!dev->fvf_vertex_decl_xyz_normal_tex1) {
+            const D3DVERTEXELEMENT9_COMPAT elems[] = {
+                {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+                {0, 12, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsageNormal, 0},
+                {0, 24, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+                {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+            };
+            dev->fvf_vertex_decl_xyz_normal_tex1 = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+          }
+          decl = dev->fvf_vertex_decl_xyz_normal_tex1;
           break;
         }
         case kSupportedFvfXyzNormalDiffuse: {
@@ -25132,7 +25285,7 @@ struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(*)(Args...)> {
 // - Untransformed `D3DFVF_XYZ*` fixed-function draws use internal WVP vertex shader
 //   variants that read `WORLD0 * VIEW * PROJECTION` from a reserved high VS constant
 //   range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
-// - The minimal lighting subset (`D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`)
+// - The minimal lighting subset (`D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`)
 //   also consumes WORLD/VIEW for normal transform (uploaded in c244..c246).
 //
 // Keep these outside the WDK-only DDI block so they are available in portable

@@ -945,6 +945,8 @@ struct PatchCacheEntry {
   VertexDecl* fvf_vertex_decl_xyz_diffuse = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_tex1 = nullptr;
+  VertexDecl* fvf_vertex_decl_xyz_normal = nullptr;
+  VertexDecl* fvf_vertex_decl_xyz_normal_tex1 = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_normal_diffuse = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_normal_diffuse_tex1 = nullptr;
   // Internal FVF-derived vertex declarations synthesized by `SetFVF` for the
@@ -955,6 +957,10 @@ struct PatchCacheEntry {
   // *unused* texcoord sets (some runtimes leave garbage size bits set).
   std::unordered_map<uint32_t, VertexDecl*> fvf_vertex_decl_cache;
   Shader* fixedfunc_vs = nullptr;
+  Shader* fixedfunc_vs_xyz_normal = nullptr;
+  Shader* fixedfunc_vs_xyz_normal_tex1 = nullptr;
+  Shader* fixedfunc_vs_xyz_normal_lit = nullptr;
+  Shader* fixedfunc_vs_xyz_normal_tex1_lit = nullptr;
   Shader* fixedfunc_vs_xyz_normal_diffuse = nullptr;
   Shader* fixedfunc_vs_xyz_normal_diffuse_tex1 = nullptr;
   Shader* fixedfunc_vs_xyz_normal_diffuse_lit = nullptr;
