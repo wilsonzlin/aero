@@ -923,6 +923,15 @@ To also exercise the virtio-input tablet (absolute pointer) end-to-end path, set
 `with_virtio_input_tablet_events=true`. This requires a guest image provisioned with `--test-input-tablet-events`
 (alias: `--test-tablet-events`) so the guest selftest enables the `virtio-input-tablet-events` read loop.
 
+To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
+`with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
+after the guest emits the readiness marker (`...|virtio-blk-resize|READY|...`), and requires the guest marker
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|...`.
+
+- The guest image must be provisioned with `--test-blk-resize` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1`),
+  for example via `New-AeroWin7TestImage.ps1 -TestBlkResize`.
+- Optional: set `blk_resize_delta_mib=<N>` to override the default growth delta (MiB).
+
 To require the virtio-snd buffer limits stress test (`virtio-snd-buffer-limits`), set the workflow input
 `with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`,
 for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
@@ -966,6 +975,7 @@ only if you explicitly want the base image to be mutated.
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
+    - (only when blk resize is enabled via `-WithBlkResize` / `--with-blk-resize`) `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS`
     - (only when virtio-input event injection is enabled via `-WithInputEvents`/`--with-input-events` or implied by wheel/extended flags)
@@ -990,6 +1000,7 @@ The Python/PowerShell harnesses may also emit additional host-side markers after
 AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|PASS/FAIL/INFO|write_ok=...|write_bytes=...|write_mbps=...|flush_ok=...|read_ok=...|read_bytes=...|read_mbps=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=...|reset_bus_srb=...|pnp_srb=...|ioctl_reset=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|old_bytes=...|new_bytes=...|qmp_cmd=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|PASS/FAIL/SKIP|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...
