@@ -19,8 +19,8 @@ use crate::runtime::index_pulling::{
     wgsl_index_pulling_lib, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
 };
 use crate::runtime::vertex_pulling::{
-    VertexPullingAttribute, VertexPullingLayout, VERTEX_PULLING_GROUP, VERTEX_PULLING_UNIFORM_BINDING,
-    VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
+    VertexPullingAttribute, VertexPullingLayout, VERTEX_PULLING_GROUP,
+    VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
 
 /// `@binding` number for the index pulling params uniform when VS-as-compute needs indexed draw
@@ -674,7 +674,10 @@ fn parse_vs_out_struct(vs_wgsl: &str) -> Result<VsOutStructInfo> {
                 let Some((name, _ty)) = parse_struct_member_name_and_type(trimmed) else {
                     continue;
                 };
-                info.location_fields.push(VsOutLocationField { location: loc, name });
+                info.location_fields.push(VsOutLocationField {
+                    location: loc,
+                    name,
+                });
             }
         }
         if !found_pos {
@@ -926,7 +929,9 @@ fn load_fn_for_format(
                 ("load_attr_snorm16x4", 4, WgslScalarType::F32)
             }
         }
-        DxgiFormatComponentType::Unorm10_10_10_2 => ("load_attr_unorm10_10_10_2", 4, WgslScalarType::F32),
+        DxgiFormatComponentType::Unorm10_10_10_2 => {
+            ("load_attr_unorm10_10_10_2", 4, WgslScalarType::F32)
+        }
     }
 }
 
@@ -939,9 +944,9 @@ fn extract_expr(var: &str, want_count: u32, have_count: u32) -> Result<String> {
         (3, 3) => Ok(var.to_owned()),
         (3, 4) => Ok(format!("{var}.xyz")),
         (4, 4) => Ok(var.to_owned()),
-        _ => bail!(
-            "VS-as-compute: cannot extract vec{want_count} from vec{have_count} (var={var})"
-        ),
+        _ => {
+            bail!("VS-as-compute: cannot extract vec{want_count} from vec{have_count} (var={var})")
+        }
     }
 }
 
@@ -1002,9 +1007,7 @@ fn wgsl_load_attr_fn(attr: &VertexPullingAttribute, loc: u32, target_ty: &str) -
         "    let slot = aero_vp_ia.slots[{slot}u];\n",
         slot = attr.pulling_slot
     ));
-    body.push_str(&format!(
-        "    let elem_index: u32 = {elem_index_expr};\n"
-    ));
+    body.push_str(&format!("    let elem_index: u32 = {elem_index_expr};\n"));
     body.push_str(&format!(
         "    let addr: u32 = slot.base_offset_bytes + elem_index * slot.stride_bytes + {offset}u;\n",
         offset = attr.offset_bytes

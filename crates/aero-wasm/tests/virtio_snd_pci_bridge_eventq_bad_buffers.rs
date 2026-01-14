@@ -270,4 +270,3 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_buffer_is_out_of_
     guest.read_into(buf, &mut got_evt);
     assert_eq!(&got_evt, &expected_speaker_connected());
 }
-

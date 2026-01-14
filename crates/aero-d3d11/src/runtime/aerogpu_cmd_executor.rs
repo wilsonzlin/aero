@@ -8715,7 +8715,8 @@ impl AerogpuD3d11Executor {
 
             let (vs_bgl_group0, vs_bg_group0) = if vs_bindings_compute.is_empty() {
                 (
-                    self.bind_group_layout_cache.get_or_create(&self.device, &[]),
+                    self.bind_group_layout_cache
+                        .get_or_create(&self.device, &[]),
                     self.empty_bind_group.clone(),
                 )
             } else {
@@ -8742,7 +8743,8 @@ impl AerogpuD3d11Executor {
                     legacy_constants: &self.legacy_constants,
                     cbuffer_scratch: &self.cbuffer_scratch,
                     srv_buffer_scratch: &self.srv_buffer_scratch,
-                    storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
+                    storage_align: (self.device.limits().min_storage_buffer_offset_alignment
+                        as u64)
                         .max(1),
                     max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
                         as u64,

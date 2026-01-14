@@ -9,10 +9,10 @@ pub mod gs_translate;
 pub mod index_pulling;
 pub mod indirect_args;
 pub mod pipeline_layout_cache;
-pub mod tessellation;
 mod reflection_bindings;
 pub mod resources;
 pub mod scratch_allocator;
+pub mod tessellation;
 pub mod tessellator;
 // Persistent shader translation cache is only available in the browser/WASM build.
 #[cfg(target_arch = "wasm32")]

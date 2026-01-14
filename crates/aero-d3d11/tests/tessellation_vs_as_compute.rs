@@ -268,14 +268,9 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
             pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(
-            &device,
-            &pulling,
-            &vs_bgl_group0,
-            VS_WGSL_POS_COLOR,
-            cfg,
-        )
-        .unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -308,7 +303,13 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
             label: Some("VS-as-compute encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, vertex_count, instance_count, &vs_bg_group0, &bg)
+            .dispatch(
+                &mut encoder,
+                vertex_count,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -456,7 +457,8 @@ fn vs_as_compute_binds_vs_group0_resources_and_supports_nonzero_pos_reg() {
         .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
-        let vs_out_regs = alloc_vs_out_regs(&mut scratch, &device, 1, 1, cfg.out_reg_count).unwrap();
+        let vs_out_regs =
+            alloc_vs_out_regs(&mut scratch, &device, 1, 1, cfg.out_reg_count).unwrap();
 
         let bg = pipeline
             .create_bind_group_group3(
@@ -621,7 +623,13 @@ fn vs_as_compute_respects_first_vertex() {
             label: Some("VS-as-compute first_vertex encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, vertex_count, instance_count, &vs_bg_group0, &bg)
+            .dispatch(
+                &mut encoder,
+                vertex_count,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -770,7 +778,13 @@ fn vs_as_compute_uses_patch_control_point_layout() {
             label: Some("VS-as-compute patch layout encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, vertex_count, instance_count, &vs_bg_group0, &bg)
+            .dispatch(
+                &mut encoder,
+                vertex_count,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -963,7 +977,13 @@ fn vs_as_compute_supports_index_pulling() {
             label: Some("VS-as-compute indexed encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
+            .dispatch(
+                &mut encoder,
+                index_count,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -1129,7 +1149,13 @@ fn vs_as_compute_supports_u32_index_pulling() {
             label: Some("VS-as-compute indexed encoder (u32)"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
+            .dispatch(
+                &mut encoder,
+                index_count,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -1308,7 +1334,13 @@ fn vs_as_compute_index_pulling_applies_first_index_and_base_vertex() {
             label: Some("VS-as-compute indexed encoder (first_index/base_vertex)"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
+            .dispatch(
+                &mut encoder,
+                index_count,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -1486,7 +1518,13 @@ fn vs_as_compute_index_pulling_supports_negative_base_vertex() {
             label: Some("VS-as-compute indexed encoder (negative base_vertex)"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
+            .dispatch(
+                &mut encoder,
+                index_count,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -2122,14 +2160,9 @@ fn vs_as_compute_loads_extended_formats() {
                 pos_reg: 0,
                 indexed: false,
             };
-            let pipeline = VsAsComputePipeline::new(
-                device,
-                &pulling,
-                &vs_bgl_group0,
-                VS_WGSL_POS_ONLY,
-                cfg,
-            )
-            .unwrap();
+            let pipeline =
+                VsAsComputePipeline::new(device, &pulling, &vs_bgl_group0, VS_WGSL_POS_ONLY, cfg)
+                    .unwrap();
 
             let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
             let vs_out_regs =

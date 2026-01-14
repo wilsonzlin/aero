@@ -117,7 +117,8 @@ impl TessellationPipelines {
         };
 
         if let Entry::Vacant(e) = self.vs_as_compute.entry(key) {
-            let pipeline = VsAsComputePipeline::new(device, vertex_pulling, vs_bgl_group0, vs_wgsl, cfg)?;
+            let pipeline =
+                VsAsComputePipeline::new(device, vertex_pulling, vs_bgl_group0, vs_wgsl, cfg)?;
             e.insert(pipeline);
         }
 
