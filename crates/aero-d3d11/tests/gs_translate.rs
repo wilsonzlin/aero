@@ -152,7 +152,7 @@ fn sm4_gs_emit_cut_fixture_translates() {
     // The checked-in fixture uses decl encodings that differ from the tokenized-format enums
     // (triangle=4, triangle_strip=5). The GS prepass translator should accept these encodings so it
     // can run real DXBC blobs produced by various toolchains.
-    const DXBC: &[u8] = include_bytes!("fixtures/gs_emit_cut.dxbc");
+    const DXBC: &[u8] = include_bytes!("fixtures/gs_cut.dxbc");
 
     let program = Sm4Program::parse_from_dxbc_bytes(DXBC).expect("SM4 parse");
     assert_eq!(program.stage, ShaderStage::Geometry);

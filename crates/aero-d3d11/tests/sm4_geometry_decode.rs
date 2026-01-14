@@ -12,7 +12,7 @@ fn load_fixture(name: &str) -> Vec<u8> {
 
 #[test]
 fn decodes_geometry_shader_decls_and_emit_cut() {
-    let bytes = load_fixture("gs_emit_cut.dxbc");
+    let bytes = load_fixture("gs_cut.dxbc");
     let program = Sm4Program::parse_from_dxbc_bytes(&bytes).expect("SM4 parse");
     assert_eq!(program.stage, ShaderStage::Geometry);
     assert_eq!(program.model, ShaderModel { major: 4, minor: 0 });

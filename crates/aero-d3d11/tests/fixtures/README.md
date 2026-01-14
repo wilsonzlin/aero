@@ -73,7 +73,7 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `gs_5_0`
   * Chunks: `SHEX`
   * Behavior: `emit_stream(1)`, `ret` (minimal stream-index fixture; used to exercise SM5 stream policy)
-* `gs_emit_cut.dxbc`
+* `gs_cut.dxbc`
   * Shader model: `gs_4_0`
   * Chunks: `SHDR`
   * Behavior: `dcl_inputprimitive`, `dcl_outputtopology`, `dcl_maxvertexcount`, `mov r0, v0[0]`, `emit`, `cut`, `ret`
@@ -142,7 +142,7 @@ void gs_main(triangle GsIn input[3], inout TriangleStream<GsOut> stream) {
   o.pos = input[2].pos; stream.Append(o);
 }
 
-// gs_emit_cut.hlsl
+// gs_cut.hlsl
 [maxvertexcount(1)]
 void gs_main(point GsIn input[1], inout TriangleStream<GsOut> stream) {
   GsOut o;
@@ -174,7 +174,7 @@ fxc /nologo /T ps_4_0 /E ps_main /Fo ps_passthrough.dxbc ps_passthrough.hlsl
 fxc /nologo /T ps_4_0 /E ps_main /Fo ps_sample.dxbc ps_sample.hlsl
 fxc /nologo /T gs_4_0 /E gs_main /Fo gs_passthrough.dxbc gs_passthrough.hlsl
 fxc /nologo /T gs_4_0 /E gs_main /Fo gs_point_to_triangle.dxbc gs_point_to_triangle.hlsl
-fxc /nologo /T gs_4_0 /E gs_main /Fo gs_emit_cut.dxbc gs_emit_cut.hlsl
+fxc /nologo /T gs_4_0 /E gs_main /Fo gs_cut.dxbc gs_cut.hlsl
 fxc /nologo /T cs_5_0 /E cs_main /Fo cs_store_uav_raw.dxbc cs_store_uav_raw.hlsl
 ```
 
