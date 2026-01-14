@@ -136,16 +136,16 @@ typedef struct _AEROGPU_ALLOC_TABLE_SCRATCH {
     SIZE_T BlockBytes;
 
     UINT TmpEntriesCapacity; /* number of aerogpu_alloc_entry slots */
-    UINT HashCapacity;       /* number of slots in Seen* arrays; power-of-two */
+    UINT HashCapacity;       /* number of slots in SeenSlots; power-of-two */
 
     struct aerogpu_alloc_entry* TmpEntries;
-    uint32_t* Seen;
     /*
-     * [epoch|index] packed metadata for the Seen hash table:
-     * - high 16 bits: epoch tag
-     * - low  16 bits: tmpEntries index
+     * Packed hash table slot:
+     * - bits  0..31: alloc_id
+     * - bits 32..47: tmpEntries index
+     * - bits 48..63: epoch tag
      */
-    uint32_t* SeenMeta;
+    uint64_t* SeenSlots;
     uint16_t Epoch;
 
 #if DBG
