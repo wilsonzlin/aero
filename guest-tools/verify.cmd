@@ -51,7 +51,7 @@ echo Reports:
 echo   C:\AeroGuestTools\report.json
 echo   C:\AeroGuestTools\report.txt
 echo Optional dbgctl artifacts (if aerogpu_dbgctl.exe is present on the Guest Tools media):
-echo   C:\AeroGuestTools\dbgctl_version.txt   (best-effort: runs a safe --version or /? with timeout)
+echo   C:\AeroGuestTools\dbgctl_version.txt   (best-effort: runs a safe --help or /? with timeout)
 echo   C:\AeroGuestTools\dbgctl_status.txt    (only when -RunDbgctl is used and AeroGPU is healthy)
 echo   C:\AeroGuestTools\dbgctl_selftest.txt  (only when -RunDbgctlSelftest is used and AeroGPU is healthy)
 echo   Note: Optional tools inventory (tools\*) is included in report.txt under "Optional Tools (tools\*)".
