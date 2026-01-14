@@ -1899,6 +1899,18 @@ mod tests {
         }
     }
 
+    fn src_temp(index: u32) -> Src {
+        Src {
+            reg: RegRef {
+                file: RegFile::Temp,
+                index,
+                relative: None,
+            },
+            swizzle: Swizzle::identity(),
+            modifier: SrcModifier::None,
+        }
+    }
+
     #[test]
     fn collect_used_pixel_inputs_includes_dp2add_src2() {
         // Regression test: `dp2add` reads a third source operand (`src2.x`) and the software
@@ -1924,6 +1936,77 @@ mod tests {
         assert!(used.contains(&(RegFile::Input, 0)));
         assert!(used.contains(&(RegFile::Input, 1)));
         assert!(used.contains(&(RegFile::Input, 2)));
+    }
+
+    #[test]
+    fn exec_dp2add_matches_sm3_definition() {
+        let op = IrOp::Dp2Add {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 3,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            src0: src_temp(0),
+            src1: src_temp(1),
+            src2: src_temp(2),
+            modifiers: InstModifiers::none(),
+        };
+
+        let mut temps = vec![
+            Vec4::new(1.0, 2.0, 0.0, 0.0),
+            Vec4::new(10.0, 20.0, 0.0, 0.0),
+            Vec4::new(5.0, 0.0, 0.0, 0.0),
+            Vec4::ZERO,
+        ];
+        let mut addrs = vec![Vec4::ZERO; 1];
+        let mut loops = vec![Vec4::ZERO; 1];
+        let mut preds = vec![Vec4::ZERO; 1];
+        let inputs_v = HashMap::<u16, Vec4>::new();
+        let inputs_t = HashMap::<u16, Vec4>::new();
+        let sampler_types = HashMap::<u32, TextureType>::new();
+        let textures = HashMap::<u16, Texture>::new();
+        let sampler_states = HashMap::<u16, SamplerState>::new();
+        let constants = ConstBank {
+            f32: [Vec4::ZERO; 256],
+            i32: [Vec4::ZERO; CONST_INT_REGS],
+            bool: [Vec4::ZERO; CONST_BOOL_REGS],
+        };
+        let builtins = PixelBuiltins {
+            frag_pos: Vec4::ZERO,
+            front_facing: true,
+        };
+
+        let mut o_pos = Vec4::ZERO;
+        let mut o_attr = HashMap::<u16, Vec4>::new();
+        let mut o_tex = HashMap::<u16, Vec4>::new();
+        let mut o_out = HashMap::<u16, Vec4>::new();
+        let mut o_color = Vec4::ZERO;
+
+        exec_op(
+            &op,
+            &mut temps,
+            &mut addrs,
+            &mut loops,
+            &mut preds,
+            &inputs_v,
+            &inputs_t,
+            &constants,
+            &builtins,
+            &sampler_types,
+            &textures,
+            &sampler_states,
+            &mut o_pos,
+            &mut o_attr,
+            &mut o_tex,
+            &mut o_out,
+            &mut o_color,
+        );
+
+        // dp2add: dot(src0.xy, src1.xy) + src2.x
+        assert_eq!(temps[3], Vec4::splat(55.0));
     }
 }
 
