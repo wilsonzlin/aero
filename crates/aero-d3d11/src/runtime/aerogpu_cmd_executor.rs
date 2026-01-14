@@ -25,9 +25,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_shader_resource_buffers_bindings_le,
     decode_cmd_set_unordered_access_buffers_bindings_le, decode_cmd_set_vertex_buffers_bindings_le,
-    decode_cmd_upload_resource_payload_le, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AerogpuCmdStreamIter, AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH,
-    AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    decode_cmd_upload_resource_payload_le, resolve_stage, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuD3dShaderStage, AerogpuShaderStage,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
@@ -3374,8 +3374,17 @@ impl AerogpuD3d11Executor {
             stage_ex
         };
 
-        ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-            anyhow!("{opcode}: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+        let stage = resolve_stage(stage_raw, stage_ex).map_err(|e| {
+            anyhow!("{opcode}: {e} (shader_stage={stage_raw}, stage_ex={stage_ex})")
+        })?;
+
+        Ok(match stage {
+            AerogpuD3dShaderStage::Vertex => ShaderStage::Vertex,
+            AerogpuD3dShaderStage::Pixel => ShaderStage::Pixel,
+            AerogpuD3dShaderStage::Geometry => ShaderStage::Geometry,
+            AerogpuD3dShaderStage::Hull => ShaderStage::Hull,
+            AerogpuD3dShaderStage::Domain => ShaderStage::Domain,
+            AerogpuD3dShaderStage::Compute => ShaderStage::Compute,
         })
     }
 
