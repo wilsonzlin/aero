@@ -59,6 +59,7 @@ use super::bindings::{BindingState, BoundBuffer, BoundConstantBuffer, BoundSampl
 use super::expansion_scratch::{
     ExpansionScratchAlloc, ExpansionScratchAllocator, ExpansionScratchDescriptor,
 };
+use super::gs_translate::GsOutputTopologyKind;
 use super::index_pulling::{
     IndexPullingParams, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
 };
@@ -916,6 +917,7 @@ struct GsPrepassMetadata {
     verts_per_primitive: u32,
     input_reg_count: u32,
     max_output_vertices: u32,
+    output_topology_kind: GsOutputTopologyKind,
 }
 
 #[derive(Debug, Clone)]
@@ -4463,6 +4465,9 @@ impl AerogpuD3d11Executor {
                 CmdPrimitiveTopology::PointList
             );
         let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
+        // Primitive topology for the expanded draw render pass (post GS strip->list lowering).
+        // For the placeholder prepass path we always emit triangles.
+        let mut expanded_draw_topology = CmdPrimitiveTopology::TriangleList;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
@@ -4856,6 +4861,14 @@ impl AerogpuD3d11Executor {
             expanded_index_alloc = draw_scratch.expanded_indices;
             indirect_args_alloc = draw_scratch.indirect_args;
         } else if let Some((gs_handle, gs_meta)) = gs_prepass {
+            expanded_draw_topology = match gs_meta.output_topology_kind {
+                GsOutputTopologyKind::PointList => CmdPrimitiveTopology::PointList,
+                // The GS prepass expands line strips into a line list index buffer.
+                GsOutputTopologyKind::LineStrip => CmdPrimitiveTopology::LineList,
+                // The GS prepass expands triangle strips into a triangle list index buffer.
+                GsOutputTopologyKind::TriangleStrip => CmdPrimitiveTopology::TriangleList,
+            };
+
             // The GS translator writes `DrawIndexedIndirectArgs`, so always render via
             // `draw_indexed_indirect`.
             use_indexed_indirect = true;
@@ -5760,15 +5773,14 @@ impl AerogpuD3d11Executor {
         // pointer so we can keep using executor state while the render pass is alive.
         let render_pipeline_ptr = {
             // The placeholder compute prepass always emits triangles (3 verts per input primitive),
-            // so the expanded draw must use TriangleList regardless of the original IA topology:
-            // e.g. point-list inputs expanded by the emulation path should rasterize triangles, not
-            // points.
+            // so `expanded_draw_topology` is always TriangleList for that path.
             //
-            // Future GS/HS/DS emulation will supply the correct post-expansion topology here.
+            // For real GS translation, `expanded_draw_topology` is set based on the shader-declared
+            // output topology (after strip->list lowering).
             let prev_emulated = self.state.emulated_expanded_vertex_buffer;
             let prev_topology = self.state.primitive_topology;
             self.state.emulated_expanded_vertex_buffer = Some(0);
-            self.state.primitive_topology = CmdPrimitiveTopology::TriangleList;
+            self.state.primitive_topology = expanded_draw_topology;
             let pipeline_res = get_or_create_render_pipeline_for_state(
                 &self.device,
                 &mut self.pipeline_cache,
@@ -11837,6 +11849,7 @@ impl AerogpuD3d11Executor {
                         verts_per_primitive: t.info.input_verts_per_primitive,
                         input_reg_count: t.info.input_reg_count,
                         max_output_vertices: t.info.max_output_vertex_count,
+                        output_topology_kind: t.info.output_topology_kind,
                     });
                     (
                         t.wgsl,

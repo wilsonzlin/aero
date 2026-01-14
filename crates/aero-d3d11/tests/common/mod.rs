@@ -45,9 +45,10 @@ pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Er
         return true;
     }
 
-    // Some downlevel backends support compute shaders but have very low storage buffer binding
-    // limits (e.g. max_storage_buffers_per_shader_stage=4 on some GL paths). The compute prepass
-    // uses multiple storage buffers for expansion output plus vertex/index pulling.
+    // Some backends expose compute+indirect but have very low per-stage storage buffer limits
+    // (e.g. `Limits::downlevel_defaults()` sets this to 4). Our GS/HS/DS emulation paths can bind
+    // multiple storage buffers (expanded vertices/indices, indirect args, counters, vertex/index
+    // pulling), which can exceed these limits.
     if msg.contains("max_storage_buffers_per_shader_stage")
         || msg.contains("Too many bindings of type StorageBuffers")
     {

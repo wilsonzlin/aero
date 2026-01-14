@@ -245,8 +245,13 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
     }
 }
 
+/// The GS declared output topology kind (`dcl_outputtopology`).
+///
+/// Note: the compute prepass lowers strip output (`line_strip` / `triangle_strip`) into list
+/// indices (`line_list` / `triangle_list`). Use this kind to determine the post-expansion render
+/// primitive topology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OutputTopologyKind {
+pub enum GsOutputTopologyKind {
     PointList,
     LineStrip,
     TriangleStrip,
@@ -266,13 +271,13 @@ fn input_primitive_token(prim: GsInputPrimitive) -> u32 {
 fn decode_output_topology(
     topology: GsOutputTopology,
     input_primitive: GsInputPrimitive,
-) -> Result<OutputTopologyKind, GsTranslateError> {
+) -> Result<GsOutputTopologyKind, GsTranslateError> {
     let input_prim_token = input_primitive_token(input_primitive);
     let likely_d3d_encoding = matches!(input_prim_token, 4 | 10 | 11 | 12 | 13);
 
     match topology {
-        GsOutputTopology::Point(_) => Ok(OutputTopologyKind::PointList),
-        GsOutputTopology::LineStrip(_) => Ok(OutputTopologyKind::LineStrip),
+        GsOutputTopology::Point(_) => Ok(GsOutputTopologyKind::PointList),
+        GsOutputTopology::LineStrip(_) => Ok(GsOutputTopologyKind::LineStrip),
         // `3` is ambiguous:
         // - tokenized shader format: trianglestrip=3.
         // - D3D primitive topology enum: linestrip=3.
@@ -282,23 +287,23 @@ fn decode_output_topology(
         // constants for GS declarations (e.g. triangle=4, triadj=12).
         GsOutputTopology::TriangleStrip(3) => {
             if likely_d3d_encoding {
-                Ok(OutputTopologyKind::LineStrip)
+                Ok(GsOutputTopologyKind::LineStrip)
             } else {
-                Ok(OutputTopologyKind::TriangleStrip)
+                Ok(GsOutputTopologyKind::TriangleStrip)
             }
         }
-        GsOutputTopology::TriangleStrip(_) => Ok(OutputTopologyKind::TriangleStrip),
+        GsOutputTopology::TriangleStrip(_) => Ok(GsOutputTopologyKind::TriangleStrip),
         GsOutputTopology::Unknown(other) => match other {
-            1 => Ok(OutputTopologyKind::PointList),
-            2 => Ok(OutputTopologyKind::LineStrip),
+            1 => Ok(GsOutputTopologyKind::PointList),
+            2 => Ok(GsOutputTopologyKind::LineStrip),
             3 => {
                 if likely_d3d_encoding {
-                    Ok(OutputTopologyKind::LineStrip)
+                    Ok(GsOutputTopologyKind::LineStrip)
                 } else {
-                    Ok(OutputTopologyKind::TriangleStrip)
+                    Ok(GsOutputTopologyKind::TriangleStrip)
                 }
             }
-            5 => Ok(OutputTopologyKind::TriangleStrip),
+            5 => Ok(GsOutputTopologyKind::TriangleStrip),
             _ => Err(GsTranslateError::UnsupportedOutputTopology { topology: other }),
         },
     }
@@ -312,6 +317,12 @@ pub struct GsPrepassInfo {
     pub input_reg_count: u32,
     /// Maximum number of vertices the shader may emit per input primitive (`dcl_maxvertexcount`).
     pub max_output_vertex_count: u32,
+    /// Geometry shader declared output topology kind (`dcl_outputtopology`).
+    ///
+    /// Note: the compute prepass expands strips into lists, so:
+    /// - `LineStrip` expands to a render `LineList`
+    /// - `TriangleStrip` expands to a render `TriangleList`
+    pub output_topology_kind: GsOutputTopologyKind,
 }
 
 #[derive(Debug, Clone)]
@@ -1323,7 +1334,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     }
     w.line("");
     match output_topology_kind {
-        OutputTopologyKind::PointList => {
+        GsOutputTopologyKind::PointList => {
             w.line("// Point list index emission.");
             w.line("let base = atomicAdd(&out_state.counters.index_count, 1u);");
             w.line("let idx_cap = arrayLength(&out_indices.data);");
@@ -1336,7 +1347,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             w.line("}");
             w.line("out_indices.data[base] = vtx_idx;");
         }
-        OutputTopologyKind::LineStrip => {
+        GsOutputTopologyKind::LineStrip => {
             w.line("// Line strip -> line list index emission.");
             w.line("if (*strip_len == 0u) {");
             w.indent();
@@ -1361,7 +1372,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             w.dedent();
             w.line("}");
         }
-        OutputTopologyKind::TriangleStrip => {
+        GsOutputTopologyKind::TriangleStrip => {
             w.line("// Triangle strip -> triangle list index emission.");
             w.line("if (*strip_len == 0u) {");
             w.indent();
@@ -2394,6 +2405,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
             input_verts_per_primitive: verts_per_primitive,
             input_reg_count: gs_input_reg_count,
             max_output_vertex_count: max_output_vertices,
+            output_topology_kind,
         },
     })
 }
