@@ -206,10 +206,18 @@ impl AtaDrive {
     pub fn snapshot_state(&self) -> aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
         // Snapshots historically tracked only the UDMA mode number for IDE ATA devices.
         //
-        // We preserve that shape for compatibility, and use a sentinel of 0xFF to represent
-        // "UDMA disabled" (i.e. MWDMA selected).
+        // We preserve that shape for compatibility, and encode non-UDMA modes by setting the high
+        // bit. This keeps the common case (UDMA enabled) stable (0..=6) while allowing snapshots
+        // to round-trip Multiword DMA selections deterministically.
+        //
+        // Legacy snapshots created before Multiword DMA was represented may store `0xFF` as a
+        // sentinel for "UDMA disabled"; we continue to accept that on restore.
         aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
-            udma_mode: if self.udma_enabled { self.udma_mode } else { 0xFF },
+            udma_mode: if self.udma_enabled {
+                self.udma_mode
+            } else {
+                0x80 | (self.mwdma_mode & 0x07)
+            },
         }
     }
 
@@ -219,8 +227,13 @@ impl AtaDrive {
     ) {
         // Restore negotiated transfer mode state (guest-visible via IDENTIFY and snapshots).
         if state.udma_mode == 0xFF {
+            // Legacy sentinel: UDMA disabled, MWDMA mode unknown.
             self.udma_enabled = false;
             self.mwdma_mode = 0;
+        } else if (state.udma_mode & 0x80) != 0 {
+            // New encoding: high bit indicates MWDMA selection.
+            self.udma_enabled = false;
+            self.mwdma_mode = (state.udma_mode & 0x07).min(ATA_MAX_MWDMA_MODE);
         } else {
             self.udma_enabled = true;
             self.udma_mode = state.udma_mode.min(ATA_MAX_UDMA_MODE);

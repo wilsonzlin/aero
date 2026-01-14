@@ -190,8 +190,8 @@ fn ata_identify_word63_reflects_negotiated_mwdma_mode() {
     // Switch to Multiword DMA mode 2 (0x20 | 2).
     drive.set_transfer_mode_select(0x22).unwrap();
 
-    // Snapshotted UDMA mode is a sentinel when UDMA is disabled.
-    assert_eq!(drive.snapshot_state().udma_mode, 0xFF);
+    // Snapshotted UDMA mode encodes MWDMA selections by setting the high bit.
+    assert_eq!(drive.snapshot_state().udma_mode, 0x80 | 2);
 
     let id = drive.identify_sector();
     let w63 = identify_word(id, 63);
