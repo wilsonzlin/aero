@@ -486,6 +486,7 @@ Guest-side validation:
 * `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` exercises the cross-process “create shared → open shared” path.
   * Validates cross-process pixel sharing via readback by default.
   * Pass `--no-validate-sharing` to focus on open + minimal submit (`ColorFill` + `Flush`) only (`--dump` always validates).
+* `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc` is a smaller producer/consumer variant that focuses on opening a shared D3D9Ex render-target texture in a second process and validating a readback of the producer’s clear color.
 
 ---
 

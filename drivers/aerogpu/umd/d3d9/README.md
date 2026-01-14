@@ -196,8 +196,8 @@ For allocations that may be referenced together in a single submission (notably 
 - `alloc_id` values (for both shared and non-shared allocations) are derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
 - `share_token` is returned by the KMD via `aerogpu_wddm_alloc_priv.share_token` (filled during `DxgkDdiCreateAllocation` and preserved across cross-process opens).
 
-See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and the cross-process validation test
-(`d3d9ex_shared_surface_ipc`).
+See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and cross-process validation tests
+(`d3d9ex_shared_surface_ipc` and `d3d9ex_shared_surface`).
 
 #### Cross-API note: D3D9Ex consuming DXGI shared handles (DWM scenario)
 
@@ -511,7 +511,7 @@ This subset is validated via:
   `d3d9_caps_smoke`, `d3d9_validate_device_sanity`, `d3d9ex_getters_sanity`, `d3d9_get_state_roundtrip`, `d3d9ex_stateblock_sanity`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`, `d3d9ex_submit_fence_stress`,
   `d3d9ex_stretchrect`, `d3d9_raster_status_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`,
-  `d3d9ex_shared_surface_ipc`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
+  `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
 ## Call tracing (bring-up / debugging)
 

@@ -104,6 +104,7 @@ when the **final** wrapper for a shared surface is released (tolerant of Win7’
 Use one of the cross-process shared-surface IPC tests:
 
 - `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc/main.cpp`
+- `drivers/aerogpu/tests/win7/d3d9ex_shared_surface/main.cpp`
 - `drivers/aerogpu/tests/win7/d3d11_shared_surface_ipc/main.cpp`
 - `drivers/aerogpu/tests/win7/d3d10_shared_surface_ipc/main.cpp`
 - `drivers/aerogpu/tests/win7/d3d10_1_shared_surface_ipc/main.cpp`
@@ -114,7 +115,7 @@ It should:
 2. Duplicate the D3D shared `HANDLE` into a child process.
 3. Child opens the resource and validates content via readback.
 
-This test catches the common bug where `share_token` is (incorrectly) derived from the process-local shared `HANDLE` value: producer and consumer handles differ, so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
+This test catches the common bug where `share_token` is (incorrectly) derived from the process-local shared `HANDLE` value: producer and consumer handle values commonly differ, so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
 
 Optional debug-only validation (when supported by the KMD):
 
