@@ -4055,6 +4055,11 @@ function renderAudioPanel(): HTMLElement {
         jit: workerCoordinator.getWorkerWasmStatus("jit") ?? null,
         net: workerCoordinator.getWorkerWasmStatus("net") ?? null,
       };
+      const serialOutputBytes = workerCoordinator.getSerialOutputBytes();
+      const serialText = workerCoordinator.getSerialOutputText();
+      const SERIAL_TAIL_MAX_CHARS = 8192;
+      const serialOutputTruncated = serialText.length > SERIAL_TAIL_MAX_CHARS;
+      const serialOutputTail = serialOutputTruncated ? serialText.slice(-SERIAL_TAIL_MAX_CHARS) : serialText;
       return {
         vmState: workerCoordinator.getVmState(),
         statuses: workerCoordinator.getWorkerStatuses(),
@@ -4063,6 +4068,9 @@ function renderAudioPanel(): HTMLElement {
         configAckVersions: workerCoordinator.getWorkerConfigAckVersions(),
         heartbeatCounter: workerCoordinator.getHeartbeatCounter(),
         lastHeartbeatFromRing: workerCoordinator.getLastHeartbeatFromRing(),
+        serialOutputBytes,
+        serialOutputTruncated,
+        serialOutputTail,
         lastFatal: workerCoordinator.getLastFatalEvent(),
         lastNonFatal: workerCoordinator.getLastNonFatalEvent(),
         pendingFullRestart: workerCoordinator.getPendingFullRestart(),
@@ -4269,6 +4277,22 @@ function renderAudioPanel(): HTMLElement {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/workers-error.txt`, data: encoder.encode(message) });
+        }
+
+        // Guest serial output tail (best-effort). Useful when driver bring-up emits logs via COM1.
+        try {
+          const serialText = workerCoordinator.getSerialOutputText();
+          const serialBytes = workerCoordinator.getSerialOutputBytes();
+          const MAX_CHARS = 200_000;
+          const truncated = serialText.length > MAX_CHARS;
+          const tail = truncated ? serialText.slice(-MAX_CHARS) : serialText;
+          const header = truncated
+            ? `# NOTE: serial output truncated (chars=${serialText.length.toLocaleString()} bytes=${serialBytes.toLocaleString()})\n\n`
+            : `# serial output (bytes=${serialBytes.toLocaleString()})\n\n`;
+          entries.push({ path: `${dir}/serial.txt`, data: encoder.encode(header + tail) });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/serial-error.txt`, data: encoder.encode(message) });
         }
 
         // HDA codec debug state (best-effort).

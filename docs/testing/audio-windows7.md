@@ -281,6 +281,7 @@ Alternative (if the web UI exposes it):
   - `aero-config.json` (best-effort; effective config snapshot with sensitive fields redacted)
   - `aero.version.json` (best-effort; build/version endpoint, when served)
   - `workers.json` (best-effort; WorkerCoordinator snapshot: worker states + wasm variants + last fatal/nonfatal errors)
+  - `serial.txt` (best-effort; guest serial output tail, if any)
   - `hda-codec-state.json` (best-effort; requires the I/O worker)
   - `screenshot-*.png` (best-effort; requires the GPU worker)
   - `trace.json` (best-effort; Chrome trace export; includes worker thread metadata and any recorded spans/counters if tracing was enabled)
