@@ -10,9 +10,10 @@ set(VIOINPUT_TEST_CFLAGS "")
 # Keep assertions enabled even in Release builds.
 #
 # - CMake defaults to defining NDEBUG in Release, which compiles out assert().
-# - For clang-cl, CMAKE_C_COMPILER_ID is "Clang" but the frontend is MSVC; prefer
-#   checking the frontend variant over compiler ID matching.
-if (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+# - For clang-cl, CMAKE_C_COMPILER_ID is "Clang" but the frontend is MSVC.
+#   Prefer the built-in MSVC predicate (covers both MSVC and clang-cl) and fall
+#   back to the frontend variant if available.
+if (MSVC OR (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
     set(VIOINPUT_TEST_CFLAGS /UNDEBUG)
 elseif (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     set(VIOINPUT_TEST_CFLAGS -Wall -Wextra -Werror -UNDEBUG)
@@ -79,4 +80,3 @@ foreach(test_src IN LISTS VIOINPUT_TEST_SOURCES)
     target_compile_options(${test_name} PRIVATE ${VIOINPUT_TEST_CFLAGS})
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach ()
-
