@@ -1798,7 +1798,10 @@ fn assemble_vs3_reads_vpos_misc_sm3_decoder() -> Vec<u32> {
     // vs_3_0: attempts to read vPos via MiscType (misc0), which is only valid in pixel shaders.
     let mut out = vec![0xFFFE0300];
     // mov r0, misc0
-    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(17, 0, 0xE4)]));
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(17, 0, 0xE4)],
+    ));
     // mov oPos, r0
     out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
@@ -1809,7 +1812,10 @@ fn assemble_ps3_reads_misc2_sm3_decoder() -> Vec<u32> {
     // ps_3_0: attempts to read an unsupported MiscType builtin (misc2).
     let mut out = vec![0xFFFF0300];
     // mov r0, misc2
-    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(17, 2, 0xE4)]));
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(17, 2, 0xE4)],
+    ));
     // mov oC0, r0
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
@@ -2487,7 +2493,11 @@ fn translate_entrypoint_accepts_operand_count_length_encoding_with_rep() {
         shader_translate::ShaderTranslateBackend::Sm3
     );
 
-    assert!(translated.wgsl.contains("_aero_rep_count"), "{}", translated.wgsl);
+    assert!(
+        translated.wgsl.contains("_aero_rep_count"),
+        "{}",
+        translated.wgsl
+    );
 
     let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(

@@ -149,16 +149,21 @@ fn ehci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() 
 
     // Start the controller (USBCMD.RS) so FRINDEX advances when ticking.
     let usbcmd_before = src.machine.read_physical_u32(bar0_base + regs::REG_USBCMD);
-    src.machine
-        .write_physical_u32(bar0_base + regs::REG_USBCMD, usbcmd_before | regs::USBCMD_RS);
+    src.machine.write_physical_u32(
+        bar0_base + regs::REG_USBCMD,
+        usbcmd_before | regs::USBCMD_RS,
+    );
 
-    let frindex_before = src.machine.read_physical_u32(bar0_base + regs::REG_FRINDEX)
-        & regs::FRINDEX_MASK;
+    let frindex_before =
+        src.machine.read_physical_u32(bar0_base + regs::REG_FRINDEX) & regs::FRINDEX_MASK;
     // Advance by 1.5ms so the controller ticks once and the machine accumulates a sub-ms remainder.
     src.machine.tick_platform(1_500_000);
-    let frindex_snapshot = src.machine.read_physical_u32(bar0_base + regs::REG_FRINDEX)
-        & regs::FRINDEX_MASK;
-    assert_eq!(frindex_snapshot, frindex_before.wrapping_add(8) & regs::FRINDEX_MASK);
+    let frindex_snapshot =
+        src.machine.read_physical_u32(bar0_base + regs::REG_FRINDEX) & regs::FRINDEX_MASK;
+    assert_eq!(
+        frindex_snapshot,
+        frindex_before.wrapping_add(8) & regs::FRINDEX_MASK
+    );
 
     // Ensure our snapshot source really emitted the legacy payload (EHCP), not the canonical `USBC`
     // wrapper.
@@ -185,20 +190,20 @@ fn ehci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() 
         .expect("EHCI BAR0 should exist");
     assert_ne!(bar0_base_restored, 0);
 
-    let frindex_after_restore = restored.read_physical_u32(bar0_base_restored + regs::REG_FRINDEX)
-        & regs::FRINDEX_MASK;
+    let frindex_after_restore =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_FRINDEX) & regs::FRINDEX_MASK;
     assert_eq!(frindex_after_restore, frindex_snapshot);
 
     // Legacy snapshots did not include the machine's sub-ms tick remainder; we should start from a
     // deterministic default of 0 on restore.
     restored.tick_platform(500_000);
-    let frindex_after_half_ms = restored.read_physical_u32(bar0_base_restored + regs::REG_FRINDEX)
-        & regs::FRINDEX_MASK;
+    let frindex_after_half_ms =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_FRINDEX) & regs::FRINDEX_MASK;
     assert_eq!(frindex_after_half_ms, frindex_snapshot);
 
     restored.tick_platform(500_000);
-    let frindex_after_full_ms = restored.read_physical_u32(bar0_base_restored + regs::REG_FRINDEX)
-        & regs::FRINDEX_MASK;
+    let frindex_after_full_ms =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_FRINDEX) & regs::FRINDEX_MASK;
     assert_eq!(
         frindex_after_full_ms,
         frindex_snapshot.wrapping_add(8) & regs::FRINDEX_MASK

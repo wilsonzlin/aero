@@ -1782,13 +1782,9 @@ fn try_emit_uniform_control_flow_predicated_op_assignment(
     };
     let new_value = match op.op {
         Op::Dsx | Op::Dsy => derivative_expr(op, const_defs_f32, const_base, op.op),
-        Op::Texld => texld_sample_expr(
-            op,
-            const_defs_f32,
-            const_base,
-            stage,
-            sampler_texture_types,
-        ),
+        Op::Texld => {
+            texld_sample_expr(op, const_defs_f32, const_base, stage, sampler_texture_types)
+        }
         _ => return false,
     };
 

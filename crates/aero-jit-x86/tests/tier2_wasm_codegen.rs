@@ -690,10 +690,7 @@ fn tier2_inline_code_version_guard_invalidates_against_empty_table_when_expected
         &store,
         CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
     );
-    assert_eq!(
-        exit_reason,
-        jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION
-    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION);
     assert_eq!(
         store.data().code_version_calls,
         0,

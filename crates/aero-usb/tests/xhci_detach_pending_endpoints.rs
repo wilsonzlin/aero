@@ -84,4 +84,3 @@ fn xhci_detach_at_path_clears_pending_endpoints() {
     assert_eq!(work3.doorbells_serviced, 0);
     assert_eq!(work3.transfer_trbs_consumed, 0);
 }
-

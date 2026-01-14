@@ -604,7 +604,10 @@ fn xhci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() 
     src.machine.io_write(A20_GATE_PORT, 1, 0x02);
 
     let bdf = USB_XHCI_QEMU.bdf;
-    let bar0_base = src.machine.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    let bar0_base = src
+        .machine
+        .pci_bar_base(bdf, 0)
+        .expect("xHCI BAR0 should exist");
     assert_ne!(bar0_base, 0);
 
     // Ensure MMIO decode is enabled so MFINDEX reads are valid.
@@ -643,7 +646,9 @@ fn xhci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() 
     restored.restore_snapshot_bytes(&bytes).unwrap();
     restored.io_write(A20_GATE_PORT, 1, 0x02);
 
-    let bar0_base_restored = restored.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    let bar0_base_restored = restored
+        .pci_bar_base(bdf, 0)
+        .expect("xHCI BAR0 should exist");
     assert_ne!(bar0_base_restored, 0);
 
     let mfindex_after_restore =
@@ -660,5 +665,8 @@ fn xhci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() 
     restored.tick_platform(500_000);
     let mfindex_after_full_ms =
         restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
-    assert_eq!(mfindex_after_full_ms, mfindex_snapshot.wrapping_add(8) & 0x3fff);
+    assert_eq!(
+        mfindex_after_full_ms,
+        mfindex_snapshot.wrapping_add(8) & 0x3fff
+    );
 }
