@@ -96,6 +96,18 @@ WIN7_VIRTIO_DRIVER_INFS: Mapping[str, Path] = {
     "virtio-input": REPO_ROOT / "drivers/windows7/virtio-input/inf/aero_virtio_input.inf",
 }
 
+# Minimum MessageNumberLimit per device so the driver can use a dedicated config
+# interrupt plus at least one interrupt per critical virtqueue.
+#
+# These are intentionally conservative lower bounds; INFs may request a larger
+# "future-proof" number and Windows may still grant fewer messages at runtime.
+WIN7_VIRTIO_INF_MIN_MESSAGE_NUMBER_LIMIT: Mapping[str, int] = {
+    "virtio-blk": 2,  # config + queue0
+    "virtio-net": 3,  # config + rx + tx
+    "virtio-input": 3,  # config + eventq + statusq
+    "virtio-snd": 5,  # config + 4 queues
+}
+
 # virtio-pci vendor as allocated by PCI-SIG.
 VIRTIO_PCI_VENDOR_ID = 0x1AF4
 # Modern virtio-pci device IDs: 0x1040 + virtio device type.
@@ -698,6 +710,315 @@ def parse_inf_strings_map(path: Path) -> dict[str, str]:
             value = value[1:-1]
         out[key.lower()] = value
     return out
+
+def _strip_inf_inline_comment(line: str) -> str:
+    """
+    Strip an INF inline comment.
+
+    INF comments start with `;` and run to end-of-line. Semicolons inside a quoted
+    string literal are treated as data, not a comment delimiter.
+    """
+
+    in_quotes = False
+    for i, ch in enumerate(line):
+        if ch == '"':
+            in_quotes = not in_quotes
+            continue
+        if ch == ";" and not in_quotes:
+            return line[:i]
+    return line
+
+
+def _split_inf_csv_fields(line: str) -> list[str]:
+    """
+    Split a single INF directive line into comma-separated fields.
+
+    Commas inside quoted strings are preserved. Quotes are not removed.
+    """
+
+    parts: list[str] = []
+    cur: list[str] = []
+    in_quotes = False
+    for ch in line:
+        if ch == '"':
+            in_quotes = not in_quotes
+            cur.append(ch)
+            continue
+        if ch == "," and not in_quotes:
+            parts.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur).strip())
+    # Drop trailing empty fields caused by a stray trailing comma.
+    while parts and parts[-1] == "":
+        parts.pop()
+    return parts
+
+
+def _unquote_inf_token(token: str) -> str:
+    token = token.strip()
+    if len(token) >= 2 and token.startswith('"') and token.endswith('"'):
+        return token[1:-1]
+    return token
+
+
+def _normalize_inf_reg_subkey(subkey: str) -> str:
+    """
+    Normalize an INF AddReg subkey for robust matching.
+
+    - trims whitespace/quotes
+    - collapses repeated backslashes (some INFs mistakenly use `\\`)
+    - case-folds for comparison
+    """
+
+    subkey = _unquote_inf_token(subkey).strip()
+    subkey = re.sub(r"\\+", r"\\", subkey)
+    return subkey.lower()
+
+
+def _normalize_inf_reg_value_name(value_name: str) -> str:
+    return _unquote_inf_token(value_name).strip().lower()
+
+
+def _try_parse_inf_int(token: str) -> int | None:
+    token = _unquote_inf_token(token).strip()
+    if not token:
+        return None
+    try:
+        return int(token, 0)
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class InfRegDwordOccurrence:
+    line_no: int
+    value: int
+    raw_line: str
+
+
+@dataclass(frozen=True)
+class InfMsiInterruptSettingsScan:
+    interrupt_management_key_lines: tuple[str, ...]
+    msi_supported: tuple[InfRegDwordOccurrence, ...]
+    message_number_limit: tuple[InfRegDwordOccurrence, ...]
+
+
+def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInterruptSettingsScan, list[str]]:
+    """
+    Scan an INF for MSI/MSI-X opt-in AddReg entries.
+
+    We deliberately keep this lightweight and tolerant: line-based parsing that
+    ignores full-line + inline comments and whitespace differences.
+    """
+
+    errors: list[str] = []
+
+    interrupt_mgmt_lines: list[str] = []
+    msi_supported: list[InfRegDwordOccurrence] = []
+    msg_limit: list[InfRegDwordOccurrence] = []
+
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        if raw.lstrip().startswith(";"):
+            continue
+        line = _strip_inf_inline_comment(raw).strip()
+        if not line:
+            continue
+
+        if not line.lstrip().upper().startswith("HKR"):
+            continue
+
+        parts = _split_inf_csv_fields(line)
+        if not parts:
+            continue
+        if parts[0].strip().upper() != "HKR":
+            continue
+
+        subkey = _normalize_inf_reg_subkey(parts[1] if len(parts) > 1 else "")
+        value_name = _normalize_inf_reg_value_name(parts[2] if len(parts) > 2 else "")
+
+        if subkey == "interrupt management":
+            # Prefer the recommended "key-only" form:
+            #
+            #   HKR, "Interrupt Management",,0x00000010
+            #
+            # but accept other ways of explicitly creating/touching the key.
+            flags = _try_parse_inf_int(parts[3] if len(parts) > 3 else "")
+            if value_name == "" and flags is not None and (flags & 0x10):
+                interrupt_mgmt_lines.append(f"{file.as_posix()}:{line_no}: {line}")
+            elif value_name:
+                interrupt_mgmt_lines.append(f"{file.as_posix()}:{line_no}: {line}")
+            continue
+
+        if subkey != "interrupt management\\messagesignaledinterruptproperties":
+            continue
+
+        if value_name not in ("msisupported", "messagenumberlimit"):
+            continue
+
+        if len(parts) < 5:
+            errors.append(
+                format_error(
+                    f"{file.as_posix()}:{line_no}: MSI AddReg entry is missing a value field:",
+                    [line],
+                )
+            )
+            continue
+
+        value = _try_parse_inf_int(parts[4])
+        if value is None:
+            errors.append(
+                format_error(
+                    f"{file.as_posix()}:{line_no}: MSI AddReg entry has a non-integer value:",
+                    [line],
+                )
+            )
+            continue
+
+        occ = InfRegDwordOccurrence(line_no=line_no, value=value, raw_line=f"{file.as_posix()}:{line_no}: {line}")
+        if value_name == "msisupported":
+            msi_supported.append(occ)
+        else:
+            msg_limit.append(occ)
+
+    return (
+        InfMsiInterruptSettingsScan(
+            interrupt_management_key_lines=tuple(interrupt_mgmt_lines),
+            msi_supported=tuple(msi_supported),
+            message_number_limit=tuple(msg_limit),
+        ),
+        errors,
+    )
+
+
+def _self_test_scan_inf_msi_interrupt_settings() -> None:
+    sample = r"""
+; full-line comment should be ignored:
+; HKR, "Interrupt Management",,0x00000010
+[Foo]
+HKR, "Interrupt Management",, 16 ; inline comment should be ignored
+HKR, "Interrupt Management\MessageSignaledInterruptProperties", "MSISupported", 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 0x8
+"""
+    scan, errors = scan_inf_msi_interrupt_settings(sample, file=Path("<unit-test>"))
+    if errors:
+        fail(format_error("internal unit-test failed: scan_inf_msi_interrupt_settings returned errors:", errors))
+    if not scan.interrupt_management_key_lines:
+        fail("internal unit-test failed: expected Interrupt Management key creation line to be detected")
+    if {o.value for o in scan.msi_supported} != {1}:
+        fail(f"internal unit-test failed: expected MSISupported=1, got: {[o.value for o in scan.msi_supported]}")
+    if {o.value for o in scan.message_number_limit} != {8}:
+        fail(
+            f"internal unit-test failed: expected MessageNumberLimit=8, got: {[o.value for o in scan.message_number_limit]}"
+        )
+
+
+def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> list[str]:
+    """
+    Ensure a canonical Win7 virtio INF keeps MSI/MSI-X opt-in settings.
+
+    This prevents accidental removals/typos that silently drop the MSI path and
+    reduce test coverage.
+    """
+
+    errors: list[str] = []
+    scan, scan_errors = scan_inf_msi_interrupt_settings(read_text(inf_path), file=inf_path)
+    errors.extend(scan_errors)
+
+    if not scan.interrupt_management_key_lines:
+        errors.append(
+            format_error(
+                f"{inf_path.as_posix()}: missing Interrupt Management key creation AddReg entry:",
+                [
+                    'expected something like: HKR, "Interrupt Management",,0x00000010',
+                    "hint: required for MSI/MSI-X opt-in on Windows 7",
+                ],
+            )
+        )
+
+    if not scan.msi_supported:
+        errors.append(
+            format_error(
+                f"{inf_path.as_posix()}: missing MSISupported AddReg entry:",
+                [
+                    'expected: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, ..., 1',
+                ],
+            )
+        )
+    else:
+        values = {o.value for o in scan.msi_supported}
+        if values != {1}:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: MSISupported must be 1:",
+                    [
+                        f"values found: {sorted(values)}",
+                        *[o.raw_line for o in scan.msi_supported],
+                    ],
+                )
+            )
+
+    min_limit = WIN7_VIRTIO_INF_MIN_MESSAGE_NUMBER_LIMIT.get(device_name)
+
+    if not scan.message_number_limit:
+        errors.append(
+            format_error(
+                f"{inf_path.as_posix()}: missing MessageNumberLimit AddReg entry:",
+                [
+                    'expected: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, ..., <n>',
+                ],
+            )
+        )
+    else:
+        limits = {o.value for o in scan.message_number_limit}
+        if len(limits) != 1:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: MessageNumberLimit must be consistent (found multiple values):",
+                    [
+                        f"values found: {sorted(limits)}",
+                        *[o.raw_line for o in scan.message_number_limit],
+                    ],
+                )
+            )
+        else:
+            limit = next(iter(limits))
+            if limit <= 0:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: MessageNumberLimit must be a positive integer:",
+                        [
+                            f"got: {limit}",
+                            *[o.raw_line for o in scan.message_number_limit],
+                        ],
+                    )
+                )
+            # PCI MSI-X Table Size max is 2048 vectors.
+            if limit > 2048:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: MessageNumberLimit is unreasonably large:",
+                        [
+                            f"got: {limit}",
+                            "expected: <= 2048 (PCI MSI-X Table Size limit)",
+                            *[o.raw_line for o in scan.message_number_limit],
+                        ],
+                    )
+                )
+            if min_limit is not None and limit < min_limit:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: MessageNumberLimit too small for {device_name}:",
+                        [
+                            f"minimum: {min_limit}",
+                            f"got:     {limit}",
+                            *[o.raw_line for o in scan.message_number_limit],
+                        ],
+                    )
+                )
+
+    return errors
 
 
 _PCI_HARDWARE_ID_RE = re.compile(r"^PCI\\VEN_(?P<ven>[0-9A-Fa-f]{4})&DEV_(?P<dev>[0-9A-Fa-f]{4})")
@@ -1723,6 +2044,8 @@ def parse_aero_virtio_device_feature_usage() -> Mapping[str, dict[str, bool]]:
 
 def main() -> None:
     errors: list[str] = []
+
+    _self_test_scan_inf_msi_interrupt_settings()
 
     w7_md = read_text(W7_VIRTIO_CONTRACT_MD)
     windows_md = read_text(WINDOWS_DEVICE_CONTRACT_MD)
@@ -2942,6 +3265,10 @@ def main() -> None:
         if not inf_path.exists():
             errors.append(f"missing expected Win7 virtio driver INF: {inf_path.as_posix()}")
             continue
+
+        # Guardrail: keep MSI/MSI-X opt-in registry keys present so message-signaled
+        # interrupt paths remain exercised by default (when supported by the platform).
+        errors.extend(validate_win7_virtio_inf_msi_settings(device_name, inf_path))
 
         hwids = parse_inf_hardware_ids(inf_path)
         if not hwids:
