@@ -685,6 +685,15 @@ async function rgba8ToPngBlob(width: number, height: number, rgba8: Uint8Array):
   });
 }
 
+function parseOptionalBoolParam(search: URLSearchParams, key: string): boolean | undefined {
+  const raw = search.get(key);
+  if (raw === null) return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "" || normalized === "1" || normalized === "true") return true;
+  if (normalized === "0" || normalized === "false") return false;
+  return true;
+}
+
 function renderMachinePanel(): HTMLElement {
   const status = el("pre", { text: "Initializing canonical machine…" });
   const vgaInfo = el("pre", { text: "" });
@@ -692,8 +701,8 @@ function renderMachinePanel(): HTMLElement {
     class: "mono",
     text:
       "Tip: click the canvas to focus + request pointer lock (keyboard/mouse will be forwarded to the guest). " +
-      "VBE mode test: add ?machineVbe=1280x720 to the URL to boot straight into a Bochs VBE 32bpp mode. " +
-      "AeroGPU config test: add ?machineAerogpu=1 to request the AeroGPU device model (VGA disabled by default). " +
+      "VBE mode test: add ?machineVbe=1280x720 to boot straight into a Bochs VBE 32bpp mode (requires VGA; set ?machineVga=1 or ?machineAerogpu=0). " +
+      "GPU config test: add ?machineAerogpu=1 (or =0 to disable) to override the default GPU device model. " +
       "SMP test: add ?machineCpuCount=2 to request a 2-vCPU machine (requires native SMP support).",
   });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
@@ -886,39 +895,40 @@ function renderMachinePanel(): HTMLElement {
         if (!Number.isFinite(n) || n < 1 || n > 255) return 1;
         return n;
       })();
-      const enableAerogpu = (() => {
-        const raw = search.get("machineAerogpu");
-        if (raw === null) return false;
-        const normalized = raw.trim().toLowerCase();
-        if (normalized === "" || normalized === "1" || normalized === "true") return true;
-        if (normalized === "0" || normalized === "false") return false;
-        return true;
-      })();
-      const enableVgaOverride = (() => {
-        const raw = search.get("machineVga");
-        if (raw === null) return undefined;
-        const normalized = raw.trim().toLowerCase();
-        if (normalized === "" || normalized === "1" || normalized === "true") return true;
-        if (normalized === "0" || normalized === "false") return false;
-        return true;
-      })();
+      const enableAerogpuOverride = parseOptionalBoolParam(search, "machineAerogpu");
+      const enableVgaOverride = parseOptionalBoolParam(search, "machineVga");
       // `Machine.new_with_config` is optional across wasm builds. Stash the property in a local so
       // TypeScript can safely narrow before invoking it (property reads are not stable).
       const newWithConfig = api.Machine.new_with_config;
       const newWithCpuCount = api.Machine.new_with_cpu_count;
-      const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
-      const machine =
-        canEnableAerogpu
-          ? newWithConfig(ramSizeBytes, true, enableVgaOverride, cpuCount !== 1 ? cpuCount : undefined)
-          : cpuCount !== 1 && typeof newWithCpuCount === "function"
-            ? newWithCpuCount(ramSizeBytes, cpuCount)
-            : new api.Machine(ramSizeBytes);
+      const wantsGraphicsOverride = enableAerogpuOverride !== undefined || enableVgaOverride !== undefined;
+      const machine = (() => {
+        if (wantsGraphicsOverride && typeof newWithConfig === "function") {
+          const enableAerogpu =
+            enableAerogpuOverride ?? (enableVgaOverride !== undefined ? !enableVgaOverride : false);
+          return newWithConfig(ramSizeBytes, enableAerogpu, enableVgaOverride, cpuCount !== 1 ? cpuCount : undefined);
+        }
+        if (cpuCount !== 1 && typeof newWithCpuCount === "function") {
+          return newWithCpuCount(ramSizeBytes, cpuCount);
+        }
+        return new api.Machine(ramSizeBytes);
+      })();
       const vbeRaw = search.get("machineVbe");
       let diskImage = buildSerialBootSector(bootMessage);
-      // Bochs VBE programming requires the legacy VGA/VBE device model. If the user requested the
-      // AeroGPU config (which disables VGA by default), ignore `machineVbe` so we keep visible text
-      // output via the `0xB8000` fallback scanout.
-      if (vbeRaw && !canEnableAerogpu) {
+      // Bochs VBE programming requires the legacy VGA/VBE device model. If the canonical machine
+      // was constructed without VGA, ignore `machineVbe` so we keep visible text output via the
+      // `0xB8000` fallback scanout.
+      //
+      // `vga_width()` returns 0 when the machine has no VGA device model attached.
+      const vgaDevicePresent = (() => {
+        try {
+          const vgaWidth = machine.vga_width;
+          return typeof vgaWidth === "function" && vgaWidth.call(machine) > 0;
+        } catch {
+          return false;
+        }
+      })();
+      if (vbeRaw && vgaDevicePresent) {
         const match = /^(\d+)x(\d+)$/.exec(vbeRaw.trim());
         if (match) {
           const width = Number.parseInt(match[1] ?? "", 10);
@@ -1841,26 +1851,14 @@ function renderMachineWorkerPanel(): HTMLElement {
               }
             }
 
-            const aerogpuRaw = search.get("machineWorkerAerogpu");
-            if (aerogpuRaw !== null) {
-              const normalized = aerogpuRaw.trim().toLowerCase();
-              if (normalized === "" || normalized === "1" || normalized === "true") {
-                out.enableAerogpu = true;
-              } else if (normalized === "0" || normalized === "false") {
-                out.enableAerogpu = false;
-              } else {
-                out.enableAerogpu = true;
-              }
+            const enableAerogpu = parseOptionalBoolParam(search, "machineWorkerAerogpu");
+            if (enableAerogpu !== undefined) {
+              out.enableAerogpu = enableAerogpu;
             }
 
-            const vgaRaw = search.get("machineWorkerVga");
-            if (vgaRaw !== null) {
-              const normalized = vgaRaw.trim().toLowerCase();
-              if (normalized === "" || normalized === "1" || normalized === "true") {
-                out.enableVga = true;
-              } else if (normalized === "0" || normalized === "false") {
-                out.enableVga = false;
-              }
+            const enableVga = parseOptionalBoolParam(search, "machineWorkerVga");
+            if (enableVga !== undefined) {
+              out.enableVga = enableVga;
             }
 
             const cpuRaw = search.get("machineWorkerCpuCount");
@@ -1891,8 +1889,8 @@ function renderMachineWorkerPanel(): HTMLElement {
       text:
         "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes display scanout via the framebuffer protocol. " +
         "(Prefers unified display_* exports when present; falls back to legacy vga_*.) " +
-        "VBE mode test: add ?machineWorkerVbe=1280x720 to the URL to boot the worker into a Bochs VBE 32bpp mode. " +
-        "AeroGPU config test: add ?machineWorkerAerogpu=1 to request AeroGPU (VGA disabled by default). " +
+        "VBE mode test: add ?machineWorkerVbe=1280x720 to boot the worker into a Bochs VBE 32bpp mode (requires VGA; set ?machineWorkerVga=1 or ?machineWorkerAerogpu=0). " +
+        "GPU config test: add ?machineWorkerAerogpu=1 (or =0 to disable) to override the default GPU device model. " +
         "SMP test: add ?machineWorkerCpuCount=2 to request a 2-vCPU machine (requires native SMP support).",
     }),
     el("div", { class: "row" }, startButton, stopButton),

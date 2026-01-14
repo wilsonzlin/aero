@@ -3398,7 +3398,8 @@ pub enum MachineBootDevice {
 /// - Canonical PC platform topology (PIC/APIC/PIT/RTC/PCI/ACPI/HPET)
 /// - Canonical Win7 storage topology (ICH9 AHCI + PIIX3 IDE) as defined in
 ///   `docs/05-storage-topology-win7.md`
-/// - E1000 NIC + UHCI (USB 1.1) + AeroGPU (default; VGA disabled)
+/// - E1000 NIC + UHCI (USB 1.1) + AeroGPU (default; VGA disabled; legacy VGA ranges are aliased
+///   through VRAM)
 ///
 /// To opt into the legacy VGA/VBE device model instead of AeroGPU, use
 /// [`Machine::new_with_config`] with `enable_aerogpu=false` (VGA defaults to enabled in that case).

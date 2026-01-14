@@ -40,17 +40,17 @@ type MachineVgaWorkerStartMessage = {
    */
   ramSizeBytes?: number;
   /**
-    * Request the canonical machine be constructed with AeroGPU enabled (and VGA disabled by default).
-    *
-    * Note: in `aero_machine` today, `enable_aerogpu` wires BAR1-backed VRAM plus minimal legacy VGA
-    * decode (legacy VGA window aliasing + permissive VGA ports) and a minimal BAR0 register block
-    * (scanout/vblank storage + ring/fence transport). Ring processing is currently a **no-op**
-    * (fence completion only) and does not execute real command streams.
-    *
-    * Also note: the AeroGPU mode does **not** expose the Bochs VBE_DISPI register ports
-    * (`0x01CE/0x01CF`) implemented by the standalone VGA/VBE device model (`aero-gpu-vga`), so the
-    * `vbeMode` boot-sector demo in this worker is not supported when `enableAerogpu=true`.
-    */
+   * Request the canonical machine be constructed with AeroGPU enabled (and VGA disabled by default).
+   *
+   * Note: in `aero_machine` today, `enable_aerogpu` wires BAR1-backed VRAM plus minimal legacy VGA
+   * decode (legacy VGA window aliasing + permissive VGA ports) and a minimal BAR0 register block
+   * (scanout/vblank storage + ring/fence transport). Ring processing is currently a **no-op**
+   * (fence completion only) and does not execute real command streams.
+   *
+   * Also note: the AeroGPU mode does **not** expose the Bochs VBE_DISPI register ports
+   * (`0x01CE/0x01CF`) implemented by the standalone VGA/VBE device model (`aero-gpu-vga`), so the
+   * `vbeMode` boot-sector demo in this worker is not supported unless VGA is enabled.
+   */
   enableAerogpu?: boolean;
   /**
    * Optional explicit VGA enablement override when constructing the machine via `new_with_config`.
@@ -65,8 +65,9 @@ type MachineVgaWorkerStartMessage = {
    * When omitted (or when the active WASM build does not support `new_with_cpu_count`), the machine
    * defaults to 1 vCPU.
    *
-   * Note: When `enableAerogpu=true`, the worker constructs the machine via `Machine.new_with_config`;
-   * newer WASM builds accept an optional `cpuCount` parameter there as well.
+   * Note: When `enableAerogpu` or `enableVga` is provided, the worker constructs the machine via
+   * `Machine.new_with_config`. Newer WASM builds accept an optional `cpuCount` parameter there as
+   * well.
    */
   cpuCount?: number;
 };
@@ -660,13 +661,13 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
   }
 
   const ramSizeBytes = typeof msg.ramSizeBytes === "number" ? msg.ramSizeBytes : 2 * 1024 * 1024;
-  const enableAerogpu = !!msg.enableAerogpu;
-  const enableVga = typeof msg.enableVga === "boolean" ? msg.enableVga : undefined;
+  const enableAerogpuOverride = typeof msg.enableAerogpu === "boolean" ? msg.enableAerogpu : undefined;
+  const enableVgaOverride = typeof msg.enableVga === "boolean" ? msg.enableVga : undefined;
   // `Machine.new_with_config` is optional across wasm builds. Stash the property in a local so
   // TypeScript can safely narrow before invoking it (property reads are not stable).
   const newWithConfig = api.Machine.new_with_config;
   const newWithCpuCount = api.Machine.new_with_cpu_count;
-  const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
+  const wantsGraphicsOverride = enableAerogpuOverride !== undefined || enableVgaOverride !== undefined;
   const cpuCount = (() => {
     const raw = msg.cpuCount;
     if (typeof raw !== "number") return 1;
@@ -675,8 +676,17 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
     return n;
   })();
   machine =
-    canEnableAerogpu
-      ? newWithConfig(ramSizeBytes >>> 0, true, enableVga, cpuCount !== 1 ? cpuCount : undefined)
+    wantsGraphicsOverride && typeof newWithConfig === "function"
+      ? (() => {
+          const enableAerogpu =
+            enableAerogpuOverride ?? (enableVgaOverride !== undefined ? !enableVgaOverride : false);
+          return newWithConfig(
+            ramSizeBytes >>> 0,
+            enableAerogpu,
+            enableVgaOverride,
+            cpuCount !== 1 ? cpuCount : undefined,
+          );
+        })()
       : cpuCount !== 1 && typeof newWithCpuCount === "function"
         ? newWithCpuCount(ramSizeBytes >>> 0, cpuCount)
         : new api.Machine(ramSizeBytes >>> 0);
@@ -685,10 +695,17 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
     throw new Error("Machine init failed (machine is null)");
   }
   const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
-  // Bochs VBE programming requires the legacy VGA/VBE device model. When running with AeroGPU
-  // enabled (and VGA disabled), ignore any requested VBE mode so we keep text-mode scanout via
-  // the `0xB8000` fallback.
-  const vbeMode = canEnableAerogpu ? undefined : msg.vbeMode;
+  // Bochs VBE programming requires the legacy VGA/VBE device model. When VGA is absent, ignore any
+  // requested VBE mode so we keep text-mode scanout via the `0xB8000` fallback.
+  const vgaDevicePresent = (() => {
+    try {
+      const vgaWidth = machineInstance.vga_width;
+      return typeof vgaWidth === "function" && vgaWidth.call(machineInstance) > 0;
+    } catch {
+      return false;
+    }
+  })();
+  const vbeMode = vgaDevicePresent ? msg.vbeMode : undefined;
   let diskImage: Uint8Array;
   if (vbeMode && typeof vbeMode === "object" && typeof vbeMode.width === "number" && typeof vbeMode.height === "number") {
     const width = Math.trunc(vbeMode.width);
