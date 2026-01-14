@@ -220,7 +220,7 @@ const OTHER_VARYING_LOCATION_BASE: u32 = 12;
 ///
 /// This is intentionally shared between the vertex and pixel shader stages so that separately
 /// compiled shaders use matching locations.
-fn varying_location(
+pub(crate) fn varying_location(
     file: RegFile,
     index: u32,
     semantic: Option<&Semantic>,

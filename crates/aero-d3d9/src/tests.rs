@@ -114,6 +114,77 @@ fn assemble_ps2_mov_oc0_t0_sm3_decoder() -> Vec<u32> {
     out
 }
 
+fn assemble_vs3_generic_output_texcoord3_constant_sm3_decoder() -> Vec<u32> {
+    // vs_3_0: outputs TEXCOORD3 via generic output register o0 so we can exercise the
+    // semantic-based varying location mapping.
+    let mut out = vec![0xFFFE0300];
+
+    // dcl_position v0
+    out.extend(enc_inst_with_extra_sm3(
+        0x001F,
+        (0u32 << 16) | (0u32 << 20),
+        &[enc_dst(1, 0, 0xF)],
+    ));
+    // dcl_position oPos
+    out.extend(enc_inst_with_extra_sm3(
+        0x001F,
+        (0u32 << 16) | (0u32 << 20),
+        &[enc_dst(4, 0, 0xF)],
+    ));
+    // dcl_texcoord3 o0
+    out.extend(enc_inst_with_extra_sm3(
+        0x001F,
+        (5u32 << 16) | (3u32 << 20),
+        &[enc_dst(6, 0, 0xF)],
+    ));
+
+    // def c0, 0.25, 0.5, 0.0, 1.0
+    out.extend(enc_inst_sm3(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3E80_0000,
+            0x3F00_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // mov oPos, v0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
+    ));
+    // mov o0, c0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(6, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_input_texcoord3_passthrough_sm3_decoder() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+
+    // dcl_texcoord3 v0
+    out.extend(enc_inst_with_extra_sm3(
+        0x001F,
+        (5u32 << 16) | (3u32 << 20),
+        &[enc_dst(1, 0, 0xF)],
+    ));
+    // mov oC0, v0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(1, 0, 0xE4)],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps_texture_modulate() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
@@ -2159,6 +2230,57 @@ fn sm3_vertex_input_semantic_locations_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "524d04e1337e7293fa80fba71bc6566addbfc46aad2f6c63656e0df4fdee75e9"
+    );
+}
+
+#[test]
+fn sm3_vs3_output_semantic_locations_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs3_generic_output_texcoord3_constant_sm3_decoder());
+    let ps = build_sm3_ir(&assemble_ps3_input_texcoord3_passthrough_sm3_decoder());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos, (u, v)) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // TEXCOORD3 is declared on VS `o0` and PS `v0`; location matching must use the semantic
+    // index (3), not the raw register index (0).
+    assert_eq!(rt.get(4, 4).to_rgba8(), [64, 128, 0, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "613f76fe73088defc52f7cd1acad3b8d0fce920bee67651655c37dcc6d97e304"
     );
 }
 

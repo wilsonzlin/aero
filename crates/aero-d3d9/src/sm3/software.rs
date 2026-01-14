@@ -4,7 +4,7 @@
 //! new shader pipeline. It is intended for deterministic, headless regression tests
 //! (pixel hash comparisons) on CI where a GPU/WebGPU adapter may be missing.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::software::{RenderTarget, Texture2D, Vec4};
 use crate::state::{
@@ -14,9 +14,10 @@ use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
 
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
 use crate::sm3::ir::{
-    Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Src, Stmt,
-    TexSampleKind,
+    Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
+    Stmt, TexSampleKind,
 };
+use super::wgsl::varying_location;
 
 const MAX_LOOP_ITERS: usize = 1_024;
 const MAX_CONTROL_FLOW_DEPTH: usize = 64;
@@ -213,6 +214,7 @@ fn exec_dst(
     o_pos: &mut Vec4,
     o_attr: &mut HashMap<u16, Vec4>,
     o_tex: &mut HashMap<u16, Vec4>,
+    o_out: &mut HashMap<u16, Vec4>,
     o_color: &mut Vec4,
     value: Vec4,
 ) {
@@ -262,13 +264,16 @@ fn exec_dst(
                 apply_write_mask(v, dst.mask, value);
             }
         }
+        RegFile::Output => {
+            if let Some(i) = idx_u16 {
+                let v = o_out.entry(i).or_insert(Vec4::ZERO);
+                apply_write_mask(v, dst.mask, value);
+            }
+        }
         RegFile::ColorOut => {
             apply_write_mask(o_color, dst.mask, value);
         }
-        // VS 3.0 uses generic `o#` outputs. We don't have enough context to
-        // map them to varyings here, so ignore them for now.
-        RegFile::Output
-        | RegFile::DepthOut
+        RegFile::DepthOut
         | RegFile::Const
         | RegFile::ConstInt
         | RegFile::ConstBool
@@ -327,6 +332,7 @@ fn exec_block(
     o_pos: &mut Vec4,
     o_attr: &mut HashMap<u16, Vec4>,
     o_tex: &mut HashMap<u16, Vec4>,
+    o_out: &mut HashMap<u16, Vec4>,
     o_color: &mut Vec4,
 ) -> Flow {
     if depth > MAX_CONTROL_FLOW_DEPTH {
@@ -350,6 +356,7 @@ fn exec_block(
                     o_pos,
                     o_attr,
                     o_tex,
+                    o_out,
                     o_color,
                 );
                 Flow::Continue
@@ -377,6 +384,7 @@ fn exec_block(
                         o_pos,
                         o_attr,
                         o_tex,
+                        o_out,
                         o_color,
                     )
                 } else if let Some(else_block) = else_block {
@@ -395,6 +403,7 @@ fn exec_block(
                         o_pos,
                         o_attr,
                         o_tex,
+                        o_out,
                         o_color,
                     )
                 } else {
@@ -463,6 +472,7 @@ fn exec_block(
                         o_pos,
                         o_attr,
                         o_tex,
+                        o_out,
                         o_color,
                     ) {
                         Flow::Continue => {}
@@ -527,6 +537,7 @@ fn exec_op(
     o_pos: &mut Vec4,
     o_attr: &mut HashMap<u16, Vec4>,
     o_tex: &mut HashMap<u16, Vec4>,
+    o_out: &mut HashMap<u16, Vec4>,
     o_color: &mut Vec4,
 ) {
     let (dst, modifiers) = match op {
@@ -775,6 +786,7 @@ fn exec_op(
         o_pos,
         o_attr,
         o_tex,
+        o_out,
         o_color,
         v,
     );
@@ -846,6 +858,7 @@ struct VsOut {
     clip_pos: Vec4,
     attr: HashMap<u16, Vec4>,
     tex: HashMap<u16, Vec4>,
+    out: HashMap<u16, Vec4>,
 }
 
 fn prepare_constants(
@@ -895,6 +908,7 @@ fn run_vertex_shader(
     let mut o_pos = Vec4::ZERO;
     let mut o_attr = HashMap::<u16, Vec4>::new();
     let mut o_tex = HashMap::<u16, Vec4>::new();
+    let mut o_out = HashMap::<u16, Vec4>::new();
     let mut dummy_color = Vec4::ZERO;
     let empty_t = HashMap::new();
     let empty_tex = HashMap::new();
@@ -914,6 +928,7 @@ fn run_vertex_shader(
         &mut o_pos,
         &mut o_attr,
         &mut o_tex,
+        &mut o_out,
         &mut dummy_color,
     );
 
@@ -921,6 +936,7 @@ fn run_vertex_shader(
         clip_pos: o_pos,
         attr: o_attr,
         tex: o_tex,
+        out: o_out,
     }
 }
 
@@ -940,6 +956,7 @@ fn run_pixel_shader(
     let mut dummy_pos = Vec4::ZERO;
     let mut dummy_attr = HashMap::<u16, Vec4>::new();
     let mut dummy_tex = HashMap::<u16, Vec4>::new();
+    let mut dummy_out = HashMap::<u16, Vec4>::new();
     let mut o_color = Vec4::ZERO;
 
     let flow = exec_block(
@@ -957,6 +974,7 @@ fn run_pixel_shader(
         &mut dummy_pos,
         &mut dummy_attr,
         &mut dummy_tex,
+        &mut dummy_out,
         &mut o_color,
     );
 
@@ -971,8 +989,7 @@ struct ScreenVertex {
     x: f32,
     y: f32,
     inv_w: f32,
-    attr: HashMap<u16, Vec4>,
-    tex: HashMap<u16, Vec4>,
+    varyings: HashMap<u32, Vec4>,
 }
 
 fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
@@ -991,12 +1008,223 @@ pub struct DrawParams<'a> {
     pub blend_state: BlendState,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PsInputLocation {
+    file: RegFile,
+    index: u16,
+    location: u32,
+}
+
 struct PixelContext<'a> {
     ps: &'a crate::sm3::ir::ShaderIr,
     constants: ConstBank,
     textures: &'a HashMap<u16, Texture2D>,
     sampler_states: &'a HashMap<u16, SamplerState>,
     blend_state: BlendState,
+    ps_inputs: Vec<PsInputLocation>,
+}
+
+fn collect_used_pixel_inputs(block: &Block, out: &mut BTreeSet<(RegFile, u32)>) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Op(op) => collect_used_pixel_inputs_op(op, out),
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                collect_used_pixel_inputs_cond(cond, out);
+                collect_used_pixel_inputs(then_block, out);
+                if let Some(else_block) = else_block {
+                    collect_used_pixel_inputs(else_block, out);
+                }
+            }
+            Stmt::Loop { init, body } => {
+                collect_used_pixel_inputs_reg(&init.loop_reg, out);
+                collect_used_pixel_inputs_reg(&init.ctrl_reg, out);
+                collect_used_pixel_inputs(body, out);
+            }
+            Stmt::Break => {}
+            Stmt::BreakIf { cond } => collect_used_pixel_inputs_cond(cond, out),
+            Stmt::Discard { src } => collect_used_pixel_inputs_src(src, out),
+        }
+    }
+}
+
+fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
+    match op {
+        IrOp::Mov { src, modifiers, .. }
+        | IrOp::Mova { src, modifiers, .. }
+        | IrOp::Rcp { src, modifiers, .. }
+        | IrOp::Rsq { src, modifiers, .. }
+        | IrOp::Frc { src, modifiers, .. }
+        | IrOp::Exp { src, modifiers, .. }
+        | IrOp::Log { src, modifiers, .. }
+        | IrOp::Ddx { src, modifiers, .. }
+        | IrOp::Ddy { src, modifiers, .. }
+        | IrOp::Nrm { src, modifiers, .. }
+        | IrOp::Lit { src, modifiers, .. } => {
+            collect_used_pixel_inputs_src(src, out);
+            collect_used_pixel_inputs_modifiers(modifiers, out);
+        }
+        IrOp::SinCos {
+            src,
+            src1,
+            src2,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src(src, out);
+            if let Some(src1) = src1 {
+                collect_used_pixel_inputs_src(src1, out);
+            }
+            if let Some(src2) = src2 {
+                collect_used_pixel_inputs_src(src2, out);
+            }
+            collect_used_pixel_inputs_modifiers(modifiers, out);
+        }
+        IrOp::Add {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Sub {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Mul {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Min {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Max {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Dp2 {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Dp3 {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Dp4 {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::SetCmp {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Pow {
+            src0,
+            src1,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src(src0, out);
+            collect_used_pixel_inputs_src(src1, out);
+            collect_used_pixel_inputs_modifiers(modifiers, out);
+        }
+        IrOp::Select {
+            cond,
+            src_ge,
+            src_lt,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src(cond, out);
+            collect_used_pixel_inputs_src(src_ge, out);
+            collect_used_pixel_inputs_src(src_lt, out);
+            collect_used_pixel_inputs_modifiers(modifiers, out);
+        }
+        IrOp::Mad {
+            src0,
+            src1,
+            src2,
+            modifiers,
+            ..
+        }
+        | IrOp::Lrp {
+            src0,
+            src1,
+            src2,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src(src0, out);
+            collect_used_pixel_inputs_src(src1, out);
+            collect_used_pixel_inputs_src(src2, out);
+            collect_used_pixel_inputs_modifiers(modifiers, out);
+        }
+        IrOp::TexSample {
+            coord,
+            ddx,
+            ddy,
+            modifiers,
+            ..
+        } => {
+            collect_used_pixel_inputs_src(coord, out);
+            if let Some(ddx) = ddx {
+                collect_used_pixel_inputs_src(ddx, out);
+            }
+            if let Some(ddy) = ddy {
+                collect_used_pixel_inputs_src(ddy, out);
+            }
+            collect_used_pixel_inputs_modifiers(modifiers, out);
+        }
+    }
+}
+
+fn collect_used_pixel_inputs_cond(cond: &Cond, out: &mut BTreeSet<(RegFile, u32)>) {
+    match cond {
+        Cond::NonZero { src } => collect_used_pixel_inputs_src(src, out),
+        Cond::Compare { src0, src1, .. } => {
+            collect_used_pixel_inputs_src(src0, out);
+            collect_used_pixel_inputs_src(src1, out);
+        }
+        Cond::Predicate { pred } => collect_used_pixel_inputs_reg(&pred.reg, out),
+    }
+}
+
+fn collect_used_pixel_inputs_src(src: &Src, out: &mut BTreeSet<(RegFile, u32)>) {
+    collect_used_pixel_inputs_reg(&src.reg, out);
+}
+
+fn collect_used_pixel_inputs_modifiers(modifiers: &InstModifiers, out: &mut BTreeSet<(RegFile, u32)>) {
+    if let Some(pred) = &modifiers.predicate {
+        collect_used_pixel_inputs_reg(&pred.reg, out);
+    }
+}
+
+fn collect_used_pixel_inputs_reg(reg: &RegRef, out: &mut BTreeSet<(RegFile, u32)>) {
+    if matches!(reg.file, RegFile::Input | RegFile::Texture) {
+        out.insert((reg.file, reg.index));
+    }
+    if let Some(rel) = &reg.relative {
+        collect_used_pixel_inputs_reg(&rel.reg, out);
+    }
 }
 
 /// Draw a triangle list using SM2/3 bytecode lowered to `sm3::ir::ShaderIr`.
@@ -1016,6 +1244,41 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
 
     let vs_constants = prepare_constants(constants, vs);
     let ps_constants = prepare_constants(constants, ps);
+
+    let mut vs_output_semantics = HashMap::<u32, Semantic>::new();
+    for decl in &vs.outputs {
+        if decl.reg.file == RegFile::Output {
+            vs_output_semantics.insert(decl.reg.index, decl.semantic.clone());
+        }
+    }
+
+    let mut ps_input_semantics = HashMap::<u32, Semantic>::new();
+    for decl in &ps.inputs {
+        if decl.reg.file == RegFile::Input {
+            ps_input_semantics.insert(decl.reg.index, decl.semantic.clone());
+        }
+    }
+
+    let mut used_ps_inputs = BTreeSet::<(RegFile, u32)>::new();
+    collect_used_pixel_inputs(&ps.body, &mut used_ps_inputs);
+    let mut ps_inputs = Vec::<PsInputLocation>::new();
+    for (file, index) in used_ps_inputs {
+        let Ok(index_u16) = u16::try_from(index) else {
+            continue;
+        };
+        let semantic = match file {
+            RegFile::Input => ps_input_semantics.get(&index),
+            RegFile::Texture => None,
+            other => panic!("unexpected pixel shader input register file {other:?}"),
+        };
+        let location = varying_location(file, index, semantic)
+            .unwrap_or_else(|e| panic!("failed to map {file:?}{index} to varying location: {e}"));
+        ps_inputs.push(PsInputLocation {
+            file,
+            index: index_u16,
+            location,
+        });
+    }
 
     // Vertex shader IR may canonicalize `v#` indices to WGSL `@location(n)` values based on DCL
     // semantics. Mirror that mapping here so the software interpreter sees the same inputs as the
@@ -1054,19 +1317,43 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
     let mut verts = Vec::<ScreenVertex>::new();
     let mut emit_vertex = |vertex_index: u32| {
         let inputs = fetch_vertex(vertex_index);
-        let out = run_vertex_shader(vs, &inputs, &vs_constants);
-        let cp = out.clip_pos;
+        let VsOut {
+            clip_pos: cp,
+            attr,
+            tex,
+            out,
+        } = run_vertex_shader(vs, &inputs, &vs_constants);
         let inv_w = 1.0 / cp.w.max(f32::EPSILON);
         let ndc_x = cp.x * inv_w;
         let ndc_y = cp.y * inv_w;
         let sx = (ndc_x * 0.5 + 0.5) * target.width as f32;
         let sy = (-ndc_y * 0.5 + 0.5) * target.height as f32;
+        let mut varyings = HashMap::<u32, Vec4>::new();
+        for (index, value) in attr {
+            let index = u32::from(index);
+            let loc = varying_location(RegFile::AttrOut, index, None)
+                .unwrap_or_else(|e| panic!("failed to map AttrOut{index} to varying location: {e}"));
+            varyings.insert(loc, value);
+        }
+        for (index, value) in tex {
+            let index = u32::from(index);
+            let loc = varying_location(RegFile::TexCoordOut, index, None).unwrap_or_else(|e| {
+                panic!("failed to map TexCoordOut{index} to varying location: {e}")
+            });
+            varyings.insert(loc, value);
+        }
+        for (index, value) in out {
+            let index = u32::from(index);
+            let semantic = vs_output_semantics.get(&index);
+            let loc = varying_location(RegFile::Output, index, semantic)
+                .unwrap_or_else(|e| panic!("failed to map Output{index} to varying location: {e}"));
+            varyings.insert(loc, value);
+        }
         verts.push(ScreenVertex {
             x: sx,
             y: sy,
             inv_w,
-            attr: out.attr,
-            tex: out.tex,
+            varyings,
         });
     };
 
@@ -1076,6 +1363,7 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
         textures,
         sampler_states,
         blend_state,
+        ps_inputs,
     };
 
     match indices {
@@ -1154,16 +1442,16 @@ fn rasterize_triangle(
                 let inv_w = inv_w.max(f32::EPSILON);
                 let w = 1.0 / inv_w;
 
-                let interp_map = |map_a: &HashMap<u16, Vec4>,
-                                  map_b: &HashMap<u16, Vec4>,
-                                  map_c: &HashMap<u16, Vec4>| {
+                let interp_map = |map_a: &HashMap<u32, Vec4>,
+                                  map_b: &HashMap<u32, Vec4>,
+                                  map_c: &HashMap<u32, Vec4>| {
                     let mut keys = map_a.keys().copied().collect::<Vec<_>>();
                     keys.extend(map_b.keys().copied());
                     keys.extend(map_c.keys().copied());
                     keys.sort_unstable();
                     keys.dedup();
 
-                    let mut out = HashMap::<u16, Vec4>::new();
+                    let mut out = HashMap::<u32, Vec4>::new();
                     for k in keys {
                         let va = map_a
                             .get(&k)
@@ -1187,13 +1475,27 @@ fn rasterize_triangle(
                     out
                 };
 
-                let attr = interp_map(&a.attr, &b.attr, &c.attr);
-                let tex = interp_map(&a.tex, &b.tex, &c.tex);
+                let varyings = interp_map(&a.varyings, &b.varyings, &c.varyings);
+
+                let mut inputs_v = HashMap::<u16, Vec4>::new();
+                let mut inputs_t = HashMap::<u16, Vec4>::new();
+                for input in &ctx.ps_inputs {
+                    let value = varyings.get(&input.location).copied().unwrap_or(Vec4::ZERO);
+                    match input.file {
+                        RegFile::Input => {
+                            inputs_v.insert(input.index, value);
+                        }
+                        RegFile::Texture => {
+                            inputs_t.insert(input.index, value);
+                        }
+                        _ => {}
+                    }
+                }
 
                 if let Some(color) = run_pixel_shader(
                     ctx.ps,
-                    &attr,
-                    &tex,
+                    &inputs_v,
+                    &inputs_t,
                     &ctx.constants,
                     ctx.textures,
                     ctx.sampler_states,
