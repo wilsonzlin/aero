@@ -269,8 +269,8 @@ impl XhciControllerBridge {
     /// as 1ms of guest time (USB frame).
     ///
     /// DMA is gated on PCI Bus Master Enable (command bit 2):
-    /// - When BME is set, the controller can DMA into guest RAM via [`WasmGuestMemory`]. Stepping
-    ///   also runs transfer-ring work and drains queued events into the guest-configured event ring.
+    /// - When BME is set, the controller can DMA into guest RAM via [`GuestMemoryBus`]. Stepping also
+    ///   runs transfer-ring work and drains queued events into the guest-configured event ring.
     /// - When BME is clear, the controller still advances internal timers (e.g. port reset timers)
     ///   but does not perform any DMA.
     pub fn step_frames(&mut self, frames: u32) {
