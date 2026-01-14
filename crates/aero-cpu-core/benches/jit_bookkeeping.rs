@@ -88,10 +88,20 @@ fn criterion_config() -> Criterion {
             .measurement_time(Duration::from_millis(400))
             .sample_size(20)
             .noise_threshold(0.05),
-        _ => Criterion::default()
+        Ok("full") => Criterion::default()
+            // More stable results at the cost of runtime.
             .warm_up_time(Duration::from_secs(1))
             .measurement_time(Duration::from_secs(2))
             .sample_size(50)
+            .noise_threshold(0.03),
+        _ => Criterion::default()
+            // This bench target contains many sub-benchmarks. Use a moderately-sized default so
+            // `cargo bench --bench jit_bookkeeping` stays practical for local runs (and within
+            // `scripts/safe-run.sh`'s default timeout), while still allowing a slower/more-stable
+            // run via `AERO_BENCH_PROFILE=full`.
+            .warm_up_time(Duration::from_millis(250))
+            .measurement_time(Duration::from_secs(1))
+            .sample_size(30)
             .noise_threshold(0.03),
     }
 }
@@ -865,7 +875,6 @@ fn bench_jit_runtime_prepare_block_compile_request(c: &mut Criterion) {
             cache_max_bytes: 0,
             // Keep bench setup lightweight; page-version tracking isn't exercised here.
             code_version_max_pages: 0,
-            ..JitConfig::default()
         };
 
         // Pre-generate a stable RIP set so no allocations occur in the measured loop.
@@ -892,7 +901,6 @@ fn bench_jit_runtime_prepare_block_compile_request(c: &mut Criterion) {
             cache_max_bytes: 0,
             // Keep bench setup lightweight; page-version tracking isn't exercised here.
             code_version_max_pages: 0,
-            ..JitConfig::default()
         };
 
         let rips: Vec<u64> = (0..OPS_PER_ITER as u64).map(|i| 0xB000u64 + i).collect();
