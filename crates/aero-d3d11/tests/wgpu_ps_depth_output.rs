@@ -241,7 +241,8 @@ fn wgpu_pixel_shader_depth_output_affects_depth_test() {
         // the LESS depth test and the output stays red.
         let osgn_params = vec![
             sig_param("SV_Target", 0, 0, 0b1111),
-            sig_param("SV_Depth", 0, 1, 0b0001),
+            // Depth signatures frequently reuse register 0 even when `SV_Target0` also uses 0.
+            sig_param("SV_Depth", 0, 0, 0b0001),
         ];
         let dxbc_bytes = build_dxbc(&[
             (FOURCC_SHEX, Vec::new()),
@@ -261,9 +262,9 @@ fn wgpu_pixel_shader_depth_output_affects_depth_test() {
                     dst: dst(RegFile::Output, 0, WriteMask::XYZW),
                     src: src_imm([1.0, 0.0, 0.0, 1.0]),
                 },
-                // o1.x = 0.0 (override depth to near)
+                // oDepth.x = 0.0 (override depth to near)
                 Sm4Inst::Mov {
-                    dst: dst(RegFile::Output, 1, WriteMask::X),
+                    dst: dst(RegFile::OutputDepth, 0, WriteMask::X),
                     src: src_imm([0.0, 0.0, 0.0, 0.0]),
                 },
                 Sm4Inst::Ret,

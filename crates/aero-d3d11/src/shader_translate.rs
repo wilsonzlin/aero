@@ -502,7 +502,7 @@ fn translate_ps(
         .filter(|p| p.sys_value == Some(D3D_NAME_TARGET))
         .collect();
     ps_targets.sort_by_key(|p| p.param.semantic_index);
-    let ps_has_depth_output = io.ps_sv_depth_register.is_some();
+    let ps_has_depth_output = io.ps_sv_depth.is_some();
     if ps_targets.is_empty() && !ps_has_depth_output {
         return Err(ShaderTranslateError::PixelShaderMissingColorOutputs);
     }
@@ -634,9 +634,59 @@ fn build_io_maps(
     }
 
     let mut outputs: BTreeMap<u32, ParamInfo> = BTreeMap::new();
+    let mut ps_sv_depth: Option<ParamInfo> = None;
     for p in &osgn.parameters {
-        let sys_value = resolve_sys_value_type(p, &output_sivs);
+        let mut sys_value = resolve_sys_value_type(p, &output_sivs);
+        if module.stage == ShaderStage::Pixel
+            && sys_value.is_none()
+            && p.semantic_index == 0
+            && p.semantic_name.eq_ignore_ascii_case("DEPTH")
+        {
+            // Some toolchains emit the legacy `DEPTH` semantic with `system_value_type` unset.
+            sys_value = Some(D3D_NAME_DEPTH);
+        }
         let info = ParamInfo::from_sig_param("output", p, sys_value)?;
+
+        if module.stage == ShaderStage::Pixel
+            && matches!(
+                info.sys_value,
+                Some(D3D_NAME_DEPTH)
+                    | Some(D3D_NAME_DEPTH_GREATER_EQUAL)
+                    | Some(D3D_NAME_DEPTH_LESS_EQUAL)
+            )
+        {
+            // SV_Depth uses a dedicated register file (`oDepth`) and can share a register number
+            // with color outputs in the signature table. Keep it out of the regular `o#` output map
+            // (which is keyed only by register number) and track it separately.
+            match ps_sv_depth.as_mut() {
+                Some(existing) => {
+                    if existing.sys_value != info.sys_value {
+                        return Err(ShaderTranslateError::ConflictingSignatureRegister {
+                            io: "output",
+                            register: p.register,
+                            first: format!(
+                                "{}{}",
+                                existing.param.semantic_name, existing.param.semantic_index
+                            ),
+                            second: format!(
+                                "{}{}",
+                                info.param.semantic_name, info.param.semantic_index
+                            ),
+                        });
+                    }
+
+                    let mut merged_param = existing.param.clone();
+                    merged_param.mask |= info.param.mask;
+                    merged_param.read_write_mask |= info.param.read_write_mask;
+                    *existing =
+                        ParamInfo::from_sig_param("output", &merged_param, existing.sys_value)?;
+                }
+                None => {
+                    ps_sv_depth = Some(info);
+                }
+            }
+            continue;
+        }
         match outputs.get_mut(&p.register) {
             Some(existing) => {
                 if existing.sys_value != info.sys_value || existing.builtin != info.builtin {
@@ -722,33 +772,7 @@ fn build_io_maps(
         }
     }
 
-    let mut ps_sv_depth_reg = None;
-    if module.stage == ShaderStage::Pixel {
-        ps_sv_depth_reg = outputs
-            .values()
-            .find(|p| {
-                matches!(
-                    p.sys_value,
-                    Some(D3D_NAME_DEPTH)
-                        | Some(D3D_NAME_DEPTH_GREATER_EQUAL)
-                        | Some(D3D_NAME_DEPTH_LESS_EQUAL)
-                )
-            })
-            .map(|p| p.param.register);
-        if ps_sv_depth_reg.is_none() {
-            // Some toolchains emit the legacy `DEPTH` semantic with `system_value_type` unset.
-            ps_sv_depth_reg = osgn
-                .parameters
-                .iter()
-                .find(|p| p.semantic_index == 0 && p.semantic_name.eq_ignore_ascii_case("DEPTH"))
-                .map(|p| p.register);
-            if let Some(reg) = ps_sv_depth_reg {
-                if let Some(p) = outputs.get_mut(&reg) {
-                    p.sys_value = Some(D3D_NAME_DEPTH);
-                }
-            }
-        }
-    }
+    // `ps_sv_depth` is extracted while building the output map (see above).
 
     let vs_vertex_id_reg = (module.stage == ShaderStage::Vertex)
         .then(|| {
@@ -791,7 +815,7 @@ fn build_io_maps(
         vs_position_register: vs_position_reg,
         ps_position_register: ps_position_reg,
         ps_primitive_id_register: ps_primitive_id_reg,
-        ps_sv_depth_register: ps_sv_depth_reg,
+        ps_sv_depth,
         vs_vertex_id_register: vs_vertex_id_reg,
         vs_instance_id_register: vs_instance_id_reg,
         ps_front_facing_register: ps_front_facing_reg,
@@ -895,7 +919,7 @@ fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
         vs_position_register: None,
         ps_position_register: None,
         ps_primitive_id_register: None,
-        ps_sv_depth_register: None,
+        ps_sv_depth: None,
         vs_vertex_id_register: None,
         vs_instance_id_register: None,
         ps_front_facing_register: None,
@@ -1185,7 +1209,7 @@ struct IoMaps {
     vs_position_register: Option<u32>,
     ps_position_register: Option<u32>,
     ps_primitive_id_register: Option<u32>,
-    ps_sv_depth_register: Option<u32>,
+    ps_sv_depth: Option<ParamInfo>,
     vs_vertex_id_register: Option<u32>,
     vs_instance_id_register: Option<u32>,
     ps_front_facing_register: Option<u32>,
@@ -1193,6 +1217,28 @@ struct IoMaps {
 }
 
 impl IoMaps {
+    fn ps_depth_needs_dedicated_reg(&self) -> bool {
+        let Some(depth) = &self.ps_sv_depth else {
+            return false;
+        };
+        let depth_reg = depth.param.register;
+        self.outputs.values().any(|p| {
+            p.sys_value == Some(D3D_NAME_TARGET) && p.param.register == depth_reg
+        })
+    }
+
+    fn ps_depth_var(&self) -> Result<String, ShaderTranslateError> {
+        let depth = self.ps_sv_depth.as_ref().ok_or(ShaderTranslateError::MissingSignature(
+            "pixel output SV_Depth",
+        ))?;
+        let depth_reg = depth.param.register;
+        if self.ps_depth_needs_dedicated_reg() {
+            Ok("oDepth".to_owned())
+        } else {
+            Ok(format!("o{depth_reg}"))
+        }
+    }
+
     fn inputs_reflection(&self) -> Vec<IoParam> {
         self.inputs
             .values()
@@ -1369,7 +1415,7 @@ impl IoMaps {
             .collect();
         targets.sort_by_key(|p| p.param.semantic_index);
 
-        let has_depth = self.ps_sv_depth_register.is_some();
+        let has_depth = self.ps_sv_depth.is_some();
         if targets.is_empty() && !has_depth {
             return Err(ShaderTranslateError::PixelShaderMissingColorOutputs);
         }
@@ -1381,15 +1427,9 @@ impl IoMaps {
             let expr = apply_sig_mask_to_vec4(&format!("o{reg}"), p.param.mask);
             w.line(&format!("out.target{location} = {expr};"));
         }
-        if let Some(depth_reg) = self.ps_sv_depth_register {
-            let depth_param = self.outputs.get(&depth_reg).ok_or(
-                ShaderTranslateError::SignatureMissingRegister {
-                    io: "output",
-                    register: depth_reg,
-                },
-            )?;
-            let depth_expr =
-                apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
+        if let Some(depth_param) = &self.ps_sv_depth {
+            let depth_var = self.ps_depth_var()?;
+            let depth_expr = apply_sig_mask_to_scalar(&depth_var, depth_param.param.mask);
             w.line(&format!("out.depth = {depth_expr};"));
         }
         w.line("return out;");
@@ -2399,6 +2439,8 @@ fn emit_temp_and_output_decls(
 ) -> Result<(), ShaderTranslateError> {
     let mut temps = BTreeSet::<u32>::new();
     let mut outputs = BTreeSet::<u32>::new();
+    let mut needs_depth_reg = false;
+    let depth_reg = io.ps_sv_depth.as_ref().map(|p| p.param.register);
 
     for inst in &module.instructions {
         let mut scan_reg = |reg: RegisterRef| match reg.file {
@@ -2409,9 +2451,11 @@ fn emit_temp_and_output_decls(
                 outputs.insert(reg.index);
             }
             RegFile::OutputDepth => {
-                // Depth output registers are mapped to a concrete `o#` register by the output
-                // signature. Ensure the mapped register is declared if present.
-                if let Some(depth_reg) = io.ps_sv_depth_register {
+                // Depth output registers are mapped either to the signature's register index (when
+                // it does not overlap with any color outputs) or to a dedicated `oDepth` temp.
+                if io.ps_sv_depth.is_some() && io.ps_depth_needs_dedicated_reg() {
+                    needs_depth_reg = true;
+                } else if let Some(depth_reg) = depth_reg {
                     outputs.insert(depth_reg);
                 } else {
                     outputs.insert(reg.index);
@@ -2616,6 +2660,13 @@ fn emit_temp_and_output_decls(
     for &reg in io.outputs.keys() {
         outputs.insert(reg);
     }
+    if io.ps_sv_depth.is_some() {
+        if io.ps_depth_needs_dedicated_reg() {
+            needs_depth_reg = true;
+        } else if let Some(depth_reg) = depth_reg {
+            outputs.insert(depth_reg);
+        }
+    }
     if let Some(pos_reg) = io.vs_position_register {
         outputs.insert(pos_reg);
     }
@@ -2627,9 +2678,12 @@ fn emit_temp_and_output_decls(
     if has_temps {
         w.line("");
     }
-    let has_outputs = !outputs.is_empty();
+    let has_outputs = !outputs.is_empty() || needs_depth_reg;
     for &idx in &outputs {
         w.line(&format!("var o{idx}: vec4<f32> = vec4<f32>(0.0);"));
+    }
+    if needs_depth_reg {
+        w.line("var oDepth: vec4<f32> = vec4<f32>(0.0);");
     }
     if has_outputs {
         w.line("");
@@ -3791,12 +3845,7 @@ fn emit_src_vec4(
             match reg.file {
                 RegFile::Temp => format!("r{}", reg.index),
                 RegFile::Output => format!("o{}", reg.index),
-                RegFile::OutputDepth => {
-                    let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
-                        ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
-                    )?;
-                    format!("o{depth_reg}")
-                }
+                RegFile::OutputDepth => ctx.io.ps_depth_var()?,
                 RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
             }
         }
@@ -3839,12 +3888,7 @@ fn emit_src_vec4_u32(
             let expr = match reg.file {
                 RegFile::Temp => format!("r{}", reg.index),
                 RegFile::Output => format!("o{}", reg.index),
-                RegFile::OutputDepth => {
-                    let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
-                        ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
-                    )?;
-                    format!("o{depth_reg}")
-                }
+                RegFile::OutputDepth => ctx.io.ps_depth_var()?,
                 RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
             };
             format!("bitcast<vec4<u32>>({expr})")
@@ -3910,12 +3954,7 @@ fn emit_src_vec4_i32(
             let expr = match reg.file {
                 RegFile::Temp => format!("r{}", reg.index),
                 RegFile::Output => format!("o{}", reg.index),
-                RegFile::OutputDepth => {
-                    let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
-                        ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
-                    )?;
-                    format!("o{depth_reg}")
-                }
+                RegFile::OutputDepth => ctx.io.ps_depth_var()?,
                 RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
             };
             format!("bitcast<vec4<i32>>({expr})")
@@ -4076,15 +4115,7 @@ fn emit_write_masked(
     let dst_expr = match dst.file {
         RegFile::Temp => format!("r{}", dst.index),
         RegFile::Output => format!("o{}", dst.index),
-        RegFile::OutputDepth => {
-            let depth_reg =
-                ctx.io
-                    .ps_sv_depth_register
-                    .ok_or(ShaderTranslateError::MissingSignature(
-                        "pixel output SV_Depth",
-                    ))?;
-            format!("o{depth_reg}")
-        }
+        RegFile::OutputDepth => ctx.io.ps_depth_var()?,
         RegFile::Input => {
             return Err(ShaderTranslateError::UnsupportedInstruction {
                 inst_index,

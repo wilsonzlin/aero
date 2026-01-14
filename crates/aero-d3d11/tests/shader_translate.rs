@@ -728,6 +728,61 @@ fn translates_pixel_depth_output_sv_depth_greater_equal_semantic() {
 }
 
 #[test]
+fn translates_pixel_depth_output_with_overlapping_signature_registers() {
+    // Real DXBC signatures can assign `SV_Target0` and `SV_Depth` the same register number (they
+    // live in different register files). Ensure our signature-driven translator doesn't treat this
+    // as a conflict and still emits `@builtin(frag_depth)` alongside color outputs.
+    let osgn_params = vec![
+        sig_param("SV_Target", 0, 0, 0b1111),
+        sig_param("SV_Depth", 0, 0, 0b0001),
+    ];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // o0 = red
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 0.0, 0.0, 1.0]),
+            },
+            // oDepth.x = 0.25
+            Sm4Inst::Mov {
+                dst: dst(RegFile::OutputDepth, 0, WriteMask::X),
+                src: src_imm([0.25, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("@location(0) target0"),
+        "expected color output location 0:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("@builtin(frag_depth)"),
+        "expected depth output builtin:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("var oDepth: vec4<f32>"),
+        "expected dedicated oDepth temp when signature registers overlap:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_cbuffer_and_arithmetic_ops() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[
