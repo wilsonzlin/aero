@@ -613,6 +613,17 @@ fn tier2_trace_wasm_updates_rflags_even_when_flags_are_not_observed_in_trace() {
     let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
     assert_eq!(got_rip, interp_state.cpu.rip);
 
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(
+        exit_reason,
+        jit_ctx::TRACE_EXIT_REASON_NONE,
+        "guard side exits should not set TRACE_EXIT_REASON_CODE_INVALIDATION"
+    );
+
     let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
     memory
         .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
@@ -713,6 +724,17 @@ fn tier2_trace_wasm_spills_rflags_on_side_exit_when_flags_are_not_observed_in_tr
 
     let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
     assert_eq!(got_rip, interp_state.cpu.rip);
+
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(
+        exit_reason,
+        jit_ctx::TRACE_EXIT_REASON_NONE,
+        "guard side exits should not set TRACE_EXIT_REASON_CODE_INVALIDATION"
+    );
 
     let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
     memory
