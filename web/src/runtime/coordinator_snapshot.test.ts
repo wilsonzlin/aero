@@ -429,6 +429,55 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(cursorAfter.basePaddrHi).toBe(0);
   });
 
+  it("tolerates malformed scanout/cursor shared state on snapshotRestoreFromOpfs (no throw)", async () => {
+    const coordinator = new WorkerCoordinator();
+    const cpu = new StubWorker();
+    const io = new StubWorker();
+    installReadyWorkers(coordinator, { cpu, io });
+
+    const shared = (coordinator as any).shared;
+    // Too small for a ScanoutState view; `wrapScanoutState` would throw.
+    shared.scanoutState = new SharedArrayBuffer(16);
+    shared.scanoutStateOffsetBytes = 0;
+    // Misaligned cursor offset; `wrapCursorState` would throw.
+    shared.cursorState = new SharedArrayBuffer(16);
+    shared.cursorStateOffsetBytes = 2;
+
+    const promise = coordinator.snapshotRestoreFromOpfs("state/test.snap");
+
+    expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(io.posted[1]?.message.kind).toBe("vm.snapshot.restoreFromOpfs");
+    const cpuBuf = new ArrayBuffer(4);
+    const mmuBuf = new ArrayBuffer(8);
+    io.emitMessage({
+      kind: "vm.snapshot.restored",
+      requestId: io.posted[1]!.message.requestId,
+      ok: true,
+      cpu: cpuBuf,
+      mmu: mmuBuf,
+      devices: [],
+    });
+    await flushMicrotasks();
+
+    expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.setCpuState");
+    cpu.emitMessage({ kind: "vm.snapshot.cpuStateSet", requestId: cpu.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(io.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
+    io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
   it("pauses/resumes the net worker even when it is not marked ready yet (avoids NET ring reset races)", async () => {
     const coordinator = new WorkerCoordinator();
     const cpu = new StubWorker();
