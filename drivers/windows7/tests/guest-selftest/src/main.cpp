@@ -11147,9 +11147,10 @@ static void PrintUsage() {
        "  --test-input-led          Run virtio-input keyboard LED/statusq smoke test (optional)\n"
        "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1)\n"
         "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
-        "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
-        "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)\n"
+      "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)\n"
         "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
+        "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)\n"
         "  --require-non-silence     Fail capture smoke test if only silence is captured\n"
         "  --allow-virtio-snd-transitional  Also accept legacy PCI\\VEN_1AF4&DEV_1018\n"
        "  --require-net-msix        Fail if virtio-net is not using MSI-X (default: allow INTx)\n"
@@ -11320,6 +11321,10 @@ int wmain(int argc, wchar_t** argv) {
   if (!opt.disable_snd && !opt.disable_snd_capture && !opt.test_snd_capture &&
       EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE")) {
     opt.test_snd_capture = true;
+  }
+  if (!opt.disable_snd && !opt.test_snd_buffer_limits &&
+      EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS")) {
+    opt.test_snd_buffer_limits = true;
   }
 
   if (!opt.test_blk_resize && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE")) {

@@ -315,7 +315,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Use `--disable-snd` to force **SKIP** for both playback and capture.
   - Use `--disable-snd-capture` to force **SKIP** for capture only (while still exercising playback).
   - Optional buffer sizing stress test:
-    - Use `--test-snd-buffer-limits` to run a WASAPI stress check that attempts to initialize a render stream with an
+    - Use `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`) to run a WASAPI stress check that attempts to initialize a render stream with an
       intentionally large buffer duration/period, to exercise virtio-snd buffer sizing limits (for example large cyclic
       buffers / payload caps).
     - Emits a separate `virtio-snd-buffer-limits` marker.
