@@ -2034,7 +2034,7 @@ static bool UnmapLocked(Device* dev, Resource* res) {
     return false;
   }
 
-  const bool is_write = (res->mapped_map_type != D3D11_MAP_READ);
+  const bool is_write = (res->mapped_map_type != kD3D11MapRead);
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
     if (is_write && !res->storage.empty()) {
       const uint8_t* src_base = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
@@ -9019,7 +9019,7 @@ static HRESULT MapLocked11(Device* dev,
     return E_INVALIDARG;
   }
 
-  if ((map_flags & ~static_cast<UINT>(D3D11_MAP_FLAG_DO_NOT_WAIT)) != 0) {
+  if ((map_flags & ~static_cast<UINT>(kD3D11MapFlagDoNotWait)) != 0) {
     SetError(dev, E_INVALIDARG);
     return E_INVALIDARG;
   }
@@ -9028,15 +9028,15 @@ static HRESULT MapLocked11(Device* dev,
   bool want_read = false;
   bool want_write = false;
   switch (map_u32) {
-    case D3D11_MAP_READ:
+    case kD3D11MapRead:
       want_read = true;
       break;
-    case D3D11_MAP_WRITE:
-    case D3D11_MAP_WRITE_DISCARD:
-    case D3D11_MAP_WRITE_NO_OVERWRITE:
+    case kD3D11MapWrite:
+    case kD3D11MapWriteDiscard:
+    case kD3D11MapWriteNoOverwrite:
       want_write = true;
       break;
-    case D3D11_MAP_READ_WRITE:
+    case kD3D11MapReadWrite:
       want_read = true;
       want_write = true;
       break;
@@ -9048,7 +9048,7 @@ static HRESULT MapLocked11(Device* dev,
   // Enforce the D3D11 Map/Usage rules (see docs/graphics/win7-d3d11-map-unmap.md).
   switch (res->usage) {
     case kD3D11UsageDynamic:
-      if (map_u32 != D3D11_MAP_WRITE_DISCARD && map_u32 != D3D11_MAP_WRITE_NO_OVERWRITE) {
+      if (map_u32 != kD3D11MapWriteDiscard && map_u32 != kD3D11MapWriteNoOverwrite) {
         SetError(dev, E_INVALIDARG);
         return E_INVALIDARG;
       }
@@ -9057,17 +9057,17 @@ static HRESULT MapLocked11(Device* dev,
       const uint32_t access_mask = kD3D11CpuAccessRead | kD3D11CpuAccessWrite;
       const uint32_t access = res->cpu_access_flags & access_mask;
       if (access == kD3D11CpuAccessRead) {
-        if (map_u32 != D3D11_MAP_READ) {
+        if (map_u32 != kD3D11MapRead) {
           SetError(dev, E_INVALIDARG);
           return E_INVALIDARG;
         }
       } else if (access == kD3D11CpuAccessWrite) {
-        if (map_u32 != D3D11_MAP_WRITE) {
+        if (map_u32 != kD3D11MapWrite) {
           SetError(dev, E_INVALIDARG);
           return E_INVALIDARG;
         }
       } else if (access == access_mask) {
-        if (map_u32 != D3D11_MAP_READ && map_u32 != D3D11_MAP_WRITE && map_u32 != D3D11_MAP_READ_WRITE) {
+        if (map_u32 != kD3D11MapRead && map_u32 != kD3D11MapWrite && map_u32 != kD3D11MapReadWrite) {
           SetError(dev, E_INVALIDARG);
           return E_INVALIDARG;
         }
@@ -9108,7 +9108,7 @@ static HRESULT MapLocked11(Device* dev,
 
     const uint64_t fence = res->last_gpu_write_fence;
     if (fence != 0) {
-      const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+      const bool do_not_wait = (map_flags & kD3D11MapFlagDoNotWait) != 0;
       const UINT64 timeout = do_not_wait ? 0ull : ~0ull;
       const HRESULT wait_hr = WaitForFence(dev, fence, timeout);
       if (wait_hr == kDxgiErrorWasStillDrawing || (do_not_wait && wait_hr == kHrPending)) {
@@ -9121,7 +9121,7 @@ static HRESULT MapLocked11(Device* dev,
     }
   }
 
-  if (map_u32 == D3D11_MAP_WRITE_DISCARD) {
+  if (map_u32 == kD3D11MapWriteDiscard) {
     if (res->kind == ResourceKind::Buffer) {
       // Approximate DISCARD renaming by allocating a fresh CPU backing store.
       try {
@@ -9237,7 +9237,7 @@ static HRESULT MapLocked11(Device* dev,
   __if_exists(D3DDDICB_LOCK::Flags) {
     std::memset(&lock.Flags, 0, sizeof(lock.Flags));
 
-    const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+    const bool do_not_wait = (map_flags & kD3D11MapFlagDoNotWait) != 0;
     __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) {
       lock.Flags.DoNotWait = do_not_wait ? 1u : 0u;
     }
@@ -9245,11 +9245,11 @@ static HRESULT MapLocked11(Device* dev,
       lock.Flags.DonotWait = do_not_wait ? 1u : 0u;
     }
 
-    const bool is_read_only = (map_u32 == D3D11_MAP_READ);
+    const bool is_read_only = (map_u32 == kD3D11MapRead);
     const bool is_write_only =
-        (map_u32 == D3D11_MAP_WRITE || map_u32 == D3D11_MAP_WRITE_DISCARD || map_u32 == D3D11_MAP_WRITE_NO_OVERWRITE);
-    const bool discard = (map_u32 == D3D11_MAP_WRITE_DISCARD);
-    const bool no_overwrite = (map_u32 == D3D11_MAP_WRITE_NO_OVERWRITE);
+        (map_u32 == kD3D11MapWrite || map_u32 == kD3D11MapWriteDiscard || map_u32 == kD3D11MapWriteNoOverwrite);
+    const bool discard = (map_u32 == kD3D11MapWriteDiscard);
+    const bool no_overwrite = (map_u32 == kD3D11MapWriteNoOverwrite);
 
     __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) {
       lock.Flags.ReadOnly = is_read_only ? 1u : 0u;
@@ -9279,7 +9279,7 @@ static HRESULT MapLocked11(Device* dev,
   } else {
     lock_hr = CallCbMaybeHandle(cb_device->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &lock);
   }
-  const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+  const bool do_not_wait = (map_flags & kD3D11MapFlagDoNotWait) != 0;
   if (lock_hr == kDxgiErrorWasStillDrawing ||
       (do_not_wait && (lock_hr == kHrPending || lock_hr == kHrWaitTimeout || lock_hr == kHrErrorTimeout ||
                        lock_hr == kHrNtStatusTimeout ||
@@ -9425,7 +9425,7 @@ static HRESULT MapLocked11(Device* dev,
   // Keep the software-backed shadow copy (`res->storage`) in sync with the
   // runtime allocation pointer we hand back to the D3D runtime.
   if (!res->storage.empty()) {
-    if (map_u32 == D3D11_MAP_WRITE_DISCARD) {
+    if (map_u32 == kD3D11MapWriteDiscard) {
       // Discard contents are undefined; clear for deterministic tests.
       if (res->kind == ResourceKind::Texture2D) {
         const uint32_t dst_pitch = (mapped_row_pitch != 0) ? mapped_row_pitch : sub_layout.row_pitch_bytes;
@@ -9719,7 +9719,11 @@ void AEROGPU_APIENTRY StagingResourceUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11
 
 HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
   AEROGPU_D3D10_11_LOG_CALL();
-  return DynamicBufferMapCore11(hCtx, hResource, kD3D11BindVertexBuffer | kD3D11BindIndexBuffer, D3D11_MAP_WRITE_DISCARD, ppData);
+  return DynamicBufferMapCore11(hCtx,
+                                hResource,
+                                kD3D11BindVertexBuffer | kD3D11BindIndexBuffer,
+                                kD3D11MapWriteDiscard,
+                                ppData);
 }
 
 void AEROGPU_APIENTRY DynamicIABufferMapDiscard11Void(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
@@ -9731,7 +9735,7 @@ HRESULT AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite11(D3D11DDI_HDEVICECONTEXT
   return DynamicBufferMapCore11(hCtx,
                                hResource,
                                kD3D11BindVertexBuffer | kD3D11BindIndexBuffer,
-                               D3D11_MAP_WRITE_NO_OVERWRITE,
+                               kD3D11MapWriteNoOverwrite,
                                ppData);
 }
 
@@ -9766,7 +9770,7 @@ void AEROGPU_APIENTRY DynamicIABufferUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11
 
 HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
   AEROGPU_D3D10_11_LOG_CALL();
-  return DynamicBufferMapCore11(hCtx, hResource, kD3D11BindConstantBuffer, D3D11_MAP_WRITE_DISCARD, ppData);
+  return DynamicBufferMapCore11(hCtx, hResource, kD3D11BindConstantBuffer, kD3D11MapWriteDiscard, ppData);
 }
 
 void AEROGPU_APIENTRY DynamicConstantBufferMapDiscard11Void(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {

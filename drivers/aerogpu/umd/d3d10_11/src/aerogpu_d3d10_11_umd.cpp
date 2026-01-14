@@ -2041,7 +2041,7 @@ void SetLockFlagsFromMap(TLockFlags* flags, uint32_t map_type, uint32_t map_flag
     return;
   }
 
-  const bool do_not_wait = (map_flags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+  const bool do_not_wait = (map_flags & kD3D11MapFlagDoNotWait) != 0;
 
   if constexpr (std::is_integral_v<TLockFlags>) {
     *flags = static_cast<TLockFlags>(map_type | map_flags);
@@ -2153,7 +2153,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   if (res->mapped) {
     return E_FAIL;
   }
-  if ((map_flags & ~static_cast<uint32_t>(AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT)) != 0) {
+  if ((map_flags & ~static_cast<uint32_t>(kD3D11MapFlagDoNotWait)) != 0) {
     return E_INVALIDARG;
   }
 
@@ -2221,7 +2221,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   // then wait for the fence that last wrote this resource, instead of waiting
   // for the device's latest fence (which may include unrelated work).
   if (want_read) {
-    const bool do_not_wait = (map_flags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+    const bool do_not_wait = (map_flags & kD3D11MapFlagDoNotWait) != 0;
     HRESULT submit_hr = S_OK;
     (void)submit_locked(dev, &submit_hr);
     if (FAILED(submit_hr)) {
@@ -2649,7 +2649,7 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   if (!dev || !res) {
     return E_INVALIDARG;
   }
-  if ((map_flags & ~static_cast<uint32_t>(AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT)) != 0) {
+  if ((map_flags & ~static_cast<uint32_t>(kD3D11MapFlagDoNotWait)) != 0) {
     return E_INVALIDARG;
   }
 
