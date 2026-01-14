@@ -7453,6 +7453,9 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
      * state is partially initialised (e.g. during teardown or failed start paths).
      */
 
+    /* Ensure submission paths are blocked while we rebuild ring/MMIO state. */
+    InterlockedExchange(&adapter->AcceptingSubmissions, 0);
+
     /* Clear any KMD-side latched "device error" state recorded from IRQ_ERROR. */
     InterlockedExchange(&adapter->DeviceErrorLatched, 0);
 
