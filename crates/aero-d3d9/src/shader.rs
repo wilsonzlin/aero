@@ -39,6 +39,7 @@ pub enum RegisterFile {
     Temp,        // r#
     Input,       // v#
     Const,       // c#
+    ConstBool,   // b#
     Addr,        // a#
     Texture,     // t#
     Sampler,     // s#
@@ -313,6 +314,7 @@ fn decode_src(token: u32) -> Result<Src, ShaderError> {
         0 => RegisterFile::Temp,
         1 => RegisterFile::Input,
         2 => RegisterFile::Const,
+        14 => RegisterFile::ConstBool,
         3 => RegisterFile::Texture, // also Addr in vs; we treat as texture for pixel shader inputs.
         10 => RegisterFile::Sampler,
         other => return Err(ShaderError::UnsupportedRegisterType(other)),
@@ -322,6 +324,7 @@ fn decode_src(token: u32) -> Result<Src, ShaderError> {
         RegisterFile::Temp => MAX_D3D9_TEMP_REGISTER_INDEX,
         RegisterFile::Input => MAX_D3D9_INPUT_REGISTER_INDEX,
         RegisterFile::Const => MAX_D3D9_SHADER_REGISTER_INDEX,
+        RegisterFile::ConstBool => MAX_D3D9_SHADER_REGISTER_INDEX,
         RegisterFile::Texture => MAX_D3D9_TEXTURE_REGISTER_INDEX,
         RegisterFile::Sampler => MAX_D3D9_SAMPLER_REGISTER_INDEX,
         // Source operands should never use output register files, but keep a defensive fallback.
@@ -364,6 +367,7 @@ fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
         RegisterFile::Temp => MAX_D3D9_TEMP_REGISTER_INDEX,
         RegisterFile::Input => MAX_D3D9_INPUT_REGISTER_INDEX,
         RegisterFile::Const => MAX_D3D9_SHADER_REGISTER_INDEX,
+        RegisterFile::ConstBool => MAX_D3D9_SHADER_REGISTER_INDEX,
         RegisterFile::Texture => MAX_D3D9_TEXTURE_REGISTER_INDEX,
         RegisterFile::Sampler => MAX_D3D9_SAMPLER_REGISTER_INDEX,
         RegisterFile::AttrOut => MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX,
@@ -499,9 +503,17 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     while idx < words.len() {
         let token = read_u32(&words, &mut idx)?;
         let opcode = (token & 0xFFFF) as u16;
-        // D3D9 instruction length is encoded in bits 24..27 (4 bits). Higher bits in the same
-        // byte are flags (predication/co-issue) and must not affect operand count.
-        let param_count = ((token >> 24) & 0x0F) as usize;
+        // D3D9 SM2/SM3 encode the *total* instruction length in DWORD tokens (including the
+        // opcode token itself) in bits 24..27. Many operand-less instructions encode this length
+        // as `0`, which is interpreted as a 1-token instruction.
+        //
+        // Higher bits in the same byte are flags (predication/co-issue) and must not affect
+        // operand count.
+        let mut inst_len = ((token >> 24) & 0x0F) as usize;
+        if inst_len == 0 {
+            inst_len = 1;
+        }
+        let param_count = inst_len.saturating_sub(1);
         let result_modifier = decode_result_modifier(token);
 
         // Comments are variable-length data blocks that should be skipped.
@@ -530,11 +542,22 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             for _ in 0..param_count {
                 params.push(read_u32(&words, &mut idx)?);
             }
-            if params.len() < 2 {
-                return Err(ShaderError::UnexpectedEof);
-            }
-            let decl_token = params[0];
-            let dst_token = params[1];
+
+            // D3D9 `DCL` encoding differs between toolchains:
+            // - The common SM2/SM3 form (as emitted by modern `D3DCompiler`) uses a single
+            //   destination register token, with usage/texture-type information packed into the
+            //   opcode token itself.
+            // - Some older assemblers emit a second "decl token" operand (usage in low bits,
+            //   sampler texture type in high bits).
+            //
+            // Be tolerant and accept both.
+            let (decl_token, dst_token) = match params.as_slice() {
+                // Modern form: `dcl <dst>`
+                [dst_token] => (token, *dst_token),
+                // Legacy form: `dcl <decl_token>, <dst>`
+                [decl_token, dst_token, ..] => (*decl_token, *dst_token),
+                _ => return Err(ShaderError::UnexpectedEof),
+            };
 
             // Sampler declaration: `dcl_* s#` (e.g. `dcl_2d s0`, `dcl_cube s1`).
             //
@@ -547,7 +570,13 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             let dst_reg_type = decode_reg_type(dst_token);
             if dst_reg_type == 10 {
                 let sampler = decode_reg_num(dst_token);
-                let tex_ty_raw = ((decl_token >> 27) & 0xF) as u8;
+                // Modern form: texture type is encoded in opcode_token[16..20].
+                // Legacy form: texture type is encoded in decl_token[27..31].
+                let tex_ty_raw = if decl_token == token {
+                    ((token >> 16) & 0xF) as u8
+                } else {
+                    ((decl_token >> 27) & 0xF) as u8
+                };
                 let ty = match tex_ty_raw {
                     1 => TextureType::Texture1D,
                     2 => TextureType::Texture2D,
@@ -566,10 +595,13 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             }
 
             // D3D9 `DCL` encoding:
-            // - usage_raw = decl_token & 0x1F
-            // - usage_index = (decl_token >> 16) & 0xF
-            let usage_raw = (decl_token & 0x1F) as u8;
-            let usage_index = ((decl_token >> 16) & 0xF) as u8;
+            // - Modern form (no decl token): usage_raw = opcode_token[16..20], usage_index = opcode_token[20..24].
+            // - Legacy form: usage_raw = decl_token[0..5], usage_index = decl_token[16..20].
+            let (usage_raw, usage_index) = if decl_token == token {
+                (((token >> 16) & 0xF) as u8, ((token >> 20) & 0xF) as u8)
+            } else {
+                ((decl_token & 0x1F) as u8, ((decl_token >> 16) & 0xF) as u8)
+            };
             let Ok(usage) = DeclUsage::from_u8(usage_raw) else {
                 continue;
             };
@@ -968,6 +1000,7 @@ fn reg_var_name(reg: Register) -> String {
         RegisterFile::Temp => format!("r{}", reg.index),
         RegisterFile::Input => format!("v{}", reg.index),
         RegisterFile::Const => format!("c{}", reg.index),
+        RegisterFile::ConstBool => format!("b{}", reg.index),
         RegisterFile::Addr => format!("a{}", reg.index),
         RegisterFile::Texture => format!("t{}", reg.index),
         RegisterFile::Sampler => format!("s{}", reg.index),
@@ -1140,6 +1173,23 @@ pub fn generate_wgsl_with_options(
         ShaderStage::Pixel => 256u32,
     };
 
+    // D3D9 boolean constants (`b#`). The legacy translator currently does not support dynamic bool
+    // constant updates from the host; declare any referenced `b#` registers as compile-time false
+    // so shaders using `if b#` still translate/validate.
+    let mut used_bool_consts = BTreeSet::<u16>::new();
+    for inst in &ir.ops {
+        if let Some(dst) = inst.dst {
+            if dst.reg.file == RegisterFile::ConstBool {
+                used_bool_consts.insert(dst.reg.index);
+            }
+        }
+        for src in &inst.src {
+            if src.reg.file == RegisterFile::ConstBool {
+                used_bool_consts.insert(src.reg.index);
+            }
+        }
+    }
+
     match ir.version.stage {
         ShaderStage::Vertex => {
             let has_inputs = !ir.used_inputs.is_empty();
@@ -1176,6 +1226,9 @@ pub fn generate_wgsl_with_options(
             // Declare registers.
             for i in 0..ir.temp_count {
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
+            }
+            for b in &used_bool_consts {
+                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>(0.0);\n", b));
             }
             for &v in &ir.used_inputs {
                 wgsl.push_str(&format!("  let v{}: vec4<f32> = input.v{};\n", v, v));
@@ -1311,6 +1364,9 @@ pub fn generate_wgsl_with_options(
             }
             for i in 0..ir.temp_count {
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
+            }
+            for b in &used_bool_consts {
+                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>(0.0);\n", b));
             }
             // Load inputs.
             if has_inputs {
