@@ -32,7 +32,7 @@ cmake --build build-virtio-host-tests
 ctest --test-dir build-virtio-host-tests --output-on-failure
 
 # Or just the virtio-input tests:
-ctest --test-dir build-virtio-host-tests --output-on-failure -R '^(hid_translate_test|virtio_statusq_test|led_.*_test|report_ring_test)$'
+ctest --test-dir build-virtio-host-tests --output-on-failure -R '^(hid_translate_test|virtio_input_integration_test|virtio_statusq_test|led_.*_test|report_ring_test)$'
 ```
 
 The script will attempt to run the test suite with both `gcc` and `clang` (if present).
