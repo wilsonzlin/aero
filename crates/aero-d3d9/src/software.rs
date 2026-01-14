@@ -66,6 +66,10 @@ impl Vec4 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
 
+    pub fn dot2(self, rhs: Self) -> f32 {
+        self.x * rhs.x + self.y * rhs.y
+    }
+
     pub fn dot4(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z + self.w * rhs.w
     }
@@ -641,7 +645,10 @@ fn run_vertex_shader(
                         let t = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let a = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let b = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants, bool_consts);
-                        let v = apply_result_modifier(t * a + (Vec4::splat(1.0) - t) * b, inst.result_modifier);
+                        let v = apply_result_modifier(
+                            t * a + (Vec4::splat(1.0) - t) * b,
+                            inst.result_modifier,
+                        );
                         exec_dst(
                             dst,
                             &mut temps,
@@ -667,6 +674,22 @@ fn run_vertex_shader(
                             &mut o_tex,
                             &mut dummy_color,
                             v,
+                        );
+                    }
+                    Op::Dp2 => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let d = Vec4::splat(a.dot2(b));
+                        let d = apply_result_modifier(d, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut o_pos,
+                            &mut o_attr,
+                            &mut o_tex,
+                            &mut dummy_color,
+                            d,
                         );
                     }
                     Op::Dp3 => {
@@ -767,12 +790,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
-                        let v = Vec4::new(
-                            a.x.powf(b.x),
-                            a.y.powf(b.y),
-                            a.z.powf(b.z),
-                            a.w.powf(b.w),
-                        );
+                        let v = Vec4::new(a.x.powf(b.x), a.y.powf(b.y), a.z.powf(b.z), a.w.powf(b.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -1064,7 +1082,10 @@ fn run_pixel_shader(
                         let t = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let a = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let b = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants, bool_consts);
-                        let v = apply_result_modifier(t * a + (Vec4::splat(1.0) - t) * b, inst.result_modifier);
+                        let v = apply_result_modifier(
+                            t * a + (Vec4::splat(1.0) - t) * b,
+                            inst.result_modifier,
+                        );
                         exec_dst(
                             dst,
                             &mut temps,
@@ -1073,6 +1094,22 @@ fn run_pixel_shader(
                             &mut dummy_tex,
                             &mut o_color,
                             v,
+                        );
+                    }
+                    Op::Dp2 => {
+                        let dst = inst.dst.unwrap();
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let d = Vec4::splat(a.dot2(b));
+                        let d = apply_result_modifier(d, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut dummy_pos,
+                            &mut dummy_attr,
+                            &mut dummy_tex,
+                            &mut o_color,
+                            d,
                         );
                     }
                     Op::Dp3 => {
@@ -1173,12 +1210,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
-                        let v = Vec4::new(
-                            a.x.powf(b.x),
-                            a.y.powf(b.y),
-                            a.z.powf(b.z),
-                            a.w.powf(b.w),
-                        );
+                        let v = Vec4::new(a.x.powf(b.x), a.y.powf(b.y), a.z.powf(b.z), a.w.powf(b.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,

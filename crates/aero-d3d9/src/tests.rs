@@ -96,20 +96,11 @@ fn assemble_vs_passthrough_with_dcl_sm3_decoder() -> Vec<u32> {
     ));
 
     // mov oPos, v0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     // mov oT0, v1
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(6, 0, 0xF), enc_src(1, 1, 0xE4)]));
     // mov oD0, v2
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(5, 0, 0xF), enc_src(1, 2, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 2, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -118,10 +109,7 @@ fn assemble_ps2_mov_oc0_t0_sm3_decoder() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
     // mov oC0, t0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(3, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(3, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -308,6 +296,44 @@ fn assemble_ps_with_unknown_opcode() -> Vec<u32> {
     out
 }
 
+fn assemble_ps2_dp2_masked_xy() -> Vec<u32> {
+    // ps_2_0
+    let mut out = vec![0xFFFF0200];
+    // def c0, 0.5, 0.25, 0.0, 0.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F00_0000,
+            0x3E80_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c1, 0.1, 0.2, 0.3, 0.4
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x3DCC_CCCD,
+            0x3E4C_CCCD,
+            0x3E99_999A,
+            0x3ECC_CCCD,
+        ],
+    ));
+    // mov r0, c1
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 1, 0xE4)]));
+    // dp2 r0.xy, c0, c0
+    out.extend(enc_inst(
+        0x005A,
+        &[enc_dst(0, 0, 0x3), enc_src(2, 0, 0xE4), enc_src(2, 0, 0xE4)],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps_mov_sat_neg_c0() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
@@ -351,10 +377,7 @@ fn assemble_ps2_src_modifiers_bias_x2neg_dz() -> Vec<u32> {
         ],
     ));
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -527,10 +550,7 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     ));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -638,10 +658,7 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
     ));
 
     // mov oC0, c2 (default blue)
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(2, 2, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 2, 0xE4)]));
 
     // (p0.x) mov oC0, c1 (predicated)
     out.extend(enc_inst_with_extra(
@@ -780,15 +797,9 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     ));
 
     // mov r0, c0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
     // mov r1.x, c0.x
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 1, 0x1), enc_src(2, 0, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 1, 0x1), enc_src(2, 0, 0x00)]));
 
     // loop aL, i0
     out.extend(enc_inst(
@@ -818,10 +829,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     out.extend(enc_inst(0x001D, &[]));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
     out.push(0x0000FFFF);
     out
@@ -1304,10 +1312,7 @@ fn assemble_ps3_predicated_exp_log_pow_modifiers() -> Vec<u32> {
         &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)],
     ));
     // mov r3.y, r1.x
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)]));
     // mov r3.z, r2.x
     out.extend(enc_inst(
         0x0001,
@@ -1551,6 +1556,24 @@ fn translates_additional_ps_ops_to_wgsl() {
     assert!(wgsl.wgsl.contains("select("));
     assert!(wgsl.wgsl.contains("dot(("));
     assert!(wgsl.wgsl.contains(").xy"));
+}
+
+#[test]
+fn translates_ps2_dp2_masked_write_to_wgsl() {
+    let ps_bytes = to_bytes(&assemble_ps2_dp2_masked_xy());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("dot("), "wgsl:\n{}", wgsl.wgsl);
 }
 
 #[test]
@@ -1962,6 +1985,49 @@ fn micro_ps3_lrp_pixel_compare() {
 }
 
 #[test]
+fn micro_ps2_dp2_masked_xy_pixel_compare() {
+    let vs = shader::to_ir(&shader::parse(&to_bytes(&assemble_vs_passthrough())).unwrap());
+    let ps = shader::to_ir(&shader::parse(&to_bytes(&assemble_ps2_dp2_masked_xy())).unwrap());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+    let constants = zero_constants();
+    let textures = HashMap::new();
+    let sampler_states = HashMap::new();
+    software::draw(
+        &mut rt,
+        software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: None,
+            constants: &constants,
+            textures: &textures,
+            sampler_states: &sampler_states,
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Expected:
+    //   c0 = (0.5, 0.25, 0, 0)
+    //   c1 = (0.1, 0.2, 0.3, 0.4)
+    //   mov r0, c1
+    //   dp2 r0.xy, c0, c0 => dot(c0.xy, c0.xy) = 0.3125 written into x/y only
+    //   => r0 = (0.3125, 0.3125, 0.3, 0.4)
+    assert_eq!(rt.get(8, 8).to_rgba8(), [80, 80, 77, 102]);
+}
+
+#[test]
 fn sm3_predicated_mov_pixel_compare() {
     let vs = build_sm3_ir(&assemble_vs_passthrough());
     let ps = build_sm3_ir(&assemble_ps3_predicated_mov());
@@ -2036,10 +2102,26 @@ fn sm3_exp_log_pow_pixel_compare() {
     let decl = build_vertex_decl_pos_tex_color();
 
     let quad = [
-        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
-        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (
+            software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            (0.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, -1.0, 0.0, 1.0),
+            (1.0, 1.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, 1.0, 0.0, 1.0),
+            (1.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
+        (
+            software::Vec4::new(-1.0, 1.0, 0.0, 1.0),
+            (0.0, 0.0),
+            software::Vec4::new(1.0, 1.0, 1.0, 1.0),
+        ),
     ];
     let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 

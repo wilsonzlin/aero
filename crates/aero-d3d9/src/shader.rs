@@ -8,10 +8,10 @@ use thiserror::Error;
 use crate::dxbc;
 use crate::shader_limits::{
     MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX, MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX,
-    MAX_D3D9_INPUT_REGISTER_INDEX, MAX_D3D9_SAMPLER_REGISTER_INDEX,
-    MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX,
-    MAX_D3D9_SHADER_TOKEN_COUNT, MAX_D3D9_TEMP_REGISTER_INDEX,
-    MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX, MAX_D3D9_TEXTURE_REGISTER_INDEX,
+    MAX_D3D9_INPUT_REGISTER_INDEX, MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_BLOB_BYTES,
+    MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
+    MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX,
+    MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
 use crate::sm3::decode::TextureType;
 use crate::vertex::{AdaptiveLocationMap, DeclUsage, LocationMapError, VertexLocationMap};
@@ -128,6 +128,7 @@ pub enum Op {
     Mul,
     Mad,
     Lrp,
+    Dp2,
     /// `dp2add`: dot2 + add (`dot(a.xy, b.xy) + c.x`), replicated to all components.
     Dp2Add,
     Dp3,
@@ -462,6 +463,7 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x0055 => Some(Op::Sne),
         0x0058 => Some(Op::Cmp),
         0x0059 => Some(Op::Dp2Add),
+        0x005A => Some(Op::Dp2),
         0xFFFF => Some(Op::End),
         _ => None,
     }
@@ -810,6 +812,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Mul
             | Op::Mad
             | Op::Lrp
+            | Op::Dp2
             | Op::Dp2Add
             | Op::Dp3
             | Op::Dp4
@@ -1122,26 +1125,6 @@ fn swizzle_suffix(swz: Swizzle) -> String {
     };
     let chars: String = swz.0.into_iter().map(comp).collect();
     format!(".{}", chars)
-}
-
-fn mask_suffix(mask: WriteMask) -> Option<String> {
-    if mask == WriteMask::XYZW {
-        return None;
-    }
-    let mut s = String::new();
-    if mask.write_x() {
-        s.push('x');
-    }
-    if mask.write_y() {
-        s.push('y');
-    }
-    if mask.write_z() {
-        s.push('z');
-    }
-    if mask.write_w() {
-        s.push('w');
-    }
-    Some(format!(".{}", s))
 }
 
 #[derive(Debug, Clone)]
@@ -1528,6 +1511,53 @@ fn push_indent(wgsl: &mut String, indent: usize) {
     }
 }
 
+fn emit_assign(wgsl: &mut String, indent: usize, dst: Dst, value: &str) {
+    // WGSL does not permit assignment to multi-component swizzles (e.g. `v.xy = ...`), so lower
+    // write masks to per-component assignments.
+    //
+    // Note: single-component assignments (`v.x = ...`) are permitted.
+    if dst.mask.0 == 0 {
+        return;
+    }
+
+    let dst_name = reg_var_name(dst.reg);
+    if dst.mask == WriteMask::XYZW {
+        push_indent(wgsl, indent);
+        wgsl.push_str(&format!("{dst_name} = {value};\n"));
+        return;
+    }
+
+    let mut comps = Vec::new();
+    if dst.mask.write_x() {
+        comps.push('x');
+    }
+    if dst.mask.write_y() {
+        comps.push('y');
+    }
+    if dst.mask.write_z() {
+        comps.push('z');
+    }
+    if dst.mask.write_w() {
+        comps.push('w');
+    }
+
+    if comps.len() == 1 {
+        let c = comps[0];
+        push_indent(wgsl, indent);
+        wgsl.push_str(&format!("{dst_name}.{c} = ({value}).{c};\n"));
+        return;
+    }
+
+    push_indent(wgsl, indent);
+    wgsl.push_str("{ let _tmp = ");
+    wgsl.push_str(value);
+    wgsl.push_str("; ");
+    for c in comps {
+        wgsl.push_str(&format!("{dst_name}.{c} = _tmp.{c}; "));
+    }
+    wgsl.push_str("}\n");
+}
+
 fn emit_inst(
     wgsl: &mut String,
     indent: &mut usize,
@@ -1543,22 +1573,14 @@ fn emit_inst(
         Op::Mov => {
             let dst = inst.dst.unwrap();
             let src0 = inst.src[0];
-            let dst_name = reg_var_name(dst.reg);
             let mut expr = src_expr(&src0, const_defs_f32, const_base);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Add | Op::Sub | Op::Mul => {
             let dst = inst.dst.unwrap();
             let src0 = inst.src[0];
             let src1 = inst.src[1];
-            let dst_name = reg_var_name(dst.reg);
             let op = match inst.op {
                 Op::Add => "+",
                 Op::Sub => "-",
@@ -1572,20 +1594,13 @@ fn emit_inst(
                 src_expr(&src1, const_defs_f32, const_base)
             );
             expr = apply_result_modifier(expr, inst.result_modifier);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Min | Op::Max => {
             let dst = inst.dst.unwrap();
             let src0 = inst.src[0];
             let src1 = inst.src[1];
             let func = if inst.op == Op::Min { "min" } else { "max" };
-            let dst_name = reg_var_name(dst.reg);
             let mut expr = format!(
                 "{}({}, {})",
                 func,
@@ -1593,13 +1608,7 @@ fn emit_inst(
                 src_expr(&src1, const_defs_f32, const_base)
             );
             expr = apply_result_modifier(expr, inst.result_modifier);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Mad => {
             let dst = inst.dst.unwrap();
@@ -1608,14 +1617,7 @@ fn emit_inst(
             let c = src_expr(&inst.src[2], const_defs_f32, const_base);
             let mut expr = format!("fma({}, {}, {})", a, b, c);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Dp2Add => {
             let dst = inst.dst.unwrap();
@@ -1624,14 +1626,7 @@ fn emit_inst(
             let c = src_expr(&inst.src[2], const_defs_f32, const_base);
             let mut expr = format!("vec4<f32>(dot(({a}).xy, ({b}).xy) + ({c}).x)");
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Lrp => {
             let dst = inst.dst.unwrap();
@@ -1641,14 +1636,7 @@ fn emit_inst(
             // D3D9 `lrp`: dst = t * a + (1 - t) * b = mix(b, a, t).
             let mut expr = format!("mix({}, {}, {})", b, a, t);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Cmp => {
             let dst = inst.dst.unwrap();
@@ -1658,14 +1646,7 @@ fn emit_inst(
             // Per-component compare: if cond >= 0 then a else b.
             let mut expr = format!("select({}, {}, ({} >= vec4<f32>(0.0)))", b, a, cond);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Slt | Op::Sge | Op::Seq | Op::Sne => {
             let dst = inst.dst.unwrap();
@@ -1683,39 +1664,25 @@ fn emit_inst(
                 a, op, b
             );
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
-        Op::Dp3 | Op::Dp4 => {
+        Op::Dp2 | Op::Dp3 | Op::Dp4 => {
             let dst = inst.dst.unwrap();
             let a = src_expr(&inst.src[0], const_defs_f32, const_base);
             let b = src_expr(&inst.src[1], const_defs_f32, const_base);
-            let mut expr = if inst.op == Op::Dp3 {
-                format!("vec4<f32>(dot(({}).xyz, ({}).xyz))", a, b)
-            } else {
-                format!("vec4<f32>(dot({}, {}))", a, b)
+            let mut expr = match inst.op {
+                Op::Dp2 => format!("vec4<f32>(dot(({}).xy, ({}).xy))", a, b),
+                Op::Dp3 => format!("vec4<f32>(dot(({}).xyz, ({}).xyz))", a, b),
+                Op::Dp4 => format!("vec4<f32>(dot({}, {}))", a, b),
+                _ => unreachable!(),
             };
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Texld => {
             let dst = inst.dst.unwrap();
             let coord = inst.src[0];
             let s = inst.sampler.unwrap();
-            let dst_name = reg_var_name(dst.reg);
             let coord_expr = src_expr(&coord, const_defs_f32, const_base);
             let project = inst.imm.unwrap_or(0) != 0;
             let ty = sampler_texture_types
@@ -1751,69 +1718,35 @@ fn emit_inst(
                 ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, coords),
             };
             sample = apply_result_modifier(sample, inst.result_modifier);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, sample, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, sample));
-            }
+            emit_assign(wgsl, *indent, dst, &sample);
         }
         Op::Rcp => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("(vec4<f32>(1.0) / {})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Rsq => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("inverseSqrt({})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Exp => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("exp2({})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Log => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("log2({})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Pow => {
             let dst = inst.dst.unwrap();
@@ -1821,28 +1754,14 @@ fn emit_inst(
             let src1 = src_expr(&inst.src[1], const_defs_f32, const_base);
             let mut expr = format!("pow({}, {})", src0, src1);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::Frc => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
             let mut expr = format!("fract({})", src0);
             expr = apply_result_modifier(expr, inst.result_modifier);
-            let dst_name = reg_var_name(dst.reg);
-            if let Some(mask) = mask_suffix(dst.mask) {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
-            } else {
-                push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
-            }
+            emit_assign(wgsl, *indent, dst, &expr);
         }
         Op::If => {
             let cond = src_expr(&inst.src[0], const_defs_f32, const_base);
