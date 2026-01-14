@@ -42,22 +42,67 @@ fn hmac_sha256(key: &[u8], chunks: &[&[u8]]) -> [u8; 32] {
     out
 }
 
-fn mint_session_token(payload: &[u8], secret: &[u8]) -> String {
-    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+fn b64url_val(b: u8) -> Option<u8> {
+    match b {
+        b'A'..=b'Z' => Some(b - b'A'),
+        b'a'..=b'z' => Some(b - b'a' + 26),
+        b'0'..=b'9' => Some(b - b'0' + 52),
+        b'-' => Some(62),
+        b'_' => Some(63),
+        _ => None,
+    }
+}
+
+fn b64url_char(v: u8) -> u8 {
+    match v {
+        0..=25 => b'A' + v,
+        26..=51 => b'a' + (v - 26),
+        52..=61 => b'0' + (v - 52),
+        62 => b'-',
+        63 => b'_',
+        _ => unreachable!("invalid base64url value {v}"),
+    }
+}
+
+fn make_noncanonical_base64url(mut s: String) -> String {
+    // Flip unused bits in the last base64 quantum. This produces a string which is still comprised
+    // of base64url characters, but is invalid for canonical unpadded base64url.
+    let rem = s.len() % 4;
+    if rem != 2 && rem != 3 {
+        return s;
+    }
+    let bytes = unsafe { s.as_bytes_mut() };
+    let last = bytes.len() - 1;
+    let v = b64url_val(bytes[last]).unwrap_or(0);
+    let v2 = v | 1;
+    bytes[last] = b64url_char(v2);
+    s
+}
+
+fn mint_session_token_b64(payload_b64: &str, secret: &[u8]) -> String {
     let sig = hmac_sha256(secret, &[payload_b64.as_bytes()]);
     let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
     format!("{payload_b64}.{sig_b64}")
 }
 
-fn mint_hs256_jwt(header: &[u8], payload: &[u8], secret: &[u8]) -> String {
-    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+fn mint_session_token(payload: &[u8], secret: &[u8]) -> String {
     let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    mint_session_token_b64(&payload_b64, secret)
+}
+
+fn mint_hs256_jwt_b64(header_b64: &str, payload_b64: &str, secret: &[u8]) -> String {
     let sig = hmac_sha256(
         secret,
         &[header_b64.as_bytes(), b".", payload_b64.as_bytes()],
     );
     let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
     format!("{header_b64}.{payload_b64}.{sig_b64}")
+}
+
+fn mint_hs256_jwt(header: &[u8], payload: &[u8], secret: &[u8]) -> String {
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    mint_hs256_jwt_b64(&header_b64, &payload_b64, secret)
 }
 
 fn gen_ascii(u: &mut Unstructured<'_>, max_len: usize) -> String {
@@ -110,15 +155,37 @@ fuzz_target!(|data: &[u8]| {
         1 => {
             let payload_len: usize = u.int_in_range(0usize..=4096).unwrap_or(0);
             let payload = u.bytes(payload_len).unwrap_or(&[]);
-            let token = mint_session_token(payload, secret);
+            let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+            let payload_b64 = if u.arbitrary::<bool>().unwrap_or(false) {
+                make_noncanonical_base64url(payload_b64)
+            } else {
+                payload_b64
+            };
+            let token = mint_session_token_b64(&payload_b64, secret);
             let _ = verify_gateway_session_token(&token, secret, 0);
         }
         // Validly signed JWT with arbitrary payload bytes, valid HS256 header.
         2 => {
             let payload_len: usize = u.int_in_range(0usize..=4096).unwrap_or(0);
             let payload = u.bytes(payload_len).unwrap_or(&[]);
-            let header = br#"{"alg":"HS256","typ":"JWT"}"#;
-            let token = mint_hs256_jwt(header, payload, secret);
+            let header: &[u8] = if u.arbitrary::<bool>().unwrap_or(false) {
+                br#"{"alg":"HS256","typ":"JWT"} "#
+            } else {
+                br#"{"alg":"HS256","typ":"JWT"}"#
+            };
+            let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+            let header_b64 = if u.arbitrary::<bool>().unwrap_or(false) {
+                make_noncanonical_base64url(header_b64)
+            } else {
+                header_b64
+            };
+            let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+            let payload_b64 = if u.arbitrary::<bool>().unwrap_or(false) {
+                make_noncanonical_base64url(payload_b64)
+            } else {
+                payload_b64
+            };
+            let token = mint_hs256_jwt_b64(&header_b64, &payload_b64, secret);
             let _ = verify_hs256_jwt(&token, secret, 0);
         }
         // Structured-ish JSON payloads to drive deeper parsing logic with valid signatures.
@@ -146,4 +213,3 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 });
-
