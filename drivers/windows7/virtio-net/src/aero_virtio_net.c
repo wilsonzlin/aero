@@ -15,6 +15,90 @@ C_ASSERT(sizeof(VIRTIO_NET_HDR) == sizeof(AEROVNET_VIRTIO_NET_HDR));
 #endif
 
 static NDIS_HANDLE g_NdisDriverHandle = NULL;
+static NDIS_HANDLE g_NdisDeviceHandle = NULL;
+static PDEVICE_OBJECT g_NdisDeviceObject = NULL;
+static NDIS_SPIN_LOCK g_DiagLock;
+static BOOLEAN g_DiagLockInitialized = FALSE;
+static AEROVNET_ADAPTER* g_DiagAdapter = NULL;
+static PDRIVER_DISPATCH g_DiagMajorFunctions[IRP_MJ_MAXIMUM_FUNCTION + 1];
+
+// Allow System/Admin full access, Everyone read (diagnostic-only interface).
+static const WCHAR g_AerovNetDiagSddl[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;WD)";
+
+// `\\.\AeroVirtioNetDiag` user-mode diagnostics interface (read-only).
+#define AEROVNET_DIAG_DEVICE_NAME L"\\Device\\AeroVirtioNetDiag"
+#define AEROVNET_DIAG_SYMBOLIC_NAME L"\\DosDevices\\AeroVirtioNetDiag"
+
+// Private IOCTLs: function code range 0x800-0xFFF is reserved for customer use.
+#define IOCTL_AEROVNET_DIAG_QUERY CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800u, METHOD_BUFFERED, FILE_READ_ACCESS)
+
+// Interrupt mode values for `AEROVNET_DIAG_INFO::InterruptMode`.
+#define AEROVNET_INTERRUPT_MODE_INTX 0u
+#define AEROVNET_INTERRUPT_MODE_MSI 1u
+
+#define AEROVNET_DIAG_INFO_VERSION 1u
+
+#pragma pack(push, 1)
+typedef struct _AEROVNET_DIAG_INFO {
+  ULONG Version;
+  ULONG Size;
+
+  ULONGLONG HostFeatures;
+  ULONGLONG GuestFeatures;
+
+  ULONG InterruptMode;
+  ULONG MessageCount;
+
+  USHORT MsixConfigVector;
+  USHORT MsixRxVector;
+  USHORT MsixTxVector;
+
+  USHORT RxQueueSize;
+  USHORT TxQueueSize;
+
+  // virtqueue indices (best-effort, snapshot).
+  USHORT RxAvailIdx;
+  USHORT RxUsedIdx;
+  USHORT TxAvailIdx;
+  USHORT TxUsedIdx;
+
+  ULONG Flags;
+
+  // Offload support + enablement.
+  UCHAR TxChecksumSupported;
+  UCHAR TxTsoV4Supported;
+  UCHAR TxTsoV6Supported;
+  UCHAR TxChecksumV4Enabled;
+  UCHAR TxChecksumV6Enabled;
+  UCHAR TxTsoV4Enabled;
+  UCHAR TxTsoV6Enabled;
+  UCHAR Reserved0;
+
+  ULONGLONG StatTxPackets;
+  ULONGLONG StatTxBytes;
+  ULONGLONG StatRxPackets;
+  ULONGLONG StatRxBytes;
+  ULONGLONG StatTxErrors;
+  ULONGLONG StatRxErrors;
+  ULONGLONG StatRxNoBuffers;
+} AEROVNET_DIAG_INFO;
+#pragma pack(pop)
+
+C_ASSERT(sizeof(AEROVNET_DIAG_INFO) <= 256);
+
+// Flags for `AEROVNET_DIAG_INFO::Flags`.
+#define AEROVNET_DIAG_FLAG_USE_MSIX 0x00000001u
+#define AEROVNET_DIAG_FLAG_MSIX_ALL_ON_VECTOR0 0x00000002u
+#define AEROVNET_DIAG_FLAG_SURPRISE_REMOVED 0x00000004u
+#define AEROVNET_DIAG_FLAG_ADAPTER_RUNNING 0x00000008u
+#define AEROVNET_DIAG_FLAG_ADAPTER_PAUSED 0x00000010u
+
+static NTSTATUS AerovNetDiagDispatchCreateClose(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);
+static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);
+static NTSTATUS AerovNetDiagDispatchDefault(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);
+
+static VOID AerovNetDiagDetachAdapter(_In_ AEROVNET_ADAPTER* Adapter);
+static VOID AerovNetDiagAttachAdapter(_In_ AEROVNET_ADAPTER* Adapter);
 
 #if DBG
 static volatile LONG g_AerovNetDbgTxCancelBeforeSg = 0;
@@ -4420,7 +4504,7 @@ static VOID AerovNetMiniportHaltEx(_In_ NDIS_HANDLE MiniportAdapterContext, _In_
   if (InterruptHandle) {
     NdisMDeregisterInterruptEx(InterruptHandle);
   }
-
+  AerovNetDiagDetachAdapter(Adapter);
   AerovNetVirtioStop(Adapter);
   AerovNetCleanupAdapter(Adapter);
 }
@@ -4449,12 +4533,14 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   Adapter->MulticastListSize = 0;
   Adapter->IsrStatus = 0;
   Adapter->OutstandingSgMappings = 0;
+  Adapter->DiagRefCount = 0;
 
   virtio_os_ndis_get_ops(&Adapter->VirtioOps);
   Adapter->VirtioOpsCtx.pool_tag = AEROVNET_TAG;
 
   NdisAllocateSpinLock(&Adapter->Lock);
   KeInitializeEvent(&Adapter->OutstandingSgEvent, NotificationEvent, TRUE);
+  KeInitializeEvent(&Adapter->DiagRefEvent, NotificationEvent, TRUE);
 
   InitializeListHead(&Adapter->RxFreeList);
   InitializeListHead(&Adapter->TxFreeList);
@@ -4584,13 +4670,277 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   Adapter->State = AerovNetAdapterRunning;
   NdisReleaseSpinLock(&Adapter->Lock);
 
+  AerovNetDiagAttachAdapter(Adapter);
   AerovNetIndicateLinkState(Adapter);
 
   return NDIS_STATUS_SUCCESS;
 }
 
+static __forceinline AEROVNET_ADAPTER* AerovNetDiagReferenceAdapter(VOID) {
+  AEROVNET_ADAPTER* Adapter;
+  LONG Ref;
+
+  if (!g_DiagLockInitialized) {
+    return NULL;
+  }
+
+  Adapter = NULL;
+  NdisAcquireSpinLock(&g_DiagLock);
+  Adapter = g_DiagAdapter;
+  if (Adapter != NULL) {
+    Ref = InterlockedIncrement(&Adapter->DiagRefCount);
+    if (Ref == 1) {
+      (VOID)KeResetEvent(&Adapter->DiagRefEvent);
+    }
+  }
+  NdisReleaseSpinLock(&g_DiagLock);
+  return Adapter;
+}
+
+static __forceinline VOID AerovNetDiagDereferenceAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  LONG Ref;
+
+  if (!Adapter) {
+    return;
+  }
+
+  Ref = InterlockedDecrement(&Adapter->DiagRefCount);
+  if (Ref == 0) {
+    KeSetEvent(&Adapter->DiagRefEvent, IO_NO_INCREMENT, FALSE);
+  }
+}
+
+static VOID AerovNetDiagAttachAdapter(_In_ AEROVNET_ADAPTER* Adapter) {
+  if (!Adapter || !g_DiagLockInitialized) {
+    return;
+  }
+
+  NdisAcquireSpinLock(&g_DiagLock);
+  g_DiagAdapter = Adapter;
+  NdisReleaseSpinLock(&g_DiagLock);
+}
+
+static VOID AerovNetDiagDetachAdapter(_In_ AEROVNET_ADAPTER* Adapter) {
+  if (!Adapter || !g_DiagLockInitialized) {
+    return;
+  }
+
+  NdisAcquireSpinLock(&g_DiagLock);
+  if (g_DiagAdapter == Adapter) {
+    g_DiagAdapter = NULL;
+  }
+  NdisReleaseSpinLock(&g_DiagLock);
+
+  // HaltEx is expected to run at PASSIVE_LEVEL; wait for outstanding diagnostic IOCTLs so we don't unmap BAR0 while
+  // a user-mode query is reading virtio registers.
+  if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+    (VOID)KeWaitForSingleObject(&Adapter->DiagRefEvent, Executive, KernelMode, FALSE, NULL);
+  }
+}
+
+static NTSTATUS AerovNetDiagDispatchDefault(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp) {
+  UNREFERENCED_PARAMETER(DeviceObject);
+
+  Irp->IoStatus.Status = STATUS_INVALID_DEVICE_REQUEST;
+  Irp->IoStatus.Information = 0;
+  IoCompleteRequest(Irp, IO_NO_INCREMENT);
+  return STATUS_INVALID_DEVICE_REQUEST;
+}
+
+static NTSTATUS AerovNetDiagDispatchCreateClose(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp) {
+  UNREFERENCED_PARAMETER(DeviceObject);
+
+  Irp->IoStatus.Status = STATUS_SUCCESS;
+  Irp->IoStatus.Information = 0;
+  IoCompleteRequest(Irp, IO_NO_INCREMENT);
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp) {
+  PIO_STACK_LOCATION IrpSp;
+  ULONG Ioctl;
+  ULONG OutLen;
+  NTSTATUS Status;
+  AEROVNET_ADAPTER* Adapter;
+  AEROVNET_DIAG_INFO Info;
+  ULONG CopyLen;
+
+  UNREFERENCED_PARAMETER(DeviceObject);
+
+  IrpSp = IoGetCurrentIrpStackLocation(Irp);
+  Ioctl = IrpSp->Parameters.DeviceIoControl.IoControlCode;
+  OutLen = IrpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+  Status = STATUS_INVALID_DEVICE_REQUEST;
+  CopyLen = 0;
+
+  if (Ioctl != IOCTL_AEROVNET_DIAG_QUERY) {
+    Irp->IoStatus.Status = Status;
+    Irp->IoStatus.Information = 0;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    return Status;
+  }
+
+  if (Irp->AssociatedIrp.SystemBuffer == NULL || OutLen < sizeof(ULONG) * 2) {
+    Status = STATUS_BUFFER_TOO_SMALL;
+    Irp->IoStatus.Status = Status;
+    Irp->IoStatus.Information = 0;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    return Status;
+  }
+
+  Adapter = AerovNetDiagReferenceAdapter();
+  if (Adapter == NULL) {
+    Status = STATUS_DEVICE_NOT_READY;
+    Irp->IoStatus.Status = Status;
+    Irp->IoStatus.Information = 0;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    return Status;
+  }
+
+  RtlZeroMemory(&Info, sizeof(Info));
+  Info.Version = AEROVNET_DIAG_INFO_VERSION;
+  Info.Size = sizeof(Info);
+  Info.MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  Info.MsixRxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+  Info.MsixTxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+
+  // Snapshot cached state under the adapter lock.
+  NdisAcquireSpinLock(&Adapter->Lock);
+  if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
+    NdisReleaseSpinLock(&Adapter->Lock);
+    AerovNetDiagDereferenceAdapter(Adapter);
+
+    Status = STATUS_DEVICE_NOT_READY;
+    Irp->IoStatus.Status = Status;
+    Irp->IoStatus.Information = 0;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    return Status;
+  }
+
+  Info.HostFeatures = Adapter->HostFeatures;
+  Info.GuestFeatures = Adapter->GuestFeatures;
+
+  Info.InterruptMode = Adapter->UseMsix ? AEROVNET_INTERRUPT_MODE_MSI : AEROVNET_INTERRUPT_MODE_INTX;
+  Info.MessageCount = Adapter->UseMsix ? (ULONG)Adapter->MsixMessageCount : 0;
+
+  if (Adapter->UseMsix) {
+    Info.Flags |= AEROVNET_DIAG_FLAG_USE_MSIX;
+    if (Adapter->MsixAllOnVector0) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_MSIX_ALL_ON_VECTOR0;
+    }
+  }
+
+  if (Adapter->SurpriseRemoved) {
+    Info.Flags |= AEROVNET_DIAG_FLAG_SURPRISE_REMOVED;
+  }
+
+  if (Adapter->State == AerovNetAdapterRunning) {
+    Info.Flags |= AEROVNET_DIAG_FLAG_ADAPTER_RUNNING;
+  } else if (Adapter->State == AerovNetAdapterPaused) {
+    Info.Flags |= AEROVNET_DIAG_FLAG_ADAPTER_PAUSED;
+  }
+
+  Info.RxQueueSize = Adapter->RxVq.QueueSize;
+  Info.TxQueueSize = Adapter->TxVq.QueueSize;
+
+  Info.RxAvailIdx = (USHORT)Adapter->RxVq.Vq.avail_idx;
+  Info.RxUsedIdx = (Adapter->RxVq.Vq.used != NULL) ? (USHORT)Adapter->RxVq.Vq.used->idx : 0;
+  Info.TxAvailIdx = (USHORT)Adapter->TxVq.Vq.avail_idx;
+  Info.TxUsedIdx = (Adapter->TxVq.Vq.used != NULL) ? (USHORT)Adapter->TxVq.Vq.used->idx : 0;
+
+  Info.TxChecksumSupported = Adapter->TxChecksumSupported ? 1 : 0;
+  Info.TxTsoV4Supported = Adapter->TxTsoV4Supported ? 1 : 0;
+  Info.TxTsoV6Supported = Adapter->TxTsoV6Supported ? 1 : 0;
+  Info.TxChecksumV4Enabled = Adapter->TxChecksumV4Enabled ? 1 : 0;
+  Info.TxChecksumV6Enabled = Adapter->TxChecksumV6Enabled ? 1 : 0;
+  Info.TxTsoV4Enabled = Adapter->TxTsoV4Enabled ? 1 : 0;
+  Info.TxTsoV6Enabled = Adapter->TxTsoV6Enabled ? 1 : 0;
+
+  Info.StatTxPackets = Adapter->StatTxPackets;
+  Info.StatTxBytes = Adapter->StatTxBytes;
+  Info.StatRxPackets = Adapter->StatRxPackets;
+  Info.StatRxBytes = Adapter->StatRxBytes;
+  Info.StatTxErrors = Adapter->StatTxErrors;
+  Info.StatRxErrors = Adapter->StatRxErrors;
+  Info.StatRxNoBuffers = Adapter->StatRxNoBuffers;
+  NdisReleaseSpinLock(&Adapter->Lock);
+
+  // Read back the currently programmed MSI-X vectors from virtio common config.
+  //
+  // Only attempt this if:
+  //  - we're at PASSIVE_LEVEL (IOCTL path)
+  //  - BAR0 is still mapped (not surprise removed / not halted)
+  if (KeGetCurrentIrql() == PASSIVE_LEVEL && Adapter->Vdev.CommonCfg != NULL && !Adapter->SurpriseRemoved) {
+    KIRQL OldIrql;
+    USHORT MsixConfig;
+    USHORT MsixRx;
+    USHORT MsixTx;
+
+    MsixConfig = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->msix_config);
+    KeMemoryBarrier();
+
+    MsixRx = VIRTIO_PCI_MSI_NO_VECTOR;
+    MsixTx = VIRTIO_PCI_MSI_NO_VECTOR;
+
+    KeAcquireSpinLock(&Adapter->Vdev.CommonCfgLock, &OldIrql);
+
+    WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, 0);
+    KeMemoryBarrier();
+    MsixRx = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector);
+    KeMemoryBarrier();
+
+    WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, 1);
+    KeMemoryBarrier();
+    MsixTx = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector);
+    KeMemoryBarrier();
+
+    KeReleaseSpinLock(&Adapter->Vdev.CommonCfgLock, OldIrql);
+
+    Info.MsixConfigVector = MsixConfig;
+    Info.MsixRxVector = MsixRx;
+    Info.MsixTxVector = MsixTx;
+
+    // If vectors are assigned, treat the effective mode as MSI/MSI-X even if
+    // `UseMsix` was not set (should be rare; included for observability).
+    if (MsixConfig != VIRTIO_PCI_MSI_NO_VECTOR || MsixRx != VIRTIO_PCI_MSI_NO_VECTOR || MsixTx != VIRTIO_PCI_MSI_NO_VECTOR) {
+      Info.InterruptMode = AEROVNET_INTERRUPT_MODE_MSI;
+    }
+  }
+
+  CopyLen = OutLen;
+  if (CopyLen > sizeof(Info)) {
+    CopyLen = sizeof(Info);
+  }
+
+  RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &Info, CopyLen);
+  Status = STATUS_SUCCESS;
+
+  AerovNetDiagDereferenceAdapter(Adapter);
+
+  Irp->IoStatus.Status = Status;
+  Irp->IoStatus.Information = CopyLen;
+  IoCompleteRequest(Irp, IO_NO_INCREMENT);
+  return Status;
+}
+
 static VOID AerovNetDriverUnload(_In_ PDRIVER_OBJECT DriverObject) {
   UNREFERENCED_PARAMETER(DriverObject);
+
+  if (g_NdisDeviceHandle) {
+    NdisDeregisterDeviceEx(g_NdisDeviceHandle);
+    g_NdisDeviceHandle = NULL;
+    g_NdisDeviceObject = NULL;
+  }
+
+  if (g_DiagLockInitialized) {
+    NdisAcquireSpinLock(&g_DiagLock);
+    g_DiagAdapter = NULL;
+    NdisReleaseSpinLock(&g_DiagLock);
+
+    NdisFreeSpinLock(&g_DiagLock);
+    g_DiagLockInitialized = FALSE;
+  }
 
   if (g_NdisDriverHandle) {
     NdisMDeregisterMiniportDriver(g_NdisDriverHandle);
@@ -4601,6 +4951,10 @@ static VOID AerovNetDriverUnload(_In_ PDRIVER_OBJECT DriverObject) {
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath) {
   NDIS_STATUS Status;
   NDIS_MINIPORT_DRIVER_CHARACTERISTICS Ch;
+  ULONG I;
+  NDIS_DEVICE_OBJECT_ATTRIBUTES DevAttrs;
+  UNICODE_STRING DeviceName;
+  UNICODE_STRING SymbolicName;
 
   RtlZeroMemory(&Ch, sizeof(Ch));
   Ch.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_DRIVER_CHARACTERISTICS;
@@ -4626,6 +4980,45 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
   if (Status != NDIS_STATUS_SUCCESS) {
     g_NdisDriverHandle = NULL;
     return Status;
+  }
+
+  // Register a global diagnostics control device for user-mode state queries.
+  //
+  // This is best-effort: failure should not prevent the miniport from loading.
+  NdisAllocateSpinLock(&g_DiagLock);
+  g_DiagLockInitialized = TRUE;
+
+  for (I = 0; I <= IRP_MJ_MAXIMUM_FUNCTION; I++) {
+    g_DiagMajorFunctions[I] = AerovNetDiagDispatchDefault;
+  }
+  g_DiagMajorFunctions[IRP_MJ_CREATE] = AerovNetDiagDispatchCreateClose;
+  g_DiagMajorFunctions[IRP_MJ_CLOSE] = AerovNetDiagDispatchCreateClose;
+  g_DiagMajorFunctions[IRP_MJ_DEVICE_CONTROL] = AerovNetDiagDispatchDeviceControl;
+
+  RtlInitUnicodeString(&DeviceName, AEROVNET_DIAG_DEVICE_NAME);
+  RtlInitUnicodeString(&SymbolicName, AEROVNET_DIAG_SYMBOLIC_NAME);
+
+  RtlZeroMemory(&DevAttrs, sizeof(DevAttrs));
+  DevAttrs.Header.Type = NDIS_OBJECT_TYPE_DEVICE_OBJECT_ATTRIBUTES;
+  DevAttrs.Header.Revision = NDIS_DEVICE_OBJECT_ATTRIBUTES_REVISION_1;
+  DevAttrs.Header.Size = sizeof(DevAttrs);
+  DevAttrs.MajorFunctions = g_DiagMajorFunctions;
+  DevAttrs.ExtensionSize = 0;
+  DevAttrs.DeviceName = &DeviceName;
+  DevAttrs.SymbolicName = &SymbolicName;
+  DevAttrs.DefaultSDDLString = (PWSTR)g_AerovNetDiagSddl;
+  DevAttrs.DeviceClassGuid = NULL;
+
+  Status = NdisRegisterDeviceEx(g_NdisDriverHandle, &DevAttrs, &g_NdisDeviceObject, &g_NdisDeviceHandle);
+  if (Status != NDIS_STATUS_SUCCESS) {
+#if DBG
+    DbgPrint("aero_virtio_net: diag: NdisRegisterDeviceEx failed: 0x%08X\n", Status);
+#endif
+    g_NdisDeviceHandle = NULL;
+    g_NdisDeviceObject = NULL;
+
+    NdisFreeSpinLock(&g_DiagLock);
+    g_DiagLockInitialized = FALSE;
   }
 
   return STATUS_SUCCESS;

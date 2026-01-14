@@ -202,6 +202,8 @@ typedef struct _AEROVNET_ADAPTER {
 
   volatile LONG OutstandingSgMappings;
   KEVENT OutstandingSgEvent;
+  volatile LONG DiagRefCount;
+  KEVENT DiagRefEvent;
 
   UCHAR PciCfgSpace[256];
 

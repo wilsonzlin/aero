@@ -523,6 +523,64 @@ struct AerovblkQueryInfoResult {
   size_t returned_len = 0; // Bytes of `info` returned by the driver (variable-length contract).
 };
 
+// Userspace mirror of `drivers/windows7/virtio-net/src/aero_virtio_net.c` diagnostics interface.
+static constexpr const wchar_t* kAerovnetDiagDevicePath = L"\\\\.\\AeroVirtioNetDiag";
+static constexpr ULONG kAerovnetDiagIoctlQuery =
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800u, METHOD_BUFFERED, FILE_READ_ACCESS);
+static constexpr ULONG kAerovnetInterruptModeIntx = 0u;
+static constexpr ULONG kAerovnetInterruptModeMsi = 1u;
+static constexpr USHORT kAerovnetNoVector = 0xFFFFu;
+
+#pragma pack(push, 1)
+struct AEROVNET_DIAG_INFO {
+  ULONG Version;
+  ULONG Size;
+
+  ULONGLONG HostFeatures;
+  ULONGLONG GuestFeatures;
+
+  ULONG InterruptMode;
+  ULONG MessageCount;
+
+  USHORT MsixConfigVector;
+  USHORT MsixRxVector;
+  USHORT MsixTxVector;
+
+  USHORT RxQueueSize;
+  USHORT TxQueueSize;
+
+  USHORT RxAvailIdx;
+  USHORT RxUsedIdx;
+  USHORT TxAvailIdx;
+  USHORT TxUsedIdx;
+
+  ULONG Flags;
+
+  UCHAR TxChecksumSupported;
+  UCHAR TxTsoV4Supported;
+  UCHAR TxTsoV6Supported;
+  UCHAR TxChecksumV4Enabled;
+  UCHAR TxChecksumV6Enabled;
+  UCHAR TxTsoV4Enabled;
+  UCHAR TxTsoV6Enabled;
+  UCHAR Reserved0;
+
+  ULONGLONG StatTxPackets;
+  ULONGLONG StatTxBytes;
+  ULONGLONG StatRxPackets;
+  ULONGLONG StatRxBytes;
+  ULONGLONG StatTxErrors;
+  ULONGLONG StatRxErrors;
+  ULONGLONG StatRxNoBuffers;
+};
+#pragma pack(pop)
+
+static_assert(offsetof(AEROVNET_DIAG_INFO, Version) == 0x00, "AEROVNET_DIAG_INFO layout");
+static_assert(offsetof(AEROVNET_DIAG_INFO, HostFeatures) == 0x08, "AEROVNET_DIAG_INFO layout");
+static_assert(offsetof(AEROVNET_DIAG_INFO, GuestFeatures) == 0x10, "AEROVNET_DIAG_INFO layout");
+static_assert(offsetof(AEROVNET_DIAG_INFO, InterruptMode) == 0x18, "AEROVNET_DIAG_INFO layout");
+static_assert(sizeof(AEROVNET_DIAG_INFO) <= 256, "AEROVNET_DIAG_INFO size");
+
 static std::string VirtioFeaturesToString(ULONGLONG f) {
   char buf[64];
   // Windows 7 MSVCRT lacks `%llx` in some configurations; use I64 explicitly.
@@ -1154,6 +1212,62 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
   }
 
   EmitVirtioIrqMarkerForDevInst(log, dev_name, matches.front().devinst);
+}
+
+static void EmitVirtioNetDiagMarker(Logger& log) {
+  HANDLE h = CreateFileW(kAerovnetDiagDevicePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) {
+    const DWORD err = GetLastError();
+    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+      log.LogLine("virtio-net-diag|WARN|reason=not_supported");
+    } else {
+      log.Logf("virtio-net-diag|WARN|reason=open_failed|err=%lu", static_cast<unsigned long>(err));
+    }
+    return;
+  }
+
+  AEROVNET_DIAG_INFO info{};
+  DWORD bytes = 0;
+  const BOOL ok = DeviceIoControl(h, kAerovnetDiagIoctlQuery, nullptr, 0, &info, sizeof(info), &bytes, nullptr);
+  const DWORD err = ok ? 0 : GetLastError();
+  CloseHandle(h);
+
+  if (!ok) {
+    log.Logf("virtio-net-diag|WARN|reason=ioctl_failed|err=%lu", static_cast<unsigned long>(err));
+    return;
+  }
+  if (bytes < sizeof(ULONG) * 2) {
+    log.Logf("virtio-net-diag|WARN|reason=short_read|bytes=%lu", static_cast<unsigned long>(bytes));
+    return;
+  }
+
+  const char* mode = "unknown";
+  if (info.InterruptMode == kAerovnetInterruptModeIntx) {
+    mode = "intx";
+  } else if (info.InterruptMode == kAerovnetInterruptModeMsi) {
+    if (info.MsixConfigVector != kAerovnetNoVector || info.MsixRxVector != kAerovnetNoVector ||
+        info.MsixTxVector != kAerovnetNoVector) {
+      mode = "msix";
+    } else {
+      mode = "msi";
+    }
+  }
+
+  log.Logf(
+      "virtio-net-diag|INFO|host_features=%s|guest_features=%s|irq_mode=%s|irq_message_count=%lu|"
+      "msix_config_vector=0x%04x|msix_rx_vector=0x%04x|msix_tx_vector=0x%04x|"
+      "rx_queue_size=%u|tx_queue_size=%u|"
+      "rx_avail_idx=%u|rx_used_idx=%u|tx_avail_idx=%u|tx_used_idx=%u|"
+      "tx_csum_v4=%u|tx_csum_v6=%u|tx_tso_v4=%u|tx_tso_v6=%u|"
+      "stat_tx_err=%llu|stat_rx_err=%llu|stat_rx_no_buf=%llu",
+      VirtioFeaturesToString(info.HostFeatures).c_str(), VirtioFeaturesToString(info.GuestFeatures).c_str(), mode,
+      static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
+      static_cast<unsigned>(info.MsixRxVector), static_cast<unsigned>(info.MsixTxVector), info.RxQueueSize,
+      info.TxQueueSize, info.RxAvailIdx, info.RxUsedIdx, info.TxAvailIdx, info.TxUsedIdx, info.TxChecksumV4Enabled,
+      info.TxChecksumV6Enabled, info.TxTsoV4Enabled, info.TxTsoV6Enabled,
+      static_cast<unsigned long long>(info.StatTxErrors), static_cast<unsigned long long>(info.StatRxErrors),
+      static_cast<unsigned long long>(info.StatRxNoBuffers));
 }
 
 static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log,
@@ -9718,6 +9832,7 @@ int wmain(int argc, wchar_t** argv) {
     WSACleanup();
   }
 
+  EmitVirtioNetDiagMarker(log);
   if (net_devinst != 0) {
     EmitVirtioIrqMarkerForDevInst(log, "virtio-net", net_devinst);
   } else {

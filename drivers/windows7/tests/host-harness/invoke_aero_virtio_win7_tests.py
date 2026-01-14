@@ -4814,6 +4814,7 @@ def main() -> int:
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_net_large_host_marker(tail)
+        _emit_virtio_net_diag_host_marker(tail)
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_input_irq_host_marker(tail)
@@ -5311,6 +5312,7 @@ def _parse_virtio_input_msix_marker(tail: bytes) -> Optional[_VirtioInputMsixMar
 
 
 _VIRTIO_IRQ_MARKER_RE = re.compile(r"^virtio-(?P<dev>.+)-irq\|(?P<level>INFO|WARN)(?:\|(?P<rest>.*))?$")
+_VIRTIO_NET_DIAG_MARKER_RE = re.compile(r"^virtio-net-diag\|(?P<level>INFO|WARN)(?:\|(?P<rest>.*))?$")
 
 
 def _try_parse_virtio_irq_marker_line(line: str) -> Optional[tuple[str, dict[str, str]]]:
@@ -5619,6 +5621,78 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
     ):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_net_diag_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest's `virtio-net-diag|...` diagnostics.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"virtio-net-diag|")
+    if marker_line is None:
+        return
+
+    m = _VIRTIO_NET_DIAG_MARKER_RE.match(marker_line)
+    if not m:
+        return
+
+    level = m.group("level")
+    rest = m.group("rest") or ""
+
+    fields: dict[str, str] = {}
+    extra_parts: list[str] = []
+    for tok in rest.split("|") if rest else []:
+        tok = tok.strip()
+        if not tok:
+            continue
+        if "=" not in tok:
+            extra_parts.append(tok)
+            continue
+        k, v = tok.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if not k:
+            continue
+        fields[k] = v
+    if extra_parts:
+        fields["msg"] = "|".join(extra_parts)
+
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|{level}"]
+
+    ordered = (
+        "reason",
+        "host_features",
+        "guest_features",
+        "irq_mode",
+        "irq_message_count",
+        "msix_config_vector",
+        "msix_rx_vector",
+        "msix_tx_vector",
+        "rx_queue_size",
+        "tx_queue_size",
+        "rx_avail_idx",
+        "rx_used_idx",
+        "tx_avail_idx",
+        "tx_used_idx",
+        "tx_csum_v4",
+        "tx_csum_v6",
+        "tx_tso_v4",
+        "tx_tso_v6",
+        "stat_tx_err",
+        "stat_rx_err",
+        "stat_rx_no_buf",
+        "msg",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
     print("|".join(parts))
 
 
