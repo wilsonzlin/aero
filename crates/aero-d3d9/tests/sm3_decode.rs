@@ -435,3 +435,13 @@ fn decode_rejects_missing_end_token() {
     let err = decode_u32_tokens(&tokens).unwrap_err();
     assert!(err.message.contains("missing end token"), "{err}");
 }
+
+#[test]
+fn decode_rejects_unsupported_shader_model() {
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 9, 0),
+        0x0000_FFFF,
+    ];
+    let err = decode_u32_tokens(&tokens).unwrap_err();
+    assert!(err.message.contains("unsupported shader model"), "{err}");
+}
