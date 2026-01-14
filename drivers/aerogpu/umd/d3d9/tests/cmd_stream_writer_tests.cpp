@@ -1184,6 +1184,9 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check((caps.Caps2 & D3DCAPS2_CANSHARERESOURCE) != 0, "Caps2 includes CANSHARERESOURCE")) {
     return false;
   }
+  if (!Check((caps.Caps & D3DCAPS_READ_SCANLINE) != 0, "Caps includes READ_SCANLINE")) {
+    return false;
+  }
   if (!Check(caps.VertexShaderVersion >= D3DVS_VERSION(2, 0), "VertexShaderVersion >= 2.0")) {
     return false;
   }
@@ -1193,13 +1196,26 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check((caps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT) != 0, "DevCaps includes HWTRANSFORMANDLIGHT")) {
     return false;
   }
+  if (!Check((caps.PrimitiveMiscCaps & D3DPMISCCAPS_BLENDOP) != 0, "PrimitiveMiscCaps includes BLENDOP")) {
+    return false;
+  }
+  if (!Check((caps.PrimitiveMiscCaps & D3DPMISCCAPS_SEPARATEALPHABLEND) != 0,
+             "PrimitiveMiscCaps includes SEPARATEALPHABLEND")) {
+    return false;
+  }
   if (!Check((caps.TextureCaps & D3DPTEXTURECAPS_POW2) == 0, "TextureCaps does not include POW2")) {
     return false;
   }
   if (!Check((caps.TextureCaps & D3DPTEXTURECAPS_CUBEMAP) != 0, "TextureCaps includes CUBEMAP")) {
     return false;
   }
-  if (!Check((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) != 0, "RasterCaps includes SCISSORTEST")) {
+  const uint32_t raster_required =
+      D3DPRASTERCAPS_SCISSORTEST |
+      D3DPRASTERCAPS_ZTEST |
+      D3DPRASTERCAPS_CULLCCW |
+      D3DPRASTERCAPS_CULLCW;
+  if (!Check((caps.RasterCaps & raster_required) == raster_required,
+             "RasterCaps includes SCISSORTEST/ZTEST/CULLCCW/CULLCW")) {
     return false;
   }
   const uint32_t required_texfilt_caps =
@@ -1214,6 +1230,15 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   const uint32_t stretchrect_required =
       D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
       D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
+  if (!Check((caps.TextureFilterCaps & stretchrect_required) == stretchrect_required,
+             "TextureFilterCaps includes point+linear min/mag filtering")) {
+    return false;
+  }
+  const uint32_t texture_mip_caps = D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
+  if (!Check((caps.TextureFilterCaps & texture_mip_caps) == texture_mip_caps,
+             "TextureFilterCaps includes mip point+linear filtering")) {
+    return false;
+  }
   if (!Check((caps.StretchRectFilterCaps & stretchrect_required) == stretchrect_required,
              "StretchRectFilterCaps includes point+linear min/mag filtering")) {
     return false;
@@ -1231,7 +1256,25 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
       D3DTEXOPCAPS_SELECTARG2 |
       D3DTEXOPCAPS_MODULATE;
   if (!Check((caps.TextureOpCaps & required_texop_caps) == required_texop_caps,
-             "TextureOpCaps includes DISABLE/SELECTARG1/SELECTARG2/MODULATE")) {
+               "TextureOpCaps includes DISABLE/SELECTARG1/SELECTARG2/MODULATE")) {
+    return false;
+  }
+  const uint32_t blend_required = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE |
+                                  D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA |
+                                  D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA |
+                                  D3DPBLENDCAPS_BLENDFACTOR | D3DPBLENDCAPS_INVBLENDFACTOR;
+  if (!Check((caps.SrcBlendCaps & blend_required) == blend_required, "SrcBlendCaps includes required blend factors")) {
+    return false;
+  }
+  if (!Check((caps.DestBlendCaps & blend_required) == blend_required, "DestBlendCaps includes required blend factors")) {
+    return false;
+  }
+  const uint32_t blendop_required = D3DBLENDOPCAPS_ADD |
+                                    D3DBLENDOPCAPS_SUBTRACT |
+                                    D3DBLENDOPCAPS_REVSUBTRACT |
+                                    D3DBLENDOPCAPS_MIN |
+                                    D3DBLENDOPCAPS_MAX;
+  if (!Check((caps.BlendOpCaps & blendop_required) == blendop_required, "BlendOpCaps includes ADD/SUB/REVSUB/MIN/MAX")) {
     return false;
   }
   // Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch), but

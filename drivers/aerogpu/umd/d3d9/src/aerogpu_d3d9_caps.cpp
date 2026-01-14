@@ -159,6 +159,26 @@ bool is_supported_format(const Adapter* adapter, uint32_t format) {
   return false;
 }
 
+#if defined(_WIN32)
+
+GUID make_aerogpu_adapter_guid() {
+  GUID g{};
+  g.Data1 = 0x5f84f5ae;
+  g.Data2 = 0x6c2b;
+  g.Data3 = 0x4c3f;
+  g.Data4[0] = 0x8b;
+  g.Data4[1] = 0x6f;
+  g.Data4[2] = 0x5e;
+  g.Data4[3] = 0x7d;
+  g.Data4[4] = 0x3c;
+  g.Data4[5] = 0x3a;
+  g.Data4[6] = 0x27;
+  g.Data4[7] = 0xb1;
+  return g;
+}
+
+#endif // _WIN32
+
 template <typename T, typename = void>
 struct caps_has_blend_op_caps : std::false_type {};
 template <typename T>
@@ -219,24 +239,6 @@ void maybe_set_blend_op_caps(CapsT* out) {
         D3DBLENDOPCAPS_MIN |
         D3DBLENDOPCAPS_MAX;
   }
-}
-
-#if defined(_WIN32)
-
-GUID make_aerogpu_adapter_guid() {
-  GUID g{};
-  g.Data1 = 0x5f84f5ae;
-  g.Data2 = 0x6c2b;
-  g.Data3 = 0x4c3f;
-  g.Data4[0] = 0x8b;
-  g.Data4[1] = 0x6f;
-  g.Data4[2] = 0x5e;
-  g.Data4[3] = 0x7d;
-  g.Data4[4] = 0x3c;
-  g.Data4[5] = 0x3a;
-  g.Data4[6] = 0x27;
-  g.Data4[7] = 0xb1;
-  return g;
 }
 
 void fill_d3d9_caps(D3DCAPS9* out) {
@@ -366,12 +368,9 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP | D3DPTEXTURECAPS_CUBEMAP;
 
   // Fixed-function texture stage operation caps (TextureOpCaps) are used by apps
-  // and some runtimes to validate stage-state combiner operations.
-  //
-  // The UMD's fixed-function fallback can interpret a small stage0 subset, but
-  // support is intentionally bring-up level (some ops/sources are only handled
-  // for common TEXTURE↔DIFFUSE/TFACTOR patterns). Keep caps conservative so apps
-  // don't rely on partially-implemented combinations.
+  // and some runtimes to validate stage-state combiner operations. The UMD only
+  // implements a minimal stage0 subset; advertise just the operations we handle
+  // end-to-end.
   out->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
                        D3DTEXOPCAPS_SELECTARG1 |
                        D3DTEXOPCAPS_SELECTARG2 |
@@ -431,6 +430,8 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->PixelShader1xMaxValue = 1.0f;
 }
+
+#if defined(_WIN32)
 
 void log_caps_once(const D3DCAPS9& caps) {
   const bool already = g_logged_caps_once.exchange(true);
@@ -527,100 +528,12 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
       if (pGetCaps->DataSize < sizeof(D3DCAPS9)) {
         return E_INVALIDARG;
       }
-#if defined(_WIN32)
       auto* caps = reinterpret_cast<D3DCAPS9*>(pGetCaps->pData);
       fill_d3d9_caps(caps);
+#if defined(_WIN32)
       log_caps_once(*caps);
-      return S_OK;
-#else
-      auto* caps = reinterpret_cast<D3DCAPS9*>(pGetCaps->pData);
-      std::memset(caps, 0, sizeof(*caps));
-      caps->DeviceType = D3DDEVTYPE_HAL;
-      caps->AdapterOrdinal = 0;
-      caps->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
-      caps->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
-                      D3DDEVCAPS_DRAWPRIMITIVES2 |
-                      D3DDEVCAPS_DRAWPRIMITIVES2EX |
-                      D3DDEVCAPS_RTPATCHES;
-      caps->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS;
-      caps->RasterCaps = D3DPRASTERCAPS_SCISSORTEST;
-      const DWORD cmp_caps = D3DPCMPCAPS_NEVER |
-                             D3DPCMPCAPS_LESS |
-                             D3DPCMPCAPS_EQUAL |
-                             D3DPCMPCAPS_LESSEQUAL |
-                             D3DPCMPCAPS_GREATER |
-                             D3DPCMPCAPS_NOTEQUAL |
-                             D3DPCMPCAPS_GREATEREQUAL |
-                             D3DPCMPCAPS_ALWAYS;
-      caps->ZCmpCaps = cmp_caps;
-      caps->AlphaCmpCaps = cmp_caps;
-      caps->StencilCaps = D3DSTENCILCAPS_KEEP |
-                          D3DSTENCILCAPS_ZERO |
-                          D3DSTENCILCAPS_REPLACE |
-                          D3DSTENCILCAPS_INCRSAT |
-                          D3DSTENCILCAPS_DECRSAT |
-                          D3DSTENCILCAPS_INVERT |
-                          D3DSTENCILCAPS_INCR |
-                          D3DSTENCILCAPS_DECR |
-                          D3DSTENCILCAPS_TWOSIDED;
-
-      // Fixed-function FVF fallback supports at most TEX1.
-      caps->FVFCaps = 1;
-
-      caps->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
-      caps->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP | D3DPTEXTURECAPS_CUBEMAP;
-      caps->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
-                                D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
-                                D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
-      caps->CubeTextureFilterCaps = caps->TextureFilterCaps;
-
-      // StretchRect filtering only supports min/mag point/linear (no mip filtering).
-      caps->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
-                                    D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
-      caps->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP |
-                                 D3DPTADDRESSCAPS_MIRROR;
-      caps->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
-                            D3DTEXOPCAPS_SELECTARG1 |
-                            D3DTEXOPCAPS_SELECTARG2 |
-                            D3DTEXOPCAPS_MODULATE;
-      caps->SrcBlendCaps = D3DPBLENDCAPS_ZERO |
-                           D3DPBLENDCAPS_ONE |
-                           D3DPBLENDCAPS_SRCALPHA |
-                           D3DPBLENDCAPS_INVSRCALPHA |
-                           D3DPBLENDCAPS_DESTALPHA |
-                           D3DPBLENDCAPS_INVDESTALPHA |
-                           D3DPBLENDCAPS_BLENDFACTOR |
-                           D3DPBLENDCAPS_INVBLENDFACTOR;
-      caps->DestBlendCaps = caps->SrcBlendCaps;
-      maybe_set_blend_op_caps(caps);
-      caps->MaxTextureWidth = 4096;
-      caps->MaxTextureHeight = 4096;
-      caps->MaxTextureRepeat = 8192;
-      caps->MaxTextureAspectRatio = 8192;
-      caps->MaxAnisotropy = 1;
-      caps->MaxVertexW = 1e10f;
-      // Keep portable caps aligned with the Win7 WDDM path: no volume textures,
-      // conservative limits for the compositor workload.
-      caps->MaxVolumeExtent = 0;
-      caps->MaxSimultaneousTextures = 4;
-      caps->MaxTextureBlendStages = 4;
-      caps->MaxStreams = 4;
-      caps->MaxStreamStride = 2048;
-      caps->MaxPrimitiveCount = 0xFFFFFu;
-      caps->MaxVertexIndex = 0xFFFFFu;
-      caps->VertexShaderVersion = D3DVS_VERSION(2, 0);
-      caps->PixelShaderVersion = D3DPS_VERSION(2, 0);
-      caps->MaxVertexShaderConst = 256;
-      caps->PresentationIntervals = D3DPRESENT_INTERVAL_ONE | D3DPRESENT_INTERVAL_IMMEDIATE;
-      caps->NumSimultaneousRTs = 4;
-      caps->VS20Caps.NumTemps = 32;
-      caps->VS20Caps.NumInstructionSlots = 256;
-      caps->PS20Caps.NumTemps = 32;
-      caps->PS20Caps.NumInstructionSlots = 512;
-      caps->MaxNpatchTessellationLevel = 64.0f;
-      caps->PixelShader1xMaxValue = 1.0f;
-      return S_OK;
 #endif
+      return S_OK;
     }
     case D3DDDICAPS_GETFORMATCOUNT: {
       if (pGetCaps->DataSize < sizeof(uint32_t)) {
