@@ -795,9 +795,13 @@ typedef struct aerogpu_escape_map_shared_handle_inout {
   aerogpu_escape_header hdr;
   aerogpu_escape_u64 shared_handle;
   /*
-   * Debug-only 32-bit token for mapping a process-local NT handle to a stable
-   * value for bring-up tooling. This is NOT the `u64 share_token` used by
-   * `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
+   * Debug-only 32-bit token for mapping a process-local NT handle (a section
+   * object; common for DXGI shared handles) to a stable value for bring-up
+   * tooling. This is NOT the `u64 share_token` used by `EXPORT_SHARED_SURFACE`
+   * / `IMPORT_SHARED_SURFACE`.
+   *
+   * Note: token-style shared handles are not real NT handles and cannot be
+   * mapped by this escape.
    *
    * Field naming note:
    * - Prefer `debug_token` in new code.
