@@ -1766,4 +1766,119 @@ describe("RemoteRangeDisk", () => {
 
     await disk.close();
   });
+
+  it("disables persistent caching if background flush hits quota (and continues serving reads)", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(chunkSize * 2);
+    let rangeGets = 0;
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    class FlushQuotaDisk extends MemorySparseDisk {
+      writeCalls = 0;
+      flushCalls = 0;
+
+      override async writeBlock(blockIndex: number, bytes: Uint8Array): Promise<void> {
+        this.writeCalls += 1;
+        await super.writeBlock(blockIndex, bytes);
+      }
+
+      override async flush(): Promise<void> {
+        this.flushCalls += 1;
+        // Fail the first background flush with quota, but allow subsequent flushes
+        // (e.g. during close()) to succeed.
+        if (this.flushCalls === 1) {
+          throw new DOMException("quota exceeded", "QuotaExceededError");
+        }
+      }
+    }
+
+    class FlushQuotaFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: FlushQuotaDisk | null = null;
+
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new FlushQuotaDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    const factory = new FlushQuotaFactory();
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "quota-drop-flush", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      maxConcurrentFetches: 1,
+      readAheadChunks: 0,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: factory,
+      fetchFn,
+    });
+
+    const first = new Uint8Array(chunkSize);
+    await disk.readSectors(0, first);
+    expect(first).toEqual(data.subarray(0, first.byteLength));
+    expect(rangeGets).toBe(1);
+
+    // Allow the scheduled background flush to run and observe quota exhaustion.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const snap = disk.getTelemetrySnapshot();
+    expect(snap.cacheLimitBytes).toBe(0);
+    expect(snap.cachedBytes).toBe(0);
+    expect(factory.lastCreated?.flushCalls).toBeGreaterThanOrEqual(1);
+
+    // With persistence disabled, subsequent reads should re-download.
+    const second = new Uint8Array(chunkSize);
+    await disk.readSectors(0, second);
+    expect(second).toEqual(data.subarray(0, second.byteLength));
+    expect(rangeGets).toBe(2);
+
+    // Persistent writes should not be attempted again once disabled.
+    expect(factory.lastCreated?.writeCalls).toBe(1);
+
+    await disk.close();
+  });
 });
