@@ -540,7 +540,6 @@ pub enum MachineError {
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
     EhciRequiresPcPlatform,
-    AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
@@ -588,9 +587,6 @@ impl fmt::Display for MachineError {
             }
             MachineError::EhciRequiresPcPlatform => {
                 write!(f, "enable_ehci requires enable_pc_platform=true")
-            }
-            MachineError::AeroGpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::AeroGpuConflictsWithVga => {
                 write!(
@@ -3967,7 +3963,7 @@ Track progress: docs/21-smp.md\n\
         model: Box<dyn aero_usb::UsbDeviceModel>,
     ) -> Result<(), aero_usb::UsbHubAttachError> {
         let path = [port];
-        self.usb_attach_path(&path, model)
+        self.usb_attach_at_path(&path, model)
     }
 
     /// Detach any USB device model from a UHCI root hub port.
@@ -3977,7 +3973,7 @@ Track progress: docs/21-smp.md\n\
     /// If UHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
     pub fn usb_detach_root(&mut self, port: u8) -> Result<(), aero_usb::UsbHubAttachError> {
         let path = [port];
-        self.usb_detach_path(&path)
+        self.usb_detach_at_path(&path)
     }
 
     /// Attach a USB device model at a topology path rooted at the UHCI root hub.
@@ -3992,13 +3988,7 @@ Track progress: docs/21-smp.md\n\
         path: &[u8],
         model: Box<dyn aero_usb::UsbDeviceModel>,
     ) -> Result<(), aero_usb::UsbHubAttachError> {
-        let Some(uhci) = &self.uhci else {
-            return Ok(());
-        };
-        uhci.borrow_mut()
-            .controller_mut()
-            .hub_mut()
-            .attach_at_path(path, model)
+        self.usb_attach_at_path(path, model)
     }
 
     /// Detach any USB device model at a topology path rooted at the UHCI root hub.
@@ -4009,9 +3999,60 @@ Track progress: docs/21-smp.md\n\
     ///
     /// If UHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
     pub fn usb_detach_path(&mut self, path: &[u8]) -> Result<(), aero_usb::UsbHubAttachError> {
+        self.usb_detach_at_path(path)
+    }
+
+    /// Attach a USB device model at a topology path on the UHCI root hub.
+    ///
+    /// Path semantics match [`aero_usb::hub::RootHub::attach_at_path`]:
+    ///
+    /// - `path[0]` is the **root port index** (0-based).
+    /// - `path[1..]` are **hub port numbers** (1-based) for any nested hubs.
+    ///
+    /// If UHCI is not enabled on this machine, this call is a no-op.
+    pub fn usb_attach_at_path(
+        &mut self,
+        path: &[u8],
+        dev: Box<dyn aero_usb::UsbDeviceModel>,
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
         let Some(uhci) = &self.uhci else {
             return Ok(());
         };
+
+        let Some((&root_port, _)) = path.split_first() else {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        };
+        // UHCI root hub has 2 ports (PORTSC1/PORTSC2). Validate early so hosts don't accidentally
+        // attach to non-existent root ports and then rely on undefined behaviour.
+        if root_port as usize >= 2 {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        }
+
+        uhci.borrow_mut()
+            .controller_mut()
+            .hub_mut()
+            .attach_at_path(path, dev)
+    }
+
+    /// Detach any USB device model at a topology path on the UHCI root hub.
+    ///
+    /// Path semantics match [`aero_usb::hub::RootHub::detach_at_path`]. If UHCI is not enabled on
+    /// this machine, this call is a no-op.
+    pub fn usb_detach_at_path(
+        &mut self,
+        path: &[u8],
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        let Some(uhci) = &self.uhci else {
+            return Ok(());
+        };
+
+        let Some((&root_port, _)) = path.split_first() else {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        };
+        if root_port as usize >= 2 {
+            return Err(aero_usb::UsbHubAttachError::InvalidPort);
+        }
+
         uhci.borrow_mut()
             .controller_mut()
             .hub_mut()
@@ -11827,7 +11868,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             headless.vbe_lfb_base(),
-            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
         );
 
         // When VGA is enabled, the BIOS should report the legacy MMIO-mapped SVGA base.
@@ -11842,7 +11883,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(vga.vbe_lfb_base(), aero_gpu_vga::SVGA_LFB_BASE);
+        assert_eq!(vga.vbe_lfb_base(), u64::from(aero_gpu_vga::SVGA_LFB_BASE));
     }
 
     #[test]
@@ -11866,8 +11907,9 @@ mod tests {
             .unwrap_or(0);
         assert_ne!(bar1_base, 0, "AeroGPU BAR1 should be assigned by BIOS POST");
 
-        let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
-            .expect("LFB base should fit in u32");
+        let expected = u64::from(
+            u32::try_from(bar1_base + VBE_LFB_OFFSET as u64).expect("LFB base should fit in u32"),
+        );
         assert_eq!(m.vbe_lfb_base(), expected);
     }
 
