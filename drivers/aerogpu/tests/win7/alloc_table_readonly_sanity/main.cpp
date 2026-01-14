@@ -199,12 +199,13 @@ static int RunAllocTableReadonlySanity(int argc, char** argv) {
         "Usage: %s.exe [--hidden] [--json[=PATH]] [--allow-remote] [--require-agpu]",
         kTestName);
     aerogpu_test::PrintfStdout(
-        "Triggers a D3D9Ex GPU->CPU readback (GetRenderTargetData) which uses an AeroGPU COPY_TEXTURE2D "
-        "WRITEBACK_DST submission when transfer is supported. Reads back the per-submit allocation table via "
-        "dbgctl READ_GPA and validates that it contains a mix of READONLY and writable entries, verifying "
-        "propagation of WDDM DXGK_ALLOCATIONLIST WriteOperation semantics into alloc_table.flags.");
-    return 0;
-  }
+         "Triggers a D3D9Ex GPU->CPU readback (GetRenderTargetData) which uses an AeroGPU COPY_TEXTURE2D "
+         "WRITEBACK_DST submission when transfer is supported. Reads back the per-submit allocation table via "
+         "dbgctl READ_GPA and validates that it contains a mix of READONLY and writable entries, verifying "
+         "propagation of WDDM submission-time write metadata (DXGK_ALLOCATIONLIST WriteOperation bit; Flags.Value&0x1) "
+         "into alloc_table.flags.");
+      return 0;
+    }
 
   aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
