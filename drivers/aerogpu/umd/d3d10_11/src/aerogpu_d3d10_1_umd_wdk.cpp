@@ -261,29 +261,8 @@ static bool FixupLegacyPrivForOpenResource(aerogpu_wddm_alloc_priv_v2* priv) {
   return aerogpu::shared_surface::FixupLegacyPrivForOpenResource(priv);
 }
 
-struct AerogpuTextureFormatLayout {
-  // For linear formats, block_width/block_height are 1 and bytes_per_block is
-  // the bytes-per-texel value.
-  //
-  // For BC formats, block_width/block_height are 4 and bytes_per_block is the
-  // bytes-per-4x4-block value.
-  uint32_t block_width = 0;
-  uint32_t block_height = 0;
-  uint32_t bytes_per_block = 0;
-  bool valid = false;
-};
-
-static AerogpuTextureFormatLayout aerogpu_texture_format_layout(uint32_t aerogpu_format) {
-  // Keep the format layout mapping in sync with the shared internal header to
-  // avoid format list drift when new formats are added.
-  const auto layout = aerogpu::d3d10_11::aerogpu_texture_format_layout(aerogpu_format);
-  return AerogpuTextureFormatLayout{
-      layout.block_width,
-      layout.block_height,
-      layout.bytes_per_block,
-      layout.valid,
-  };
-}
+using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
+using aerogpu::d3d10_11::aerogpu_texture_format_layout;
 
 static bool aerogpu_format_is_block_compressed(uint32_t aerogpu_format) {
   return aerogpu::d3d10_11::aerogpu_format_is_block_compressed(aerogpu_format);
