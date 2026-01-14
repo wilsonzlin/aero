@@ -36,6 +36,16 @@ In the browser runtime, the “GPU worker” reads a shared framebuffer in a `Sh
 - Shared framebuffer layout (TS mirror): `web/src/ipc/shared-layout.ts`
 - GPU worker consumption and present loop: `web/src/workers/gpu-worker.ts`
 
+Presenter backend selection (GPU worker):
+
+- Backends (current implementations):
+  - WebGPU: `web/src/gpu/webgpu-presenter-backend.ts`
+  - WebGL2 (raw): `web/src/gpu/raw-webgl2-presenter-backend.ts`
+  - WebGL2 (wgpu via WASM): `web/src/gpu/wgpu-webgl2-presenter.ts`
+- Selection inputs:
+  - `GpuRuntimeInitOptions` in `web/src/ipc/gpu-protocol.ts` (`forceBackend`, `disableWebGpu`, `preferWebGpu`)
+  - selection logic: `initPresenterForRuntime()` in `web/src/workers/gpu-worker.ts`
+
 Compatibility note: the GPU worker can also consume an older “shared framebuffer protocol” header (RGBA8888 + frame counter, no dirty tiles) used by some harnesses/demos:
 
 - `web/src/display/framebuffer_protocol.ts` (layout)
@@ -288,6 +298,9 @@ npm run test:webgpu
 
 # Targeted test for the SharedFramebuffer + dirty-tiles presentation path
 npm run test:e2e -- tests/e2e/web/aero-gpu-shared-framebuffer.spec.ts
+
+# Targeted test for presenter backend fallback (WebGPU disabled → WebGL2)
+npm run test:e2e -- tests/e2e/web/gpu-fallback.spec.ts
 ```
 
 Rust tests relevant to shared-memory graphics/presentation:
