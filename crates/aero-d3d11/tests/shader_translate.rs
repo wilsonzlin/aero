@@ -57,6 +57,57 @@ fn build_minimal_rdef_cbuffer(name: &str, bind_point: u32, size_bytes: u32) -> V
     bytes
 }
 
+fn build_minimal_rdef_texture_and_sampler_arrays(bind_point: u32, bind_count: u32) -> Vec<u8> {
+    // Header (8 DWORDs / 32 bytes) + 2 resource binding descs (2*32 bytes) + string table.
+    let header_len = 32u32;
+    let rb_offset = header_len;
+    let table_len = 2u32 * 32;
+    let string_offset = header_len + table_len;
+
+    let tex_name = "tex_array";
+    let samp_name = "samp_array";
+
+    let tex_name_offset = string_offset;
+    let samp_name_offset = string_offset + (tex_name.len() as u32) + 1;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_count
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_offset
+    bytes.extend_from_slice(&2u32.to_le_bytes()); // rb_count
+    bytes.extend_from_slice(&rb_offset.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // target
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // creator_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // interface_slot_count
+
+    // Resource binding desc (texture array).
+    bytes.extend_from_slice(&tex_name_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&2u32.to_le_bytes()); // input_type (D3D_SIT_TEXTURE)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // return_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // dimension
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // sample_count
+    bytes.extend_from_slice(&bind_point.to_le_bytes());
+    bytes.extend_from_slice(&bind_count.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+
+    // Resource binding desc (sampler array).
+    bytes.extend_from_slice(&samp_name_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&3u32.to_le_bytes()); // input_type (D3D_SIT_SAMPLER)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // return_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // dimension
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // sample_count
+    bytes.extend_from_slice(&bind_point.to_le_bytes());
+    bytes.extend_from_slice(&bind_count.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+
+    // String table.
+    bytes.extend_from_slice(tex_name.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(samp_name.as_bytes());
+    bytes.push(0);
+    bytes
+}
+
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
 }
@@ -714,6 +765,86 @@ fn rdef_cbuffer_size_overrides_used_registers() {
         BindingKind::ConstantBuffer { reg_count, .. } => assert_eq!(reg_count, 8),
         _ => panic!("unexpected binding kind"),
     }
+}
+
+#[test]
+fn rdef_resource_arrays_expand_used_texture_and_sampler_slots() {
+    // Shader samples from t2/s2, but RDEF declares arrays bound at t0..t3 and s0..s3.
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let rdef_bytes = build_minimal_rdef_texture_and_sampler_arrays(0, 4);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_RDEF, rdef_bytes),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Sample {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                coord: src_imm([0.0, 0.0, 0.0, 0.0]),
+                texture: TextureRef { slot: 2 },
+                sampler: SamplerRef { slot: 2 },
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+
+    // Texture array expansion should declare t0..t3.
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({}) var t0: texture_2d<f32>;",
+        BINDING_BASE_TEXTURE
+    )));
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({}) var t3: texture_2d<f32>;",
+        BINDING_BASE_TEXTURE + 3
+    )));
+
+    // Sampler array expansion should declare s0..s3.
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({}) var s0: sampler;",
+        BINDING_BASE_SAMPLER
+    )));
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({}) var s3: sampler;",
+        BINDING_BASE_SAMPLER + 3
+    )));
+
+    // Reflection should surface the expanded ranges.
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 })));
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Texture2D { slot: 3 })));
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Sampler { slot: 0 })));
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Sampler { slot: 3 })));
 }
 
 #[test]

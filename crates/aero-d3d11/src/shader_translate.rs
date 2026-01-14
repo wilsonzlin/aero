@@ -2033,6 +2033,88 @@ fn scan_resources(
                 *entry = (*entry).max(reg_count);
             }
         }
+
+        // Expand resource binding ranges (arrays) using the RDEF binding table.
+        //
+        // This is important for shaders that declare resource arrays and use dynamic indexing
+        // (e.g. `Texture2D tex[4] : register(t0); tex[i].Sample(...)`). Instruction scanning alone
+        // may only see a subset of the slots.
+        //
+        // We only expand ranges that intersect the resources we've already discovered via
+        // declarations/instructions, to avoid needlessly bloating pipeline layouts for unused
+        // declarations.
+        fn set_intersects_range(set: &BTreeSet<u32>, start: u32, count: u32) -> bool {
+            if count == 0 {
+                return false;
+            }
+            let end = start.saturating_add(count);
+            set.range(start..end).next().is_some()
+        }
+        fn expand_set_range(set: &mut BTreeSet<u32>, start: u32, count: u32, max_slots: u32) {
+            if count == 0 {
+                return;
+            }
+            let end = start.saturating_add(count).min(max_slots);
+            for slot in start..end {
+                set.insert(slot);
+            }
+        }
+
+        for res in &rdef.bound_resources {
+            match res.input_type {
+                // D3D_SIT_TEXTURE
+                2 => {
+                    if set_intersects_range(&textures, res.bind_point, res.bind_count) {
+                        expand_set_range(
+                            &mut textures,
+                            res.bind_point,
+                            res.bind_count,
+                            MAX_TEXTURE_SLOTS,
+                        );
+                    }
+                }
+                // D3D_SIT_SAMPLER
+                3 => {
+                    if set_intersects_range(&samplers, res.bind_point, res.bind_count) {
+                        expand_set_range(
+                            &mut samplers,
+                            res.bind_point,
+                            res.bind_count,
+                            MAX_SAMPLER_SLOTS,
+                        );
+                    }
+                }
+                // D3D_SIT_STRUCTURED / D3D_SIT_BYTEADDRESS
+                5 | 7 => {
+                    if set_intersects_range(&srv_buffers, res.bind_point, res.bind_count) {
+                        expand_set_range(
+                            &mut srv_buffers,
+                            res.bind_point,
+                            res.bind_count,
+                            MAX_TEXTURE_SLOTS,
+                        );
+                    }
+                }
+                // UAV buffer types (SM5):
+                // - D3D_SIT_UAV_RWTYPED
+                // - D3D_SIT_UAV_RWSTRUCTURED
+                // - D3D_SIT_UAV_RWBYTEADDRESS
+                // - D3D_SIT_UAV_APPEND_STRUCTURED
+                // - D3D_SIT_UAV_CONSUME_STRUCTURED
+                // - D3D_SIT_UAV_RWSTRUCTURED_WITH_COUNTER
+                4 | 6 | 8 | 9 | 10 | 11 => {
+                    if set_intersects_range(&uav_buffers, res.bind_point, res.bind_count) {
+                        expand_set_range(
+                            &mut uav_buffers,
+                            res.bind_point,
+                            res.bind_count,
+                            MAX_UAV_SLOTS,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     Ok(ResourceUsage {
