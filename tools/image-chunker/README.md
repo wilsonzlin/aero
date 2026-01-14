@@ -390,6 +390,9 @@ curl -fSs "<presigned-url>"
   - `chunks[i].size`: optional per-chunk size in bytes (recommended; otherwise derived from `chunkSize`/`totalSize`)
   - `chunks[i].sha256`: optional per-chunk checksum (present when `--checksum sha256` **(default)**, omitted when `--checksum none`)
 
+Note: `aero-image-chunker publish` currently always includes a `chunks` array with explicit
+`chunks[i].size` for every chunk; `--checksum none` simply omits `chunks[i].sha256`.
+
 Example (abridged):
 
 ```json
