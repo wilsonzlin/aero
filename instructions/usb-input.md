@@ -29,6 +29,7 @@ Aero supports input through two different integration styles:
   - Input is injected directly via `Machine.inject_*`:
     - PS/2 (i8042): `inject_browser_key`, `inject_mouse_motion`, etc.
     - virtio-input (optional): `inject_virtio_key/rel/button/wheel` once enabled.
+    - synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control): `inject_usb_hid_*` (enabled by default for `new api.Machine(...)` in the WASM wrapper; native config is opt-in via `MachineConfig.enable_synthetic_usb_hid`).
   - Virtio-input is opt-in:
     - Native: `MachineConfig.enable_virtio_input = true` (requires `enable_pc_platform = true`).
     - JS/WASM: `api.Machine.new_with_options(..., { enable_virtio_input: true })`.
