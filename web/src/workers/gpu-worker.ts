@@ -1445,6 +1445,11 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   if (!wantsScanout) return null;
 
   const fmt = snap.format >>> 0;
+  const isSrgb =
+    fmt === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
+    fmt === SCANOUT_FORMAT_B8G8R8A8_SRGB ||
+    fmt === AerogpuFormat.R8G8B8A8UnormSrgb ||
+    fmt === AerogpuFormat.R8G8B8X8UnormSrgb;
   // Supported scanout formats:
   // - BGRX/RGBX: force alpha=255 so presenters (which may render with blending enabled) do not show
   //              random transparency from uninitialized X bytes.
@@ -1713,6 +1718,15 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
         out[dstRowStart + x + 3] = a;
       }
     }
+  }
+
+  // If the scanout is an sRGB format, decode sRGB -> linear before uploading to the presenter.
+  //
+  // Presenters blend cursor overlays in linear space and then encode to sRGB for output. If we
+  // were to upload sRGB-encoded bytes as if they were linear, we'd effectively double-encode
+  // gamma and the scanout would appear incorrect.
+  if (isSrgb) {
+    linearizeSrgbRgba8InPlace(out);
   }
 
   wddmScanoutWidth = width;
@@ -4485,6 +4499,17 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 // Guest RAM-backed scanout: use the unit-tested helper (handles guest paddr translation,
                 // pitch padding, and BGRA/BGRX/RGBA/RGBX swizzle + alpha policy).
                 out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
+                // `readScanoutRgba8FromGuestRam` returns bytes in the source scanout color space.
+                // For sRGB scanout formats, decode to linear so the screenshot buffer matches the
+                // worker's linear RGBA8 presentation path (and cursor blending semantics).
+                if (
+                  format === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
+                  format === SCANOUT_FORMAT_B8G8R8A8_SRGB ||
+                  format === AerogpuFormat.R8G8B8A8UnormSrgb ||
+                  format === AerogpuFormat.R8G8B8X8UnormSrgb
+                ) {
+                  linearizeSrgbRgba8InPlace(out);
+                }
               } else {
                 if (!scanoutIsInVram) {
                   if (!guest) {
