@@ -1115,6 +1115,36 @@ fn emit_branchless_predicated_op_line(
     })
 }
 
+fn emit_branchless_predicated_mov_line(
+    op: &IrOp,
+    cond: &str,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+) -> Result<Option<String>, WgslError> {
+    Ok(match op {
+        IrOp::Mov {
+            dst,
+            src,
+            modifiers,
+        } => {
+            let (src_e, src_ty) = src_expr(src, f32_defs)?;
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if src_ty != dst_ty {
+                return Err(err("mov between mismatched types"));
+            }
+            let src_e = match dst_ty {
+                ScalarTy::F32 => apply_float_result_modifiers(src_e, modifiers)?,
+                _ => src_e,
+            };
+            let dst_name = reg_var_name(&dst.reg)?;
+            Some(emit_assign(
+                dst,
+                format!("select({dst_name}, {src_e}, {cond})"),
+            )?)
+        }
+        _ => None,
+    })
+}
+
 fn emit_op_line(
     op: &IrOp,
     stage: ShaderStage,
@@ -2062,19 +2092,19 @@ fn emit_stmt(
             // destination register.
             let mut then_skip = 0usize;
             let mut else_skip = 0usize;
-            let mut then_line: Option<String> = None;
-            let mut else_line: Option<String> = None;
+            let mut then_lines = Vec::<String>::new();
+            let mut else_lines = Vec::<String>::new();
 
             if let Some(Stmt::Op(op)) = then_block.stmts.first() {
                 let cond_for_op = cond_with_pred(op, &cond_e)?;
-                then_line = emit_branchless_predicated_op_line(
+                if let Some(line) = emit_branchless_predicated_op_line(
                     op,
                     &cond_for_op,
                     stage,
                     f32_defs,
                     sampler_types,
-                )?;
-                if then_line.is_some() {
+                )? {
+                    then_lines.push(line);
                     then_skip = 1;
                 }
             }
@@ -2082,24 +2112,78 @@ fn emit_stmt(
             if let Some(else_b) = else_block.as_ref() {
                 if let Some(Stmt::Op(op)) = else_b.stmts.first() {
                     let cond_for_op = cond_with_pred(op, &not_cond_e)?;
-                    else_line = emit_branchless_predicated_op_line(
+                    if let Some(line) = emit_branchless_predicated_op_line(
                         op,
                         &cond_for_op,
                         stage,
                         f32_defs,
                         sampler_types,
-                    )?;
-                    if else_line.is_some() {
+                    )? {
+                        else_lines.push(line);
                         else_skip = 1;
                     }
                 }
             }
 
-            if then_line.is_some() || else_line.is_some() {
-                if let Some(line) = &then_line {
+            // If the first op isn't sensitive but the second op is, we can hoist both by also
+            // lowering the prefix `mov` to a predicated `select` assignment.
+            if then_lines.is_empty() && then_block.stmts.len() >= 2 {
+                if let (Some(Stmt::Op(mov)), Some(Stmt::Op(op))) =
+                    (then_block.stmts.get(0), then_block.stmts.get(1))
+                {
+                    let mov_cond = cond_with_pred(mov, &cond_e)?;
+                    if let Some(mov_line) =
+                        emit_branchless_predicated_mov_line(mov, &mov_cond, f32_defs)?
+                    {
+                        let op_cond = cond_with_pred(op, &cond_e)?;
+                        if let Some(op_line) = emit_branchless_predicated_op_line(
+                            op,
+                            &op_cond,
+                            stage,
+                            f32_defs,
+                            sampler_types,
+                        )? {
+                            then_lines.push(mov_line);
+                            then_lines.push(op_line);
+                            then_skip = 2;
+                        }
+                    }
+                }
+            }
+
+            if else_lines.is_empty() {
+                if let Some(else_b) = else_block.as_ref() {
+                    if else_b.stmts.len() >= 2 {
+                        if let (Some(Stmt::Op(mov)), Some(Stmt::Op(op))) =
+                            (else_b.stmts.get(0), else_b.stmts.get(1))
+                        {
+                            let mov_cond = cond_with_pred(mov, &not_cond_e)?;
+                            if let Some(mov_line) =
+                                emit_branchless_predicated_mov_line(mov, &mov_cond, f32_defs)?
+                            {
+                                let op_cond = cond_with_pred(op, &not_cond_e)?;
+                                if let Some(op_line) = emit_branchless_predicated_op_line(
+                                    op,
+                                    &op_cond,
+                                    stage,
+                                    f32_defs,
+                                    sampler_types,
+                                )? {
+                                    else_lines.push(mov_line);
+                                    else_lines.push(op_line);
+                                    else_skip = 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !then_lines.is_empty() || !else_lines.is_empty() {
+                for line in &then_lines {
                     let _ = writeln!(wgsl, "{pad}{line}");
                 }
-                if let Some(line) = &else_line {
+                for line in &else_lines {
                     let _ = writeln!(wgsl, "{pad}{line}");
                 }
 
