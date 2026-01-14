@@ -102,6 +102,11 @@ param(
   # (abort_srb/reset_device_srb/reset_bus_srb/pnp_srb/ioctl_reset) on its machine marker.
   [Parameter(Mandatory = $false)]
   [switch]$RequireNoBlkRecovery,
+  
+  # If set, fail if the guest virtio-blk-counters marker reports non-zero abort/reset_device/reset_bus.
+  # This is a looser check than -RequireNoBlkRecovery (ignores pnp/ioctl_reset).
+  [Parameter(Mandatory = $false)]
+  [switch]$FailOnBlkRecovery,
 
   # If set, require the guest virtio-blk-reset marker to PASS (treat SKIP/missing as failure).
   #
@@ -5906,6 +5911,62 @@ try {
     }
   }
 
+  if ($FailOnBlkRecovery -and $result.Result -eq "PASS") {
+    $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
+    $line = Try-ExtractLastAeroMarkerLine -Tail $result.Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+    if ($null -ne $line) {
+      $toks = $line.Split("|")
+      $status = "INFO"
+      if ($toks.Count -ge 4) {
+        $s = $toks[3].Trim().ToUpperInvariant()
+        if ($s -eq "PASS" -or $s -eq "FAIL" -or $s -eq "SKIP" -or $s -eq "INFO") {
+          $status = $s
+        }
+      }
+      if ($status -ne "SKIP") {
+        $fields = @{}
+        foreach ($tok in $toks) {
+          $idx = $tok.IndexOf("=")
+          if ($idx -le 0) { continue }
+          $k = $tok.Substring(0, $idx).Trim()
+          $v = $tok.Substring($idx + 1).Trim()
+          if (-not [string]::IsNullOrEmpty($k)) {
+            $fields[$k] = $v
+          }
+        }
+
+        $keys = @("abort", "reset_device", "reset_bus")
+        $vals = @{}
+        $okAll = $true
+        foreach ($k in $keys) {
+          if (-not $fields.ContainsKey($k)) { $okAll = $false; break }
+          $raw = [string]$fields[$k]
+          $v = 0L
+          $ok = [int64]::TryParse($raw, [ref]$v)
+          if (-not $ok) {
+            if ($raw -match "^0x[0-9a-fA-F]+$") {
+              try {
+                $v = [Convert]::ToInt64($raw.Substring(2), 16)
+                $ok = $true
+              } catch {
+                $ok = $false
+              }
+            }
+          }
+          if (-not $ok) { $okAll = $false; break }
+          $vals[$k] = $v
+        }
+
+        if ($okAll) {
+          if ([int64]$vals["abort"] -gt 0 -or [int64]$vals["reset_device"] -gt 0 -or [int64]$vals["reset_bus"] -gt 0) {
+            $result["Result"] = "VIRTIO_BLK_RECOVERY_DETECTED"
+            $result["BlkCounters"] = $vals
+          }
+        }
+      }
+    }
+  }
+
   switch ($result.Result) {
     "PASS" {
       if ($RequireIntx -or $RequireMsi) {
@@ -5990,6 +6051,23 @@ try {
       $msg = "FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"
       if ($null -ne $counters) {
         $msg += " abort_srb=$($counters['abort_srb']) reset_device_srb=$($counters['reset_device_srb']) reset_bus_srb=$($counters['reset_bus_srb']) pnp_srb=$($counters['pnp_srb']) ioctl_reset=$($counters['ioctl_reset'])"
+      }
+      Write-Host $msg
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_RECOVERY_DETECTED" {
+      $counters = $null
+      if ($result.ContainsKey("BlkCounters")) {
+        $counters = $result["BlkCounters"]
+      }
+
+      $msg = "FAIL: VIRTIO_BLK_RECOVERY_DETECTED:"
+      if ($null -ne $counters) {
+        $msg += " abort=$($counters['abort']) reset_device=$($counters['reset_device']) reset_bus=$($counters['reset_bus'])"
       }
       Write-Host $msg
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {

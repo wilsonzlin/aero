@@ -2840,6 +2840,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"
         ),
     )
+    parser.add_argument(
+        "--fail-on-blk-recovery",
+        action="store_true",
+        help=(
+            "Fail the harness if the guest reports non-zero virtio-blk recovery/reset activity via the "
+            "machine-readable virtio-blk-counters marker (checks abort/reset_device/reset_bus only)."
+        ),
+    )
 
     return parser
 
@@ -5174,6 +5182,15 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if args.fail_on_blk_recovery:
+                            msg = _check_fail_on_blk_recovery_requirement(
+                                tail, blk_counters_line=virtio_blk_counters_marker_line
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                         result_code = 0
                         break
@@ -6423,6 +6440,15 @@ def main() -> int:
                                 break
                             if args.require_no_blk_recovery:
                                 msg = _check_no_blk_recovery_requirement(tail, blk_test_line=virtio_blk_marker_line)
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if args.fail_on_blk_recovery:
+                                msg = _check_fail_on_blk_recovery_requirement(
+                                    tail, blk_counters_line=virtio_blk_counters_marker_line
+                                )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -7835,6 +7861,54 @@ def _check_no_blk_recovery_requirement(
         return None
     if _virtio_blk_recovery_is_nonzero(counters, threshold=threshold):
         return _virtio_blk_recovery_failure_message(counters)
+    return None
+
+
+def _check_fail_on_blk_recovery_requirement(
+    tail: bytes,
+    *,
+    threshold: int = 0,
+    blk_counters_line: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Enforce that virtio-blk did not trigger StorPort recovery activity.
+
+    This uses the dedicated guest marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=...|returned_len=...
+
+    Behavior:
+    - If the marker is missing or SKIP: no failure (backward compatible).
+    - If any of abort/reset_device/reset_bus exceed `threshold`: return a FAIL message.
+    """
+    if blk_counters_line is None:
+        blk_counters_line = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
+        )
+    if not blk_counters_line:
+        return None
+
+    toks = blk_counters_line.split("|")
+    status = toks[3] if len(toks) >= 4 else ""
+    if status == "SKIP":
+        return None
+
+    fields = _parse_marker_kv_fields(blk_counters_line)
+    want = ("abort", "reset_device", "reset_bus")
+    counters: dict[str, int] = {}
+    for k in want:
+        if k not in fields:
+            return None
+        v = _try_parse_int_base0(fields[k])
+        if v is None:
+            return None
+        counters[k] = v
+
+    if counters["abort"] > threshold or counters["reset_device"] > threshold or counters["reset_bus"] > threshold:
+        return (
+            "FAIL: VIRTIO_BLK_RECOVERY_DETECTED:"
+            f" abort={counters['abort']} reset_device={counters['reset_device']} reset_bus={counters['reset_bus']}"
+        )
     return None
 
 

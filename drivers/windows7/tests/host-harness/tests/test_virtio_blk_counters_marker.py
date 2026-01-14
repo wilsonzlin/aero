@@ -77,6 +77,58 @@ class VirtioBlkCountersMarkerTests(unittest.TestCase):
             "ioctl_reset=0|capacity_change_events=not_supported",
         )
 
+    def test_fail_on_blk_recovery_gate_passes_on_zero(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=0|reset_bus=0|"
+            b"pnp=0|ioctl_reset=0|capacity_change_events=0\n"
+        )
+        msg = self.harness._check_fail_on_blk_recovery_requirement(tail)
+        self.assertIsNone(msg)
+
+    def test_fail_on_blk_recovery_gate_fails_on_nonzero(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=1|reset_device=0|reset_bus=2|"
+            b"pnp=0|ioctl_reset=0|capacity_change_events=0\n"
+        )
+        msg = self.harness._check_fail_on_blk_recovery_requirement(tail)
+        self.assertEqual(
+            msg,
+            "FAIL: VIRTIO_BLK_RECOVERY_DETECTED: abort=1 reset_device=0 reset_bus=2",
+        )
+
+    def test_fail_on_blk_recovery_gate_ignores_skip(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=16\n"
+        )
+        msg = self.harness._check_fail_on_blk_recovery_requirement(tail)
+        self.assertIsNone(msg)
+
+    def test_fail_on_blk_recovery_gate_uses_override_line(self) -> None:
+        tail = b""
+        line = (
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=3|reset_bus=0|"
+            "pnp=0|ioctl_reset=0|capacity_change_events=0"
+        )
+        msg = self.harness._check_fail_on_blk_recovery_requirement(tail, blk_counters_line=line)
+        self.assertEqual(
+            msg,
+            "FAIL: VIRTIO_BLK_RECOVERY_DETECTED: abort=0 reset_device=3 reset_bus=0",
+        )
+
+    def test_cli_flag_parses(self) -> None:
+        parser = self.harness._build_arg_parser()
+        args, extra = parser.parse_known_args(
+            [
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--fail-on-blk-recovery",
+            ]
+        )
+        self.assertEqual(extra, [])
+        self.assertTrue(args.fail_on_blk_recovery)
+
 
 if __name__ == "__main__":
     unittest.main()
