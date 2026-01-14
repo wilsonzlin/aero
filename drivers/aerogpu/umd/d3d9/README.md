@@ -367,8 +367,9 @@ The current implementation targets:
   `Lock/Unlock` dirty-range tracking (`d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`).
   - Dynamic buffer locks honor `D3DLOCK_DISCARD` / `D3DLOCK_NOOVERWRITE` via buffer renaming + in-flight range tracking
     (validated by `d3d9_dynamic_vb_lock_semantics`).
-  - Stream instancing (`SetStreamSourceFreq`) is supported for a bring-up subset (triangle lists) via CPU expansion of
-    per-instance streams/indices into scratch UP buffers (validated by `d3d9ex_instancing_sanity`).
+  - Stream instancing (`SetStreamSourceFreq`) is supported for a bring-up subset of shader-based triangle-list draws
+    (requires a user VS) via CPU expansion of per-instance streams/indices into scratch UP buffers (validated by
+    `d3d9ex_instancing_sanity`).
 - User-pointer draws: `DrawPrimitiveUP` / `DrawIndexedPrimitiveUP` (`d3d9ex_triangle`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_fixedfunc_textured_triangle`, `d3d9ex_fixedfunc_texture_stage_state`).
 
