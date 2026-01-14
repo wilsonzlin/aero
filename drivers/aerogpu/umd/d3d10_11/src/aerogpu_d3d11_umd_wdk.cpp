@@ -5696,7 +5696,7 @@ static bool D3D11RtBlendDescEquivalent(const RtBlendDescT& a, const RtBlendDescT
 template <typename RtBlendDescT>
 static bool D3D11RtBlendDescRepresentableByAeroGpu(const RtBlendDescT& rt) {
   // Protocol only supports 4 bits of write mask.
-  if ((static_cast<uint32_t>(rt.RenderTargetWriteMask) & ~0xFu) != 0) {
+  if ((static_cast<uint32_t>(rt.RenderTargetWriteMask) & ~kD3DColorWriteMaskAll) != 0) {
     return false;
   }
   if (!rt.BlendEnable) {
@@ -5732,7 +5732,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState11(D3D11DDI_HDEVICE hDevice,
     state->src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
     state->dest_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
     state->blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
-    state->render_target_write_mask = 0xFu;
+    state->render_target_write_mask = kD3DColorWriteMaskAll;
   };
   const auto fail = [&](HRESULT hr) -> HRESULT {
     // The runtime does not necessarily call DestroyBlendState on failed creates.
@@ -6013,8 +6013,8 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState11(D3D11DDI_HDEVICE hDevice,
   state->depth_write_mask = static_cast<uint32_t>(D3D11_DEPTH_WRITE_MASK_ALL);
   state->depth_func = static_cast<uint32_t>(D3D11_COMPARISON_LESS);
   state->stencil_enable = 0u;
-  state->stencil_read_mask = 0xFF;
-  state->stencil_write_mask = 0xFF;
+  state->stencil_read_mask = kD3DStencilMaskAll;
+  state->stencil_write_mask = kD3DStencilMaskAll;
 
   if (!pDesc) {
     return S_OK;
@@ -7155,7 +7155,7 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   uint32_t src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
   uint32_t dst_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
   uint32_t blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
-  uint32_t write_mask = 0xFu;
+  uint32_t write_mask = kD3DColorWriteMaskAll;
   if (bs) {
     blend_enable = bs->blend_enable;
     write_mask = bs->render_target_write_mask;
@@ -7200,7 +7200,7 @@ static void EmitBlendStateLocked(Device* dev, const BlendState* bs) {
   cmd->state.src_factor = D3dBlendFactorToAerogpuOr(src_blend, AEROGPU_BLEND_ONE);
   cmd->state.dst_factor = D3dBlendFactorToAerogpuOr(dst_blend, AEROGPU_BLEND_ZERO);
   cmd->state.blend_op = D3dBlendOpToAerogpuOr(blend_op, AEROGPU_BLEND_OP_ADD);
-  cmd->state.color_write_mask = static_cast<uint8_t>(write_mask & 0xFu);
+  cmd->state.color_write_mask = static_cast<uint8_t>(write_mask & kD3DColorWriteMaskAll);
   cmd->state.reserved0[0] = 0;
   cmd->state.reserved0[1] = 0;
   cmd->state.reserved0[2] = 0;
@@ -7452,7 +7452,7 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_blend_factor[1] = 1.0f;
   dev->current_blend_factor[2] = 1.0f;
   dev->current_blend_factor[3] = 1.0f;
-  dev->current_sample_mask = 0xFFFFFFFFu;
+  dev->current_sample_mask = kD3DSampleMaskAll;
   dev->scissor_valid = false;
   dev->scissor_left = 0;
   dev->scissor_top = 0;
@@ -8320,7 +8320,7 @@ static void SoftwareRasterTriangle(Device* dev,
   uint32_t src_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ONE);
   uint32_t dst_blend_alpha = static_cast<uint32_t>(D3D11_BLEND_ZERO);
   uint32_t blend_op_alpha = static_cast<uint32_t>(D3D11_BLEND_OP_ADD);
-  uint32_t write_mask = 0xFu;
+  uint32_t write_mask = kD3DColorWriteMaskAll;
   if (const BlendState* bs = dev->current_bs) {
     blend_enable = bs->blend_enable;
     src_blend = bs->src_blend;

@@ -79,6 +79,9 @@ using aerogpu::d3d10_11::kD3D10CpuAccessRead;
 using aerogpu::d3d10_11::kD3D10CpuAccessWrite;
 using aerogpu::d3d10_11::kD3D10ResourceMiscShared;
 using aerogpu::d3d10_11::kD3D10ResourceMiscSharedKeyedMutex;
+using aerogpu::d3d10_11::kD3DSampleMaskAll;
+using aerogpu::d3d10_11::kD3DColorWriteMaskAll;
+using aerogpu::d3d10_11::kD3DStencilMaskAll;
 
 template <typename T>
 static void ResetObject(T* obj) {
@@ -424,8 +427,8 @@ struct AeroGpuDepthStencilState {
   uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
   uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
   uint32_t stencil_enable = 0u;
-  uint8_t stencil_read_mask = 0xFF;
-  uint8_t stencil_write_mask = 0xFF;
+  uint8_t stencil_read_mask = kD3DStencilMaskAll;
+  uint8_t stencil_write_mask = kD3DStencilMaskAll;
   uint8_t reserved0[2] = {0, 0};
 };
 
@@ -7148,7 +7151,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
   base.src_factor_alpha = AEROGPU_BLEND_ONE;
   base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
   base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
-  base.color_write_mask = 0xFu;
+  base.color_write_mask = kD3DColorWriteMaskAll;
 
   // Always construct the state object so DestroyBlendState is safe even if we
   // reject the descriptor (some runtimes may still call Destroy on failure).
@@ -7230,7 +7233,7 @@ void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
   base.src_factor_alpha = AEROGPU_BLEND_ONE;
   base.dst_factor_alpha = AEROGPU_BLEND_ZERO;
   base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
-  base.color_write_mask = 0xFu;
+  base.color_write_mask = kD3DColorWriteMaskAll;
 
   if (hState.pDrvPrivate) {
     auto* bs = FromHandle<D3D10DDI_HBLENDSTATE, AeroGpuBlendState>(hState);
@@ -7249,7 +7252,7 @@ void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
   cmd->state.src_factor = base.src_factor;
   cmd->state.dst_factor = base.dst_factor;
   cmd->state.blend_op = base.blend_op;
-  cmd->state.color_write_mask = static_cast<uint8_t>(base.color_write_mask & 0xFu);
+  cmd->state.color_write_mask = static_cast<uint8_t>(base.color_write_mask & kD3DColorWriteMaskAll);
   cmd->state.reserved0[0] = 0;
   cmd->state.reserved0[1] = 0;
   cmd->state.reserved0[2] = 0;
@@ -7330,8 +7333,8 @@ void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice,
   uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
   uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
   uint32_t stencil_enable = 0u;
-  uint8_t stencil_read_mask = 0xFF;
-  uint8_t stencil_write_mask = 0xFF;
+  uint8_t stencil_read_mask = kD3DStencilMaskAll;
+  uint8_t stencil_write_mask = kD3DStencilMaskAll;
   if (hState.pDrvPrivate) {
     const auto* dss = FromHandle<D3D10DDI_HDEPTHSTENCILSTATE, AeroGpuDepthStencilState>(hState);
     if (dss) {
@@ -8410,7 +8413,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bs_cmd->state.src_factor = AEROGPU_BLEND_ONE;
   bs_cmd->state.dst_factor = AEROGPU_BLEND_ZERO;
   bs_cmd->state.blend_op = AEROGPU_BLEND_OP_ADD;
-  bs_cmd->state.color_write_mask = 0xFu;
+  bs_cmd->state.color_write_mask = kD3DColorWriteMaskAll;
   bs_cmd->state.reserved0[0] = 0;
   bs_cmd->state.reserved0[1] = 0;
   bs_cmd->state.reserved0[2] = 0;
@@ -8421,7 +8424,7 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bs_cmd->state.blend_constant_rgba_f32[1] = f32_bits(1.0f);
   bs_cmd->state.blend_constant_rgba_f32[2] = f32_bits(1.0f);
   bs_cmd->state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
-  bs_cmd->state.sample_mask = 0xFFFFFFFFu;
+  bs_cmd->state.sample_mask = kD3DSampleMaskAll;
 
   // Reset depth/stencil state to D3D10 defaults (depth enabled, write enabled, LESS, stencil disabled).
   auto* dss_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
@@ -8433,8 +8436,8 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dss_cmd->state.depth_write_enable = 1u;
   dss_cmd->state.depth_func = AEROGPU_COMPARE_LESS;
   dss_cmd->state.stencil_enable = 0u;
-  dss_cmd->state.stencil_read_mask = 0xFF;
-  dss_cmd->state.stencil_write_mask = 0xFF;
+  dss_cmd->state.stencil_read_mask = kD3DStencilMaskAll;
+  dss_cmd->state.stencil_write_mask = kD3DStencilMaskAll;
   dss_cmd->state.reserved0[0] = 0;
   dss_cmd->state.reserved0[1] = 0;
 

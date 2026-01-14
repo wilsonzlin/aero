@@ -47,6 +47,11 @@ constexpr uint32_t kMaxUavSlots = 8;
 // Back-compat alias: older code used this name for the compute UAV buffer slot count.
 constexpr uint32_t kMaxUnorderedAccessBufferSlots = kMaxUavSlots;
 
+// Common D3D10/D3D11 default mask values.
+constexpr uint32_t kD3DSampleMaskAll = 0xFFFFFFFFu; // D3D11_DEFAULT_SAMPLE_MASK
+constexpr uint32_t kD3DColorWriteMaskAll = 0xFu; // D3D11_COLOR_WRITE_ENABLE_ALL
+constexpr uint8_t kD3DStencilMaskAll = 0xFFu; // default StencilReadMask/StencilWriteMask
+
 // D3D10/D3D11 Map type subset (numeric values from d3d10.h/d3d11.h).
 constexpr uint32_t kD3DMapRead = 1;
 constexpr uint32_t kD3DMapWrite = 2;
@@ -897,7 +902,7 @@ struct BlendState {
   uint32_t src_blend_alpha = 0;
   uint32_t dest_blend_alpha = 0;
   uint32_t blend_op_alpha = 0;
-  uint32_t render_target_write_mask = 0xFu;
+  uint32_t render_target_write_mask = kD3DColorWriteMaskAll;
 };
 struct RasterizerState {
   // Stored as raw numeric values so this header remains WDK-free.
@@ -914,8 +919,8 @@ struct DepthStencilState {
   uint32_t depth_write_mask = 0;
   uint32_t depth_func = 0;
   uint32_t stencil_enable = 0;
-  uint8_t stencil_read_mask = 0xFF;
-  uint8_t stencil_write_mask = 0xFF;
+  uint8_t stencil_read_mask = kD3DStencilMaskAll;
+  uint8_t stencil_write_mask = kD3DStencilMaskAll;
 };
 
 struct Device {
@@ -1061,7 +1066,7 @@ struct Device {
   RasterizerState* current_rs = nullptr;
   BlendState* current_bs = nullptr;
   float current_blend_factor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-  uint32_t current_sample_mask = 0xFFFFFFFFu;
+  uint32_t current_sample_mask = kD3DSampleMaskAll;
 
   bool scissor_valid = false;
   int32_t scissor_left = 0;
@@ -1471,8 +1476,8 @@ inline bool EmitDepthStencilStateCmdLocked(Device* dev, const DepthStencilState*
   uint32_t depth_write_mask = 1u; // D3D11_DEPTH_WRITE_MASK_ALL
   uint32_t depth_func = 2u; // D3D11_COMPARISON_LESS
   uint32_t stencil_enable = 0u;
-  uint8_t stencil_read_mask = 0xFF;
-  uint8_t stencil_write_mask = 0xFF;
+  uint8_t stencil_read_mask = kD3DStencilMaskAll;
+  uint8_t stencil_write_mask = kD3DStencilMaskAll;
   if (dss) {
     depth_enable = dss->depth_enable;
     depth_write_mask = dss->depth_write_mask;

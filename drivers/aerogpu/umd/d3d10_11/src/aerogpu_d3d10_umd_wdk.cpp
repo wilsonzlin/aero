@@ -211,6 +211,9 @@ using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::kMaxConstantBufferSlots;
 using aerogpu::d3d10_11::kMaxShaderResourceSlots;
 using aerogpu::d3d10_11::kMaxSamplerSlots;
+using aerogpu::d3d10_11::kD3DSampleMaskAll;
+using aerogpu::d3d10_11::kD3DColorWriteMaskAll;
+using aerogpu::d3d10_11::kD3DStencilMaskAll;
 constexpr uint32_t kMaxVertexBufferSlots = aerogpu::d3d10_11::kD3D10IaVertexInputResourceSlotCount;
 
 using aerogpu::d3d10_11::AlignUpU64;
@@ -826,8 +829,8 @@ struct AeroGpuDepthStencilState {
   uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
   uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
   uint32_t stencil_enable = 0u;
-  uint8_t stencil_read_mask = 0xFF;
-  uint8_t stencil_write_mask = 0xFF;
+  uint8_t stencil_read_mask = kD3DStencilMaskAll;
+  uint8_t stencil_write_mask = kD3DStencilMaskAll;
   uint8_t reserved0[2] = {0, 0};
 };
 
@@ -1067,7 +1070,7 @@ struct AeroGpuDevice {
   AeroGpuRasterizerState* current_rs = nullptr;
   AeroGpuBlendState* current_bs = nullptr;
   float current_blend_factor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-  uint32_t current_sample_mask = 0xFFFFFFFFu;
+  uint32_t current_sample_mask = kD3DSampleMaskAll;
 
   aerogpu_constant_buffer_binding vs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_constant_buffer_binding ps_constant_buffers[kMaxConstantBufferSlots] = {};
@@ -7725,7 +7728,7 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_blend_factor[1] = 1.0f;
   dev->current_blend_factor[2] = 1.0f;
   dev->current_blend_factor[3] = 1.0f;
-  dev->current_sample_mask = 0xFFFFFFFFu;
+  dev->current_sample_mask = kD3DSampleMaskAll;
 
   // Blend state.
   auto* bs_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
@@ -7737,7 +7740,7 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bs_cmd->state.src_factor = AEROGPU_BLEND_ONE;
   bs_cmd->state.dst_factor = AEROGPU_BLEND_ZERO;
   bs_cmd->state.blend_op = AEROGPU_BLEND_OP_ADD;
-  bs_cmd->state.color_write_mask = 0xFu;
+  bs_cmd->state.color_write_mask = kD3DColorWriteMaskAll;
   bs_cmd->state.reserved0[0] = 0;
   bs_cmd->state.reserved0[1] = 0;
   bs_cmd->state.reserved0[2] = 0;
@@ -7748,7 +7751,7 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bs_cmd->state.blend_constant_rgba_f32[1] = f32_bits(1.0f);
   bs_cmd->state.blend_constant_rgba_f32[2] = f32_bits(1.0f);
   bs_cmd->state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
-  bs_cmd->state.sample_mask = 0xFFFFFFFFu;
+  bs_cmd->state.sample_mask = kD3DSampleMaskAll;
 
   // Depth-stencil state.
   auto* dss_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
@@ -7760,8 +7763,8 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dss_cmd->state.depth_write_enable = 1u;
   dss_cmd->state.depth_func = AEROGPU_COMPARE_LESS;
   dss_cmd->state.stencil_enable = 0u;
-  dss_cmd->state.stencil_read_mask = 0xFF;
-  dss_cmd->state.stencil_write_mask = 0xFF;
+  dss_cmd->state.stencil_read_mask = kD3DStencilMaskAll;
+  dss_cmd->state.stencil_write_mask = kD3DStencilMaskAll;
   dss_cmd->state.reserved0[0] = 0;
   dss_cmd->state.reserved0[1] = 0;
 
@@ -8144,8 +8147,8 @@ static void EmitDepthStencilStateLocked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice*
   uint32_t depth_write_mask = static_cast<uint32_t>(D3D10_DEPTH_WRITE_MASK_ALL);
   uint32_t depth_func = static_cast<uint32_t>(D3D10_COMPARISON_LESS);
   uint32_t stencil_enable = 0u;
-  uint8_t stencil_read_mask = 0xFF;
-  uint8_t stencil_write_mask = 0xFF;
+  uint8_t stencil_read_mask = kD3DStencilMaskAll;
+  uint8_t stencil_write_mask = kD3DStencilMaskAll;
   if (dss) {
     depth_enable = dss->depth_enable;
     depth_write_mask = dss->depth_write_mask;
