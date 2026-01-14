@@ -490,10 +490,10 @@ if ($RequireIntx -and $RequireMsi) {
 }
 
 if ($VirtioDisableMsix -and (($VirtioMsixVectors -gt 0) -or ($VirtioNetVectors -gt 0) -or ($VirtioBlkVectors -gt 0) -or ($VirtioSndVectors -gt 0) -or ($VirtioInputVectors -gt 0))) {
-  throw "-VirtioDisableMsix is mutually exclusive with -VirtioMsixVectors/-Virtio*Vectors (INTx-only mode disables MSI-X by forcing vectors=0)."
+  throw "-VirtioDisableMsix is mutually exclusive with -VirtioMsixVectors/-Virtio*Vectors (INTx-only mode disables MSI-X by forcing vectors=0). Aliases: -ForceIntx/-IntxOnly."
 }
 if ($VirtioDisableMsix -and ($RequireVirtioNetMsix -or $RequireVirtioBlkMsix -or $RequireVirtioSndMsix -or $RequireVirtioInputMsix)) {
-  throw "-VirtioDisableMsix is incompatible with -RequireVirtio*Msix (aliases: -RequireNetMsix/-RequireBlkMsix/-RequireSndMsix/-RequireInputMsix) (MSI-X is disabled)."
+  throw "-VirtioDisableMsix is incompatible with -RequireVirtio*Msix (aliases: -RequireNetMsix/-RequireBlkMsix/-RequireSndMsix/-RequireInputMsix) (MSI-X is disabled). Aliases: -ForceIntx/-IntxOnly."
 }
 
 if ($VirtioSndVectors -gt 0 -and (-not $WithVirtioSnd)) {
@@ -541,7 +541,7 @@ function Assert-AeroWin7QemuAcceptsVectorsZero {
     # Use QEMU's `-device <name>,help` path to validate that `vectors=0` is accepted.
     $null = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName "$DeviceName,vectors=0"
   } catch {
-    throw "QEMU rejected 'vectors=0' for device '$DeviceName' (required by -VirtioDisableMsix). Upgrade QEMU or omit -VirtioDisableMsix. $_"
+    throw "QEMU rejected 'vectors=0' for device '$DeviceName' (required by -VirtioDisableMsix/-ForceIntx/-IntxOnly). Upgrade QEMU or omit -VirtioDisableMsix/-ForceIntx/-IntxOnly. $_"
   }
 }
 
@@ -2224,7 +2224,7 @@ function Get-AeroVirtioSoundDeviceArg {
   }
 
   if ($DisableMsix -and ($helpText -notmatch "(?m)^\s*vectors\b")) {
-    throw "QEMU device '$deviceName' does not advertise a 'vectors' property; cannot disable MSI-X via vectors=0. Upgrade QEMU or omit -VirtioDisableMsix."
+    throw "QEMU device '$deviceName' does not advertise a 'vectors' property; cannot disable MSI-X via vectors=0. Upgrade QEMU or omit -VirtioDisableMsix/-ForceIntx/-IntxOnly."
   }
   if ($DisableMsix) {
     Assert-AeroWin7QemuAcceptsVectorsZero -QemuSystem $QemuSystem -DeviceName $deviceName
