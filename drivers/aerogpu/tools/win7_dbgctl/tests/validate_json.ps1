@@ -50,6 +50,10 @@ Assert-ValidJson -ExpectedCommand "dump-ring" -Args @("--dump-ring", "--ring-id"
 Assert-ValidJson -ExpectedCommand "dump-vblank" -Args @("--dump-vblank", "--vblank-samples", "1")
 Assert-ValidJson -ExpectedCommand "query-scanline" -Args @("--query-scanline", "--vblank-samples", "1", "--vblank-interval-ms", "0")
 Assert-ValidJson -ExpectedCommand "wait-vblank" -Args @("--wait-vblank", "--vblank-samples", "2", "--timeout-ms", "200")
+Assert-ValidJson -ExpectedCommand "dump-scanout-bmp" -Args @("--dump-scanout-bmp", "scanout_test.bmp")
+Assert-ValidJson -ExpectedCommand "dump-scanout-png" -Args @("--dump-scanout-png", "scanout_test.png")
+Assert-ValidJson -ExpectedCommand "dump-cursor-bmp" -Args @("--dump-cursor-bmp", "cursor_test.bmp")
+Assert-ValidJson -ExpectedCommand "dump-cursor-png" -Args @("--dump-cursor-png", "cursor_test.png")
 
 Write-Host "OK: dbgctl JSON output parsed successfully"
 
