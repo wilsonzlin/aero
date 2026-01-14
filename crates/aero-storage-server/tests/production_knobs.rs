@@ -157,6 +157,79 @@ async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cross_origin_resource_policy_is_configurable_for_bytes_and_chunked_endpoints() {
+    let dir = tempdir().expect("tempdir");
+    tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
+        .await
+        .expect("write test file");
+
+    // Chunked artifacts for the chunked endpoints.
+    let chunk_root = dir.path().join("chunked").join("test.img");
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"x")
+        .await
+        .expect("write chunk");
+
+    // Versioned chunked artifacts.
+    let chunk_root_v1 = dir.path().join("chunked").join("test.img").join("v1");
+    tokio::fs::create_dir_all(chunk_root_v1.join("chunks"))
+        .await
+        .expect("create chunk dirs (v1)");
+    tokio::fs::write(
+        chunk_root_v1.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest (v1)");
+    tokio::fs::write(chunk_root_v1.join("chunks/00000000.bin"), b"x")
+        .await
+        .expect("write chunk (v1)");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()));
+    let state = AppState::new(store)
+        .with_cross_origin_resource_policy("cross-origin".parse().unwrap());
+    let app = aero_storage_server::app(state);
+
+    for (name, uri) in [
+        ("bytes", "/v1/images/test.img"),
+        ("data", "/v1/images/test.img/data"),
+        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
+        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
+        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
+        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(res.status(), StatusCode::OK, "{name}");
+        assert_eq!(
+            res.headers()["cross-origin-resource-policy"]
+                .to_str()
+                .unwrap(),
+            "cross-origin",
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn max_range_bytes_enforced_on_both_images_endpoints() {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
