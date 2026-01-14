@@ -9,7 +9,9 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
   // mounted at the origin root. Start at `/` as the smoke-test entrypoint, then
   // fall back to `/web/index.html` when the Workers panel isn't present.
   await page.goto("/", { waitUntil: "load" });
-  if ((await page.locator("#workers-start").count()) === 0) {
+  try {
+    await page.locator("#workers-start").waitFor({ state: "attached", timeout: 2000 });
+  } catch {
     await page.goto("/web/index.html", { waitUntil: "load" });
   }
 
