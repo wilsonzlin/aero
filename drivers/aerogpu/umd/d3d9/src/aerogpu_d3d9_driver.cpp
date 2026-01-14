@@ -11822,7 +11822,13 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     return trace.ret(E_INVALIDARG);
   }
 
+  if (device_is_lost(dev)) {
+    return trace.ret(device_lost_hresult(dev));
+  }
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (device_is_lost(dev)) {
+    return trace.ret(device_lost_hresult(dev));
+  }
 
   const uint32_t vertex_count = pProcessVertices->VertexCount;
   if (vertex_count == 0) {

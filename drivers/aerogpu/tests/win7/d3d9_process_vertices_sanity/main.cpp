@@ -405,6 +405,86 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
     }
   }
 
+  // Validate Flags=D3DPV_DONOTCOPYDATA for an XYZRHW input without DIFFUSE: only
+  // POSITIONT should be written; DIFFUSE bytes must be preserved.
+  {
+    const VertexXyzrhw src = {10.0f, 20.0f, 0.5f, 2.0f};
+
+    ComPtr<IDirect3DVertexBuffer9> src_vb;
+    hr = dev->CreateVertexBuffer(sizeof(src), 0, D3DFVF_XYZRHW, D3DPOOL_DEFAULT, src_vb.put(), NULL);
+    if (FAILED(hr) || !src_vb) {
+      return reporter.FailHresult("CreateVertexBuffer(src_xyzw_flags)", hr);
+    }
+    void* src_ptr = NULL;
+    hr = src_vb->Lock(0, sizeof(src), &src_ptr, 0);
+    if (FAILED(hr) || !src_ptr) {
+      return reporter.FailHresult("src_xyzw_flags->Lock", hr);
+    }
+    memcpy(src_ptr, &src, sizeof(src));
+    hr = src_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("src_xyzw_flags->Unlock", hr);
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> dst_vb;
+    hr = dev->CreateVertexBuffer(sizeof(Vertex),
+                                 0,
+                                 D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                                 D3DPOOL_SYSTEMMEM,
+                                 dst_vb.put(),
+                                 NULL);
+    if (FAILED(hr) || !dst_vb) {
+      return reporter.FailHresult("CreateVertexBuffer(dst_xyzw_flags)", hr);
+    }
+    void* dst_init_ptr = NULL;
+    hr = dst_vb->Lock(0, sizeof(Vertex), &dst_init_ptr, 0);
+    if (FAILED(hr) || !dst_init_ptr) {
+      return reporter.FailHresult("dst_xyzw_flags->Lock (init)", hr);
+    }
+    memset(dst_init_ptr, 0xCD, sizeof(Vertex));
+    hr = dst_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("dst_xyzw_flags->Unlock (init)", hr);
+    }
+
+    hr = dev->SetFVF(D3DFVF_XYZRHW);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF(XYZRHW) (flags)", hr);
+    }
+    hr = dev->SetStreamSource(0, src_vb.get(), 0, sizeof(VertexXyzrhw));
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(src_xyzw_flags)", hr);
+    }
+
+    hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                              /*DestIndex=*/0,
+                              /*VertexCount=*/1,
+                              dst_vb.get(),
+                              decl.get(),
+                              /*Flags=*/D3DPV_DONOTCOPYDATA);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyzw flags)", hr);
+    }
+
+    void* dst_ptr = NULL;
+    hr = dst_vb->Lock(0, sizeof(Vertex), &dst_ptr, D3DLOCK_READONLY);
+    if (FAILED(hr) || !dst_ptr) {
+      return reporter.FailHresult("dst_xyzw_flags->Lock (read)", hr);
+    }
+
+    const Vertex expected = {src.x, src.y, src.z, src.rhw, 0xCDCDCDCDu};
+    const bool bytes_match = (memcmp(dst_ptr, &expected, sizeof(expected)) == 0);
+
+    hr = dst_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("dst_xyzw_flags->Unlock (read)", hr);
+    }
+
+    if (!bytes_match) {
+      return reporter.Fail("ProcessVertices XYZRHW Flags=D3DPV_DONOTCOPYDATA mismatch (non-position bytes were modified)");
+    }
+  }
+
   // Validate non-zero SrcStartIndex/DestIndex in the common XYZRHW passthrough case.
   {
     const Vertex src_off_verts[3] = {
@@ -703,6 +783,93 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
 
       if (!white_bytes_match) {
         return reporter.Fail("ProcessVertices XYZ missing-diffuse case did not match expected output");
+      }
+    }
+
+    // Validate Flags=D3DPV_DONOTCOPYDATA for an XYZ input without DIFFUSE: only
+    // POSITIONT should be written; DIFFUSE bytes must be preserved.
+    {
+      const VertexXyz src_white = {0.0f, 0.0f, 0.0f};
+
+      ComPtr<IDirect3DVertexBuffer9> src_white_vb;
+      hr = dev->CreateVertexBuffer(sizeof(src_white),
+                                   0,
+                                   D3DFVF_XYZ,
+                                   D3DPOOL_DEFAULT,
+                                   src_white_vb.put(),
+                                   NULL);
+      if (FAILED(hr) || !src_white_vb) {
+        return reporter.FailHresult("CreateVertexBuffer(src_xyz_flags)", hr);
+      }
+
+      void* src_white_ptr = NULL;
+      hr = src_white_vb->Lock(0, sizeof(src_white), &src_white_ptr, 0);
+      if (FAILED(hr) || !src_white_ptr) {
+        return reporter.FailHresult("src_xyz_flags->Lock", hr);
+      }
+      memcpy(src_white_ptr, &src_white, sizeof(src_white));
+      hr = src_white_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("src_xyz_flags->Unlock", hr);
+      }
+
+      ComPtr<IDirect3DVertexBuffer9> dst_flags_vb;
+      hr = dev->CreateVertexBuffer(sizeof(Vertex),
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                                   D3DPOOL_SYSTEMMEM,
+                                   dst_flags_vb.put(),
+                                   NULL);
+      if (FAILED(hr) || !dst_flags_vb) {
+        return reporter.FailHresult("CreateVertexBuffer(dst_xyz_flags)", hr);
+      }
+
+      void* dst_flags_init_ptr = NULL;
+      hr = dst_flags_vb->Lock(0, sizeof(Vertex), &dst_flags_init_ptr, 0);
+      if (FAILED(hr) || !dst_flags_init_ptr) {
+        return reporter.FailHresult("dst_xyz_flags->Lock (init)", hr);
+      }
+      memset(dst_flags_init_ptr, 0xCD, sizeof(Vertex));
+      hr = dst_flags_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_xyz_flags->Unlock (init)", hr);
+      }
+
+      hr = dev->SetFVF(D3DFVF_XYZ);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetFVF(XYZ) (flags)", hr);
+      }
+      hr = dev->SetStreamSource(0, src_white_vb.get(), 0, sizeof(VertexXyz));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetStreamSource(src_xyz_flags)", hr);
+      }
+
+      hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                                /*DestIndex=*/0,
+                                /*VertexCount=*/1,
+                                dst_flags_vb.get(),
+                                decl.get(),
+                                /*Flags=*/D3DPV_DONOTCOPYDATA);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyz flags)", hr);
+      }
+
+      void* dst_flags_ptr = NULL;
+      hr = dst_flags_vb->Lock(0, sizeof(Vertex), &dst_flags_ptr, D3DLOCK_READONLY);
+      if (FAILED(hr) || !dst_flags_ptr) {
+        return reporter.FailHresult("dst_xyz_flags->Lock (read)", hr);
+      }
+
+      const Vertex expected = {0.5f, 0.5f, 0.0f, 1.0f, 0xCDCDCDCDu};
+      const bool bytes_match = (memcmp(dst_flags_ptr, &expected, sizeof(expected)) == 0);
+
+      hr = dst_flags_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_xyz_flags->Unlock (read)", hr);
+      }
+
+      if (!bytes_match) {
+        return reporter.Fail("ProcessVertices XYZ Flags=D3DPV_DONOTCOPYDATA mismatch (non-position bytes were modified)");
       }
     }
   }
