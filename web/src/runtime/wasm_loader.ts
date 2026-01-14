@@ -500,6 +500,29 @@ export type MachineHandle = {
     inject_mouse_back?(pressed: boolean): void;
     inject_mouse_forward?(pressed: boolean): void;
     /**
+     * Virtio-input injection helpers.
+     *
+     * Requires constructing the machine with `enableVirtioInput=true` (see `Machine.new_with_input_backends`).
+     *
+     * These are safe to call even when virtio-input is disabled; they will no-op.
+     *
+     * Optional for older WASM builds.
+     */
+    inject_virtio_key?(linux_key: number, pressed: boolean): void;
+    inject_virtio_rel?(dx: number, dy: number): void;
+    inject_virtio_button?(btn: number, pressed: boolean): void;
+    inject_virtio_wheel?(delta: number): void;
+    inject_virtio_hwheel?(delta: number): void;
+    inject_virtio_wheel2?(wheel: number, hwheel: number): void;
+    // Newer, more explicit aliases (preferred for new code).
+    inject_virtio_mouse_rel?(dx: number, dy: number): void;
+    inject_virtio_mouse_button?(btn: number, pressed: boolean): void;
+    inject_virtio_mouse_wheel?(delta: number): void;
+    /** Whether the guest virtio-input keyboard driver has reached `DRIVER_OK`. */
+    virtio_input_keyboard_driver_ok?(): boolean;
+    /** Whether the guest virtio-input mouse driver has reached `DRIVER_OK`. */
+    virtio_input_mouse_driver_ok?(): boolean;
+    /**
      * Synthetic USB HID injection helpers (devices behind the external hub).
      *
      * Requires constructing the machine with `enableSyntheticUsbHid=true`
