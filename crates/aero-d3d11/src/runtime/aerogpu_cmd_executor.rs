@@ -3947,6 +3947,7 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
         let patchlist_only_emulation = matches!(
             self.state.primitive_topology,
             CmdPrimitiveTopology::PatchList { .. }
