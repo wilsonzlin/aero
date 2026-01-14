@@ -138,7 +138,7 @@ python3 tools/disk-streaming-conformance/conformance.py \
 
 Chunked mode will verify `chunks[i].sha256` for the sampled chunks when present.
 
-Note: For compatibility with Aero’s native client and `aero-image-chunker verify`, the tool expects chunked manifests to be served with `Content-Encoding` absent or `identity` when requesting `Accept-Encoding: identity`. Chunk objects are also required to be served as identity (no compression transforms).
+Note: The tool sends a browser-like `Accept-Encoding` (e.g. `gzip, deflate, br, zstd`) to match real `fetch()` behavior. For compatibility with Aero’s reference clients and tooling, it requires both `manifest.json` and chunk objects to be served with `Content-Encoding` absent or `identity` (i.e. no compression transforms).
 
 ### Private chunked image (Authorization header)
 

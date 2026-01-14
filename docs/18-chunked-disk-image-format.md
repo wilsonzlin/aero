@@ -247,8 +247,8 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 **Chunks (`*.bin`):**
 
 - `Content-Type: application/octet-stream`
-- `Content-Encoding: identity` (recommended; avoid transparent compression)
-  - For maximum compatibility with Aero’s reference clients and tooling, chunk responses should be served with no `Content-Encoding` or with `Content-Encoding: identity` (i.e. do not gzip/br-encode chunks in transit).
+- `Content-Encoding: identity` (or omit the header; required: avoid transparent compression)
+  - Aero’s reference clients and tooling treat any non-identity `Content-Encoding` as a protocol error (i.e. do not gzip/br-encode chunks in transit).
 - `Cache-Control: public, max-age=31536000, immutable, no-transform`
 - `ETag: "<strong etag>"` (optional but recommended; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (if served cross-origin without credentials)
@@ -256,7 +256,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 **Manifest (`manifest.json`):**
 
 - `Content-Type: application/json`
-- `Content-Encoding: identity` (recommended for compatibility with Aero’s Rust/native client + `aero-image-chunker verify`)
+- `Content-Encoding: identity` (or omit the header; required for compatibility with Aero’s reference clients + tooling)
 - `Cache-Control: public, max-age=31536000, immutable` (when versioned/immutable as described above)
 - `ETag: "<strong etag>"` (optional; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (same policy as chunks)
@@ -412,7 +412,7 @@ Possible approaches:
 
 - **No compression (recommended default):** simplest; best for random access and CPU usage.
 - **Per-chunk compression:** compress each chunk independently (e.g., gzip/zstd) so random access still works.
-  - If using HTTP `Content-Encoding`, remember that CDNs often store separate variants based on `Accept-Encoding`.
+  - Note: Aero’s reference clients currently require `Content-Encoding` to be absent/`identity` for both `manifest.json` and chunk objects, so HTTP `Content-Encoding`-based compression is not compatible with the current ecosystem.
   - If storing custom-compressed bytes, the client must decompress in JS/WASM before use.
 
 Because disk images often contain already-compressed data and need random access, compression may offer limited wins; measure before adopting.

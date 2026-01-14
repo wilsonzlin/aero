@@ -18,9 +18,7 @@ No third-party dependencies; Python stdlib only.
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
-import io
 import json
 import os
 import random
@@ -30,9 +28,13 @@ import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
-import zlib
 from dataclasses import dataclass
 from typing import Mapping, Sequence
+
+# Browsers automatically send a non-identity Accept-Encoding (and scripts cannot override it).
+# Conformance checks must therefore emulate a browser-like Accept-Encoding so we detect any
+# CDN/object-store transforms that would break byte-addressed disk streaming.
+_BROWSER_ACCEPT_ENCODING = "gzip, deflate, br, zstd"
 
 
 @dataclass(frozen=True)
@@ -300,7 +302,7 @@ def _test_private_requires_auth(
     name = "private: unauthenticated request is denied (401/403)"
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "Range": "bytes=0-0",
         }
         if origin is not None:
@@ -337,7 +339,7 @@ def _test_head(
     name = "HEAD: Accept-Ranges=bytes and Content-Length is present"
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
         }
         if origin is not None:
             headers["Origin"] = origin
@@ -475,7 +477,7 @@ def _test_get_range(
 ) -> TestResult:
     _require(0 <= req_start <= req_end < size, f"invalid test range {req_start}-{req_end} for size {size}")
     headers: dict[str, str] = {
-        "Accept-Encoding": "identity",
+        "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
         "Range": f"bytes={req_start}-{req_end}",
     }
     if origin is not None:
@@ -591,7 +593,7 @@ def _test_get_unsatisfiable_range(
         start = size
         end = size + 10
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "Range": f"bytes={start}-{end}",
         }
         if origin is not None:
@@ -675,7 +677,7 @@ def _test_options_preflight(
             url=base_url,
             method="OPTIONS",
             headers={
-                "Accept-Encoding": "identity",
+                "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
                 "Origin": origin,
                 "Access-Control-Request-Method": "GET",
                 "Access-Control-Request-Headers": req_header_value,
@@ -781,7 +783,7 @@ def _test_options_preflight_if_modified_since(
             url=base_url,
             method="OPTIONS",
             headers={
-                "Accept-Encoding": "identity",
+                "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
                 "Origin": origin,
                 "Access-Control-Request-Method": "GET",
                 "Access-Control-Request-Headers": req_header_value,
@@ -1107,7 +1109,7 @@ def _test_get_etag_matches_head(
 
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "Range": "bytes=0-0",
         }
         if origin is not None:
@@ -1151,7 +1153,7 @@ def _test_if_range_mismatch(
 
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "Range": "bytes=0-0",
             "If-Range": '"mismatch"',
         }
@@ -1212,7 +1214,7 @@ def _test_conditional_if_none_match(
 
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "If-None-Match": etag,
         }
         if origin is not None:
@@ -1260,7 +1262,7 @@ def _test_head_conditional_if_none_match(
 
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "If-None-Match": etag,
         }
         if origin is not None:
@@ -1308,7 +1310,7 @@ def _test_conditional_if_modified_since(
 
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "If-Modified-Since": last_modified,
         }
         if origin is not None:
@@ -1352,7 +1354,7 @@ def _test_head_conditional_if_modified_since(
 
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "If-Modified-Since": last_modified,
         }
         if origin is not None:
@@ -1434,7 +1436,7 @@ def _test_get_content_headers(
     name = "GET: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff"
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "Range": "bytes=0-0",
         }
         if origin is not None:
@@ -1578,7 +1580,7 @@ def _test_corp_on_get(
     name = "GET: Cross-Origin-Resource-Policy is set"
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "Range": "bytes=0-0",
         }
         if origin is not None:
@@ -1614,7 +1616,7 @@ def _test_private_cache_control(
 
     try:
         headers: dict[str, str] = {
-            "Accept-Encoding": "identity",
+            "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
             "Range": "bytes=0-0",
             "Authorization": authorization,
         }
@@ -1786,11 +1788,12 @@ def _test_chunked_manifest_fetch(
     max_body_bytes: int,
 ) -> tuple[TestResult, HttpResponse | None, object | None]:
     name = "manifest: GET returns 200 and parses JSON"
+    resp: HttpResponse | None = None
     try:
         # Read at most max_body_bytes+1 so we can distinguish "exactly hit cap" from
         # "response is larger than cap" even when Content-Length is missing.
         request_cap = max_body_bytes + 1
-        headers: dict[str, str] = {"Accept-Encoding": "identity"}
+        headers: dict[str, str] = {"Accept-Encoding": _BROWSER_ACCEPT_ENCODING}
         if origin is not None:
             headers["Origin"] = origin
         if authorization is not None:
@@ -1812,85 +1815,27 @@ def _test_chunked_manifest_fetch(
                 "Increase --max-body-bytes to debug."
             )
 
-        def _decompress_manifest(body: bytes, content_encoding: str | None) -> bytes:
-            if content_encoding is None:
-                return body
-            tokens = _csv_tokens(content_encoding)
-            if not tokens or tokens == {"identity"}:
-                return body
-
-            # `urllib` does not automatically decode `Content-Encoding`. Browsers do, so to match
-            # fetch() semantics we decode common encodings for the *manifest only*.
-            #
-            # Chunks must be served as identity (checked elsewhere) because their bytes are
-            # byte-addressed disk sectors.
-            if tokens in ({"gzip"}, {"x-gzip"}):
-                try:
-                    with gzip.GzipFile(fileobj=io.BytesIO(body)) as f:
-                        decoded = f.read(max_body_bytes + 1)
-                except OSError as e:
-                    raise TestFailure(f"invalid gzip manifest: {e}") from None
-                if len(decoded) > max_body_bytes:
-                        raise TestFailure(
-                            "decoded manifest exceeds safety cap; "
-                            f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
-                            "Increase --max-body-bytes to debug."
-                        )
-                return decoded
-
-            if tokens == {"deflate"}:
-                # RFC 9110 defines deflate as zlib-wrapped DEFLATE. Some legacy servers send raw
-                # DEFLATE streams; try both.
-                for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
-                    try:
-                        decomp = zlib.decompressobj(wbits)
-                        decoded = decomp.decompress(body, max_body_bytes + 1)
-                        if len(decoded) > max_body_bytes:
-                            raise TestFailure(
-                                "decoded manifest exceeds safety cap; "
-                                f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
-                                "Increase --max-body-bytes to debug."
-                            )
-                        decoded += decomp.flush(max_body_bytes + 1 - len(decoded))
-                        if len(decoded) > max_body_bytes:
-                            raise TestFailure(
-                                "decoded manifest exceeds safety cap; "
-                                f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
-                                "Increase --max-body-bytes to debug."
-                            )
-                        if not decomp.eof:
-                            raise TestFailure(
-                                f"deflate manifest did not reach end-of-stream (Content-Encoding={content_encoding!r})"
-                            )
-                        return decoded
-                    except zlib.error:
-                        continue
-
-                raise TestFailure(f"invalid deflate manifest (Content-Encoding={content_encoding!r})") from None
-
-            raise TestFailure(
-                f"unsupported manifest Content-Encoding {content_encoding!r} "
-                "(supported: identity/absent, gzip, deflate)"
+        content_encoding = _header(resp, "Content-Encoding")
+        if content_encoding is not None:
+            encodings = _csv_tokens(content_encoding)
+            _require(
+                encodings == {"identity"},
+                f"unexpected Content-Encoding {content_encoding!r} (expected absent or 'identity')",
             )
 
-        decoded_body = _decompress_manifest(resp.body, _header(resp, "Content-Encoding"))
-
         try:
-            text = decoded_body.decode("utf-8")
+            text = resp.body.decode("utf-8")
         except UnicodeDecodeError:
-            raise TestFailure("manifest body is not valid UTF-8 (after decoding Content-Encoding)") from None
+            raise TestFailure("manifest body is not valid UTF-8") from None
 
         try:
             raw = json.loads(text)
         except json.JSONDecodeError as e:
             raise TestFailure(f"manifest body is not valid JSON: {e}") from None
 
-        details = f"bytes={len(resp.body)}"
-        if decoded_body is not resp.body:
-            details += f"; decoded_bytes={len(decoded_body)}"
-        return TestResult(name=name, status="PASS", details=details), resp, raw
+        return TestResult(name=name, status="PASS", details=f"bytes={len(resp.body)}"), resp, raw
     except TestFailure as e:
-        return TestResult(name=name, status="FAIL", details=str(e)), None, None
+        return TestResult(name=name, status="FAIL", details=str(e)), resp, None
 
 
 def _test_chunked_private_requires_auth(
@@ -1902,7 +1847,7 @@ def _test_chunked_private_requires_auth(
     max_body_bytes: int,
 ) -> TestResult:
     try:
-        headers: dict[str, str] = {"Accept-Encoding": "identity"}
+        headers: dict[str, str] = {"Accept-Encoding": _BROWSER_ACCEPT_ENCODING}
         if origin is not None:
             headers["Origin"] = origin
         resp = _request(
@@ -2107,6 +2052,7 @@ def _main_chunked(args: argparse.Namespace) -> int:
     if base_url is not None:
         print(f"  BASE_URL:     {base_url}")
     print(f"  ORIGIN:       {origin or '(none)'}")
+    print(f"  ACCEPT_ENCODING: {_BROWSER_ACCEPT_ENCODING}")
     print(f"  STRICT:       {strict}")
     print(f"  CORP:         {expect_corp or '(not required)'}")
     print(f"  MAX_BODY_BYTES:       {max_body_bytes} ({_fmt_bytes(max_body_bytes)})")
@@ -2299,7 +2245,7 @@ def _main_chunked(args: argparse.Namespace) -> int:
                 chunk_resp: HttpResponse | None = None
                 chunk_body_ok = False
                 try:
-                    headers: dict[str, str] = {"Accept-Encoding": "identity"}
+                    headers: dict[str, str] = {"Accept-Encoding": _BROWSER_ACCEPT_ENCODING}
                     if origin is not None:
                         headers["Origin"] = origin
                     if authorization is not None:
@@ -2491,6 +2437,7 @@ def main(argv: Sequence[str]) -> int:
     print("Disk streaming conformance")
     print(f"  BASE_URL: {base_url}")
     print(f"  ORIGIN:   {origin or '(none)'}")
+    print(f"  ACCEPT_ENCODING: {_BROWSER_ACCEPT_ENCODING}")
     print(f"  STRICT:   {strict}")
     print(f"  CORP:     {expect_corp or '(not required)'}")
     print(f"  MAX_BODY_BYTES: {max_body_bytes} ({_fmt_bytes(max_body_bytes)})")
