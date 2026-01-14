@@ -89,7 +89,7 @@ func TestProtocolVectors(t *testing.T) {
 			}
 
 			if v.ExpectError {
-				_, err := Decode(frame)
+				_, err := DefaultCodec.DecodeFrame(frame)
 				if err == nil {
 					t.Fatalf("expected error, got nil")
 				}
@@ -104,7 +104,7 @@ func TestProtocolVectors(t *testing.T) {
 				t.Fatalf("decode payload_b64: %v", err)
 			}
 
-			got, err := Decode(frame)
+			got, err := DefaultCodec.DecodeFrame(frame)
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}
@@ -137,9 +137,9 @@ func TestProtocolVectors(t *testing.T) {
 			var encoded []byte
 			switch v.Version {
 			case 1:
-				encoded, err = EncodeV1(roundTrip)
+				encoded, err = DefaultCodec.EncodeFrameV1(roundTrip)
 			case 2:
-				encoded, err = EncodeV2(roundTrip)
+				encoded, err = DefaultCodec.EncodeFrameV2(roundTrip)
 			default:
 				t.Fatalf("unsupported vector version %d", v.Version)
 			}

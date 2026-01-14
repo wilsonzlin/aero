@@ -76,32 +76,6 @@ func NewCodec(maxPayload int) (Codec, error) {
 	return Codec{MaxPayload: maxPayload}, nil
 }
 
-func EncodeDatagram(d Datagram, dst []byte) ([]byte, error) {
-	return DefaultCodec.EncodeDatagram(d, dst)
-}
-
-func DecodeDatagram(b []byte) (Datagram, error) {
-	return DefaultCodec.DecodeDatagram(b)
-}
-
-// Decode parses a datagram frame using the v2 prefix heuristic:
-//
-//   - if b starts with (0xA2, 0x02), decode as v2
-//   - otherwise decode as v1
-func Decode(b []byte) (Frame, error) {
-	return DefaultCodec.DecodeFrame(b)
-}
-
-// EncodeV1 encodes an IPv4-only v1 frame.
-func EncodeV1(f Frame) ([]byte, error) {
-	return DefaultCodec.EncodeFrameV1(f)
-}
-
-// EncodeV2 encodes a v2 frame (IPv4 or IPv6).
-func EncodeV2(f Frame) ([]byte, error) {
-	return DefaultCodec.EncodeFrameV2(f)
-}
-
 func (c Codec) EncodeDatagram(d Datagram, dst []byte) ([]byte, error) {
 	if c.MaxPayload < 0 {
 		return nil, fmt.Errorf("udpproto: invalid codec max payload %d", c.MaxPayload)

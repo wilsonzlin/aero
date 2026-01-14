@@ -107,7 +107,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 		if msg.IsString {
 			return
 		}
-		d, err := udpproto.Decode(msg.Data)
+		d, err := udpproto.DefaultCodec.DecodeFrame(msg.Data)
 		if err != nil {
 			return
 		}
@@ -173,7 +173,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip(t *testing.T) {
 	copy(echoIP[:], ip4)
 	const guestPort = uint16(4242)
 	wantPayload := []byte("hello")
-	frame, err := udpproto.EncodeV2(udpproto.Frame{
+	frame, err := udpproto.DefaultCodec.EncodeFrameV2(udpproto.Frame{
 		Version:    2,
 		GuestPort:  guestPort,
 		RemoteIP:   netip.AddrFrom4(echoIP),
@@ -293,7 +293,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 		if msg.IsString {
 			return
 		}
-		d, err := udpproto.Decode(msg.Data)
+		d, err := udpproto.DefaultCodec.DecodeFrame(msg.Data)
 		if err != nil {
 			return
 		}
@@ -353,7 +353,7 @@ func TestWebRTCUDPRelay_UDPDatagramRoundTrip_IPv6(t *testing.T) {
 	echoAddr := echoConn.LocalAddr().(*net.UDPAddr).AddrPort()
 	const guestPort = uint16(4242)
 	wantPayload := []byte("hello")
-	frame, err := udpproto.EncodeV2(udpproto.Frame{
+	frame, err := udpproto.DefaultCodec.EncodeFrameV2(udpproto.Frame{
 		Version:    2,
 		GuestPort:  guestPort,
 		RemoteIP:   echoAddr.Addr(),

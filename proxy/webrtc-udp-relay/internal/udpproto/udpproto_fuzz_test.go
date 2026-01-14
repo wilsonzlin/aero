@@ -25,8 +25,8 @@ func FuzzDecodeDatagram(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, b []byte) {
-		d1, err1 := DecodeDatagram(b)
-		d2, err2 := DecodeDatagram(b)
+		d1, err1 := DefaultCodec.DecodeDatagram(b)
+		d2, err2 := DefaultCodec.DecodeDatagram(b)
 
 		c1, c2 := classify(err1), classify(err2)
 		if c1 == "other" || c2 == "other" {
@@ -69,8 +69,8 @@ func FuzzDecodeFrame(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, b []byte) {
-		f1, err1 := Decode(b)
-		f2, err2 := Decode(b)
+		f1, err1 := DefaultCodec.DecodeFrame(b)
+		f2, err2 := DefaultCodec.DecodeFrame(b)
 
 		c1, c2 := classify(err1), classify(err2)
 		if c1 != c2 {

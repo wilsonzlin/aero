@@ -381,7 +381,7 @@ func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 
 	outPkt := readWSBinary(t, c, 2*time.Second)
 
-	outFrame, err := udpproto.Decode(outPkt)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestUDPWebSocketServer_RelaysV2IPv4WhenNegotiated(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello v2"),
 	}
-	inPkt, err := udpproto.EncodeV2(inFrame)
+	inPkt, err := udpproto.DefaultCodec.EncodeFrameV2(inFrame)
 	if err != nil {
 		t.Fatalf("EncodeV2: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestUDPWebSocketServer_RelaysV2IPv4WhenNegotiated(t *testing.T) {
 
 	outPkt := readWSBinary(t, c, 2*time.Second)
 
-	outFrame, err := udpproto.Decode(outPkt)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello ipv6"),
 	}
-	inPkt, err := udpproto.EncodeV2(inFrame)
+	inPkt, err := udpproto.DefaultCodec.EncodeFrameV2(inFrame)
 	if err != nil {
 		t.Fatalf("EncodeV2: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 
 	outPkt := readWSBinary(t, c, 2*time.Second)
 
-	outFrame, err := udpproto.Decode(outPkt)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -676,7 +676,7 @@ func TestUDPWebSocketServer_QuotaExceededIncrementsMetric(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestUDPWebSocketServer_QuotaExceededIncrementsMetric(t *testing.T) {
 		otherPort = echoPort - 1
 	}
 	in.RemotePort = otherPort
-	pkt2, err := udpproto.EncodeV1(in)
+	pkt2, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1 #2: %v", err)
 	}
@@ -742,7 +742,7 @@ func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -859,7 +859,7 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello after auth"),
 	}
-	inPkt, err := udpproto.EncodeV1(inFrame)
+	inPkt, err := udpproto.DefaultCodec.EncodeFrameV1(inFrame)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -870,7 +870,7 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 
 	outPkt := readWSBinary(t, c, 2*time.Second)
 
-	outFrame, err := udpproto.Decode(outPkt)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -970,7 +970,7 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -981,7 +981,7 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 
 	outPkt := readWSBinary(t, c, 2*time.Second)
 
-	outFrame, err := udpproto.Decode(outPkt)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -1024,7 +1024,7 @@ func TestUDPWebSocketServer_QueryTokenAlias(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello via token alias"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}
@@ -1035,7 +1035,7 @@ func TestUDPWebSocketServer_QueryTokenAlias(t *testing.T) {
 
 	outPkt := readWSBinary(t, c, 2*time.Second)
 
-	outFrame, err := udpproto.Decode(outPkt)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -1079,7 +1079,7 @@ func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 		RemotePort: echoPort,
 		Payload:    []byte("hello"),
 	}
-	pkt, err := udpproto.EncodeV1(in)
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
 	if err != nil {
 		t.Fatalf("EncodeV1: %v", err)
 	}

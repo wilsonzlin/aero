@@ -23,7 +23,7 @@ func (f *fakeDataChannel) Send(data []byte) error {
 
 func mustEncode(t *testing.T, d udpproto.Datagram) []byte {
 	t.Helper()
-	b, err := udpproto.EncodeDatagram(d, nil)
+	b, err := udpproto.DefaultCodec.EncodeDatagram(d, nil)
 	if err != nil {
 		t.Fatalf("encode datagram: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 		t.Fatalf("timed out waiting for forwarded packet from allowed remote")
 	}
 
-	d, err := udpproto.DecodeDatagram(got)
+	d, err := udpproto.DefaultCodec.DecodeDatagram(got)
 	if err != nil {
 		t.Fatalf("decode forwarded packet: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestUdpPortBinding_InboundFilterAny_AllowsAnyRemote(t *testing.T) {
 		t.Fatalf("timed out waiting for forwarded packet from remote2")
 	}
 
-	d, err := udpproto.DecodeDatagram(got)
+	d, err := udpproto.DefaultCodec.DecodeDatagram(got)
 	if err != nil {
 		t.Fatalf("decode forwarded packet: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestUdpPortBinding_DropsOversizeDatagramInsteadOfForwardingTruncated(t *tes
 	select {
 	case pkt := <-dc.sent:
 		// Show what would have been forwarded to make debugging easy.
-		f, err := udpproto.Decode(pkt)
+		f, err := udpproto.DefaultCodec.DecodeFrame(pkt)
 		if err != nil {
 			t.Fatalf("unexpected forwarded packet (decode failed): %v", err)
 		}
@@ -399,7 +399,7 @@ func TestSessionRelay_IPv6EchoV2(t *testing.T) {
 		RemotePort: echoAddr.Port(),
 		Payload:    payload,
 	}
-	inPkt, err := udpproto.EncodeV2(inFrame)
+	inPkt, err := udpproto.DefaultCodec.EncodeFrameV2(inFrame)
 	if err != nil {
 		t.Fatalf("EncodeV2: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestSessionRelay_IPv6EchoV2(t *testing.T) {
 		t.Fatalf("timed out waiting for relay response")
 	}
 
-	gotFrame, err := udpproto.Decode(outPkt)
+	gotFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestSessionRelay_PreferV2NegotiatedForIPv4(t *testing.T) {
 		RemotePort: uint16(remoteAddr.Port),
 		Payload:    []byte("ping"),
 	}
-	inPkt, err := udpproto.EncodeV2(inFrame)
+	inPkt, err := udpproto.DefaultCodec.EncodeFrameV2(inFrame)
 	if err != nil {
 		t.Fatalf("EncodeV2: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestSessionRelay_PreferV2NegotiatedForIPv4(t *testing.T) {
 		t.Fatalf("timed out waiting for forwarded packet")
 	}
 
-	f, err := udpproto.Decode(got)
+	f, err := udpproto.DefaultCodec.DecodeFrame(got)
 	if err != nil {
 		t.Fatalf("decode forwarded packet: %v", err)
 	}

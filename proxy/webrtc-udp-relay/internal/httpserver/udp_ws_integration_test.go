@@ -99,9 +99,9 @@ func readWSFrame(t *testing.T, c *websocket.Conn) udpproto.Frame {
 			// Ignore control messages like {"type":"ready"}.
 			continue
 		}
-		f, err := udpproto.Decode(msg)
+		f, err := udpproto.DefaultCodec.DecodeFrame(msg)
 		if err != nil {
-			t.Fatalf("udpproto.Decode: %v", err)
+			t.Fatalf("DecodeFrame: %v", err)
 		}
 		return f
 	}
@@ -146,7 +146,7 @@ func TestUDPWebSocket_RoundTripV1AndV2(t *testing.T) {
 	var ip4Arr [4]byte
 	copy(ip4Arr[:], ip4)
 
-	pktV1, err := udpproto.EncodeDatagram(udpproto.Datagram{
+	pktV1, err := udpproto.DefaultCodec.EncodeDatagram(udpproto.Datagram{
 		GuestPort:  1234,
 		RemoteIP:   ip4Arr,
 		RemotePort: uint16(echoAddr.Port),
@@ -167,7 +167,7 @@ func TestUDPWebSocket_RoundTripV1AndV2(t *testing.T) {
 		t.Fatalf("payload=%q, want %q", got, "hello-v1")
 	}
 
-	pktV2, err := udpproto.EncodeV2(udpproto.Frame{
+	pktV2, err := udpproto.DefaultCodec.EncodeFrameV2(udpproto.Frame{
 		GuestPort:  2345,
 		RemoteIP:   echoAddr.AddrPort().Addr(),
 		RemotePort: uint16(echoAddr.Port),
@@ -247,7 +247,7 @@ func TestUDPWebSocket_APIKeyAuth(t *testing.T) {
 		ip4 := echoAddr.IP.To4()
 		var ip4Arr [4]byte
 		copy(ip4Arr[:], ip4)
-		pkt, err := udpproto.EncodeDatagram(udpproto.Datagram{
+		pkt, err := udpproto.DefaultCodec.EncodeDatagram(udpproto.Datagram{
 			GuestPort:  1234,
 			RemoteIP:   ip4Arr,
 			RemotePort: uint16(echoAddr.Port),
@@ -308,7 +308,7 @@ func TestUDPWebSocket_JWTAuth_QueryParam(t *testing.T) {
 	ip4 := echoAddr.IP.To4()
 	var ip4Arr [4]byte
 	copy(ip4Arr[:], ip4)
-	pkt, err := udpproto.EncodeDatagram(udpproto.Datagram{
+	pkt, err := udpproto.DefaultCodec.EncodeDatagram(udpproto.Datagram{
 		GuestPort:  1234,
 		RemoteIP:   ip4Arr,
 		RemotePort: uint16(echoAddr.Port),

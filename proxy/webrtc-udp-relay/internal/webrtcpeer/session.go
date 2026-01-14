@@ -15,7 +15,7 @@ import (
 // webrtcDataChannelUDPFrameOverheadBytes is the worst-case overhead (in bytes)
 // for a single UDP relay DataChannel message on top of MAX_DATAGRAM_PAYLOAD_BYTES.
 //
-// This matches the v2 header carrying an IPv6 address (see udpproto.EncodeV2):
+// This matches the v2 header carrying an IPv6 address (see udpproto.Codec.EncodeFrameV2):
 //
 //	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
 const webrtcDataChannelUDPFrameOverheadBytes = 24
