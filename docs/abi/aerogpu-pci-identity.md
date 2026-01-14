@@ -49,6 +49,8 @@ The canonical machine supports **two mutually-exclusive** display configurations
   PCI stub at `00:0c.0` (`1234:1111`) used only to route the VBE linear framebuffer through the PCI
   MMIO window. The stub BAR mirrors the configured LFB base (historically defaulting to
   `0xE000_0000` via `aero_gpu_vga::SVGA_LFB_BASE`).
+  This `00:0c.0` device is transitional and must not be exposed when `enable_aerogpu=true` (to avoid
+  presenting two VGA-class PCI functions to the guest).
 
 See also:
 

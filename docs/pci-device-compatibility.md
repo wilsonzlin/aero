@@ -25,7 +25,8 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation
   (`aero_gpu_vga`) plus a **transitional** PCI VGA stub at `00:0c.0` (`1234:1111`) used only for
   boot display / VBE LFB routing. This stub is not part of the long-term Windows paravirtual device
-  contract.
+  contract. When `enable_aerogpu=true`, this transitional stub must be absent to avoid exposing two
+  VGA-class PCI devices to the guest.
 
 ## Canonical PCI layout (bus/dev/fn)
 
@@ -41,13 +42,13 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:04.0  | Audio  | 8086:2668     | 04/03/00                 | INTA     | Intel HD Audio (HDA) controller |
 | 00:05.0  | NIC    | 8086:100E     | 02/00/00                 | INTA     | Intel E1000 (82540EM) |
 | 00:06.0  | NIC    | 10EC:8139     | 02/00/00                 | INTA     | RTL8139 (alternate NIC option) |
-| 00:07.0  | GPU    | A3A0:0001     | 03/00/00                 | INTA     | AeroGPU display controller (WDDM). **Canonical BDF + VID/DID contract** for Windows driver binding (`PCI\VEN_A3A0&DEV_0001`). Do not assign any other device to `00:07.0`. See `docs/abi/aerogpu-pci-identity.md`. Canonical PCI profile defines BAR0 (64KiB regs) + BAR1 (prefetchable VRAM aperture) per `docs/16-aerogpu-vga-vesa-compat.md`. |
+| 00:07.0  | GPU    | A3A0:0001     | 03/00/00                 | INTA     | AeroGPU display controller (WDDM). **Canonical BDF + VID/DID contract** for Windows driver binding (`PCI\VEN_A3A0&DEV_0001`). Do not assign any other device to `00:07.0`. See `docs/abi/aerogpu-pci-identity.md`. Canonical PCI profile defines BAR0 (64KiB regs) + BAR1 (prefetchable VRAM aperture) per `docs/16-aerogpu-vga-vesa-compat.md`. When AeroGPU owns boot display (legacy VGA/VBE path), the transitional VGA stub at `00:0c.0` must be absent. |
 | 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1000) |
 | 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (Aero Win7 contract v1: modern-only, `REV_01`; upstream transitional = 1AF4:1001) |
 | 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input keyboard (Aero Win7 contract v1: `SUBSYS_00101AF4`, `REV_01`, `header_type=0x80` for multi-function discovery) |
 | 00:0A.1  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input mouse (Aero Win7 contract v1: `SUBSYS_00111AF4`, `REV_01`) |
 | 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`) |
-| 00:0c.0  | VGA    | 1234:1111     | 03/00/00                 | -        | **Transitional boot display** (Bochs/QEMU "Standard VGA"-like PCI identity) used by the canonical `aero_machine::Machine` when `enable_vga=true` (and `enable_aerogpu=false`). This is distinct from AeroGPU and intentionally does not occupy `00:07.0`. |
+| 00:0c.0  | VGA    | 1234:1111     | 03/00/00                 | -        | **Transitional boot display** (Bochs/QEMU "Standard VGA"-like PCI identity) used by the canonical `aero_machine::Machine` when `enable_vga=true` (and `enable_aerogpu=false`) to route the fixed VBE LFB through the PCI MMIO router (stub BAR mirrors the configured LFB base). This is distinct from AeroGPU and intentionally does not occupy `00:07.0`. When `enable_aerogpu=true`, this stub is not exposed. |
 | 00:0d.0  | USB3   | 1B36:000D     | 0C/03/30                 | INTA     | xHCI (USB 3.x) controller (QEMU xHCI identity). Wired in the web runtime when the WASM build exports `XhciControllerBridge` (optional/experimental; Windows 7 has no in-box xHCI driver). See [`docs/usb-xhci.md`](./usb-xhci.md). |
 | 00:12.0  | USB2   | 8086:293A     | 0C/03/20                 | INTA     | EHCI (USB 2.0) controller (ICH9-family identity; Windows 7 in-box `usbehci.sys`). See [`docs/usb-ehci.md`](./usb-ehci.md). |
 
@@ -60,6 +61,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
   path (see [`16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md)), firmware derives
   the VBE mode-info `PhysBasePtr` from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`
   (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`).
+  In this mode, the transitional VGA stub at `00:0c.0` is not exposed.
 - With `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`), boot display is provided by
   the standalone `aero_gpu_vga` VGA/VBE device model, and the machine exposes a minimal PCI VGA
   function at `00:0c.0` (`1234:1111`) so the VBE LFB is reachable via the PCI MMIO router (the stub

@@ -50,6 +50,12 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();
+    // This test covers the standalone legacy VGA/VBE device model wired into the canonical PC
+    // platform. If a machine configuration uses AeroGPU-owned boot display (no standalone VGA
+    // device), skip.
+    if m.vga().is_none() {
+        return;
+    }
 
     // Match the programming sequence used by `aero-gpu-vga`'s
     // `vbe_linear_framebuffer_write_shows_up_in_output` test.

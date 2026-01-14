@@ -2413,8 +2413,8 @@ impl PciDevice for XhciPciConfigDevice {
 // minimal Bochs/QEMU-compatible VGA PCI function on a different slot so the SVGA/VBE linear
 // framebuffer (LFB) can be routed via the PCI MMIO window (stub BAR mirrors the configured LFB
 // base; legacy default `SVGA_LFB_BASE`). When AeroGPU is enabled, this transitional PCI stub is
-// intentionally not installed.
-
+// intentionally not installed to avoid exposing two VGA-class PCI devices to the guest (which can
+// confuse Windows driver binding).
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
 
@@ -2465,6 +2465,7 @@ impl PciDevice for VgaPciConfigDevice {
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
+
 /// Size of the legacy VGA memory window (`0xA0000..0xC0000`) in bytes.
 ///
 /// This is aliased to `VRAM[0..LEGACY_VGA_WINDOW_SIZE]` when AeroGPU is enabled.
@@ -8798,12 +8799,14 @@ impl Machine {
                         ),
                     );
                 }
-                if let Some(vga) = vga.clone() {
-                    router.register_handler(
-                        VGA_PCI_BDF,
-                        VGA_PCI_BAR_INDEX,
-                        VgaLfbMmioHandler { dev: vga },
-                    );
+                if use_legacy_vga {
+                    if let Some(vga) = vga.clone() {
+                        router.register_handler(
+                            VGA_PCI_BDF,
+                            VGA_PCI_BAR_INDEX,
+                            VgaLfbMmioHandler { dev: vga },
+                        );
+                    }
                 }
                 if let Some(aerogpu) = aerogpu.clone() {
                     let bdf = aero_devices::pci::profile::AEROGPU.bdf;

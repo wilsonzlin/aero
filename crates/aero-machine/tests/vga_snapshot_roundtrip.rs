@@ -38,6 +38,22 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
 
     let mut vm = Machine::new(cfg.clone()).unwrap();
 
+    // If the canonical machine is using an AeroGPU-owned boot display path, the legacy Bochs/QEMU
+    // VGA PCI stub is expected to be absent and the SVGA LFB is not routed through the PCI MMIO
+    // window. This snapshot roundtrip test targets the standalone `aero_gpu_vga` path.
+    let has_vga_pci_stub = vm
+        .pci_config_ports()
+        .and_then(|pci_cfg| {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let bus = pci_cfg.bus_mut();
+            let vendor = bus.read_config(aero_devices::pci::PciBdf::new(0, 0x0c, 0), 0x00, 2) as u16;
+            (vendor != 0xFFFF).then_some(())
+        })
+        .is_some();
+    if !has_vga_pci_stub {
+        return;
+    }
+
     // Program Bochs VBE_DISPI to 64x64x32 with LFB enabled.
     vm.io_write(0x01CE, 2, 0x0001);
     vm.io_write(0x01CF, 2, 64);

@@ -93,6 +93,21 @@ fn build_vbe_palette_boot_sector() -> [u8; 512] {
     sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
     i += 2;
 
+    // Query VBE mode info for mode 0x105 into 0x0000:0x0600 so the host can discover PhysBasePtr.
+    //
+    // mov di, 0x0600
+    sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x06]);
+    i += 3;
+    // mov ax, 0x4F01
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x01, 0x4F]);
+    i += 3;
+    // mov cx, 0x0105
+    sector[i..i + 3].copy_from_slice(&[0xB9, 0x05, 0x01]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
     // mov ax, 0x4F02
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
     i += 3;

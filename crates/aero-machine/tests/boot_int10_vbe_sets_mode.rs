@@ -6,6 +6,16 @@ fn build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags: u16) -> [u8; 512] {
     let mut sector = [0u8; 512];
     let mut i = 0usize;
 
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+    // mov es, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+    i += 2;
+
     // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
     i += 3;
@@ -18,6 +28,21 @@ fn build_int10_vbe_set_mode_boot_sector(vbe_mode_with_flags: u16) -> [u8; 512] {
     ]);
     i += 3;
 
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // Query VBE mode info (so the host can discover PhysBasePtr).
+    //
+    // mov di, 0x0500
+    sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
+    i += 3;
+    // mov ax, 0x4F01
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x01, 0x4F]);
+    i += 3;
+    // mov cx, 0x0118
+    sector[i..i + 3].copy_from_slice(&[0xB9, 0x18, 0x01]);
+    i += 3;
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
     i += 2;
@@ -76,9 +101,17 @@ fn assert_vbe_mode_set_and_lfb_visible(vbe_mode_with_flags: u16, expected_res: (
     m.display_present();
     assert_eq!(m.display_resolution(), expected_res);
 
+    let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
+    assert_ne!(phys_base_ptr, 0);
+
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
     let base = m.vbe_lfb_base();
     m.write_physical_u32(base, 0x00FF_0000);
+    assert_eq!(
+        u64::from(phys_base_ptr),
+        base,
+        "BIOS VBE mode info PhysBasePtr must match Machine::vbe_lfb_base()"
+    );
 
     m.display_present();
     assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
