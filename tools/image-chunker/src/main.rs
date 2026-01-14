@@ -3863,6 +3863,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_http_sends_accept_encoding_identity() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let checked = Arc::new(AtomicU64::new(0));
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let checked = Arc::clone(&checked);
+            Arc::new(move |req: TestHttpRequest| {
+                let encoding = req
+                    .headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"))
+                    .map(|(_, v)| v.as_str())
+                    .unwrap_or("");
+                if encoding != "identity" {
+                    return (
+                        400,
+                        Vec::new(),
+                        format!("unexpected accept-encoding: {encoding}").into_bytes(),
+                    );
+                }
+
+                checked.fetch_add(1, Ordering::SeqCst);
+                match req.path.as_str() {
+                    "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                    "/chunks/00000000.bin" => (200, Vec::new(), chunk0.clone()),
+                    "/chunks/00000001.bin" => (200, Vec::new(), chunk1.clone()),
+                    _ => (404, Vec::new(), b"not found".to_vec()),
+                }
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        // At minimum: manifest + 2 chunks. (Some optional requests like meta.json may also occur.)
+        assert!(checked.load(Ordering::SeqCst) >= 3);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn verify_http_rejects_non_identity_content_encoding() -> Result<()> {
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
