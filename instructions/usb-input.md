@@ -147,9 +147,10 @@ DOM `KeyboardEvent.code` is mapped to PS/2 **Set 2** scancode bytes via a single
 
 Generated outputs:
 
-- `web/src/input/scancodes.ts` (browser capture)
-- `src/input/scancodes.ts` (repo-root harness)
+- `scancodes.ts` in `web/src/input/` (browser capture)
 - `crates/aero-devices-input/src/scancodes_generated.rs` (Rust/WASM)
+
+Native Rust harnesses consume the mapping via `aero-devices-input` (there is no longer a separate generated harness copy).
 
 In the web runtime, capture uses `ps2Set2ScancodeForCode` from `web/src/input/scancode.ts`. On the Rust side, the canonical helper is `aero_devices_input::scancode::browser_code_to_set2_bytes`.
 
