@@ -200,7 +200,12 @@ impl AhciPciConfigDevice {
             },
         );
         // Expose MSI in the guest-visible PCI function config space.
-        config.add_capability(Box::new(MsiCapability::new()));
+        //
+        // The canonical PCI profile (`SATA_AHCI_ICH9`) declares MSI, but keep this defensive so the
+        // platform doesn't accidentally regress if profiles are customized.
+        if config.capability::<MsiCapability>().is_none() {
+            config.add_capability(Box::new(MsiCapability::new()));
+        }
         Self { config }
     }
 }
@@ -3000,6 +3005,17 @@ mod tests {
         let lo = cmos_read_u8(pc, index_lo);
         let hi = cmos_read_u8(pc, index_hi);
         u16::from(lo) | (u16::from(hi) << 8)
+    }
+
+    #[test]
+    fn ahci_pci_config_space_exposes_single_msi_capability() {
+        let mut dev = AhciPciConfigDevice::new();
+        let caps = dev.config_mut().capability_list();
+        let msi_count = caps
+            .iter()
+            .filter(|cap| cap.id == aero_devices::pci::msi::PCI_CAP_ID_MSI)
+            .count();
+        assert_eq!(msi_count, 1);
     }
 
     #[test]

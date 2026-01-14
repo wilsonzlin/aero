@@ -74,11 +74,14 @@ impl AhciPciDevice {
         let irq = AtomicIrqLine::default();
         let controller = AhciController::new(Box::new(irq.clone()), num_ports);
         let mut config = profile::SATA_AHCI_ICH9.build_config_space();
-        // Expose MSI so modern guests can use message-signaled interrupts instead of legacy INTx.
+        // Ensure MSI is exposed so modern guests can use message-signaled interrupts instead of
+        // legacy INTx.
         //
-        // Note: this is wired up in `aero-pc-platform` by polling `irq_pending_raw()` and
-        // triggering the MSI capability via the canonical PCI config bus.
-        config.add_capability(Box::new(MsiCapability::new()));
+        // The canonical PCI profile (`SATA_AHCI_ICH9`) normally declares this capability, but keep
+        // this defensive so older profiles (or test-only custom configs) still expose MSI.
+        if config.capability::<MsiCapability>().is_none() {
+            config.add_capability(Box::new(MsiCapability::new()));
+        }
         Self {
             config,
             controller,
@@ -434,6 +437,17 @@ mod tests {
     const PORT_REG_IS: u64 = 0x10;
     const PORT_REG_IE: u64 = 0x14;
     const PORT_REG_SERR: u64 = 0x30;
+
+    #[test]
+    fn pci_config_exposes_single_msi_capability() {
+        let mut dev = AhciPciDevice::new(1);
+        let caps = dev.config_mut().capability_list();
+        let msi_count = caps
+            .iter()
+            .filter(|cap| cap.id == aero_devices::pci::msi::PCI_CAP_ID_MSI)
+            .count();
+        assert_eq!(msi_count, 1);
+    }
 
     #[test]
     fn mmio_read_size0_returns_zero() {
