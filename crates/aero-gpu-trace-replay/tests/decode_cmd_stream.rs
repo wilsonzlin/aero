@@ -427,6 +427,18 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     assert_eq!(payload.len(), 56);
     push_packet(&mut out, AerogpuCmdOpcode::CopyTexture2d as u32, &payload);
 
+    // DEBUG_MARKER("MARK").
+    push_packet(&mut out, AerogpuCmdOpcode::DebugMarker as u32, b"MARK");
+
+    // SET_SCISSOR(x=1, y=2, width=3, height=4).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1);
+    push_u32_le(&mut payload, 2);
+    push_u32_le(&mut payload, 3);
+    push_u32_le(&mut payload, 4);
+    assert_eq!(payload.len(), 16);
+    push_packet(&mut out, AerogpuCmdOpcode::SetScissor as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -590,6 +602,12 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("src_xy=7,8"));
     assert!(listing.contains("size=9x10"));
     assert!(listing.contains("flags=0x00000002"));
+
+    assert!(listing.contains("DebugMarker"));
+    assert!(listing.contains("marker=\"MARK\""));
+
+    assert!(listing.contains("SetScissor"));
+    assert!(listing.contains("x=1 y=2 width=3 height=4"));
 }
 
 #[test]
@@ -767,6 +785,17 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(upload["decoded"]["data_len"], 4);
     assert_eq!(upload["decoded"]["data_prefix"], "deadbeef");
 
+    let clear = find_packet("Clear");
+    assert_eq!(clear["decoded"]["flags"], AEROGPU_CLEAR_COLOR);
+    assert_eq!(
+        clear["decoded"]["color_rgba"][0]
+            .as_f64()
+            .expect("color_rgba[0]"),
+        1.0
+    );
+    assert_eq!(clear["decoded"]["depth"].as_f64().expect("depth"), 1.0);
+    assert_eq!(clear["decoded"]["stencil"], 0);
+
     let srv = find_packet("SetShaderResourceBuffers");
     assert_eq!(srv["decoded"]["shader_stage"], 2);
     assert_eq!(srv["decoded"]["buffer_count"], 1);
@@ -936,6 +965,15 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(copy_texture["decoded"]["width"], 9);
     assert_eq!(copy_texture["decoded"]["height"], 10);
     assert_eq!(copy_texture["decoded"]["flags"], 2);
+
+    let marker = find_packet("DebugMarker");
+    assert_eq!(marker["decoded"]["marker"], "MARK");
+
+    let scissor = find_packet("SetScissor");
+    assert_eq!(scissor["decoded"]["x"], 1);
+    assert_eq!(scissor["decoded"]["y"], 2);
+    assert_eq!(scissor["decoded"]["width"], 3);
+    assert_eq!(scissor["decoded"]["height"], 4);
 }
 
 #[test]

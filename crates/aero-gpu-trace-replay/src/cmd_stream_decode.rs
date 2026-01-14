@@ -542,6 +542,19 @@ fn decode_known_fields(
                 out.insert("max_depth".into(), json!(v));
             }
         }
+        AerogpuCmdOpcode::SetScissor => {
+            if pkt.payload.len() < 16 {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
+            }
+            out.insert("x".into(), json!(read_i32_le(pkt.payload, 0).unwrap()));
+            out.insert("y".into(), json!(read_i32_le(pkt.payload, 4).unwrap()));
+            out.insert("width".into(), json!(read_i32_le(pkt.payload, 8).unwrap()));
+            out.insert(
+                "height".into(),
+                json!(read_i32_le(pkt.payload, 12).unwrap()),
+            );
+        }
         AerogpuCmdOpcode::SetBlendState => {
             if pkt.payload.len() < 52 {
                 out.insert("decode_error".into(), json!("truncated payload"));
@@ -1018,19 +1031,22 @@ fn decode_known_fields(
             }
         }
         AerogpuCmdOpcode::Clear => {
-            if let Some(v) = read_u32_le(pkt.payload, 0) {
-                out.insert("flags".into(), json!(v));
+            if pkt.payload.len() < 28 {
+                out.insert("decode_error".into(), json!("truncated payload"));
+                return out;
             }
+            out.insert("flags".into(), json!(read_u32_le(pkt.payload, 0).unwrap()));
             // color_rgba_f32[4] start at payload offset 4.
             let mut rgba = Vec::new();
             for i in 0..4 {
-                if let Some(f) = read_f32_le(pkt.payload, 4 + i * 4) {
-                    rgba.push(Value::from(f));
-                }
+                rgba.push(Value::from(read_f32_le(pkt.payload, 4 + i * 4).unwrap()));
             }
-            if rgba.len() == 4 {
-                out.insert("color_rgba".into(), Value::Array(rgba));
-            }
+            out.insert("color_rgba".into(), Value::Array(rgba));
+            out.insert("depth".into(), json!(read_f32_le(pkt.payload, 20).unwrap()));
+            out.insert(
+                "stencil".into(),
+                json!(read_u32_le(pkt.payload, 24).unwrap()),
+            );
         }
         AerogpuCmdOpcode::Draw => {
             if let Some(v) = read_u32_le(pkt.payload, 0) {
@@ -1105,7 +1121,13 @@ fn decode_known_fields(
         }
         AerogpuCmdOpcode::Flush => {}
         AerogpuCmdOpcode::Nop => {}
-        AerogpuCmdOpcode::DebugMarker => {}
+        AerogpuCmdOpcode::DebugMarker => {
+            let marker = String::from_utf8_lossy(pkt.payload)
+                .trim_end_matches('\0')
+                .replace('\n', "\\n");
+            let marker = marker.chars().take(80).collect::<String>();
+            out.insert("marker".into(), Value::String(marker));
+        }
         // Everything else: no additional decode for now.
         _ => {}
     }
