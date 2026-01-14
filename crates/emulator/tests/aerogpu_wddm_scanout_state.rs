@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
+use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM};
 use emulator::devices::aerogpu_regs::mmio;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
@@ -73,4 +73,62 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb2 >> 32) as u32);
     let snap2 = scanout_state.snapshot();
     assert_eq!(snap2.base_paddr(), fb2);
+}
+
+#[test]
+fn reset_reverts_scanout_state_to_legacy() {
+    let mut mem = DummyMemory;
+    let scanout_state = Arc::new(ScanoutState::new());
+    let mut dev = new_test_device(scanout_state.clone());
+
+    // Program a valid scanout configuration and enable it so WDDM owns scanout.
+    const WIDTH: u32 = 640;
+    const HEIGHT: u32 = 480;
+    const BYTES_PER_PIXEL: u32 = 4;
+    const PITCH_BYTES: u32 = WIDTH * BYTES_PER_PIXEL;
+    const FB: u64 = 0x1234_5678_9abc_def0;
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, WIDTH);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, HEIGHT);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, FB as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (FB >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+
+    let snap0 = scanout_state.snapshot();
+    assert_eq!(snap0.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap0.base_paddr(), FB);
+
+    // Reset should implicitly disable scanout0 and publish legacy scanout ownership.
+    dev.reset();
+
+    let snap1 = scanout_state.snapshot();
+    assert_eq!(snap1.source, SCANOUT_SOURCE_LEGACY_TEXT);
+}
+
+#[test]
+fn reset_clears_torn_fb_gpa_tracking() {
+    let mut mem = DummyMemory;
+    let scanout_state = Arc::new(ScanoutState::new());
+    let mut dev = new_test_device(scanout_state.clone());
+
+    // Simulate a torn FB address update: write LO but not HI.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, 0xdead_beef);
+
+    // If a reset occurs in this state, we must not leave the publisher permanently blocked on the
+    // stale LO write.
+    dev.reset();
+
+    // Enabling scanout should now publish a WDDM scanout-state update (even if the descriptor is
+    // still "disabled" due to missing config).
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), 0);
 }

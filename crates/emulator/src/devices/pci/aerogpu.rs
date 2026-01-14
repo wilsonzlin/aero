@@ -413,6 +413,16 @@ impl AeroGpuPciDevice {
         self.suppress_vblank_irq = false;
         self.ring_reset_pending = false;
         self.doorbell_pending = false;
+
+        // Reset scanout-state publish bookkeeping. If a reset occurs mid-framebuffer-address update,
+        // we must not leave the scanout state publisher permanently blocked on a stale LO write.
+        self.scanout0_fb_gpa_lo_pending = false;
+        self.last_published_scanout0 = None;
+
+        // Resetting guest-visible registers implicitly disables scanout0. Ensure scanout consumers
+        // see ownership revert back to the legacy VGA/VBE path rather than continuing to treat WDDM
+        // as the active scanout source.
+        self.publish_legacy_scanout_state();
     }
 
     pub fn tick(&mut self, mem: &mut dyn MemoryBus, now_ns: u64) {
