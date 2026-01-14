@@ -202,7 +202,9 @@ GS/HS/DS stages are emulated using compute passes, but their **D3D-stage resourc
 tracked independently and are expected to be provided to the emulation pipelines via a reserved
 bind group:
 
-- `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
+- `@group(3)` for GS/HS/DS resources (selected either via the direct `shader_stage = GEOMETRY`
+  encoding for GS, or via the `stage_ex` ABI extension when `shader_stage = COMPUTE` (required for
+  HS/DS; optional GS compatibility encoding)).
 - Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) are
   also internal to the emulation path. In the baseline design they live in `@group(3)` using a
   reserved high binding-number range (starting at `BINDING_BASE_INTERNAL = 256`, defined in
@@ -246,7 +248,7 @@ The broader compute-expansion pipeline also defines additional internal scratch 
 binding-number range).
 
 Note: the full GS/HS/DS emulation pipeline will need a unified bind-group layout that accommodates
- both “stage_ex” bindings (low `@binding` ranges) and vertex pulling/expansion internal bindings
+ both GS/HS/DS D3D bindings (low `@binding` ranges) and vertex pulling/expansion internal bindings
  (`@binding >= BINDING_BASE_INTERNAL`) within `@group(3)` (keeping the bind group count within the
  WebGPU baseline of 4).
 

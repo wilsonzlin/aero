@@ -275,13 +275,18 @@ Reference: `crates/aero-d3d11/src/binding_model.rs`.
 
 ### Extended stages (GS/HS/DS) and `stage_ex`
 
-The AeroGPU command stream historically only supported VS/PS/CS as shader stages. To bind resources
-for GS/HS/DS without breaking the ABI, resource-binding packets overload a reserved field with a
-small **`stage_ex` tag** (values match DXBC program types):
+The AeroGPU command stream has legacy `shader_stage` enums that mirror WebGPU (VS/PS/CS) and also
+includes an explicit Geometry stage (`shader_stage = GEOMETRY`).
 
-- `2 = Geometry`
-- `3 = Hull`
-- `4 = Domain`
+To support additional D3D programmable stages (HS/DS) without breaking the ABI, some
+resource-binding packets overload a reserved field with a small **`stage_ex` tag** when
+`shader_stage == COMPUTE` (values match DXBC program types):
+
+- Preferred GS encoding: `shader_stage = GEOMETRY`, `reserved0 = 0`.
+- `stage_ex` encoding (required for HS/DS; may also be used for GS for compatibility):
+  - `2 = Geometry`
+  - `3 = Hull`
+  - `4 = Domain`
 
 On the host, these are tracked as distinct per-stage binding tables so that “real compute” state is
 not overwritten by graphics emulation state.
@@ -381,4 +386,3 @@ For early bring-up, it’s also useful to add a “buffer readback” test that 
 - index buffer contents follow the expected topology,
 
 before relying on rasterization correctness.
-
