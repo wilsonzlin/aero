@@ -38,9 +38,7 @@ describe("xHCI WebUSB root port reservation matches web runtime topology", () =>
     } else if (/^\d+$/.test(xhciWebusbRootPortExpr)) {
       xhciWebusbRootPort = Number(xhciWebusbRootPortExpr);
     } else {
-      throw new Error(
-        `Unexpected xHCI WEBUSB_ROOT_PORT expression: ${xhciWebusbRootPortExpr}`,
-      );
+      throw new Error(`Unexpected xHCI WEBUSB_ROOT_PORT expression: ${xhciWebusbRootPortExpr}`);
     }
     expect(xhciWebusbRootPort).toBe(sharedWebusbRootPort);
 
