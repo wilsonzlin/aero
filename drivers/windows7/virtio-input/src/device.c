@@ -1245,7 +1245,17 @@ VOID VirtioInputUpdateStatusQActiveState(_In_ PDEVICE_CONTEXT Ctx)
         return;
     }
 
-    active = VirtioInputIsHidActive(Ctx) && (Ctx->DeviceKind == VioInputDeviceKindKeyboard);
+    /*
+     * Only enable the statusq (LED output path) when:
+     *  - HID is active and the device is in D0 (VirtioInputIsHidActive)
+     *  - The device is a keyboard
+     *  - The device advertises EV_LED support (KeyboardLedSupportedBitmask != 0)
+     *
+     * Some non-contract virtio-input devices may expose keyboard input without
+     * advertising EV_LED in EV_BITS(types). In that case we must not emit EV_LED
+     * events on statusq.
+     */
+    active = VirtioInputIsHidActive(Ctx) && (Ctx->DeviceKind == VioInputDeviceKindKeyboard) && (Ctx->KeyboardLedSupportedBitmask != 0);
     VirtioStatusQSetActive(Ctx->StatusQ, active);
 }
 
@@ -2495,7 +2505,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 if (!hasLed) {
                     VIOINPUT_LOG(
                         VIOINPUT_LOG_VIRTQ,
-                        "compat: keyboard EV_BITS(types) does not advertise EV_LED; LED output reports may be ignored\n");
+                        "compat: keyboard EV_BITS(types) does not advertise EV_LED; LED output (statusq) will be disabled\n");
                 }
 
                 RtlZeroMemory(bits, sizeof(bits));
@@ -2539,9 +2549,23 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                                                       sizeof(bits),
                                                       &size);
                     if (!NT_SUCCESS(status) || size == 0) {
+                        /*
+                         * EV_LED is advertised in EV_BITS(types) but the EV_BITS(EV_LED)
+                         * bitmap query failed. Treat this as "unknown" support and fall
+                         * back to emitting only the required LEDs (Num/Caps/Scroll).
+                         *
+                         * This keeps LED output functional for partially compliant devices
+                         * while avoiding optional LED codes the device may reject.
+                         */
+                        {
+                            const UCHAR fallbackMask =
+                                (UCHAR)((1u << VIRTIO_INPUT_LED_NUML) | (1u << VIRTIO_INPUT_LED_CAPSL) | (1u << VIRTIO_INPUT_LED_SCROLLL));
+                            deviceContext->KeyboardLedSupportedBitmask = fallbackMask;
+                            VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, fallbackMask);
+                        }
                         VIOINPUT_LOG(
                             VIOINPUT_LOG_VIRTQ,
-                            "compat: keyboard EV_BITS(EV_LED) query failed: %!STATUS! (continuing)\n",
+                            "compat: keyboard EV_BITS(EV_LED) query failed: %!STATUS! (defaulting to Num/Caps/Scroll)\n",
                             status);
                     } else {
                         /*
