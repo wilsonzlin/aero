@@ -206,6 +206,107 @@ fn xhci_port_status_change_event_delivers_controller_interrupt_via_msix() {
 }
 
 #[test]
+fn xhci_msix_table_mmio_is_gated_by_pci_command_mem() {
+    let mut dev = XhciPciDevice::default();
+
+    let msix = dev
+        .config()
+        .capability::<MsixCapability>()
+        .expect("MSI-X capability");
+    let table_base = u64::from(msix.table_offset());
+
+    // With COMMAND.MEM disabled, reads must float high and writes must be ignored.
+    dev.config_mut().set_command(0);
+    assert_eq!(
+        MmioHandler::read(&mut dev, table_base, 4),
+        u64::from(u32::MAX),
+        "MMIO reads must float high when COMMAND.MEM is disabled"
+    );
+
+    // Enable MMIO decoding and snapshot the initial table value.
+    dev.config_mut().set_command(1 << 1);
+    let initial = MmioHandler::read(&mut dev, table_base, 4);
+
+    // Disable decoding, attempt a write, then re-enable and confirm the table was not modified.
+    dev.config_mut().set_command(0);
+    MmioHandler::write(&mut dev, table_base, 4, initial ^ 0xffff_ffff);
+    assert_eq!(
+        MmioHandler::read(&mut dev, table_base, 4),
+        u64::from(u32::MAX),
+        "MMIO reads must float high when COMMAND.MEM is disabled"
+    );
+    dev.config_mut().set_command(1 << 1);
+    assert_eq!(
+        MmioHandler::read(&mut dev, table_base, 4),
+        initial,
+        "MSI-X table writes must be ignored when COMMAND.MEM is disabled"
+    );
+
+    // MMIO decoding is enabled again; writes should now apply.
+    MmioHandler::write(&mut dev, table_base, 4, initial ^ 0xffff_ffff);
+    assert_eq!(MmioHandler::read(&mut dev, table_base, 4), initial ^ 0xffff_ffff);
+}
+
+#[test]
+fn xhci_msix_function_mask_sets_pba_and_delivers_on_unmask() {
+    let chipset = ChipsetState::new(true);
+    let filter = AddressFilter::new(chipset.a20());
+    let mut mem = PlatformMemoryBus::new(filter, 0x1000);
+
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, false);
+
+    // Enable MSI-X and set the MSI-X function mask bit (bit 14).
+    let cap_offset = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSIX)
+        .expect("MSI-X capability") as u16;
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
+
+    let pba_base = u64::from(
+        dev.config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability")
+            .pba_offset(),
+    );
+
+    // Trigger: function mask should prevent delivery but set PBA[0].
+    dev.raise_event_interrupt();
+    assert!(!dev.irq_level(), "INTx must be suppressed while MSI-X is active");
+    assert_eq!(interrupts.borrow_mut().get_pending(), None);
+    let pba = MmioHandler::read(&mut dev, pba_base, 8);
+    assert_eq!(pba & 1, 1, "function-masked trigger should set PBA pending bit");
+
+    // Clear the function mask while the interrupt condition remains asserted.
+    let ctrl_after = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, u32::from(ctrl_after & !(1 << 14)));
+
+    // The platform tick loop calls `tick_1ms`, which in turn calls `service_interrupts()`. This
+    // should observe the PBA pending bit and deliver without needing a new rising edge.
+    dev.tick_1ms(&mut mem);
+
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(ints.get_pending(), Some(0x45));
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
+
+    let pba_after = MmioHandler::read(&mut dev, pba_base, 8);
+    assert_eq!(pba_after & 1, 0, "PBA pending bit should clear after delivery");
+}
+
+#[test]
 fn xhci_snapshot_roundtrip_preserves_msix_table_and_pba() {
     let mut dev = XhciPciDevice::default();
     dev.config_mut().set_command(1 << 1);
