@@ -1506,6 +1506,14 @@ int main(int argc, char** argv) {
     if (report_dir.empty()) {
       report_dir = L".\\";
     }
+    std::string mk_err;
+    if (!EnsureDirExistsRecursive(report_dir, &mk_err)) {
+      // Reporting should not change the test outcome, but this diagnostic is useful when users pass
+      // a `--json` path containing a non-existent directory.
+      aerogpu_test::PrintfStdout("INFO: aerogpu_test_runner: failed to create JSON report dir %ls: %s",
+                                 report_dir.c_str(),
+                                 mk_err.c_str());
+    }
   }
   std::vector<std::string> test_json_objects;
   test_json_objects.reserve(tests.size());
