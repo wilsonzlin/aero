@@ -4,7 +4,7 @@ use std::fs;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
-use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
+use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStageEx;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -27,7 +27,7 @@ fn rejects_nonzero_emit_stream_index() {
         let dxbc = load_fixture("gs_emit_stream1.dxbc");
 
         let mut writer = AerogpuCmdWriter::new();
-        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &dxbc);
+        writer.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Geometry, &dxbc);
         let stream = writer.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
