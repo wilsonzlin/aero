@@ -300,6 +300,7 @@ async fn serve_manifest(
             header::CONTENT_TYPE,
             HeaderValue::from_static(crate::store::CONTENT_TYPE_JSON),
         );
+        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("identity"));
         headers.insert(
             HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
@@ -425,6 +426,7 @@ async fn serve_manifest_version(
             header::CONTENT_TYPE,
             HeaderValue::from_static(crate::store::CONTENT_TYPE_JSON),
         );
+        headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("identity"));
         headers.insert(
             HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),

@@ -229,6 +229,10 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
         "application/json"
     );
     assert_eq!(
+        resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
+        "identity"
+    );
+    assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
     );
@@ -322,6 +326,10 @@ async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
     assert_eq!(
         resp.headers()[header::CONTENT_TYPE].to_str().unwrap(),
         "application/json"
+    );
+    assert_eq!(
+        resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
+        "identity"
     );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
@@ -501,6 +509,10 @@ async fn versioned_chunked_manifest_head_has_expected_headers_and_empty_body() {
     assert_eq!(
         resp.headers()[header::CONTENT_TYPE].to_str().unwrap(),
         "application/json"
+    );
+    assert_eq!(
+        resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
+        "identity"
     );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
@@ -916,6 +928,10 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
     assert_eq!(
         resp.headers()[header::CONTENT_TYPE].to_str().unwrap(),
         "application/json"
+    );
+    assert_eq!(
+        resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
+        "identity"
     );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
