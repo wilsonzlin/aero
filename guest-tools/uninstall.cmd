@@ -152,11 +152,39 @@ echo(%*
 endlocal & exit /b 0
 
 :log_installed_media_state
-setlocal DisableDelayedExpansion
+setlocal EnableDelayedExpansion
 call :log ""
 call :log "Installed media provenance (from setup.cmd): %STATE_INSTALLED_MEDIA%"
 if exist "%STATE_INSTALLED_MEDIA%" (
-  for /f "usebackq delims=" %%L in ("%STATE_INSTALLED_MEDIA%") do call :log "  %%L"
+  set "IM_VERSION="
+  set "IM_BUILD_ID="
+  for /f "usebackq delims=" %%L in ("%STATE_INSTALLED_MEDIA%") do (
+    call :log "  %%L"
+    for /f "tokens=1,* delims==" %%A in ("%%L") do (
+      if /i "%%A"=="GT_VERSION" set "IM_VERSION=%%B"
+      if /i "%%A"=="GT_BUILD_ID" set "IM_BUILD_ID=%%B"
+    )
+  )
+
+  rem Warn if the installed-media record does not match the currently-running Guest Tools media.
+  rem This helps catch "mixed media" installs or accidentally running uninstall from a different ISO/zip.
+  if defined GT_VERSION if defined IM_VERSION (
+    if /i not "!GT_VERSION!"=="!IM_VERSION!" (
+      call :log "WARNING: Installed media differs from current media (version mismatch)."
+      call :log "         installed-media GT_VERSION=!IM_VERSION!"
+      call :log "         current media  GT_VERSION=!GT_VERSION!"
+    )
+  )
+  if defined GT_BUILD_ID if defined IM_BUILD_ID (
+    if /i not "!GT_BUILD_ID!"=="!IM_BUILD_ID!" (
+      call :log "WARNING: Installed media differs from current media (build_id mismatch)."
+      call :log "         installed-media GT_BUILD_ID=!IM_BUILD_ID!"
+      call :log "         current media  GT_BUILD_ID=!GT_BUILD_ID!"
+    )
+  )
+  if not defined GT_MANIFEST (
+    call :log "INFO: Current Guest Tools manifest.json not found; unable to compare current media to installed-media record."
+  )
 ) else (
   call :log "  (not present)"
 )
@@ -198,6 +226,8 @@ if not exist "!MANIFEST!" (
     set "GT_BUILD_ID="
     set "GT_SIGNING_POLICY=test"
     set "GT_CERTS_REQUIRED=1"
+    set "GT_PARSED_SIGNING_POLICY=0"
+    set "GT_PARSED_CERTS_REQUIRED=0"
   ) & exit /b 0
 )
 
@@ -206,6 +236,42 @@ set "GT_VERSION="
 set "GT_BUILD_ID="
 set "GT_SIGNING_POLICY="
 set "GT_CERTS_REQUIRED="
+set "GT_PARSED_SIGNING_POLICY=0"
+set "GT_PARSED_CERTS_REQUIRED=0"
+
+rem Prefer PowerShell JSON parsing (robust to schema/formatting changes). Fall back to
+rem the legacy line-based parser if PowerShell is unavailable or parsing fails.
+set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PWSH%" set "PWSH=powershell.exe"
+set "PWSH_OK=0"
+set "PWSH_OUT=%TEMP%\aerogt_manifest_parse_%RANDOM%.txt"
+set "AEROGT_MANIFEST=!MANIFEST!"
+"%PWSH%" -NoProfile -ExecutionPolicy Bypass -Command "try{ $p=$env:AEROGT_MANIFEST; [void][System.Reflection.Assembly]::LoadWithPartialName('System.Web.Extensions'); $json=[System.IO.File]::ReadAllText($p); $ser=New-Object System.Web.Script.Serialization.JavaScriptSerializer; $ser.MaxJsonLength=10485760; $o=$ser.DeserializeObject($json); function g($d,$k){ if($d -is [System.Collections.IDictionary]){ $i=[System.Collections.IDictionary]$d; if($i.Contains($k)){ $i[$k] } else { $null } } else { $null } }; function s($v){ if($v -eq $null){ '' } else { ''+$v } }; $pkg=g $o 'package'; $ver=s (g $pkg 'version'); if(-not $ver){ $ver=s (g $o 'version') }; $bid=s (g $pkg 'build_id'); if(-not $bid){ $bid=s (g $o 'build_id') }; $pol=s (g $o 'signing_policy'); $cr=s (g $o 'certs_required'); $out=@(); $out += 'AEROGT_POWERSHELL_OK=1'; if($ver){ $out += ('GT_VERSION=' + $ver) }; if($bid){ $out += ('GT_BUILD_ID=' + $bid) }; if($pol){ $out += ('GT_SIGNING_POLICY=' + $pol) }; if($cr){ $out += ('GT_CERTS_REQUIRED=' + $cr) }; $out | Out-File -Encoding ASCII -FilePath '%PWSH_OUT%'; exit 0 } catch { try{ ('AEROGT_POWERSHELL_OK=0') | Out-File -Encoding ASCII -FilePath '%PWSH_OUT%' } catch {} ; exit 1 }" >nul 2>&1
+if "%ERRORLEVEL%"=="0" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("%PWSH_OUT%") do (
+    if /i "%%A"=="AEROGT_POWERSHELL_OK" if "%%B"=="1" set "PWSH_OK=1"
+    if /i "%%A"=="GT_VERSION" set "GT_VERSION=%%B"
+    if /i "%%A"=="GT_BUILD_ID" set "GT_BUILD_ID=%%B"
+    if /i "%%A"=="GT_SIGNING_POLICY" set "GT_SIGNING_POLICY=%%B"
+    if /i "%%A"=="GT_CERTS_REQUIRED" set "GT_CERTS_REQUIRED=%%B"
+  )
+)
+del /q "%PWSH_OUT%" >nul 2>&1
+if "%PWSH_OK%"=="1" (
+  if defined GT_SIGNING_POLICY set "GT_PARSED_SIGNING_POLICY=1"
+  if defined GT_CERTS_REQUIRED set "GT_PARSED_CERTS_REQUIRED=1"
+)
+if not "%PWSH_OK%"=="1" (
+  call :log "WARNING: Failed to parse manifest.json via PowerShell; falling back to legacy parser."
+  set "GT_VERSION="
+  set "GT_BUILD_ID="
+  set "GT_SIGNING_POLICY="
+  set "GT_CERTS_REQUIRED="
+  goto log_manifest_legacy_parse
+)
+goto log_manifest_normalize
+
+:log_manifest_legacy_parse
 for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
   set "KEY=%%A"
   set "VAL=%%B"
@@ -235,6 +301,7 @@ for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
     if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
     set "VAL=!VAL:"=!"
     set "GT_SIGNING_POLICY=!VAL!"
+    set "GT_PARSED_SIGNING_POLICY=1"
   )
   if /i "!KEY!"=="certs_required" (
     set "VAL=%%B"
@@ -242,8 +309,11 @@ for /f "usebackq tokens=1,* delims=:" %%A in ("!MANIFEST!") do (
     if "!VAL:~-1!"=="," set "VAL=!VAL:~0,-1!"
     set "VAL=!VAL:"=!"
     set "GT_CERTS_REQUIRED=!VAL!"
+    set "GT_PARSED_CERTS_REQUIRED=1"
   )
 )
+
+:log_manifest_normalize
 
 rem Back-compat: old manifests don't include signing_policy/certs_required.
 if not defined GT_SIGNING_POLICY set "GT_SIGNING_POLICY=test"
@@ -251,6 +321,7 @@ rem Normalize legacy signing_policy values to the current surface (test|producti
 if /i "!GT_SIGNING_POLICY!"=="testsigning" set "GT_SIGNING_POLICY=test"
 if /i "!GT_SIGNING_POLICY!"=="test-signing" set "GT_SIGNING_POLICY=test"
 if /i "!GT_SIGNING_POLICY!"=="nointegritychecks" set "GT_SIGNING_POLICY=none"
+if /i "!GT_SIGNING_POLICY!"=="no-integrity-checks" set "GT_SIGNING_POLICY=none"
 if /i "!GT_SIGNING_POLICY!"=="prod" set "GT_SIGNING_POLICY=production"
 if /i "!GT_SIGNING_POLICY!"=="whql" set "GT_SIGNING_POLICY=production"
 if not defined GT_CERTS_REQUIRED (
@@ -283,6 +354,8 @@ endlocal & (
   set "GT_BUILD_ID=%GT_BUILD_ID%"
   set "GT_SIGNING_POLICY=%GT_SIGNING_POLICY%"
   set "GT_CERTS_REQUIRED=%GT_CERTS_REQUIRED%"
+  set "GT_PARSED_SIGNING_POLICY=%GT_PARSED_SIGNING_POLICY%"
+  set "GT_PARSED_CERTS_REQUIRED=%GT_PARSED_CERTS_REQUIRED%"
 ) & exit /b 0
 
 :require_admin

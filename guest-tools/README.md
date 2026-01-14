@@ -244,7 +244,8 @@ Optional flags:
 
 `uninstall.cmd` only prompts about Test Signing / `nointegritychecks` if `setup.cmd` previously enabled them (marker files under `C:\AeroGuestTools\`). For `signing_policy=production|none` media, these markers are not created by default.
 
-For diagnostics, `uninstall.cmd` also logs the Guest Tools manifest metadata (version/build_id) and `signing_policy`. It searches for `manifest.json` at the media root (one directory above the script directory) and falls back to `manifest.json` next to the script (same behavior as `setup.cmd`).
+For diagnostics, `uninstall.cmd` also logs the Guest Tools manifest metadata (version/build_id) and `signing_policy`. It searches for `manifest.json` at the media root (one directory above the script directory) and falls back to `manifest.json` next to the script (same behavior as `setup.cmd`).  
+If `C:\AeroGuestTools\installed-media.txt` exists, `uninstall.cmd` prints it and warns if it does not match the currently-running Guest Tools media (helps detect “mixed media” / wrong ISO cases).
 
 Output:
 
