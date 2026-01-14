@@ -1572,6 +1572,7 @@ static bool EmitVirtioNetMsixMarker(Logger& log, bool require_net_msix) {
   CloseHandle(h);
 
   constexpr size_t kRequiredEnd = offsetof(AEROVNET_DIAG_INFO, MsixTxVector) + sizeof(uint16_t);
+  constexpr size_t kCountersEnd = offsetof(AEROVNET_DIAG_INFO, TxBuffersDrained) + sizeof(uint32_t);
   if (!ok) {
     log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|reason=ioctl_failed|err=%lu",
              require_net_msix ? "FAIL" : "SKIP", static_cast<unsigned long>(err));
@@ -1603,11 +1604,24 @@ static bool EmitVirtioNetMsixMarker(Logger& log, bool require_net_msix) {
   };
 
   const bool require_ok = !require_net_msix || strcmp(mode, "msix") == 0;
-  log.Logf(
-      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s",
-      require_ok ? "PASS" : "FAIL", mode, static_cast<unsigned long>(info.MessageCount),
-      vec_to_string(info.MsixConfigVector).c_str(), vec_to_string(info.MsixRxVector).c_str(),
-      vec_to_string(info.MsixTxVector).c_str());
+  if (bytes >= kCountersEnd) {
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s|"
+        "flags=0x%08lx|intr0=%lu|intr1=%lu|intr2=%lu|dpc0=%lu|dpc1=%lu|dpc2=%lu|rx_drained=%lu|tx_drained=%lu",
+        require_ok ? "PASS" : "FAIL", mode, static_cast<unsigned long>(info.MessageCount),
+        vec_to_string(info.MsixConfigVector).c_str(), vec_to_string(info.MsixRxVector).c_str(),
+        vec_to_string(info.MsixTxVector).c_str(), static_cast<unsigned long>(info.Flags),
+        static_cast<unsigned long>(info.InterruptCountVector0), static_cast<unsigned long>(info.InterruptCountVector1),
+        static_cast<unsigned long>(info.InterruptCountVector2), static_cast<unsigned long>(info.DpcCountVector0),
+        static_cast<unsigned long>(info.DpcCountVector1), static_cast<unsigned long>(info.DpcCountVector2),
+        static_cast<unsigned long>(info.RxBuffersDrained), static_cast<unsigned long>(info.TxBuffersDrained));
+  } else {
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|%s|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s",
+        require_ok ? "PASS" : "FAIL", mode, static_cast<unsigned long>(info.MessageCount),
+        vec_to_string(info.MsixConfigVector).c_str(), vec_to_string(info.MsixRxVector).c_str(),
+        vec_to_string(info.MsixTxVector).c_str());
+  }
   return require_ok;
 }
 
