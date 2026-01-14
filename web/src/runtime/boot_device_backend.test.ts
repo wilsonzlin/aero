@@ -122,4 +122,37 @@ describe("runtime/boot_device_backend", () => {
       }
     }
   });
+
+  it("repairs window.aero/debug when they are non-objects", () => {
+    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+    try {
+      const win: any = { aero: "not-an-object" };
+      Object.defineProperty(globalThis, "window", { value: win, configurable: true, writable: true });
+
+      const coordinator: any = {
+        getBootDisks: () => null,
+        getMachineCpuActiveBootDevice: () => null,
+        getMachineCpuBootConfig: () => null,
+      };
+
+      installBootDeviceBackendOnAeroGlobal(coordinator);
+
+      expect(win.aero && typeof win.aero).toBe("object");
+      expect(win.aero.debug && typeof win.aero.debug).toBe("object");
+      expect(typeof win.aero.debug.getBootDisks).toBe("function");
+
+      // Also repair the debug object itself if it is replaced by some other tooling.
+      win.aero.debug = "not-an-object";
+      installBootDeviceBackendOnAeroGlobal(coordinator);
+      expect(win.aero.debug && typeof win.aero.debug).toBe("object");
+      expect(typeof win.aero.debug.getBootDisks).toBe("function");
+    } finally {
+      if (originalWindowDescriptor) {
+        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "window");
+      }
+    }
+  });
 });
