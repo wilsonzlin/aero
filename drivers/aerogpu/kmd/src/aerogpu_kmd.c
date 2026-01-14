@@ -11487,11 +11487,15 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
             ULONG head = 0;
             ULONG tail = 0;
-            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
-                head = adapter->RingHeader->head;
-                tail = adapter->RingHeader->tail;
-                ringValid = TRUE;
-            } else if (mmioSafe) {
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                if (AeroGpuV1SubmitPathUsable(adapter)) {
+                    const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)adapter->RingVa;
+                    head = ringHeader->head;
+                    tail = ringHeader->tail;
+                    ringValid = TRUE;
+                }
+            } else if (mmioSafe && AeroGpuLegacySubmitPathUsable(adapter) &&
+                       adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_TAIL + sizeof(ULONG))) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
                 tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
                 ringValid = TRUE;
@@ -11668,33 +11672,54 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         KIRQL oldIrql;
         KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
 
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
-            head = adapter->RingHeader->head;
-            tail = adapter->RingHeader->tail;
-        } else {
+        const BOOLEAN v1RingValid = (adapter->AbiKind == AEROGPU_ABI_KIND_V1) ? AeroGpuV1SubmitPathUsable(adapter) : FALSE;
+        const BOOLEAN legacyRingValid =
+            (adapter->AbiKind != AEROGPU_ABI_KIND_V1) ? AeroGpuLegacySubmitPathUsable(adapter) : FALSE;
+
+        if (v1RingValid) {
+            const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)adapter->RingVa;
+            head = ringHeader->head;
+            tail = ringHeader->tail;
+        } else if (legacyRingValid) {
             /*
              * Legacy head is device-owned (MMIO). Avoid MMIO reads unless the
-             * adapter is in D0.
+             * adapter is in D0 and accepting submissions.
              */
             tail = adapter->RingTail;
-            if (mmioSafe) {
+            if (tail >= adapter->RingEntryCount) {
+                if (mmioSafe && adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_TAIL + sizeof(ULONG))) {
+                    tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+                }
+                if (tail >= adapter->RingEntryCount) {
+                    tail = 0;
+                }
+            }
+            if (mmioSafe && adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_HEAD + sizeof(ULONG))) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+                if (head >= adapter->RingEntryCount) {
+                    head %= adapter->RingEntryCount;
+                }
             } else {
                 head = tail;
             }
+        } else {
+            head = 0;
+            tail = 0;
         }
 
         ULONG pending = 0;
         if (adapter->RingEntryCount != 0) {
-            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            if (v1RingValid) {
                 pending = tail - head;
                 if (pending > adapter->RingEntryCount) {
                     pending = adapter->RingEntryCount;
                 }
-            } else if (tail >= head) {
-                pending = tail - head;
-            } else {
-                pending = tail + adapter->RingEntryCount - head;
+            } else if (legacyRingValid) {
+                if (tail >= head) {
+                    pending = tail - head;
+                } else {
+                    pending = tail + adapter->RingEntryCount - head;
+                }
             }
         }
 
@@ -11703,7 +11728,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             outCount = io->desc_capacity;
         }
         if (adapter->RingVa && adapter->RingEntryCount && outCount) {
-            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
+            if (v1RingValid) {
                 struct aerogpu_submit_desc* ring =
                     (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
                 for (ULONG i = 0; i < outCount; ++i) {
@@ -11714,7 +11739,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     local[i].cmd_size_bytes = entry.cmd_size_bytes;
                     local[i].flags = entry.flags;
                 }
-            } else {
+            } else if (legacyRingValid) {
                 aerogpu_legacy_ring_entry* ring = (aerogpu_legacy_ring_entry*)adapter->RingVa;
                 for (ULONG i = 0; i < outCount; ++i) {
                     const ULONG idx = (head + i) % adapter->RingEntryCount;
@@ -11806,33 +11831,54 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         KIRQL oldIrql;
         KeAcquireSpinLock(&adapter->RingLock, &oldIrql);
 
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
-            head = adapter->RingHeader->head;
-            tail = adapter->RingHeader->tail;
-        } else {
+        const BOOLEAN v1RingValid = (adapter->AbiKind == AEROGPU_ABI_KIND_V1) ? AeroGpuV1SubmitPathUsable(adapter) : FALSE;
+        const BOOLEAN legacyRingValid =
+            (adapter->AbiKind != AEROGPU_ABI_KIND_V1) ? AeroGpuLegacySubmitPathUsable(adapter) : FALSE;
+
+        if (v1RingValid) {
+            const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)adapter->RingVa;
+            head = ringHeader->head;
+            tail = ringHeader->tail;
+        } else if (legacyRingValid) {
             /*
              * Legacy head is device-owned (MMIO). Avoid MMIO reads unless the
-             * adapter is in D0.
+             * adapter is in D0 and accepting submissions.
              */
             tail = adapter->RingTail;
-            if (mmioSafe) {
+            if (tail >= adapter->RingEntryCount) {
+                if (mmioSafe && adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_TAIL + sizeof(ULONG))) {
+                    tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+                }
+                if (tail >= adapter->RingEntryCount) {
+                    tail = 0;
+                }
+            }
+            if (mmioSafe && adapter->Bar0Length >= (AEROGPU_LEGACY_REG_RING_HEAD + sizeof(ULONG))) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+                if (head >= adapter->RingEntryCount) {
+                    head %= adapter->RingEntryCount;
+                }
             } else {
                 head = tail;
             }
+        } else {
+            head = 0;
+            tail = 0;
         }
 
         ULONG pending = 0;
         if (adapter->RingEntryCount != 0) {
-            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            if (v1RingValid) {
                 pending = tail - head;
                 if (pending > adapter->RingEntryCount) {
                     pending = adapter->RingEntryCount;
                 }
-            } else if (tail >= head) {
-                pending = tail - head;
-            } else {
-                pending = tail + adapter->RingEntryCount - head;
+            } else if (legacyRingValid) {
+                if (tail >= head) {
+                    pending = tail - head;
+                } else {
+                    pending = tail + adapter->RingEntryCount - head;
+                }
             }
         }
 
@@ -11848,7 +11894,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * not monotonic (masked indices).
          */
         outCount = pending;
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        if (v1RingValid) {
             outCount = io->desc_capacity;
             if (outCount > adapter->RingEntryCount) {
                 outCount = adapter->RingEntryCount;
@@ -11856,11 +11902,13 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             if (tail < outCount) {
                 outCount = tail;
             }
-        } else if (outCount > io->desc_capacity) {
+        } else if (legacyRingValid && outCount > io->desc_capacity) {
             outCount = io->desc_capacity;
+        } else if (!legacyRingValid) {
+            outCount = 0;
         }
         if (adapter->RingVa && adapter->RingEntryCount && outCount) {
-            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
+            if (v1RingValid) {
                 struct aerogpu_submit_desc* ring =
                     (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
                 for (ULONG i = 0; i < outCount; ++i) {
@@ -11875,7 +11923,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     local[i].alloc_table_size_bytes = entry.alloc_table_size_bytes;
                     local[i].reserved0 = 0;
                 }
-            } else {
+            } else if (legacyRingValid) {
                 aerogpu_legacy_ring_entry* ring = (aerogpu_legacy_ring_entry*)adapter->RingVa;
                 for (ULONG i = 0; i < outCount; ++i) {
                     const ULONG idx = (head + i) % adapter->RingEntryCount;
@@ -13080,7 +13128,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * most recent ring descriptors. This makes it easier to dump the most recent submission even on
          * fast devices where the pending submission list may already have been retired.
          */
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader && adapter->RingVa && adapter->RingEntryCount) {
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && AeroGpuV1SubmitPathUsable(adapter)) {
             ULONGLONG allowBase = 0;
             ULONGLONG allowSize = 0;
             BOOLEAN found = FALSE;
@@ -13088,7 +13136,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
-            ULONG tail = adapter->RingHeader->tail;
+            const struct aerogpu_ring_header* ringHeader = (const struct aerogpu_ring_header*)adapter->RingVa;
+            ULONG tail = ringHeader->tail;
             ULONG window = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
             if (window > adapter->RingEntryCount) {
                 window = adapter->RingEntryCount;
@@ -13097,8 +13146,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 window = tail;
             }
 
-            struct aerogpu_submit_desc* ring =
-                (struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
+            const struct aerogpu_submit_desc* ring =
+                (const struct aerogpu_submit_desc*)((PUCHAR)adapter->RingVa + sizeof(struct aerogpu_ring_header));
 
             for (ULONG i = 0; i < window && !found; ++i) {
                 const ULONG ringIndex = (tail - 1u - i) & (adapter->RingEntryCount - 1u);
