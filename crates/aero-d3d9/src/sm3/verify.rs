@@ -16,10 +16,10 @@ impl std::fmt::Display for VerifyError {
 impl std::error::Error for VerifyError {}
 
 pub fn verify_ir(ir: &ShaderIr) -> Result<(), VerifyError> {
-    verify_block(&ir.body, ir.version.stage)
+    verify_block(&ir.body, ir.version.stage, 0)
 }
 
-fn verify_block(block: &Block, stage: ShaderStage) -> Result<(), VerifyError> {
+fn verify_block(block: &Block, stage: ShaderStage, loop_depth: usize) -> Result<(), VerifyError> {
     for stmt in &block.stmts {
         match stmt {
             Stmt::Op(op) => verify_op(op, stage)?,
@@ -29,9 +29,9 @@ fn verify_block(block: &Block, stage: ShaderStage) -> Result<(), VerifyError> {
                 else_block,
             } => {
                 verify_cond(cond)?;
-                verify_block(then_block, stage)?;
+                verify_block(then_block, stage, loop_depth)?;
                 if let Some(else_block) = else_block {
-                    verify_block(else_block, stage)?;
+                    verify_block(else_block, stage, loop_depth)?;
                 }
             }
             Stmt::Loop { init, body } => {
@@ -45,10 +45,23 @@ fn verify_block(block: &Block, stage: ShaderStage) -> Result<(), VerifyError> {
                         message: "loop init refers to a non-integer-constant register".to_owned(),
                     });
                 }
-                verify_block(body, stage)?;
+                verify_block(body, stage, loop_depth + 1)?;
             }
-            Stmt::Break => {}
-            Stmt::BreakIf { cond } => verify_cond(cond)?,
+            Stmt::Break => {
+                if loop_depth == 0 {
+                    return Err(VerifyError {
+                        message: "break outside of a loop".to_owned(),
+                    });
+                }
+            }
+            Stmt::BreakIf { cond } => {
+                if loop_depth == 0 {
+                    return Err(VerifyError {
+                        message: "breakc outside of a loop".to_owned(),
+                    });
+                }
+                verify_cond(cond)?;
+            }
             Stmt::Discard { src } => {
                 if stage != ShaderStage::Pixel {
                     return Err(VerifyError {
