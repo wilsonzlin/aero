@@ -1829,7 +1829,11 @@ impl HdaController {
         while self.corbrp != self.corbwp && processed < entries {
             processed += 1;
             self.corbrp = (self.corbrp + 1) & mask;
-            let Some(addr) = corb_base.checked_add(self.corbrp as u64 * 4) else {
+            let Some(addr) = corb_base
+                .checked_add(self.corbrp as u64 * 4)
+                // Reading a u32 touches bytes `[addr, addr + 4)`.
+                .and_then(|addr| addr.checked_add(4).map(|_| addr))
+            else {
                 break;
             };
             let cmd = mem.read_u32(addr);

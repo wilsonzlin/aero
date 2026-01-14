@@ -293,6 +293,45 @@ fn hda_process_completes_on_corb_addr_overflow() {
 }
 
 #[test]
+fn hda_process_completes_on_corb_range_overflow() {
+    let mut hda = HdaController::new();
+    let mut mem = SafeGuestMemory::new(0x4000);
+
+    // Bring controller out of reset.
+    hda.mmio_write(0x08, 4, 0x1); // GCTL.CRST
+
+    // RIRB is in-bounds so any spurious CORB command would be observable via RIRBWP/INTSTS.
+    let rirb_base = 0x2000u64;
+    hda.mmio_write(0x50, 4, rirb_base); // RIRBLBASE
+    hda.mmio_write(0x54, 4, 0); // RIRBUBASE
+
+    // Choose a CORB base such that reading a u32 at the current RP would overflow when computing
+    // `addr + 4` (end-exclusive).
+    hda.mmio_write(0x40, 4, 0xffff_fffc); // CORBLBASE = u64::MAX-3 (low 32 bits)
+    hda.mmio_write(0x44, 4, 0xffff_ffff); // CORBUBASE = u64::MAX (high 32 bits)
+
+    // Set pointers so the next command read uses CORBRP=0 (offset 0), which triggers the range
+    // overflow check.
+    hda.mmio_write(0x4a, 2, 0x00ff); // CORBRP=0xFF
+    hda.mmio_write(0x48, 2, 0x0000); // CORBWP=0
+
+    // Set the RIRB write pointer to 0xFF so the next response would land at entry 0.
+    hda.mmio_write(0x58, 2, 0x00ff);
+
+    // Enable CORB + RIRB DMA engines and response interrupts.
+    hda.mmio_write(0x4c, 1, 0x02); // CORBCTL.RUN
+    hda.mmio_write(0x5a, 2, 1); // RINTCNT=1
+    hda.mmio_write(0x5c, 1, 0x03); // RIRBCTL.RINTCTL | RUN
+
+    // Should not panic; and must not fabricate a response interrupt from an invalid CORB read.
+    hda.process(&mut mem, 0);
+
+    assert_eq!(hda.mmio_read(0x58, 2), 0x00ff);
+    assert_eq!(hda.mmio_read(0x5d, 1), 0);
+    assert_eq!(hda.mmio_read(0x24, 4), 0);
+}
+
+#[test]
 fn hda_process_completes_on_rirb_addr_overflow() {
     let mut hda = HdaController::new();
     let mut mem = SafeGuestMemory::new(0x4000);
