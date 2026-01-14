@@ -290,10 +290,17 @@ Semantics / guarantees:
 - **Unified FIFO across transports:** both the SAB output ring (`hid.ringAttach`) and the fallback
   `postMessage` path (`hid.sendReport`) enqueue into the same per-device FIFO, so reports do not run
   concurrently even if the runtime temporarily mixes forwarding mechanisms.
-- **Ring→message ordering:** because the output ring is normally drained on a timer, a fallback
-  `postMessage` request could otherwise overtake earlier ring records. To preserve guest order, the
-  broker drains already-produced output ring records up to the current `tail` before enqueuing a
-  `hid.sendReport` or `hid.getFeatureReport` task.
+- **Ordering when mixing ring + `postMessage`:** because the output ring is normally drained on a
+  timer, a `postMessage` fallback could otherwise overtake earlier ring records (or vice-versa, a
+  later ring write could become visible in SharedArrayBuffer memory before an earlier `postMessage`
+  is delivered). To preserve guest order:
+  - the worker includes an `outputRingTail` snapshot on `hid.sendReport` / `hid.getFeatureReport`
+    fallbacks when an output ring is present
+  - the broker drains the output ring only up to that snapshot *before* enqueuing the message into
+    the per-device FIFO
+  - if the consumer `head` has already advanced past the snapshot (meaning the periodic drain ran
+    before the message was delivered), the broker does not drain any additional ring records while
+    handling that message (avoiding making ordering inversions worse)
 - **Bounded send queue:** WebHID report I/O is serialized through a bounded per-device queue. If the
   guest produces reports faster than the host can execute them (or a `sendReport()` Promise never
   resolves), the broker drops new output/feature sends once the cap is reached (drop newest, keep
