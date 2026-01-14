@@ -75,6 +75,7 @@ coverage/
 dist/
 build/
 build-*/
+build_*/
 out/
 pkg/
 target/
