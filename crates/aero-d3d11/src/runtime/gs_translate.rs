@@ -174,6 +174,22 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GsPrepassInfo {
+    /// Number of vertices in each input primitive (point=1, line=2, triangle=3, etc).
+    pub input_verts_per_primitive: u32,
+    /// Number of input registers (`v#[]`) referenced by the shader (1 + max register index).
+    pub input_reg_count: u32,
+    /// Maximum number of vertices the shader may emit per input primitive (`dcl_maxvertexcount`).
+    pub max_output_vertex_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct GsPrepassTranslation {
+    pub wgsl: String,
+    pub info: GsPrepassInfo,
+}
+
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
 /// geometry prepass.
 ///
@@ -186,6 +202,15 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
 pub fn translate_gs_module_to_wgsl_compute_prepass(
     module: &Sm4Module,
 ) -> Result<String, GsTranslateError> {
+    Ok(translate_gs_module_to_wgsl_compute_prepass_with_entry_point(module, "cs_main")?.wgsl)
+}
+
+/// Variant of [`translate_gs_module_to_wgsl_compute_prepass`] that allows overriding the compute
+/// entry point name.
+pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
+    module: &Sm4Module,
+    entry_point: &str,
+) -> Result<GsPrepassTranslation, GsTranslateError> {
     if module.stage != ShaderStage::Geometry {
         return Err(GsTranslateError::NotGeometryStage(module.stage));
     }
@@ -592,7 +617,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
 
     // Compute entry point.
     w.line("@compute @workgroup_size(1)");
-    w.line("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {");
+    w.line(&format!(
+        "fn {entry_point}(@builtin(global_invocation_id) id: vec3<u32>) {{"
+    ));
     w.indent();
     w.line("if (id.x != 0u) { return; }");
     w.line("");
@@ -632,7 +659,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
     w.dedent();
     w.line("}");
 
-    Ok(w.finish())
+    Ok(GsPrepassTranslation {
+        wgsl: w.finish(),
+        info: GsPrepassInfo {
+            input_verts_per_primitive: verts_per_primitive,
+            input_reg_count: gs_input_reg_count,
+            max_output_vertex_count: max_output_vertices,
+        },
+    })
 }
 
 // ---- WGSL emission helpers ----

@@ -51,7 +51,9 @@ use crate::{
 };
 
 use super::bindings::{BindingState, BoundBuffer, BoundConstantBuffer, BoundSampler, ShaderStage};
-use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchDescriptor};
+use super::expansion_scratch::{
+    ExpansionScratchAlloc, ExpansionScratchAllocator, ExpansionScratchDescriptor,
+};
 use super::index_pulling::{
     IndexPullingParams, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
 };
@@ -818,12 +820,21 @@ struct ShaderResource {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct GsPrepassMetadata {
+    verts_per_primitive: u32,
+    input_reg_count: u32,
+    max_output_vertices: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct GsShaderMetadata {
     /// Geometry-shader instance count (`dcl_gsinstancecount` / `[instance(n)]`).
     ///
     /// The WebGPU backend does not execute the GS token stream yet; we keep enough metadata to
     /// fail fast (instead of silently misrendering) when unsupported GS instancing is requested.
     instance_count: u32,
+    /// Parsed geometry prepass parameters when the GS token stream is translateable.
+    prepass: Option<GsPrepassMetadata>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3044,6 +3055,523 @@ impl AerogpuD3d11Executor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn exec_geometry_shader_prepass_pointlist(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        vs_handle: u32,
+        gs_handle: u32,
+        gs_meta: GsPrepassMetadata,
+        primitive_count: u32,
+        instance_count: u32,
+        vertex_pulling_draw: VertexPullingDrawParams,
+        uniform_align: u64,
+    ) -> Result<(ExpansionScratchAlloc, ExpansionScratchAlloc, ExpansionScratchAlloc)> {
+        let gs_shader = self
+            .resources
+            .shaders
+            .get(&gs_handle)
+            .ok_or_else(|| anyhow!("unknown GS shader {gs_handle}"))?
+            .clone();
+        if gs_shader.stage != ShaderStage::Geometry {
+            bail!("shader {gs_handle} is not a geometry shader");
+        }
+
+        let vs_shader = self
+            .resources
+            .shaders
+            .get(&vs_handle)
+            .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?
+            .clone();
+        if vs_shader.stage != ShaderStage::Vertex {
+            bail!("shader {vs_handle} is not a vertex shader");
+        }
+
+        let layout_handle = self
+            .state
+            .input_layout
+            .ok_or_else(|| anyhow!("GS prepass requires an input layout"))?;
+        let layout = self
+            .resources
+            .input_layouts
+            .get(&layout_handle)
+            .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
+
+        let slot_strides: Vec<u32> = self
+            .state
+            .vertex_buffers
+            .iter()
+            .map(|vb| vb.as_ref().map(|b| b.stride_bytes).unwrap_or(0))
+            .collect();
+        let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+        let pulling =
+            VertexPullingLayout::new(&binding, &vs_shader.vs_input_signature).map_err(|e| {
+                anyhow!("failed to build vertex pulling layout for input layout {layout_handle}: {e}")
+            })?;
+
+        let mut slots: Vec<VertexPullingSlot> =
+            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+        let mut buffers: Vec<&wgpu::Buffer> =
+            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+        for &d3d_slot in &pulling.pulling_slot_to_d3d_slot {
+            let vb = self
+                .state
+                .vertex_buffers
+                .get(d3d_slot as usize)
+                .and_then(|v| *v)
+                .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
+            let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
+                anyhow!(
+                    "vertex buffer slot {d3d_slot} offset {} out of range",
+                    vb.offset_bytes
+                )
+            })?;
+
+            let buf = self
+                .resources
+                .buffers
+                .get(&vb.buffer)
+                .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+            slots.push(VertexPullingSlot {
+                base_offset_bytes,
+                stride_bytes: vb.stride_bytes,
+            });
+            buffers.push(&buf.buffer);
+        }
+
+        let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
+        let uniform_alloc = self
+            .expansion_scratch
+            .alloc_metadata(&self.device, uniform_bytes.len() as u64, uniform_align)
+            .map_err(|e| anyhow!("GS prepass: alloc vertex pulling uniform: {e}"))?;
+        self.queue.write_buffer(
+            uniform_alloc.buffer.as_ref(),
+            uniform_alloc.offset,
+            &uniform_bytes,
+        );
+
+        let vp_bgl_entries = pulling.bind_group_layout_entries();
+        let vp_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &vp_bgl_entries);
+
+        let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
+            Vec::with_capacity(buffers.len() + 1);
+        for (slot, buf) in buffers.iter().enumerate() {
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot as u32,
+                resource: buf.as_entire_binding(),
+            });
+        }
+        vp_bg_entries.push(wgpu::BindGroupEntry {
+            binding: VERTEX_PULLING_UNIFORM_BINDING,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: uniform_alloc.buffer.as_ref(),
+                offset: uniform_alloc.offset,
+                size: wgpu::BufferSize::new(uniform_alloc.size),
+            }),
+        });
+        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd gs prepass vertex pulling bind group"),
+            layout: vp_bgl.layout.as_ref(),
+            entries: &vp_bg_entries,
+        });
+
+        // Allocate and populate the GS input payload (flattened v#[] register file).
+        let gs_input_vec4_count = u64::from(primitive_count)
+            .checked_mul(u64::from(gs_meta.verts_per_primitive))
+            .and_then(|v| v.checked_mul(u64::from(gs_meta.input_reg_count)))
+            .ok_or_else(|| anyhow!("GS prepass: gs_inputs element count overflow"))?;
+        let gs_inputs_size = gs_input_vec4_count
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("GS prepass: gs_inputs buffer size overflow"))?
+            .max(16);
+        let gs_inputs_alloc = self
+            .expansion_scratch
+            .alloc_metadata(&self.device, gs_inputs_size, 16)
+            .map_err(|e| anyhow!("GS prepass: alloc gs_inputs buffer: {e}"))?;
+
+        // Map WGSL `@location` indices (used by the vertex-pulling layout) back to the original
+        // D3D11 input register indices. Signature-driven translation often compacts locations, so
+        // relying on `shader_location` directly can mismatch register numbering when the VS input
+        // signature includes gaps or builtins.
+        let vs_location_to_input_reg: HashMap<u32, u32> = vs_shader
+            .vs_input_signature
+            .iter()
+            .map(|s| (s.shader_location, s.input_register))
+            .collect();
+
+        // Build a small compute shader that fills `gs_inputs` from the IA vertex buffers using the
+        // vertex-pulling bind group.
+        let fill_wgsl = {
+            use crate::input_layout::DxgiFormatComponentType;
+            let mut out = String::new();
+            out.push_str(&pulling.wgsl_prelude());
+            out.push('\n');
+            out.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n");
+            out.push_str("@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n");
+            out.push_str(&format!(
+                "const GS_INPUT_REG_COUNT: u32 = {}u;\n\n",
+                gs_meta.input_reg_count
+            ));
+            out.push_str(
+                "fn aero_gs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
+            );
+
+            out.push_str("fn aero_gs_load_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str("  switch reg {\n");
+            for attr in &pulling.attributes {
+                let reg = vs_location_to_input_reg
+                    .get(&attr.shader_location)
+                    .copied()
+                    .unwrap_or(attr.shader_location);
+                if reg >= gs_meta.input_reg_count {
+                    continue;
+                }
+                let slot = attr.pulling_slot;
+                let offset = attr.offset_bytes;
+                let element_index_expr = match attr.step_mode {
+                    wgpu::VertexStepMode::Vertex => "vertex_index",
+                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                };
+                out.push_str(&format!("    case {reg}u: {{\n"));
+                out.push_str(&format!(
+                    "      let addr: u32 = aero_vp_ia.slots[{slot}u].base_offset_bytes + ({element_index_expr}) * aero_vp_ia.slots[{slot}u].stride_bytes + {offset}u;\n"
+                ));
+
+                let expr = match (attr.format.component_type, attr.format.component_count) {
+                    (DxgiFormatComponentType::F32, 1) => {
+                        "let x: f32 = load_attr_f32(slot, addr);\n      return vec4<f32>(x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 2) => {
+                        "let v: vec2<f32> = load_attr_f32x2(slot, addr);\n      return vec4<f32>(v, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 3) => {
+                        "let v: vec3<f32> = load_attr_f32x3(slot, addr);\n      return vec4<f32>(v, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 4) => "return load_attr_f32x4(slot, addr);".to_owned(),
+                    (DxgiFormatComponentType::Unorm8, 4) => {
+                        "return load_attr_unorm8x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm10_10_10_2, 4) => {
+                        "return load_attr_unorm10_10_10_2(slot, addr);".to_owned()
+                    }
+                    _ => "return aero_gs_default();".to_owned(),
+                };
+
+                out.push_str(&format!("      let slot: u32 = {slot}u;\n"));
+                out.push_str("      ");
+                out.push_str(&expr.replace('\n', "\n      "));
+                out.push('\n');
+                out.push_str("    }\n");
+            }
+            out.push_str("    default: { return aero_gs_default(); }\n");
+            out.push_str("  }\n");
+            out.push_str("}\n\n");
+
+            out.push_str("@compute @workgroup_size(1)\n");
+            out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
+            out.push_str("  let prim_id: u32 = id.x;\n");
+            out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
+            out.push_str("  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n");
+            out.push_str("    let idx: u32 = prim_id * GS_INPUT_REG_COUNT + reg;\n");
+            out.push_str("    gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index);\n");
+            out.push_str("  }\n");
+            out.push_str("}\n");
+            out
+        };
+
+        let fill_bgl_entries = [wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(gs_inputs_size),
+            },
+            count: None,
+        }];
+        let fill_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &fill_bgl_entries);
+        let fill_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd gs prepass input fill bind group"),
+            layout: fill_bgl.layout.as_ref(),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: gs_inputs_alloc.buffer.as_ref(),
+                    offset: gs_inputs_alloc.offset,
+                    size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+                }),
+            }],
+        });
+
+        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let (fill_layout_key, fill_pipeline_layout) = {
+            let mut hashes: Vec<u64> = Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+            let mut layouts: Vec<&wgpu::BindGroupLayout> =
+                Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+            hashes.push(fill_bgl.hash);
+            layouts.push(fill_bgl.layout.as_ref());
+            for _ in 1..VERTEX_PULLING_GROUP {
+                hashes.push(empty_bgl.hash);
+                layouts.push(empty_bgl.layout.as_ref());
+            }
+            hashes.push(vp_bgl.hash);
+            layouts.push(vp_bgl.layout.as_ref());
+            let key = PipelineLayoutKey {
+                bind_group_layout_hashes: hashes,
+            };
+            let layout = self.pipeline_layout_cache.get_or_create(
+                &self.device,
+                &key,
+                &layouts,
+                Some("aerogpu_cmd gs prepass fill pipeline layout"),
+            );
+            (key, layout)
+        };
+
+        let fill_pipeline_ptr = {
+            let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                &self.device,
+                aero_gpu::pipeline_key::ShaderStage::Compute,
+                &fill_wgsl,
+                Some("aerogpu_cmd gs prepass fill CS"),
+            );
+            let key = ComputePipelineKey {
+                shader: cs_hash,
+                layout: fill_layout_key.clone(),
+            };
+            let pipeline = self
+                .pipeline_cache
+                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aerogpu_cmd gs prepass fill compute pipeline"),
+                        layout: Some(fill_pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: "cs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            pipeline as *const wgpu::ComputePipeline
+        };
+        let fill_pipeline = unsafe { &*fill_pipeline_ptr };
+
+        self.encoder_has_commands = true;
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aerogpu_cmd gs prepass fill compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(fill_pipeline);
+            pass.set_bind_group(0, &fill_bg, &[]);
+            pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
+            pass.dispatch_workgroups(primitive_count, 1, 1);
+        }
+
+        // Allocate expanded output buffers for the GS prepass.
+        let expanded_vertex_count = u64::from(primitive_count)
+            .checked_mul(u64::from(gs_meta.max_output_vertices))
+            .ok_or_else(|| anyhow!("GS prepass: expanded vertex count overflow"))?;
+        let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
+            .checked_mul(expanded_vertex_count.max(1))
+            .ok_or_else(|| anyhow!("GS prepass: expanded vertex buffer size overflow"))?;
+
+        let max_triangles_per_prim = gs_meta.max_output_vertices.saturating_sub(2) as u64;
+        let max_indices_per_prim = max_triangles_per_prim
+            .checked_mul(3)
+            .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?;
+        let expanded_index_count = u64::from(primitive_count)
+            .checked_mul(max_indices_per_prim)
+            .ok_or_else(|| anyhow!("GS prepass: expanded index count overflow"))?;
+        let expanded_index_size = expanded_index_count
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("GS prepass: expanded index buffer size overflow"))?
+            .max(4);
+
+        let expanded_vertex_alloc = self
+            .expansion_scratch
+            .alloc_vertex_output(&self.device, expanded_vertex_size)
+            .map_err(|e| anyhow!("GS prepass: alloc expanded vertex buffer: {e}"))?;
+        let expanded_index_alloc = self
+            .expansion_scratch
+            .alloc_index_output(&self.device, expanded_index_size)
+            .map_err(|e| anyhow!("GS prepass: alloc expanded index buffer: {e}"))?;
+        let indirect_args_alloc = self
+            .expansion_scratch
+            .alloc_indirect_draw_indexed(&self.device)
+            .map_err(|e| anyhow!("GS prepass: alloc indirect args buffer: {e}"))?;
+
+        // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
+        let mut params_bytes = [0u8; 16];
+        params_bytes[0..4].copy_from_slice(&primitive_count.to_le_bytes());
+        params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
+        params_bytes[8..12].copy_from_slice(&vertex_pulling_draw.first_instance.to_le_bytes());
+        let params_alloc = self
+            .expansion_scratch
+            .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+            .map_err(|e| anyhow!("GS prepass: alloc params buffer: {e}"))?;
+        self.queue.write_buffer(
+            params_alloc.buffer.as_ref(),
+            params_alloc.offset,
+            &params_bytes,
+        );
+
+        // Build GS prepass pipeline + bind group.
+        let gs_bgl_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(expanded_vertex_size),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(expanded_index_size),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        core::mem::size_of::<DrawIndexedIndirectArgs>() as u64,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(gs_inputs_size),
+                },
+                count: None,
+            },
+        ];
+        let gs_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &gs_bgl_entries);
+        let gs_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd gs prepass bind group"),
+            layout: gs_bgl.layout.as_ref(),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: expanded_vertex_alloc.buffer.as_ref(),
+                        offset: expanded_vertex_alloc.offset,
+                        size: wgpu::BufferSize::new(expanded_vertex_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: expanded_index_alloc.buffer.as_ref(),
+                        offset: expanded_index_alloc.offset,
+                        size: wgpu::BufferSize::new(expanded_index_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: indirect_args_alloc.buffer.as_ref(),
+                        offset: indirect_args_alloc.offset,
+                        size: wgpu::BufferSize::new(indirect_args_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: params_alloc.buffer.as_ref(),
+                        offset: params_alloc.offset,
+                        size: wgpu::BufferSize::new(params_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: gs_inputs_alloc.buffer.as_ref(),
+                        offset: gs_inputs_alloc.offset,
+                        size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+                    }),
+                },
+            ],
+        });
+
+        let gs_layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: vec![gs_bgl.hash],
+        };
+        let gs_pipeline_layout = self.pipeline_layout_cache.get_or_create(
+            &self.device,
+            &gs_layout_key,
+            &[gs_bgl.layout.as_ref()],
+            Some("aerogpu_cmd gs prepass pipeline layout"),
+        );
+
+        let gs_pipeline_ptr = {
+            let key = ComputePipelineKey {
+                shader: gs_shader.wgsl_hash,
+                layout: gs_layout_key.clone(),
+            };
+            let pipeline = self
+                .pipeline_cache
+                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aerogpu_cmd gs prepass compute pipeline"),
+                        layout: Some(gs_pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: gs_shader.entry_point,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            pipeline as *const wgpu::ComputePipeline
+        };
+        let gs_pipeline = unsafe { &*gs_pipeline_ptr };
+
+        self.encoder_has_commands = true;
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aerogpu_cmd gs prepass compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(gs_pipeline);
+            pass.set_bind_group(0, &gs_bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+
+        Ok((expanded_vertex_alloc, expanded_index_alloc, indirect_args_alloc))
+    }
+
     /// Execute a single draw that requires a compute prepass (GS/HS/DS emulation).
     ///
     /// This records:
@@ -3392,6 +3920,45 @@ impl AerogpuD3d11Executor {
             && self.state.ds.is_none();
         let centered_placeholder_triangle = patchlist_only_emulation
             || matches!(self.state.primitive_topology, CmdPrimitiveTopology::PointList);
+
+        let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
+        let expanded_vertex_alloc: ExpansionScratchAlloc;
+        let expanded_index_alloc: ExpansionScratchAlloc;
+        let indirect_args_alloc: ExpansionScratchAlloc;
+
+        let gs_prepass = if opcode == OPCODE_DRAW
+            && self.state.primitive_topology == CmdPrimitiveTopology::PointList
+        {
+            self.state.gs.and_then(|gs_handle| {
+                self.resources
+                    .gs_shaders
+                    .get(&gs_handle)
+                    .and_then(|meta| meta.prepass)
+                    .filter(|meta| meta.verts_per_primitive == 1)
+                    .map(|meta| (gs_handle, meta))
+            })
+        } else {
+            None
+        };
+
+        if let Some((gs_handle, gs_meta)) = gs_prepass {
+            // The GS translator writes `DrawIndexedIndirectArgs`, so always render via
+            // `draw_indexed_indirect`.
+            use_indexed_indirect = true;
+            let (v_alloc, i_alloc, args_alloc) = self.exec_geometry_shader_prepass_pointlist(
+                encoder,
+                vs_handle,
+                gs_handle,
+                gs_meta,
+                primitive_count,
+                instance_count,
+                vertex_pulling_draw,
+                uniform_align,
+            )?;
+            expanded_vertex_alloc = v_alloc;
+            expanded_index_alloc = i_alloc;
+            indirect_args_alloc = args_alloc;
+        } else {
         let expanded_vertex_count = u64::from(primitive_count)
             .checked_mul(3)
             .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
@@ -3403,15 +3970,15 @@ impl AerogpuD3d11Executor {
             .checked_mul(4)
             .ok_or_else(|| anyhow!("geometry prepass expanded index buffer size overflow"))?;
 
-        let expanded_vertex_alloc = self
+        expanded_vertex_alloc = self
             .expansion_scratch
             .alloc_vertex_output(&self.device, expanded_vertex_size)
             .map_err(|e| anyhow!("geometry prepass: alloc expanded vertex buffer: {e}"))?;
-        let expanded_index_alloc = self
+        expanded_index_alloc = self
             .expansion_scratch
             .alloc_index_output(&self.device, expanded_index_size)
             .map_err(|e| anyhow!("geometry prepass: alloc expanded index buffer: {e}"))?;
-        let indirect_args_alloc = self
+        indirect_args_alloc = self
             .expansion_scratch
             .alloc_indirect_draw_indexed(&self.device)
             .map_err(|e| anyhow!("geometry prepass: alloc indirect args buffer: {e}"))?;
@@ -4029,6 +4596,7 @@ impl AerogpuD3d11Executor {
             }
             pass.dispatch_workgroups(primitive_count, 1, 1);
         }
+        }
 
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
         // executor caches).
@@ -4294,7 +4862,7 @@ impl AerogpuD3d11Executor {
             }
 
             if !skip_draw {
-                if opcode == OPCODE_DRAW_INDEXED {
+                if use_indexed_indirect {
                     let ib_end = expanded_index_alloc
                         .offset
                         .checked_add(expanded_index_alloc.size)
@@ -9397,12 +9965,9 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
 
-        if stage == ShaderStage::Geometry {
-            let instance_count = sm5_gs_instance_count(&program).unwrap_or(1).max(1);
-            self.resources
-                .gs_shaders
-                .insert(shader_handle, GsShaderMetadata { instance_count });
-        }
+        let gs_instance_count = (stage == ShaderStage::Geometry)
+            .then(|| sm5_gs_instance_count(&program).unwrap_or(1).max(1));
+        let mut gs_prepass: Option<GsPrepassMetadata> = None;
 
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
@@ -9447,12 +10012,36 @@ impl AerogpuD3d11Executor {
         };
 
         let (wgsl, reflection) = match stage {
-            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
-                // Placeholder geometry/tessellation path: we currently accept and store these DXBC
-                // shaders (via the `stage_ex` ABI extension) but cannot translate them yet.
-                //
-                // Compile a minimal compute shader so the pipeline cache can create a shader module
-                // and future code can bind the shader by handle.
+            ShaderStage::Geometry => {
+                // Attempt to translate a minimal subset of SM4 geometry shaders into a compute-based
+                // geometry prepass. If translation fails (unsupported opcodes/declarations), fall
+                // back to an empty compute shader so the handle can still be created/bound.
+                let translation = crate::sm4::decode_program(&program)
+                    .ok()
+                    .and_then(|module| {
+                        super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
+                            &module,
+                            entry_point,
+                        )
+                        .ok()
+                    });
+                if let Some(t) = translation {
+                    gs_prepass = Some(GsPrepassMetadata {
+                        verts_per_primitive: t.info.input_verts_per_primitive,
+                        input_reg_count: t.info.input_reg_count,
+                        max_output_vertices: t.info.max_output_vertex_count,
+                    });
+                    (t.wgsl, ShaderReflection::default())
+                } else {
+                    (
+                        format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
+                        ShaderReflection::default(),
+                    )
+                }
+            }
+            ShaderStage::Hull | ShaderStage::Domain => {
+                // Placeholder tessellation path: accept these shaders by handle, but do not attempt
+                // to translate yet.
                 (
                     format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
                     ShaderReflection::default(),
@@ -9517,6 +10106,16 @@ impl AerogpuD3d11Executor {
             reflection,
             wgsl_source: wgsl,
         };
+
+        if let Some(instance_count) = gs_instance_count {
+            self.resources.gs_shaders.insert(
+                shader_handle,
+                GsShaderMetadata {
+                    instance_count,
+                    prepass: gs_prepass,
+                },
+            );
+        }
 
         self.resources.shaders.insert(shader_handle, shader);
         Ok(())
