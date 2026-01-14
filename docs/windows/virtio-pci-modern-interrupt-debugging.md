@@ -84,6 +84,13 @@ table (requires QEMU virtio `vectors` property) and/or fail the harness when MSI
     - PowerShell: `-RequireVirtioInputMsix` *(alias: `-RequireInputMsix`)*
     - Python: `--require-virtio-input-msix` *(alias: `--require-input-msix`)*
     - Optional guest-side fail-fast: `aero-virtio-selftest.exe --require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
+  - Optional guest-side fail-fast (make the *guest selftest* emit `RESULT|FAIL` when MSI/MSI-X expectations are not met):
+    - virtio-blk: `aero-virtio-selftest.exe --expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+    - virtio-net: `aero-virtio-selftest.exe --require-net-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
+    - virtio-snd: `aero-virtio-selftest.exe --require-snd-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`)
+    - virtio-input: `aero-virtio-selftest.exe --require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
+    - When provisioning the guest scheduled task via `New-AeroWin7TestImage.ps1`, bake these in with:
+      `-ExpectBlkMsi`, `-RequireNetMsix`, `-RequireSndMsix`, `-RequireInputMsix`.
 
 See: [`drivers/windows7/tests/guest-selftest/README.md`](../../drivers/windows7/tests/guest-selftest/README.md).
 
