@@ -92,6 +92,7 @@ function installMockRangeFetch(
       status: 206,
       headers: {
         "Accept-Ranges": "bytes",
+        "Cache-Control": "no-transform",
         "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
         "Content-Length": String(body.byteLength),
         ETag: opts.etag,
@@ -762,6 +763,7 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
         status: 206,
         headers: {
           "Accept-Ranges": "bytes",
+          "Cache-Control": "no-transform",
           "Content-Range": `bytes ${start}-${endInclusive}/${image.byteLength}`,
           "Content-Length": String(body.byteLength),
           ETag: etag,
@@ -875,6 +877,7 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
         status: 206,
         headers: {
           "Accept-Ranges": "bytes",
+          "Cache-Control": "no-transform",
           "Content-Range": `bytes ${start}-${endInclusive}/${image.byteLength}`,
           "Content-Length": String(body.byteLength),
           ETag: etag,

@@ -70,6 +70,7 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { rest
       status: 206,
       headers: {
         "Accept-Ranges": "bytes",
+        "Cache-Control": "no-transform",
         "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
         "Content-Length": String(body.byteLength),
         ETag: opts.etag,

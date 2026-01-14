@@ -176,6 +176,23 @@ function assertIdentityContentEncoding(headers: Headers, label: string): void {
   throw new Error(`${label} unexpected Content-Encoding: ${raw}`);
 }
 
+function assertNoTransformCacheControl(headers: Headers, label: string): void {
+  // Cache-Control is CORS-safelisted and therefore readable cross-origin without explicit header
+  // exposure. Require `no-transform` to guard against intermediary transforms that can break
+  // byte-addressed disk streaming.
+  const raw = headers.get("cache-control");
+  if (!raw) {
+    throw new Error(`${label} missing Cache-Control header (expected include 'no-transform')`);
+  }
+  const tokens = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  if (!tokens.includes("no-transform")) {
+    throw new Error(`${label} Cache-Control missing no-transform: ${raw}`);
+  }
+}
+
 function validatorsMatch(expected: string, actual: string): boolean {
   const e = expected.trim();
   const a = actual.trim();
@@ -244,6 +261,7 @@ export async function probeRemoteDisk(
       // If Content-Encoding is visible and non-identity, fail fast. (In cross-origin cases where
       // Content-Encoding is not exposed via CORS, this check is best-effort.)
       assertIdentityContentEncoding(probe.headers, "Range probe");
+      assertNoTransformCacheControl(probe.headers, "Range probe");
     }
     if (!etag) etag = probe.headers.get("etag");
     if (!lastModified) lastModified = probe.headers.get("last-modified");
@@ -1364,6 +1382,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (resp.status !== 206) {
       await cancelBody(resp);
       throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
+    }
+    try {
+      assertNoTransformCacheControl(resp.headers, `Range response bytes=${r.start}-${r.end - 1}`);
+    } catch (err) {
+      await cancelBody(resp);
+      throw err;
     }
 
     // Servers that don't implement If-Range may still return 206 after the representation has

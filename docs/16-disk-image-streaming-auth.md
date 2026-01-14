@@ -291,7 +291,8 @@ Notes:
 Disk images are binary; servers and intermediaries MUST NOT apply compression transforms because it breaks deterministic byte offsets. Requirements:
 
 * `Content-Encoding: identity`
-* `Cache-Control: no-transform` (recommended defence-in-depth)
+* `Cache-Control` MUST include `no-transform`.
+  * Aero's browser clients reject `206` responses without it (defence-in-depth against intermediary transforms).
 
 ### Content type
 

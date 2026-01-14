@@ -235,6 +235,7 @@ Required origin/CDN behavior:
 - Include `Content-Range` describing the served range and total size
 - Include `Content-Length` equal to the returned byte count
 - Include `Accept-Ranges: bytes`
+- Include `Cache-Control` containing `no-transform` (Aero clients enforce this to prevent intermediary transforms)
 
 Example response:
 

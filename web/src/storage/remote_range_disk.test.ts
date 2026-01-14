@@ -202,6 +202,7 @@ async function startRangeServer(state: RangeServerState): Promise<{
     }
 
     res.setHeader("accept-ranges", "bytes");
+    res.setHeader("cache-control", "no-transform");
     if (state.etag) res.setHeader("etag", state.etag);
     if (state.lastModified) res.setHeader("last-modified", state.lastModified);
 
@@ -372,6 +373,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -426,6 +428,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -504,6 +507,7 @@ describe("RemoteRangeDisk", () => {
           return new Response(body, {
             status: 206,
             headers: {
+              "Cache-Control": "no-transform",
               "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
               ETag: "\"v1\"",
             },
@@ -607,6 +611,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -639,6 +644,51 @@ describe("RemoteRangeDisk", () => {
     await disk.close();
   });
 
+  it("rejects Range responses missing Cache-Control: no-transform", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(2 * chunkSize);
+    let rangeGets = 0;
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const rangeHeader = headerValue(init?.headers, "Range");
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+        // Intentionally omit Cache-Control to ensure the client fails fast (anti-transform defence).
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "missing-no-transform", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+      fetchFn,
+    });
+    await expect(disk.readSectors(0, new Uint8Array(chunkSize))).rejects.toThrow(/Cache-Control/i);
+    expect(rangeGets).toBe(1);
+    await disk.close().catch(() => {});
+  });
+
   it("rejects oversized Range bodies without retrying", async () => {
     const chunkSize = 512;
     const data = makeTestData(2 * chunkSize);
@@ -668,6 +718,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             // Deliberately lie: indicate a larger body than requested. The client must not
             // attempt to download an arbitrarily large response.
@@ -753,6 +804,7 @@ describe("RemoteRangeDisk", () => {
         const resp = new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -1731,7 +1783,11 @@ describe("RemoteRangeDisk", () => {
       const body = toArrayBuffer(slice);
       const resp = new Response(body, {
         status: 206,
-        headers: { "Content-Range": `bytes ${start}-${start + body.byteLength - 1}/${data.byteLength}`, ETag: "\"v1\"" },
+        headers: {
+          "Cache-Control": "no-transform",
+          "Content-Range": `bytes ${start}-${start + body.byteLength - 1}/${data.byteLength}`,
+          ETag: "\"v1\"",
+        },
       });
 
       // Block the first read-ahead chunk (chunk 2).
@@ -1844,6 +1900,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -1932,6 +1989,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -2016,6 +2074,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -2124,6 +2183,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -2208,6 +2268,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -2310,6 +2371,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -2405,6 +2467,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(body, {
           status: 206,
           headers: {
+            "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },

@@ -457,6 +457,25 @@ function assertIdentityContentEncoding(headers: Headers, label: string): void {
   throw new ProtocolError(`${label} unexpected Content-Encoding: ${raw}`);
 }
 
+function assertNoTransformCacheControl(headers: Headers, label: string): void {
+  // Disk streaming reads bytes by offset. Any intermediary transform (compression, format change,
+  // etc) can break byte-addressed semantics, especially when combined with HTTP Range.
+  //
+  // Cache-Control is CORS-safelisted, so this is readable in browsers even for cross-origin
+  // requests without explicit `Access-Control-Expose-Headers`.
+  const raw = headers.get("cache-control");
+  if (!raw) {
+    throw new ProtocolError(`${label} missing Cache-Control header (expected include 'no-transform')`);
+  }
+  const tokens = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  if (!tokens.includes("no-transform")) {
+    throw new ProtocolError(`${label} Cache-Control missing no-transform: ${raw}`);
+  }
+}
+
 function parseContentRangeHeader(header: string): { start: number; endInclusive: number; total: number } {
   // Example: "bytes 0-0/12345"
   const m = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(header.trim());
@@ -611,6 +630,7 @@ async function probeRemoteImage(
     }
     try {
       assertIdentityContentEncoding(probe.headers, "range probe");
+      assertNoTransformCacheControl(probe.headers, "range probe");
     } catch (err) {
       await cancelBody(probe);
       throw err;
@@ -1815,6 +1835,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     try {
       assertIdentityContentEncoding(resp.headers, `range chunk ${chunkIndex}`);
+      assertNoTransformCacheControl(resp.headers, `range chunk ${chunkIndex}`);
     } catch (err) {
       await cancelBody(resp);
       throw err;

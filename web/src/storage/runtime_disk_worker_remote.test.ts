@@ -53,7 +53,10 @@ function createRangeFetch(
       const body = toArrayBuffer(slice);
       return new Response(body, {
         status: 206,
-        headers: { "Content-Range": `bytes ${start}-${start + body.byteLength - 1}/${data.byteLength}` },
+        headers: {
+          "Cache-Control": "no-transform",
+          "Content-Range": `bytes ${start}-${start + body.byteLength - 1}/${data.byteLength}`,
+        },
       });
     }
 
