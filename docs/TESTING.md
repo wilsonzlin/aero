@@ -380,6 +380,8 @@ Common pitfalls:
 - **Threaded/shared-memory builds:** the web app’s threaded WASM build uses `-Z build-std` and requires the **pinned**
   nightly toolchain declared in `scripts/toolchains.json` (`rust.nightlyWasm`) plus `rust-src`. Run `just setup` to
   install the correct nightly toolchain (or see README for the manual commands).
+  - The build also enables the internal Cargo feature `wasm-threaded` on relevant crates (via the web build
+    scripts) so Rust takes the shared-memory-safe paths.
 - **Node vs browser environment:** `--node` does **not** provide DOM APIs (`document`, `window`, etc.). Keep `--node` tests focused on pure logic/WASM exports. If a test needs browser APIs, it should use a browser runner (e.g. `wasm-pack test --headless --chrome`) or be covered by Playwright.
 - **WASM threads:** if a test requires `SharedArrayBuffer` / WASM threads, Node support may differ from browsers. Prefer testing thread-dependent behavior in a real browser (Playwright) where COOP/COEP can be enforced.
 

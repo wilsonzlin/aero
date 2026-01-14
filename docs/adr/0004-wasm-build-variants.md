@@ -17,6 +17,8 @@ Ship **two WebAssembly build variants**:
    - Compiled with WASM atomics/threads enabled.
    - Uses `WebAssembly.Memory({ shared: true })`.
    - Requires `crossOriginIsolated === true` at runtime.
+   - Built with the internal Cargo feature `wasm-threaded` so Rust code takes the shared-memory-safe
+     paths (byte-granular atomic loads/stores, shared scanout/cursor state headers, etc).
 
 2. **Single-threaded build**
    - Compiled without threads/atomics.
@@ -55,7 +57,8 @@ npm run wasm:build        # builds both variants (via the `web/` workspace)
 
 For the threaded build, `web/scripts/build_wasm.mjs` uses a **pinned nightly toolchain** (see
 [ADR 0009](./0009-rust-toolchain-policy.md)) and nightly `build-std` so the standard library is rebuilt with
-atomics/bulk-memory enabled (required by `--shared-memory`).
+atomics/bulk-memory enabled (required by `--shared-memory`). It also passes `--features wasm-threaded`
+to the Rust crates that opt into the threaded variant.
 
 At runtime, select the variant via feature detection:
 
