@@ -4692,6 +4692,7 @@ def main() -> int:
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
         _emit_virtio_snd_playback_host_marker(tail)
         _emit_virtio_snd_capture_host_marker(tail)
+        _emit_virtio_snd_format_host_marker(tail)
         _emit_virtio_snd_duplex_host_marker(tail)
         _emit_virtio_snd_buffer_limits_host_marker(tail)
         _emit_virtio_snd_eventq_host_marker(tail)
@@ -5798,6 +5799,35 @@ def _emit_virtio_snd_buffer_limits_host_marker(tail: bytes) -> None:
     fields = _parse_marker_kv_fields(marker_line)
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|{status}"]
     for k in ("mode", "expected_failure", "buffer_bytes", "init_hr", "hr", "reason"):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_snd_format_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker surfacing the negotiated virtio-snd endpoint mix formats.
+
+    The guest selftest emits:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>
+
+    Mirror it into:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=<...>|capture=<...>
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+    status = toks[3] if len(toks) >= 4 else "INFO"
+    if status not in ("PASS", "FAIL", "SKIP", "INFO"):
+        status = "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|{status}"]
+    for k in ("render", "capture"):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))

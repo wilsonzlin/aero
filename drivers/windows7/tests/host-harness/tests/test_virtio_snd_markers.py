@@ -75,6 +75,18 @@ class VirtioSndMarkerTests(unittest.TestCase):
             "buffer_bytes=262144|init_hr=0x0|hr=0x0|reason=ok",
         )
 
+    def test_emits_format_marker(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=tag=0x0001 type=pcm rate=48000 ch=2 bits=16 align=4|"
+            b"capture=tag=0xfffe type=pcm rate=44100 ch=1 bits=32 align=4\n"
+        )
+        out = self._emit("_emit_virtio_snd_format_host_marker", tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=tag=0x0001 type=pcm rate=48000 ch=2 bits=16 align=4|"
+            "capture=tag=0xfffe type=pcm rate=44100 ch=1 bits=32 align=4",
+        )
+
     def test_emits_eventq_marker_info(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=10|parsed=9|short=1|unknown=0|"
@@ -97,6 +109,7 @@ class VirtioSndMarkerTests(unittest.TestCase):
         for fn in (
             "_emit_virtio_snd_playback_host_marker",
             "_emit_virtio_snd_capture_host_marker",
+            "_emit_virtio_snd_format_host_marker",
             "_emit_virtio_snd_duplex_host_marker",
             "_emit_virtio_snd_buffer_limits_host_marker",
             "_emit_virtio_snd_eventq_host_marker",
