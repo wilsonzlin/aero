@@ -39,6 +39,9 @@ type CpuWorkerToMainMessage =
       stale_install_rejected: boolean;
       stale_recompile_requested: boolean;
       stale_existing_slot_preserved: boolean;
+      // Debug: number of unique guest physical pages whose code versions were bumped.
+      // This is additive-only and may be absent in older builds.
+      code_version_pages_bumped_total?: number;
     }
   | { type: 'CpuWorkerError'; reason: string };
 
@@ -697,6 +700,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   const jitFns: Array<((cpu_ptr: number, jit_ctx_ptr: number) => bigint) | undefined> = [];
   let lastJitReturnType: string | null = null;
   let lastJitReturnIsSentinel = false;
+  let codeVersionPagesBumpedTotal = 0;
 
   // Rollback state is scoped to a single `__aero_jit_call` invocation.
   // `env.*` imports consult these while a block is executing.
@@ -953,8 +957,55 @@ async function runTieredVm(iterations: number, threshold: number) {
     } else if (writeLog.length) {
       // Notify the tiered runtime of committed guest writes so it can bump code page versions for
       // self-modifying code invalidation. We intentionally skip this on rolled-back exits.
+      //
+      // Realistic blocks can perform many stores to the same 4KiB page; de-duplicate version bumps
+      // so we don't do O(N writes) Atomics/add overhead or inflate page-version counters.
+      const touchedPages = new Set<number>();
       for (const entry of writeLog) {
-        bumpOrNotifyGuestWrite(entry.paddr, entry.size);
+        const size = entry.size >>> 0;
+        if (size === 0) continue;
+        const start = asU64(entry.paddr);
+        const u64MaxPlusOne = 0x1_0000_0000_0000_0000n;
+        let endExclusive = start + BigInt(size);
+        if (endExclusive > u64MaxPlusOne) endExclusive = u64MaxPlusOne;
+        const endInclusive = endExclusive - 1n;
+
+        const startPage = start >> pageShiftBig;
+        const endPage = endInclusive >> pageShiftBig;
+        const startPageNum = Number(startPage);
+        const endPageNum = Number(endPage);
+        if (
+          !Number.isSafeInteger(startPageNum) ||
+          !Number.isSafeInteger(endPageNum) ||
+          startPageNum < 0 ||
+          endPageNum < startPageNum
+        ) {
+          continue;
+        }
+        for (let page = startPageNum; page <= endPageNum; page++) {
+          touchedPages.add(page);
+        }
+      }
+
+      const table = ensureCodeVersionTableView();
+      if (table) {
+        const len = codeVersionTableLen >>> 0;
+        const useAtomics = codeVersionTableUseAtomics();
+        for (const page of touchedPages) {
+          if (page < 0 || page >= len) continue;
+          if (useAtomics) {
+            Atomics.add(table, page, 1);
+          } else {
+            table[page] = (table[page]! + 1) >>> 0;
+          }
+          codeVersionPagesBumpedTotal++;
+        }
+      } else if (onGuestWrite) {
+        for (const page of touchedPages) {
+          if (page < 0) continue;
+          onGuestWrite(BigInt(page) << pageShiftBig, 1);
+          codeVersionPagesBumpedTotal++;
+        }
       }
     }
 
@@ -1955,6 +2006,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     stale_install_rejected,
     stale_recompile_requested,
     stale_existing_slot_preserved,
+    code_version_pages_bumped_total: codeVersionPagesBumpedTotal,
   });
 
   jitWorker.terminate();
