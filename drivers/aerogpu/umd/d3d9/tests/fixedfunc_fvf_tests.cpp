@@ -72,6 +72,7 @@ constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
 
 // D3DTA_* source selector (from d3d9types.h).
 constexpr uint32_t kD3dTaDiffuse = 0u;
+constexpr uint32_t kD3dTaCurrent = 1u;
 constexpr uint32_t kD3dTaTexture = 2u;
 constexpr uint32_t kD3dTaTFactor = 3u;
 constexpr uint32_t kD3dTaSpecular = 4u;
@@ -6251,6 +6252,95 @@ bool TestStage0IgnoresUnusedArgsAndOps() {
   return true;
 }
 
+bool TestStage0CurrentCanonicalizesToDiffuse() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: SELECTARG1 with COLORARG1=CURRENT (treated as DIFFUSE at stage0).
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaCurrent, "SetTextureStageState(COLORARG1=CURRENT)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "SetTextureStageState(ALPHAOP=DISABLE)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(CURRENT)")) {
+    return false;
+  }
+
+  Shader* ps_current = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_current = dev->ps;
+  }
+  if (!Check(ps_current != nullptr, "PS bound after CURRENT draw")) {
+    return false;
+  }
+
+  // Switch to DIFFUSE. This should reuse the same cached stage0 PS variant.
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaDiffuse, "SetTextureStageState(COLORARG1=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(DIFFUSE)")) {
+    return false;
+  }
+
+  Shader* ps_diffuse = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_diffuse = dev->ps;
+  }
+  if (!Check(ps_diffuse != nullptr, "PS bound after DIFFUSE draw")) {
+    return false;
+  }
+  return Check(ps_current == ps_diffuse, "CURRENT canonicalizes to DIFFUSE (reuse cached PS)");
+}
+
 bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6787,6 +6877,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage0IgnoresUnusedArgsAndOps()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage0CurrentCanonicalizesToDiffuse()) {
     return 1;
   }
   if (!aerogpu::TestTextureFactorRenderStateUpdatesPsConstantWhenUsed()) {
