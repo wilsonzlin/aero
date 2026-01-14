@@ -503,8 +503,8 @@ export class WebHidBroker {
 
   #warnOutputSendDrop(deviceId: number): void {
     const now = performance.now();
-    const lastWarn = this.#outputSendDropWarnedAtByDevice.get(deviceId) ?? 0;
-    if (now - lastWarn < OUTPUT_SEND_DROP_WARN_INTERVAL_MS) return;
+    const lastWarn = this.#outputSendDropWarnedAtByDevice.get(deviceId);
+    if (lastWarn !== undefined && now - lastWarn < OUTPUT_SEND_DROP_WARN_INTERVAL_MS) return;
     this.#outputSendDropWarnedAtByDevice.set(deviceId, now);
 
     const dropped = this.#outputSendDroppedByDevice.get(deviceId) ?? 0;

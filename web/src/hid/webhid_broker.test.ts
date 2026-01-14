@@ -1008,6 +1008,77 @@ describe("hid/WebHidBroker", () => {
     broker.destroy();
   });
 
+  it("bounds pending per-device output sends when sendReport stalls", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const limit = 3;
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, maxPendingSendsPerDevice: limit });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      const first = deferred<void>();
+      device.sendReport.mockImplementationOnce(() => first.promise);
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // First report begins executing and stalls; subsequent reports are queued.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+      for (let i = 2; i <= 10; i += 1) {
+        port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: i, data: Uint8Array.of(i) });
+      }
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+      expect(broker.getOutputSendStats().droppedTotal).toBeGreaterThan(0);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes(`deviceId=${id}`))).toBe(true);
+
+      first.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("bounds pending per-device feature sends when sendFeatureReport stalls", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const limit = 3;
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, maxPendingSendsPerDevice: limit });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      const first = deferred<void>();
+      device.sendFeatureReport.mockImplementationOnce(() => first.promise);
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "feature", reportId: 1, data: Uint8Array.of(1) });
+      for (let i = 2; i <= 10; i += 1) {
+        port.emit({ type: "hid.sendReport", deviceId: id, reportType: "feature", reportId: i, data: Uint8Array.of(i) });
+      }
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
+
+      expect(broker.getOutputSendStats().droppedTotal).toBeGreaterThan(0);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes(`deviceId=${id}`))).toBe(true);
+
+      first.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendFeatureReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("executes output ring reports sequentially per device", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
