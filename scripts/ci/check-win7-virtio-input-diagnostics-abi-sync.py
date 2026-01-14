@@ -16,13 +16,17 @@ Why:
     MinGW-w64) without including the driver's WDK-only headers.
 
 This script prevents accidental drift between:
-  - the driver source of truth: `drivers/windows7/virtio-input/src/log.h`
+  - the driver source of truth:
+      - `drivers/windows7/virtio-input/src/log.h` (diagnostics IOCTL ABI)
+      - `drivers/windows7/virtio-input/src/virtio_input.h` (VIOINPUT_DEVICE_KIND ABI)
   - the user-mode tooling copies: `drivers/windows7/virtio-input/tools/hidtest/main.c`
 
 It checks:
   - VIOINPUT_COUNTERS_VERSION / VIOINPUT_STATE_VERSION / VIOINPUT_INTERRUPT_INFO_VERSION match
   - IOCTL_VIOINPUT_* CTL_CODE() definitions match (so tools don't drift to the wrong function codes)
   - field order/name lists for VIOINPUT_COUNTERS / VIOINPUT_STATE / VIOINPUT_INTERRUPT_INFO match
+  - interrupt-info enum values / sentinel constants match (prevents user-mode tools from misinterpreting fields)
+  - VIOINPUT_DEVICE_KIND values stay aligned with the driver enum in virtio_input.h
 
 Note: it intentionally ignores qualifiers like `volatile`, and does not attempt
 to validate packing/alignment beyond field order/name equivalence (the structs
@@ -39,6 +43,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LOG_H = REPO_ROOT / "drivers/windows7/virtio-input/src/log.h"
 HIDTEST_C = REPO_ROOT / "drivers/windows7/virtio-input/tools/hidtest/main.c"
+VIRTIO_INPUT_H = REPO_ROOT / "drivers/windows7/virtio-input/src/virtio_input.h"
 
 
 def fail(message: str) -> None:
@@ -59,6 +64,27 @@ def extract_define_int(text: str, macro: str, *, file: Path) -> int:
     if not m:
         fail(f"{file.as_posix()}: missing '#define {macro} <int>'")
     return int(m.group(1))
+
+
+def extract_define_int_literal(text: str, macro: str, *, file: Path) -> int:
+    """
+    Extract a numeric value from a macro definition.
+
+    This is intentionally more permissive than `extract_define_int`: it supports
+    integer literals wrapped in simple casts/parentheses (e.g. `((USHORT)0xFFFF)`).
+    """
+
+    m = re.search(rf"(?m)^\s*#define\s+{re.escape(macro)}\b\s+(.+)$", text)
+    if not m:
+        fail(f"{file.as_posix()}: missing '#define {macro} <expr>'")
+
+    expr = m.group(1).strip()
+
+    # Accept exactly one integer literal in the expression.
+    lits = re.findall(r"0x[0-9A-Fa-f]+|\d+", expr)
+    if len(lits) != 1:
+        fail(f"{file.as_posix()}: could not extract a single integer literal from {macro}: {expr!r}")
+    return int(lits[0], 0)
 
 
 def extract_ctl_code_args(text: str, macro: str, *, file: Path) -> tuple[str, str, str, str]:
@@ -117,6 +143,44 @@ def extract_struct_body(text: str, typedef_regex: str, *, file: Path, what: str)
     raise AssertionError("unreachable")
 
 
+def parse_enum_items(body: str, *, file: Path, what: str) -> list[tuple[str, int]]:
+    """
+    Parse an enum body ("NAME = 0, NAME2, ...") into a list of (name, value).
+    Supports both explicit and implicit value assignment.
+    """
+
+    items: list[tuple[str, int]] = []
+    current = -1
+
+    for raw in body.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\s*=\s*(.+))?$", entry)
+        if not m:
+            fail(f"{file.as_posix()}: could not parse {what} enum entry: {entry!r}")
+
+        name = m.group(1)
+        value_expr = m.group(2)
+        if value_expr is None:
+            current += 1
+            value = current
+        else:
+            ve = value_expr.strip()
+            m2 = re.fullmatch(r"([-+]?(?:0x[0-9A-Fa-f]+|\d+))(?:[uUlL]+)?", ve)
+            if not m2:
+                fail(f"{file.as_posix()}: unsupported {what} enum value expression: {ve!r}")
+            value = int(m2.group(1), 0)
+            current = value
+
+        items.append((name, value))
+
+    if not items:
+        fail(f"{file.as_posix()}: {what} enum has no entries")
+    return items
+
+
 FIELD_RE = re.compile(
     r"(?m)^\s*(?:volatile\s+)?"
     r"(?:[A-Za-z_][A-Za-z0-9_]*)"
@@ -156,14 +220,53 @@ def compare_field_lists(*, driver_fields: list[str], tool_fields: list[str], lab
     return failures
 
 
+def format_enum_items(items: list[tuple[str, int]]) -> str:
+    return ", ".join(f"{name}={value} (0x{value:X})" for name, value in items)
+
+
+def compare_enum_item_lists(
+    *, driver_items: list[tuple[str, int]], tool_items: list[tuple[str, int]], label: str
+) -> list[str]:
+    failures: list[str] = []
+
+    if driver_items == tool_items:
+        return failures
+
+    failures.append(f"{label}: enum values mismatch")
+    failures.append(f"  driver item count : {len(driver_items)}")
+    failures.append(f"  hidtest item count: {len(tool_items)}")
+
+    # Find first mismatch index for readability.
+    n = min(len(driver_items), len(tool_items))
+    for i in range(n):
+        if driver_items[i] != tool_items[i]:
+            d_name, d_val = driver_items[i]
+            t_name, t_val = tool_items[i]
+            failures.append(
+                f"  first mismatch at index {i}: "
+                f"driver={d_name}={d_val} (0x{d_val:X}) hidtest={t_name}={t_val} (0x{t_val:X})"
+            )
+            break
+    else:
+        if len(driver_items) != len(tool_items):
+            failures.append("  enum lists differ only by trailing items")
+
+    failures.append(f"  driver items : {format_enum_items(driver_items)}")
+    failures.append(f"  hidtest items: {format_enum_items(tool_items)}")
+    return failures
+
+
 def main() -> int:
     if not LOG_H.exists():
         fail(f"missing expected file: {LOG_H.as_posix()}")
     if not HIDTEST_C.exists():
         fail(f"missing expected file: {HIDTEST_C.as_posix()}")
+    if not VIRTIO_INPUT_H.exists():
+        fail(f"missing expected file: {VIRTIO_INPUT_H.as_posix()}")
 
     driver_text = strip_c_comments(LOG_H.read_text(encoding="utf-8", errors="replace"))
     tool_text = strip_c_comments(HIDTEST_C.read_text(encoding="utf-8", errors="replace"))
+    virtio_input_text = strip_c_comments(VIRTIO_INPUT_H.read_text(encoding="utf-8", errors="replace"))
 
     failures: list[str] = []
 
@@ -207,6 +310,96 @@ def main() -> int:
                 f"  driver: {driver_args}\n"
                 f"  hidtest: {tool_args}"
             )
+
+    # Interrupt-info enum values / constants (user-mode visible ABI).
+    driver_int_mode_body = extract_struct_body(
+        driver_text,
+        r"\btypedef\s+enum\s+_VIOINPUT_INTERRUPT_MODE\s*\{",
+        file=LOG_H,
+        what="typedef enum _VIOINPUT_INTERRUPT_MODE { ... }",
+    )
+    tool_int_mode_body = extract_struct_body(
+        tool_text,
+        r"\btypedef\s+enum\s+_VIOINPUT_INTERRUPT_MODE\s*\{",
+        file=HIDTEST_C,
+        what="typedef enum _VIOINPUT_INTERRUPT_MODE { ... } (hidtest)",
+    )
+    failures += compare_enum_item_lists(
+        driver_items=parse_enum_items(driver_int_mode_body, file=LOG_H, what="VIOINPUT_INTERRUPT_MODE"),
+        tool_items=parse_enum_items(tool_int_mode_body, file=HIDTEST_C, what="VIOINPUT_INTERRUPT_MODE"),
+        label="VIOINPUT_INTERRUPT_MODE",
+    )
+
+    driver_int_map_body = extract_struct_body(
+        driver_text,
+        r"\btypedef\s+enum\s+_VIOINPUT_INTERRUPT_MAPPING\s*\{",
+        file=LOG_H,
+        what="typedef enum _VIOINPUT_INTERRUPT_MAPPING { ... }",
+    )
+    tool_int_map_body = extract_struct_body(
+        tool_text,
+        r"\btypedef\s+enum\s+_VIOINPUT_INTERRUPT_MAPPING\s*\{",
+        file=HIDTEST_C,
+        what="typedef enum _VIOINPUT_INTERRUPT_MAPPING { ... } (hidtest)",
+    )
+    failures += compare_enum_item_lists(
+        driver_items=parse_enum_items(driver_int_map_body, file=LOG_H, what="VIOINPUT_INTERRUPT_MAPPING"),
+        tool_items=parse_enum_items(tool_int_map_body, file=HIDTEST_C, what="VIOINPUT_INTERRUPT_MAPPING"),
+        label="VIOINPUT_INTERRUPT_MAPPING",
+    )
+
+    driver_vec_none = extract_define_int_literal(driver_text, "VIOINPUT_INTERRUPT_VECTOR_NONE", file=LOG_H)
+    tool_vec_none = extract_define_int_literal(tool_text, "VIOINPUT_INTERRUPT_VECTOR_NONE", file=HIDTEST_C)
+    if driver_vec_none != tool_vec_none:
+        failures.append(
+            "VIOINPUT_INTERRUPT_VECTOR_NONE mismatch: "
+            f"driver=0x{driver_vec_none:X} hidtest=0x{tool_vec_none:X}"
+        )
+
+    # VIOINPUT_DEVICE_KIND is returned to user mode via VIOINPUT_STATE.DeviceKind.
+    # hidtest duplicates the values for printing; keep them aligned with the driver enum.
+    driver_kind_body = extract_struct_body(
+        virtio_input_text,
+        r"\btypedef\s+enum\s+_VIOINPUT_DEVICE_KIND\s*\{",
+        file=VIRTIO_INPUT_H,
+        what="typedef enum _VIOINPUT_DEVICE_KIND { ... }",
+    )
+    driver_kind_items = dict(parse_enum_items(driver_kind_body, file=VIRTIO_INPUT_H, what="VIOINPUT_DEVICE_KIND"))
+
+    def require_kind(name: str) -> int:
+        if name not in driver_kind_items:
+            fail(f"{VIRTIO_INPUT_H.as_posix()}: expected enumerator {name} in VIOINPUT_DEVICE_KIND")
+        return driver_kind_items[name]
+
+    # Extract the hidtest constants directly (they are explicit assignments).
+    kind_names = ("UNKNOWN", "KEYBOARD", "MOUSE", "TABLET")
+    hidtest_kind_vals: dict[str, int] = {}
+    for k in kind_names:
+        m = re.search(rf"(?m)^\s*VIOINPUT_DEVICE_KIND_{k}\s*=\s*([-+]?(?:0x[0-9A-Fa-f]+|\d+))\s*,", tool_text)
+        if not m:
+            fail(f"{HIDTEST_C.as_posix()}: missing VIOINPUT_DEVICE_KIND_{k} enum entry")
+        hidtest_kind_vals[k] = int(m.group(1), 0)
+
+    unknown_driver = require_kind("VioInputDeviceKindUnknown")
+    keyboard_driver = require_kind("VioInputDeviceKindKeyboard")
+    mouse_driver = require_kind("VioInputDeviceKindMouse")
+    tablet_driver = require_kind("VioInputDeviceKindTablet")
+    if hidtest_kind_vals["UNKNOWN"] != unknown_driver:
+        failures.append(
+            f"VIOINPUT_DEVICE_KIND_UNKNOWN value mismatch: driver={unknown_driver} hidtest={hidtest_kind_vals['UNKNOWN']}"
+        )
+    if hidtest_kind_vals["KEYBOARD"] != keyboard_driver:
+        failures.append(
+            f"VIOINPUT_DEVICE_KIND_KEYBOARD value mismatch: driver={keyboard_driver} hidtest={hidtest_kind_vals['KEYBOARD']}"
+        )
+    if hidtest_kind_vals["MOUSE"] != mouse_driver:
+        failures.append(
+            f"VIOINPUT_DEVICE_KIND_MOUSE value mismatch: driver={mouse_driver} hidtest={hidtest_kind_vals['MOUSE']}"
+        )
+    if hidtest_kind_vals["TABLET"] != tablet_driver:
+        failures.append(
+            f"VIOINPUT_DEVICE_KIND_TABLET value mismatch: driver={tablet_driver} hidtest={hidtest_kind_vals['TABLET']}"
+        )
 
     driver_counters_body = extract_struct_body(
         driver_text,
@@ -278,6 +471,7 @@ def main() -> int:
         print(
             "\nFix: keep these in sync:\n"
             "  - drivers/windows7/virtio-input/src/log.h\n"
+            "  - drivers/windows7/virtio-input/src/virtio_input.h\n"
             "  - drivers/windows7/virtio-input/tools/hidtest/main.c\n",
             file=sys.stderr,
         )
