@@ -1735,7 +1735,7 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_half_pixel_uniform_binding
 #[wasm_bindgen_test(async)]
 async fn d3d9_executor_retranslates_on_persisted_wgsl_constants_binding_mismatch() {
     // Cached WGSL must follow the executor's binding contract for the shared constants uniforms
-    // (group(0) bindings 0/1/2). If this is corrupted, pipeline creation would fail later; detect
+    // (group(0) binding(0)). If this is corrupted, pipeline creation would fail later; detect
     // it on persistent cache hit and invalidate+retry.
     let (api, store) = make_persistent_cache_stub();
     let _guard = PersistentCacheApiGuard::install(&api, &store);
@@ -2031,7 +2031,7 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_half_pixel_uniform_in_pixe
         .and_then(|v| v.as_string())
         .unwrap_or_default();
     assert!(
-        // Be precise (avoid substring collision with `constants_i`).
+        // Be precise (avoid substring collisions with other identifiers).
         wgsl_before.contains("@group(0) @binding(0) var<uniform> constants:"),
         "expected cached WGSL to contain constants uniform"
     );
