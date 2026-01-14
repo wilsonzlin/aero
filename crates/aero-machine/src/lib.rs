@@ -799,9 +799,20 @@ impl MachineConfig {
     /// - disables the transitional standalone VGA/VBE path (`enable_vga=false`).
     ///
     /// Note: `enable_aerogpu` currently wires BAR1-backed VRAM plus legacy VGA aliasing and an MVP
-    /// BAR0 register block (ring/fence transport + scanout/cursor + vblank pacing). Submission
-    /// processing is currently a no-op that only completes fences (so the in-tree Win7 KMD can
-    /// initialize); command execution and scanout rendering are not implemented yet.
+    /// BAR0 register block (ring/fence transport + scanout/cursor + vblank pacing + submission
+    /// capture).
+    ///
+    /// By default (no backend, submission bridge disabled), the device model completes fences
+    /// without executing the command stream so early guests don't deadlock during bring-up.
+    /// Command execution can be supplied by:
+    ///
+    /// - the browser submission bridge (`Machine::aerogpu_drain_submissions` +
+    ///   `Machine::aerogpu_complete_fence`), or
+    /// - an in-process backend (`Machine::aerogpu_set_backend_*`, including the feature-gated
+    ///   native wgpu backend).
+    ///
+    /// Host-side scanout presentation (`Machine::display_present`) can present WDDM scanout once it
+    /// is claimed by a valid scanout0 configuration.
     #[must_use]
     pub fn win7_graphics(ram_size_bytes: u64) -> Self {
         let mut cfg = Self::win7_storage(ram_size_bytes);
