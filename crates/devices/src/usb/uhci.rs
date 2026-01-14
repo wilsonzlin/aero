@@ -240,6 +240,7 @@ impl IoSnapshot for UhciPciDevice {
             ));
         };
         self.controller.load_state(buf)?;
+        self.controller.reset_host_state_for_restore();
 
         Ok(())
     }

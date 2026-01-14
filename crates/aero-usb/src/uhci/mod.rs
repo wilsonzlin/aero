@@ -49,6 +49,18 @@ impl UhciController {
         &self.hub
     }
 
+    /// Traverse attached USB topology and clear any host-side asynchronous state that cannot be
+    /// resumed after restoring a snapshot (e.g. WebUSB passthrough actions backed by JS Promises).
+    ///
+    /// This does not alter guest-visible USB state.
+    pub fn reset_host_state_for_restore(&mut self) {
+        for port in 0..2 {
+            if let Some(mut dev) = self.hub.port_device_mut(port) {
+                dev.reset_host_state_for_restore();
+            }
+        }
+    }
+
     pub fn regs(&self) -> &UhciRegs {
         &self.regs
     }

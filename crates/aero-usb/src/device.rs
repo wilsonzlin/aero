@@ -131,6 +131,29 @@ impl AttachedUsbDevice {
         self.model.as_hub_mut()
     }
 
+    /// Reset any host-side asynchronous state that cannot survive snapshot/restore.
+    ///
+    /// Some USB device models (e.g. WebUSB passthrough) maintain host-side state backed by
+    /// asynchronous host operations. That host state cannot be resumed after restoring a VM
+    /// snapshot. Host integrations should traverse the restored USB topology and call this helper
+    /// (or a controller-specific wrapper that delegates to it) before resuming execution.
+    pub fn reset_host_state_for_restore(&mut self) {
+        {
+            let any = self.model_mut() as &mut dyn Any;
+            if let Some(webusb) = any.downcast_mut::<crate::UsbWebUsbPassthroughDevice>() {
+                webusb.reset_host_state_for_restore();
+            }
+        }
+
+        if let Some(hub) = self.as_hub_mut() {
+            for port in 0..hub.num_ports() {
+                if let Some(child) = hub.downstream_device_mut(port) {
+                    child.reset_host_state_for_restore();
+                }
+            }
+        }
+    }
+
     pub fn reset(&mut self) {
         self.address = 0;
         self.pending_address = None;

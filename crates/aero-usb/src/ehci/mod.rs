@@ -153,6 +153,19 @@ impl EhciController {
         &self.hub
     }
 
+    /// Traverse attached USB topology and clear any host-side asynchronous state that cannot be
+    /// resumed after restoring a snapshot (e.g. WebUSB passthrough actions backed by JS Promises).
+    ///
+    /// This does not alter guest-visible USB state.
+    pub fn reset_host_state_for_restore(&mut self) {
+        let hub = self.hub_mut();
+        for port in 0..hub.num_ports() {
+            if let Some(mut dev) = hub.port_device_mut(port) {
+                dev.reset_host_state_for_restore();
+            }
+        }
+    }
+
     /// Forces status bits in USBSTS for tests and diagnostics.
     ///
     /// Reserved bits are masked out; the HCHALTED bit is driven by `USBCMD.RS` and should not be

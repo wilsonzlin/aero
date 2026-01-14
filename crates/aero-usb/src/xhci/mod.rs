@@ -73,7 +73,6 @@ pub use regs::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR, PORTSC
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use core::any::Any;
 use core::fmt;
 
 use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
@@ -3590,26 +3589,9 @@ impl XhciController {
     /// This is intended to be called by host integrations after restoring a VM snapshot. It does
     /// not modify guest-visible USB state.
     pub fn reset_host_state_for_restore(&mut self) {
-        fn visit(dev: &mut AttachedUsbDevice) {
-            {
-                let any = dev.model_mut() as &mut dyn Any;
-                if let Some(webusb) = any.downcast_mut::<crate::UsbWebUsbPassthroughDevice>() {
-                    webusb.reset_host_state_for_restore();
-                }
-            }
-
-            if let Some(hub) = dev.as_hub_mut() {
-                for port in 0..hub.num_ports() {
-                    if let Some(child) = hub.downstream_device_mut(port) {
-                        visit(child);
-                    }
-                }
-            }
-        }
-
         for port in &mut self.ports {
             if let Some(dev) = port.device_mut() {
-                visit(dev);
+                dev.reset_host_state_for_restore();
             }
         }
     }
