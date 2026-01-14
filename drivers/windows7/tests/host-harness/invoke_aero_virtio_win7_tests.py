@@ -4145,6 +4145,8 @@ def main() -> int:
         parser.error("--http-port must be in the range 1..65535")
     if not args.http_path.startswith("/"):
         parser.error("--http-path must start with '/'")
+    if any(ch.isspace() for ch in args.http_path):
+        parser.error("--http-path must not contain whitespace")
     if args.memory_mb <= 0:
         parser.error("--memory-mb must be a positive integer")
     if args.smp <= 0:

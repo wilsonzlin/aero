@@ -338,6 +338,28 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
         finally:
             sys.argv = old_argv
 
+    def test_rejects_http_path_with_whitespace(self) -> None:
+        h = self.harness
+
+        old_argv = sys.argv
+        try:
+            sys.argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--http-path",
+                "/aero virtio",
+            ]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                h.main()
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--http-path must not contain whitespace", stderr.getvalue())
+        finally:
+            sys.argv = old_argv
+
     def test_rejects_negative_wav_thresholds_when_verify_enabled(self) -> None:
         h = self.harness
 
