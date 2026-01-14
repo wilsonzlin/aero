@@ -88,6 +88,11 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=contract-v1/transitional|vendor=1af4|devices=...`
 
+When `--require-no-blk-recovery` is enabled, the harness fails if any of the virtio-blk recovery counters are non-zero,
+emitting a deterministic failure token:
+
+- `FAIL: VIRTIO_BLK_RECOVERY_NONZERO: ...`
+
 Note: virtio-blk miniport IRQ diagnostics may report `mode=msi` even when MSI-X vectors are assigned; the harness infers
 MSI-X (`irq_mode=msix`) when any `msix_*_vector` field is non-`0xFFFF`.
 
