@@ -1057,8 +1057,14 @@ async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: Gues
 
   type Candidate = { name: string; fn: unknown; thisArg: unknown };
   const candidates: Candidate[] = [
-    { name: "Machine.new_win7_storage_shared", fn: Machine.new_win7_storage_shared, thisArg: Machine },
+    // Prefer the canonical shared-guest-memory constructor (`MachineConfig::browser_defaults`):
+    // - AeroGPU enabled (VGA disabled)
+    // - E1000 + UHCI enabled (browser runtime expectations)
+    //
+    // `new_win7_storage_shared` remains as a fallback for older builds/configurations that want
+    // the conservative Win7 storage preset (VGA enabled, networking/USB disabled).
     { name: "Machine.new_shared", fn: Machine.new_shared, thisArg: Machine },
+    { name: "Machine.new_win7_storage_shared", fn: Machine.new_win7_storage_shared, thisArg: Machine },
 
     // Back-compat shims for intermediate builds.
     { name: "Machine.new_win7_storage_shared_guest_memory", fn: Machine.new_win7_storage_shared_guest_memory, thisArg: Machine },
@@ -1113,7 +1119,7 @@ async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: Gues
 
   throw new Error(
     "Shared-guest-memory Machine constructor is unavailable in this WASM build. " +
-      "Expected Machine.new_win7_storage_shared(guestBase, guestSize) (or an equivalent factory).",
+      "Expected Machine.new_shared(guestBase, guestSize) (or an equivalent factory).",
   );
 }
 
