@@ -530,6 +530,10 @@ fn verify_dst(dst: &Dst) -> Result<(), VerifyError> {
         // `defi`/`defb` constant registers are also read-only at runtime.
         | RegFile::ConstInt
         | RegFile::ConstBool
+        // Input registers (`v#` / `t#` / MISCTYPE) are read-only at runtime.
+        | RegFile::Input
+        | RegFile::Texture
+        | RegFile::MiscType
         // Label registers are not runtime storage.
         | RegFile::Label
     ) {
