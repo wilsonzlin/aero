@@ -1760,7 +1760,9 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	api := newTestWebRTCAPI(t)
 	offerSDP := newOfferSDP(t, api)
 
-	token := makeJWT(cfg.JWTSecret, "sess_test")
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
 
 	ws1, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -1769,7 +1771,7 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	}
 	t.Cleanup(func() { _ = ws1.Close() })
 
-	if err := ws1.WriteJSON(signalMessage{Type: "auth", Token: token}); err != nil {
+	if err := ws1.WriteJSON(signalMessage{Type: "auth", Token: tokenA}); err != nil {
 		t.Fatalf("write auth ws1: %v", err)
 	}
 	if err := ws1.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
@@ -1795,7 +1797,7 @@ func TestAuth_JWT_WebSocketSignal_FirstMessageAuth_RejectsConcurrentSessions(t *
 	}
 	t.Cleanup(func() { _ = ws2.Close() })
 
-	if err := ws2.WriteJSON(signalMessage{Type: "auth", Token: token}); err != nil {
+	if err := ws2.WriteJSON(signalMessage{Type: "auth", Token: tokenB}); err != nil {
 		t.Fatalf("write auth ws2: %v", err)
 	}
 	if err := ws2.WriteJSON(signalMessage{Type: "offer", SDP: &offerSDP}); err != nil {
