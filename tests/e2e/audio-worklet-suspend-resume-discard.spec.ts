@@ -5,6 +5,7 @@ const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127
 test("AudioContext suspend/resume discards playback ring backlog (stale latency avoidance)", async ({ page }) => {
   test.setTimeout(60_000);
   test.skip(test.info().project.name !== "chromium", "AudioWorklet suspend/resume discard test only runs on Chromium.");
+  page.setDefaultTimeout(60_000);
 
   // Use a large ring buffer so that "no discard" behaviour would require hundreds of ms of real-time
   // playback to drain, making the regression easy to detect.
