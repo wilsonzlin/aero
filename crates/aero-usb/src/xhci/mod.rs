@@ -1743,12 +1743,6 @@ impl XhciController {
                 self.interrupter0.write_erdp(v);
             }
 
-            off if off == u64::from(regs::DBOFF_VALUE) => {
-                // Doorbell 0: notify controller that command ring contains new commands.
-                let _ = value_shifted;
-                self.ring_doorbell0();
-            }
-
             _ => {}
         }
 
@@ -2144,7 +2138,7 @@ impl IoSnapshot for XhciController {
     fn save_state(&self) -> Vec<u8> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
-        const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
@@ -2180,7 +2174,7 @@ impl IoSnapshot for XhciController {
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
-        const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;

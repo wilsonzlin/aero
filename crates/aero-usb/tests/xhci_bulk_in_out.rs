@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use aero_usb::xhci::transfer::{
-    write_trb, CompletionCode, Trb, TrbType, TransferEvent, XhciTransferExecutor,
+    write_trb, CompletionCode, TransferEvent, Trb, TrbType, XhciTransferExecutor,
 };
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 
@@ -255,7 +255,11 @@ fn xhci_bulk_out_normal_trb_delivers_payload() {
         normal_trb_addr,
         make_normal_trb(buf, payload.len() as u32, true, false, true),
     );
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     let out_received = Rc::new(RefCell::new(Vec::new()));
@@ -363,8 +367,16 @@ fn xhci_bulk_in_normal_trb_writes_guest_memory() {
     let sentinel = [0xa5u8; 8];
     mem.write(buf as u32, &sentinel);
 
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, true));
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 4, true, false, true),
+    );
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
@@ -437,8 +449,16 @@ fn xhci_bulk_in_short_packet_sets_residual_bytes() {
 
     // Request 8 bytes but only provide 3. xHCI should report the residual byte count (5) and
     // complete with ShortPacket.
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 8, true, false, true));
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 8, true, false, true),
+    );
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     in_queue.borrow_mut().push_back(vec![9, 8, 7]);
@@ -479,8 +499,16 @@ fn xhci_bulk_in_nak_leaves_trb_pending_until_data_available() {
     let sentinel = [0xa5u8; 3];
     mem.write(buf as u32, &sentinel);
 
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 3, true, false, true));
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 3, true, false, true),
+    );
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     let out_received = Rc::new(RefCell::new(Vec::new()));
@@ -527,8 +555,16 @@ fn xhci_transfer_executor_follows_link_trb_and_toggles_cycle_state() {
     let sentinel = [0xa5u8; 4];
     mem.write(buf as u32, &sentinel);
 
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, true));
-    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 4, true, false, true),
+    );
+    write_trb(
+        &mut mem,
+        link_trb_addr,
+        make_link_trb(ring_base, true, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
     in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
@@ -547,20 +583,30 @@ fn xhci_transfer_executor_follows_link_trb_and_toggles_cycle_state() {
     assert_single_success_event(&events, 0x81, normal_trb_addr, 0);
 
     // After consuming the first TRB, the dequeue pointer should land on the Link TRB.
-    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, link_trb_addr);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        link_trb_addr
+    );
     assert!(xhci.endpoint_state(0x81).unwrap().ring.cycle);
 
     // Tick again without producing new TRBs: the executor should follow the Link TRB, toggle cycle,
     // then stop because the next TRB's cycle bit doesn't match.
     xhci.tick_1ms(&mut mem);
     assert!(xhci.take_events().is_empty());
-    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, ring_base);
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        ring_base
+    );
     assert!(!xhci.endpoint_state(0x81).unwrap().ring.cycle);
 
     // Produce another TRB in the new cycle state (C=0) and confirm it completes.
     in_queue.borrow_mut().push_back(vec![5, 6, 7, 8]);
     mem.write(buf as u32, &sentinel);
-    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, false, false, true));
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, 4, false, false, true),
+    );
 
     xhci.tick_1ms(&mut mem);
     let mut got = [0u8; 4];
@@ -590,12 +636,22 @@ fn xhci_transfer_executor_td_can_span_linked_segments() {
     mem.write(buf2 as u32, &sentinel);
 
     // TD: Normal (CH=1) then Link to seg2, then Normal (CH=0, IOC=1).
-    write_trb(&mut mem, normal1_addr, make_normal_trb(buf1, 4, true, true, false));
+    write_trb(
+        &mut mem,
+        normal1_addr,
+        make_normal_trb(buf1, 4, true, true, false),
+    );
     write_trb(&mut mem, link_addr, make_link_trb(seg2, true, false));
-    write_trb(&mut mem, normal2_addr, make_normal_trb(buf2, 4, true, false, true));
+    write_trb(
+        &mut mem,
+        normal2_addr,
+        make_normal_trb(buf2, 4, true, false, true),
+    );
 
     let in_queue = Rc::new(RefCell::new(VecDeque::new()));
-    in_queue.borrow_mut().push_back(vec![10, 11, 12, 13, 20, 21, 22, 23]);
+    in_queue
+        .borrow_mut()
+        .push_back(vec![10, 11, 12, 13, 20, 21, 22, 23]);
     let out_received = Rc::new(RefCell::new(Vec::new()));
     let dev = BulkEndpointDevice::new(in_queue, out_received);
     let mut xhci = XhciTransferExecutor::new(Box::new(dev));

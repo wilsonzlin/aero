@@ -658,7 +658,7 @@ impl CommandRingProcessor {
     }
 
     fn read_device_context_ptr(
-        &mut self,
+        &self,
         mem: &mut dyn MemoryBus,
         slot_id: u8,
     ) -> Result<u64, CompletionCode> {
@@ -668,6 +668,9 @@ impl CommandRingProcessor {
         let idx = usize::from(slot_id);
         if !self.slots_enabled.get(idx).copied().unwrap_or(false) {
             return Err(CompletionCode::SlotNotEnabledError);
+        }
+        if self.dcbaa_ptr == 0 {
+            return Err(CompletionCode::ContextStateError);
         }
 
         if (self.dcbaa_ptr & (CONTEXT_ALIGN - 1)) != 0 {
@@ -696,7 +699,7 @@ impl CommandRingProcessor {
     }
 
     fn endpoint_context_addr(
-        &mut self,
+        &self,
         mem: &mut dyn MemoryBus,
         slot_id: u8,
         endpoint_id: u8,
@@ -724,6 +727,9 @@ impl CommandRingProcessor {
 
         let mut ctx = EndpointContext::read_from(mem, ep_ctx);
         let prev_state = ctx.endpoint_state() as u32;
+        if prev_state == 0 {
+            return CompletionCode::EndpointNotEnabledError;
+        }
         ctx.set_endpoint_state(EP_STATE_STOPPED as u8);
         ctx.write_to(mem, ep_ctx);
 
@@ -760,6 +766,9 @@ impl CommandRingProcessor {
         };
 
         let mut ctx = EndpointContext::read_from(mem, ep_ctx);
+        if ctx.endpoint_state() == 0 {
+            return CompletionCode::EndpointNotEnabledError;
+        }
         // MVP: clear halted/stopped and allow transfers again.
         ctx.set_endpoint_state(EP_STATE_RUNNING as u8);
         ctx.write_to(mem, ep_ctx);
@@ -799,17 +808,30 @@ impl CommandRingProcessor {
             Err(code) => return code,
         };
 
+        // Bits 1..=3 are reserved in the command parameter field (bit0 is DCS).
+        if (cmd.parameter & 0x0e) != 0 {
+            return CompletionCode::ParameterError;
+        }
+        // Streams are not supported by this model. Stream ID lives in DW2 bits 16..=31.
+        let stream_id = (cmd.status >> 16) & 0xffff;
+        if stream_id != 0 {
+            return CompletionCode::ParameterError;
+        }
+
         let ptr = cmd.parameter & !0x0f;
-        let dcs = cmd.parameter & 0x01;
+        let dcs = (cmd.parameter & 0x01) != 0;
         if ptr == 0 {
             return CompletionCode::ParameterError;
         }
         if !self.check_range(ptr, TRB_LEN as u64) {
             return CompletionCode::ParameterError;
         }
-        let dcs = dcs != 0;
+
         let mut ctx = EndpointContext::read_from(mem, ep_ctx);
         let endpoint_state = ctx.endpoint_state() as u32;
+        if endpoint_state == 0 {
+            return CompletionCode::EndpointNotEnabledError;
+        }
         ctx.set_tr_dequeue_pointer(ptr, dcs);
         ctx.write_to(mem, ep_ctx);
 
@@ -859,10 +881,7 @@ impl CommandRingProcessor {
             return CompletionCode::ParameterError;
         }
 
-        let dcbaa_entry_addr = match self
-            .dcbaa_ptr
-            .checked_add(u64::from(slot_id) * 8)
-        {
+        let dcbaa_entry_addr = match self.dcbaa_ptr.checked_add(u64::from(slot_id) * 8) {
             Some(addr) => addr,
             None => return CompletionCode::ParameterError,
         };

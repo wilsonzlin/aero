@@ -346,13 +346,13 @@ fn prepare_resume_detect_edge_case(
     // (Re-)configure the device and enable remote wakeup. Global/bus resets during the randomized
     // phase may have reset the device model state.
     {
-        let dev = ctrl
+        let mut dev = ctrl
             .hub_mut()
             .port_device_mut(0)
             .expect("keyboard must remain attached on port 0");
 
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x09, // SET_CONFIGURATION
@@ -362,7 +362,7 @@ fn prepare_resume_detect_edge_case(
             },
         );
         control_no_data(
-            dev,
+            &mut dev,
             SetupPacket {
                 bm_request_type: 0x00,
                 b_request: 0x03, // SET_FEATURE

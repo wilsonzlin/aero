@@ -296,6 +296,42 @@ impl EndpointType {
     }
 }
 
+/// Endpoint state (xHCI Endpoint Context Endpoint State field, bits 2:0 of DWORD0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndpointState {
+    Disabled,
+    Running,
+    Halted,
+    Stopped,
+    Error,
+    /// Any reserved/unknown state value (3-bit field).
+    Reserved(u8),
+}
+
+impl EndpointState {
+    pub const fn from_raw(raw: u8) -> Self {
+        match raw & 0x07 {
+            0 => EndpointState::Disabled,
+            1 => EndpointState::Running,
+            2 => EndpointState::Halted,
+            3 => EndpointState::Stopped,
+            4 => EndpointState::Error,
+            other => EndpointState::Reserved(other),
+        }
+    }
+
+    pub const fn raw(self) -> u8 {
+        match self {
+            EndpointState::Disabled => 0,
+            EndpointState::Running => 1,
+            EndpointState::Halted => 2,
+            EndpointState::Stopped => 3,
+            EndpointState::Error => 4,
+            EndpointState::Reserved(v) => v & 0x07,
+        }
+    }
+}
+
 /// Endpoint Context (32 bytes / 8 dwords).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EndpointContext {
@@ -328,9 +364,17 @@ impl EndpointContext {
         (self.dwords[0] & 0x7) as u8
     }
 
+    pub fn endpoint_state_enum(&self) -> EndpointState {
+        EndpointState::from_raw(self.endpoint_state())
+    }
+
     pub fn set_endpoint_state(&mut self, state: u8) {
         let state = (state as u32) & 0x7;
         self.dwords[0] = (self.dwords[0] & !0x7) | state;
+    }
+
+    pub fn set_endpoint_state_enum(&mut self, state: EndpointState) {
+        self.set_endpoint_state(state.raw());
     }
 
     /// Interval field (DW0 bits 16..=23).
@@ -402,6 +446,14 @@ impl EndpointContext {
 
     pub fn set_tr_dequeue_ptr_lo(&mut self, value: u32) {
         self.dwords[2] = value;
+    }
+
+    pub fn tr_dequeue_ptr_hi(&self) -> u32 {
+        self.dwords[3]
+    }
+
+    pub fn set_tr_dequeue_ptr_hi(&mut self, value: u32) {
+        self.dwords[3] = value;
     }
 }
 

@@ -29,6 +29,7 @@ pub enum CompletionCode {
     StallError = 6,
     NoSlotsAvailableError = 9,
     SlotNotEnabledError = 11,
+    EndpointNotEnabledError = 12,
     ShortPacket = 13,
     ParameterError = 17,
     ContextStateError = 19,
