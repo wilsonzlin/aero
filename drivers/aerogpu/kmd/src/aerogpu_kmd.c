@@ -11980,7 +11980,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         AeroGpuFreeInternalSubmission(adapter, selftestInternal);
-        AeroGpuFreeInternalSubmission(adapter, selftestInternal);
 
         /*
          * VBlank sanity (optional, gated by device feature bits).
