@@ -2641,6 +2641,64 @@ def _virtio_input_tablet_events_skip_failure_message(
     )
 
 
+def _virtio_input_tablet_events_fail_failure_message(
+    tail: bytes, *, marker_line: Optional[str] = None
+) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|reason=...|err=...|tablet_reports=...|...
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            # Backcompat: allow `...|FAIL|missing_tablet_device|err=...` (no `reason=` field).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        err = (fields.get("err") or "").strip()
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        if err:
+            parts.append(f"err={_sanitize_marker_value(err)}")
+        for k in (
+            "tablet_reports",
+            "move_target",
+            "left_down",
+            "left_up",
+            "last_x",
+            "last_y",
+            "last_left",
+        ):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+        return (
+            "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while "
+            f"--with-input-tablet-events/--with-tablet-events was enabled{details}"
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while "
+        "--with-input-tablet-events/--with-tablet-events was enabled"
+    )
+
+
 def _virtio_input_wheel_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # Guest marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|wheel_total=...|hwheel_total=...|...
@@ -5796,7 +5854,10 @@ def main() -> int:
                             break
                         if saw_virtio_input_tablet_events_fail:
                             print(
-                                "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events/--with-tablet-events was enabled",
+                                _virtio_input_tablet_events_fail_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_tablet_events_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6337,8 +6398,10 @@ def main() -> int:
                             if need_input_tablet_events:
                                 if saw_virtio_input_tablet_events_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: selftest RESULT=PASS but virtio-input-tablet-events test reported FAIL "
-                                        "while --with-input-tablet-events/--with-tablet-events was enabled",
+                                        _virtio_input_tablet_events_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_tablet_events_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6811,7 +6874,10 @@ def main() -> int:
                         if need_input_tablet_events:
                             if saw_virtio_input_tablet_events_fail:
                                 print(
-                                    "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events/--with-tablet-events was enabled",
+                                    _virtio_input_tablet_events_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_input_tablet_events_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -8824,7 +8890,10 @@ def main() -> int:
                             if need_input_tablet_events:
                                 if saw_virtio_input_tablet_events_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while --with-input-tablet-events/--with-tablet-events was enabled",
+                                        _virtio_input_tablet_events_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_tablet_events_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)

@@ -281,6 +281,18 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("no_tablet_device", msg2)
         self.assertNotIn("--test-input-tablet-events", msg2)
 
+    def test_virtio_input_tablet_events_fail_tokens_include_reason_and_err(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_tablet_events_fail_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|reason=timeout|err=123|tablet_reports=0|move_target=0|left_down=0|left_up=0|last_x=0|last_y=0|last_left=0\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED:"))
+        self.assertIn("reason=timeout", msg)
+        self.assertIn("err=123", msg)
+        self.assertIn("tablet_reports=0", msg)
+
     def test_virtio_input_wheel_skip_tokens_include_reason_details(self) -> None:
         h = self.harness
 
