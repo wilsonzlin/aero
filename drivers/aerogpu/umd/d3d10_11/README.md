@@ -27,7 +27,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; basic filter/address modes) |
 
-\* Current host executors require RTV bindings to be a contiguous prefix (no gaps). The UMD normalizes away gaps by truncating at the first null RTV slot.
+\* D3D10 preserves the runtime-provided RTV list (including NULL entries) when emitting `SET_RENDER_TARGETS`. D3D10.1 and D3D11 currently normalize away gaps by truncating at the first NULL RTV slot.
 
 ### Implemented
 
@@ -41,7 +41,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - VS/PS binding tables:
   - D3D10 + D3D10.1: constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
   - D3D11: constant buffers (supports `{FirstConstant, NumConstants}` ranges), shader-resource views, samplers
-- Render target + depth-stencil binding (MRT up to `AEROGPU_MAX_RENDER_TARGETS`, contiguous prefix), Clear, Draw/DrawIndexed
+- Render target + depth-stencil binding (MRT up to `AEROGPU_MAX_RENDER_TARGETS`), Clear, Draw/DrawIndexed
 - Viewport + scissor
 - Resource updates + readback:
   - `Map`/`Unmap` for buffers and Texture2D subresources (uploads via `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` / `AEROGPU_CMD_UPLOAD_RESOURCE`)
