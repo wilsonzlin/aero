@@ -83,13 +83,14 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // This helps libFuzzer reach deep decode/IR/WGSL paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let mode = seed.get(6).copied().unwrap_or(0) % 5;
+    let mode = seed.get(6).copied().unwrap_or(0) % 7;
 
     // For the texture-sampling path, force a pixel shader so we can exercise `texldd`.
     let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) || mode == 4;
 
-    // For the `mova`/relative-constant mode, force SM3 so address registers are valid.
-    let major = if mode == 2 {
+    // For the `mova`/relative-constant, `loop`, and `predicate` modes, force SM3 so address/loop
+    // registers are valid and we can exercise predicate-aware WGSL lowering more reliably.
+    let major = if mode == 2 || mode == 5 || mode == 6 {
         3u32
     } else {
         2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1)
@@ -122,13 +123,15 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
 
     let c0 = seed.get(3).copied().unwrap_or(0) % 8;
     let c1 = seed.get(4).copied().unwrap_or(1) % 8;
+    let c2 = seed.get(12).copied().unwrap_or(2) % 8;
     let src0 = src_token(2, c0, swz, src_mod);
     let src1 = src_token(2, c1, swz, src_mod);
+    let src2 = src_token(2, c2, swz, src_mod);
 
     let include_def = seed.get(5).copied().unwrap_or(0) & 1 != 0;
     let def_dst = dst_token(2, c0, 0);
 
-    let mut tokens: Vec<u32> = Vec::with_capacity(16);
+    let mut tokens: Vec<u32> = Vec::with_capacity(24);
     tokens.push(version_token);
     if include_def {
         // def c#, imm0..imm3
@@ -203,7 +206,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
         }
 
         // A couple of math ops to reach more lowering code.
-        3 => match seed.get(2).copied().unwrap_or(0) % 3 {
+        3 => match seed.get(2).copied().unwrap_or(0) % 5 {
             // dp2 dst, src0, src1
             0 => {
                 tokens.push(opcode_token(90, 3, mod_bits));
@@ -218,16 +221,32 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
                 tokens.push(src0);
             }
             // pow dst, src0, src1
-            _ => {
+            2 => {
                 tokens.push(opcode_token(32, 3, mod_bits));
                 tokens.push(dst);
                 tokens.push(src0);
                 tokens.push(src1);
             }
+            // dp2add dst, src0, src1, src2
+            3 => {
+                tokens.push(opcode_token(89, 4, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src1);
+                tokens.push(src2);
+            }
+            // lrp dst, src0, src1, src2
+            _ => {
+                tokens.push(opcode_token(18, 4, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src1);
+                tokens.push(src2);
+            }
         },
 
         // Texture sampling (D3D9 `tex`/`texldl`/`texldd`).
-        _ => {
+        4 => {
             let sampler = seed.get(12).copied().unwrap_or(0) % 4;
             let sampler_token = src_token(10, sampler, 0xE4, 0);
 
@@ -265,6 +284,53 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
                     tokens.push(sampler_token);
                 }
             }
+        }
+
+        // Loop + breakc to exercise structured looping WGSL lowering.
+        5 => {
+            // loop aL#, i#
+            let loop_reg_idx = seed.get(13).copied().unwrap_or(0) % 4;
+            let ctrl_reg_idx = seed.get(14).copied().unwrap_or(0) % 4;
+            let loop_reg = src_token(15, loop_reg_idx, 0xE4, 0);
+            let ctrl_reg = src_token(7, ctrl_reg_idx, 0xE4, 0);
+            tokens.push(opcode_token(27, 2, 0));
+            tokens.push(loop_reg);
+            tokens.push(ctrl_reg);
+
+            // add dst, src0, src1
+            tokens.push(opcode_token(2, 3, mod_bits));
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // breakc src0, src1 (compare op encoded in opcode_token[16..19])
+            let cmp = (seed.get(15).copied().unwrap_or(0) % 6) as u32;
+            tokens.push(opcode_token(45, 2, 0) | (cmp << 16));
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // endloop
+            tokens.push(opcode_token(29, 0, 0));
+        }
+
+        // Predication + setp to exercise predicate-aware WGSL lowering.
+        _ => {
+            // setp p0.x, src0, src1 (comparison op in opcode_token[16..19])
+            let p0 = dst_token(19, 0, 0x1);
+            let cmp = (seed.get(13).copied().unwrap_or(0) % 6) as u32;
+            tokens.push(opcode_token(78, 3, 0) | (cmp << 16));
+            tokens.push(p0);
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // Predicated add dst, src0, src1, p0.x (optionally negated).
+            let pred_neg = seed.get(14).copied().unwrap_or(0) & 1;
+            let pred_token = src_token(19, 0, 0x00, pred_neg);
+            tokens.push(opcode_token(2, 4, mod_bits) | 0x1000_0000);
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+            tokens.push(pred_token);
         }
     };
 
