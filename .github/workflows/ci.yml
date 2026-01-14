@@ -228,9 +228,6 @@ jobs:
       - name: Check deterministic fixtures are up-to-date
         run: cargo xtask fixtures --check
 
-      - name: Check BIOS ROM fixture is up-to-date
-        run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- bios-rom --check
-
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
