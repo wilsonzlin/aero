@@ -212,6 +212,95 @@ fn build_gs_point_to_triangle_color_from_raw_srv_t0() -> Vec<u8> {
     build_dxbc(&[(FourCC(*b"SHDR"), shdr)])
 }
 
+fn build_gs_point_to_triangle_color_from_structured_srv_t0_index1() -> Vec<u8> {
+    // gs_4_0 that:
+    // - Declares point input + triangle strip output + maxvertexcount=3.
+    // - Declares + reads a structured SRV buffer at t0 via ld_structured.
+    // - Uses that read data as COLOR0 output (o1), so the pixel shader can observe it.
+    //
+    // Note: We intentionally emit a *small* centered triangle so this test can detect if we
+    // accidentally fell back to the placeholder GS prepass (which emits a much larger triangle).
+    const PRIM_POINT: u32 = 1;
+    const TOPO_TRIANGLE_STRIP: u32 = 5;
+    const MAX_VERTS: u32 = 3;
+    const STRIDE_BYTES: u32 = 16;
+    const INDEX: u32 = 1;
+
+    let mut tokens: Vec<u32> = vec![
+        0x0002_0040u32, // gs_4_0
+        0,              // length patched below
+        opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2),
+        PRIM_POINT,
+        opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2),
+        TOPO_TRIANGLE_STRIP,
+        opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2),
+        MAX_VERTS,
+    ];
+
+    // dcl_resource_structured t0, stride=16
+    let t0 = reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    tokens.push(opcode_token(
+        OPCODE_DCL_RESOURCE_STRUCTURED,
+        (1 + t0.len() + 1) as u32,
+    ));
+    tokens.extend_from_slice(&t0);
+    tokens.push(STRIDE_BYTES);
+
+    // ld_structured r0.xyzw, index=1, offset=0, t0
+    let index = imm32_scalar(INDEX);
+    let offset = imm32_scalar(0);
+    let mut ld_struct = vec![opcode_token(
+        OPCODE_LD_STRUCTURED,
+        (1 + 2 + index.len() + offset.len() + t0.len()) as u32,
+    )];
+    ld_struct.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld_struct.extend_from_slice(&index);
+    ld_struct.extend_from_slice(&offset);
+    ld_struct.extend_from_slice(&t0);
+    tokens.extend_from_slice(&ld_struct);
+
+    // mov o1.xyzw, r0.xyzw
+    let mut mov_color = vec![opcode_token(OPCODE_MOV, 1 + 2 + 2)];
+    mov_color.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    mov_color.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    tokens.extend_from_slice(&mov_color);
+
+    // Helper to emit one triangle vertex at a constant position.
+    let emit_vertex = |tokens: &mut Vec<u32>, x: f32, y: f32| {
+        // mov o0.xyzw, l(x,y,0,1)
+        let imm = imm32_vec4([x.to_bits(), y.to_bits(), 0.0f32.to_bits(), 1.0f32.to_bits()]);
+        let mut mov_pos = vec![opcode_token(OPCODE_MOV, (1 + 2 + imm.len()) as u32)];
+        mov_pos.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+        mov_pos.extend_from_slice(&imm);
+        tokens.extend_from_slice(&mov_pos);
+
+        // emit
+        tokens.push(opcode_token(OPCODE_EMIT, 1));
+    };
+
+    // Small centered clockwise triangle.
+    emit_vertex(&mut tokens, -0.25, -0.25);
+    emit_vertex(&mut tokens, 0.0, 0.25);
+    emit_vertex(&mut tokens, 0.25, -0.25);
+
+    tokens.push(opcode_token(OPCODE_CUT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    tokens[1] = tokens.len() as u32;
+    let shdr = tokens_to_bytes(&tokens);
+    build_dxbc(&[(FourCC(*b"SHDR"), shdr)])
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct VertexPos3Color4 {
@@ -237,13 +326,29 @@ fn aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass() {
             return;
         }
 
+        // The translated GS prepass uses 4 internal storage buffers (`out_vertices`, `out_indices`,
+        // `out_state`, `gs_inputs`) plus one SRV storage buffer for `t0`.
+        let max_storage = exec.device().limits().max_storage_buffers_per_shader_stage;
+        if max_storage < 5 {
+            common::skip_or_panic(
+                test_name,
+                &format!(
+                    "requires >=5 storage buffers per shader stage (max_storage_buffers_per_shader_stage={max_storage})"
+                ),
+            );
+            return;
+        }
+
         const VB: u32 = 1;
-        const SRV: u32 = 2;
-        const RT: u32 = 3;
-        const VS: u32 = 4;
-        const GS: u32 = 5;
-        const PS: u32 = 6;
-        const IL: u32 = 7;
+        const SRV_STAGE_EX: u32 = 2;
+        const RT_RAW: u32 = 3;
+        const RT_STRUCT: u32 = 4;
+        const SRV_LEGACY: u32 = 5;
+        const VS: u32 = 10;
+        const GS_RAW: u32 = 11;
+        const GS_STRUCT: u32 = 12;
+        const PS: u32 = 13;
+        const IL: u32 = 14;
 
         // Use an odd render target size so NDC (0,0) maps exactly to the center pixel.
         let w = 65u32;
@@ -257,15 +362,36 @@ fn aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass() {
         };
         let vb_bytes = bytemuck::bytes_of(&vertex);
 
-        // SRV buffer payload: RGBA = green. Stored as raw u32 words (float bit patterns) so
-        // `ld_raw` returns these as f32 lanes via bitcast.
-        let srv_words: [u32; 4] = [
+        // SRV buffer payload for stage_ex binding:
+        // - element 0 = magenta (1,0,1,1) for ld_raw @ byte offset 0
+        // - element 1 = cyan    (0,1,1,1) for ld_structured index=1 stride=16
+        //
+        // Stored as raw u32 words (float bit patterns) so `ld_raw`/`ld_structured` return these as
+        // f32 lanes via bitcast.
+        let srv_stage_ex_words: [u32; 8] = [
+            1.0f32.to_bits(),
             0.0f32.to_bits(),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+        ];
+        let srv_stage_ex_bytes: &[u8] = bytemuck::cast_slice(&srv_stage_ex_words);
+        // SRV buffer payload for legacy geometry-stage binding:
+        // - element 1 = green (0,1,0,1) for ld_structured index=1 stride=16
+        let srv_legacy_words: [u32; 8] = [
+            1.0f32.to_bits(), // element 0 (unused)
+            1.0f32.to_bits(),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+            0.0f32.to_bits(), // element 1 (used)
             1.0f32.to_bits(),
             0.0f32.to_bits(),
             1.0f32.to_bits(),
         ];
-        let srv_bytes: &[u8] = bytemuck::cast_slice(&srv_words);
+        let srv_legacy_bytes: &[u8] = bytemuck::cast_slice(&srv_legacy_words);
 
         let mut writer = AerogpuCmdWriter::new();
         writer.create_buffer(
@@ -278,16 +404,36 @@ fn aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass() {
         writer.upload_resource(VB, 0, vb_bytes);
 
         writer.create_buffer(
-            SRV,
+            SRV_STAGE_EX,
             AEROGPU_RESOURCE_USAGE_STORAGE,
-            srv_bytes.len() as u64,
+            srv_stage_ex_bytes.len() as u64,
             0,
             0,
         );
-        writer.upload_resource(SRV, 0, srv_bytes);
+        writer.upload_resource(SRV_STAGE_EX, 0, srv_stage_ex_bytes);
+        writer.create_buffer(
+            SRV_LEGACY,
+            AEROGPU_RESOURCE_USAGE_STORAGE,
+            srv_legacy_bytes.len() as u64,
+            0,
+            0,
+        );
+        writer.upload_resource(SRV_LEGACY, 0, srv_legacy_bytes);
 
         writer.create_texture2d(
-            RT,
+            RT_RAW,
+            AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            AerogpuFormat::R8G8B8A8Unorm as u32,
+            w,
+            h,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
+        writer.create_texture2d(
+            RT_STRUCT,
             AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
             AerogpuFormat::R8G8B8A8Unorm as u32,
             w,
@@ -302,9 +448,14 @@ fn aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass() {
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
         writer.create_shader_dxbc_ex(
-            GS,
+            GS_RAW,
             AerogpuShaderStageEx::Geometry,
             &build_gs_point_to_triangle_color_from_raw_srv_t0(),
+        );
+        writer.create_shader_dxbc_ex(
+            GS_STRUCT,
+            AerogpuShaderStageEx::Geometry,
+            &build_gs_point_to_triangle_color_from_structured_srv_t0_index1(),
         );
 
         writer.create_input_layout(IL, ILAY_POS3_COLOR);
@@ -322,7 +473,6 @@ fn aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass() {
 
         writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
         writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
-        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
 
         // Disable face culling to avoid depending on winding conventions.
         writer.set_rasterizer_state_ext(
@@ -340,14 +490,35 @@ fn aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass() {
             AerogpuShaderStageEx::Geometry,
             0,
             &[AerogpuShaderResourceBufferBinding {
-                buffer: SRV,
+                buffer: SRV_STAGE_EX,
                 offset_bytes: 0,
                 size_bytes: 0, // 0 = whole buffer
                 reserved0: 0,
             }],
         );
 
-        writer.set_render_targets(&[RT], 0);
+        // Pass 1: ld_raw reads element 0 (magenta).
+        writer.bind_shaders_ex(VS, PS, 0, GS_RAW, 0, 0);
+        writer.set_render_targets(&[RT_RAW], 0);
+        writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
+        writer.draw(1, 1, 0, 0);
+
+        // Rebind `t0` via the *legacy* geometry-stage encoding and point it at a different SRV
+        // buffer. This ensures we cover both stage_ex and legacy binding paths end-to-end.
+        writer.set_shader_resource_buffers(
+            AerogpuShaderStage::Geometry,
+            0,
+            &[AerogpuShaderResourceBufferBinding {
+                buffer: SRV_LEGACY,
+                offset_bytes: 0,
+                size_bytes: 0,
+                reserved0: 0,
+            }],
+        );
+
+        // Pass 2: ld_structured reads element 1 (green).
+        writer.bind_shaders_ex(VS, PS, 0, GS_STRUCT, 0, 0);
+        writer.set_render_targets(&[RT_STRUCT], 0);
         writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.draw(1, 1, 0, 0);
 
@@ -363,19 +534,27 @@ fn aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass() {
         }
         exec.poll_wait();
 
-        let pixels = exec
-            .read_texture_rgba8(RT)
+        let pixels_raw = exec
+            .read_texture_rgba8(RT_RAW)
             .await
             .expect("readback should succeed");
-        let px = |x: u32, y: u32| -> [u8; 4] {
+        let pixels_struct = exec
+            .read_texture_rgba8(RT_STRUCT)
+            .await
+            .expect("readback should succeed");
+        let px = |pixels: &[u8], x: u32, y: u32| -> [u8; 4] {
             let idx = ((y * w + x) * 4) as usize;
             pixels[idx..idx + 4].try_into().unwrap()
         };
 
-        // The SRV buffer contains green, so the triangle should render green at the center pixel.
-        assert_eq!(px(w / 2, h / 2), [0, 255, 0, 255]);
+        // The SRV buffers contain:
+        // - stage_ex buffer element 0 = magenta (ld_raw)
+        // - legacy buffer element 1 = green (ld_structured)
+        assert_eq!(px(&pixels_raw, w / 2, h / 2), [255, 0, 255, 255]);
+        assert_eq!(px(&pixels_struct, w / 2, h / 2), [0, 255, 0, 255]);
         // The translated GS emits a small triangle. A pixel above the center should remain the
         // clear color. The placeholder prepass triangle would cover this pixel.
-        assert_eq!(px(w / 2, h / 2 - 10), [255, 0, 0, 255]);
+        assert_eq!(px(&pixels_raw, w / 2, h / 2 - 10), [255, 0, 0, 255]);
+        assert_eq!(px(&pixels_struct, w / 2, h / 2 - 10), [255, 0, 0, 255]);
     });
 }
