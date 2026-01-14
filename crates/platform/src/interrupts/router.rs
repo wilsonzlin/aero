@@ -621,7 +621,7 @@ impl PlatformInterrupts {
         }
     }
 
-    fn lapic_for_apic_id(&self, apic_id: u8) -> Option<&LocalApic> {
+    pub(crate) fn lapic_for_apic_id(&self, apic_id: u8) -> Option<&LocalApic> {
         self.lapics
             .iter()
             .find(|lapic| lapic.apic_id() == apic_id)

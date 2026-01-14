@@ -136,8 +136,8 @@ pub const EXT_CAP_ID_SUPPORTED_PROTOCOL: u8 = 2;
 /// Supported Protocol: Protocol name string "USB ".
 pub const PROTOCOL_NAME_USB2: u32 = u32::from_le_bytes(*b"USB ");
 
-pub const USB_REVISION_2_0_MAJOR: u8 = 0x02;
-pub const USB_REVISION_2_0_MINOR: u8 = 0x00;
+/// USB revision number encoded as BCD (e.g. USB 2.0 == 0x0200).
+pub const USB_REVISION_2_0: u16 = 0x0200;
 
 /// Protocol Slot Type used for USB 2.0 ports.
 ///
@@ -147,8 +147,13 @@ pub const USB2_PROTOCOL_SLOT_TYPE: u8 = 0x01;
 // ---- Supported Protocol: Protocol Speed ID Descriptor ----
 
 /// Protocol Speed ID values used by this model.
-pub const PSIV_LOW_SPEED: u8 = 1;
-pub const PSIV_FULL_SPEED: u8 = 2;
+///
+/// For compatibility with common xHCI drivers, use the canonical ordering:
+/// - 1 = full speed
+/// - 2 = low speed
+/// - 3 = high speed
+pub const PSIV_FULL_SPEED: u8 = 1;
+pub const PSIV_LOW_SPEED: u8 = 2;
 pub const PSIV_HIGH_SPEED: u8 = 3;
 
 /// Protocol Speed ID Types (PSIT).
@@ -162,12 +167,12 @@ pub const PSI_TYPE_HIGH: u8 = 3;
 ///
 /// Field layout (xHCI spec):
 /// - Bits 3:0  PSIV (Protocol Speed ID Value)
-/// - Bits 5:4  PSIT (Protocol Speed ID Type)
+/// - Bits 7:4  PSIT (Protocol Speed ID Type)
 /// - Bits 15:8 PSIM (Protocol Speed ID Mantissa)
 /// - Bits 17:16 PSIE (Protocol Speed ID Exponent)
 pub const fn encode_psi(psiv: u8, psit: u8, mantissa: u8, exponent: u8) -> u32 {
     (psiv as u32 & 0xf)
-        | ((psit as u32 & 0x3) << 4)
+        | ((psit as u32 & 0xf) << 4)
         | ((mantissa as u32) << 8)
         | ((exponent as u32 & 0x3) << 16)
 }

@@ -420,8 +420,7 @@ impl XhciController {
         let psic = 3u8; // low/full/high-speed entries.
         let header0 = (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32)
             | (0u32 << 8) // next pointer (0 => end of list)
-            | ((regs::USB_REVISION_2_0_MAJOR as u32) << 16)
-            | ((regs::USB_REVISION_2_0_MINOR as u32) << 24);
+            | ((regs::USB_REVISION_2_0 as u32) << 16);
         caps.push(header0);
         caps.push(regs::PROTOCOL_NAME_USB2);
         caps.push((1u32) | ((self.port_count as u32) << 8));
@@ -430,22 +429,22 @@ impl XhciController {
         // Protocol Speed ID descriptors.
         // These values are consumed by guest xHCI drivers to interpret PORTSC.PS values.
         caps.push(regs::encode_psi(
-            regs::PSIV_LOW_SPEED,
-            regs::PSI_TYPE_LOW,
-            0,
-            0,
-        ));
-        caps.push(regs::encode_psi(
             regs::PSIV_FULL_SPEED,
             regs::PSI_TYPE_FULL,
             12,
+            1,
+        ));
+        caps.push(regs::encode_psi(
+            regs::PSIV_LOW_SPEED,
+            regs::PSI_TYPE_LOW,
+            15,
             0,
         ));
         caps.push(regs::encode_psi(
             regs::PSIV_HIGH_SPEED,
             regs::PSI_TYPE_HIGH,
             48,
-            1,
+            2,
         ));
 
         caps

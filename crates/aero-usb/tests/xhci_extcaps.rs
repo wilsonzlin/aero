@@ -47,8 +47,11 @@ fn supported_protocol_capability_usb2_matches_port_count() {
         0,
         "Supported Protocol capability should terminate the list (next=0)"
     );
-    assert_eq!(((cap0 >> 16) & 0xff) as u8, USB_REVISION_2_0_MAJOR);
-    assert_eq!(((cap0 >> 24) & 0xff) as u8, USB_REVISION_2_0_MINOR);
+    assert_eq!(
+        ((cap0 >> 16) & 0xffff) as u16,
+        USB_REVISION_2_0,
+        "USB2 Supported Protocol revision should be 0x0200 (USB 2.0)"
+    );
 
     // DWORD1: protocol name string.
     let name = xhci.mmio_read_u32(&mut mem, xecp + 4);
@@ -74,7 +77,7 @@ fn supported_protocol_capability_usb2_matches_port_count() {
     let mut has_full = false;
     for i in 0..psic {
         let psi = xhci.mmio_read_u32(&mut mem, xecp + 16 + (i as u64) * 4);
-        let psit = ((psi >> 4) & 0x3) as u8;
+        let psit = ((psi >> 4) & 0xf) as u8;
         if psit == PSI_TYPE_LOW {
             has_low = true;
         }

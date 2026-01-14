@@ -86,7 +86,7 @@ impl MsiTrigger for PlatformInterrupts {
             return;
         }
 
-        if let Some(lapic) = self.lapic_by_apic_id(dest) {
+        if let Some(lapic) = self.lapic_for_apic_id(dest) {
             lapic.inject_fixed_interrupt(vector);
         }
     }
