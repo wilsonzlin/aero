@@ -8974,7 +8974,8 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
         }
-        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1 &&
+            adapter->Bar0Length >= (AEROGPU_LEGACY_REG_INT_ACK + sizeof(ULONG))) {
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
         }
         return TRUE;
