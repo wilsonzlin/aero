@@ -151,6 +151,9 @@ jobs:
       - name: Check AeroGPU KMD fence atomic access (x86 tearing guard)
         run: python3 scripts/ci/check-aerogpu-kmd-fence-atomics.py
 
+      - name: Check AeroGPU KMD IRQ_ENABLE writeback semantics
+        run: python3 scripts/ci/check-aerogpu-kmd-irq-enable-mask-writeback.py
+
       - name: Check aero-d3d11 guest-memory imports
         run: python3 scripts/ci/check-aero-d3d11-guest-memory-imports.py
 

@@ -98,6 +98,9 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_query_scanout_out_v2", aerogpu_escape_query_scanout_out_v2);
   PRINT_SIZE("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out);
   PRINT_SIZE("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out);
+  PRINT_SIZE("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in);
+  PRINT_SIZE("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in);
+  PRINT_SIZE("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in);
   PRINT_SIZE("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout);
   PRINT_SIZE("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout);
   PRINT_SIZE("aerogpu_dbgctl_createallocation_desc", aerogpu_dbgctl_createallocation_desc);
@@ -1007,6 +1010,9 @@ int main(void) {
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_PERF);
   PRINT_CONST(AEROGPU_ESCAPE_OP_READ_GPA);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_ERROR);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY);
   PRINT_CONST(AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS);
   PRINT_CONST(AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS);
   PRINT_CONST(AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
