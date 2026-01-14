@@ -4539,6 +4539,14 @@ pub struct Machine {
     serial_log: Vec<u8>,
     debugcon_log: SharedDebugConLog,
     ps2_mouse_buttons: u8,
+    // Tracks which backend delivered the most recent press for each Consumer Control usage so
+    // releases are routed consistently even if virtio-input becomes ready mid-hold.
+    //
+    // Encoding:
+    // - 0: not pressed / unknown
+    // - 1: synthetic USB consumer-control device
+    // - 2: virtio-input keyboard (media keys subset)
+    consumer_usage_backend: [u8; 0x0400],
 
     next_snapshot_id: u64,
     last_snapshot_id: Option<u64>,
@@ -4753,6 +4761,7 @@ impl Machine {
             serial_log: Vec::new(),
             debugcon_log: Rc::new(RefCell::new(Vec::new())),
             ps2_mouse_buttons: 0,
+            consumer_usage_backend: [0u8; 0x0400],
             next_snapshot_id: 1,
             last_snapshot_id: None,
             guest_time: GuestTime::default(),
@@ -8294,29 +8303,80 @@ impl Machine {
             return;
         };
 
-        // If virtio-input is active, route supported media keys through the virtio keyboard's
-        // Consumer Control collection so they work even when synthetic USB HID is disabled.
-        //
-        // Browser/application control usages (AC Back/Forward/etc.) are not currently modeled by
-        // the Windows 7 virtio-input driver and should continue to route via the synthetic USB
-        // consumer-control device when available.
-        if self.virtio_input_keyboard_driver_ok() {
-            use aero_virtio::devices::input::*;
-            let linux_key = match usage {
-                0x00E2 => Some(KEY_MUTE),
-                0x00EA => Some(KEY_VOLUMEDOWN),
-                0x00E9 => Some(KEY_VOLUMEUP),
-                0x00CD => Some(KEY_PLAYPAUSE),
-                0x00B5 => Some(KEY_NEXTSONG),
-                0x00B6 => Some(KEY_PREVIOUSSONG),
-                0x00B7 => Some(KEY_STOPCD),
-                _ => None,
+        // Route the consumer usage via the best available backend, ensuring the press+release pair
+        // is delivered to the *same* backend. Virtio-input readiness can change asynchronously
+        // (when the guest sets `DRIVER_OK`), so without this tracking we'd risk leaving the USB
+        // consumer-control device stuck in a pressed state if the press was routed to USB and the
+        // release was routed to virtio.
+        let idx = usage as usize;
+        if idx < self.consumer_usage_backend.len() {
+            const BACKEND_USB: u8 = 1;
+            const BACKEND_VIRTIO: u8 = 2;
+            let prev = self.consumer_usage_backend[idx];
+
+            // Map the consumer usage to a virtio-input `KEY_*` code when supported by the Win7
+            // virtio-input driver (media keys subset).
+            //
+            // Note: this mapping is independent of whether virtio-input is currently `DRIVER_OK`;
+            // we use it for routing both press and release events (to keep pairs consistent).
+            let virtio_key = {
+                use aero_virtio::devices::input::*;
+                match usage {
+                    0x00E2 => Some(KEY_MUTE),
+                    0x00EA => Some(KEY_VOLUMEDOWN),
+                    0x00E9 => Some(KEY_VOLUMEUP),
+                    0x00CD => Some(KEY_PLAYPAUSE),
+                    0x00B5 => Some(KEY_NEXTSONG),
+                    0x00B6 => Some(KEY_PREVIOUSSONG),
+                    0x00B7 => Some(KEY_STOPCD),
+                    _ => None,
+                }
             };
-            if let Some(key) = linux_key {
-                self.inject_virtio_key(key, pressed);
+
+            if pressed {
+                if prev != 0 {
+                    // Duplicate keydown; ignore.
+                    return;
+                }
+                if self.virtio_input_keyboard_driver_ok() {
+                    if let Some(key) = virtio_key {
+                        self.inject_virtio_key(key, true);
+                        self.consumer_usage_backend[idx] = BACKEND_VIRTIO;
+                        return;
+                    }
+                }
+                if self.usb_hid_consumer_control.is_some() {
+                    self.inject_usb_hid_consumer_usage(u32::from(usage), true);
+                    self.consumer_usage_backend[idx] = BACKEND_USB;
+                }
                 return;
             }
+
+            // Release: prefer the backend that handled the press.
+            match prev {
+                BACKEND_VIRTIO => {
+                    if let Some(key) = virtio_key {
+                        self.inject_virtio_key(key, false);
+                    }
+                }
+                BACKEND_USB => {
+                    self.inject_usb_hid_consumer_usage(u32::from(usage), false);
+                }
+                _ => {
+                    // Unknown backend (e.g. snapshot restored into a new machine which does not
+                    // have the press->release pairing state). Best-effort release both backends so
+                    // we don't leave the guest stuck in a pressed state.
+                    if let Some(key) = virtio_key {
+                        self.inject_virtio_key(key, false);
+                    }
+                    self.inject_usb_hid_consumer_usage(u32::from(usage), false);
+                }
+            }
+            self.consumer_usage_backend[idx] = 0;
+            return;
         }
+
+        // Out-of-range consumer usage: best-effort fall back to the USB consumer-control device.
         self.inject_usb_hid_consumer_usage(u32::from(usage), pressed);
     }
 
@@ -9094,28 +9154,96 @@ impl Machine {
                     // Only Usage Page 0x0C ("Consumer") is supported by the canonical synthetic
                     // consumer-control device today.
                     if usage_page == 0x000c {
-                        // Prefer virtio-input when the virtio keyboard driver is active and the
-                        // usage is representable as a Linux `KEY_*` code (media keys subset).
-                        if use_virtio_keyboard {
-                            let usage16 = usage_id as u16;
-                            if let Some(code) = hid_consumer_usage_to_linux_key(usage16) {
-                                let Some(kbd) = &self.virtio_input_keyboard else {
+                        // Usage 0 means "no control"; ignore it. The synthetic consumer-control
+                        // device only supports `1..=0x03FF`.
+                        if usage_id == 0 || usage_id > 0x03ff {
+                            continue;
+                        }
+                        // Route the usage via the best available backend, ensuring the press+release
+                        // pair is delivered to the same backend even if virtio-input becomes ready
+                        // between calls.
+                        let idx = usage_id as usize;
+                        if idx < self.consumer_usage_backend.len() {
+                            const BACKEND_USB: u8 = 1;
+                            const BACKEND_VIRTIO: u8 = 2;
+                            let prev = self.consumer_usage_backend[idx];
+
+                            if pressed {
+                                if prev != 0 {
+                                    // Duplicate keydown; ignore.
                                     continue;
-                                };
-                                let mut dev = kbd.borrow_mut();
-                                let Some(input) = dev.device_mut::<VirtioInput>() else {
-                                    continue;
-                                };
-                                input.inject_key(code, pressed);
-                                virtio_input_dirty = true;
+                                }
+
+                                // Prefer virtio-input when the virtio keyboard driver is active and the
+                                // usage is representable as a Linux `KEY_*` code (media keys subset).
+                                if use_virtio_keyboard {
+                                    let usage16 = usage_id as u16;
+                                    if let Some(code) = hid_consumer_usage_to_linux_key(usage16) {
+                                        let Some(kbd) = &self.virtio_input_keyboard else {
+                                            continue;
+                                        };
+                                        let mut dev = kbd.borrow_mut();
+                                        let Some(input) = dev.device_mut::<VirtioInput>() else {
+                                            continue;
+                                        };
+                                        input.inject_key(code, true);
+                                        virtio_input_dirty = true;
+                                        self.consumer_usage_backend[idx] = BACKEND_VIRTIO;
+                                        continue;
+                                    }
+                                }
+
+                                // Otherwise fall back to the synthetic USB consumer-control device (when
+                                // available). This handles browser navigation keys (AC Back/Forward/etc.)
+                                // which are not currently modeled by the virtio-input keyboard.
+                                if self.usb_hid_consumer_control.is_some() {
+                                    self.inject_usb_hid_consumer_usage(usage_id, true);
+                                    self.consumer_usage_backend[idx] = BACKEND_USB;
+                                }
                                 continue;
                             }
-                        }
 
-                        // Otherwise fall back to the synthetic USB consumer-control device (when
-                        // available). This handles browser navigation keys (AC Back/Forward/etc.)
-                        // which are not currently modeled by the virtio-input keyboard.
-                        self.inject_usb_hid_consumer_usage(usage_id, pressed);
+                            // Release: prefer the backend that handled the press.
+                            match prev {
+                                BACKEND_VIRTIO => {
+                                    let usage16 = usage_id as u16;
+                                    if let Some(code) = hid_consumer_usage_to_linux_key(usage16) {
+                                        let Some(kbd) = &self.virtio_input_keyboard else {
+                                            continue;
+                                        };
+                                        let mut dev = kbd.borrow_mut();
+                                        let Some(input) = dev.device_mut::<VirtioInput>() else {
+                                            continue;
+                                        };
+                                        input.inject_key(code, false);
+                                        virtio_input_dirty = true;
+                                    }
+                                }
+                                BACKEND_USB => {
+                                    self.inject_usb_hid_consumer_usage(usage_id, false);
+                                }
+                                _ => {
+                                    // Unknown backend (e.g. snapshot restored into a new machine).
+                                    // Best-effort release both backends so we don't leave the guest
+                                    // stuck in a pressed state.
+                                    let usage16 = usage_id as u16;
+                                    if let Some(code) = hid_consumer_usage_to_linux_key(usage16) {
+                                        if let Some(kbd) = &self.virtio_input_keyboard {
+                                            let mut dev = kbd.borrow_mut();
+                                            if let Some(input) = dev.device_mut::<VirtioInput>() {
+                                                input.inject_key(code, false);
+                                                virtio_input_dirty = true;
+                                            }
+                                        }
+                                    }
+                                    self.inject_usb_hid_consumer_usage(usage_id, false);
+                                }
+                            }
+                            self.consumer_usage_backend[idx] = 0;
+                        } else {
+                            // Out-of-range consumer usage: best-effort fall back to USB.
+                            self.inject_usb_hid_consumer_usage(usage_id, pressed);
+                        }
                     }
                 }
                 TYPE_MOUSE_MOVE => {
@@ -9320,6 +9448,7 @@ impl Machine {
         self.serial_log.clear();
         self.debugcon_log.borrow_mut().clear();
         self.ps2_mouse_buttons = 0;
+        self.consumer_usage_backend.fill(0);
         self.guest_time.reset();
         self.uhci_ns_remainder = 0;
         self.ehci_ns_remainder = 0;
@@ -14313,6 +14442,11 @@ impl snapshot::SnapshotTarget for Machine {
         // restores guest device state; invalidate the cache so the next injection call can re-sync
         // correctly even if the guest mouse state differs from the cached host value.
         self.ps2_mouse_buttons = 0xFF;
+        // `consumer_usage_backend` tracks which input backend (virtio vs synthetic USB
+        // consumer-control) delivered the press for each consumer usage. Snapshot restore can be
+        // applied into a new machine instance that lacks this host-side pairing state, so drop any
+        // cached mapping after restore to avoid misrouting subsequent events.
+        self.consumer_usage_backend.fill(0);
         self.reset_latch.clear();
         self.assist = AssistContext::default();
         self.display_fb.clear();
