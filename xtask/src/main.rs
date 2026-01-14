@@ -130,8 +130,11 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
         check,
     )?;
 
-    let int_sanity = boot_sector_from_code(fixture_sources::int_sanity::CODE)?;
-    ensure_file(&boot_fixtures_dir.join("int_sanity.bin"), &int_sanity, check)?;
+    ensure_file(
+        &boot_fixtures_dir.join("int_sanity.bin"),
+        &fixture_sources::int_sanity::BIN,
+        check,
+    )?;
 
     // Legacy tiny boot fixtures at `tests/fixtures/*.bin` (generated here to
     // avoid requiring external assemblers like `nasm` / GNU `as` in CI).
