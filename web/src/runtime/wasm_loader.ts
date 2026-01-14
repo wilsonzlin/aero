@@ -2246,6 +2246,14 @@ export interface WasmApi {
      *
      * Optional while older WASM builds are still in circulation.
      */
+    /**
+     * Worker-side VM snapshot helpers (CPU/MMU/device state + full RAM streaming to OPFS) exposed
+     * as free functions.
+     *
+     * These are optional for older WASM builds; newer builds prefer {@link WorkerVmSnapshot}.
+     */
+    vm_snapshot_save_to_opfs?: (path: string, cpu: Uint8Array, mmu: Uint8Array, devices: unknown) => unknown;
+    vm_snapshot_restore_from_opfs?: (path: string) => unknown;
     WorkerVmSnapshot?: new (guestBase: number, guestSize: number) => {
         set_cpu_state_v2(cpuBytes: Uint8Array, mmuBytes: Uint8Array): void;
         add_device_state(id: number, version: number, flags: number, data: Uint8Array): void;
@@ -2549,7 +2557,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         MachineBootDevice: mod.MachineBootDevice,
         VirtioInputPciDevice: mod.VirtioInputPciDevice,
         SharedRingBuffer: mod.SharedRingBuffer,
-        open_ring_by_kind: mod.open_ring_by_kind,
+        open_ring_by_kind: mod.open_ring_by_kind ?? mod.openRingByKind,
         demo_render_rgba8888: mod.demo_render_rgba8888,
         UsbHidBridge: mod.UsbHidBridge,
         WebHidPassthroughBridge: mod.WebHidPassthroughBridge,
@@ -2576,6 +2584,28 @@ function toApi(mod: RawWasmModule): WasmApi {
         Machine: mod.Machine,
         WasmVm: mod.WasmVm,
         WasmTieredVm: mod.WasmTieredVm,
+        vm_snapshot_save_to_opfs:
+          mod.vm_snapshot_save_to_opfs ??
+          mod.vmSnapshotSaveToOpfs ??
+          mod.save_vm_snapshot_to_opfs ??
+          mod.saveVmSnapshotToOpfs ??
+          mod.snapshot_vm_to_opfs ??
+          mod.snapshotVmToOpfs ??
+          mod.snapshot_worker_vm_to_opfs ??
+          mod.snapshotWorkerVmToOpfs ??
+          mod.worker_vm_snapshot_to_opfs ??
+          mod.workerVmSnapshotToOpfs,
+        vm_snapshot_restore_from_opfs:
+          mod.vm_snapshot_restore_from_opfs ??
+          mod.vmSnapshotRestoreFromOpfs ??
+          mod.restore_vm_snapshot_from_opfs ??
+          mod.restoreVmSnapshotFromOpfs ??
+          mod.restore_snapshot_vm_from_opfs ??
+          mod.restoreSnapshotVmFromOpfs ??
+          mod.restore_worker_vm_snapshot_from_opfs ??
+          mod.restoreWorkerVmSnapshotFromOpfs ??
+          mod.snapshot_restore_vm_from_opfs ??
+          mod.snapshotRestoreVmFromOpfs,
         WorkerVmSnapshot: mod.WorkerVmSnapshot,
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,

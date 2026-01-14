@@ -142,6 +142,106 @@ describe("runtime/wasm_loader (optional exports)", () => {
     expect(api.open_ring_by_kind).toBe(open_ring_by_kind);
   });
 
+  it("supports camelCase openRingByKind export naming (surfaces as open_ring_by_kind)", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    class FakeSharedRingBuffer {
+      constructor(_buffer: SharedArrayBuffer, _offsetBytes: number) {}
+
+      capacity_bytes(): number {
+        return 0;
+      }
+      try_push(_payload: Uint8Array): boolean {
+        return true;
+      }
+      try_pop(): Uint8Array | null {
+        return null;
+      }
+      wait_for_data(): void {}
+      push_blocking(_payload: Uint8Array): void {}
+      pop_blocking(): Uint8Array {
+        return new Uint8Array();
+      }
+      free(): void {}
+    }
+
+    const openRingByKind = (_buffer: SharedArrayBuffer, _kind: number, _nth: number) => new FakeSharedRingBuffer(_buffer, 0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        SharedRingBuffer: FakeSharedRingBuffer,
+        openRingByKind,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.SharedRingBuffer).toBe(FakeSharedRingBuffer);
+    expect(api.open_ring_by_kind).toBe(openRingByKind);
+  });
+
+  it("surfaces vm_snapshot_save_to_opfs/vm_snapshot_restore_from_opfs when present", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    const vm_snapshot_save_to_opfs = () => {};
+    const vm_snapshot_restore_from_opfs = () => ({ cpu: new Uint8Array(), mmu: new Uint8Array(), devices: [] });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        vm_snapshot_save_to_opfs,
+        vm_snapshot_restore_from_opfs,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.vm_snapshot_save_to_opfs).toBe(vm_snapshot_save_to_opfs);
+    expect(api.vm_snapshot_restore_from_opfs).toBe(vm_snapshot_restore_from_opfs);
+  });
+
+  it("supports camelCase vmSnapshot* VM snapshot free-function exports (surfaced via vm_snapshot_* keys)", async () => {
+    const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
+
+    const vmSnapshotSaveToOpfs = () => {};
+    const vmSnapshotRestoreFromOpfs = () => ({ cpu: new Uint8Array(), mmu: new Uint8Array(), devices: [] });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroWasmJsImporterOverride = {
+      single: async () => ({
+        default: async (_input?: unknown) => {},
+        greet: (name: string) => `hello ${name}`,
+        add: (a: number, b: number) => a + b,
+        version: () => 1,
+        sum: (a: number, b: number) => a + b,
+        mem_store_u32: (_offset: number, _value: number) => {},
+        mem_load_u32: (_offset: number) => 0,
+        guest_ram_layout: (_desiredBytes: number) => ({ guest_base: 0, guest_size: 0, runtime_reserved: 0 }),
+        vmSnapshotSaveToOpfs,
+        vmSnapshotRestoreFromOpfs,
+      }),
+    };
+
+    const { api } = await initWasm({ variant: "single", module });
+    expect(api.vm_snapshot_save_to_opfs).toBe(vmSnapshotSaveToOpfs);
+    expect(api.vm_snapshot_restore_from_opfs).toBe(vmSnapshotRestoreFromOpfs);
+  });
+
   it("surfaces WebUsbUhciBridge when present", async () => {
     const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
