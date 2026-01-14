@@ -61,6 +61,11 @@ const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixe
 // In browser/WASM builds, the machine may copy guest-provided command streams and allocation
 // tables out of guest memory so they can be executed out-of-process (GPU worker). These sizes are
 // guest-controlled and must be bounded.
+// Keep tighter limits on wasm32 where heaps are typically smaller and extremely large allocation
+// tables are not expected.
+#[cfg(target_arch = "wasm32")]
+const MAX_AEROGPU_ALLOC_TABLE_BYTES: u32 = 4 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_AEROGPU_ALLOC_TABLE_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_PENDING_AEROGPU_SUBMISSIONS: usize = 256;
 
