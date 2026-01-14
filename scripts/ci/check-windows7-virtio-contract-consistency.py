@@ -1287,6 +1287,59 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
         else any_referenced_addreg_sections
     )
 
+    section_name_by_lower: dict[str, str] = {}
+    for name in defined_sections:
+        section_name_by_lower.setdefault(name.lower(), name)
+
+    def _section_label(key: str) -> str:
+        return section_name_by_lower.get(key.lower(), key)
+
+    def _collect_addreg_directives(*, from_sections: set[str] | None) -> list[str]:
+        directives: list[str] = []
+        current: str | None = None
+        for line_no, raw in enumerate(text.splitlines(), start=1):
+            if raw.lstrip().startswith(";"):
+                continue
+            active = _strip_inf_inline_comment(raw).strip()
+            if not active:
+                continue
+            m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", active)
+            if m:
+                current = m.group("section").strip().lower()
+                continue
+            if current is None:
+                continue
+            if from_sections is not None and current not in from_sections:
+                continue
+            m = re.match(r"^\s*AddReg\s*=\s*(?P<rhs>.+)$", active, flags=re.I)
+            if not m:
+                continue
+            directives.append(f"{inf_path.as_posix()}:{line_no}: [{_section_label(current)}] {active}")
+        return directives
+
+    addreg_directives = _collect_addreg_directives(from_sections=active_install_sections or None)
+    reachability_context = [
+        "install-reachability context:",
+        "install sections considered:",
+        *(
+            [f"- [{_section_label(s)}]" for s in sorted(active_install_sections)]
+            if active_install_sections
+            else ["- (none found; using all AddReg directives)"]
+        ),
+        "referenced AddReg sections:",
+        *(
+            [f"- [{_section_label(s)}]" for s in sorted(referenced_addreg_sections)]
+            if referenced_addreg_sections
+            else ["- (none)"]
+        ),
+        "AddReg directive(s):",
+        *(
+            [f"- {d}" for d in addreg_directives]
+            if addreg_directives
+            else ["- (none found)"]
+        ),
+    ]
+
     line_sections = _parse_inf_line_sections(text)
 
     def _is_in_referenced_addreg_section(line_no: int) -> bool:
@@ -1307,6 +1360,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 [
                     'expected something like: HKR, "Interrupt Management",,0x00000010',
                     "hint: required for MSI/MSI-X opt-in on Windows 7",
+                    *reachability_context,
                 ],
             )
         )
@@ -1317,6 +1371,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 f"{inf_path.as_posix()}: missing MSISupported AddReg entry:",
                 [
                     'expected: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, ..., 1',
+                    *reachability_context,
                 ],
             )
         )
@@ -1329,6 +1384,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                     [
                         f"values found: {sorted(values)}",
                         *[o.raw_line for o in msi_supported_entries],
+                        *reachability_context,
                     ],
                 )
             )
@@ -1341,6 +1397,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 f"{inf_path.as_posix()}: missing MessageNumberLimit AddReg entry:",
                 [
                     'expected: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, ..., <n>',
+                    *reachability_context,
                 ],
             )
         )
@@ -1353,6 +1410,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                     [
                         f"values found: {sorted(limits)}",
                         *[o.raw_line for o in msg_limit_entries],
+                        *reachability_context,
                     ],
                 )
             )
@@ -1365,6 +1423,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                         [
                             f"got: {limit}",
                             *[o.raw_line for o in msg_limit_entries],
+                            *reachability_context,
                         ],
                     )
                 )
@@ -1377,6 +1436,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                             f"got: {limit}",
                             "expected: <= 2048 (PCI MSI-X Table Size limit)",
                             *[o.raw_line for o in msg_limit_entries],
+                            *reachability_context,
                         ],
                     )
                 )
@@ -1388,6 +1448,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                             f"minimum: {min_limit}",
                             f"got:     {limit}",
                             *[o.raw_line for o in msg_limit_entries],
+                            *reachability_context,
                         ],
                     )
                 )
@@ -1439,11 +1500,16 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
     hw_section_keys = [k for k in hw_section_keys if not (k in seen_hw or seen_hw.add(k))]
 
     if not hw_section_keys:
+        hw_sections_present = [name for name in section_names.values() if name.lower().endswith(".hw")]
+        hw_sections_present.sort(key=lambda s: s.lower())
         errors.append(
             format_error(
                 f"{inf_path.as_posix()}: could not locate any reachable .HW sections to validate MSI settings reachability:",
                 [
                     "expected at least one [<InstallSection>*.HW] section referenced by Models.",
+                    f"models install section base(s): {sorted(install_bases) if install_bases else '(none)'}",
+                    "HW sections present in INF:",
+                    *(hw_sections_present if hw_sections_present else ["(none)"]),
                 ],
             )
         )
