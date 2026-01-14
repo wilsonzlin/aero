@@ -1178,6 +1178,7 @@ int main(int argc, char** argv) {
       "d3d10_map_do_not_wait",
       "d3d10_shared_surface_ipc",
       "d3d10_1_triangle",
+      "d3d10_1_rs_om_state_sanity",
       "d3d10_1_map_do_not_wait",
       "d3d10_1_shared_surface_ipc",
       "d3d10_caps_smoke",
