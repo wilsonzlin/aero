@@ -78,6 +78,10 @@ let started = false;
 let vmSnapshotPaused = false;
 let machineBusy = false;
 const machineIdleWaiters: Array<() => void> = [];
+let runLoopWakeResolve: (() => void) | null = null;
+let runLoopWakePromise: Promise<void> = new Promise((resolve) => {
+  runLoopWakeResolve = resolve;
+});
 
 function setMachineBusy(busy: boolean): void {
   machineBusy = busy;
@@ -91,6 +95,20 @@ function setMachineBusy(busy: boolean): void {
       // ignore
     }
   }
+}
+
+function wakeRunLoop(): void {
+  const resolve = runLoopWakeResolve;
+  if (resolve) {
+    try {
+      resolve();
+    } catch {
+      // ignore
+    }
+  }
+  runLoopWakePromise = new Promise((next) => {
+    runLoopWakeResolve = next;
+  });
 }
 
 let pendingBootDisks: SetBootDisksMessage | null = null;
@@ -922,7 +940,10 @@ async function runLoop(): Promise<void> {
       }
 
       if (!running || !machine || vmSnapshotPaused || machineBusy) {
-        await ring.waitForDataAsync(HEARTBEAT_INTERVAL_MS);
+        // The run loop waits primarily on coordinator-issued commands (via the command ring),
+        // but snapshot orchestration and input delivery arrive via `postMessage`. Race the ring
+        // wait against a lightweight JS wakeup promise so we respond promptly to those messages.
+        await Promise.race([ring.waitForDataAsync(HEARTBEAT_INTERVAL_MS), runLoopWakePromise]);
         continue;
       }
 
@@ -1106,6 +1127,7 @@ ctx.onmessage = (ev) => {
       case "vm.snapshot.resume": {
         vmSnapshotPaused = false;
         postVmSnapshot({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+        wakeRunLoop();
         return;
       }
       case "vm.snapshot.machine.saveToOpfs": {
@@ -1129,6 +1151,7 @@ ctx.onmessage = (ev) => {
           return;
         }
         pendingMachineOps.push({ kind: "vm.machine.saveToOpfs", requestId, path });
+        wakeRunLoop();
         return;
       }
       case "vm.snapshot.machine.restoreFromOpfs": {
@@ -1153,6 +1176,7 @@ ctx.onmessage = (ev) => {
           return;
         }
         pendingMachineOps.push({ kind: "vm.machine.restoreFromOpfs", requestId, path });
+        wakeRunLoop();
         return;
       }
     }
@@ -1172,6 +1196,7 @@ ctx.onmessage = (ev) => {
       return;
     }
     pendingMachineOps.push({ kind: "machine.restoreFromOpfs", requestId, path });
+    wakeRunLoop();
     return;
   }
 
@@ -1188,6 +1213,7 @@ ctx.onmessage = (ev) => {
       return;
     }
     pendingMachineOps.push({ kind: "machine.restore", requestId, bytes: new Uint8Array(bytes) });
+    wakeRunLoop();
     return;
   }
 
@@ -1215,6 +1241,7 @@ ctx.onmessage = (ev) => {
     postBootDeviceSelected(bootDevice);
 
     pendingBootDisks = bootDisks;
+    wakeRunLoop();
     return;
   }
 
@@ -1223,6 +1250,7 @@ ctx.onmessage = (ev) => {
     currentConfig = update.config;
     currentConfigVersion = update.version;
     networkWanted = isNetworkingEnabled(currentConfig);
+    wakeRunLoop();
     post({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
     return;
   }
