@@ -831,22 +831,11 @@ static bool EmitBindShadersCmdLocked(Device* dev,
     return false;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  auto* cmd = dev->cmd.bind_shaders_with_gs(vs, ps, cs, gs);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
     return false;
   }
-  cmd->vs = vs;
-  cmd->ps = ps;
-  cmd->cs = cs;
-  // Geometry shader (GS) handle is carried via `reserved0` for legacy compatibility.
-  //
-  // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
-  // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
-  // hosts/tools can still observe a bound GS. When present, the appended `{gs,hs,ds}` handles are
-  // authoritative; `reserved0` is only a legacy compatibility mirror. If mirrored, it should match
-  // the appended `gs` handle.
-  cmd->reserved0 = gs;
   return true;
 }
 

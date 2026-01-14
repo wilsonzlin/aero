@@ -7254,24 +7254,13 @@ static bool EmitBindShadersCmdLocked(AeroGpuDevice* dev,
   if (!dev) {
     return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  auto* cmd = dev->cmd.bind_shaders_with_gs(vs, ps, /*cs=*/0, gs);
   if (!cmd) {
     D3D10DDI_HDEVICE hDevice{};
     hDevice.pDrvPrivate = dev;
     SetError(hDevice, E_OUTOFMEMORY);
     return false;
   }
-  cmd->vs = vs;
-  cmd->ps = ps;
-  cmd->cs = 0;
-  // `reserved0` is interpreted as the optional geometry shader handle (legacy compat).
-  //
-  // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
-  // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
-  // hosts/tools can still observe a bound GS. When present, the appended `{gs,hs,ds}` handles are
-  // authoritative; `reserved0` is only a legacy compatibility mirror. If mirrored, it should match
-  // the appended `gs` handle.
-  cmd->reserved0 = gs;
   return true;
 }
 
@@ -7637,15 +7626,11 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_dsv = 0;
   dev->current_dsv_res = nullptr;
 
-  auto* bind_cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  auto* bind_cmd = dev->cmd.bind_shaders(/*vs=*/0, /*ps=*/0, /*cs=*/0);
   if (!bind_cmd) {
     SetError(hDevice, E_OUTOFMEMORY);
     return;
   }
-  bind_cmd->vs = 0;
-  bind_cmd->ps = 0;
-  bind_cmd->cs = 0;
-  bind_cmd->reserved0 = 0;
   dev->current_vs = 0;
   dev->current_ps = 0;
   dev->current_gs = 0;

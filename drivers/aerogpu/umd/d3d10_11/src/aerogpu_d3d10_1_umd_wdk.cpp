@@ -7545,15 +7545,11 @@ static bool EmitBindShadersCmdLocked(AeroGpuDevice* dev,
   if (!dev) {
     return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  auto* cmd = dev->cmd.bind_shaders_with_gs(vs, ps, /*cs=*/0, gs);
   if (!cmd) {
     set_error(dev, E_OUTOFMEMORY);
     return false;
   }
-  cmd->vs = vs;
-  cmd->ps = ps;
-  cmd->cs = 0;
-  cmd->reserved0 = gs;
   return true;
 }
 
@@ -8104,15 +8100,11 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_dsv = 0;
   dev->current_dsv_res = nullptr;
 
-  auto* bind_cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  auto* bind_cmd = dev->cmd.bind_shaders(/*vs=*/0, /*ps=*/0, /*cs=*/0);
   if (!bind_cmd) {
     set_error(dev, E_OUTOFMEMORY);
     return;
   }
-  bind_cmd->vs = 0;
-  bind_cmd->ps = 0;
-  bind_cmd->cs = 0;
-  bind_cmd->reserved0 = 0;
   dev->current_vs = 0;
   dev->current_ps = 0;
   dev->current_gs = 0;
