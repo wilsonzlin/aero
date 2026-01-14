@@ -55,7 +55,7 @@ fn build_boot_sector_select_page1_write_space_disable_cursor() -> [u8; 512] {
 }
 
 #[test]
-fn int10_active_page_select_makes_page_visible_via_crtc_start_address() {
+fn boot_int10_active_page_select_makes_page_visible_via_crtc_start_address() {
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,

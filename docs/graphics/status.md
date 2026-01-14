@@ -89,7 +89,7 @@ Code pointers:
 Test pointers:
 
 - [`crates/aero-machine/tests/boot_int10_vbe_sets_mode.rs`](../../crates/aero-machine/tests/boot_int10_vbe_sets_mode.rs) (INT 10h VBE mode set)
-- [`crates/aero-machine/tests/int10_active_page_renders_text.rs`](../../crates/aero-machine/tests/int10_active_page_renders_text.rs) (text mode active-page behavior)
+- [`crates/aero-machine/tests/boot_int10_active_page_renders_text.rs`](../../crates/aero-machine/tests/boot_int10_active_page_renders_text.rs) (text mode active-page behavior)
 - [`crates/aero-machine/tests/vga_vbe_lfb_pci.rs`](../../crates/aero-machine/tests/vga_vbe_lfb_pci.rs) (VBE LFB routed via PCI stub)
 
 ### Implemented today: AeroGPU boot-display foundation (`enable_aerogpu=true`)
