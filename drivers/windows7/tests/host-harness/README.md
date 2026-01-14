@@ -799,7 +799,7 @@ To enable end-to-end testing:
 1. Provision the guest image so the scheduled selftest runs with `--test-input-tablet-events`
    (alias: `--test-tablet-events`; for example via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents` / `-TestTabletEvents`,
    or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
-   - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+    - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
       HID interface.
       - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
         `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
