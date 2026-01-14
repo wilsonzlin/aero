@@ -1067,13 +1067,13 @@ impl UsbHidPassthroughBridge {
         &mut self,
         request_id: u32,
         report_id: u32,
-        error: Option<String>,
+        _error: Option<String>,
     ) -> Result<bool, JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         Ok(self
             .device
-            .fail_feature_report_request(request_id, report_id, error))
+            .fail_feature_report_request(request_id, report_id))
     }
 
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
@@ -1204,13 +1204,13 @@ impl WebHidPassthroughBridge {
         &mut self,
         request_id: u32,
         report_id: u32,
-        error: Option<String>,
+        _error: Option<String>,
     ) -> Result<bool, JsValue> {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         Ok(self
             .device
-            .fail_feature_report_request(request_id, report_id, error))
+            .fail_feature_report_request(request_id, report_id))
     }
 
     /// Whether the guest has configured the USB device (SET_CONFIGURATION != 0).
