@@ -204,9 +204,11 @@ impl AerogpuShaderStage {
 /// Numeric values intentionally match the D3D DXBC "program type" numbers used in the shader
 /// version token: Pixel=0, Vertex=1, Geometry=2, Hull=3, Domain=4, Compute=5.
 ///
-/// Because `reserved0 == 0` is reserved for "no override", `stage_ex` cannot encode Pixel (0).
-/// This is not a limitation in practice because Pixel/Vertex shaders are already expressible via
-/// [`AerogpuShaderStage`].
+/// `stage_ex` can only represent the non-legacy stages because:
+/// - `reserved0 == 0` is reserved for "no override" (legacy Compute), so `stage_ex` cannot encode
+///   Pixel (0), and
+/// - Vertex (1) must be encoded via the legacy `shader_stage = Vertex` for clarity; `reserved0 == 1`
+///   is intentionally invalid and must be rejected by decoders.
 ///
 /// [`AerogpuShaderStageEx::Compute`] (5) is accepted by [`resolve_stage`] and treated the same as
 /// "no override" (Compute). Writers should emit 0 for Compute to preserve legacy packet semantics.

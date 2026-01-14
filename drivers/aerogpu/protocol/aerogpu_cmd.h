@@ -198,15 +198,17 @@ enum aerogpu_shader_stage {
  * the shader version token:
  *   Pixel=0, Vertex=1, Geometry=2, Hull=3, Domain=4, Compute=5.
  *
- * Because `reserved0 == 0` is reserved for "no override", `stage_ex` cannot
- * encode Pixel (0). This is not a limitation in practice because Pixel/Vertex
- * shaders are already expressible via `enum aerogpu_shader_stage`.
+ * `stage_ex` can only represent the non-legacy stages because:
+ * - `reserved0 == 0` is reserved for "no override" (legacy Compute), so `stage_ex`
+ *   cannot encode Pixel (0), and
+ * - Vertex (1) must be encoded via the legacy `shader_stage = VERTEX` for clarity;
+ *   `reserved0 == 1` is intentionally invalid and must be rejected by decoders.
  *
  * `AEROGPU_SHADER_STAGE_EX_COMPUTE` (5) is accepted by decoders and treated the
  * same as "no override" (Compute). Writers should emit 0 for Compute to preserve
  * legacy packet semantics.
  */
- enum aerogpu_shader_stage_ex {
+enum aerogpu_shader_stage_ex {
   /* 0 = no stage_ex override (legacy Compute). */
   AEROGPU_SHADER_STAGE_EX_NONE = 0,
   AEROGPU_SHADER_STAGE_EX_GEOMETRY = 2,
