@@ -492,6 +492,7 @@ On a Win7 guest, `aerogpu_dbgctl.exe` is shipped on the Guest Tools ISO/zip unde
 
 - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+- Optional top-level tools payload (when present): `<GuestToolsDrive>:\tools\aerogpu_dbgctl.exe` (or under `<GuestToolsDrive>:\tools\*\aerogpu_dbgctl.exe`)
 
 ```cmd
 cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin
@@ -505,6 +506,8 @@ If your Guest Tools ISO is mounted as `X:` (common), these are copy/pastable:
 X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-createalloc
 :: Win7 x86:
 X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-createalloc
+:: Optional top-level tools payload (when present):
+X:\tools\aerogpu_dbgctl.exe --dump-createalloc
 ```
 
 This includes `flags_in` (the incoming `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime) and `flags_out` (after the
