@@ -3443,7 +3443,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
          * dxgkrnl typically re-enables via DxgkDdiControlInterrupt, but some
          * transition paths assume the miniport restores its prior state.
          */
-        if (adapter->PostDisplayVblankWasEnabled && adapter->SupportsVblank &&
+        if (poweredOn && adapter->PostDisplayVblankWasEnabled && adapter->SupportsVblank &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
