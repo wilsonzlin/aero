@@ -5771,9 +5771,12 @@ function renderAudioPanel(): HTMLElement {
         try {
           const files = entries.map((e) => ({ path: e.path, bytes: e.data.byteLength }));
           files.sort((a, b) => a.path.localeCompare(b.path));
+          const totalBytes = files.reduce((sum, f) => sum + (typeof f.bytes === "number" && Number.isFinite(f.bytes) ? f.bytes : 0), 0);
           entries.push({
             path: `${dir}/manifest.json`,
-            data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), files }, null, 2)),
+            data: encoder.encode(
+              JSON.stringify({ timeIso, build: getBuildInfoForExport(), fileCount: files.length, totalBytes, files }, null, 2),
+            ),
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
