@@ -24920,8 +24920,8 @@ fn cs_main() {
                 }
             };
 
-            let storage_align = (exec.device.limits().min_storage_buffer_offset_alignment as u64)
-                .max(1);
+            let storage_align =
+                (exec.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
             if storage_align <= wgpu::COPY_BUFFER_ALIGNMENT {
                 skip_or_panic(
                     module_path!(),
@@ -24994,7 +24994,9 @@ fn cs_main() {
             let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(std::slice::from_ref(&binding))],
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    std::slice::from_ref(&binding),
+                )],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("build pipeline bindings");
@@ -25057,7 +25059,8 @@ fn cs_main() {
                 cbuffer_scratch: &exec.cbuffer_scratch,
                 srv_buffer_scratch: &exec.srv_buffer_scratch,
                 storage_align,
-                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size as u64,
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size
+                    as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
