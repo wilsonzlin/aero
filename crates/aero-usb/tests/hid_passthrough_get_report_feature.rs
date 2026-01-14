@@ -372,3 +372,72 @@ fn snapshot_restore_requeues_inflight_feature_report_request() {
         ControlResponse::Data(vec![7, 0xAA, 0xBB, 0xCC])
     );
 }
+
+#[test]
+fn snapshot_restore_does_not_requeue_failed_feature_report_request() {
+    let report = sample_feature_report_descriptor_with_id();
+    let mut dev = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report.clone(),
+        false,
+        None,
+        None,
+        None,
+    );
+
+    let setup = SetupPacket {
+        bm_request_type: 0xa1,
+        b_request: HID_REQUEST_GET_REPORT,
+        w_value: (3u16 << 8) | 7u16,
+        w_index: 0,
+        w_length: 4,
+    };
+
+    assert_eq!(dev.handle_control_request(setup, None), ControlResponse::Nak);
+    let req = dev
+        .pop_feature_report_request()
+        .expect("expected queued feature report request");
+    assert!(dev.fail_feature_report_request(req.request_id, req.report_id));
+
+    // Snapshot after the host has failed the request but before the guest has observed the
+    // resulting timeout.
+    let snapshot = dev.save_state();
+
+    let mut restored = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        report,
+        false,
+        None,
+        None,
+        None,
+    );
+    restored
+        .load_state(&snapshot)
+        .expect("snapshot restore should succeed");
+
+    // The failed request should not be re-queued to the host runtime; the guest will see a Timeout
+    // on its next poll and then re-issue a new request.
+    assert!(restored.pop_feature_report_request().is_none());
+    assert_eq!(
+        restored.handle_control_request(setup, None),
+        ControlResponse::Timeout
+    );
+
+    // Next poll should enqueue a fresh request.
+    assert_eq!(
+        restored.handle_control_request(setup, None),
+        ControlResponse::Nak
+    );
+    let req2 = restored
+        .pop_feature_report_request()
+        .expect("expected new feature report request");
+    assert_ne!(req2, req);
+}

@@ -2134,7 +2134,7 @@ fn make_port_status_change_event_trb(port_id: u8) -> Trb {
 }
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 3);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 4);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_USBCMD: u16 = 1;

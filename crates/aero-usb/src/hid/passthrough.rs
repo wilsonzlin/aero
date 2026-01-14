@@ -2070,7 +2070,8 @@ impl IoSnapshot for UsbHidPassthrough {
         // host runtime no longer has a way to rediscover the request.
         //
         // Make snapshot restore deterministic by re-queuing any in-flight requests so the host can
-        // service them again after restore.
+        // service them again after restore. Requests that have already failed (and will return
+        // `Timeout` to the guest on the next poll) are intentionally not re-queued.
         for req in &self.feature_report_request_queue {
             self.feature_report_requests_pending
                 .entry(req.report_id)
@@ -2083,6 +2084,10 @@ impl IoSnapshot for UsbHidPassthrough {
 
         self.feature_report_request_queue.retain(|req| {
             self.feature_report_requests_pending.get(&req.report_id) == Some(&req.request_id)
+                && self
+                    .feature_report_requests_failed
+                    .get(&req.report_id)
+                    != Some(&req.request_id)
         });
 
         let mut queued = BTreeSet::<u32>::new();
@@ -2090,6 +2095,11 @@ impl IoSnapshot for UsbHidPassthrough {
             queued.insert(req.request_id);
         }
         for (&report_id, &request_id) in &self.feature_report_requests_pending {
+            if self.feature_report_requests_failed.get(&report_id) == Some(&request_id) {
+                // Failed requests are surfaced to the guest as `Timeout` and then cleared; they do
+                // not need to be re-queued to the host runtime.
+                continue;
+            }
             if queued.contains(&request_id) {
                 continue;
             }
