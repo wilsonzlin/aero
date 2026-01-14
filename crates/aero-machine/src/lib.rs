@@ -620,7 +620,8 @@ pub struct MachineConfig {
     /// - BAR1: a dedicated VRAM aperture:
     ///   - the legacy VGA window (`0xA0000..0xC0000`) is an alias of `VRAM[0..0x20000)` (128KiB),
     ///   - the first 256KiB is reserved for legacy VGA planar storage (4 × 64KiB planes), and
-    ///   - the BIOS VBE linear framebuffer begins at `BAR1_BASE + VBE_LFB_OFFSET` (`0x40000`).
+    ///   - the BIOS VBE linear framebuffer begins at `BAR1_BASE + VBE_LFB_OFFSET` (`0x40000`,
+    ///     `AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`).
     ///
     /// This is the foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
     /// firmware/bootloader compatibility and for the guest WDDM driver to claim scanout.
