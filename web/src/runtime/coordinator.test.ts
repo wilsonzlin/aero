@@ -1599,6 +1599,71 @@ describe("runtime/coordinator", () => {
     expect(((coordinator as unknown as CoordinatorTestHarness).pendingAerogpuSubmissions as unknown[]).length).toBe(0);
   });
 
+  it("falls back to posting submit_aerogpu without a transfer list if the transfer list is rejected", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
+
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.gpu as { instanceId: number; worker: MockWorker };
+    const cpuWorker = cpuInfo.worker;
+    const gpuWorker = gpuInfo.worker;
+
+    // Bring GPU worker to READY so the coordinator attempts to post submits immediately.
+    gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
+
+    cpuWorker.posted.length = 0;
+    gpuWorker.posted.length = 0;
+
+    const postAttempts: Array<{ hasTransfer: boolean }> = [];
+    const originalPostMessage = gpuWorker.postMessage.bind(gpuWorker);
+    gpuWorker.postMessage = (message: unknown, transfer?: unknown[]) => {
+      postAttempts.push({ hasTransfer: Array.isArray(transfer) && transfer.length > 0 });
+      if (transfer && transfer.length > 0) {
+        throw new Error("transfer list rejected");
+      }
+      return originalPostMessage(message, transfer);
+    };
+
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      kind: "aerogpu.submit",
+      contextId: 0,
+      signalFence: 42n,
+      cmdStream: new Uint8Array([1, 2, 3]).buffer,
+    });
+
+    expect(postAttempts.length).toBe(2);
+    expect(postAttempts[0]?.hasTransfer).toBe(true);
+    expect(postAttempts[1]?.hasTransfer).toBe(false);
+
+    const submitMsg = lastMessageOfType(gpuWorker, "submit_aerogpu") as { requestId?: unknown; signalFence?: unknown } | undefined;
+    expect(submitMsg?.signalFence).toBe(42n);
+    expect(typeof submitMsg?.requestId).toBe("number");
+
+    // Ensure we didn't force-complete the fence just because the transfer-list post failed (we
+    // should only force-complete if both transfer and structured clone fail).
+    expect(cpuWorker.posted.some((p) => (p.message as { kind?: unknown }).kind === "aerogpu.complete_fence")).toBe(false);
+
+    // GPU worker reports submit_complete; coordinator should forward the fence completion and drop tracking.
+    const requestId = submitMsg!.requestId as number;
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("gpu", gpuInfo.instanceId, {
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "submit_complete",
+      requestId,
+      completedFence: 42n,
+    });
+
+    expect(cpuWorker.posted).toContainEqual({
+      message: { kind: "aerogpu.complete_fence", fence: 42n },
+      transfer: undefined,
+    });
+    expect(((coordinator as unknown as CoordinatorTestHarness).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
+  });
+
   it("rejects pending net trace requests when the net worker is terminated", async () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
