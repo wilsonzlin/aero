@@ -178,7 +178,10 @@ python3 tools/disk-streaming-conformance/conformance.py \
 
 Chunked mode will verify `chunks[i].sha256` for the sampled chunks when present.
 
-Note: The tool sends a browser-like `Accept-Encoding` (e.g. `gzip, deflate, br, zstd`) to match real `fetch()` behavior. For compatibility with Aero’s reference clients and tooling, it requires both `manifest.json` and chunk objects to be served with `Content-Encoding` absent or `identity` (i.e. no compression transforms).
+Note: The tool sends a browser-like `Accept-Encoding` (e.g. `gzip, deflate, br, zstd`) to match real `fetch()` behavior. For compatibility with Aero’s reference clients and tooling, it requires both `manifest.json` and chunk objects to be served with:
+
+- `Content-Encoding` absent or `identity` (i.e. no compression transforms)
+- `Cache-Control` including `no-transform` (defence-in-depth against intermediary transforms)
 
 ### Private chunked image (Authorization header)
 
@@ -293,7 +296,7 @@ Summary: 19 passed, 0 failed, 0 warned, 2 skipped
 - Missing/mismatched `ETag` on `304 Not Modified` responses
 - Missing recommended content headers (e.g. `X-Content-Type-Options: nosniff`)
 - Unexpected `Content-Encoding` (disk bytes must be served as identity / no compression transforms)
-- (Chunked mode) manifest/chunk caching headers missing `immutable` and/or `no-transform` (recommended for versioned, CDN-hosted artifacts)
+- (Chunked mode) manifest/chunk caching headers missing `immutable` (recommended for versioned, CDN-hosted artifacts)
 - Private responses missing `Cache-Control: no-store`
 - `If-Range` mismatch returning `412` instead of `200`
 - `If-Modified-Since` not returning `304` (this check is WARN-only by default)
