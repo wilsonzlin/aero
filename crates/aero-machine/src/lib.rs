@@ -1860,28 +1860,6 @@ impl PciDevice for EhciPciConfigDevice {
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
 
-struct AeroGpuPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AeroGpuPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for AeroGpuPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
 struct VgaPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -1916,28 +1894,6 @@ impl VgaPciConfigDevice {
 }
 
 impl PciDevice for VgaPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
-struct AeroGpuPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AeroGpuPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for AeroGpuPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.cfg
     }
