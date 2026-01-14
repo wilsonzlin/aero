@@ -2,13 +2,15 @@
 
 ## Overview
 
-Aero can use **raw disk images** in two ways:
+Aero can use **disk images** in two ways:
 
 1. **Local images**: you provide a file (or one is generated) and Aero stores it in browser storage
-   (OPFS preferred; IndexedDB fallback in some environments).
+   (OPFS preferred; IndexedDB fallback in some environments). Local import flows can accept common
+   container formats (e.g. qcow2/VHD) and convert them into Aero’s internal sparse-on-OPFS format
+   (`AEROSPAR`) for efficient random access. See: [`16-disk-image-management.md`](./16-disk-image-management.md).
 2. **Streaming images**: you provide a **URL** to a remote image and Aero reads it lazily, caching only the blocks/chunks it actually touches.
-   - **HTTP Range** (single file): fetches with `Range: bytes=...`
-   - **Chunked manifest** (many files): fetches `manifest.json` + `chunks/*.bin` with plain `GET` (no `Range` header)
+    - **HTTP Range** (single file): fetches with `Range: bytes=...`
+    - **Chunked manifest** (many files): fetches `manifest.json` + `chunks/*.bin` with plain `GET` (no `Range` header)
 
 Streaming is essential for very large images (20GB+) because it avoids a full upfront download.
 
@@ -90,6 +92,13 @@ Chunked streaming avoids `Range` requests entirely (and therefore can avoid CORS
 - The client reads the manifest once, then fetches chunks with plain `GET`.
 
 See the full format spec: [`18-chunked-disk-image-format.md`](./18-chunked-disk-image-format.md).
+
+To generate a chunked image (manifest + chunks) from a local disk image, use the reference tooling:
+
+- [`tools/image-chunker/`](../tools/image-chunker/README.md) (`aero-image-chunker publish`)
+  - Supports `publish --format` to publish the **logical disk byte stream** for container formats
+    (qcow2/VHD/AeroSparse), not just raw `.img` files.
+  - Provides `aero-image-chunker verify` to validate a published image end-to-end.
 
 ## Inspecting streaming performance (telemetry + controls)
 
