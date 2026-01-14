@@ -124,6 +124,7 @@ call :log "Script dir: %SCRIPT_DIR%"
 call :log "System tools: %SYS32%"
 call :log "Logs: %LOG%"
 call :log_manifest
+call :warn_if_installed_media_mismatch
 if "%ARG_SKIP_STORAGE%"=="0" (
   rem Clear any stale marker from a previous /skipstorage run as early as possible so
   rem diagnostics reflect the current invocation even if setup fails before the storage step.
@@ -258,6 +259,7 @@ call :log_manifest
 if not defined GT_MANIFEST (
   call :log "INFO: Guest Tools manifest.json not found; using legacy defaults."
 )
+call :warn_if_installed_media_mismatch
 call :validate_manifest_signing_policy || goto :check_fail
 call :detect_arch || goto :check_fail
 call :load_signing_policy
@@ -787,6 +789,57 @@ endlocal & (
   set "GT_PARSED_SIGNING_POLICY=%GT_PARSED_SIGNING_POLICY%"
   set "GT_PARSED_CERTS_REQUIRED=%GT_PARSED_CERTS_REQUIRED%"
 ) & exit /b 0
+
+:warn_if_installed_media_mismatch
+rem Best-effort "mixed media" warning: if setup.cmd was previously run from one Guest Tools build,
+rem warn when the currently-running media does not match the recorded installed-media.txt.
+rem This helps catch cases where users merge folders from different ISO/zip versions.
+setlocal EnableDelayedExpansion
+if not exist "%STATE_INSTALLED_MEDIA%" (
+  endlocal & exit /b 0
+)
+
+set "IM_VERSION="
+set "IM_BUILD_ID="
+set "IM_SIGNING_POLICY="
+set "IM_MANIFEST_SHA256="
+for /f "tokens=1,* delims==" %%A in ('type "%STATE_INSTALLED_MEDIA%" 2^>nul') do (
+  if /i "%%A"=="GT_VERSION" set "IM_VERSION=%%B"
+  if /i "%%A"=="GT_BUILD_ID" set "IM_BUILD_ID=%%B"
+  if /i "%%A"=="GT_SIGNING_POLICY" set "IM_SIGNING_POLICY=%%B"
+  if /i "%%A"=="manifest_sha256" set "IM_MANIFEST_SHA256=%%B"
+)
+
+set "MISMATCH=0"
+set "REASON="
+
+if defined IM_VERSION if defined GT_VERSION (
+  if /i not "!IM_VERSION!"=="!GT_VERSION!" (
+    set "MISMATCH=1"
+    set "REASON=version mismatch"
+  )
+)
+if defined IM_BUILD_ID if defined GT_BUILD_ID (
+  if /i not "!IM_BUILD_ID!"=="!GT_BUILD_ID!" (
+    set "MISMATCH=1"
+    if defined REASON (set "REASON=!REASON!, build_id mismatch") else set "REASON=build_id mismatch"
+  )
+)
+if defined IM_SIGNING_POLICY if defined GT_SIGNING_POLICY (
+  if /i not "!IM_SIGNING_POLICY!"=="!GT_SIGNING_POLICY!" (
+    set "MISMATCH=1"
+    if defined REASON (set "REASON=!REASON!, signing_policy mismatch") else set "REASON=signing_policy mismatch"
+  )
+)
+
+if "%MISMATCH%"=="1" (
+  call :log ""
+  call :log "WARNING: Installed media differs from the current Guest Tools media (!REASON!)."
+  call :log "         This can indicate mixed/corrupted media (merged ISO/zip versions)."
+  call :log "         Installed media record: %STATE_INSTALLED_MEDIA%"
+)
+
+endlocal & exit /b 0
 
 :write_installed_media_state
 setlocal EnableDelayedExpansion
