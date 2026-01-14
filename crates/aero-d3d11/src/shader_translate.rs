@@ -1553,9 +1553,6 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
             }
             Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }
-            | Sm4Inst::Itof { dst: _, src }
-            | Sm4Inst::Ftoi { dst: _, src }
-            | Sm4Inst::Ftou { dst: _, src }
             | Sm4Inst::Not { dst: _, src }
             | Sm4Inst::Clip { src }
             | Sm4Inst::IAbs { dst: _, src }
