@@ -69,7 +69,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Disabled by default; enable with `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`).
     - Coordinates with the host harness to deterministically toggle link state via QMP `set_link`:
       - Guest emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY`
-      - Host flaps link down/up (default: 2s down)
+      - Host flaps link down/up (default: 3s down)
       - Guest waits for link down, then link up + valid IPv4, then performs a small HTTP GET to confirm datapath
       - Guest emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS/FAIL|...`
     - Intended to be paired with host-harness gating:
