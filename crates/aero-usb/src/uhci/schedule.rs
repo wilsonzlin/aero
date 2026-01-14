@@ -253,16 +253,15 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
     let mut steps = 0usize;
 
     loop {
+        if td_addr == 0 {
+            // Treat null pointers as terminated.
+            return LinkPointer(LINK_PTR_TERMINATE);
+        }
         if steps >= MAX_TD_CHAIN_STEPS {
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             return LinkPointer(LINK_PTR_TERMINATE);
         }
         steps += 1;
-
-        if td_addr == 0 {
-            // Treat null pointers as terminated.
-            return LinkPointer(LINK_PTR_TERMINATE);
-        }
         if visited.contains(&td_addr) {
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             return LinkPointer(LINK_PTR_TERMINATE);
@@ -281,16 +280,15 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
                     let mut skip_steps = 0usize;
                     let mut skip_visited: Vec<u32> = Vec::with_capacity(16);
                     while !skip.terminated() && !skip.is_qh() {
+                        let addr = skip.addr();
+                        if addr == 0 {
+                            return LinkPointer(LINK_PTR_TERMINATE);
+                        }
                         if skip_steps >= MAX_TD_CHAIN_STEPS {
                             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
                             return LinkPointer(LINK_PTR_TERMINATE);
                         }
                         skip_steps += 1;
-
-                        let addr = skip.addr();
-                        if addr == 0 {
-                            return LinkPointer(LINK_PTR_TERMINATE);
-                        }
                         if visited.contains(&addr) || skip_visited.contains(&addr) {
                             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
                             return LinkPointer(LINK_PTR_TERMINATE);
