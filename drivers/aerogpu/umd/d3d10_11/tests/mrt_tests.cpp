@@ -11,9 +11,12 @@
 namespace {
 
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
+constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45; // DXGI_FORMAT_D24_UNORM_S8_UINT
 
 // D3D11_BIND_* subset (numeric values from d3d11.h).
+constexpr uint32_t kD3D11BindShaderResource = 0x8;
 constexpr uint32_t kD3D11BindRenderTarget = 0x20;
+constexpr uint32_t kD3D11BindDepthStencil = 0x40;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -175,6 +178,11 @@ struct TestRtv {
   std::vector<uint8_t> storage;
 };
 
+struct TestDsv {
+  D3D10DDI_HDEPTHSTENCILVIEW hDsv{};
+  std::vector<uint8_t> storage;
+};
+
 struct TestSrv {
   D3D10DDI_HSHADERRESOURCEVIEW hSrv{};
   std::vector<uint8_t> storage;
@@ -215,14 +223,19 @@ bool CreateDevice(TestDevice* out) {
   return true;
 }
 
-bool CreateRenderTargetTexture2D(TestDevice* dev, uint32_t width, uint32_t height, TestResource* out) {
+bool CreateTexture2D(TestDevice* dev,
+                     uint32_t bind_flags,
+                     uint32_t format,
+                     uint32_t width,
+                     uint32_t height,
+                     TestResource* out) {
   if (!dev || !out) {
     return false;
   }
 
   AEROGPU_DDIARG_CREATERESOURCE desc{};
   desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
-  desc.BindFlags = kD3D11BindRenderTarget;
+  desc.BindFlags = bind_flags;
   desc.MiscFlags = 0;
   desc.Usage = AEROGPU_D3D11_USAGE_DEFAULT;
   desc.CPUAccessFlags = 0;
@@ -230,7 +243,7 @@ bool CreateRenderTargetTexture2D(TestDevice* dev, uint32_t width, uint32_t heigh
   desc.Height = height;
   desc.MipLevels = 1;
   desc.ArraySize = 1;
-  desc.Format = kDxgiFormatB8G8R8A8Unorm;
+  desc.Format = format;
   desc.pInitialData = nullptr;
   desc.InitialDataCount = 0;
   desc.SampleDescCount = 1;
@@ -245,7 +258,11 @@ bool CreateRenderTargetTexture2D(TestDevice* dev, uint32_t width, uint32_t heigh
   out->hResource.pDrvPrivate = out->storage.data();
 
   const HRESULT hr = dev->device_funcs.pfnCreateResource(dev->hDevice, &desc, out->hResource);
-  return Check(hr == S_OK, "CreateResource(tex2d render target)");
+  return Check(hr == S_OK, "CreateResource(tex2d)");
+}
+
+bool CreateRenderTargetTexture2D(TestDevice* dev, uint32_t width, uint32_t height, TestResource* out) {
+  return CreateTexture2D(dev, kD3D11BindRenderTarget, kDxgiFormatB8G8R8A8Unorm, width, height, out);
 }
 
 bool CreateRTV(TestDevice* dev, const TestResource* res, TestRtv* out) {
@@ -264,6 +281,24 @@ bool CreateRTV(TestDevice* dev, const TestResource* res, TestRtv* out) {
 
   const HRESULT hr = dev->device_funcs.pfnCreateRTV(dev->hDevice, &desc, out->hRtv);
   return Check(hr == S_OK, "CreateRTV");
+}
+
+bool CreateDSV(TestDevice* dev, const TestResource* res, TestDsv* out) {
+  if (!dev || !res || !out) {
+    return false;
+  }
+  AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW desc{};
+  desc.hResource = res->hResource;
+
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateDSVSize(dev->hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateDSVSize returned non-trivial size")) {
+    return false;
+  }
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hDsv.pDrvPrivate = out->storage.data();
+
+  const HRESULT hr = dev->device_funcs.pfnCreateDSV(dev->hDevice, &desc, out->hDsv);
+  return Check(hr == S_OK, "CreateDSV");
 }
 
 bool CreateSRV(TestDevice* dev, const TestResource* res, TestSrv* out) {
@@ -545,6 +580,104 @@ bool TestSrvBindingUnbindsOnlyAliasedRtv() {
   return true;
 }
 
+bool TestSrvBindingUnbindsAliasedDsv() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  TestResource depth{};
+  TestDsv dsv{};
+  TestSrv srv{};
+
+  if (!CreateTexture2D(&dev,
+                       /*bind_flags=*/kD3D11BindDepthStencil | kD3D11BindShaderResource,
+                       /*format=*/kDxgiFormatD24UnormS8Uint,
+                       /*width=*/4,
+                       /*height=*/4,
+                       &depth)) {
+    return false;
+  }
+  if (!CreateDSV(&dev, &depth, &dsv)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &depth, &srv)) {
+    return false;
+  }
+
+  // Bind only DSV, no RTVs.
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/0, /*pViews=*/nullptr, dsv.hDsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets DSV-only)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets DSV-only)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 1, "captured CREATE_TEXTURE2D handles (1)")) {
+    return false;
+  }
+
+  {
+    const CmdLoc loc =
+        FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+    if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after DSV-only bind)")) {
+      return false;
+    }
+    const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+    if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (DSV-only bind)")) {
+      return false;
+    }
+    if (!Check(set_rt->depth_stencil == created[0], "SET_RENDER_TARGETS depth_stencil matches created texture handle")) {
+      return false;
+    }
+  }
+
+  // Binding a SRV that aliases the DSV must unbind the DSV.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv.hSrv};
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources alias DSV)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after PSSetShaderResources alias DSV)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after PSSetShaderResources alias DSV)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (DSV-only unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->depth_stencil == 0, "SET_RENDER_TARGETS depth_stencil==0 (aliased DSV unbound)")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (DSV-only unbound)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hSrv);
+  dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, depth.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -552,6 +685,7 @@ int main() {
   ok &= TestSetRenderTargetsEncodesMrtAndClamps();
   ok &= TestSetRenderTargetsPreservesNullEntries();
   ok &= TestSrvBindingUnbindsOnlyAliasedRtv();
+  ok &= TestSrvBindingUnbindsAliasedDsv();
   if (!ok) {
     return 1;
   }
