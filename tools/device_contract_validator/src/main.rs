@@ -1554,7 +1554,7 @@ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
 AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
 AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
 "#;
-        let err = validate(inf).unwrap_err();
+        let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("extra SUBSYS-qualified model entry"));
     }
