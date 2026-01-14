@@ -4,6 +4,7 @@ use aero_d3d9::fixed_function::shader_gen::{
 };
 use aero_d3d9::fixed_function::tss::{
     AlphaTestState, FogState, LightingState, TextureArg, TextureOp, TextureStageState,
+    TextureTransform,
 };
 
 fn shaders_snapshot(desc: &FixedFunctionShaderDesc) -> String {
@@ -93,6 +94,32 @@ fn wgsl_modulate2x_with_complement_and_alpha_replicate() {
     };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | Fvf::SPECULAR | (1 << 8)),
+        stages,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    insta::assert_snapshot!(shaders_snapshot(&desc));
+}
+
+#[test]
+fn wgsl_texture_transform_projected() {
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        texture_transform: TextureTransform::Count2Projected,
+        ..Default::default()
+    };
+    let desc = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (1 << 8)),
         stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
