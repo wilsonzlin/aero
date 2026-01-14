@@ -264,6 +264,11 @@ fn bdfs_are_unique_in_canonical_profile() {
     for profile in CANONICAL_IO_DEVICES {
         assert!(bdfs.insert(profile.bdf), "duplicate BDF: {:?}", profile.bdf);
     }
+    assert!(
+        !bdfs.contains(&VGA_TRANSITIONAL_STUB.bdf),
+        "canonical IO device profile must not occupy reserved VGA transitional stub BDF {:?}",
+        VGA_TRANSITIONAL_STUB.bdf
+    );
 }
 
 #[test]
