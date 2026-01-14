@@ -1646,7 +1646,7 @@ impl ComputeSysValue {
         // callers can still differentiate them.
         const BASE: u32 = 0xffff_ff00;
         match self {
-            ComputeSysValue::DispatchThreadId => BASE + 0,
+            ComputeSysValue::DispatchThreadId => BASE,
             ComputeSysValue::GroupThreadId => BASE + 1,
             ComputeSysValue::GroupId => BASE + 2,
             ComputeSysValue::GroupIndex => BASE + 3,
