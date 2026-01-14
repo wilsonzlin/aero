@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion};
 use aero_usb::xhci::{context::SlotContext, regs, CommandCompletion, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
@@ -467,6 +467,56 @@ fn xhci_snapshot_preserves_pending_dma_on_run_probe() {
     // read.
     restored.tick_1ms_with_dma(&mut mem);
     assert_eq!(mem.reads, 3);
+}
+
+#[test]
+fn xhci_snapshot_pending_dma_on_run_defaults_to_false_when_missing() {
+    // xHCI snapshot v0.9+ persists `pending_dma_on_run`, but older snapshots do not. Ensure restores
+    // default the field to false when absent (even if USBCMD.RUN is set).
+    const TAG_USBCMD: u16 = 1;
+    const TAG_PENDING_DMA_ON_RUN: u16 = 29;
+
+    let mut w = aero_io_snapshot::io::state::SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 8));
+    w.field_u32(TAG_USBCMD, regs::USBCMD_RUN);
+    let bytes = w.finish();
+
+    let mut ctrl = XhciController::new();
+    ctrl.load_state(&bytes).expect("load legacy snapshot");
+
+    let saved = ctrl.save_state();
+    let r = SnapshotReader::parse(&saved, *b"XHCI").expect("parse restored snapshot");
+    assert!(
+        !r.bool(TAG_PENDING_DMA_ON_RUN)
+            .expect("read pending_dma_on_run")
+            .unwrap_or(false),
+        "expected pending_dma_on_run to default to false when omitted"
+    );
+}
+
+#[test]
+fn xhci_snapshot_clears_pending_dma_on_run_when_controller_halted() {
+    // `pending_dma_on_run` is only meaningful while RUN is set; dropping RUN cancels the deferred
+    // probe. Enforce the same invariant on restore so malformed snapshots can't keep the probe
+    // armed while halted.
+    const TAG_USBCMD: u16 = 1;
+    const TAG_PENDING_DMA_ON_RUN: u16 = 29;
+
+    let mut w = aero_io_snapshot::io::state::SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 9));
+    w.field_u32(TAG_USBCMD, 0);
+    w.field_bool(TAG_PENDING_DMA_ON_RUN, true);
+    let bytes = w.finish();
+
+    let mut ctrl = XhciController::new();
+    ctrl.load_state(&bytes).expect("load snapshot");
+
+    let saved = ctrl.save_state();
+    let r = SnapshotReader::parse(&saved, *b"XHCI").expect("parse restored snapshot");
+    assert!(
+        !r.bool(TAG_PENDING_DMA_ON_RUN)
+            .expect("read pending_dma_on_run")
+            .unwrap_or(false),
+        "expected pending_dma_on_run to be cleared while halted"
+    );
 }
 
 #[test]

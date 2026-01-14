@@ -2986,17 +2986,23 @@ impl XhciController {
             //   demand).
             let exec_halted = exec.endpoint_state(ep_addr).is_some_and(|st| st.halted);
             if exec_halted {
-                // Avoid clobbering Stopped/other states; only transition Running->Halted.
-                if let Some(state) = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id)
-                {
-                    if matches!(state, context::EndpointState::Running) {
-                        self.write_endpoint_state_to_context(
-                            mem,
-                            slot_id,
-                            endpoint_id,
-                            context::EndpointState::Halted,
-                        );
-                    }
+                // Avoid clobbering Stopped/other states; only transition Running->Halted when the
+                // guest Endpoint Context is readable. If the guest context is unavailable (e.g.
+                // harnesses that only configure controller-local ring cursors), still mark the
+                // controller-local shadow context as halted so doorbell gating is effective and
+                // snapshot/restore preserves the halt.
+                let should_halt =
+                    match self.read_endpoint_state_from_context(mem, slot_id, endpoint_id) {
+                        Some(state) => matches!(state, context::EndpointState::Running),
+                        None => true,
+                    };
+                if should_halt {
+                    self.write_endpoint_state_to_context(
+                        mem,
+                        slot_id,
+                        endpoint_id,
+                        context::EndpointState::Halted,
+                    );
                 }
             }
 
@@ -3584,7 +3590,6 @@ impl XhciController {
         let ep_ctx = dev_ctx.endpoint_context(mem, endpoint_id).ok()?;
         Some(ep_ctx.endpoint_state_enum())
     }
-
     fn write_endpoint_dequeue_to_context(
         &self,
         mem: &mut dyn MemoryBus,
@@ -3641,10 +3646,18 @@ impl XhciController {
         if endpoint_id == 0 || endpoint_id > 31 {
             return false;
         }
+
+        // Always update the controller-local shadow Endpoint Context so doorbell gating and
+        // snapshot/restore preserve the halted state even if the guest Device Context is absent.
+        let slot_idx = usize::from(slot_id);
+        let Some(slot) = self.slots.get_mut(slot_idx) else {
+            return false;
+        };
+        slot.endpoint_contexts[usize::from(endpoint_id - 1)].set_endpoint_state_enum(state);
+
         if self.dcbaap == 0 {
             return false;
         }
-
         let dcbaa = context::Dcbaa::new(self.dcbaap);
         let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
             return false;
@@ -3667,15 +3680,10 @@ impl XhciController {
 
         // Keep controller-local shadow context in sync so snapshot/restore preserves the halted
         // state even if the guest doesn't re-run Configure Endpoint.
-        let slot_idx = usize::from(slot_id);
-        let Some(slot) = self.slots.get_mut(slot_idx) else {
-            return false;
-        };
         slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
         slot.device_context_ptr = dev_ctx_ptr;
         true
     }
-
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {
         if !self.pending_dma_on_run {
             return;
