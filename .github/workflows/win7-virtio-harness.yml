@@ -936,6 +936,7 @@ jobs:
           result_marker=""
           blk_marker=""
           blk_marker_line=""
+          blk_counters_marker=""
           blk_resize_marker=""
           blk_resize_marker_line=""
           blk_reset_marker=""
@@ -1026,6 +1027,9 @@ jobs:
             blk_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            blk_counters_marker="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_resize_marker_line="$(
@@ -1249,6 +1253,9 @@ jobs:
             fi
             if [[ -n "${blk_marker_line}" ]]; then
               echo "- Guest virtio-blk marker line: \`${blk_marker_line}\`"
+            fi
+            if [[ -n "${blk_counters_marker}" ]]; then
+              echo "- Guest virtio-blk-counters marker: \`${blk_counters_marker}\`"
             fi
             if [[ -n "${blk_resize_marker}" ]]; then
               echo "- Guest virtio-blk-resize marker: \`${blk_resize_marker}\`"

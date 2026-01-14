@@ -11454,8 +11454,9 @@ def _check_fail_on_blk_recovery_requirement(
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=...|returned_len=...
 
     Behavior:
-    - If the marker is missing or SKIP: no failure (backward compatible).
+    - If the marker is present but SKIP: treat counters as unavailable (no failure; does not fall back).
     - If any of abort/reset_device/reset_bus exceed `threshold`: return a FAIL message.
+    - If the marker is missing entirely: fall back to legacy abort_srb/reset_*_srb fields on the virtio-blk test marker.
     """
     if blk_counters_line is None:
         blk_counters_line = _try_extract_last_marker_line(
