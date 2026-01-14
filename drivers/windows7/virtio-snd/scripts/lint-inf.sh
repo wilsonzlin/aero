@@ -406,17 +406,23 @@ section_contains_norm \
   "inf/aero_virtio_snd.inf must list aero_virtio_snd.sys under [SourceDisksFiles]"
 
 INF_ALIAS=""
+if [ -f "$INF_ALIAS_ENABLED" ] && [ -f "$INF_ALIAS_DISABLED" ]; then
+  fail "both inf/virtio-snd.inf and inf/virtio-snd.inf.disabled exist; keep only one to avoid multiple matching INFs"
+fi
+
 if [ -f "$INF_ALIAS_ENABLED" ]; then
   INF_ALIAS="$INF_ALIAS_ENABLED"
 elif [ -f "$INF_ALIAS_DISABLED" ]; then
   INF_ALIAS="$INF_ALIAS_DISABLED"
 fi
 
-  if [ -n "$INF_ALIAS" ]; then
-    alias_basename=$(basename "$INF_ALIAS")
-    note "checking inf/$alias_basename stays in sync..."
-    tmp1=$(mktemp "${TMPDIR:-/tmp}/aero_virtio_snd.inf.XXXXXX") || fail "mktemp failed"
-    tmp2=$(mktemp "${TMPDIR:-/tmp}/virtio-snd.inf.alias.XXXXXX") || fail "mktemp failed"
+if [ -n "$INF_ALIAS" ]; then
+  alias_basename=$(basename "$INF_ALIAS")
+  note "checking inf/$alias_basename stays in sync..."
+  contract_label='inf/aero_virtio_snd.inf'
+  alias_label="inf/$alias_basename"
+  tmp1=$(mktemp "${TMPDIR:-/tmp}/aero_virtio_snd.inf.XXXXXX") || fail "mktemp failed"
+  tmp2=$(mktemp "${TMPDIR:-/tmp}/virtio-snd.inf.alias.XXXXXX") || fail "mktemp failed"
 
   strip_leading_comment_header "$INF_CONTRACT" > "$tmp1"
   strip_leading_comment_header "$INF_ALIAS" > "$tmp2"
@@ -425,11 +431,11 @@ fi
     # Show a unified diff, but label it with the real file paths to make CI logs
     # actionable (instead of referencing mktemp paths).
     if diff -u -L a -L b /dev/null /dev/null >/dev/null 2>&1; then
-      diff -u -L "$INF_CONTRACT" -L "$INF_ALIAS" "$tmp1" "$tmp2" >&2 || true
+      diff -u -L "$contract_label" -L "$alias_label" "$tmp1" "$tmp2" >&2 || true
     else
       # Fallback for diff implementations without -L (label): rewrite headers.
       diff -u "$tmp1" "$tmp2" \
-        | sed "1s|^--- .*|--- $INF_CONTRACT|;2s|^+++ .*|+++ $INF_ALIAS|" >&2 || true
+        | sed "1s|^--- .*|--- $contract_label|;2s|^+++ .*|+++ $alias_label|" >&2 || true
     fi
     fail "inf/$alias_basename is out of sync with inf/aero_virtio_snd.inf (ignoring leading comment headers)"
   fi
