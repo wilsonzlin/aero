@@ -4324,6 +4324,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_local_manifest_with_chunks_list_missing_sha256_succeeds() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        tokio::fs::create_dir_all(dir.path().join("chunks"))
+            .await
+            .context("create chunks dir")?;
+
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; SECTOR_SIZE];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let chunk0_path = dir.path().join(chunk_object_key(0)?);
+        let chunk1_path = dir.path().join(chunk_object_key(1)?);
+        tokio::fs::write(&chunk0_path, &chunk0)
+            .await
+            .with_context(|| format!("write {}", chunk0_path.display()))?;
+        tokio::fs::write(&chunk1_path, &chunk1)
+            .await
+            .with_context(|| format!("write {}", chunk1_path.display()))?;
+
+        // Provide per-chunk size for both chunks, but omit sha256 for chunk 1. Verifier should
+        // skip sha256 validation for that chunk and still succeed.
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(vec![
+                ManifestChunkV1 {
+                    size: Some(chunk0.len() as u64),
+                    sha256: Some(sha256_hex(&chunk0)),
+                },
+                ManifestChunkV1 {
+                    size: Some(chunk1.len() as u64),
+                    sha256: None,
+                },
+            ]),
+        };
+
+        let manifest_path = dir.path().join("manifest.json");
+        tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+            .await
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+
+        verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: DEFAULT_RETRIES,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn verify_detects_corrupted_chunk() -> Result<()> {
         let dir = tempfile::tempdir().context("create tempdir")?;
         tokio::fs::create_dir_all(dir.path().join("chunks"))
