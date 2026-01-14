@@ -1466,6 +1466,9 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
                                             _In_ ULONG DescSize,
                                             _In_ PHYSICAL_ADDRESS DescPa)
 {
+    if (AeroGpuIsDeviceErrorLatched(Adapter)) {
+        return STATUS_GRAPHICS_DEVICE_REMOVED;
+    }
     if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
         DxgkDevicePowerStateD0) {
         return STATUS_DEVICE_NOT_READY;
@@ -1519,6 +1522,9 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
                                          _In_ ULONGLONG SignalFence,
                                          _Out_opt_ ULONG* RingTailAfterOut)
 {
+    if (AeroGpuIsDeviceErrorLatched(Adapter)) {
+        return STATUS_GRAPHICS_DEVICE_REMOVED;
+    }
     if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
         DxgkDevicePowerStateD0) {
         return STATUS_DEVICE_NOT_READY;
@@ -1965,6 +1971,15 @@ static VOID AeroGpuFreeAllShareTokenRefs(_Inout_ AEROGPU_ADAPTER* Adapter)
 static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken)
 {
     if (!Adapter || ShareToken == 0) {
+        return;
+    }
+
+    /*
+     * Best-effort cleanup. Once the device has signaled IRQ_ERROR, avoid sending additional
+     * commands to a potentially wedged device; the host side should clean up resources as part
+     * of device reset/teardown.
+     */
+    if (AeroGpuIsDeviceErrorLatched(Adapter)) {
         return;
     }
 
