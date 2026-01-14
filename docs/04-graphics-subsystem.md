@@ -360,6 +360,9 @@ npm run test:webgpu
 # Targeted test for the SharedFramebuffer + dirty-tiles presentation path
 npm run test:e2e -- tests/e2e/web/aero-gpu-shared-framebuffer.spec.ts
 
+# Targeted test for ScanoutState-driven scanout presentation (guest-memory scanout readback)
+npm run test:e2e -- tests/e2e/web/runtime_workers_scanout_state.spec.ts
+
 # Targeted test for presenter backend fallback (WebGPU disabled → WebGL2)
 npm run test:e2e -- tests/e2e/web/gpu-fallback.spec.ts
 ```
