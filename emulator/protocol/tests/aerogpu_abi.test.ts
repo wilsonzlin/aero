@@ -740,6 +740,18 @@ test("TypeScript layout matches C headers", () => {
   // If this changes, the TS mirror + ABI dump helper must be updated accordingly.
   assertNameSetEq([], parseCStructDefNames(pciHeader), "aerogpu_pci.h struct coverage");
 
+  // Coverage guard: keep the C ABI dump helper in sync with smaller, pointer-free ABI headers too.
+  assertNameSetEq(
+    [...abi.sizes.keys()].filter((name) => name.startsWith("aerogpu_umd_private_")),
+    parseCStructDefNames(umdPrivateHeader),
+    "aerogpu_umd_private.h struct coverage",
+  );
+  assertNameSetEq(
+    [...abi.sizes.keys()].filter((name) => name.startsWith("aerogpu_wddm_alloc_")),
+    parseCStructDefNames(wddmAllocHeader),
+    "aerogpu_wddm_alloc.h struct coverage",
+  );
+
   // Key offsets.
   assert.equal(off("aerogpu_cmd_stream_header", "magic"), AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC);
   assert.equal(off("aerogpu_cmd_stream_header", "abi_version"), AEROGPU_CMD_STREAM_HEADER_OFF_ABI_VERSION);
@@ -1320,6 +1332,27 @@ test("TypeScript layout matches C headers", () => {
     const sizeConstName = `AEROGPU_${suffix}_SIZE`;
     const expectedSize = size(structName);
     const actualSize = ringAny[sizeConstName];
+    assert.equal(typeof actualSize, "number", `missing TS struct size constant ${sizeConstName}`);
+    assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
+  }
+
+  // Coverage guard: same for `aerogpu_umd_private.h` and `aerogpu_wddm_alloc.h`.
+  const umdPrivateAny = aerogpuUmdPrivate as unknown as Record<string, unknown>;
+  for (const structName of parseCStructDefNames(umdPrivateHeader)) {
+    const suffix = structName.replace(/^aerogpu_/, "").toUpperCase();
+    const sizeConstName = `AEROGPU_${suffix}_SIZE`;
+    const expectedSize = size(structName);
+    const actualSize = umdPrivateAny[sizeConstName];
+    assert.equal(typeof actualSize, "number", `missing TS struct size constant ${sizeConstName}`);
+    assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
+  }
+
+  const wddmAllocAny = aerogpuWddmAlloc as unknown as Record<string, unknown>;
+  for (const structName of parseCStructDefNames(wddmAllocHeader)) {
+    const suffix = structName.replace(/^aerogpu_/, "").toUpperCase();
+    const sizeConstName = `AEROGPU_${suffix}_SIZE`;
+    const expectedSize = size(structName);
+    const actualSize = wddmAllocAny[sizeConstName];
     assert.equal(typeof actualSize, "number", `missing TS struct size constant ${sizeConstName}`);
     assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
   }

@@ -794,13 +794,13 @@ fn rust_layout_matches_c_headers() {
 
     // Coverage guard: every `struct aerogpu_* { ... }` definition in `aerogpu_cmd.h` must have its
     // size validated against the C headers.
-    let struct_sizes_seen: std::collections::BTreeSet<String> = struct_sizes_seen
+    let cmd_struct_sizes_seen: std::collections::BTreeSet<String> = struct_sizes_seen
         .iter()
         .map(|name| (*name).to_string())
         .collect();
     let mut missing: Vec<String> = Vec::new();
     for c_name in parse_c_cmd_struct_def_names() {
-        if !struct_sizes_seen.contains(&c_name) {
+        if !cmd_struct_sizes_seen.contains(&c_name) {
             missing.push(c_name);
         }
     }
@@ -2747,6 +2747,30 @@ fn rust_layout_matches_c_headers() {
         reserved1,
         "aerogpu_wddm_alloc_priv_v2",
         "reserved1"
+    );
+
+    // Coverage guard: same for pointer-free Win7 user↔kernel ABI headers (`aerogpu_umd_private.h`,
+    // `aerogpu_wddm_alloc.h`).
+    //
+    // This keeps the Rust mirror and the C ABI dump helper in sync when new struct definitions are
+    // added to these headers.
+    assert_name_set_eq(
+        struct_sizes_seen
+            .iter()
+            .filter(|name| name.starts_with("aerogpu_umd_private_"))
+            .map(|name| (*name).to_string())
+            .collect(),
+        parse_c_struct_def_names(&repo_root().join("drivers/aerogpu/protocol/aerogpu_umd_private.h")),
+        "aerogpu_umd_private.h struct definitions",
+    );
+    assert_name_set_eq(
+        struct_sizes_seen
+            .iter()
+            .filter(|name| name.starts_with("aerogpu_wddm_alloc_"))
+            .map(|name| (*name).to_string())
+            .collect(),
+        parse_c_struct_def_names(&repo_root().join("drivers/aerogpu/protocol/aerogpu_wddm_alloc.h")),
+        "aerogpu_wddm_alloc.h struct definitions",
     );
 
     // Escape ABI (driver-private; should remain stable across x86/x64).
