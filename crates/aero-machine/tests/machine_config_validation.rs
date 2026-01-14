@@ -102,6 +102,7 @@ fn enable_aerogpu_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
         enable_aerogpu: true,
+        enable_vga: false,
         ..Default::default()
     };
 

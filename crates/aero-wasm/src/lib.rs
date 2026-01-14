@@ -1064,6 +1064,7 @@ impl UsbHidPassthroughBridge {
         report_id: u32,
         _error: Option<String>,
     ) -> Result<bool, JsValue> {
+        let _ = error;
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         // `UsbHidPassthroughHandle` no longer carries an error string for feature report failures,
@@ -1204,6 +1205,7 @@ impl WebHidPassthroughBridge {
         report_id: u32,
         _error: Option<String>,
     ) -> Result<bool, JsValue> {
+        let _ = error;
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
         // `UsbHidPassthroughHandle` no longer carries an error string for feature report failures,
