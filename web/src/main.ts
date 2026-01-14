@@ -5904,8 +5904,48 @@ function renderInputPanel(): HTMLElement {
     return workerCoordinator.getIoWorker();
   };
 
-  const inputTarget: InputBatchTarget = {
-    postMessage: (msg, transfer) => {
+  const inputTarget: InputBatchTarget & {
+    addEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
+    removeEventListener?: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => void;
+  } = (() => {
+    const messageListeners: ((ev: MessageEvent<unknown>) => void)[] = [];
+    let attachedCpu: Worker | null = null;
+    let attachedIo: Worker | null = null;
+
+    const onWorkerMessage = (ev: MessageEvent<unknown>): void => {
+      const data = ev.data as { type?: unknown } | null;
+      if (!data || typeof data !== "object") return;
+      // Forward only input-recycle messages to avoid spamming the capture with unrelated worker traffic.
+      if (data.type !== "in:input-batch-recycle") return;
+      for (const listener of messageListeners.slice()) listener(ev);
+    };
+
+    const syncWorkerAttachments = (): void => {
+      if (messageListeners.length === 0) {
+        if (attachedCpu) attachedCpu.removeEventListener("message", onWorkerMessage as EventListener);
+        if (attachedIo) attachedIo.removeEventListener("message", onWorkerMessage as EventListener);
+        attachedCpu = null;
+        attachedIo = null;
+        return;
+      }
+
+      const cpu = workerCoordinator.getWorker("cpu") ?? null;
+      const io = workerCoordinator.getIoWorker();
+      if (cpu !== attachedCpu) {
+        if (attachedCpu) attachedCpu.removeEventListener("message", onWorkerMessage as EventListener);
+        if (cpu) cpu.addEventListener("message", onWorkerMessage as EventListener);
+        attachedCpu = cpu;
+      }
+      if (io !== attachedIo) {
+        if (attachedIo) attachedIo.removeEventListener("message", onWorkerMessage as EventListener);
+        if (io) io.addEventListener("message", onWorkerMessage as EventListener);
+        attachedIo = io;
+      }
+    };
+
+    return {
+      postMessage: (msg, transfer) => {
+        syncWorkerAttachments();
       const words = new Int32Array(msg.buffer);
       const count = words[0] >>> 0;
       const base = 2;
@@ -5940,8 +5980,20 @@ function renderInputPanel(): HTMLElement {
       if (worker) {
         worker.postMessage(msg, transfer);
       }
-    },
-  };
+      },
+      addEventListener: (type, listener) => {
+        if (type !== "message") return;
+        messageListeners.push(listener);
+        syncWorkerAttachments();
+      },
+      removeEventListener: (type, listener) => {
+        if (type !== "message") return;
+        const idx = messageListeners.indexOf(listener);
+        if (idx >= 0) messageListeners.splice(idx, 1);
+        syncWorkerAttachments();
+      },
+    };
+  })();
 
   const capture = new InputCapture(canvas, inputTarget, { onBeforeSendBatch: inputRecordReplay.captureHook });
   capture.start();
