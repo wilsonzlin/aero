@@ -345,63 +345,28 @@ Minimum behavior:
   * For **CD drives**, this means reporting `bytes_per_sector = 2048` and `total_sectors` in
     **2048-byte units**.
 
-### 6.4 AH=4Bh — El Torito disk emulation services (optional)
-
-Some CD boot images query El Torito metadata via `INT 13h` **AH=4Bh**. Aero implements a minimal
-subset sufficient for those boot images *when booting via El Torito*.
-
-Notes:
-
-* This interface is only available when the BIOS actually booted from a CD (i.e. `boot_drive` is a
-  CD drive number and POST successfully parsed an El Torito boot catalog).
-* Calls must use `DL=<boot_drive>` (typically `0xE0`).
-
-Supported subfunctions (in `AL`):
-
-* `AL=00h` — terminate disk emulation
-  * For **no-emulation** boot this is a no-op; Aero returns success.
-* `AL=01h` — get disk emulation status
-  * Writes a 0x13-byte packet at `ES:DI` containing the boot catalog/image metadata (see below).
-
-#### `AL=01h` status packet layout (0x13 bytes)
-
-| Offset | Size | Field | Notes |
-|---:|---:|---|---|
-| `0x00` | 1 | packet size | Always `0x13` |
-| `0x01` | 1 | media type | `0x00` = no-emulation |
-| `0x02` | 1 | boot drive | `DL` passed to the boot image (e.g. `0xE0`) |
-| `0x03` | 1 | controller index | Usually `0` |
-| `0x04` | 4 | boot image LBA | ISO LBA (**2048-byte units**) |
-| `0x08` | 4 | boot catalog LBA | ISO LBA (**2048-byte units**) |
-| `0x0C` | 2 | load segment | Real-mode segment (or `0`) |
-| `0x0E` | 2 | sector count | Number of **512-byte** sectors loaded for the initial image |
-| `0x10` | 3 | reserved | Zero |
-
-In Aero:
-
-* HDD (`DL=0x80..=0xDF`) reports **512 bytes/sector** and `total_sectors` in 512-byte units.
-* CD-ROM (`DL=0xE0..=0xEF`) reports **2048 bytes/sector** and `total_sectors` in 2048-byte units.
-
 ### 6.4 AH=4Bh — El Torito disk emulation services (optional compatibility)
 
 Some CD boot images query El Torito metadata via INT 13h `AH=4Bh`. Windows 7 install media does not
-typically require this path, but Aero implements a minimal subset because it is closely tied to
-El Torito boot-catalog parsing.
+typically require this path, but Aero implements a minimal subset for compatibility when booting via
+El Torito (since it is closely tied to boot-catalog parsing).
 
-Behavior implemented by Aero:
+Notes:
 
 * Only available when the BIOS actually booted via El Torito and captured boot-catalog metadata
   during POST.
-* Only valid for the El Torito boot drive (must match `DL` used to boot).
+* Only valid for the El Torito boot drive (must match `DL` used to boot, typically `0xE0`).
 
 Supported subfunctions (in `AL`):
 
-* `AX=4B00h` — Terminate disk emulation
+* `AL=00h` (`AX=4B00h`) — terminate disk emulation
   * For **no-emulation** boots, Aero treats this as a no-op success.
-* `AX=4B01h` — Get disk emulation status
+* `AL=01h` (`AX=4B01h`) — get disk emulation status
   * Writes a status packet at `ES:DI` (caller provides the buffer).
+  * Compatibility rule: if the caller sets the first byte to a non-zero buffer size, Aero requires
+    it to be `>= 0x13`.
 
-Status packet written by Aero (size `0x13` bytes):
+#### `AL=01h` status packet layout (0x13 bytes)
 
 | Offset | Size | Field | Notes |
 |---:|---:|---|---|
@@ -409,8 +374,8 @@ Status packet written by Aero (size `0x13` bytes):
 | `0x01` | 1 | media type | `0x00` = no-emulation |
 | `0x02` | 1 | boot drive | `DL` value used for El Torito boot (typically `0xE0`) |
 | `0x03` | 1 | controller index | currently `0` |
-| `0x04` | 4 | boot image LBA | ISO LBA (2048-byte) of the boot image, little-endian |
-| `0x08` | 4 | boot catalog LBA | ISO LBA (2048-byte) of the boot catalog, little-endian |
+| `0x04` | 4 | boot image LBA | ISO LBA (**2048-byte units**) |
+| `0x08` | 4 | boot catalog LBA | ISO LBA (**2048-byte units**) |
 | `0x0C` | 2 | load segment | real-mode segment used to load boot image (e.g. `0x07C0`) |
 | `0x0E` | 2 | sector count | number of **512-byte** sectors loaded for the initial image |
 | `0x10` | 3 | reserved | zero |
