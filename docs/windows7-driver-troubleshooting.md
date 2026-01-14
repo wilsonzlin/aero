@@ -78,8 +78,13 @@ This produces one or more small, shareable artifacts:
 - `alloc.bin` (or `cmd.bin.alloc_table.bin`): the raw alloc table for the submission (`alloc_table_gpa` region, when present; AGPU only).
 - `cmd.bin.txt`: a small text summary (ring index, fence, GPAs/sizes).
 
+Also capture a one-shot dbgctl snapshot (recommended):
+
+- `aerogpu_dbgctl.exe --status` (or `--status --json=C:\status.json`)
+  - Includes fences/ring state and the most recent **latched device error** (`Last error:`) when supported (ABI 1.3+ / `AEROGPU_IRQ_ERROR`).
+
 ### 1) Guest (Windows 7): dump the last submission
- 
+  
 Run this inside the guest as soon as possible after reproducing:
 
 From a default Aero Guest Tools ISO/zip mount (often `X:`), run the command that matches your guest OS:
