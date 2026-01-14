@@ -82,7 +82,8 @@ fn operand_token(
     token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
     token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
     token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
-    token |= (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
     token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
@@ -95,7 +96,10 @@ fn swizzle_bits(swz: [u8; 4]) -> u32 {
 }
 
 fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
-    vec![operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1), idx]
+    vec![
+        operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1),
+        idx,
+    ]
 }
 
 fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {
@@ -130,7 +134,12 @@ fn imm_f32x4(v: [f32; 4]) -> Vec<u32> {
         swizzle_bits(Swizzle::XYZW.0),
         0,
     ));
-    out.extend_from_slice(&[v[0].to_bits(), v[1].to_bits(), v[2].to_bits(), v[3].to_bits()]);
+    out.extend_from_slice(&[
+        v[0].to_bits(),
+        v[1].to_bits(),
+        v[2].to_bits(),
+        v[3].to_bits(),
+    ]);
     out
 }
 
@@ -332,4 +341,3 @@ fn aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs() {
         );
     });
 }
-

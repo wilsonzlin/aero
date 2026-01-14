@@ -4826,7 +4826,10 @@ impl AerogpuD3d11Executor {
             use crate::sm4_ir::{RegFile, Sm4Inst, SrcKind, Swizzle, WriteMask};
 
             if module.stage != crate::sm4::ShaderStage::Vertex {
-                bail!("VS-as-compute: expected vertex shader module, got {:?}", module.stage);
+                bail!(
+                    "VS-as-compute: expected vertex shader module, got {:?}",
+                    module.stage
+                );
             }
 
             let mut max_temp: i32 = -1;
@@ -4930,10 +4933,7 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     Sm4Inst::Ret => break,
-                    _ => bail!(
-                        "VS-as-compute: unsupported VS instruction {:?}",
-                        inst
-                    ),
+                    _ => bail!("VS-as-compute: unsupported VS instruction {:?}", inst),
                 }
                 inst_count += 1;
             }
@@ -4990,10 +4990,9 @@ impl AerogpuD3d11Executor {
 
                 let base = match &src.kind {
                     SrcKind::Register(reg) => match reg.file {
-                        RegFile::Input => format!(
-                            "aero_vs_load_input_reg({}u, {vertex_index_var})",
-                            reg.index
-                        ),
+                        RegFile::Input => {
+                            format!("aero_vs_load_input_reg({}u, {vertex_index_var})", reg.index)
+                        }
                         RegFile::Temp => format!("r[{}u]", reg.index),
                         RegFile::Output => {
                             if reg.index >= out_reg_count {
@@ -5004,10 +5003,7 @@ impl AerogpuD3d11Executor {
                             }
                             format!("o[{}u]", reg.index)
                         }
-                        other => bail!(
-                            "VS-as-compute: unsupported src register file {:?}",
-                            other
-                        ),
+                        other => bail!("VS-as-compute: unsupported src register file {:?}", other),
                     },
                     SrcKind::ImmediateF32(bits) => format!(
                         "vec4<f32>({},{},{},{})",
@@ -5016,10 +5012,7 @@ impl AerogpuD3d11Executor {
                         f32_bits_to_wgsl(bits[2]),
                         f32_bits_to_wgsl(bits[3])
                     ),
-                    other => bail!(
-                        "VS-as-compute: unsupported src operand kind {:?}",
-                        other
-                    ),
+                    other => bail!("VS-as-compute: unsupported src operand kind {:?}", other),
                 };
 
                 let swz = swizzle_to_wgsl(src.swizzle);
@@ -5067,9 +5060,7 @@ impl AerogpuD3d11Executor {
             );
 
             // Input register loads (`v#`) from IA buffers.
-            out.push_str(
-                "fn aero_vs_load_input_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n",
-            );
+            out.push_str("fn aero_vs_load_input_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
             out.push_str("  switch reg {\n");
             for attr in &pulling.attributes {
                 let reg = vs_location_to_input_reg
@@ -5131,9 +5122,7 @@ impl AerogpuD3d11Executor {
             } else {
                 out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
             }
-            out.push_str(&format!(
-                "  var r: array<vec4<f32>, {temp_reg_count}>;\n"
-            ));
+            out.push_str(&format!("  var r: array<vec4<f32>, {temp_reg_count}>;\n"));
             out.push_str(&format!(
                 "  var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
             ));
@@ -5146,19 +5135,16 @@ impl AerogpuD3d11Executor {
                         let expr = eval_src(src, "vertex_index", gs_input_reg_count)?;
                         let mut val = expr;
                         if dst.saturate {
-                            val = format!(
-                                "clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))"
-                            );
+                            val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");
                         }
                         let tmp_name = format!("inst{idx}_val");
                         out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
                         let dst_expr = match dst.reg.file {
                             RegFile::Temp => format!("r[{}u]", dst.reg.index),
                             RegFile::Output => format!("o[{}u]", dst.reg.index),
-                            other => bail!(
-                                "VS-as-compute: unsupported mov dst reg file {:?}",
-                                other
-                            ),
+                            other => {
+                                bail!("VS-as-compute: unsupported mov dst reg file {:?}", other)
+                            }
                         };
                         emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
                     }
@@ -5167,31 +5153,27 @@ impl AerogpuD3d11Executor {
                         let b_expr = eval_src(b, "vertex_index", gs_input_reg_count)?;
                         let mut val = format!("({a_expr}) + ({b_expr})");
                         if dst.saturate {
-                            val = format!(
-                                "clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))"
-                            );
+                            val = format!("clamp(({val}), vec4<f32>(0.0), vec4<f32>(1.0))");
                         }
                         let tmp_name = format!("inst{idx}_val");
                         out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
                         let dst_expr = match dst.reg.file {
                             RegFile::Temp => format!("r[{}u]", dst.reg.index),
                             RegFile::Output => format!("o[{}u]", dst.reg.index),
-                            other => bail!(
-                                "VS-as-compute: unsupported add dst reg file {:?}",
-                                other
-                            ),
+                            other => {
+                                bail!("VS-as-compute: unsupported add dst reg file {:?}", other)
+                            }
                         };
                         emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
                     }
                     Sm4Inst::Ret => {}
-                    other => bail!(
-                        "VS-as-compute: unsupported VS instruction {:?}",
-                        other
-                    ),
+                    other => bail!("VS-as-compute: unsupported VS instruction {:?}", other),
                 }
             }
 
-            out.push_str("\n  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n");
+            out.push_str(
+                "\n  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
+            );
             out.push_str("    let idx: u32 = prim_id * GS_INPUT_REG_COUNT + reg;\n");
             out.push_str("    gs_inputs.data[idx] = o[reg];\n");
             out.push_str("  }\n");
