@@ -15627,24 +15627,13 @@ impl AerogpuD3d11Executor {
         let group_count_z = read_u32_le(cmd_bytes, 16)?;
         let stage_ex = read_u32_le(cmd_bytes, 20)?;
         // `DISPATCH.reserved0` is repurposed as a `stage_ex` selector for extended-stage compute
-        // passes (GS/HS/DS). Older command streams may not reliably zero reserved fields, so gate
-        // the interpretation by cmd-stream ABI minor.
-        let stage_ex = if self.cmd_stream_abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR {
-            0
-        } else {
-            stage_ex
-        };
-        let pass_stage = resolve_stage(AerogpuShaderStage::Compute as u32, stage_ex)
-            .map_err(|e| anyhow!("DISPATCH: {e} (shader_stage=2, stage_ex={stage_ex})"))?;
-        let pass_stage = match pass_stage {
-            AerogpuD3dShaderStage::Compute => ShaderStage::Compute,
-            AerogpuD3dShaderStage::Geometry => ShaderStage::Geometry,
-            AerogpuD3dShaderStage::Hull => ShaderStage::Hull,
-            AerogpuD3dShaderStage::Domain => ShaderStage::Domain,
-            AerogpuD3dShaderStage::Vertex | AerogpuD3dShaderStage::Pixel => {
-                bail!("DISPATCH: invalid pass stage {pass_stage:?} (stage_ex={stage_ex})")
-            }
-        };
+        // passes (GS/HS/DS). Reuse the shared stage decoder so ABI-minor gating and error messages
+        // match other stage_ex-bearing packets.
+        let pass_stage = self.decode_shader_stage_for_packet(
+            AerogpuShaderStage::Compute as u32,
+            stage_ex,
+            "DISPATCH",
+        )?;
 
         // D3D11 treats any zero group count as a no-op dispatch.
         if group_count_x == 0 || group_count_y == 0 || group_count_z == 0 {
