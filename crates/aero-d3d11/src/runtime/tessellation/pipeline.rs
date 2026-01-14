@@ -11,6 +11,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use aero_gpu::pipeline_key::ShaderHash;
 use anyhow::{anyhow, bail, Result};
 
 use crate::binding_model::{
@@ -52,6 +53,7 @@ const DS_OUT_INDICES_BINDING: u32 = DS_HS_OUT_BINDING + 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct VsAsComputePipelineKey {
     vertex_pulling_hash: u64,
+    vs_wgsl_hash: ShaderHash,
     cfg: VsAsComputeConfig,
 }
 
@@ -98,20 +100,24 @@ impl TessellationPipelines {
         &mut self,
         device: &wgpu::Device,
         vertex_pulling: &VertexPullingLayout,
+        vs_bgl_group0: &wgpu::BindGroupLayout,
+        vs_wgsl: &str,
+        vs_wgsl_hash: ShaderHash,
         cfg: VsAsComputeConfig,
     ) -> Result<&VsAsComputePipeline> {
         // Key the pipeline by the WGSL prelude (which encodes binding numbers + attribute loads)
-        // and the small config struct.
+        // plus the guest VS identity, and the small config struct.
         let prelude = vertex_pulling.wgsl_prelude();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         prelude.hash(&mut hasher);
         let key = VsAsComputePipelineKey {
             vertex_pulling_hash: hasher.finish(),
+            vs_wgsl_hash,
             cfg,
         };
 
         if let Entry::Vacant(e) = self.vs_as_compute.entry(key) {
-            let pipeline = VsAsComputePipeline::new(device, vertex_pulling, cfg)?;
+            let pipeline = VsAsComputePipeline::new(device, vertex_pulling, vs_bgl_group0, vs_wgsl, cfg)?;
             e.insert(pipeline);
         }
 

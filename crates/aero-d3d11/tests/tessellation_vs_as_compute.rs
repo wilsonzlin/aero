@@ -17,6 +17,81 @@ use aero_d3d11::runtime::vertex_pulling::{
 use aero_d3d11::{parse_signatures, DxbcFile};
 use anyhow::{anyhow, Context, Result};
 
+const VS_WGSL_POS_COLOR: &str = r#"
+struct VsIn {
+  @location(0) a0: vec4<f32>,
+  @location(1) a1: vec4<f32>,
+};
+
+struct VsOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(1) o1: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+  var out: VsOut;
+  out.pos = input.a0;
+  out.o1 = input.a1;
+  return out;
+}
+"#;
+
+const VS_WGSL_POS_ONLY: &str = r#"
+struct VsIn {
+  @location(0) a0: vec4<f32>,
+};
+
+struct VsOut {
+  @builtin(position) pos: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+  var out: VsOut;
+  out.pos = input.a0;
+  return out;
+}
+"#;
+
+const VS_WGSL_POS_REG1_WITH_CB0: &str = r#"
+struct Cb0 {
+  offset: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> cb0: Cb0;
+
+struct VsIn {
+  @location(0) a0: vec4<f32>,
+};
+
+struct VsOut {
+  @location(0) o0: vec4<f32>,
+  @builtin(position) pos: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+  var out: VsOut;
+  out.o0 = input.a0;
+  out.pos = input.a0 + cb0.offset;
+  return out;
+}
+"#;
+
+fn create_empty_vs_group0(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("VS-as-compute test VS group0 bgl (empty)"),
+        entries: &[],
+    });
+    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("VS-as-compute test VS group0 bind group (empty)"),
+        layout: &bgl,
+        entries: &[],
+    });
+    (bgl, bg)
+}
+
 fn load_vs_passthrough_signature() -> Result<(Vec<VsInputSignatureElement>, u32)> {
     let vs_dxbc = DxbcFile::parse(include_bytes!("fixtures/vs_passthrough.dxbc"))
         .context("parse vs_passthrough")?;
@@ -87,14 +162,23 @@ async fn read_back_buffer(
     Ok(bytes)
 }
 
+fn unpack_vec4_f32(bytes: &[u8]) -> Vec<[f32; 4]> {
+    let floats: &[f32] = bytemuck::cast_slice(bytes);
+    let mut out = Vec::new();
+    for c in floats.chunks_exact(4) {
+        out.push([c[0], c[1], c[2], c[3]]);
+    }
+    out
+}
+
 fn unpack_vec4_u32_as_f32(words: &[u32]) -> Vec<[f32; 4]> {
     let mut out = Vec::new();
-    for chunk in words.chunks_exact(4) {
+    for c in words.chunks_exact(4) {
         out.push([
-            f32::from_bits(chunk[0]),
-            f32::from_bits(chunk[1]),
-            f32::from_bits(chunk[2]),
-            f32::from_bits(chunk[3]),
+            f32::from_bits(c[0]),
+            f32::from_bits(c[1]),
+            f32::from_bits(c[2]),
+            f32::from_bits(c[3]),
         ]);
     }
     out
@@ -176,12 +260,22 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
         let instance_count = 2u32;
         let control_point_count = 1u32;
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count,
             out_reg_count,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline = VsAsComputePipeline::new(
+            &device,
+            &pulling,
+            &vs_bgl_group0,
+            VS_WGSL_POS_COLOR,
+            cfg,
+        )
+        .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -214,7 +308,7 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
             label: Some("VS-as-compute encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, vertex_count, instance_count, &bg)
+            .dispatch(&mut encoder, vertex_count, instance_count, &vs_bg_group0, &bg)
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -227,14 +321,13 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         // Layout: [patch_id_total][control_point_id=0][out_reg], flattened as:
         // patch0: o0,o1,(zeros...); patch1:o0,o1,(zeros...); ...
         //
         // `vs_passthrough.dxbc` currently exports 2 registers, but keep this robust if it ever
-        // grows additional outputs: the placeholder VS-as-compute shader zeros regs >= 2.
+        // grows additional outputs: the VS-as-compute wrapper zeros regs >= 2 for determinism.
         let mut expected: Vec<[f32; 4]> = Vec::new();
         for _inst in 0..instance_count {
             for (pos, col) in vertices.iter() {
@@ -246,6 +339,165 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
             }
         }
         assert_eq!(vecs, expected);
+    });
+}
+
+#[test]
+fn vs_as_compute_binds_vs_group0_resources_and_supports_nonzero_pos_reg() {
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
+            "aero-d3d11 VS-as-compute group0 resource binding test device",
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return;
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        let (vs_signature, _out_reg_count) = load_vs_passthrough_signature().unwrap();
+
+        // ILAY fixture: POSITION0 (float3) + COLOR0 (float4) (we only use POSITION0 here).
+        let layout = InputLayoutDesc::parse(include_bytes!("fixtures/ilay_pos3_color.bin"))
+            .context("parse ILAY")
+            .unwrap();
+        let stride = 28u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &vs_signature)
+            .context("pulling layout")
+            .unwrap();
+
+        // One vertex: pos3 + color4.
+        let pos = [1.0f32, 2.0, 3.0];
+        let col = [0.0f32, 0.0, 0.0, 1.0];
+        let mut vb_bytes = Vec::new();
+        for f in pos {
+            vb_bytes.extend_from_slice(&f.to_le_bytes());
+        }
+        for f in col {
+            vb_bytes.extend_from_slice(&f.to_le_bytes());
+        }
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute group0 resource vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let ia_uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute group0 resource ia uniform"),
+            size: ia_uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+        // Create a cb0 uniform that offsets the position.
+        let cb0_bytes: [u8; 16] = bytemuck::cast([10.0f32, 20.0, 30.0, 0.0]);
+        let cb0 = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute cb0"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&cb0, 0, &cb0_bytes);
+
+        let vs_bgl_group0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("VS-as-compute test VS group0 bgl (cb0)"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            }],
+        });
+        let vs_bg_group0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("VS-as-compute test VS group0 bind group (cb0)"),
+            layout: &vs_bgl_group0,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: cb0.as_entire_binding(),
+            }],
+        });
+
+        // Configure output register file so that SV_Position is stored in register 1 (non-zero).
+        let cfg = VsAsComputeConfig {
+            control_point_count: 1,
+            out_reg_count: 2,
+            pos_reg: 1,
+            indexed: false,
+        };
+        let pipeline = VsAsComputePipeline::new(
+            &device,
+            &pulling,
+            &vs_bgl_group0,
+            VS_WGSL_POS_REG1_WITH_CB0,
+            cfg,
+        )
+        .unwrap();
+
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+        let vs_out_regs = alloc_vs_out_regs(&mut scratch, &device, 1, 1, cfg.out_reg_count).unwrap();
+
+        let bg = pipeline
+            .create_bind_group_group3(
+                &device,
+                &pulling,
+                &[&vb],
+                wgpu::BufferBinding {
+                    buffer: &ia_uniform,
+                    offset: 0,
+                    size: None,
+                },
+                None,
+                None,
+                &vs_out_regs,
+            )
+            .unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VS-as-compute group0 resource encoder"),
+        });
+        pipeline
+            .dispatch(&mut encoder, 1, 1, &vs_bg_group0, &bg)
+            .unwrap();
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_back_buffer(
+            &device,
+            &queue,
+            vs_out_regs.buffer.as_ref(),
+            vs_out_regs.offset,
+            vs_out_regs.size,
+        )
+        .await
+        .unwrap();
+        let vecs = unpack_vec4_f32(&bytes);
+
+        assert_eq!(vecs.len(), 2);
+        // reg0: @location(0) output (input position)
+        assert_eq!(vecs[0], [1.0, 2.0, 3.0, 1.0]);
+        // reg1: SV_Position output (input position + cb0 offset)
+        assert_eq!(vecs[1], [11.0, 22.0, 33.0, 1.0]);
     });
 }
 
@@ -327,12 +579,17 @@ fn vs_as_compute_respects_first_vertex() {
         let instance_count = 1u32;
         let control_point_count = 1u32;
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count,
             out_reg_count,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -364,7 +621,7 @@ fn vs_as_compute_respects_first_vertex() {
             label: Some("VS-as-compute first_vertex encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, vertex_count, instance_count, &bg)
+            .dispatch(&mut encoder, vertex_count, instance_count, &vs_bg_group0, &bg)
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -377,8 +634,7 @@ fn vs_as_compute_respects_first_vertex() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         let (pos, col) = &vertices[1];
         let mut expected: Vec<[f32; 4]> = Vec::new();
@@ -476,9 +732,13 @@ fn vs_as_compute_uses_patch_control_point_layout() {
         let cfg = VsAsComputeConfig {
             control_point_count,
             out_reg_count,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -510,7 +770,7 @@ fn vs_as_compute_uses_patch_control_point_layout() {
             label: Some("VS-as-compute patch layout encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, vertex_count, instance_count, &bg)
+            .dispatch(&mut encoder, vertex_count, instance_count, &vs_bg_group0, &bg)
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -655,12 +915,17 @@ fn vs_as_compute_supports_index_pulling() {
         let instance_count = 1u32;
         let control_point_count = 1u32;
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count,
             out_reg_count,
+            pos_reg: 0,
             indexed: true,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -698,7 +963,7 @@ fn vs_as_compute_supports_index_pulling() {
             label: Some("VS-as-compute indexed encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &bg)
+            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -711,8 +976,7 @@ fn vs_as_compute_supports_index_pulling() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         let mut expected: Vec<[f32; 4]> = Vec::new();
         for &idx in indices.iter() {
@@ -818,12 +1082,18 @@ fn vs_as_compute_supports_u32_index_pulling() {
 
         let index_count = indices.len() as u32;
         let instance_count = 1u32;
+
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count: 1,
             out_reg_count,
+            pos_reg: 0,
             indexed: true,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -859,7 +1129,7 @@ fn vs_as_compute_supports_u32_index_pulling() {
             label: Some("VS-as-compute indexed encoder (u32)"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &bg)
+            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -872,8 +1142,7 @@ fn vs_as_compute_supports_u32_index_pulling() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         // idx0=2, idx1=0, idx2=1
         let expected_vertices = [vertices[2], vertices[0], vertices[1]];
@@ -993,12 +1262,17 @@ fn vs_as_compute_index_pulling_applies_first_index_and_base_vertex() {
         let instance_count = 1u32;
         let control_point_count = 1u32;
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count,
             out_reg_count,
+            pos_reg: 0,
             indexed: true,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -1034,7 +1308,7 @@ fn vs_as_compute_index_pulling_applies_first_index_and_base_vertex() {
             label: Some("VS-as-compute indexed encoder (first_index/base_vertex)"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &bg)
+            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -1047,8 +1321,7 @@ fn vs_as_compute_index_pulling_applies_first_index_and_base_vertex() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         let expected: Vec<[f32; 4]> = vec![
             // abs_index 1 => idx 0 => vertex_id 2
@@ -1167,12 +1440,17 @@ fn vs_as_compute_index_pulling_supports_negative_base_vertex() {
         let instance_count = 1u32;
         let control_point_count = 1u32;
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count,
             out_reg_count,
+            pos_reg: 0,
             indexed: true,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -1208,7 +1486,7 @@ fn vs_as_compute_index_pulling_supports_negative_base_vertex() {
             label: Some("VS-as-compute indexed encoder (negative base_vertex)"),
         });
         pipeline
-            .dispatch(&mut encoder, index_count, instance_count, &bg)
+            .dispatch(&mut encoder, index_count, instance_count, &vs_bg_group0, &bg)
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -1221,8 +1499,7 @@ fn vs_as_compute_index_pulling_supports_negative_base_vertex() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         let mut expected: Vec<[f32; 4]> = Vec::new();
         for (pos, col) in vertices.iter() {
@@ -1301,12 +1578,17 @@ fn vs_as_compute_rejects_non_multiple_of_control_points() {
         let instance_count = 1u32;
         let control_point_count = 3u32; // does not divide invocations_per_instance
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count,
             out_reg_count,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_COLOR, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -1339,7 +1621,13 @@ fn vs_as_compute_rejects_non_multiple_of_control_points() {
             label: Some("VS-as-compute invalid encoder"),
         });
         let err = pipeline
-            .dispatch(&mut encoder, invocations_per_instance, instance_count, &bg)
+            .dispatch(
+                &mut encoder,
+                invocations_per_instance,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .expect_err("dispatch should reject non-multiple of control point count");
         assert!(
             err.to_string().contains("multiple of control_point_count"),
@@ -1422,12 +1710,17 @@ fn vs_as_compute_loads_f16x2_input() {
         });
         queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count: 1,
             out_reg_count: 1,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_ONLY, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs =
@@ -1452,7 +1745,9 @@ fn vs_as_compute_loads_f16x2_input() {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("VS-as-compute f16 encoder"),
         });
-        pipeline.dispatch(&mut encoder, 1, 1, &bg).unwrap();
+        pipeline
+            .dispatch(&mut encoder, 1, 1, &vs_bg_group0, &bg)
+            .unwrap();
         queue.submit([encoder.finish()]);
 
         let bytes = read_back_buffer(
@@ -1464,8 +1759,7 @@ fn vs_as_compute_loads_f16x2_input() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
         assert_eq!(vecs, vec![[1.0, 0.5, 0.0, 1.0]]);
     });
 }
@@ -1544,12 +1838,17 @@ fn vs_as_compute_loads_u16x2_input() {
         });
         queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count: 1,
             out_reg_count: 1,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_ONLY, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs =
@@ -1574,7 +1873,9 @@ fn vs_as_compute_loads_u16x2_input() {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("VS-as-compute u16 encoder"),
         });
-        pipeline.dispatch(&mut encoder, 1, 1, &bg).unwrap();
+        pipeline
+            .dispatch(&mut encoder, 1, 1, &vs_bg_group0, &bg)
+            .unwrap();
         queue.submit([encoder.finish()]);
 
         let bytes = read_back_buffer(
@@ -1586,8 +1887,7 @@ fn vs_as_compute_loads_u16x2_input() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
         assert_eq!(vecs, vec![[123.0, 456.0, 0.0, 1.0]]);
     });
 }
@@ -1671,9 +1971,13 @@ fn vs_as_compute_loads_u16_scalar_input() {
         let cfg = VsAsComputeConfig {
             control_point_count: 1,
             out_reg_count: 1,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_ONLY, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs =
@@ -1698,7 +2002,9 @@ fn vs_as_compute_loads_u16_scalar_input() {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("VS-as-compute u16 scalar encoder"),
         });
-        pipeline.dispatch(&mut encoder, 1, 1, &bg).unwrap();
+        pipeline
+            .dispatch(&mut encoder, 1, 1, &vs_bg_group0, &bg)
+            .unwrap();
         queue.submit([encoder.finish()]);
 
         let bytes = read_back_buffer(
@@ -1808,12 +2114,22 @@ fn vs_as_compute_loads_extended_formats() {
             });
             queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
 
+            let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(device);
+
             let cfg = VsAsComputeConfig {
                 control_point_count: 1,
                 out_reg_count: 1,
+                pos_reg: 0,
                 indexed: false,
             };
-            let pipeline = VsAsComputePipeline::new(device, &pulling, cfg).unwrap();
+            let pipeline = VsAsComputePipeline::new(
+                device,
+                &pulling,
+                &vs_bgl_group0,
+                VS_WGSL_POS_ONLY,
+                cfg,
+            )
+            .unwrap();
 
             let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
             let vs_out_regs =
@@ -1838,7 +2154,9 @@ fn vs_as_compute_loads_extended_formats() {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("VS-as-compute extended encoder"),
             });
-            pipeline.dispatch(&mut encoder, 1, 1, &bg).unwrap();
+            pipeline
+                .dispatch(&mut encoder, 1, 1, &vs_bg_group0, &bg)
+                .unwrap();
             queue.submit([encoder.finish()]);
 
             let bytes = read_back_buffer(
@@ -1850,8 +2168,7 @@ fn vs_as_compute_loads_extended_formats() {
             )
             .await
             .unwrap();
-            let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-            let vecs = unpack_vec4_u32_as_f32(&words);
+            let vecs = unpack_vec4_f32(&bytes);
             assert_eq!(vecs.len(), 1);
             assert_vec4(vecs[0], expected);
         }
@@ -2094,12 +2411,17 @@ fn vs_as_compute_respects_instance_step_rate() {
         let invocations_per_instance = 1u32;
         let instance_count = 4u32;
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count: 1,
             out_reg_count: 1,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_ONLY, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -2131,7 +2453,13 @@ fn vs_as_compute_respects_instance_step_rate() {
             label: Some("VS-as-compute instance-step-rate encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, invocations_per_instance, instance_count, &bg)
+            .dispatch(
+                &mut encoder,
+                invocations_per_instance,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -2144,8 +2472,7 @@ fn vs_as_compute_respects_instance_step_rate() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         let expected: Vec<[f32; 4]> = vec![
             [10.0, 0.0, 0.0, 1.0],
@@ -2249,12 +2576,17 @@ fn vs_as_compute_instance_step_rate_is_based_on_absolute_instance_id() {
         let invocations_per_instance = 1u32;
         let instance_count = 4u32;
 
+        let (vs_bgl_group0, vs_bg_group0) = create_empty_vs_group0(&device);
+
         let cfg = VsAsComputeConfig {
             control_point_count: 1,
             out_reg_count: 1,
+            pos_reg: 0,
             indexed: false,
         };
-        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+        let pipeline =
+            VsAsComputePipeline::new(&device, &pulling, &vs_bgl_group0, VS_WGSL_POS_ONLY, cfg)
+                .unwrap();
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
         let vs_out_regs = alloc_vs_out_regs(
@@ -2286,7 +2618,13 @@ fn vs_as_compute_instance_step_rate_is_based_on_absolute_instance_id() {
             label: Some("VS-as-compute instance-step-rate base-instance encoder"),
         });
         pipeline
-            .dispatch(&mut encoder, invocations_per_instance, instance_count, &bg)
+            .dispatch(
+                &mut encoder,
+                invocations_per_instance,
+                instance_count,
+                &vs_bg_group0,
+                &bg,
+            )
             .unwrap();
         queue.submit([encoder.finish()]);
 
@@ -2299,8 +2637,7 @@ fn vs_as_compute_instance_step_rate_is_based_on_absolute_instance_id() {
         )
         .await
         .unwrap();
-        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
-        let vecs = unpack_vec4_u32_as_f32(&words);
+        let vecs = unpack_vec4_f32(&bytes);
 
         // Absolute InstanceID sequence is [1,2,3,4] due to first_instance=1.
         // Divide-by-2 step rate => element indices [0,1,1,2].

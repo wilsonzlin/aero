@@ -8688,6 +8688,77 @@ impl AerogpuD3d11Executor {
                 bail!("shader {vs_handle} is not a vertex shader");
             }
 
+            let pos_reg: u32 = vs
+                .reflection
+                .outputs
+                .iter()
+                .find(|o| o.builtin == Some(crate::Builtin::Position))
+                .map(|o| o.register)
+                .ok_or_else(|| anyhow!("tessellation: VS reflection missing SV_Position output"))?;
+
+            // Build the VS stage resource bind group (group(0)) with COMPUTE visibility so the
+            // translated vertex shader can be invoked from the compute entry point.
+            //
+            // - If the VS declares no resources, reuse the cached empty bind group/layout.
+            // - Otherwise, use the standard reflection-based binding model + caches.
+            let mut vs_bindings_compute = vs.reflection.bindings.clone();
+            for b in &mut vs_bindings_compute {
+                b.visibility = wgpu::ShaderStages::COMPUTE;
+            }
+
+            let (vs_bgl_group0, vs_bg_group0) = if vs_bindings_compute.is_empty() {
+                (
+                    self.bind_group_layout_cache.get_or_create(&self.device, &[]),
+                    self.empty_bind_group.clone(),
+                )
+            } else {
+                let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                    &self.device,
+                    &mut self.bind_group_layout_cache,
+                    [reflection_bindings::ShaderBindingSet::Guest(
+                        vs_bindings_compute.as_slice(),
+                    )],
+                    reflection_bindings::BindGroupIndexValidation::GuestShaders,
+                )?;
+                // Upload any guest-backed resources used by the current VS binding state.
+                self.ensure_bound_resources_uploaded(
+                    ShaderStage::Vertex,
+                    encoder,
+                    &pipeline_bindings,
+                    allocs,
+                    guest_mem,
+                )?;
+
+                let stage_bindings = self.bindings.stage_mut(ShaderStage::Vertex);
+                let provider = CmdExecutorBindGroupProvider {
+                    resources: &self.resources,
+                    legacy_constants: &self.legacy_constants,
+                    cbuffer_scratch: &self.cbuffer_scratch,
+                    srv_buffer_scratch: &self.srv_buffer_scratch,
+                    storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
+                        .max(1),
+                    max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                        as u64,
+                    dummy_uniform: &self.dummy_uniform,
+                    dummy_storage: &self.dummy_storage,
+                    dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                    dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                    default_sampler: &self.default_sampler,
+                    stage: ShaderStage::Vertex,
+                    stage_state: stage_bindings,
+                    internal_buffers: &[],
+                };
+                let bg = reflection_bindings::build_bind_group(
+                    &self.device,
+                    &mut self.bind_group_cache,
+                    &pipeline_bindings.group_layouts[0],
+                    &pipeline_bindings.group_bindings[0],
+                    &provider,
+                )?;
+                stage_bindings.clear_dirty();
+                (pipeline_bindings.group_layouts[0].clone(), bg)
+            };
+
             let layout = self
                 .resources
                 .input_layouts
@@ -8825,9 +8896,13 @@ impl AerogpuD3d11Executor {
                 .vs_as_compute(
                     &self.device,
                     &pulling,
+                    vs_bgl_group0.layout.as_ref(),
+                    &vs.wgsl_source,
+                    vs.wgsl_hash,
                     super::tessellation::vs_as_compute::VsAsComputeConfig {
                         control_point_count: control_points,
                         out_reg_count,
+                        pos_reg,
                         indexed: opcode == OPCODE_DRAW_INDEXED,
                     },
                 )
@@ -8842,7 +8917,13 @@ impl AerogpuD3d11Executor {
                 &draw_scratch.vs_out,
             )?;
             self.encoder_has_commands = true;
-            vs_pipeline.dispatch(encoder, element_count, instance_count, &vs_bg)?;
+            vs_pipeline.dispatch(
+                encoder,
+                element_count,
+                instance_count,
+                vs_bg_group0.as_ref(),
+                &vs_bg,
+            )?;
 
             // --- HS pass-through (placeholder) ---
             let hs_pipeline = self
