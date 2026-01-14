@@ -3358,6 +3358,31 @@ try {
             $prefixLower = ""
             try { $prefixLower = $prefix.ToLower() } catch { $prefixLower = "" }
 
+            # Best-effort: correlate tools\ files against manifest.json entries (when present).
+            $manifestPaths = @{}
+            $manifestPresent = $null
+            $manifestIncludesTools = $null
+            $manifestToolsFilesListed = $null
+            try {
+                if ($report.media_integrity -and ($report.media_integrity -is [hashtable])) {
+                    if ($report.media_integrity.ContainsKey("manifest_present")) { $manifestPresent = $report.media_integrity.manifest_present }
+                    if ($report.media_integrity.ContainsKey("manifest_includes_tools")) { $manifestIncludesTools = $report.media_integrity.manifest_includes_tools }
+                    if ($report.media_integrity.ContainsKey("tools_files_listed")) { $manifestToolsFilesListed = $report.media_integrity.tools_files_listed }
+                    if ($report.media_integrity.ContainsKey("file_results") -and $report.media_integrity.file_results) {
+                        foreach ($r in $report.media_integrity.file_results) {
+                            if (-not $r -or -not $r.path) { continue }
+                            $p = ("" + $r.path).Trim()
+                            if ($p.Length -eq 0) { continue }
+                            $p = $p.Replace("\", "/")
+                            if ($p.StartsWith("./")) { $p = $p.Substring(2) }
+                            while ($p.StartsWith("/")) { $p = $p.Substring(1) }
+                            if ($p.Length -eq 0) { continue }
+                            $manifestPaths[$p.ToLower()] = $true
+                        }
+                    }
+                }
+            } catch { }
+
             $fileItems = @()
             foreach ($it in @($items)) {
                 try {
@@ -3388,6 +3413,17 @@ try {
                     $invErrors += ("Failed to compute SHA-256 for: " + $rel)
                 }
 
+                $relNorm = $rel.Replace("\", "/")
+                if ($relNorm.StartsWith("./")) { $relNorm = $relNorm.Substring(2) }
+                while ($relNorm.StartsWith("/")) { $relNorm = $relNorm.Substring(1) }
+                $listed = $false
+                try {
+                    if ($manifestPaths.Count -gt 0) {
+                        $k = $relNorm.ToLower()
+                        if ($manifestPaths.ContainsKey($k)) { $listed = $true }
+                    }
+                } catch { $listed = $false }
+
                 $vi = $null
                 try {
                     $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($full)
@@ -3411,6 +3447,8 @@ try {
 
                 $entry = @{
                     relative_path = $rel
+                    relative_path_normalized = $relNorm
+                    listed_in_manifest = $listed
                     sha256 = $sha
                     size_bytes = $f.Length
                     file_version = $fileVersion
@@ -3441,6 +3479,9 @@ try {
             $toolsData.exe_files = $exeFiles
             $toolsData.total_size_bytes = $totalBytes
             $toolsData.total_exe_size_bytes = $totalExeBytes
+            $toolsData.manifest_present = $manifestPresent
+            $toolsData.manifest_includes_tools = $manifestIncludesTools
+            $toolsData.manifest_tools_files_listed = $manifestToolsFilesListed
             $toolsData.inventory_errors = $invErrors
             $toolsData.tools_dir_readable = ($toolsStatus -eq "PASS")
 
