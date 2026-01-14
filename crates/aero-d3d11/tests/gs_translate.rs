@@ -34,9 +34,9 @@ fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
 
     // Geometry metadata declarations.
     tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
-    tokens.push(3); // D3D10_SB_PRIMITIVE_TRIANGLE
+    tokens.push(3); // triangle (tokenized shader format)
     tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
-    tokens.push(5); // D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP
+    tokens.push(3); // triangle_strip (tokenized shader format)
     tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
     tokens.push(3);
 

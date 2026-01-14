@@ -1505,15 +1505,18 @@ impl IoMaps {
             return false;
         };
         let depth_reg = depth.param.register;
-        self.outputs.values().any(|p| {
-            p.sys_value == Some(D3D_NAME_TARGET) && p.param.register == depth_reg
-        })
+        self.outputs
+            .values()
+            .any(|p| p.sys_value == Some(D3D_NAME_TARGET) && p.param.register == depth_reg)
     }
 
     fn ps_depth_var(&self) -> Result<String, ShaderTranslateError> {
-        let depth = self.ps_sv_depth.as_ref().ok_or(ShaderTranslateError::MissingSignature(
-            "pixel output SV_Depth",
-        ))?;
+        let depth = self
+            .ps_sv_depth
+            .as_ref()
+            .ok_or(ShaderTranslateError::MissingSignature(
+                "pixel output SV_Depth",
+            ))?;
         let depth_reg = depth.param.register;
         if self.ps_depth_needs_dedicated_reg() {
             Ok("oDepth".to_owned())
@@ -4320,9 +4323,7 @@ fn emit_instructions(
                 // Output packing:
                 // - x = total byte size
                 // - yzw = 0
-                let expr = format!(
-                    "bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))"
-                );
+                let expr = format!("bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::BufInfoStructuredUav {
@@ -4338,9 +4339,8 @@ fn emit_instructions(
                 // - x = element count
                 // - y = stride (bytes)
                 // - zw = 0
-                let expr = format!(
-                    "bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))"
-                );
+                let expr =
+                    format!("bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))");
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::WorkgroupBarrier => {
@@ -4496,14 +4496,12 @@ fn emit_src_vec4(
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
     let base = match &src.kind {
-        SrcKind::Register(reg) => {
-            match reg.file {
-                RegFile::Temp => format!("r{}", reg.index),
-                RegFile::Output => format!("o{}", reg.index),
-                RegFile::OutputDepth => ctx.io.ps_depth_var()?,
-                RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
-            }
-        }
+        SrcKind::Register(reg) => match reg.file {
+            RegFile::Temp => format!("r{}", reg.index),
+            RegFile::Output => format!("o{}", reg.index),
+            RegFile::OutputDepth => ctx.io.ps_depth_var()?,
+            RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
+        },
         SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         SrcKind::ConstantBuffer { slot, reg } => {
             // Size is determined by scanning, so the declared array is always
