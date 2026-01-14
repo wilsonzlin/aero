@@ -156,6 +156,11 @@ pub const KEY_LEFTMETA: u16 = 125;
 pub const KEY_RIGHTMETA: u16 = 126;
 pub const KEY_MENU: u16 = 139;
 
+// Host-side safety: cap how many events we will buffer when the guest is not consuming the
+// virtio-input event queue (e.g. driver stalled or malicious guest). Real virtio-input devices do
+// not provide infinite buffering; dropping oldest events is preferable to unbounded growth.
+const MAX_PENDING_EVENTS: usize = 4096;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VirtioInputDeviceKind {
     Keyboard,
@@ -438,6 +443,9 @@ impl VirtioInput {
     }
 
     pub fn push_event(&mut self, event: VirtioInputEvent) {
+        if self.pending.len() >= MAX_PENDING_EVENTS {
+            self.pending.pop_front();
+        }
         self.pending.push_back(event);
     }
 
@@ -912,6 +920,22 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn pending_event_queue_is_bounded() {
+        let mut dev = VirtioInput::new(VirtioInputDeviceKind::Mouse);
+        for i in 0..(MAX_PENDING_EVENTS + 100) {
+            dev.push_event(VirtioInputEvent {
+                type_: EV_REL,
+                code: REL_X,
+                value: i as i32,
+            });
+        }
+
+        assert_eq!(dev.pending.len(), MAX_PENDING_EVENTS);
+        assert_eq!(dev.pending.front().unwrap().value, 100);
+        assert_eq!(dev.pending.back().unwrap().value, (MAX_PENDING_EVENTS + 99) as i32);
     }
 
     fn write_desc(
