@@ -61,9 +61,14 @@ The canonical machine supports **two mutually-exclusive** display configurations
   `aero_gpu_vga::SVGA_LFB_BASE`).
   - When `MachineConfig::enable_pc_platform=false`, the machine maps the LFB MMIO aperture directly
     at that base.
-  - When `MachineConfig::enable_pc_platform=true`, the canonical machine exposes a small
-    Bochs/QEMU-compatible VGA PCI stub (currently `00:0c.0`) so the LFB can be reached via the PCI
-    MMIO window / BAR router.
+  - When `MachineConfig::enable_pc_platform=true`, the canonical machine maps the LFB MMIO aperture
+    directly at the configured base inside the PCI MMIO window (no dedicated PCI VGA stub). The PCI
+    BAR allocator reserves the fixed LFB range so BIOS POST does not place other devices on top of
+    it.
+    - Note: Aero historically exposed a Bochs/QEMU VGA PCI stub identity (`1234:1111` at `00:0c.0`;
+      see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`). The canonical `aero_machine::Machine`
+      no longer installs this PCI function, but the identity remains reserved for compatibility
+      tests and alternate integrations.
 
 See also:
 
