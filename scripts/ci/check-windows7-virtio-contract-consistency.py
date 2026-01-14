@@ -2202,7 +2202,9 @@ def validate_virtio_input_model_lines(
 def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str]) -> list[str]:
     """
     Normalized INF representation for drift checks:
-    - strips full-line and inline comments
+    - ignores the leading comment/banner block (starts at the first section header,
+      or the first unexpected functional line if one appears before any section header)
+    - strips full-line and inline comments (INF comments start with ';' outside quoted strings)
     - drops empty lines
     - optionally removes entire sections (by name, case-insensitive)
     - normalizes section headers to lowercase (INF section names are case-insensitive)
@@ -2230,7 +2232,7 @@ def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str
                 out.append(f"[{current_section.lower()}]")
             continue
 
-        if current_section is None or dropping:
+        if dropping:
             continue
         out.append(line)
 
