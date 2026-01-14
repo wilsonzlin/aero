@@ -5,6 +5,15 @@
 #define VIRTIO_PCI_ISR_QUEUE_INTERRUPT  0x01u
 #define VIRTIO_PCI_ISR_CONFIG_INTERRUPT 0x02u
 
+/*
+ * SCSI_PNP_ACTION value for surprise removal.
+ *
+ * Some WDKs expose `StorSurpriseRemoval` as an enum constant, others do not.
+ * The value is stable across WDK versions (StorStartDevice=0, StorStopDevice=1,
+ * StorRemoveDevice=2, StorSurpriseRemoval=3).
+ */
+#define AEROVBLK_PNP_ACTION_SURPRISE_REMOVAL 3u
+
 static VOID AerovblkCompleteSrb(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR srbStatus);
 
 static VOID AerovblkCaptureInterruptMode(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
@@ -2043,7 +2052,8 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     InterlockedIncrement(&devExt->PnpSrbCount);
     pnp = (PSCSI_PNP_REQUEST_BLOCK)srb->DataBuffer;
     if (pnp != NULL && srb->DataTransferLength >= sizeof(*pnp)) {
-      if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice || pnp->PnPAction == StorSurpriseRemoval) {
+      if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice ||
+          pnp->PnPAction == AEROVBLK_PNP_ACTION_SURPRISE_REMOVAL) {
         STOR_LOCK_HANDLE lock;
         BOOLEAN avoidMmio;
         BOOLEAN wasRemoved;
@@ -2059,7 +2069,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
          * that as potential surprise removal and avoid MMIO in that case.
          */
         wasRemoved = devExt->Removed ? TRUE : FALSE;
-        treatAsSurprise = (pnp->PnPAction == StorSurpriseRemoval) ? TRUE : FALSE;
+        treatAsSurprise = (pnp->PnPAction == AEROVBLK_PNP_ACTION_SURPRISE_REMOVAL) ? TRUE : FALSE;
         if (pnp->PnPAction == StorRemoveDevice && !wasRemoved) {
           treatAsSurprise = TRUE;
         }
@@ -2082,7 +2092,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
          * MMIO.
          */
         avoidMmio = FALSE;
-        if (devExt->SurpriseRemoved) {
+        if (treatAsSurprise) {
           avoidMmio = TRUE;
           devExt->Vdev.CommonCfg = NULL;
           devExt->Vdev.NotifyBase = NULL;
