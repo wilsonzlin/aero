@@ -565,6 +565,21 @@ fn parse_wgsl_attr_u32(line: &str, attr: &str) -> Option<u32> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn parse_wgsl_uniform_var_name(line: &str) -> Option<&str> {
+    let pos = line.find("var<uniform>")?;
+    let rest = line[pos + "var<uniform>".len()..].trim_start();
+    let mut end = 0usize;
+    for (i, ch) in rest.char_indices() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            end = i + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    (end != 0).then_some(&rest[..end])
+}
+
+#[cfg(target_arch = "wasm32")]
 fn validate_wgsl_binding_contract(
     wgsl: &str,
     stage: shader::ShaderStage,
@@ -583,60 +598,62 @@ fn validate_wgsl_binding_contract(
     let mut samp_slots = HashSet::<u32>::new();
 
     for line in wgsl.lines() {
-        if line.contains("var<uniform> constants:") {
-            let group = parse_wgsl_attr_u32(line, "group")
-                .ok_or_else(|| "constants uniform is missing @group()".to_string())?;
-            let binding = parse_wgsl_attr_u32(line, "binding")
-                .ok_or_else(|| "constants uniform is missing @binding()".to_string())?;
-            if group != 0 || binding != 0 {
-                return Err(format!(
-                    "constants uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(0)"
-                ));
+        if let Some(name) = parse_wgsl_uniform_var_name(line) {
+            match name {
+                "constants" => {
+                    let group = parse_wgsl_attr_u32(line, "group")
+                        .ok_or_else(|| "constants uniform is missing @group()".to_string())?;
+                    let binding = parse_wgsl_attr_u32(line, "binding")
+                        .ok_or_else(|| "constants uniform is missing @binding()".to_string())?;
+                    if group != 0 || binding != 0 {
+                        return Err(format!(
+                            "constants uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(0)"
+                        ));
+                    }
+                    has_constants = true;
+                    continue;
+                }
+                "constants_i" => {
+                    let group = parse_wgsl_attr_u32(line, "group")
+                        .ok_or_else(|| "constants_i uniform is missing @group()".to_string())?;
+                    let binding = parse_wgsl_attr_u32(line, "binding")
+                        .ok_or_else(|| "constants_i uniform is missing @binding()".to_string())?;
+                    if group != 0 || binding != 1 {
+                        return Err(format!(
+                            "constants_i uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(1)"
+                        ));
+                    }
+                    has_constants_i = true;
+                    continue;
+                }
+                "constants_b" => {
+                    let group = parse_wgsl_attr_u32(line, "group")
+                        .ok_or_else(|| "constants_b uniform is missing @group()".to_string())?;
+                    let binding = parse_wgsl_attr_u32(line, "binding")
+                        .ok_or_else(|| "constants_b uniform is missing @binding()".to_string())?;
+                    if group != 0 || binding != 2 {
+                        return Err(format!(
+                            "constants_b uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(2)"
+                        ));
+                    }
+                    has_constants_b = true;
+                    continue;
+                }
+                "half_pixel" => {
+                    has_half_pixel = true;
+                    let group = parse_wgsl_attr_u32(line, "group")
+                        .ok_or_else(|| "half_pixel uniform is missing @group()".to_string())?;
+                    let binding = parse_wgsl_attr_u32(line, "binding")
+                        .ok_or_else(|| "half_pixel uniform is missing @binding()".to_string())?;
+                    if group != 3 || binding != 0 {
+                        return Err(format!(
+                            "half_pixel uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(3) @binding(0)"
+                        ));
+                    }
+                    continue;
+                }
+                _ => {}
             }
-            has_constants = true;
-            continue;
-        }
-
-        if line.contains("var<uniform> constants_i:") {
-            let group = parse_wgsl_attr_u32(line, "group")
-                .ok_or_else(|| "constants_i uniform is missing @group()".to_string())?;
-            let binding = parse_wgsl_attr_u32(line, "binding")
-                .ok_or_else(|| "constants_i uniform is missing @binding()".to_string())?;
-            if group != 0 || binding != 1 {
-                return Err(format!(
-                    "constants_i uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(1)"
-                ));
-            }
-            has_constants_i = true;
-            continue;
-        }
-
-        if line.contains("var<uniform> constants_b:") {
-            let group = parse_wgsl_attr_u32(line, "group")
-                .ok_or_else(|| "constants_b uniform is missing @group()".to_string())?;
-            let binding = parse_wgsl_attr_u32(line, "binding")
-                .ok_or_else(|| "constants_b uniform is missing @binding()".to_string())?;
-            if group != 0 || binding != 2 {
-                return Err(format!(
-                    "constants_b uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(2)"
-                ));
-            }
-            has_constants_b = true;
-            continue;
-        }
-
-        if line.contains("var<uniform> half_pixel") {
-            has_half_pixel = true;
-            let group = parse_wgsl_attr_u32(line, "group")
-                .ok_or_else(|| "half_pixel uniform is missing @group()".to_string())?;
-            let binding = parse_wgsl_attr_u32(line, "binding")
-                .ok_or_else(|| "half_pixel uniform is missing @binding()".to_string())?;
-            if group != 3 || binding != 0 {
-                return Err(format!(
-                    "half_pixel uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(3) @binding(0)"
-                ));
-            }
-            continue;
         }
 
         if let Some(pos) = line.find("var tex") {
