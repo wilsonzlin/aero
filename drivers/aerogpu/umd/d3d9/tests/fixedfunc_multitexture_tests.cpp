@@ -49,6 +49,9 @@ constexpr uint32_t kD3dTaTexture = 2u;
  
 // Pixel shader instruction token (ps_2_0).
 constexpr uint32_t kPsOpTexld = 0x04000042u;
+// Sampler source register token base (s0 == 0x20E40800). Matches
+// `fixedfunc_ps20::src_sampler` in `src/aerogpu_d3d9_driver.cpp`.
+constexpr uint32_t kPsSamplerTokenBase = 0x20E40800u;
  
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -75,6 +78,52 @@ size_t CountToken(const aerogpu::Shader* shader, uint32_t token) {
     }
   }
   return count;
+}
+
+uint32_t TexldSamplerMask(const aerogpu::Shader* shader) {
+  if (!shader) {
+    return 0;
+  }
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
+    return 0;
+  }
+
+  const uint8_t* bytes = shader->bytecode.data();
+  const size_t word_count = size / sizeof(uint32_t);
+  if (word_count < 2) {
+    return 0;
+  }
+
+  auto ReadWord = [&](size_t idx) -> uint32_t {
+    uint32_t w = 0;
+    std::memcpy(&w, bytes + idx * sizeof(uint32_t), sizeof(uint32_t));
+    return w;
+  };
+
+  uint32_t mask = 0;
+  // Skip version token at word 0.
+  for (size_t i = 1; i < word_count;) {
+    const uint32_t inst = ReadWord(i);
+    if (inst == 0x0000FFFFu) { // end
+      break;
+    }
+    const uint32_t len = inst >> 24;
+    if (len == 0 || i + len > word_count) {
+      break;
+    }
+    if (inst == kPsOpTexld && len >= 4) {
+      const uint32_t sampler = ReadWord(i + 3);
+      if (sampler >= kPsSamplerTokenBase) {
+        const uint32_t reg = sampler - kPsSamplerTokenBase;
+        if (reg < 16) {
+          mask |= (1u << reg);
+        }
+      }
+    }
+    i += len;
+  }
+  return mask;
 }
  
 size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
@@ -329,6 +378,9 @@ bool TestFixedfuncTwoStageEmitsTwoTexldAndRebinds() {
     if (!Check(CountToken(dev->ps, kPsOpTexld) >= 2, "fixed-function PS contains >= 2 texld")) {
       return false;
     }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x3u, "fixed-function PS texld uses samplers s0 and s1")) {
+      return false;
+    }
     ps_before = dev->ps->handle;
   }
   if (!Check(ps_before != 0, "first draw bound non-zero PS handle")) {
@@ -359,6 +411,9 @@ bool TestFixedfuncTwoStageEmitsTwoTexldAndRebinds() {
       return false;
     }
     if (!Check(CountToken(dev->ps, kPsOpTexld) >= 2, "second fixed-function PS contains >= 2 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x3u, "second fixed-function PS texld uses samplers s0 and s1")) {
       return false;
     }
     ps_after = dev->ps->handle;
@@ -518,6 +573,9 @@ bool TestFixedfuncUnboundStage1TextureTruncatesChainAndDoesNotRebind() {
     if (!Check(CountToken(dev->ps, kPsOpTexld) == 1, "fixed-function PS contains exactly 1 texld")) {
       return false;
     }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x1u, "fixed-function PS texld uses only sampler s0")) {
+      return false;
+    }
     ps_ptr_before = dev->ps;
     ps_before = dev->ps->handle;
   }
@@ -546,6 +604,9 @@ bool TestFixedfuncUnboundStage1TextureTruncatesChainAndDoesNotRebind() {
       return false;
     }
     if (!Check(CountToken(dev->ps, kPsOpTexld) == 1, "second PS contains exactly 1 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x1u, "second PS texld uses only sampler s0")) {
       return false;
     }
     ps_ptr_after = dev->ps;
@@ -699,6 +760,9 @@ bool TestFixedfuncFourStageEmitsFourTexldAndRebindsOnStage3Change() {
     if (!Check(CountToken(dev->ps, kPsOpTexld) >= 4, "4-stage fixed-function PS contains >= 4 texld")) {
       return false;
     }
+    if (!Check(TexldSamplerMask(dev->ps) == 0xFu, "4-stage fixed-function PS texld uses samplers s0..s3")) {
+      return false;
+    }
     ps_before = dev->ps->handle;
   }
   if (!Check(ps_before != 0, "first draw bound non-zero PS handle")) {
@@ -725,6 +789,9 @@ bool TestFixedfuncFourStageEmitsFourTexldAndRebindsOnStage3Change() {
       return false;
     }
     if (!Check(CountToken(dev->ps, kPsOpTexld) >= 4, "second 4-stage PS contains >= 4 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0xFu, "second 4-stage PS texld uses samplers s0..s3")) {
       return false;
     }
     ps_after = dev->ps->handle;
