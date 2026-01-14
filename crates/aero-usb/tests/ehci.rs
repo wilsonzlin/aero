@@ -1179,7 +1179,8 @@ fn ehci_periodic_link_budget_exceeded_sets_hse_and_halts() {
     const LINK_COUNT: usize = 64 * 1024;
     let mut mem = TestMemory::new(0x220000);
 
-    let fl_base: u32 = 0x7000;
+    // Keep the frame list separate from the (large) schedule node chain.
+    let fl_base: u32 = 0x210000;
     let first: u32 = 0x1000;
 
     mem.write_u32(fl_base, first & LINK_ADDR_MASK);
