@@ -2276,7 +2276,14 @@ void main() {
       typeof gpu.getPreferredCanvasFormat === "function"
         ? gpu.getPreferredCanvasFormat()
         : "bgra8unorm";
-    ctx.configure({ device, format, alphaMode: "opaque" });
+    const isBGRA = String(format).startsWith("bgra");
+    ctx.configure({
+      device,
+      format,
+      alphaMode: "opaque",
+      // Needed for readback in determinism tests (`copyTextureToBuffer`).
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
 
     const buffers = new Map(); // u32 -> GPUBuffer
     const shaders = new Map(); // u32 -> { stage, module }
@@ -2289,11 +2296,14 @@ void main() {
 
     let encoder = null;
     let pass = null;
+    let currentTexture = null;
+    let lastPixels = null; // Uint8Array (tightly packed RGBA, origin top-left)
 
     function beginPass(loadOp) {
       if (pass) return;
       encoder = device.createCommandEncoder();
-      const view = ctx.getCurrentTexture().createView();
+      currentTexture = ctx.getCurrentTexture();
+      const view = currentTexture.createView();
       pass = encoder.beginRenderPass({
         colorAttachments: [
           {
@@ -2455,9 +2465,67 @@ void main() {
             pass = null;
           }
           if (encoder) {
+            // Capture a CPU-readable copy of the presented frame.
+            //
+            // We do this at PRESENT time so `readPixels()` can remain synchronous
+            // (the WebGL2 backend is synchronous).
+            const w = canvas.width;
+            const h = canvas.height;
+            const bytesPerPixel = 4;
+            const unpaddedBytesPerRow = w * bytesPerPixel;
+            const align = (n, a) => Math.ceil(n / a) * a;
+            const bytesPerRow = align(unpaddedBytesPerRow, 256);
+
+            const readback = device.createBuffer({
+              size: bytesPerRow * h,
+              usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+            });
+
+            if (!currentTexture) fail("PRESENT without a current canvas texture");
+            encoder.copyTextureToBuffer(
+              { texture: currentTexture },
+              { buffer: readback, bytesPerRow },
+              { width: w, height: h, depthOrArrayLayers: 1 },
+            );
+
             device.queue.submit([encoder.finish()]);
             encoder = null;
             await device.queue.onSubmittedWorkDone();
+
+            await readback.mapAsync(GPUMapMode.READ);
+            const mapped = new Uint8Array(readback.getMappedRange());
+
+            // Convert padded rows -> tightly packed RGBA.
+            const rgba = new Uint8Array(w * h * 4);
+            for (let y = 0; y < h; y++) {
+              const srcRow = y * bytesPerRow;
+              const dstRow = y * unpaddedBytesPerRow;
+              for (let x = 0; x < w; x++) {
+                const si = srcRow + x * 4;
+                const di = dstRow + x * 4;
+                const c0 = mapped[si + 0];
+                const c1 = mapped[si + 1];
+                const c2 = mapped[si + 2];
+                const c3 = mapped[si + 3];
+                if (isBGRA) {
+                  rgba[di + 0] = c2;
+                  rgba[di + 1] = c1;
+                  rgba[di + 2] = c0;
+                  rgba[di + 3] = c3;
+                } else {
+                  rgba[di + 0] = c0;
+                  rgba[di + 1] = c1;
+                  rgba[di + 2] = c2;
+                  rgba[di + 3] = c3;
+                }
+              }
+            }
+
+            readback.unmap();
+            if (typeof readback.destroy === "function") readback.destroy();
+
+            lastPixels = rgba;
+            currentTexture = null;
           }
           break;
         }
@@ -2470,7 +2538,12 @@ void main() {
       return canvas.toDataURL("image/png");
     }
 
-    return { device, executePacket, dumpScreenshotDataUrl };
+    function readPixels() {
+      if (!lastPixels) fail("readPixels called before any PRESENT");
+      return lastPixels;
+    }
+
+    return { device, executePacket, dumpScreenshotDataUrl, readPixels };
   }
 
   async function loadTrace(bytesLike, canvas, opts) {

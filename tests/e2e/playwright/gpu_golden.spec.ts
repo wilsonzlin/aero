@@ -39,6 +39,25 @@ function tryReadPngSize(filePath: string): { width: number; height: number } | n
   return { width, height };
 }
 
+function readTraceHeader(tracePath: string): { containerVersion: number; commandAbiVersion: number } {
+  const fd = fs.openSync(tracePath, 'r');
+  try {
+    const buf = Buffer.alloc(32);
+    const n = fs.readSync(fd, buf, 0, 32, 0);
+    if (n !== 32) throw new Error(`Short read for trace header: ${tracePath} (${n}/32 bytes)`);
+    if (buf.toString('ascii', 0, 8) !== 'AEROGPUT') {
+      throw new Error(`Invalid trace magic: ${tracePath}`);
+    }
+    const headerSize = buf.readUInt32LE(8);
+    if (headerSize !== 32) throw new Error(`Unsupported trace header_size=${headerSize}: ${tracePath}`);
+    const containerVersion = buf.readUInt32LE(12);
+    const commandAbiVersion = buf.readUInt32LE(16);
+    return { containerVersion, commandAbiVersion };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function browserUint8ToBase64Source(): string {
   // Chunked btoa to avoid call stack limits.
   return `
@@ -431,23 +450,28 @@ async function captureGpuTraceReplayFrameRGBA(
       const canvas = document.getElementById('c');
       if (!(canvas instanceof HTMLCanvasElement)) throw new Error('missing canvas');
 
-      const replayer = await (window as any).AeroGpuTraceReplay.load(bytes, canvas, { backend: backend ?? 'webgl2' });
+      const backendName = backend ?? 'webgl2';
+      const replayer = await (window as any).AeroGpuTraceReplay.load(bytes, canvas, { backend: backendName });
       await replayer.replayFrame(frameIndex ?? 0);
 
       const w = canvas.width;
       const h = canvas.height;
       const pixels = replayer.readPixels();
 
-      // WebGL origin is bottom-left; flip to top-left.
-      const flipped = new Uint8Array(w * h * 4);
-      const rowSize = w * 4;
-      for (let y = 0; y < h; y++) {
-        const srcStart = y * rowSize;
-        const dstStart = (h - 1 - y) * rowSize;
-        flipped.set(pixels.subarray(srcStart, srcStart + rowSize), dstStart);
+      // WebGL origin is bottom-left; WebGPU origin is top-left.
+      let out = pixels;
+      if (backendName === 'webgl2') {
+        const flipped = new Uint8Array(w * h * 4);
+        const rowSize = w * 4;
+        for (let y = 0; y < h; y++) {
+          const srcStart = y * rowSize;
+          const dstStart = (h - 1 - y) * rowSize;
+          flipped.set(pixels.subarray(srcStart, srcStart + rowSize), dstStart);
+        }
+        out = flipped;
       }
 
-      const rgbaBase64 = (window as any).__aeroUint8ToBase64(flipped);
+      const rgbaBase64 = (window as any).__aeroUint8ToBase64(out);
       return { width: w, height: h, rgbaBase64 };
     },
     args
@@ -477,6 +501,8 @@ for (const traceFile of fs
   .readdirSync(TRACE_FIXTURE_DIR)
   .filter((f) => f.endsWith('.aerogputrace'))
   .sort()) {
+  const tracePath = path.resolve(TRACE_FIXTURE_DIR, traceFile);
+  const traceHeader = readTraceHeader(tracePath);
   const goldenName =
     TRACE_GOLDEN_OVERRIDES[traceFile] ??
     `gpu_trace_${path.basename(traceFile, '.aerogputrace')}_64`;
@@ -485,7 +511,6 @@ for (const traceFile of fs
   const canvasHeight = goldenSize?.height ?? 64;
 
   test(`GPU trace replay: ${traceFile} renders deterministically (golden)`, async ({ page }, testInfo) => {
-    const tracePath = path.resolve(TRACE_FIXTURE_DIR, traceFile);
     const traceB64 = fs.readFileSync(tracePath).toString('base64');
 
     await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
@@ -494,4 +519,34 @@ for (const traceFile of fs
     const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgl2' });
     await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
   });
+
+  if (traceHeader.commandAbiVersion === 1) {
+    // The WebGPU trace backend currently only supports the minimal trace ABI v1.
+    test(`GPU trace replay: ${traceFile} renders deterministically (golden) @webgpu`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'chromium-webgpu', 'WebGPU trace replay only runs on Chromium WebGPU project.');
+
+      const hasNavigatorGpu = await page.evaluate(() => !!(navigator as any).gpu);
+      if (!hasNavigatorGpu) {
+        if (isWebGPURequired()) {
+          throw new Error('WebGPU is unavailable: `navigator.gpu` is missing');
+        }
+        test.skip(true, 'WebGPU is unavailable: `navigator.gpu` is missing');
+      }
+
+      try {
+        const traceB64 = fs.readFileSync(tracePath).toString('base64');
+
+        await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
+        await page.addScriptTag({ path: TRACE_TOOL_PATH });
+
+        const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgpu' });
+        await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
+      } catch (error) {
+        if (isWebGPURequired()) {
+          throw error;
+        }
+        test.skip(true, `WebGPU not usable in this environment: ${String(error)}`);
+      }
+    });
+  }
 }
