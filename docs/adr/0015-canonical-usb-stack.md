@@ -172,9 +172,11 @@ alive and call `reset()` on disconnect instead of recreating it. See `docs/webus
 
 **Rust (automated):**
 
-- Keep the USB passthrough and UHCI behavior covered by `crates/aero-usb` tests:
+- Keep the USB passthrough and host controller behavior (UHCI/EHCI/xHCI) covered by `crates/aero-usb` tests:
   - Unit tests in `crates/aero-usb/src/passthrough.rs`
   - UHCI + passthrough integration tests in `crates/aero-usb/tests/webusb_passthrough_uhci.rs`
+  - EHCI bring-up tests (regs + root hub timers): `crates/aero-usb/tests/ehci.rs`
+  - xHCI controller tests: `crates/aero-usb/tests/xhci_*.rs`
   - WebHID descriptor synthesis/passthrough tests in `crates/aero-usb/tests/webhid_passthrough.rs`
 - Keep the wire contract fixture stable:
   - `docs/fixtures/webusb_passthrough_wire.json` must round-trip with Rust types.
@@ -184,3 +186,6 @@ alive and call `reset()` on disconnect instead of recreating it. See `docs/webus
 - WebUSB in-app diagnostics panel: `web/src/usb/webusb_panel.ts` (rendered from `web/src/main.ts`)
 - WebUSB standalone diagnostics page: `/webusb_diagnostics.html` (`web/src/webusb_diagnostics.ts`)
 - WebUSB passthrough broker panel: `web/src/usb/usb_broker_panel.ts` (rendered from `web/src/main.ts`)
+- WebUSB passthrough demo panel (IO worker): `web/src/main.ts` (`renderWebUsbPassthroughDemoWorkerPanel`)
+- WebUSB UHCI harness panel (IO worker): `web/src/main.ts` (`renderWebUsbUhciHarnessWorkerPanel`)
+- WebUSB EHCI harness panel (IO worker): `web/src/main.ts` (`renderWebUsbEhciHarnessWorkerPanel`)
