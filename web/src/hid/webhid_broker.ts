@@ -176,6 +176,11 @@ const OUTPUT_SEND_DROP_WARN_INTERVAL_MS = 5000;
 // ring is not being drained to satisfy an ordering barrier (outputRingTail),
 // stop after this many records and resume on the next tick.
 const MAX_HID_OUTPUT_RING_RECORDS_PER_DRAIN_TICK = 256;
+// Approximate byte budget for background drains. The worker can generate output
+// reports up to a single control transfer (<= 64KiB payload). When the output
+// ring capacity is configured larger than the default, draining too many large
+// records in one tick can create large transient allocations on the main thread.
+const MAX_HID_OUTPUT_RING_BYTES_PER_DRAIN_TICK = 1024 * 1024;
 
 export class WebHidBroker {
   readonly manager: WebHidPassthroughManager;
@@ -667,9 +672,10 @@ export class WebHidBroker {
 
     const stopAtTail = options.stopAtTail;
     let remainingRecords = stopAtTail === undefined ? MAX_HID_OUTPUT_RING_RECORDS_PER_DRAIN_TICK : Number.POSITIVE_INFINITY;
+    let remainingBytes = stopAtTail === undefined ? MAX_HID_OUTPUT_RING_BYTES_PER_DRAIN_TICK : Number.POSITIVE_INFINITY;
 
     try {
-      while (remainingRecords > 0) {
+      while (remainingRecords > 0 && remainingBytes > 0) {
         // When draining to enforce ordering relative to an immediate `hid.sendReport` fallback,
         // do not spin forever if the worker keeps writing to the ring. Instead, snapshot the
         // ring's `tail` and stop once the consumer `head` reaches that value, leaving any
@@ -679,7 +685,9 @@ export class WebHidBroker {
           if (head === stopAtTail) break;
         }
 
+        let payloadLen = 0;
         const ok = ring.consumeNextOrThrow((rec) => {
+          payloadLen = rec.payload.byteLength;
           if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) return;
 
           const deviceId = rec.deviceId >>> 0;
@@ -766,6 +774,7 @@ export class WebHidBroker {
         });
         if (!ok) break;
         remainingRecords -= 1;
+        remainingBytes -= payloadLen;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

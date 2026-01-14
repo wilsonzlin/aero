@@ -2399,6 +2399,50 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("bounds background output ring draining by payload bytes per tick", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, outputRingCapacityBytes: 2 * 1024 * 1024 });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      device.sendReport.mockImplementationOnce(() => new Promise<void>(() => {}));
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      const payload = new Uint8Array(0xffff);
+      const total = 20;
+      for (let i = 0; i < total; i += 1) {
+        payload[0] = i & 0xff;
+        expect(outputRing.push(id, HidReportType.Output, 1, payload)).toBe(true);
+      }
+      expect(outputRing.isEmpty()).toBe(false);
+
+      // First drain tick should hit the byte budget and leave records for the next tick.
+      vi.advanceTimersByTime(8);
+      await flushMicrotasks();
+      expect(outputRing.isEmpty()).toBe(false);
+
+      vi.advanceTimersByTime(8);
+      await flushMicrotasks();
+      expect(outputRing.isEmpty()).toBe(true);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("caps pending per-device sends and counts drops when sendReport never resolves", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
