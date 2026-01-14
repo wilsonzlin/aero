@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_io_snapshot::io::state::{SnapshotReader, codec::Decoder};
-use aero_usb::hid::webhid::HidCollectionInfo;
+use aero_usb::hid::webhid::{HidCollectionInfo, HidCollectionType, HidReportInfo, HidReportItem};
 use aero_usb::passthrough::UsbHostAction;
 use aero_wasm::UhciRuntime;
 use core::fmt::Write as _;
@@ -302,6 +302,63 @@ fn setup_webhid_set_report_control_out_frame_list(
     guest.write_u32(status_td, LINK_PTR_T);
     guest.write_u32(status_td + 0x04, td_ctrl(true, true));
     guest.write_u32(status_td + 0x08, td_token(0x69, 0, 0, true, 0));
+    guest.write_u32(status_td + 0x0C, 0);
+
+    fl_base
+}
+
+fn setup_webhid_get_report_feature_control_in_frame_list(
+    guest: &common::GuestRegion,
+    report_id: u8,
+    expected_len: u16,
+) -> u32 {
+    let fl_base = 0x1000;
+    let qh_addr = 0x2000;
+    let setup_td = qh_addr + 0x20;
+    let data_td = setup_td + 0x20;
+    let status_td = data_td + 0x20;
+    let setup_buf = status_td + 0x20;
+    let data_buf = setup_buf + 0x10;
+
+    for i in 0..1024u32 {
+        guest.write_u32(fl_base + i * 4, qh_addr | LINK_PTR_Q);
+    }
+
+    guest.write_u32(qh_addr, LINK_PTR_T);
+    guest.write_u32(qh_addr + 0x04, setup_td);
+
+    // HID GET_REPORT(Feature, reportId=X), wLength = expected payload length.
+    let setup_packet = [
+        0xA1, // bmRequestType: device-to-host | class | interface
+        0x01, // bRequest: GET_REPORT
+        report_id,
+        0x03, // wValue: reportId in low byte, reportType=3 (Feature) in high byte.
+        0x00,
+        0x00, // wIndex: interface 0
+        (expected_len & 0xff) as u8,
+        (expected_len >> 8) as u8,
+    ];
+    guest.write_bytes(setup_buf, &setup_packet);
+
+    // SETUP TD.
+    guest.write_u32(setup_td, data_td);
+    guest.write_u32(setup_td + 0x04, td_ctrl(true, false));
+    guest.write_u32(setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
+    guest.write_u32(setup_td + 0x0C, setup_buf);
+
+    // DATA IN TD (will NAK until host completion is pushed).
+    guest.write_u32(data_td, status_td);
+    guest.write_u32(data_td + 0x04, td_ctrl(true, false));
+    guest.write_u32(
+        data_td + 0x08,
+        td_token(0x69, 0, 0, true, expected_len as usize),
+    );
+    guest.write_u32(data_td + 0x0C, data_buf);
+
+    // STATUS OUT TD (ZLP, IOC).
+    guest.write_u32(status_td, LINK_PTR_T);
+    guest.write_u32(status_td + 0x04, td_ctrl(true, true));
+    guest.write_u32(status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
     guest.write_u32(status_td + 0x0C, 0);
 
     fl_base
@@ -774,4 +831,151 @@ fn uhci_runtime_restore_preserves_webhid_device_and_allows_set_report() {
     let mut data = vec![0u8; data_u8.length() as usize];
     data_u8.copy_to(&mut data);
     assert_eq!(data.as_slice(), payload.as_slice());
+}
+
+#[wasm_bindgen_test]
+fn uhci_runtime_restore_clears_webhid_feature_report_host_state_and_allows_retry() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+
+    let fl_base = setup_webhid_get_report_feature_control_in_frame_list(&guest, 0, 1);
+
+    let collections = vec![HidCollectionInfo {
+        usage_page: 0x01,
+        usage: 0x02, // Generic Desktop / Mouse (arbitrary but valid).
+        collection_type: HidCollectionType::Application,
+        children: vec![],
+        input_reports: vec![],
+        output_reports: vec![],
+        feature_reports: vec![HidReportInfo {
+            report_id: 0,
+            items: vec![HidReportItem {
+                usage_page: 0x01,
+                usages: vec![0x30],
+                usage_minimum: 0,
+                usage_maximum: 0,
+                report_size: 8,
+                report_count: 1,
+                unit_exponent: 0,
+                unit: 0,
+                logical_minimum: 0,
+                logical_maximum: 255,
+                physical_minimum: 0,
+                physical_maximum: 0,
+                strings: vec![],
+                string_minimum: 0,
+                string_maximum: 0,
+                designators: vec![],
+                designator_minimum: 0,
+                designator_maximum: 0,
+                is_absolute: true,
+                is_array: false,
+                is_buffered_bytes: false,
+                is_constant: false,
+                is_linear: true,
+                is_range: false,
+                is_relative: false,
+                is_volatile: false,
+                has_null: false,
+                has_preferred_state: true,
+                is_wrapped: false,
+            }],
+        }],
+    }];
+    let collections_json = serde_wasm_bindgen::to_value(&collections).expect("collections to_value");
+
+    let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
+    let port = rt
+        .webhid_attach(
+            1,
+            0x1234,
+            0x0001,
+            Some("Test HID".to_string()),
+            collections_json,
+            Some(0),
+        )
+        .expect("attach WebHID device");
+    assert_eq!(port, 0);
+
+    rt.port_write(REG_FRBASEADD, 4, fl_base);
+    rt.port_write(REG_PORTSC1, 2, PORTSC_PED as u32);
+    rt.port_write(REG_USBCMD, 2, USBCMD_RUN as u32);
+
+    // First attempt should emit a feature report request.
+    rt.step_frame();
+    let drained = rt.webhid_drain_feature_report_requests();
+    assert!(
+        !drained.is_null(),
+        "expected a feature report request from GET_REPORT(Feature)"
+    );
+    let requests = Array::from(&drained);
+    assert_eq!(requests.length(), 1, "expected exactly one request");
+    let req = requests.get(0);
+    let device_id = Reflect::get(&req, &JsValue::from_str("deviceId"))
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32;
+    assert_eq!(device_id, 1);
+    let report_id = Reflect::get(&req, &JsValue::from_str("reportId"))
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32;
+    assert_eq!(report_id, 0);
+    let first_request_id = Reflect::get(&req, &JsValue::from_str("requestId"))
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32;
+
+    // With the request drained but no completion, the device is still inflight and should not
+    // emit duplicates while the TD retries.
+    rt.step_frame();
+    let drained_again = rt.webhid_drain_feature_report_requests();
+    assert!(
+        drained_again.is_null(),
+        "expected inflight feature report request to suppress duplicates (null drain)"
+    );
+
+    let snapshot = rt.save_state();
+
+    let mut rt2 = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime #2");
+    if let Err(err) = rt2.load_state(&snapshot) {
+        drop(snapshot);
+        drop(rt2);
+        panic!("load_state ok: {err:?}");
+    }
+
+    let drained_after_restore = rt2.webhid_drain_feature_report_requests();
+    assert!(
+        drained_after_restore.is_null(),
+        "expected WebHID feature report host queues to be cleared on restore (null drain)"
+    );
+
+    // The guest TD remains active and is retried; with host state cleared, the next retry should
+    // re-emit a feature report request with a new (monotonic) requestId.
+    let mut drained_retry = JsValue::NULL;
+    for _ in 0..8 {
+        rt2.step_frame();
+        drained_retry = rt2.webhid_drain_feature_report_requests();
+        if !drained_retry.is_null() {
+            break;
+        }
+    }
+    assert!(
+        !drained_retry.is_null(),
+        "expected feature report request to be re-emitted after restore"
+    );
+    let retry_requests = Array::from(&drained_retry);
+    assert_eq!(retry_requests.length(), 1, "expected one retry request");
+    let retry_req = retry_requests.get(0);
+    let retry_request_id = Reflect::get(&retry_req, &JsValue::from_str("requestId"))
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32;
+    assert!(
+        retry_request_id > first_request_id,
+        "expected WebHID feature report request ids to be monotonic across snapshot restore (first={first_request_id}, retry={retry_request_id})"
+    );
 }
