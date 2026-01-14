@@ -154,6 +154,13 @@ pub trait BlockBackend {
     fn flush(&mut self) -> Result<(), BlockBackendError> {
         Ok(())
     }
+    /// Best-effort deallocation (discard/TRIM) of the given byte range.
+    ///
+    /// Backends that cannot reclaim storage may implement this as a no-op success. Callers should
+    /// generally treat failures as non-fatal (virtio-blk discard is advisory).
+    fn discard_range(&mut self, _offset: u64, _len: u64) -> Result<(), BlockBackendError> {
+        Ok(())
+    }
     fn device_id(&self) -> [u8; 20] {
         [0; 20]
     }
@@ -316,6 +323,12 @@ impl<T: VirtualDisk> BlockBackend for Box<T> {
     fn flush(&mut self) -> Result<(), BlockBackendError> {
         (**self).flush().map_err(map_storage_error)
     }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
+        (**self)
+            .discard_range(offset, len)
+            .map_err(map_storage_error)
+    }
 }
 
 impl BlockBackend for Box<dyn VirtualDisk> {
@@ -338,6 +351,12 @@ impl BlockBackend for Box<dyn VirtualDisk> {
     fn flush(&mut self) -> Result<(), BlockBackendError> {
         (**self).flush().map_err(map_storage_error)
     }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
+        (**self)
+            .discard_range(offset, len)
+            .map_err(map_storage_error)
+    }
 }
 
 impl BlockBackend for Box<dyn VirtualDisk + Send> {
@@ -359,6 +378,12 @@ impl BlockBackend for Box<dyn VirtualDisk + Send> {
 
     fn flush(&mut self) -> Result<(), BlockBackendError> {
         (**self).flush().map_err(map_storage_error)
+    }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
+        (**self)
+            .discard_range(offset, len)
+            .map_err(map_storage_error)
     }
 }
 
@@ -903,6 +928,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
                             let disk_len = self.backend.len();
                             let mut budget = VIRTIO_BLK_MAX_REQUEST_DATA_BYTES;
+                            let mut ranges: Vec<(u64, u64)> = Vec::with_capacity(segs.len());
 
                             for seg in &segs {
                                 let num_sectors = u64::from(seg.num_sectors);
@@ -937,10 +963,17 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 }
+
+                                ranges.push((byte_off, byte_len));
+                            }
+                            // Best-effort: discard is advisory; ignore backend failures after
+                            // validation so guests get a consistent SUCCESS path.
+                            if status == VIRTIO_BLK_S_OK {
+                                for (byte_off, byte_len) in ranges {
+                                    let _ = self.backend.discard_range(byte_off, byte_len);
+                                }
                             }
                         }
-
-                        // Best-effort discard is currently a no-op once validated.
                     }
                 }
                 VIRTIO_BLK_T_WRITE_ZEROES => {

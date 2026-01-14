@@ -1,6 +1,9 @@
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::MsiMessage;
-use aero_storage::{DiskError as StorageDiskError, MemBackend, RawDisk, VirtualDisk};
+use aero_storage::{
+    AeroSparseConfig, AeroSparseDisk, DiskError as StorageDiskError, MemBackend, RawDisk,
+    VirtualDisk,
+};
 use aero_virtio::devices::blk::{
     BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_MAX_REQUEST_DATA_BYTES,
     VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS, VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_IOERR,
@@ -537,6 +540,104 @@ fn virtio_blk_discard_returns_ok() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+}
+
+#[test]
+fn virtio_blk_discard_reclaims_sparse_blocks_and_reads_zero() {
+    // Use a real AeroSparseDisk so DISCARD can reclaim storage by clearing allocation table entries
+    // (reads of discarded blocks return zeros).
+    let sectors = 4096u64; // 2 MiB
+    let capacity_bytes = sectors * VIRTIO_BLK_SECTOR_SIZE;
+    let disk = AeroSparseDisk::create(
+        MemBackend::new(),
+        AeroSparseConfig {
+            disk_size_bytes: capacity_bytes,
+            block_size_bytes: 1024 * 1024,
+        },
+    )
+    .unwrap();
+    let backend: Box<dyn VirtualDisk + Send> = Box::new(disk);
+    let blk = VirtioBlk::new(backend);
+    let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+    let (mut dev, caps, mut mem) = setup_pci_device(dev);
+
+    let header = 0x7000;
+    let data = 0x8000;
+    let seg = 0xA000;
+    let read_buf = 0xB000;
+    let status = 0x9000;
+
+    // OUT: write non-zero data at sector 0.
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    let payload = vec![0x5A; 512];
+    mem.write(data, &payload).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    // DISCARD: discard the entire first sparse allocation block (1 MiB / 512B = 2048 sectors).
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_DISCARD).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    write_u64_le(&mut mem, seg, 0).unwrap(); // sector
+    write_u32_le(&mut mem, seg + 8, 2048).unwrap(); // num_sectors
+    write_u32_le(&mut mem, seg + 12, 0).unwrap(); // flags
+
+    mem.write(status, &[0xff]).unwrap();
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg, 16, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    // Add to avail ring at index 1.
+    write_u16_le(&mut mem, AVAIL_RING + 4 + 2, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 2).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    // IN: read sector 0 and ensure it is now zero-filled.
+    mem.write(read_buf, &[0xccu8; 512]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_IN).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        read_buf,
+        512,
+        0x0001 | 0x0002,
+        2,
+    );
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    // Add to avail ring at index 2.
+    write_u16_le(&mut mem, AVAIL_RING + 4 + 4, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 3).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    let out = mem.get_slice(read_buf, 512).unwrap();
+    assert!(out.iter().all(|b| *b == 0));
 }
 
 #[test]
