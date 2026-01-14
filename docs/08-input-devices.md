@@ -97,6 +97,20 @@ Driver status helpers exist for routing decisions:
 
 These calls are only meaningful once the guest driver has finished initialization (i.e. after the guest sets `DRIVER_OK`).
 
+Keyboard LED state helpers exist for host/UI diagnostics and input parity checks:
+
+- `Machine.usb_hid_keyboard_leds()` — synthetic USB HID keyboard (last `SET_REPORT` output report)
+- `Machine.virtio_input_keyboard_leds()` — virtio-input keyboard (last `statusq` LED events)
+- `Machine.ps2_keyboard_leds()` — PS/2 i8042 keyboard (last `Set LEDs` command)
+
+All three return the same HID-style LED bitmask layout:
+
+- bit0: Num Lock
+- bit1: Caps Lock
+- bit2: Scroll Lock
+- bit3: Compose
+- bit4: Kana
+
 Synthetic USB HID readiness helpers exist for routing decisions:
 
 - `Machine.usb_hid_keyboard_configured()`
