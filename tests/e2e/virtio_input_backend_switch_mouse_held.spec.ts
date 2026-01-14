@@ -572,6 +572,18 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       return res;
     };
 
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    const drainI8042UntilNonEmpty = async (timeoutMs: number): Promise<{ bytes: number[]; statuses: number[] }> => {
+      const start = typeof performance?.now === "function" ? performance.now() : Date.now();
+      while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
+        const drained = (await cpuCall("drainI8042")) as { bytes: number[]; statuses: number[] };
+        if (drained.bytes.length > 0) return drained;
+        await sleep(10);
+      }
+      throw new Error(`Timed out waiting for non-empty i8042 output after ${timeoutMs}ms.`);
+    };
+
     try {
       ioWorker.postMessage({
         kind: "init",
@@ -620,7 +632,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       // Ensure IO worker has published its view of the held-button state.
       await waitForAtomic(StatusIndex.IoInputMouseButtonsHeldMask, 0x01, 2000);
       await waitForAtomic(StatusIndex.IoInputMouseBackend, 0, 2000); // ps2
-      const phase1BtnDown = await cpuCall("drainI8042");
+      const phase1BtnDown = await drainI8042UntilNonEmpty(2000);
 
       // Bring virtio-input online while the button is held.
       const virtioInit = await cpuCall("virtioInit");
@@ -635,7 +647,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       await waitForAtomic(StatusIndex.IoInputVirtioMouseDriverOk, 1, 2000);
       await waitForAtomic(StatusIndex.IoInputMouseButtonsHeldMask, 0x01, 2000);
       await waitForAtomic(StatusIndex.IoInputMouseBackend, 0, 2000); // ps2
-      const phase2MoveWhileHeld = await cpuCall("drainI8042");
+      const phase2MoveWhileHeld = await drainI8042UntilNonEmpty(2000);
       const usedIdxAfterHeld = await cpuCall("virtioUsedIdx");
       const backendAfterHeldMove = Atomics.load(status, StatusIndex.IoInputMouseBackend) | 0;
       const buttonsMaskAfterHeldMove = Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) | 0;
@@ -652,7 +664,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       await waitForAtomic(StatusIndex.IoInputMouseButtonsHeldMask, 0x00, 2000);
       await waitForAtomic(StatusIndex.IoInputMouseBackend, 2, 2000); // virtio
       await waitForAtomic(StatusIndex.IoMouseBackendSwitchCounter, 1, 2000);
-      const phase3BtnUp = await cpuCall("drainI8042");
+      const phase3BtnUp = await drainI8042UntilNonEmpty(2000);
       const usedIdxAfterBtnUp = await cpuCall("virtioUsedIdx");
       const buttonsMaskAfterBtnUp = Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) | 0;
       const mouseBackendSwitchCounterAfterBtnUp = Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0;
