@@ -142,8 +142,6 @@ using aerogpu::d3d10_11::kDxgiFormatBc7UnormSrgb;
 using aerogpu::d3d10_11::f32_bits;
 using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::FromHandle;
-using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
-using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 using aerogpu::d3d10_11::atomic_max_u64;
 using aerogpu::d3d10_11::bind_flags_to_buffer_usage_flags;
 using aerogpu::d3d10_11::aerogpu_div_round_up_u32;
@@ -167,6 +165,8 @@ using aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray;
 using aerogpu::d3d10_11::D3dViewCountToRemaining;
 using aerogpu::d3d10_11::ClampU64ToU32;
 using aerogpu::d3d10_11::kD3DUintAll;
+using aerogpu::d3d10_11::InitSamplerFromCreateSamplerArg;
+using aerogpu::d3d10_11::UintPtrToD3dHandle;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -321,66 +321,6 @@ struct AeroGpuSampler {
   uint32_t address_w = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
 };
 
-template <typename T, typename = void>
-struct has_member_Desc : std::false_type {};
-template <typename T>
-struct has_member_Desc<T, std::void_t<decltype(std::declval<T>().Desc)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_SamplerDesc : std::false_type {};
-template <typename T>
-struct has_member_SamplerDesc<T, std::void_t<decltype(std::declval<T>().SamplerDesc)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_Filter : std::false_type {};
-template <typename T>
-struct has_member_Filter<T, std::void_t<decltype(std::declval<T>().Filter)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_AddressU : std::false_type {};
-template <typename T>
-struct has_member_AddressU<T, std::void_t<decltype(std::declval<T>().AddressU)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_AddressV : std::false_type {};
-template <typename T>
-struct has_member_AddressV<T, std::void_t<decltype(std::declval<T>().AddressV)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_AddressW : std::false_type {};
-template <typename T>
-struct has_member_AddressW<T, std::void_t<decltype(std::declval<T>().AddressW)>> : std::true_type {};
-
-template <typename DescT>
-static void InitSamplerFromDesc(AeroGpuSampler* sampler, const DescT& desc) {
-  if (!sampler) {
-    return;
-  }
-
-  uint32_t filter = 1;
-  uint32_t addr_u = 3;
-  uint32_t addr_v = 3;
-  uint32_t addr_w = 3;
-
-  if constexpr (has_member_Filter<DescT>::value) {
-    filter = static_cast<uint32_t>(desc.Filter);
-  }
-  if constexpr (has_member_AddressU<DescT>::value) {
-    addr_u = static_cast<uint32_t>(desc.AddressU);
-  }
-  if constexpr (has_member_AddressV<DescT>::value) {
-    addr_v = static_cast<uint32_t>(desc.AddressV);
-  }
-  if constexpr (has_member_AddressW<DescT>::value) {
-    addr_w = static_cast<uint32_t>(desc.AddressW);
-  }
-
-  sampler->filter = aerogpu_sampler_filter_from_d3d_filter(filter);
-  sampler->address_u = aerogpu_sampler_address_from_d3d_mode(addr_u);
-  sampler->address_v = aerogpu_sampler_address_from_d3d_mode(addr_v);
-  sampler->address_w = aerogpu_sampler_address_from_d3d_mode(addr_w);
-}
-
 // Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
 // HDEVICE. Keep the callback typed exactly as declared by the active headers,
 // then use `std::is_invocable_v` at call sites to choose the right handle type.
@@ -511,15 +451,6 @@ decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
     return fn(h11, std::forward<Args>(args)...);
   } else {
     return fn(std::forward<Args>(args)...);
-  }
-}
-
-template <typename T>
-T UintPtrToD3dHandle(std::uintptr_t value) {
-  if constexpr (std::is_pointer_v<T>) {
-    return reinterpret_cast<T>(value);
-  } else {
-    return static_cast<T>(value);
   }
 }
 
@@ -6811,13 +6742,7 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
     return E_FAIL;
   }
 
-  if (pDesc) {
-    if constexpr (has_member_Desc<D3D10DDIARG_CREATESAMPLER>::value) {
-      InitSamplerFromDesc(sampler, pDesc->Desc);
-    } else if constexpr (has_member_SamplerDesc<D3D10DDIARG_CREATESAMPLER>::value) {
-      InitSamplerFromDesc(sampler, pDesc->SamplerDesc);
-    }
-  }
+  InitSamplerFromCreateSamplerArg(sampler, pDesc);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {

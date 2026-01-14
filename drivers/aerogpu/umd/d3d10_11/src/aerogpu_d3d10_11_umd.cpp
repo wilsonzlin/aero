@@ -129,8 +129,7 @@ using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
 using aerogpu::d3d10_11::f32_bits;
 using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::HashSemanticName;
-using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
-using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
+using aerogpu::d3d10_11::InitSamplerFromCreateSamplerArg;
 using aerogpu::d3d10_11::AllocateGlobalHandle;
 using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
 using aerogpu::d3d10_11::kInvalidHandle;
@@ -4415,10 +4414,7 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   s->handle = dev->adapter->next_handle.fetch_add(1);
-  s->filter = aerogpu_sampler_filter_from_d3d_filter(pDesc->Filter);
-  s->address_u = aerogpu_sampler_address_from_d3d_mode(pDesc->AddressU);
-  s->address_v = aerogpu_sampler_address_from_d3d_mode(pDesc->AddressV);
-  s->address_w = aerogpu_sampler_address_from_d3d_mode(pDesc->AddressW);
+  InitSamplerFromCreateSamplerArg(s, pDesc);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {

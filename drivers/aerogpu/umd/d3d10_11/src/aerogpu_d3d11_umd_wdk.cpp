@@ -5023,37 +5023,6 @@ void AEROGPU_APIENTRY DestroyUnorderedAccessView11(D3D11DDI_HDEVICE, D3D11DDI_HU
   view->~UnorderedAccessView();
   new (view) UnorderedAccessView();
 }
-
-template <typename T, typename = void>
-struct has_member_Desc : std::false_type {};
-template <typename T>
-struct has_member_Desc<T, std::void_t<decltype(std::declval<T>().Desc)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_SamplerDesc : std::false_type {};
-template <typename T>
-struct has_member_SamplerDesc<T, std::void_t<decltype(std::declval<T>().SamplerDesc)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_Filter : std::false_type {};
-template <typename T>
-struct has_member_Filter<T, std::void_t<decltype(std::declval<T>().Filter)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_AddressU : std::false_type {};
-template <typename T>
-struct has_member_AddressU<T, std::void_t<decltype(std::declval<T>().AddressU)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_AddressV : std::false_type {};
-template <typename T>
-struct has_member_AddressV<T, std::void_t<decltype(std::declval<T>().AddressV)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_member_AddressW : std::false_type {};
-template <typename T>
-struct has_member_AddressW<T, std::void_t<decltype(std::declval<T>().AddressW)>> : std::true_type {};
-
 struct Sampler {
   aerogpu_handle_t handle = 0;
   uint32_t filter = AEROGPU_SAMPLER_FILTER_LINEAR;
@@ -5061,35 +5030,6 @@ struct Sampler {
   uint32_t address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
   uint32_t address_w = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
 };
-
-template <typename DescT>
-static void InitSamplerFromDesc(Sampler* sampler, const DescT& desc) {
-  if (!sampler) {
-    return;
-  }
-
-  uint32_t filter = 1;
-  uint32_t addr_u = 3;
-  uint32_t addr_v = 3;
-  uint32_t addr_w = 3;
-  if constexpr (has_member_Filter<DescT>::value) {
-    filter = static_cast<uint32_t>(desc.Filter);
-  }
-  if constexpr (has_member_AddressU<DescT>::value) {
-    addr_u = static_cast<uint32_t>(desc.AddressU);
-  }
-  if constexpr (has_member_AddressV<DescT>::value) {
-    addr_v = static_cast<uint32_t>(desc.AddressV);
-  }
-  if constexpr (has_member_AddressW<DescT>::value) {
-    addr_w = static_cast<uint32_t>(desc.AddressW);
-  }
-
-  sampler->filter = aerogpu_sampler_filter_from_d3d_filter(filter);
-  sampler->address_u = aerogpu_sampler_address_from_d3d_mode(addr_u);
-  sampler->address_v = aerogpu_sampler_address_from_d3d_mode(addr_v);
-  sampler->address_w = aerogpu_sampler_address_from_d3d_mode(addr_w);
-}
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateSamplerSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATESAMPLER*) {
   return sizeof(Sampler);
@@ -5125,13 +5065,7 @@ HRESULT AEROGPU_APIENTRY CreateSampler11(D3D11DDI_HDEVICE hDevice,
     return E_FAIL;
   }
 
-  if (pDesc) {
-    if constexpr (has_member_Desc<D3D11DDIARG_CREATESAMPLER>::value) {
-      InitSamplerFromDesc(sampler, pDesc->Desc);
-    } else if constexpr (has_member_SamplerDesc<D3D11DDIARG_CREATESAMPLER>::value) {
-      InitSamplerFromDesc(sampler, pDesc->SamplerDesc);
-    }
-  }
+  InitSamplerFromCreateSamplerArg(sampler, pDesc);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {

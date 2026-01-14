@@ -209,6 +209,37 @@ struct has_member_pDrvPrivate : std::false_type {};
 template <typename T>
 struct has_member_pDrvPrivate<T, std::void_t<decltype(((T*)nullptr)->pDrvPrivate)>> : std::true_type {};
 
+// Generic "does this struct have member X?" helpers used by WDK-compat shims.
+template <typename T, typename = void>
+struct has_member_Desc : std::false_type {};
+template <typename T>
+struct has_member_Desc<T, std::void_t<decltype(((T*)nullptr)->Desc)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SamplerDesc : std::false_type {};
+template <typename T>
+struct has_member_SamplerDesc<T, std::void_t<decltype(((T*)nullptr)->SamplerDesc)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Filter : std::false_type {};
+template <typename T>
+struct has_member_Filter<T, std::void_t<decltype(((T*)nullptr)->Filter)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressU : std::false_type {};
+template <typename T>
+struct has_member_AddressU<T, std::void_t<decltype(((T*)nullptr)->AddressU)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressV : std::false_type {};
+template <typename T>
+struct has_member_AddressV<T, std::void_t<decltype(((T*)nullptr)->AddressV)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AddressW : std::false_type {};
+template <typename T>
+struct has_member_AddressW<T, std::void_t<decltype(((T*)nullptr)->AddressW)>> : std::true_type {};
+
 template <typename THandle>
 inline bool AnyNonNullHandles(const THandle* handles, size_t count) {
   if (!handles || count == 0) {
@@ -871,6 +902,54 @@ inline uint32_t aerogpu_sampler_address_from_d3d_mode(uint32_t mode) {
       return AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT;
     default:
       return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  }
+}
+
+template <typename SamplerT, typename DescT>
+inline void InitSamplerFromDesc(SamplerT* sampler, const DescT& desc) {
+  if (!sampler) {
+    return;
+  }
+
+  // D3D10/11 numeric defaults (MIN_MAG_POINT_MIP_LINEAR + CLAMP).
+  uint32_t filter = 1;
+  uint32_t addr_u = 3;
+  uint32_t addr_v = 3;
+  uint32_t addr_w = 3;
+  if constexpr (has_member_Filter<DescT>::value) {
+    filter = static_cast<uint32_t>(desc.Filter);
+  }
+  if constexpr (has_member_AddressU<DescT>::value) {
+    addr_u = static_cast<uint32_t>(desc.AddressU);
+  }
+  if constexpr (has_member_AddressV<DescT>::value) {
+    addr_v = static_cast<uint32_t>(desc.AddressV);
+  }
+  if constexpr (has_member_AddressW<DescT>::value) {
+    addr_w = static_cast<uint32_t>(desc.AddressW);
+  }
+
+  sampler->filter = aerogpu_sampler_filter_from_d3d_filter(filter);
+  sampler->address_u = aerogpu_sampler_address_from_d3d_mode(addr_u);
+  sampler->address_v = aerogpu_sampler_address_from_d3d_mode(addr_v);
+  sampler->address_w = aerogpu_sampler_address_from_d3d_mode(addr_w);
+}
+
+// Normalizes the different WDK CreateSampler descriptor layouts into the
+// protocol-facing fields stored in our sampler objects.
+template <typename SamplerT, typename CreateSamplerArgT>
+inline void InitSamplerFromCreateSamplerArg(SamplerT* sampler, const CreateSamplerArgT* pDesc) {
+  if (!sampler || !pDesc) {
+    return;
+  }
+
+  if constexpr (has_member_Desc<CreateSamplerArgT>::value) {
+    InitSamplerFromDesc(sampler, pDesc->Desc);
+  } else if constexpr (has_member_SamplerDesc<CreateSamplerArgT>::value) {
+    InitSamplerFromDesc(sampler, pDesc->SamplerDesc);
+  } else {
+    // Portable ABI: the create arg itself is the descriptor.
+    InitSamplerFromDesc(sampler, *pDesc);
   }
 }
 
@@ -1830,6 +1909,24 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
+}
+
+template <typename T>
+inline std::uintptr_t D3dHandleToUintPtr(T value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<std::uintptr_t>(value);
+  } else {
+    return static_cast<std::uintptr_t>(value);
+  }
+}
+
+template <typename T>
+inline T UintPtrToD3dHandle(std::uintptr_t value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<T>(value);
+  } else {
+    return static_cast<T>(value);
+  }
 }
 
 // Converts D3D10/11 fill-mode numeric values to `aerogpu_fill_mode` values used
