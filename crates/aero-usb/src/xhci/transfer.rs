@@ -871,6 +871,12 @@ impl Ep0RingState {
 
     fn consume(&mut self, trb: &XhciTrb) -> Result<(), Ep0RingError> {
         if matches!(trb.trb_type(), XhciTrbType::Link) {
+            // Link TRB segment pointers store the next segment base address; low bits are reserved.
+            // Treat reserved low bits as invalid rather than masking them away so malformed rings do
+            // not alias a different aligned address.
+            if (trb.parameter & 0x0f) != 0 {
+                return Err(Ep0RingError::InvalidLinkTarget);
+            }
             let target = trb.link_segment_ptr();
             if target == 0 {
                 return Err(Ep0RingError::InvalidLinkTarget);

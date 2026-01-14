@@ -110,6 +110,53 @@ fn command_ring_processor_self_link_sets_hce_and_is_bounded() {
 }
 
 #[test]
+fn command_ring_processor_rejects_link_trb_reserved_bits() {
+    let mut mem = CountingMem::new(0x10_000, 64, 64);
+    let mem_size = mem.data.len() as u64;
+    let ring_base = 0x1000u64;
+    let event_ring_base = 0x2000u64;
+
+    // Malformed Link TRB: segment pointer has reserved low bits set.
+    let mut link = Trb::new(ring_base + TRB_LEN as u64 + 1, 0, 0);
+    link.set_cycle(true);
+    link.set_trb_type(TrbType::Link);
+    link.set_link_toggle_cycle(false);
+    link.write_to(&mut mem, ring_base);
+
+    // If the processor incorrectly masks the link pointer, it would follow it and execute this
+    // command.
+    let mut noop = Trb::default();
+    noop.set_cycle(true);
+    noop.set_trb_type(TrbType::NoOpCommand);
+    noop.write_to(&mut mem, ring_base + TRB_LEN as u64);
+
+    let mut proc = CommandRingProcessor::new(
+        mem_size,
+        8,
+        0x3000, // dcbaa (unused by this test)
+        CommandRing {
+            dequeue_ptr: ring_base,
+            cycle_state: true,
+        },
+        EventRing::new(event_ring_base, 16),
+    );
+
+    proc.process(&mut mem, 16);
+    assert!(
+        proc.host_controller_error,
+        "expected command ring HCE on misaligned Link TRB target"
+    );
+
+    let mut bytes = [0u8; TRB_LEN];
+    mem.read_physical(event_ring_base, &mut bytes);
+    assert_eq!(
+        bytes,
+        [0u8; TRB_LEN],
+        "processor must not write completion events when the Link TRB is malformed"
+    );
+}
+
+#[test]
 fn xhci_controller_command_ring_self_link_sets_hce() {
     // `RingCursor::poll` uses a step budget of 256 in `XhciController::process_command_ring`, so
     // allow a little headroom.
@@ -172,6 +219,42 @@ fn ep0_transfer_engine_self_link_faults_and_emits_event() {
         !next.cycle(),
         "second event ring entry should still be empty"
     );
+}
+
+#[test]
+fn ep0_transfer_engine_rejects_link_trb_reserved_bits() {
+    let mut mem = CountingMem::new(0x20_000, 64, 64);
+
+    let tr_ring = 0x1000u64;
+    let event_ring = 0x2000u64;
+
+    // Malformed ring: Link TRB segment pointer has reserved low bits set.
+    let mut link = Trb::new(tr_ring + TRB_LEN as u64 + 1, 0, 0);
+    link.set_cycle(true);
+    link.set_trb_type(TrbType::Link);
+    link.set_link_toggle_cycle(false);
+    link.write_to(&mut mem, tr_ring);
+
+    // If the engine incorrectly masks the link pointer, it would follow it and then process this
+    // SetupStage TRB (which would Stall using `DummyDevice`).
+    let mut setup = Trb::default();
+    setup.set_cycle(true);
+    setup.set_trb_type(TrbType::SetupStage);
+    setup.write_to(&mut mem, tr_ring + TRB_LEN as u64);
+
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.set_event_ring(event_ring, 8);
+    xhci.hub_mut().attach(0, Box::new(DummyDevice));
+
+    let slot_id = xhci.enable_slot(0).expect("slot allocation");
+    assert!(xhci.configure_ep0(slot_id, tr_ring, true, 64));
+
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+
+    let ev = Trb::read_from(&mut mem, event_ring);
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert_eq!(ev.completion_code_raw(), CompletionCode::TrbError.as_u8());
+    assert_eq!(ev.parameter, tr_ring);
 }
 
 #[test]

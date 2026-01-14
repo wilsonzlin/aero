@@ -541,6 +541,12 @@ impl CommandRingProcessor {
     }
 
     fn handle_link_trb(&mut self, _mem: &mut dyn MemoryBus, addr: u64, trb: Trb) -> bool {
+        // Link TRB parameter contains the next segment pointer; low bits are reserved. Treat
+        // reserved low bits as invalid rather than masking them away so a malformed guest ring does
+        // not alias a different aligned segment base.
+        if (trb.parameter & 0x0f) != 0 {
+            return false;
+        }
         let target = trb.link_segment_ptr();
         if target == 0 {
             return false;
