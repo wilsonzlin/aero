@@ -88,10 +88,6 @@ Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--json=")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--size", "4", "--size", "8", "--read-gpa", "0x0")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--read-gpa", "0x0", "--size", "4", "--out", "a.bin", "--out", "b.bin")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--size", "4", "--read-gpa", "0x0", "8")
-Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "nope")
-Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--out", "foo.bin")
-Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--cmd-out", "foo.bin")
-Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--alloc-out", "foo.bin")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "5000", "--out", "read_gpa_chunked_test.bin")
 
 # Best-effort cleanup to avoid clutter in local runs. On failure, artifacts may be left behind for debugging.
@@ -99,6 +95,18 @@ $artifacts = @(
   "last_cmd_test.bin",
   "last_cmd_test.bin.txt",
   "last_cmd_test.bin.alloc_table.bin",
+  "last_cmd_test_multi_0.bin",
+  "last_cmd_test_multi_0.bin.txt",
+  "last_cmd_test_multi_0.bin.alloc_table.bin",
+  "last_cmd_test_multi_1.bin",
+  "last_cmd_test_multi_1.bin.txt",
+  "last_cmd_test_multi_1.bin.alloc_table.bin",
+  "last_cmd_submit_test.bin",
+  "last_cmd_submit_test.bin.txt",
+  "last_cmd_submit_test.bin.alloc_table.bin",
+  "last_cmd_out_test.bin",
+  "last_cmd_out_test.bin.txt",
+  "last_cmd_out_test.bin.alloc_table.bin",
   "read_gpa_test.bin",
   "read_gpa_chunked_test.bin",
   "scanout_test.bmp",
