@@ -274,6 +274,8 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastErrorFence;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastNotifiedErrorFence;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastErrorTime100ns; /* KeQueryInterruptTime() at last IRQ_ERROR */
+    volatile ULONG LastErrorCode;      /* enum aerogpu_error_code (0 if unknown / not supported). */
+    volatile ULONG LastErrorMmioCount; /* Cached AEROGPU_MMIO_REG_ERROR_COUNT (0 if unknown / not supported). */
 
     LIST_ENTRY PendingMetaHandles;
     KSPIN_LOCK MetaHandleLock;

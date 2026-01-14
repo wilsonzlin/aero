@@ -7262,6 +7262,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         }
 
         BOOLEAN sentDxgkFault = FALSE;
+        ULONG faultedFence32 = 0;
 
         if ((handled & AEROGPU_IRQ_ERROR) != 0) {
             InterlockedExchange(&adapter->DeviceErrorLatched, 1);
@@ -7279,6 +7280,29 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
                 const ULONG newEnable = (ULONG)InterlockedAnd((volatile LONG*)&adapter->IrqEnableMask, ~(LONG)AEROGPU_IRQ_ERROR);
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, newEnable);
+            }
+
+            /*
+             * Cache structured error payload when supported (ABI 1.3+).
+             *
+             * These registers remain valid until overwritten by a subsequent error and are useful
+             * for post-mortem inspection even after the device has been powered down.
+             */
+            const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
+            const BOOLEAN haveErrorRegs =
+                (abiMinor >= 3) && (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
+            if (haveErrorRegs) {
+                ULONG code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
+                if (code == 0) {
+                    /* Treat unknown/invalid values as INTERNAL for consumers. */
+                    code = (ULONG)AEROGPU_ERROR_INTERNAL;
+                }
+                const ULONG mmioCount = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
+                InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)code);
+                InterlockedExchange((volatile LONG*)&adapter->LastErrorMmioCount, (LONG)mmioCount);
+            } else {
+                /* Best-effort: no structured error payload; still record "internal" as the last seen error kind. */
+                InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)AEROGPU_ERROR_INTERNAL);
             }
             /*
              * Choose a faulted fence ID that dxgkrnl can associate with a DMA buffer.
@@ -7319,6 +7343,7 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             }
             const ULONGLONG errorFence = (ULONGLONG)errorFence32;
             AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);
+            faultedFence32 = errorFence32;
 
             const ULONGLONG n = (ULONGLONG)InterlockedIncrement64((volatile LONGLONG*)&adapter->ErrorIrqCount);
 
@@ -7393,10 +7418,11 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             queueDpc = TRUE;
 
             /*
-             * If we notified dxgkrnl of a DMA fault for this interrupt, do not also report DMA_COMPLETED
-             * for the same fence value.
+             * If we notified dxgkrnl of a DMA fault for this interrupt, avoid reporting DMA_COMPLETED
+             * for the *same* fence value. If the device signaled both FENCE and ERROR, the completed
+             * fence may still be meaningful for retiring earlier work.
              */
-            if (!sentDxgkFault && adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+            if ((!sentDxgkFault || faultedFence32 != completedFence32) && adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
                 DXGKARGCB_NOTIFY_INTERRUPT notify;
                 RtlZeroMemory(&notify, sizeof(notify));
                 notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
@@ -7548,6 +7574,8 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
 
                 if ((pending & AEROGPU_IRQ_ERROR) != 0) {
                     InterlockedExchange(&adapter->DeviceErrorLatched, 1);
+                    /* Legacy device models do not expose structured error MMIO registers; treat as INTERNAL. */
+                    InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)AEROGPU_ERROR_INTERNAL);
                     AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
 
                     /*
@@ -10814,10 +10842,20 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         /* Avoid MMIO reads while powered down; return best-effort cached state. */
         out->error_fence = AeroGpuAtomicReadU64(&adapter->LastErrorFence);
-        const ULONGLONG errorCount = AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
-        out->error_count = (errorCount > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (ULONG)errorCount;
-        if (AeroGpuIsDeviceErrorLatched(adapter)) {
+
+        const ULONG cachedCode = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->LastErrorCode);
+        if (cachedCode != 0) {
+            out->error_code = cachedCode;
+        } else if (AeroGpuIsDeviceErrorLatched(adapter)) {
             out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
+        }
+
+        const ULONG cachedMmioCount = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->LastErrorMmioCount);
+        if (cachedMmioCount != 0) {
+            out->error_count = cachedMmioCount;
+        } else {
+            const ULONGLONG errorCount = AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
+            out->error_count = (errorCount > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (ULONG)errorCount;
         }
 
         const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
