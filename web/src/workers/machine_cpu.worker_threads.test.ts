@@ -5,11 +5,14 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { InputEventType } from "../input/event_queue";
+import { encodeCommand } from "../ipc/protocol";
+import { RingBuffer } from "../ipc/ring_buffer";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
 import {
   STATUS_INTS,
   STATUS_OFFSET_BYTES,
   StatusIndex,
+  ringRegionsForWorker,
   type SharedMemorySegments,
 } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
@@ -143,6 +146,85 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       worker.postMessage(makeInit(segments));
 
       await workerReady;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
+  it("does not spin the halted run loop after a wakeRunLoop clears the wake promise (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+    const runSliceCounterIndex = 63;
+    Atomics.store(status, runSliceCounterIndex, 0);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+      await dummyReady;
+
+      const regions = ringRegionsForWorker("cpu");
+      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      if (!commandRing.tryPush(encodeCommand({ kind: "nop", seq: 1 }))) {
+        throw new Error("Failed to push nop command into command ring.");
+      }
+
+      let baseline = 0;
+      const deadline = Date.now() + 1000;
+      while (baseline === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 20);
+          (timer as unknown as { unref?: () => void }).unref?.();
+        });
+        baseline = Atomics.load(status, runSliceCounterIndex) >>> 0;
+      }
+      expect(baseline).toBeGreaterThan(0);
+
+      const ack2 = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; version?: unknown }).kind === "config.ack" && (msg as any).version === 2,
+        10_000,
+      );
+      worker.postMessage({
+        kind: "config.update",
+        version: 2,
+        config: makeConfig(),
+      });
+      await ack2;
+
+      const afterWake = Atomics.load(status, runSliceCounterIndex) >>> 0;
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 500);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      });
+      const end = Atomics.load(status, runSliceCounterIndex) >>> 0;
+      const diff = (end - afterWake) >>> 0;
+
+      expect(diff).toBeLessThan(2_000);
     } finally {
       await worker.terminate();
     }

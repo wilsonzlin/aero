@@ -2278,7 +2278,7 @@ async function runLoop(): Promise<void> {
       }
 
       if (exitKindNum === runExitKindMap.Halted) {
-        await Promise.race([ring.waitForDataAsync(HALTED_RUN_SLICE_DELAY_MS), runLoopWakePromise]);
+        await Promise.race([ring.waitForDataAsync(HALTED_RUN_SLICE_DELAY_MS), ensureRunLoopWakePromise()]);
       } else {
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, 0);
@@ -2414,7 +2414,20 @@ ctx.onmessage = (ev) => {
     machine = {
       virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
       virtio_input_mouse_driver_ok: () => virtioMouseOk,
+      run_slice: () => {
+        const st = status;
+        const runSliceCounterIndex = 63;
+        if (st && runSliceCounterIndex < st.length) {
+          Atomics.add(st, runSliceCounterIndex, 1);
+        }
+        return { kind: runExitKindMap.Halted };
+      },
     } as unknown as InstanceType<WasmApi["Machine"]>;
+    try {
+      ctx.postMessage({ kind: "__test.machine_cpu.dummyMachineEnabled" });
+    } catch {
+      void 0;
+    }
     return;
   }
 
