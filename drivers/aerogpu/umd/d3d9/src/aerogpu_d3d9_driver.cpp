@@ -7023,7 +7023,16 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
     const float z = read_f32_unaligned(src + 8);
     const float rhw = read_f32_unaligned(src + 12);
 
-    const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
+    // `rhw` is the reciprocal clip-space w. Some apps (and fuzz tests) may pass
+    // non-finite values; keep conversion math finite so downstream shader math
+    // does not get poisoned by NaNs/Infs.
+    float w = 1.0f;
+    if (rhw != 0.0f && std::isfinite(rhw)) {
+      w = 1.0f / rhw;
+      if (!std::isfinite(w)) {
+        w = 1.0f;
+      }
+    }
     // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
     // so typical D3D9 pre-transformed vertex coordinates line up with pixel
     // centers.
@@ -24065,7 +24074,16 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
         const float z = read_f32_unaligned(src + 8);
         const float rhw = read_f32_unaligned(src + 12);
 
-        const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
+        // `rhw` is the reciprocal clip-space w. Some apps may pass non-finite
+        // values; keep conversion math finite so downstream shader math does not
+        // get poisoned by NaNs/Infs.
+        float w = 1.0f;
+        if (rhw != 0.0f && std::isfinite(rhw)) {
+          w = 1.0f / rhw;
+          if (!std::isfinite(w)) {
+            w = 1.0f;
+          }
+        }
         // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
         // so typical D3D9 pre-transformed vertex coordinates line up with pixel
         // centers.
