@@ -456,10 +456,22 @@ impl Sm3TranslateFailure {
                 .contains("unsupported opcode"),
 
             // IR build errors are generally higher-level semantic issues. We treat explicit
-            // "unsupported"/"not supported" messages as fallbackable feature gaps.
+            // "not supported" messages as fallbackable feature gaps.
             Sm3TranslateFailure::Build(e) => {
                 let msg = e.message.to_ascii_lowercase();
-                msg.contains("unsupported") || msg.contains("not supported")
+                // Unknown opcodes are treated as feature gaps: the legacy translator skips unknown
+                // opcodes so we can keep games running while the strict pipeline gains coverage.
+                if msg.contains("unsupported opcode") {
+                    return true;
+                }
+
+                if msg.contains("not supported") {
+                    return true;
+                }
+
+                // Some opcodes require additional decoding support beyond the IR builder (e.g.
+                // legacy vs SM2/SM3 TEX variants). Allow fallback on these explicit encoding gaps.
+                msg.contains("tex has unsupported encoding")
             }
 
             // Verify errors represent malformed IR and should not fall back.

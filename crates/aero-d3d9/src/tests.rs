@@ -2149,6 +2149,32 @@ fn translate_entrypoint_rejects_invalid_predicate_modifier() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_invalid_src_modifier() {
+    // Source modifier values outside the D3D9 SM2/SM3 enum range are malformed input and should not
+    // trigger legacy fallback.
+    let mut words = vec![0xFFFF_0300];
+    // mov r0, c0 with an invalid source modifier (15)
+    words.extend(enc_inst(
+        0x0001,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src_mod(2, 0, 0xE4, 15),
+        ],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_relative_register_addressing() {
     // Craft a ps_3_0 shader that uses relative addressing on a non-constant register (r1[a0.x]).
     // This currently fails during WGSL lowering, and should be treated as malformed input (not as
