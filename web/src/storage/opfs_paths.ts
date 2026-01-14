@@ -24,18 +24,17 @@ function normalizeOpfsRelPath(path: string, field: string): string {
 }
 
 function normalizeOpfsFileName(name: string, field: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) {
+  if (name.trim().length === 0) {
     throw new Error(`${field} must not be empty`);
   }
   // OPFS file names are path components; reject separators to avoid confusion about directories.
-  if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("\0")) {
+  if (name.includes("/") || name.includes("\\") || name.includes("\0")) {
     throw new Error(`${field} must be a simple file name (no path separators)`);
   }
-  if (trimmed === "." || trimmed === "..") {
+  if (name === "." || name === "..") {
     throw new Error(`${field} must not be "." or ".."`);
   }
-  return trimmed;
+  return name;
 }
 
 function joinOpfsPath(
