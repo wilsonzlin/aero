@@ -4140,25 +4140,31 @@ impl Machine {
                 true
             }
             8 => {
-                let pal = &self.bios.video.vbe.palette;
-                let dac_bits = self.bios.video.vbe.dac_width_bits;
-                let scale = |c: u8| -> u8 {
-                    if dac_bits == 6 {
-                        (c << 2) | (c >> 4)
-                    } else {
-                        c
-                    }
-                };
+                // In 8bpp VBE modes, the framebuffer is a stream of palette indices and guests
+                // commonly program colors via the VGA DAC ports (`0x3C8/0x3C9`).
+                //
+                // Prefer the AeroGPU-emulated DAC palette so port writes affect visible output.
+                // The BIOS VBE palette is mirrored into this DAC on reset and when the guest uses
+                // INT 10h AX=4F09 "Set Palette Data" (see `handle_bios_interrupt`).
+                let (pal, pel_mask) = self
+                    .aerogpu
+                    .as_ref()
+                    .map(|dev| {
+                        let dev = dev.borrow();
+                        (dev.dac_palette, dev.pel_mask)
+                    })
+                    .unwrap_or(([[0u8; 3]; 256], 0xFF));
+                let scale_6bit_to_8bit = |c: u8| -> u8 { (c << 2) | (c >> 4) };
 
                 for y in 0..height {
                     let row_addr = base.saturating_add(u64::from(y).saturating_mul(pitch));
                     self.mem.read_physical(row_addr, &mut row);
                     for x in 0..width as usize {
-                        let idx = row.get(x).copied().unwrap_or(0) as usize;
-                        let base = idx * 4;
-                        let b = scale(pal.get(base).copied().unwrap_or(0));
-                        let g = scale(pal.get(base + 1).copied().unwrap_or(0));
-                        let r = scale(pal.get(base + 2).copied().unwrap_or(0));
+                        let idx = (row.get(x).copied().unwrap_or(0) & pel_mask) as usize;
+                        let [r6, g6, b6] = pal[idx];
+                        let b = scale_6bit_to_8bit(b6);
+                        let g = scale_6bit_to_8bit(g6);
+                        let r = scale_6bit_to_8bit(r6);
                         self.display_fb[y as usize * width as usize + x] =
                             0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
                     }
@@ -7550,6 +7556,36 @@ impl Machine {
         // Once PCI BARs are assigned, update the BIOS VBE LFB base for any display configurations
         // that derive it from PCI resources (AeroGPU BAR1).
         self.sync_bios_vbe_lfb_base_to_display_wiring();
+        // The HLE BIOS maintains its own copy of the VBE palette for INT 10h AX=4F09 services, but
+        // does not perform VGA port I/O. Keep the AeroGPU-emulated VGA DAC palette coherent with
+        // the BIOS palette so 8bpp VBE modes (which are palette-indexed) have a sensible default
+        // palette before the guest programs it.
+        //
+        // This also keeps DAC port reads (`0x3C7/0x3C9`) coherent with BIOS-driven palette changes
+        // during early boot.
+        if let Some(aerogpu) = &self.aerogpu {
+            let bits = self.bios.video.vbe.dac_width_bits;
+            let pal = &self.bios.video.vbe.palette;
+            let mut dev = aerogpu.borrow_mut();
+            dev.vga_port_write_u8(0x3C8, 0); // set DAC write index
+            for idx in 0..256usize {
+                let base = idx * 4;
+                let b = pal[base];
+                let g = pal[base + 1];
+                let r = pal[base + 2];
+
+                let (r, g, b) = if bits >= 8 {
+                    (r >> 2, g >> 2, b >> 2)
+                } else {
+                    (r & 0x3F, g & 0x3F, b & 0x3F)
+                };
+
+                // VGA DAC write order is R, G, B.
+                dev.vga_port_write_u8(0x3C9, r);
+                dev.vga_port_write_u8(0x3C9, g);
+                dev.vga_port_write_u8(0x3C9, b);
+            }
+        }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         if self.bios.video.vbe.current_mode.is_none() {
             self.sync_text_mode_cursor_bda_to_vga_crtc();
@@ -9723,6 +9759,30 @@ impl snapshot::SnapshotTarget for Machine {
                             dev.reset();
                             let copy_len = decoded.vram.len().min(dev.vram.len());
                             dev.vram[..copy_len].copy_from_slice(&decoded.vram[..copy_len]);
+
+                            // Restore the VGA DAC palette from the BIOS VBE palette state. The BIOS
+                            // snapshot captures VBE palette entries (B,G,R,0), and AeroGPU-backed
+                            // 8bpp VBE rendering uses the emulated DAC palette.
+                            let bits = self.bios.video.vbe.dac_width_bits;
+                            let pal = &self.bios.video.vbe.palette;
+                            dev.vga_port_write_u8(0x3C8, 0); // set DAC write index
+                            for idx in 0..256usize {
+                                let base = idx * 4;
+                                let b = pal[base];
+                                let g = pal[base + 1];
+                                let r = pal[base + 2];
+
+                                let (r, g, b) = if bits >= 8 {
+                                    (r >> 2, g >> 2, b >> 2)
+                                } else {
+                                    (r & 0x3F, g & 0x3F, b & 0x3F)
+                                };
+
+                                // VGA DAC write order is R, G, B.
+                                dev.vga_port_write_u8(0x3C9, r);
+                                dev.vga_port_write_u8(0x3C9, g);
+                                dev.vga_port_write_u8(0x3C9, b);
+                            }
                         }
 
                         {
