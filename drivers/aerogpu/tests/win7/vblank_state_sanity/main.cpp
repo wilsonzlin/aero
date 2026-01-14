@@ -90,6 +90,42 @@ static int RunVblankStateSanity(int argc, char** argv) {
     return reporter.Fail("%s", open_err.c_str());
   }
 
+  // Best-effort: query scanout flags so failures are clearer when vblank is intentionally gated off.
+  bool have_scanout = false;
+  bool scanout_flags_valid = false;
+  bool post_display_released = false;
+  unsigned long scanout_flags = 0;
+  unsigned long scanout_cached_enable = 0;
+  unsigned long scanout_mmio_enable = 0;
+  {
+    aerogpu_escape_query_scanout_out_v2 qs;
+    NTSTATUS st_scanout = 0;
+    if (aerogpu_test::kmt::AerogpuQueryScanoutV2(&kmt, adapter, 0, &qs, &st_scanout)) {
+      have_scanout = true;
+      scanout_cached_enable = (unsigned long)qs.base.cached_enable;
+      scanout_mmio_enable = (unsigned long)qs.base.mmio_enable;
+      scanout_flags = (unsigned long)qs.base.reserved0;
+      scanout_flags_valid = (qs.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2)) &&
+                            ((qs.base.reserved0 & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0);
+      post_display_released =
+          scanout_flags_valid &&
+          ((qs.base.reserved0 & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
+      aerogpu_test::PrintfStdout(
+          "INFO: %s: scanout: flags=0x%08lX%s cached_enable=%lu mmio_enable=%lu",
+          kTestName,
+          scanout_flags,
+          scanout_flags_valid ? "" : " (flags_invalid)",
+          scanout_cached_enable,
+          scanout_mmio_enable);
+    }
+  }
+  if (scanout_flags_valid && post_display_released) {
+    aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return reporter.Fail("post_display_ownership_released flag is set in QUERY_SCANOUT (flags=0x%08lX)",
+                         scanout_flags);
+  }
+
   std::vector<aerogpu_escape_query_vblank_out> snaps;
   snaps.reserve(samples);
 
@@ -189,6 +225,13 @@ static int RunVblankStateSanity(int argc, char** argv) {
   const unsigned long long seq0 = (unsigned long long)first.vblank_seq;
   const unsigned long long seq1 = (unsigned long long)last.vblank_seq;
   if (seq1 <= seq0) {
+    if (have_scanout && (scanout_cached_enable == 0 || scanout_mmio_enable == 0)) {
+      return reporter.Fail("vblank_seq did not advance (%I64u -> %I64u); scanout enable may be off (cached_enable=%lu mmio_enable=%lu)",
+                           seq0,
+                           seq1,
+                           scanout_cached_enable,
+                           scanout_mmio_enable);
+    }
     return reporter.Fail("vblank_seq did not advance (%I64u -> %I64u)", seq0, seq1);
   }
 

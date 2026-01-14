@@ -6748,6 +6748,60 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   return true;
 }
 
+// Best-effort: query scanout flags (QUERY_SCANOUT v2) and decode post-display ownership release state.
+// This is used by vblank-related commands to print clearer diagnostics when vblank is gated off.
+static bool TryQueryScanoutPostDisplayOwnershipReleased(const D3DKMT_FUNCS *f,
+                                                        D3DKMT_HANDLE hAdapter,
+                                                        uint32_t vidpnSourceId,
+                                                        bool *flagsValidOut,
+                                                        bool *postDisplayReleasedOut) {
+  if (flagsValidOut) {
+    *flagsValidOut = false;
+  }
+  if (postDisplayReleasedOut) {
+    *postDisplayReleasedOut = false;
+  }
+
+  aerogpu_escape_query_scanout_out_v2 qs;
+  ZeroMemory(&qs, sizeof(qs));
+  qs.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qs.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  qs.base.hdr.size = sizeof(qs);
+  qs.base.hdr.reserved0 = 0;
+  qs.base.vidpn_source_id = vidpnSourceId;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
+  if (!NT_SUCCESS(st) && (st == STATUS_INVALID_PARAMETER || st == STATUS_NOT_SUPPORTED) && vidpnSourceId != 0) {
+    // Older KMDs may only support source 0; retry.
+    ZeroMemory(&qs, sizeof(qs));
+    qs.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qs.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    qs.base.hdr.size = sizeof(qs);
+    qs.base.hdr.reserved0 = 0;
+    qs.base.vidpn_source_id = 0;
+    st = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
+  }
+  if (!NT_SUCCESS(st)) {
+    return false;
+  }
+
+  // QUERY_SCANOUT v2 returns flags in reserved0.
+  if (qs.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2)) {
+    const uint32_t flags = qs.base.reserved0;
+    const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+    const bool postDisplayReleased =
+        flagsValid && ((flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
+    if (flagsValidOut) {
+      *flagsValidOut = flagsValid;
+    }
+    if (postDisplayReleasedOut) {
+      *postDisplayReleasedOut = postDisplayReleased;
+    }
+  }
+
+  return true;
+}
+
 static void PrintIrqMask(const wchar_t *label, uint32_t mask) {
   wprintf(L"  %s: 0x%08lx", label, (unsigned long)mask);
   if (mask != 0) {
@@ -6948,6 +7002,16 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     if (w == WAIT_TIMEOUT) {
       fwprintf(stderr, L"vblank wait timed out after %lu ms (sample 1/%lu)\n", (unsigned long)timeoutMs,
                (unsigned long)samples);
+      {
+        bool scanoutFlagsValid = false;
+        bool scanoutPostDisplayReleased = false;
+        if (TryQueryScanoutPostDisplayOwnershipReleased(
+                f, hAdapter, effectiveVidpnSourceId, &scanoutFlagsValid, &scanoutPostDisplayReleased) &&
+            scanoutFlagsValid && scanoutPostDisplayReleased) {
+          fwprintf(stderr,
+                   L"Note: post_display_ownership_released=1 (scanout/vblank may be gated off during transitions)\n");
+        }
+      }
       if (skipCloseAdapter) {
         // The wait thread may be blocked inside the kernel thunk. Avoid calling
         // D3DKMTCloseAdapter in this case; just exit the process.
@@ -6998,6 +7062,16 @@ static int DoWaitVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     if (w == WAIT_TIMEOUT) {
       fwprintf(stderr, L"vblank wait timed out after %lu ms (sample %lu/%lu)\n", (unsigned long)timeoutMs,
                (unsigned long)(i + 1), (unsigned long)samples);
+      {
+        bool scanoutFlagsValid = false;
+        bool scanoutPostDisplayReleased = false;
+        if (TryQueryScanoutPostDisplayOwnershipReleased(
+                f, hAdapter, effectiveVidpnSourceId, &scanoutFlagsValid, &scanoutPostDisplayReleased) &&
+            scanoutFlagsValid && scanoutPostDisplayReleased) {
+          fwprintf(stderr,
+                   L"Note: post_display_ownership_released=1 (scanout/vblank may be gated off during transitions)\n");
+        }
+      }
       if (skipCloseAdapter) {
         // The wait thread may be blocked inside the kernel thunk. Avoid calling
         // D3DKMTCloseAdapter in this case; just exit the process.
@@ -7128,6 +7202,14 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     samples = 10000;
   }
 
+  bool scanoutFlagsValid = false;
+  bool scanoutPostDisplayReleased = false;
+  (void)TryQueryScanoutPostDisplayOwnershipReleased(f,
+                                                    hAdapter,
+                                                    vidpnSourceId,
+                                                    &scanoutFlagsValid,
+                                                    &scanoutPostDisplayReleased);
+
   aerogpu_escape_query_vblank_out q;
   aerogpu_escape_query_vblank_out prev;
   bool supported = false;
@@ -7151,6 +7233,9 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       wprintf(L"Sample %lu/%lu:\n", (unsigned long)(i + 1), (unsigned long)samples);
     }
     PrintVblankSnapshot(&q, supported);
+    if (i == 0 && scanoutFlagsValid && scanoutPostDisplayReleased) {
+      wprintf(L"  note: post_display_ownership_released=1 (scanout/vblank may be gated off during transitions)\n");
+    }
     if (f->GetScanLine) {
       D3DKMT_GETSCANLINE s;
       ZeroMemory(&s, sizeof(s));
@@ -10639,6 +10724,18 @@ static int DoDumpVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   w.Key("interval_ms");
   w.Uint32(intervalMs);
 
+  bool scanoutFlagsValid = false;
+  bool scanoutPostDisplayReleased = false;
+  (void)TryQueryScanoutPostDisplayOwnershipReleased(f,
+                                                    hAdapter,
+                                                    vidpnSourceId,
+                                                    &scanoutFlagsValid,
+                                                    &scanoutPostDisplayReleased);
+  w.Key("scanout_flags_valid");
+  w.Bool(scanoutFlagsValid);
+  w.Key("scanout_post_display_ownership_released");
+  w.Bool(scanoutFlagsValid && scanoutPostDisplayReleased);
+
   w.Key("samples");
   w.BeginArray();
 
@@ -10887,7 +10984,18 @@ static int DoWaitVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
         // D3DKMTCloseAdapter in this case; just exit the process.
         *skipCloseAdapter = true;
       }
-      JsonWriteTopLevelError(out, "wait-vblank", f, "vblank wait timed out (sample 1)", STATUS_TIMEOUT);
+      bool scanoutFlagsValid = false;
+      bool scanoutPostDisplayReleased = false;
+      (void)TryQueryScanoutPostDisplayOwnershipReleased(f,
+                                                        hAdapter,
+                                                        effectiveVidpnSourceId,
+                                                        &scanoutFlagsValid,
+                                                        &scanoutPostDisplayReleased);
+      std::string msg("vblank wait timed out (sample 1)");
+      if (scanoutFlagsValid && scanoutPostDisplayReleased) {
+        msg.append("; post_display_ownership_released=1");
+      }
+      JsonWriteTopLevelError(out, "wait-vblank", f, msg.c_str(), STATUS_TIMEOUT);
       return 2;
     }
     if (w != WAIT_OBJECT_0) {
@@ -10959,6 +11067,17 @@ static int DoWaitVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
       jw.String("vblank wait timed out");
       jw.Key("sample_index");
       jw.Uint32(i + 1);
+      bool scanoutFlagsValid = false;
+      bool scanoutPostDisplayReleased = false;
+      (void)TryQueryScanoutPostDisplayOwnershipReleased(f,
+                                                        hAdapter,
+                                                        effectiveVidpnSourceId,
+                                                        &scanoutFlagsValid,
+                                                        &scanoutPostDisplayReleased);
+      jw.Key("scanout_flags_valid");
+      jw.Bool(scanoutFlagsValid);
+      jw.Key("scanout_post_display_ownership_released");
+      jw.Bool(scanoutFlagsValid && scanoutPostDisplayReleased);
       jw.Key("status");
       JsonWriteNtStatusError(jw, f, STATUS_TIMEOUT);
       jw.EndObject();
