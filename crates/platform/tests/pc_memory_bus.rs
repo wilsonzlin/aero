@@ -187,6 +187,44 @@ fn a20_masking_aliases_high_mmio_addresses() {
 }
 
 #[test]
+fn a20_disabled_only_clears_bit20_not_full_20bit_wrap() {
+    let mut bus = new_bus(false, 4 * 1024 * 1024);
+
+    bus.write_u8(0x0, 0x11);
+    bus.write_u8(0x2_00000, 0x22);
+
+    // Bit 21 should remain significant when A20 is disabled: 0x2_00000 is distinct from 0x0.
+    assert_eq!(bus.read_u8(0x0), 0x11);
+    assert_eq!(bus.read_u8(0x2_00000), 0x22);
+
+    // But bit 20 is forced low, so 0x3_00000 aliases 0x2_00000.
+    assert_eq!(bus.read_u8(0x3_00000), 0x22);
+}
+
+#[test]
+fn a20_disabled_crossing_2mib_boundary_splits_correctly() {
+    // Crossing 0x1F_FFFF -> 0x20_0000 flips bit 20 from 1 to 0. With A20 disabled, reads/writes
+    // must therefore jump from the low 1MiB alias back to the true 0x2_00000 region.
+    let mut bus = new_bus(false, 4 * 1024 * 1024);
+
+    // Seed distinct bytes in true physical RAM around the aliased and non-aliased regions.
+    bus.ram_mut().write_u8_le(0x0F_FFFE, 0x11).unwrap();
+    bus.ram_mut().write_u8_le(0x0F_FFFF, 0x22).unwrap();
+    bus.ram_mut().write_u8_le(0x2_00000, 0x33).unwrap();
+    bus.ram_mut().write_u8_le(0x2_00001, 0x44).unwrap();
+
+    let mut buf = [0u8; 4];
+    bus.read_physical(0x1F_FFFE, &mut buf);
+    assert_eq!(buf, [0x11, 0x22, 0x33, 0x44]);
+
+    bus.write_physical(0x1F_FFFE, &[0xAA, 0xBB, 0xCC, 0xDD]);
+    assert_eq!(bus.ram().read_u8_le(0x0F_FFFE).unwrap(), 0xAA);
+    assert_eq!(bus.ram().read_u8_le(0x0F_FFFF).unwrap(), 0xBB);
+    assert_eq!(bus.ram().read_u8_le(0x2_00000).unwrap(), 0xCC);
+    assert_eq!(bus.ram().read_u8_le(0x2_00001).unwrap(), 0xDD);
+}
+
+#[test]
 fn a20_disabled_crossing_1mib_boundary_within_mmio_wraps_offsets() {
     // When A20 is disabled, bit 20 is forced low. A read that crosses a 1MiB boundary at a high
     // MMIO address must therefore "wrap" back by 1MiB (i.e. alias), and MUST NOT be treated as a
