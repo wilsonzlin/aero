@@ -607,7 +607,7 @@ typedef struct _D3D9DDI_HQUERY {
   void* pDrvPrivate;
 } D3D9DDI_HQUERY;
 
-// Handle for N-Patch/patch rendering APIs (DrawRectPatch/DrawTriPatch/DeletePatch).
+// Handle for D3D9 patch rendering APIs (DrawRectPatch/DrawTriPatch/DeletePatch).
 typedef struct _D3D9DDI_HPATCH {
   void* pDrvPrivate;
 } D3D9DDI_HPATCH;
