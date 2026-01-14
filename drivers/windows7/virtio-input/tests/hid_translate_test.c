@@ -1508,6 +1508,51 @@ static void test_tablet_scaling_reports(void) {
   expect_report(&cap, 1, expect2, sizeof(expect2));
 }
 
+static void test_tablet_scaling_rounds_to_nearest(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /*
+   * Use a tiny device range where rounding behavior is visible.
+   *
+   * Expected mapping for v=1 in range [0, 2] with out_max=32767:
+   *   scaled = (1 * 32767 + (2/2)) / 2 = 16384 (0x4000)
+   */
+  hid_translate_set_tablet_abs_range(&t, 0, 2, 0, 2);
+
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 1);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 1);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x40, 0x00, 0x40};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
+static void test_tablet_scaling_min_equals_max_maps_to_zero(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /* Degenerate range: should not divide by zero; map to 0 deterministically. */
+  hid_translate_set_tablet_abs_range(&t, 5, 5, 7, 7);
+
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 123);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, -456);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x00, 0x00, 0x00};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
 static void test_tablet_abs_no_change_does_not_emit(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1680,6 +1725,8 @@ int main(void) {
   test_tablet_button_press_release();
   test_tablet_multiple_abs_updates_before_syn_is_deterministic();
   test_tablet_scaling_reports();
+  test_tablet_scaling_rounds_to_nearest();
+  test_tablet_scaling_min_equals_max_maps_to_zero();
   test_tablet_abs_no_change_does_not_emit();
   test_tablet_abs_range_swaps_min_max();
   test_tablet_partial_axis_updates_use_last_value();
