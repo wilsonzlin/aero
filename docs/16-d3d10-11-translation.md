@@ -532,6 +532,29 @@ This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageE
 Hosts should treat unknown non-zero `reserved0` values as invalid for now (reserved for future
 stages/extensions).
 
+**Packet layouts that carry `stage_ex` (normative summary)**
+
+For all of the following packets:
+
+- the struct is `#pragma pack(push, 1)` packed,
+- `hdr.size_bytes` must include the header + any trailing payload arrays, and
+- `reserved0` is interpreted as `stage_ex` **only** when the legacy `shader_stage`/`stage` field
+  equals `COMPUTE` and `reserved0 != 0`.
+
+| Packet | Packed struct header | Trailing payload |
+|---|---|---|
+| `CREATE_SHADER_DXBC` | `aerogpu_cmd_create_shader_dxbc { shader_handle, stage, dxbc_size_bytes, reserved0(stage_ex) }` | `dxbc_bytes[dxbc_size_bytes]` |
+| `SET_TEXTURE` | `aerogpu_cmd_set_texture { shader_stage, slot, texture, reserved0(stage_ex) }` | none |
+| `SET_SAMPLERS` | `aerogpu_cmd_set_samplers { shader_stage, start_slot, sampler_count, reserved0(stage_ex) }` | `aerogpu_handle_t samplers[sampler_count]` |
+| `SET_CONSTANT_BUFFERS` | `aerogpu_cmd_set_constant_buffers { shader_stage, start_slot, buffer_count, reserved0(stage_ex) }` | `aerogpu_constant_buffer_binding bindings[buffer_count]` |
+| `SET_SHADER_RESOURCE_BUFFERS` | `aerogpu_cmd_set_shader_resource_buffers { shader_stage, start_slot, buffer_count, reserved0(stage_ex) }` | `aerogpu_shader_resource_buffer_binding bindings[buffer_count]` |
+| `SET_UNORDERED_ACCESS_BUFFERS` | `aerogpu_cmd_set_unordered_access_buffers { shader_stage, start_slot, uav_count, reserved0(stage_ex) }` | `aerogpu_unordered_access_buffer_binding bindings[uav_count]` |
+| `SET_SHADER_CONSTANTS_F` | `aerogpu_cmd_set_shader_constants_f { stage, start_register, vec4_count, reserved0(stage_ex) }` | `float data[vec4_count * 4]` |
+
+Implementers should copy the exact struct definitions (and sizes) from
+`drivers/aerogpu/protocol/aerogpu_cmd.h` (source of truth). The table above exists so readers can
+understand the extension pattern without having to jump to the header.
+
 **Definition (matches DXBC program type values):**
 
 ```c
