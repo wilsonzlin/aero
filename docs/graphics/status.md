@@ -502,6 +502,7 @@ Representative test pointers:
 - GS translator unit tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
 - GS prepass execution tests (translated SM4 subset):
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs)
+  - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs)
@@ -549,14 +550,17 @@ Known gaps / limitations (enforced by code/tests):
     - Reference implementation: [`crates/aero-d3d11/src/runtime/strip_to_list.rs`](../../crates/aero-d3d11/src/runtime/strip_to_list.rs)
     - Unit tests: `crates/aero-d3d11/src/runtime/strip_to_list.rs` (module `tests`)
   - Known GS emulation gaps / next steps:
-    - Broaden VS-as-compute feeding (opcode coverage + correct draw instancing semantics).
+    - Broaden VS-as-compute feeding (opcode coverage + broader draw-instancing coverage).
     - Strip and adjacency-strip IA topologies (`LINESTRIP`, `TRIANGLESTRIP`, `LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not supported end-to-end yet (until Tasks 705/708/711 equivalents land).
-    - Instanced draws (`instance_count > 1`) with GS bound are not supported yet (the translated-GS prepass currently assumes `instance_count == 1`; some translated prepass paths fail-fast when `instance_count != 1`).
+    - Draw instancing (`instance_count > 1`) is now exercised for the translated-GS prepass (pointlist)
+      by `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`, but
+      coverage is still incomplete (some translated prepass paths fail-fast when `instance_count != 1`).
     - Some downlevel backends have very low per-stage storage-buffer limits (commonly `max_storage_buffers_per_shader_stage = 4`), which can block compute-prepass execution.
   - Owning doc: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md)
     - GS DXBC + ILAY fixtures: [`crates/aero-d3d11/tests/fixtures/README.md`](../../crates/aero-d3d11/tests/fixtures/README.md)
     - Example GS test runs:
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_compute_prepass_instancing`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_emits_triangle`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelistadj_emits_triangle`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_instance_step_rate`

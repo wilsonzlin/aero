@@ -167,21 +167,26 @@ The executor currently uses **two distinct** compute prepass implementations for
 - **Pass sequence (translated-GS prepass paths today):**
   1. **Input fill:** a compute pass populates the packed `gs_inputs` payload from **VS outputs**, using
      vertex pulling to load IA data and a small VS-as-compute translator (**currently `mov`/`add` only**)
-     to execute the guest VS instruction stream for the subset needed by GS tests.
-     - If VS-as-compute translation fails, the executor only falls back to filling `gs_inputs` from the
-       IA stream when the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
-       to force IA-fill for debugging; may misrender). Otherwise the draw fails with a clear error.
-   2. **GS execution:** the translated GS WGSL compute entry point runs once per input primitive
-      (`dispatch_workgroups(primitive_count, 1, 1)`) and loops `gs_instance_id` in `0..GS_INSTANCE_COUNT`.
-      It appends outputs using atomics, performing strip→list conversion and honoring `cut` semantics.
-   3. **Finalize:** a 1-workgroup dispatch runs `cs_finalize` to write `DrawIndexedIndirectArgs` from the
-      counters (and to deterministically skip the draw if overflow occurred).
-   4. **Index expand (executor-side):** the executor runs an additional compute pass to expand the
-      indexed output into a non-indexed vertex stream and repack `DrawIndexedIndirectArgs` into
-      `DrawIndirectArgs`, so the render pass can always use `draw_indirect` (avoiding
-      `draw_indexed_indirect`, which is unreliable on some backends). See
-      `GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL` in
-      `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`.
+      to execute the guest VS instruction stream for the subset needed by GS tests.
+      - If VS-as-compute translation fails, the executor only falls back to filling `gs_inputs` from the
+        IA stream when the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
+        to force IA-fill for debugging; may misrender). Otherwise the draw fails with a clear error.
+  2. **GS execution:** the translated GS WGSL compute entry point runs once per input primitive **per
+     draw instance** (`dispatch_workgroups(primitive_count, instance_count, 1)`) and loops
+     `gs_instance_id` in `0..GS_INSTANCE_COUNT`.
+     The prepass uses `global_invocation_id.y` as an internal draw-instance selector to index into the
+     per-instance `gs_inputs` payload (the guest GS itself does not observe a draw-instance ID).
+     It appends outputs using atomics, performing strip→list conversion and honoring `cut` semantics.
+  3. **Finalize:** a 1-workgroup dispatch runs `cs_finalize` to write `DrawIndexedIndirectArgs` from the
+     counters (and to deterministically skip the draw if overflow occurred). For translated-GS prepass
+     paths the finalize step emits a **non-instanced** indirect draw (`instance_count = 1`) because the
+     prepass already expanded all draw instances.
+  4. **Index expand (executor-side):** the executor runs an additional compute pass to expand the
+     indexed output into a non-indexed vertex stream and repack `DrawIndexedIndirectArgs` into
+     `DrawIndirectArgs`, so the render pass can always use `draw_indirect` (avoiding
+     `draw_indexed_indirect`, which is unreliable on some backends). See
+     `GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL` in
+     `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`.
 - **Bindings (translated GS prepass WGSL):**
   - `@group(0)` contains prepass IO (expanded vertices/indices, counters+indirect args, params, and
     `gs_inputs`).
@@ -256,6 +261,7 @@ Test pointers:
 
 - End-to-end translated GS execution:
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`
@@ -422,11 +428,11 @@ Known limitations include:
   - If VS-as-compute translation fails, the executor only falls back to IA-fill when the VS is a strict
     passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may
     misrender because the GS observes pre-VS IA values). Otherwise the draw fails with a clear error.
-    misrender because the GS observes pre-VS IA values). Otherwise the draw fails with a clear error.
-- **Draw instancing (`instance_count > 1`) is not supported yet**
-  - The in-tree translated-GS prepass currently assumes `instance_count == 1` when executing guest GS
-    DXBC (it does not expand geometry per draw instance / fan out over `SV_InstanceID`). Some prepass
-    variants fail-fast when `instance_count != 1`.
+- **Draw instancing (`instance_count > 1`) is partially validated**
+  - Translated-GS prepass paths can execute once per draw instance (prepass expands all instances and
+    emits a non-instanced indirect draw; `instance_count = 1`), and this is exercised by
+    `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`.
+  - Some translated prepass variants still fail-fast when `instance_count != 1` (bring-up limitation).
 - **Limited output topology / payload**
   - Output topology is limited to `pointlist`, `linestrip`, and `trianglestrip` (stream 0 only).
     Strip topologies are lowered to list topologies for rendering (`linestrip` → line list,
@@ -515,6 +521,7 @@ for details (including how the GS fixtures are authored and how to dump token st
 End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`
@@ -538,6 +545,7 @@ Example:
 
 ```bash
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_compute_prepass_instancing
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelistadj_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_instance_step_rate
