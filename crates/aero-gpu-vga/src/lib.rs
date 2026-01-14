@@ -2438,7 +2438,7 @@ mod tests {
         dev.port_write(0x01CE, 2, 0x0004);
         dev.port_write(0x01CF, 2, 0x0041);
 
-        dev.mem_write_u8(SVGA_LFB_BASE + 0, 0x12);
+        dev.mem_write_u8(SVGA_LFB_BASE, 0x12);
         dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x34);
         dev.mem_write_u8(SVGA_LFB_BASE + 2, 0x56);
         dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x78);
