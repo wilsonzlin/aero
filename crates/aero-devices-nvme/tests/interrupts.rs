@@ -90,7 +90,7 @@ fn program_msix_table_entry0(dev: &mut NvmePciDevice, address: u64, data: u32) {
     // - +0x08: Message Data
     // - +0x0c: Vector Control (bit 0 = mask)
     let table_base = 0x3000u64;
-    dev.write(table_base, 4, address as u32 as u64);
+    dev.write(table_base, 4, u64::from(address as u32));
     dev.write(table_base + 0x04, 4, address >> 32);
     dev.write(table_base + 0x08, 4, data as u64);
     dev.write(table_base + 0x0c, 4, 0); // unmasked

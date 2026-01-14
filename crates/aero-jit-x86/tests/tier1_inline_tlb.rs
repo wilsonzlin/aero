@@ -610,6 +610,8 @@ struct CodeVersionTableInit<'a> {
     prefill_tlbs: &'a [(u64, u64)],
     initial_table: &'a [u32],
 }
+
+#[allow(clippy::too_many_arguments)]
 fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs_and_initial_table(
     block: &aero_jit_x86::tier1::ir::IrBlock,
     cpu: CpuState,

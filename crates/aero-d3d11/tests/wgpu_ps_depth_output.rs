@@ -375,6 +375,7 @@ fn wgpu_pixel_shader_depth_output_affects_depth_test() {
                 shader_location: 0,
             }],
         };
+        let vb_layouts = std::slice::from_ref(&vb_layout);
 
         let depth_state = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
@@ -391,7 +392,7 @@ fn wgpu_pixel_shader_depth_output_affects_depth_test() {
                 module: &vs_module,
                 entry_point: "vs_main",
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: std::slice::from_ref(&vb_layout),
+                buffers: vb_layouts,
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fs_depth_module,
@@ -424,7 +425,7 @@ fn wgpu_pixel_shader_depth_output_affects_depth_test() {
                 module: &vs_module,
                 entry_point: "vs_main",
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: std::slice::from_ref(&vb_layout),
+                buffers: vb_layouts,
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fs_green_module,

@@ -33,7 +33,6 @@ mod tests {
 
         // Trait should also be canonical (i.e. implementing the emulator-exported trait should
         // satisfy the `aero-devices-gpu` trait object).
-        #[derive(Default)]
         struct StubBackend;
 
         impl AeroGpuCommandBackend for StubBackend {
