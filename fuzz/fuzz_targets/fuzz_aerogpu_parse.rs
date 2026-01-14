@@ -1501,12 +1501,17 @@ fuzz_target!(|data: &[u8]| {
     // PayloadSizeMismatch) that are otherwise hard to reach consistently.
     let cmd_bad_len_size = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
         + cmd::AerogpuCmdCreateShaderDxbc::SIZE_BYTES
+        // BIND_SHADERS with a truncated "extended" payload: payload.len() > 16 but < 28.
+        // This should trigger `PayloadSizeMismatch` in the new extended decoder.
+        + (cmd::AerogpuCmdBindShaders::SIZE_BYTES + 4)
         + cmd::AerogpuCmdUploadResource::SIZE_BYTES
         + cmd::AerogpuCmdCreateInputLayout::SIZE_BYTES
         + cmd::AerogpuCmdSetShaderConstantsF::SIZE_BYTES
         + cmd::AerogpuCmdSetVertexBuffers::SIZE_BYTES
         + cmd::AerogpuCmdSetSamplers::SIZE_BYTES
-        + cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES;
+        + cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES
+        + cmd::AerogpuCmdSetShaderResourceBuffers::SIZE_BYTES
+        + cmd::AerogpuCmdSetUnorderedAccessBuffers::SIZE_BYTES;
     let mut cmd_bad_len = vec![0u8; cmd_bad_len_size];
     let cmd_bad_len_size_u32 = cmd_bad_len.len() as u32;
     cmd_bad_len[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
@@ -1527,6 +1532,14 @@ fuzz_target!(|data: &[u8]| {
             v.copy_from_slice(&1u32.to_le_bytes());
         }
     }
+    // BIND_SHADERS: truncated extended payload (payload len 20, but extended decode needs 28).
+    let bind_shaders_truncated_size = cmd::AerogpuCmdBindShaders::SIZE_BYTES + 4;
+    let _ = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::BindShaders as u32,
+        bind_shaders_truncated_size,
+    );
     // UPLOAD_RESOURCE: size_bytes=1 but no data bytes.
     if let Some(pkt) = write_pkt_hdr(
         cmd_bad_len.as_mut_slice(),
@@ -1588,6 +1601,28 @@ fuzz_target!(|data: &[u8]| {
         &mut off,
         cmd::AerogpuCmdOpcode::SetConstantBuffers as u32,
         cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_SHADER_RESOURCE_BUFFERS: buffer_count=1 but no bindings.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetShaderResourceBuffers as u32,
+        cmd::AerogpuCmdSetShaderResourceBuffers::SIZE_BYTES,
+    ) {
+        if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
+            v.copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+    // SET_UNORDERED_ACCESS_BUFFERS: uav_count=1 but no bindings.
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_bad_len.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32,
+        cmd::AerogpuCmdSetUnorderedAccessBuffers::SIZE_BYTES,
     ) {
         if let Some(v) = cmd_bad_len.get_mut(pkt + 16..pkt + 20) {
             v.copy_from_slice(&1u32.to_le_bytes());
