@@ -7014,6 +7014,241 @@ bool TestGenerateMipSubLevelsRejectsDepthStencilFormat() {
   return Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "no DIRTY_RANGE emitted on failure");
 }
 
+bool TestGenerateMipSubLevelsBoxFilterCubeTexture() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  // Create a 4x4 cube texture with 3 mip levels (4x4, 2x2, 1x1).
+  // Cube textures are represented as array textures with 6 layers.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeCubeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1; // ignored/normalized by driver for cube textures
+  create_res.mip_levels = 3;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(cube texture mips)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(res->depth == 6u, "cube texture normalized to depth==6")) {
+    return false;
+  }
+  if (!Check(res->mip_levels == 3u, "resource mip_levels==3")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == 0, "resource is host-allocated (alloc_id==0)")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= res->size_bytes, "resource storage sized")) {
+    return false;
+  }
+
+  Texture2dLayout full_layout{};
+  if (!Check(calc_texture2d_layout(res->format, res->width, res->height, res->mip_levels, res->depth, &full_layout), "full layout")) {
+    return false;
+  }
+  const uint64_t layer_size = full_layout.total_size_bytes / static_cast<uint64_t>(res->depth);
+
+  Texture2dMipLevelLayout mip1{};
+  Texture2dMipLevelLayout mip2{};
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 1, &mip1), "mip1 layout")) {
+    return false;
+  }
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 2, &mip2), "mip2 layout")) {
+    return false;
+  }
+
+  // Fill each face's mip0 with a known pattern:
+  // R = face_base + (x + y*4), G = 0, B = 0, X (alpha) = 0. Mip gen should force alpha to 0xFF.
+  const uint32_t row_pitch = res->row_pitch;
+  if (!Check(row_pitch == 16u, "mip0 row_pitch==16")) {
+    return false;
+  }
+  constexpr uint32_t kFaces = 6u;
+  for (uint32_t face = 0; face < kFaces; ++face) {
+    const uint8_t face_base = static_cast<uint8_t>(face * 40u);
+    const uint64_t base_off = static_cast<uint64_t>(face) * layer_size;
+    for (uint32_t y = 0; y < 4; ++y) {
+      for (uint32_t x = 0; x < 4; ++x) {
+        const uint8_t r = static_cast<uint8_t>(face_base + x + y * 4u);
+        const size_t off = static_cast<size_t>(base_off) + static_cast<size_t>(y) * row_pitch + static_cast<size_t>(x) * 4u;
+        res->storage[off + 0] = 0; // B
+        res->storage[off + 1] = 0; // G
+        res->storage[off + 2] = r; // R
+        res->storage[off + 3] = 0; // X
+      }
+    }
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == S_OK, "GenerateMipSubLevels")) {
+    return false;
+  }
+
+  for (uint32_t face = 0; face < kFaces; ++face) {
+    const uint8_t face_base = static_cast<uint8_t>(face * 40u);
+    const uint8_t expected_mip1[16] = {
+        0, 0, static_cast<uint8_t>(face_base + 3u), 0xFF, 0, 0, static_cast<uint8_t>(face_base + 5u), 0xFF,
+        0, 0, static_cast<uint8_t>(face_base + 11u), 0xFF, 0, 0, static_cast<uint8_t>(face_base + 13u), 0xFF,
+    };
+    const uint8_t expected_mip2[4] = {0, 0, static_cast<uint8_t>(face_base + 8u), 0xFF};
+
+    const uint64_t mip1_off = static_cast<uint64_t>(face) * layer_size + mip1.offset_bytes;
+    const uint64_t mip2_off = static_cast<uint64_t>(face) * layer_size + mip2.offset_bytes;
+    if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip1_off), expected_mip1, sizeof(expected_mip1)) == 0,
+               "cube face mip1 bytes match")) {
+      return false;
+    }
+    if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip2_off), expected_mip2, sizeof(expected_mip2)) == 0,
+               "cube face mip2 bytes match")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= kFaces,
+             "GenerateMipSubLevels emits UPLOAD_RESOURCE for each cube face")) {
+    return false;
+  }
+
+  // Ensure uploads cover each face's "mip1..end-of-layer" range and do not upload any mip0 bytes.
+  const uint64_t mip0_end = mip1.offset_bytes;
+  std::vector<uint8_t> covered(static_cast<size_t>(full_layout.total_size_bytes), 0);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (cmd->resource_handle == res->handle) {
+        const uint64_t start = cmd->offset_bytes;
+        const uint64_t end = start + cmd->size_bytes;
+        if (!Check(end <= static_cast<uint64_t>(res->size_bytes), "UPLOAD_RESOURCE range within resource")) {
+          return false;
+        }
+
+        // Uploads must not include any mip0 bytes from any face.
+        for (uint32_t face = 0; face < kFaces; ++face) {
+          const uint64_t face_mip0_start = static_cast<uint64_t>(face) * layer_size;
+          const uint64_t face_mip0_end = face_mip0_start + mip0_end;
+          if (!Check(!(start < face_mip0_end && end > face_mip0_start), "UPLOAD_RESOURCE does not touch face mip0")) {
+            return false;
+          }
+        }
+
+        // Payload must match storage bytes.
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
+        if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
+                   "UPLOAD_RESOURCE payload matches storage bytes")) {
+          return false;
+        }
+
+        for (uint64_t i = start; i < end && i < static_cast<uint64_t>(covered.size()); ++i) {
+          covered[static_cast<size_t>(i)] = 1;
+        }
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+
+  for (uint32_t face = 0; face < kFaces; ++face) {
+    const uint64_t start = static_cast<uint64_t>(face) * layer_size + mip1.offset_bytes;
+    const uint64_t end = static_cast<uint64_t>(face + 1u) * layer_size;
+    for (uint64_t i = start; i < end && i < static_cast<uint64_t>(covered.size()); ++i) {
+      if (!Check(covered[static_cast<size_t>(i)] != 0, "UPLOAD_RESOURCE covers full generated mip range")) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 bool TestGenerateMipSubLevelsBoxFilter2dArrayTexture() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -32865,6 +33100,7 @@ int main() {
   RUN_TEST(TestGenerateMipSubLevelsRejectsSingleMipTexture);
   RUN_TEST(TestGenerateMipSubLevelsRejectsLockedTexture);
   RUN_TEST(TestGenerateMipSubLevelsRejectsDepthStencilFormat);
+  RUN_TEST(TestGenerateMipSubLevelsBoxFilterCubeTexture);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dArrayTexture);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dR5G6B5);
