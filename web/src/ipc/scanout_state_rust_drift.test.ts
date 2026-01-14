@@ -12,6 +12,40 @@ import {
   ScanoutStateIndex,
 } from "./scanout_state";
 
+let cachedAerogpuFormatValues: Readonly<Record<string, bigint>> | null = null;
+
+function getAerogpuFormatValues(): Readonly<Record<string, bigint>> {
+  if (cachedAerogpuFormatValues) return cachedAerogpuFormatValues;
+
+  const srcUrl = new URL("../../../emulator/protocol/aerogpu/aerogpu_pci.rs", import.meta.url);
+  const src = readFileSync(srcUrl, "utf8");
+
+  const enumMatch = src.match(/pub enum AerogpuFormat\s*\{([\s\S]*?)\r?\n\}/m);
+  if (!enumMatch) {
+    throw new Error("Failed to locate `pub enum AerogpuFormat { ... }` in emulator/protocol/aerogpu/aerogpu_pci.rs");
+  }
+
+  const body = enumMatch[1] ?? "";
+  const values: Record<string, bigint> = {};
+
+  // Example lines:
+  //   Invalid = 0,
+  //   B8G8R8X8Unorm = 2,
+  const variantRe = /^\s*([A-Za-z0-9_]+)\s*=\s*([^,]+),/gm;
+  for (const match of body.matchAll(variantRe)) {
+    const name = match[1] ?? "";
+    const raw = (match[2] ?? "").trim();
+    const lit = parseRustIntLiteral(raw);
+    if (lit == null) {
+      throw new Error(`Unsupported AerogpuFormat discriminant expression for ${name}: ${raw}`);
+    }
+    values[name] = lit;
+  }
+
+  cachedAerogpuFormatValues = values;
+  return values;
+}
+
 function parseRustConstExpr(source: string, name: string): string {
   // Keep the matcher intentionally strict so we fail loudly if the Rust source changes.
   const re = new RegExp(String.raw`^\s*pub const ${name}: [^=]+ = (.+);$`, "m");
@@ -37,6 +71,21 @@ function parseRustIntLiteral(token: string): bigint | null {
 function evalRustConstExpr(expr: string, env: Readonly<Record<string, bigint>>): bigint {
   const e = expr.trim();
   if (e in env) return env[e] ?? 0n;
+
+  // Ignore simple casts like `... as u32`.
+  const cast = e.match(/^(.+?)\s+as\s+[A-Za-z0-9_]+$/);
+  if (cast) return evalRustConstExpr(cast[1] ?? "", env);
+
+  const aerogpuFormat = e.match(/^AerogpuFormat::([A-Za-z0-9_]+)$/);
+  if (aerogpuFormat) {
+    const variant = aerogpuFormat[1] ?? "";
+    const values = getAerogpuFormatValues();
+    const value = values[variant];
+    if (value === undefined) {
+      throw new Error(`Unknown AerogpuFormat variant: ${variant}`);
+    }
+    return value;
+  }
 
   const lit = parseRustIntLiteral(e);
   if (lit != null) return lit;
@@ -111,4 +160,3 @@ describe("ScanoutState layout matches Rust source of truth", () => {
     expect(ScanoutStateIndex.FORMAT, "ScanoutStateIndex.FORMAT mismatch (Rust <-> TS)").toBe(parseRustConstNumber(rust, "FORMAT"));
   });
 });
-

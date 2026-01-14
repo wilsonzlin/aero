@@ -2,16 +2,20 @@
 //
 // Keep this file in sync with:
 //   crates/aero-shared/src/scanout_state.rs
+//   emulator/protocol/aerogpu/aerogpu_pci.ts (AerogpuFormat)
 //
 // The state is stored in an `Int32Array` backed by a `SharedArrayBuffer` so it can be accessed
 // from JS using `Atomics.*` operations. All values are logically `u32` but must be stored/read
 // through `Int32Array` for `Atomics.wait` compatibility; therefore always reinterpret via `>>> 0`.
 
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+
 export const SCANOUT_SOURCE_LEGACY_TEXT = 0 as const;
 export const SCANOUT_SOURCE_LEGACY_VBE_LFB = 1 as const;
 export const SCANOUT_SOURCE_WDDM = 2 as const;
 
-export const SCANOUT_FORMAT_B8G8R8X8 = 2 as const;
+// Scanout format values use the AeroGPU `AerogpuFormat` numeric (`u32`) discriminants.
+export const SCANOUT_FORMAT_B8G8R8X8 = AerogpuFormat.B8G8R8X8Unorm;
 
 export const SCANOUT_STATE_U32_LEN = 8 as const;
 export const SCANOUT_STATE_BYTE_LEN = SCANOUT_STATE_U32_LEN * 4;
