@@ -2849,6 +2849,8 @@ static int list_hid_devices_json(void)
         int caps_valid = 0;
         DWORD report_desc_len = 0;
         int report_desc_valid = 0;
+        DWORD hid_report_desc_len = 0;
+        int hid_report_desc_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -2897,6 +2899,7 @@ static int list_hid_devices_json(void)
             caps_valid = query_hid_caps(handle, &caps);
 
             report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
+            hid_report_desc_valid = query_hid_descriptor_report_length(handle, &hid_report_desc_len);
 
             CloseHandle(handle);
         } else {
@@ -2949,9 +2952,21 @@ static int list_hid_devices_json(void)
         } else {
             wprintf(L"null");
         }
+        wprintf(L",\"featureLen\":");
+        if (caps_valid) {
+            wprintf(L"%u", (unsigned)caps.FeatureReportByteLength);
+        } else {
+            wprintf(L"null");
+        }
         wprintf(L",\"reportDescLen\":");
         if (report_desc_valid) {
             wprintf(L"%lu", report_desc_len);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"hidReportDescLen\":");
+        if (hid_report_desc_valid) {
+            wprintf(L"%lu", hid_report_desc_len);
         } else {
             wprintf(L"null");
         }
