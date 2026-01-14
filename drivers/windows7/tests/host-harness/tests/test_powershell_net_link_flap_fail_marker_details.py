@@ -33,6 +33,8 @@ class PowerShellNetLinkFlapFailMarkerDetailsTests(unittest.TestCase):
             "reason=([^|\\r\\n]+)",
             "down_sec=([^|\\r\\n]+)",
             "up_sec=([^|\\r\\n]+)",
+            "http_attempts=([^|\\r\\n]+)",
+            "cfg_vector=([^|\\r\\n]+)",
             "cfg_intr_down_delta=([^|\\r\\n]+)",
             "cfg_intr_up_delta=([^|\\r\\n]+)",
         ):
@@ -41,4 +43,3 @@ class PowerShellNetLinkFlapFailMarkerDetailsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

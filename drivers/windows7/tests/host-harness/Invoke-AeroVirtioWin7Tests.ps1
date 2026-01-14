@@ -9031,6 +9031,8 @@ try {
       $reason = ""
       $downSec = ""
       $upSec = ""
+      $httpAttempts = ""
+      $cfgVector = ""
       $cfgDownDelta = ""
       $cfgUpDelta = ""
       $line = Try-ExtractLastAeroMarkerLine `
@@ -9041,6 +9043,8 @@ try {
         if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
         if ($line -match "(?:^|\|)down_sec=([^|\r\n]+)") { $downSec = $Matches[1] }
         if ($line -match "(?:^|\|)up_sec=([^|\r\n]+)") { $upSec = $Matches[1] }
+        if ($line -match "(?:^|\|)http_attempts=([^|\r\n]+)") { $httpAttempts = $Matches[1] }
+        if ($line -match "(?:^|\|)cfg_vector=([^|\r\n]+)") { $cfgVector = $Matches[1] }
         if ($line -match "(?:^|\|)cfg_intr_down_delta=([^|\r\n]+)") { $cfgDownDelta = $Matches[1] }
         if ($line -match "(?:^|\|)cfg_intr_up_delta=([^|\r\n]+)") { $cfgUpDelta = $Matches[1] }
       }
@@ -9048,6 +9052,8 @@ try {
       if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
       if (-not [string]::IsNullOrEmpty($downSec)) { $detailsParts += "down_sec=$downSec" }
       if (-not [string]::IsNullOrEmpty($upSec)) { $detailsParts += "up_sec=$upSec" }
+      if (-not [string]::IsNullOrEmpty($httpAttempts)) { $detailsParts += "http_attempts=$httpAttempts" }
+      if (-not [string]::IsNullOrEmpty($cfgVector)) { $detailsParts += "cfg_vector=$cfgVector" }
       if (-not [string]::IsNullOrEmpty($cfgDownDelta)) { $detailsParts += "cfg_intr_down_delta=$cfgDownDelta" }
       if (-not [string]::IsNullOrEmpty($cfgUpDelta)) { $detailsParts += "cfg_intr_up_delta=$cfgUpDelta" }
       $details = ""
