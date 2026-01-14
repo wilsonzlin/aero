@@ -651,47 +651,48 @@ export class WebHidBroker {
           if (head === stopAtTail) break;
         }
 
-        const rec = ring.popOrThrow();
-        if (!rec) break;
-        if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) continue;
+        const ok = ring.consumeNextOrThrow((rec) => {
+          if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) return;
 
-        const deviceId = rec.deviceId >>> 0;
-        const pendingAttach = this.#pendingAttachResults.get(deviceId);
-        if (!this.#attachedToWorker.has(deviceId) && !pendingAttach) continue;
+          const deviceId = rec.deviceId >>> 0;
+          const pendingAttach = this.#pendingAttachResults.get(deviceId);
+          if (!this.#attachedToWorker.has(deviceId) && !pendingAttach) return;
 
-        // If the device is still attaching, defer execution until the worker confirms via
-        // `hid.attachResult`. This avoids dropping output reports produced during the attach
-        // handshake while still ensuring we don't send reports for failed attaches.
-        const attachPromise = pendingAttach?.promise;
-        const payload = rec.payload;
-        const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
-        const reportId = rec.reportId >>> 0;
-        this.#enqueueDeviceSend(deviceId, () => {
-          // Copy the report payload out of the ring immediately so it can't be overwritten by
-          // subsequent producer writes while we are awaiting an in-flight WebHID send.
-          const data = ensureArrayBufferBacked(payload);
-          return async () => {
-            if (attachPromise) {
+          // If the device is still attaching, defer execution until the worker confirms via
+          // `hid.attachResult`. This avoids dropping output reports produced during the attach
+          // handshake while still ensuring we don't send reports for failed attaches.
+          const attachPromise = pendingAttach?.promise;
+          const payload = rec.payload;
+          const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
+          const reportId = rec.reportId >>> 0;
+          this.#enqueueDeviceSend(deviceId, () => {
+            // Copy the report payload out of the ring immediately so it can't be overwritten by
+            // subsequent producer writes while we are awaiting an in-flight WebHID send.
+            const data = ensureArrayBufferBacked(payload);
+            return async () => {
+              if (attachPromise) {
+                try {
+                  await attachPromise;
+                } catch {
+                  return;
+                }
+              }
+              const device = this.#deviceById.get(deviceId);
+              if (!device) return;
               try {
-                await attachPromise;
-              } catch {
-                return;
+                if (reportType === "output") {
+                  await device.sendReport(reportId, data);
+                } else {
+                  await device.sendFeatureReport(reportId, data);
+                }
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
               }
-            }
-            const device = this.#deviceById.get(deviceId);
-            if (!device) return;
-            try {
-              if (reportType === "output") {
-                await device.sendReport(reportId, data);
-              } else {
-                await device.sendFeatureReport(reportId, data);
-              }
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
-            }
-          };
+            };
+          });
         });
+        if (!ok) break;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
