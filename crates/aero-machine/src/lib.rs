@@ -7545,43 +7545,64 @@ impl Machine {
         // Run each AP for a bounded number of instructions. This is intentionally a very simple
         // cooperative scheduler (BSP-driven) that is "good enough" for SMP bring-up tests like
         // INIT+SIPI.
-        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
-            if cpu.state.halted {
+        //
+        // Note: `PerCpuSystemMemoryBus` needs mutable access to the AP CPU slice so it can model
+        // INIT+SIPI by mutating AP core state. To avoid aliasing the currently executing AP core
+        // (`&mut CpuCore`) with that slice borrow, we temporarily move each runnable AP out of the
+        // `Vec` while running it.
+        for idx in 0..self.ap_cpus.len() {
+            if self.ap_cpus[idx].state.halted {
                 continue;
             }
+
+            // Temporarily move the AP out of the vector so we can hand a `&mut [CpuCore]` view of
+            // the remaining APs into the per-vCPU LAPIC routing adapter without violating Rust's
+            // aliasing rules.
+            let mut cpu = std::mem::take(&mut self.ap_cpus[idx]);
 
             // Keep the core's A20 view coherent with the chipset latch.
             cpu.state.a20_enabled = self.chipset.a20().enabled();
 
             // Wrap the shared `SystemMemory` in the per-vCPU LAPIC routing adapter.
             let apic_id = (idx as u8).saturating_add(1);
-            // Note: When executing an AP, we already hold `&mut CpuCore` for that AP. Avoid handing
-            // the per-vCPU bus a mutable slice containing the same core (which would violate
-            // Rust's aliasing rules).
-            //
-            // For now we pass an empty AP slice: AP execution can still access its LAPIC MMIO page
-            // via `interrupts`, but AP-originated INIT/SIPI that would mutate other AP cores is not
-            // modeled.
-            let mut empty_ap_cpus: [CpuCore; 0] = [];
-            let phys = PerCpuSystemMemoryBus::new(
-                apic_id,
-                interrupts.clone(),
-                &mut empty_ap_cpus,
-                &mut self.mem,
-            );
-            let mut inner = aero_cpu_core::PagingBus::new_with_io(
-                phys,
-                StrictIoPortBus { io: &mut self.io },
-            );
-            std::mem::swap(&mut self.mmu, inner.mmu_mut());
-            let mut bus = MachineCpuBus {
-                a20: self.chipset.a20(),
-                reset: self.reset_latch.clone(),
-                inner,
-            };
+            {
+                // Note: When executing an AP, we already hold `&mut CpuCore` for that AP. Avoid
+                // handing the per-vCPU bus a mutable slice containing the same core (which would
+                // violate Rust's aliasing rules).
+                //
+                // For now we pass an empty AP slice: AP execution can still access its LAPIC MMIO
+                // page via `interrupts`, but AP-originated INIT/SIPI that would mutate other AP
+                // cores is not modeled.
+                let mut empty_ap_cpus: [CpuCore; 0] = [];
+                let phys = PerCpuSystemMemoryBus::new(
+                    apic_id,
+                    interrupts.clone(),
+                    &mut empty_ap_cpus,
+                    &mut self.mem,
+                );
+                let mut inner = aero_cpu_core::PagingBus::new_with_io(
+                    phys,
+                    StrictIoPortBus { io: &mut self.io },
+                );
+                std::mem::swap(&mut self.mmu, inner.mmu_mut());
+                let mut bus = MachineCpuBus {
+                    a20: self.chipset.a20(),
+                    reset: self.reset_latch.clone(),
+                    inner,
+                };
 
-            let _ = run_batch_cpu_core_with_assists(cfg, &mut self.assist, cpu, &mut bus, max_insts);
-            std::mem::swap(&mut self.mmu, bus.inner.mmu_mut());
+                let _ = run_batch_cpu_core_with_assists(
+                    cfg,
+                    &mut self.assist,
+                    &mut cpu,
+                    &mut bus,
+                    max_insts,
+                );
+                std::mem::swap(&mut self.mmu, bus.inner.mmu_mut());
+            }
+
+            // Restore the AP core back into the `Vec`.
+            self.ap_cpus[idx] = cpu;
         }
     }
 
