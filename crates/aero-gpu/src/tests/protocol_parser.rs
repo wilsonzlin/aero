@@ -1108,10 +1108,12 @@ fn protocol_parses_all_opcodes() {
             group_count_x,
             group_count_y,
             group_count_z,
+            stage_ex,
         } => {
             assert_eq!(group_count_x, 2);
             assert_eq!(group_count_y, 3);
             assert_eq!(group_count_z, 4);
+            assert_eq!(stage_ex, 0);
         }
         other => panic!("unexpected cmd: {other:?}"),
     }
@@ -1401,6 +1403,36 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
             assert_eq!(*stage_ex, stage_ex_set_constants_b);
         }
         other => panic!("unexpected cmd[8]: {other:?}"),
+    }
+}
+
+#[test]
+fn protocol_preserves_stage_ex_for_dispatch() {
+    let stage_ex_dispatch = AerogpuShaderStageEx::Hull as u32;
+    let stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::Dispatch as u32, |out| {
+            push_u32(out, 1); // group_count_x
+            push_u32(out, 2); // group_count_y
+            push_u32(out, 3); // group_count_z
+            push_u32(out, stage_ex_dispatch); // reserved0 / stage_ex
+        });
+    });
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 1);
+    match &parsed.cmds[0] {
+        AeroGpuCmd::Dispatch {
+            group_count_x,
+            group_count_y,
+            group_count_z,
+            stage_ex,
+        } => {
+            assert_eq!(*group_count_x, 1);
+            assert_eq!(*group_count_y, 2);
+            assert_eq!(*group_count_z, 3);
+            assert_eq!(*stage_ex, stage_ex_dispatch);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
     }
 }
 

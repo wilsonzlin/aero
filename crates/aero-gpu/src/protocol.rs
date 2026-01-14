@@ -505,6 +505,18 @@ pub enum AeroGpuCmd<'a> {
         group_count_x: u32,
         group_count_y: u32,
         group_count_z: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// This is used by the D3D11 executor to disambiguate extended-stage compute dispatches
+        /// (GS/HS/DS emulation) from legacy compute dispatches.
+        ///
+        /// Higher layers should interpret it using the command stream header ABI minor:
+        ///
+        /// - Use `aero_protocol::aerogpu::aerogpu_cmd::decode_stage_ex_gated` /
+        ///   `resolve_shader_stage_with_ex_gated` (stage_ex was introduced in ABI 1.3 / minor=3).
+        /// - Extract `abi_minor` from `AeroGpuCmdStreamHeader.abi_version` using
+        ///   `aero_protocol::aerogpu::aerogpu_pci::abi_minor`.
+        stage_ex: u32,
     },
 
     /// Unrecognized opcode; payload is the bytes after `AeroGpuCmdHdr`.
@@ -1218,6 +1230,7 @@ pub fn parse_cmd_stream(
                     group_count_x: u32::from_le(cmd.group_count_x),
                     group_count_y: u32::from_le(cmd.group_count_y),
                     group_count_z: u32::from_le(cmd.group_count_z),
+                    stage_ex: u32::from_le(cmd.reserved0),
                 }
             }
 
