@@ -778,9 +778,11 @@ the GPU, the recommended implementation is a single large scratch buffer partiti
   - total size = `frames_in_flight * per_frame_capacity`.
 - Per-frame arena:
   - each frame uses a disjoint `[base_offset, base_offset + per_frame_capacity)` region.
-  - allocations within a frame are bump-pointer suballocations aligned to:
+- allocations within a frame are bump-pointer suballocations aligned to:
     - `COPY_BUFFER_ALIGNMENT` (4),
     - `min_storage_buffer_offset_alignment` (usually 256) when binding as storage, and
+    - `min_uniform_buffer_offset_alignment` (usually 256) when binding as uniform with dynamic
+      offsets, and
     - 16 bytes for convenience (matches `vec4`-heavy structs).
 - Lifetime:
   - call `begin_frame()` at a natural boundary where prior work is known to have been submitted,
@@ -1149,7 +1151,19 @@ The expansion pipeline needs a small, stable parameter block that covers:
 Recommended packed layout (little-endian, 4-byte fields):
 
 ```c
-// Total size: 128 bytes (aligned to 16 for convenience).
+// Total size: 192 bytes (aligned to 16 for WGSL uniform layout compatibility).
+//
+// Note: `var<uniform>` layout rules effectively require 16-byte struct alignment and 16-byte array
+// strides. The explicit `_pad*` fields below are required so the C/host-side byte layout matches the
+// WGSL layout deterministically (same approach as `AeroVpIaSlot` in `vertex_pulling.rs`).
+struct AerogpuExpandVertexBuffer {
+  uint32_t base_offset_bytes; // IA VB binding offset in bytes
+  uint32_t stride_bytes;      // IA VB binding stride in bytes
+  uint32_t _pad0;
+  uint32_t _pad1;
+};
+
+// Total size: 192 bytes.
 struct AerogpuExpandParams {
   uint32_t draw_kind;   // 0 = Draw, 1 = DrawIndexed
   uint32_t topology;    // enum aerogpu_primitive_topology (including adj/patchlist extensions)
@@ -1168,16 +1182,12 @@ struct AerogpuExpandParams {
 
   uint32_t out_max_vertices; // capacity of the current output vertex buffer (elements)
   uint32_t out_max_indices;  // capacity of the current output index buffer (elements; 0 if unused)
+  uint32_t _pad0;
+  uint32_t _pad1;
 
   // Compact IA vertex-buffer bindings (after slot compaction).
   // Each entry corresponds to vbN in `@binding(257 + N)`.
-  struct {
-    uint32_t base_offset_bytes; // IA VB binding offset in bytes
-    uint32_t stride_bytes;      // IA VB binding stride in bytes
-  } vb[8];
-
-  uint32_t reserved0;
-  uint32_t reserved1;
+  struct AerogpuExpandVertexBuffer vb[8];
 };
 ```
 
