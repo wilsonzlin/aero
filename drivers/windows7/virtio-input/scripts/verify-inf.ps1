@@ -359,7 +359,6 @@ foreach ($sect in $modelSections) {
       "Tablet devices should bind via aero_virtio_tablet.inf, not aero_virtio_input.inf.") -f $sect)
   }
 }
-
 $requiredStrings = @(
   @{ Name = 'AeroVirtioKeyboard.DeviceDesc'; Regex = '(?i)^AeroVirtioKeyboard\.DeviceDesc\s*=\s*".*"$' },
   @{ Name = 'AeroVirtioMouse.DeviceDesc';    Regex = '(?i)^AeroVirtioMouse\.DeviceDesc\s*=\s*".*"$' },
