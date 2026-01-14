@@ -3,9 +3,13 @@ import {
   SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
+  SCANOUT_FORMAT_R8G8B8A8,
+  SCANOUT_FORMAT_R8G8B8A8_SRGB,
+  SCANOUT_FORMAT_R8G8B8X8,
+  SCANOUT_FORMAT_R8G8B8X8_SRGB,
 } from "../ipc/scanout_state";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
-import { AerogpuFormat, aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "../workers/scanout_swizzle.ts";
 
 export type ScanoutDescriptor = Readonly<{
@@ -149,12 +153,12 @@ export function readScanoutRgba8FromGuestRam(
     case SCANOUT_FORMAT_B8G8R8A8_SRGB:
       kind = "bgra";
       break;
-    case AerogpuFormat.R8G8B8A8Unorm:
-    case AerogpuFormat.R8G8B8A8UnormSrgb:
+    case SCANOUT_FORMAT_R8G8B8A8:
+    case SCANOUT_FORMAT_R8G8B8A8_SRGB:
       kind = "rgba";
       break;
-    case AerogpuFormat.R8G8B8X8Unorm:
-    case AerogpuFormat.R8G8B8X8UnormSrgb:
+    case SCANOUT_FORMAT_R8G8B8X8:
+    case SCANOUT_FORMAT_R8G8B8X8_SRGB:
       kind = "rgbx";
       break;
     default:

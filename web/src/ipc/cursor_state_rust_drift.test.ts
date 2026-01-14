@@ -6,6 +6,10 @@ import {
   CURSOR_FORMAT_B8G8R8X8,
   CURSOR_FORMAT_R8G8B8A8,
   CURSOR_FORMAT_R8G8B8X8,
+  CURSOR_FORMAT_B8G8R8A8_SRGB,
+  CURSOR_FORMAT_B8G8R8X8_SRGB,
+  CURSOR_FORMAT_R8G8B8A8_SRGB,
+  CURSOR_FORMAT_R8G8B8X8_SRGB,
   CURSOR_STATE_BYTE_LEN,
   CURSOR_STATE_GENERATION_BUSY_BIT,
   CURSOR_STATE_U32_LEN,
@@ -138,6 +142,18 @@ describe("CursorState layout matches Rust source of truth", () => {
     expect(CURSOR_FORMAT_R8G8B8X8, "CURSOR_FORMAT_R8G8B8X8 mismatch (Rust <-> TS)").toBe(
       parseRustConstNumber(rust, "CURSOR_FORMAT_R8G8B8X8"),
     );
+    expect(CURSOR_FORMAT_B8G8R8A8_SRGB, "CURSOR_FORMAT_B8G8R8A8_SRGB mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "CURSOR_FORMAT_B8G8R8A8_SRGB"),
+    );
+    expect(CURSOR_FORMAT_B8G8R8X8_SRGB, "CURSOR_FORMAT_B8G8R8X8_SRGB mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "CURSOR_FORMAT_B8G8R8X8_SRGB"),
+    );
+    expect(CURSOR_FORMAT_R8G8B8A8_SRGB, "CURSOR_FORMAT_R8G8B8A8_SRGB mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "CURSOR_FORMAT_R8G8B8A8_SRGB"),
+    );
+    expect(CURSOR_FORMAT_R8G8B8X8_SRGB, "CURSOR_FORMAT_R8G8B8X8_SRGB mismatch (Rust <-> TS)").toBe(
+      parseRustConstNumber(rust, "CURSOR_FORMAT_R8G8B8X8_SRGB"),
+    );
 
     // Header indices / layout offsets.
     expect(CursorStateIndex.GENERATION, "CursorStateIndex.GENERATION mismatch (Rust <-> TS)").toBe(
@@ -160,4 +176,3 @@ describe("CursorState layout matches Rust source of truth", () => {
     );
   });
 });
-

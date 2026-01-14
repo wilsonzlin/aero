@@ -32,6 +32,10 @@ export const CURSOR_FORMAT_B8G8R8A8_SRGB = AerogpuFormat.B8G8R8A8UnormSrgb;
 export const CURSOR_FORMAT_B8G8R8X8_SRGB = AerogpuFormat.B8G8R8X8UnormSrgb;
 export const CURSOR_FORMAT_R8G8B8A8_SRGB = AerogpuFormat.R8G8B8A8UnormSrgb;
 export const CURSOR_FORMAT_R8G8B8X8_SRGB = AerogpuFormat.R8G8B8X8UnormSrgb;
+export const CURSOR_FORMAT_B8G8R8A8_SRGB = AerogpuFormat.B8G8R8A8UnormSrgb;
+export const CURSOR_FORMAT_B8G8R8X8_SRGB = AerogpuFormat.B8G8R8X8UnormSrgb;
+export const CURSOR_FORMAT_R8G8B8A8_SRGB = AerogpuFormat.R8G8B8A8UnormSrgb;
+export const CURSOR_FORMAT_R8G8B8X8_SRGB = AerogpuFormat.R8G8B8X8UnormSrgb;
 
 export const CURSOR_STATE_U32_LEN = 12 as const;
 export const CURSOR_STATE_BYTE_LEN = CURSOR_STATE_U32_LEN * 4;

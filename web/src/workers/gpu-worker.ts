@@ -63,6 +63,10 @@ import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
+  SCANOUT_FORMAT_R8G8B8A8,
+  SCANOUT_FORMAT_R8G8B8X8,
+  SCANOUT_FORMAT_R8G8B8A8_SRGB,
+  SCANOUT_FORMAT_R8G8B8X8_SRGB,
   SCANOUT_SOURCE_LEGACY_VBE_LFB,
   SCANOUT_SOURCE_WDDM,
   ScanoutStateIndex,
@@ -72,6 +76,12 @@ import {
 import {
   CURSOR_FORMAT_B8G8R8A8,
   CURSOR_FORMAT_B8G8R8X8,
+  CURSOR_FORMAT_R8G8B8A8,
+  CURSOR_FORMAT_R8G8B8X8,
+  CURSOR_FORMAT_B8G8R8A8_SRGB,
+  CURSOR_FORMAT_B8G8R8X8_SRGB,
+  CURSOR_FORMAT_R8G8B8A8_SRGB,
+  CURSOR_FORMAT_R8G8B8X8_SRGB,
   trySnapshotCursorState as trySnapshotCursorStateBounded,
   type CursorStateSnapshot,
 } from "../ipc/cursor_state";
@@ -817,18 +827,18 @@ const tryReadHwCursorImageRgba8 = (
 
   const fmt = format >>> 0;
   const isSrgb =
-    fmt === AerogpuFormat.B8G8R8A8UnormSrgb ||
-    fmt === AerogpuFormat.B8G8R8X8UnormSrgb ||
-    fmt === AerogpuFormat.R8G8B8A8UnormSrgb ||
-    fmt === AerogpuFormat.R8G8B8X8UnormSrgb;
+    fmt === CURSOR_FORMAT_B8G8R8A8_SRGB ||
+    fmt === CURSOR_FORMAT_B8G8R8X8_SRGB ||
+    fmt === CURSOR_FORMAT_R8G8B8A8_SRGB ||
+    fmt === CURSOR_FORMAT_R8G8B8X8_SRGB;
   const kind: "bgra" | "bgrx" | "rgba" | "rgbx" | null =
-    fmt === AerogpuFormat.B8G8R8A8Unorm || fmt === AerogpuFormat.B8G8R8A8UnormSrgb
+    fmt === CURSOR_FORMAT_B8G8R8A8 || fmt === CURSOR_FORMAT_B8G8R8A8_SRGB
       ? "bgra"
-      : fmt === AerogpuFormat.B8G8R8X8Unorm || fmt === AerogpuFormat.B8G8R8X8UnormSrgb
+      : fmt === CURSOR_FORMAT_B8G8R8X8 || fmt === CURSOR_FORMAT_B8G8R8X8_SRGB
         ? "bgrx"
-        : fmt === AerogpuFormat.R8G8B8A8Unorm || fmt === AerogpuFormat.R8G8B8A8UnormSrgb
+        : fmt === CURSOR_FORMAT_R8G8B8A8 || fmt === CURSOR_FORMAT_R8G8B8A8_SRGB
           ? "rgba"
-          : fmt === AerogpuFormat.R8G8B8X8Unorm || fmt === AerogpuFormat.R8G8B8X8UnormSrgb
+          : fmt === CURSOR_FORMAT_R8G8B8X8 || fmt === CURSOR_FORMAT_R8G8B8X8_SRGB
             ? "rgbx"
             : null;
   if (!kind) return null;
@@ -1464,12 +1474,12 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
     case SCANOUT_FORMAT_B8G8R8A8_SRGB:
       kind = "bgra";
       break;
-    case AerogpuFormat.R8G8B8A8Unorm:
-    case AerogpuFormat.R8G8B8A8UnormSrgb:
+    case SCANOUT_FORMAT_R8G8B8A8:
+    case SCANOUT_FORMAT_R8G8B8A8_SRGB:
       kind = "rgba";
       break;
-    case AerogpuFormat.R8G8B8X8Unorm:
-    case AerogpuFormat.R8G8B8X8UnormSrgb:
+    case SCANOUT_FORMAT_R8G8B8X8:
+    case SCANOUT_FORMAT_R8G8B8X8_SRGB:
       kind = "rgbx";
       break;
     default:
@@ -1479,10 +1489,10 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
           SCANOUT_FORMAT_B8G8R8A8,
           SCANOUT_FORMAT_B8G8R8X8_SRGB,
           SCANOUT_FORMAT_B8G8R8A8_SRGB,
-          AerogpuFormat.R8G8B8A8Unorm,
-          AerogpuFormat.R8G8B8A8UnormSrgb,
-          AerogpuFormat.R8G8B8X8Unorm,
-          AerogpuFormat.R8G8B8X8UnormSrgb,
+          SCANOUT_FORMAT_R8G8B8A8,
+          SCANOUT_FORMAT_R8G8B8A8_SRGB,
+          SCANOUT_FORMAT_R8G8B8X8,
+          SCANOUT_FORMAT_R8G8B8X8_SRGB,
         ],
         got: fmt,
       });
@@ -4434,10 +4444,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 case SCANOUT_FORMAT_B8G8R8X8_SRGB:
                 case SCANOUT_FORMAT_B8G8R8A8:
                 case SCANOUT_FORMAT_B8G8R8A8_SRGB:
-                case AerogpuFormat.R8G8B8A8Unorm:
-                case AerogpuFormat.R8G8B8A8UnormSrgb:
-                case AerogpuFormat.R8G8B8X8Unorm:
-                case AerogpuFormat.R8G8B8X8UnormSrgb:
+                case SCANOUT_FORMAT_R8G8B8A8:
+                case SCANOUT_FORMAT_R8G8B8A8_SRGB:
+                case SCANOUT_FORMAT_R8G8B8X8:
+                case SCANOUT_FORMAT_R8G8B8X8_SRGB:
                   break;
                 default:
                   postStub(typeof seq === "number" ? seq : undefined);
@@ -4485,10 +4495,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 format === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
                 format === SCANOUT_FORMAT_B8G8R8A8 ||
                 format === SCANOUT_FORMAT_B8G8R8A8_SRGB ||
-                format === AerogpuFormat.R8G8B8A8Unorm ||
-                format === AerogpuFormat.R8G8B8A8UnormSrgb ||
-                format === AerogpuFormat.R8G8B8X8Unorm ||
-                format === AerogpuFormat.R8G8B8X8UnormSrgb;
+                format === SCANOUT_FORMAT_R8G8B8A8 ||
+                format === SCANOUT_FORMAT_R8G8B8A8_SRGB ||
+                format === SCANOUT_FORMAT_R8G8B8X8 ||
+                format === SCANOUT_FORMAT_R8G8B8X8_SRGB;
 
               // Screenshot buffers must be transferable to the main thread, which means the
               // backing store must be an `ArrayBuffer` (not a `SharedArrayBuffer`).

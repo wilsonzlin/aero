@@ -5,8 +5,12 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import {
   CURSOR_FORMAT_B8G8R8A8,
   CURSOR_FORMAT_B8G8R8X8,
+  CURSOR_FORMAT_B8G8R8A8_SRGB,
+  CURSOR_FORMAT_B8G8R8X8_SRGB,
   CURSOR_FORMAT_R8G8B8A8,
   CURSOR_FORMAT_R8G8B8X8,
+  CURSOR_FORMAT_R8G8B8A8_SRGB,
+  CURSOR_FORMAT_R8G8B8X8_SRGB,
   CURSOR_STATE_GENERATION_BUSY_BIT,
   CURSOR_STATE_BYTE_LEN,
   CURSOR_STATE_U32_LEN,
@@ -50,6 +54,10 @@ describe("ipc/cursor_state", () => {
     expect(CURSOR_FORMAT_B8G8R8X8).toBe(AerogpuFormat.B8G8R8X8Unorm);
     expect(CURSOR_FORMAT_R8G8B8A8).toBe(AerogpuFormat.R8G8B8A8Unorm);
     expect(CURSOR_FORMAT_R8G8B8X8).toBe(AerogpuFormat.R8G8B8X8Unorm);
+    expect(CURSOR_FORMAT_B8G8R8A8_SRGB).toBe(AerogpuFormat.B8G8R8A8UnormSrgb);
+    expect(CURSOR_FORMAT_B8G8R8X8_SRGB).toBe(AerogpuFormat.B8G8R8X8UnormSrgb);
+    expect(CURSOR_FORMAT_R8G8B8A8_SRGB).toBe(AerogpuFormat.R8G8B8A8UnormSrgb);
+    expect(CURSOR_FORMAT_R8G8B8X8_SRGB).toBe(AerogpuFormat.R8G8B8X8UnormSrgb);
   });
 
   it("wrapCursorState validates bounds and 4-byte alignment", () => {
