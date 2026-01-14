@@ -1700,11 +1700,13 @@ static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_E
 
   needReset = FALSE;
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
-  if (devExt->ResetInProgress != 0) {
+  if (devExt->ResetInProgress != 0 || devExt->Removed) {
     /*
      * Avoid draining the virtqueue or triggering new request dispatch while the
-     * device/queue is being reset. The reset path will issue NextRequest once
-     * reinitialization is complete.
+     * device/queue is being reset or the device is being stopped/removed.
+     *
+     * - The reset path will issue NextRequest once reinitialization is complete.
+     * - Stop/remove paths abort outstanding requests and do not accept new I/O.
      */
     StorPortReleaseSpinLock(devExt, &lock);
     return TRUE;
