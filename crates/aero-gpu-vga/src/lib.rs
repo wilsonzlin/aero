@@ -1877,6 +1877,18 @@ mod tests {
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     use aero_shared::scanout_state::{SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB};
 
+    fn vbe_write(dev: &mut VgaDevice, index: u16, val: u16) {
+        dev.port_write(0x01CE, 2, index as u32);
+        dev.port_write(0x01CF, 2, val as u32);
+    }
+
+    fn vbe_write_bgrx32(dev: &mut VgaDevice, byte_offset: u32, b: u8, g: u8, r: u8) {
+        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset, b);
+        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset + 1, g);
+        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset + 2, r);
+        dev.mem_write_u8(SVGA_LFB_BASE + byte_offset + 3, 0x00);
+    }
+
     fn fnv1a64(bytes: &[u8]) -> u64 {
         const FNV_OFFSET: u64 = 0xcbf29ce484222325;
         const FNV_PRIME: u64 = 0x00000100000001B3;
@@ -2353,5 +2365,89 @@ mod tests {
         assert_eq!(update.base_paddr_lo, 0xE100_0000);
         assert_eq!(update.base_paddr_hi, 0);
         assert_eq!(update.pitch_bytes, 64 * 4);
+    }
+
+    #[test]
+    fn vbe_banked_window_maps_a0000_to_selected_bank() {
+        let mut dev = VgaDevice::new();
+
+        // Enable VBE, but *disable* the linear framebuffer, so A0000 maps to the active bank.
+        vbe_write(&mut dev, 0x0001, 640); // xres
+        vbe_write(&mut dev, 0x0002, 480); // yres
+        vbe_write(&mut dev, 0x0003, 32); // bpp
+        vbe_write(&mut dev, 0x0004, 0x0001); // enable, lfb disabled
+        vbe_write(&mut dev, 0x0005, 2); // bank
+
+        let window_off = 0x1234u32;
+        let paddr = 0xA0000u32 + window_off;
+
+        dev.mem_write_u8(paddr, 0xAB);
+
+        // VBE framebuffer is stored starting at `VBE_FRAMEBUFFER_OFFSET`, and banking is applied
+        // within that region.
+        let expected_vram_off = VBE_FRAMEBUFFER_OFFSET + (2 * 64 * 1024) + window_off as usize;
+        assert_eq!(dev.vram()[expected_vram_off], 0xAB);
+        assert_eq!(dev.mem_read_u8(paddr), 0xAB);
+    }
+
+    #[test]
+    fn vbe_virtual_width_affects_stride_between_scanlines() {
+        let mut dev = VgaDevice::new();
+
+        // 4x2 visible, but 8 pixels per scanline in VRAM.
+        vbe_write(&mut dev, 0x0001, 4); // xres
+        vbe_write(&mut dev, 0x0002, 2); // yres
+        vbe_write(&mut dev, 0x0003, 32); // bpp
+        vbe_write(&mut dev, 0x0006, 8); // virt_width
+        vbe_write(&mut dev, 0x0004, 0x0041); // enable + lfb
+
+        // Seed the start of the first line (byte offset 0) with blue.
+        vbe_write_bgrx32(&mut dev, 0, 0xFF, 0x00, 0x00);
+
+        // If the implementation incorrectly uses xres for stride, it will pick this green pixel.
+        let wrong_stride_second_line = 4u32 * 4;
+        vbe_write_bgrx32(&mut dev, wrong_stride_second_line, 0x00, 0xFF, 0x00);
+
+        // Correct second scanline start: virt_width * bytes_per_pixel.
+        let correct_stride_second_line = 8u32 * 4;
+        vbe_write_bgrx32(&mut dev, correct_stride_second_line, 0x00, 0x00, 0xFF);
+
+        dev.present();
+
+        assert_eq!(dev.get_resolution(), (4, 2));
+        assert_eq!(dev.get_framebuffer()[0], 0xFFFF_0000); // blue
+        assert_eq!(dev.get_framebuffer()[4], 0xFF00_00FF); // red
+    }
+
+    #[test]
+    fn vbe_xy_offsets_shift_the_visible_window_and_16bpp_expands_channels() {
+        let mut dev = VgaDevice::new();
+
+        // 2x2 visible, 4x4 virtual, 16bpp RGB565.
+        vbe_write(&mut dev, 0x0001, 2); // xres
+        vbe_write(&mut dev, 0x0002, 2); // yres
+        vbe_write(&mut dev, 0x0003, 16); // bpp
+        vbe_write(&mut dev, 0x0006, 4); // virt_width
+        vbe_write(&mut dev, 0x0007, 4); // virt_height
+        vbe_write(&mut dev, 0x0008, 1); // x_offset
+        vbe_write(&mut dev, 0x0009, 1); // y_offset
+        vbe_write(&mut dev, 0x0004, 0x0041); // enable + lfb
+
+        // Pixel at (0,0): blue (0x001F).
+        dev.mem_write_u8(SVGA_LFB_BASE + 0, 0x1F);
+        dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x00);
+
+        // Pixel at (x_offset,y_offset) = (1,1): 0x8543 (RGB565).
+        //
+        // r=0b10000 -> 0x84, g=0b101010 -> 0xAA, b=0b00011 -> 0x18.
+        // Expected RGBA8888: 0xFF18AA84.
+        let offset_px = (1u32 * 4 + 1) * 2;
+        dev.mem_write_u8(SVGA_LFB_BASE + offset_px + 0, 0x43);
+        dev.mem_write_u8(SVGA_LFB_BASE + offset_px + 1, 0x85);
+
+        dev.present();
+
+        assert_eq!(dev.get_resolution(), (2, 2));
+        assert_eq!(dev.get_framebuffer()[0], 0xFF18_AA84);
     }
 }
