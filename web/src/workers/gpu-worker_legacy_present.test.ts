@@ -73,6 +73,25 @@ async function waitForWorkerMessage(
   });
 }
 
+async function waitForAtomicValue(
+  arr: Int32Array,
+  index: number,
+  expected: number,
+  timeoutMs: number,
+): Promise<void> {
+  const start = Date.now();
+  // Poll rather than using `Atomics.wait()` so we don't block vitest's event loop.
+  while (Date.now() - start < timeoutMs) {
+    const value = Atomics.load(arr, index);
+    if (value === expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  const last = Atomics.load(arr, index);
+  throw new Error(
+    `timed out after ${timeoutMs}ms waiting for Atomics[${index}] to become ${expected} (last=${last})`,
+  );
+}
+
 describe("workers/gpu-worker legacy framebuffer plumbing", () => {
   it("presents from sharedFramebuffer via a mock presenter module (no vgaFramebuffer)", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
@@ -331,10 +350,10 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
       expect(presentMsg.firstPixel).toBe(0x44332211);
       expect(presentMsg.seq).toBe(newSeq >>> 0);
 
-      // The worker should clear the shared framebuffer DIRTY flag even on drops (chosen semantics).
-      expect(Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_DIRTY)).toBe(0);
-      // Shared frame pacing should still advance back to PRESENTED.
-      expect(Atomics.load(frameState, FRAME_STATUS_INDEX)).toBe(FRAME_PRESENTED);
+      // `mock_present` is posted from inside the present() function, which can race with the worker's
+      // subsequent dirty-flag + pacing updates. Wait for those to settle before asserting.
+      await waitForAtomicValue(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0, 5_000);
+      await waitForAtomicValue(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED, 5_000);
 
       // Metrics are rate-limited; wait long enough for a metrics post, then tick again so the
       // shared counters are synchronized.
