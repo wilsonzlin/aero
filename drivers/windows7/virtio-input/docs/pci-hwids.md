@@ -89,6 +89,8 @@ Keyboard: PCI device 1af4:1052
     - Do not ship/install both filenames at once (they overlap on the same HWIDs and can cause confusing install/binding behavior).
     - The tablet INF is more specific (`SUBSYS_0012...`), so it wins over the generic fallback when both driver packages are present.
   This avoids binding to non-contract virtio-input devices (no `REV_01`, wrong DEV, etc).
+    - If the tablet INF is not installed, the generic fallback entry can bind to tablet devices as well; runtime contract checks still validate the device kind.
+  This avoids binding to non-contract virtio-input devices (no `REV_01`, wrong DEV, etc).
 * Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
   ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
   for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.
