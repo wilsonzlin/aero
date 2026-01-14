@@ -3198,6 +3198,10 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
 
     AEROGPU_LOG0("StopDeviceAndReleasePostDisplayOwnership");
 
+    const BOOLEAN poweredOn =
+        (adapter->Bar0 != NULL) &&
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+
     /*
      * Report the current scanout mode + framebuffer so dxgkrnl can transition
      * cleanly to the next owner (boot/basic/VGA).
@@ -3278,10 +3282,12 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
             enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
             adapter->IrqEnableMask = enable;
 
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
+            if (poweredOn) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
 
-            /* Be robust against stale pending bits when disabling. */
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                /* Be robust against stale pending bits when disabling. */
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+            }
 
             KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
         }
@@ -3291,7 +3297,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
          * stops DMAing from system memory immediately (before the full StopDevice
          * teardown runs).
          */
-        if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0 &&
+        if (poweredOn && (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0 &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
@@ -3323,6 +3329,10 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
 
     AEROGPU_LOG0("AcquirePostDisplayOwnership");
 
+    const BOOLEAN poweredOn =
+        (adapter->Bar0 != NULL) &&
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+
     /*
      * Best-effort snapshot of the currently-programmed scanout configuration.
      *
@@ -3333,7 +3343,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
      */
     if (adapter->Bar0) {
         /* Stop cursor DMA until the OS programs a new pointer shape. */
-        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
+        if (poweredOn && adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG))) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI, 0);
