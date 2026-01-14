@@ -53,7 +53,10 @@ fn range_to_offset_agrees_with_chunk_classification_for_random_ranges() {
         };
 
         // Keep lengths small so the test stays fast and does not require large allocations.
-        let len = rng.next_usize_range(1, 4096);
+        //
+        // Include zero-length ranges: real DMA paths won't use them, but they are a useful edge case
+        // for validating boundary classification behaviour.
+        let len = rng.next_usize_range(0, 4096);
 
         let chunk = aero_guest_phys::translate_guest_paddr_chunk(ram_bytes, paddr, len);
         let offset =
@@ -70,16 +73,19 @@ fn range_to_offset_agrees_with_chunk_classification_for_random_ranges() {
                     "offset=Some implies a full-length RAM chunk: ram_bytes={ram_bytes:#x} paddr={paddr:#x} len={len}"
                 );
             }
-            None => match chunk {
-                GuestRamChunk::Ram { len: chunk_len, .. } => {
+            None => {
+                if len == 0 {
+                    assert!(
+                        !matches!(chunk, GuestRamChunk::Ram { .. }),
+                        "offset=None must not classify as RAM even for len=0: ram_bytes={ram_bytes:#x} paddr={paddr:#x}"
+                    );
+                } else if let GuestRamChunk::Ram { len: chunk_len, .. } = chunk {
                     assert!(
                         chunk_len < len,
                         "offset=None must not coincide with a full-length RAM chunk: ram_bytes={ram_bytes:#x} paddr={paddr:#x} len={len} chunk_len={chunk_len}"
                     );
                 }
-                GuestRamChunk::Hole { .. } | GuestRamChunk::OutOfBounds { .. } => {}
-            },
+            }
         }
     }
 }
-

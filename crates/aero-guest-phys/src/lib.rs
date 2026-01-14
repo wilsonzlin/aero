@@ -113,7 +113,13 @@ fn translate_guest_paddr_empty_range(ram_bytes: u64, paddr: u64) -> GuestRamRang
 /// hole by iterating.
 pub fn translate_guest_paddr_chunk(ram_bytes: u64, paddr: u64, len: usize) -> GuestRamChunk {
     if len == 0 {
-        return GuestRamChunk::OutOfBounds { len: 0 };
+        // For consistency with `translate_guest_paddr_range`, treat empty ranges as valid at RAM
+        // boundaries and within the ECAM/PCI hole.
+        return match translate_guest_paddr_empty_range(ram_bytes, paddr) {
+            GuestRamRange::Ram { ram_offset } => GuestRamChunk::Ram { ram_offset, len: 0 },
+            GuestRamRange::Hole => GuestRamChunk::Hole { len: 0 },
+            GuestRamRange::OutOfBounds => GuestRamChunk::OutOfBounds { len: 0 },
+        };
     }
 
     // Low RAM is capped at the ECAM base so the ECAM window never overlaps RAM.
@@ -186,4 +192,3 @@ pub fn translate_guest_paddr_range_to_offset(ram_bytes: u64, paddr: u64, len: u6
         GuestRamRange::Hole | GuestRamRange::OutOfBounds => None,
     }
 }
-
