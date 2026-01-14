@@ -19,17 +19,16 @@ fn bar1_mmio_writes_back_device_vram() {
 }
 
 #[test]
-fn bar1_mmio_out_of_range_reads_return_zero_and_writes_are_ignored() {
+fn bar1_mmio_out_of_range_reads_return_all_ones_and_writes_are_ignored() {
     let dev = AeroGpuPciDevice::default();
     let mut bar1 = dev.bar1_mmio_handler();
 
     // Writes past the end should not panic and should have no effect.
     bar1.write(AEROGPU_VRAM_SIZE, 1, 0x00);
 
-    // Reads past the end return zeros (the BAR size is fixed, but wasm32 builds may not allocate
-    // the full backing store).
-    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 1), 0);
-    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 4), 0);
+    // Reads past the end return all ones (floating bus semantics).
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 1), 0xFF);
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 4), 0xFFFF_FFFF);
 }
 
 #[test]
