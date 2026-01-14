@@ -596,6 +596,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     });
 
     const vramAdds = addCalls.filter((c) => c.id === VM_SNAPSHOT_DEVICE_ID_GPU_VRAM).sort((a, b) => a.flags - b.flags);
+    expect(vramAdds.map((c) => c.id)).toEqual([VM_SNAPSHOT_DEVICE_ID_GPU_VRAM, VM_SNAPSHOT_DEVICE_ID_GPU_VRAM]);
     expect(vramAdds.map((c) => c.flags)).toEqual([0, 1]);
 
     const readU16Le = (bytes: Uint8Array, off: number): number => (bytes[off]! | (bytes[off + 1]! << 8)) >>> 0;
