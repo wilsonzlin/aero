@@ -736,13 +736,14 @@ impl MmioHandler for AeroGpuBar1VramMmio {
                 out |= 0xFFu64 << (i * 8);
                 continue;
             };
-            // Reads outside the BAR1 aperture (or beyond the backing store) return 0.
+            // Reads outside the BAR1 aperture float high (all-ones), matching typical MMIO decode
+            // behavior.
             //
             // Note: wasm32 builds may allocate a smaller backing store than the canonical BAR1
-            // aperture; reads within the BAR range but beyond the backing store also return 0 (and
+            // aperture; reads within the BAR range but beyond the backing store return 0 (and
             // writes are ignored).
             let b = if addr >= bar_size {
-                0
+                0xFF
             } else {
                 usize::try_from(addr)
                     .ok()

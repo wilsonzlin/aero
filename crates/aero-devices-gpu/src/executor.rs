@@ -392,16 +392,6 @@ impl AeroGpuExecutor {
 
         if let Some(entry) = self.in_flight.get_mut(&fence) {
             entry.completed_backend = true;
-            // If the caller completed a fence before draining its submission(s), ensure we don't
-            // return already-completed work again. This matters for out-of-process/WASM execution
-            // where submissions and fence completions can be observed in different polling loops.
-            //
-            // Note: we intentionally only filter on fences that are tracked as in-flight
-            // (`fence > regs.completed_fence` at submit time). Submissions that *reuse* an
-            // already-completed fence are still drained for side effects (see
-            // `deferred_mode_drains_submission_even_if_fence_already_completed`).
-            self.pending_submissions
-                .retain(|sub| sub.signal_fence != fence);
         } else {
             // Allow completions to arrive before `process_doorbell` consumes the corresponding
             // descriptor. We'll apply this completion when the submit arrives.
