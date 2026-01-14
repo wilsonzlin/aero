@@ -14921,6 +14921,15 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     }
     dev->render_states[i] = sb->render_state_values[i];
 
+    // Fixed-function lighting uses a reserved high VS constant range. Keep the
+    // dirty bit in sync for state-block-applied lighting render states so the
+    // next fixed-function draw re-uploads the constants.
+    constexpr uint32_t kD3dRsAmbient = 26u;   // D3DRS_AMBIENT
+    constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
+    if (i == kD3dRsAmbient || i == kD3dRsLighting) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
+
     // SCISSORTESTENABLE (174) is consumed via the dedicated scissor packet. When
     // it is applied via a state block, propagate the enable bit to the scissor
     // state and emit an updated scissor packet using the current scissor rect.
