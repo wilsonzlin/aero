@@ -9235,6 +9235,10 @@ impl AerogpuD3d11Executor {
                         .context("DXBC decode failed")
                         .map_err(|e| e.to_string())?;
 
+                    // Enforce the same SM5 GS stream-0 policy as the non-persistent path, even
+                    // when the shader stage is accepted-but-ignored by the backend.
+                    validate_sm5_gs_streams(&program).map_err(|e| e.to_string())?;
+
                     // Geometry/hull/domain stages are not represented in the AeroGPU command stream
                     // (WebGPU does not expose them), but Win7 D3D11 applications may still create
                     // these shaders. Persist an explicit "ignored" result so we can skip re-parsing
