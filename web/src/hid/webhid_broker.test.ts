@@ -2356,6 +2356,49 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("bounds background output ring draining work per tick", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      // Stall the first send so queued tasks can't drain; this makes the test independent of
+      // async task timing and lets us focus on ring consumption.
+      device.sendReport.mockImplementationOnce(() => new Promise<void>(() => {}));
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      const total = 300;
+      for (let i = 0; i < total; i += 1) {
+        expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(i & 0xff))).toBe(true);
+      }
+      expect(outputRing.isEmpty()).toBe(false);
+
+      // First drain tick should be bounded and leave records for the next tick.
+      vi.advanceTimersByTime(8);
+      await flushMicrotasks();
+      expect(outputRing.isEmpty()).toBe(false);
+
+      // Second tick should drain the remaining records.
+      vi.advanceTimersByTime(8);
+      await flushMicrotasks();
+      expect(outputRing.isEmpty()).toBe(true);
+
+      broker.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("caps pending per-device sends and counts drops when sendReport never resolves", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

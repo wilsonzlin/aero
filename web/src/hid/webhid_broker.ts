@@ -171,6 +171,11 @@ function assertPositiveSafeInteger(name: string, value: number): number {
 // can't cause unbounded memory growth if the guest spams reports.
 const DEFAULT_MAX_PENDING_SENDS_PER_DEVICE = 1024;
 const OUTPUT_SEND_DROP_WARN_INTERVAL_MS = 5000;
+// Bound background output ring draining so a busy or malicious guest can't keep
+// the main thread spinning in the drain loop (starving UI/rendering). When the
+// ring is not being drained to satisfy an ordering barrier (outputRingTail),
+// stop after this many records and resume on the next tick.
+const MAX_HID_OUTPUT_RING_RECORDS_PER_DRAIN_TICK = 256;
 
 export class WebHidBroker {
   readonly manager: WebHidPassthroughManager;
@@ -661,9 +666,10 @@ export class WebHidBroker {
     if (!ring) return;
 
     const stopAtTail = options.stopAtTail;
+    let remainingRecords = stopAtTail === undefined ? MAX_HID_OUTPUT_RING_RECORDS_PER_DRAIN_TICK : Number.POSITIVE_INFINITY;
 
     try {
-      while (true) {
+      while (remainingRecords > 0) {
         // When draining to enforce ordering relative to an immediate `hid.sendReport` fallback,
         // do not spin forever if the worker keeps writing to the ring. Instead, snapshot the
         // ring's `tail` and stop once the consumer `head` reaches that value, leaving any
@@ -759,6 +765,7 @@ export class WebHidBroker {
           });
         });
         if (!ok) break;
+        remainingRecords -= 1;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
