@@ -7,6 +7,7 @@ use std::{
 };
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
+use aero_pc_constants::{PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS};
 
 fn iasl_available() -> bool {
     match Command::new("iasl").arg("-v").output() {
@@ -166,10 +167,7 @@ fn dsdt_iasl_roundtrip_handles_ecam_disabled_and_enabled_variants() {
     dsdt_iasl_roundtrip(&AcpiConfig::default(), "ecam-disabled");
     dsdt_iasl_roundtrip(
         &AcpiConfig {
-            pcie_ecam_base: 0xB000_0000,
-            pcie_segment: 0,
-            pcie_start_bus: 0,
-            pcie_end_bus: 0xFF,
+            pcie_ecam_base: PCIE_ECAM_BASE,
             ..Default::default()
         },
         "ecam-enabled",
@@ -194,10 +192,10 @@ fn full_table_set_iasl_disassembly_smoke() {
             "ecam-enabled",
             AcpiConfig {
                 // Typical Q35 ECAM/MMCONFIG base; must be 1MiB aligned.
-                pcie_ecam_base: 0xB000_0000,
-                pcie_segment: 0,
-                pcie_start_bus: 0,
-                pcie_end_bus: 0xFF,
+                pcie_ecam_base: PCIE_ECAM_BASE,
+                pcie_segment: PCIE_ECAM_SEGMENT,
+                pcie_start_bus: PCIE_ECAM_START_BUS,
+                pcie_end_bus: PCIE_ECAM_END_BUS,
                 ..Default::default()
             },
         ),

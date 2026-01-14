@@ -9,5 +9,6 @@ aero-pci-routing = { path = "../aero-pci-routing" }
 
 [dev-dependencies]
 aero-devices = { path = "../devices" }
+aero-pc-constants = { path = "../aero-pc-constants" }
 aero-platform = { path = "../platform" }
 tempfile = "3"
