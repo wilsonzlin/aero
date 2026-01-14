@@ -563,9 +563,12 @@ pub struct SrcOperand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SrcKind {
     Register(RegisterRef),
-    /// Geometry shader input operand (`v#[]`), indexed by vertex within the input primitive.
+    /// Geometry shader per-vertex input operand (`v#[]`), e.g. `v0[2]`.
     ///
-    /// D3D assembly syntax typically looks like `v0[2]`, where `reg=0` and `vertex=2`.
+    /// In DXBC this is encoded as an `OPERAND_TYPE_INPUT` operand with
+    /// `OPERAND_INDEX_DIMENSION_2D`:
+    /// - The first index selects the input register (`v#`).
+    /// - The second index selects the vertex within the input primitive.
     GsInput {
         reg: u32,
         vertex: u32,

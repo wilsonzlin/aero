@@ -1497,32 +1497,27 @@ fn decode_src(r: &mut InstrReader<'_>) -> Result<SrcOperand, Sm4DecodeError> {
                 file: RegFile::Temp,
                 index: one_index(op.ty, &op.indices, r.base_at)?,
             }),
-            OPERAND_TYPE_INPUT => SrcKind::Register(RegisterRef {
-                file: RegFile::Input,
-                index: match op.indices.as_slice() {
-                    [idx] => *idx,
-                    // Geometry shader inputs are 2D-indexed: [reg, vertex] (e.g. v0[2]).
-                    [reg, vertex] => {
-                        return Ok(SrcOperand {
-                            kind: SrcKind::GsInput {
-                                reg: *reg,
-                                vertex: *vertex,
-                            },
-                            swizzle,
-                            modifier: op.modifier,
-                        });
-                    }
-                    _ => {
-                        return Err(Sm4DecodeError {
-                            at_dword: r.base_at + r.pos.saturating_sub(1),
-                            kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
-                                ty: op.ty,
-                                indices: op.indices,
-                            },
-                        });
-                    }
+            OPERAND_TYPE_INPUT => match op.indices.as_slice() {
+                [idx] => SrcKind::Register(RegisterRef {
+                    file: RegFile::Input,
+                    index: *idx,
+                }),
+                // Geometry shaders index inputs by (register, vertex) and encode
+                // them as 2D-indexed input operands.
+                [reg, vertex] => SrcKind::GsInput {
+                    reg: *reg,
+                    vertex: *vertex,
                 },
-            }),
+                _ => {
+                    return Err(Sm4DecodeError {
+                        at_dword: r.base_at + r.pos.saturating_sub(1),
+                        kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                            ty: op.ty,
+                            indices: op.indices,
+                        },
+                    })
+                }
+            },
             OPERAND_TYPE_OUTPUT => SrcKind::Register(RegisterRef {
                 file: RegFile::Output,
                 index: one_index(op.ty, &op.indices, r.base_at)?,
