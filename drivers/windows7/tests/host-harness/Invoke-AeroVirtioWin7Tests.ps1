@@ -249,6 +249,12 @@ param(
 
   # If set, require the guest virtio-input-msix marker to report mode=msix.
   # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
+  #
+  # Tip: to make the guest fail-fast (and emit RESULT=FAIL when virtio-input is not using MSI-X), provision the guest
+  # selftest with:
+  #   aero-virtio-selftest.exe --require-input-msix
+  # (or env var AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1). When provisioning via New-AeroWin7TestImage.ps1,
+  # pass -RequireInputMsix.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
 

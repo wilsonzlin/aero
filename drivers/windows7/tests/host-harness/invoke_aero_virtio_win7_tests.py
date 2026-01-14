@@ -3287,7 +3287,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Require the guest virtio-input-msix marker to report mode=msix. "
-            "This is optional so older guest selftest binaries (which don't emit the marker) can still run."
+            "This is optional so older guest selftest binaries (which don't emit the marker) can still run. "
+            "Tip: to make the guest fail-fast, provision the guest selftest with --require-input-msix "
+            "(or env var AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1); when provisioning via "
+            "New-AeroWin7TestImage.ps1, use -RequireInputMsix."
         ),
     )
     parser.add_argument(
