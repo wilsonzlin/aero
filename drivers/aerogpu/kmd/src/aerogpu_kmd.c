@@ -2905,6 +2905,16 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->RingLock, &oldIrql);
 
+    /*
+     * Re-check ring state under RingLock to avoid racing teardown (StopDevice ->
+     * AeroGpuRingCleanup) between the initial check above and acquiring the lock.
+     */
+    if (!AeroGpuLegacySubmitPathUsable(Adapter)) {
+        KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
+        return STATUS_DEVICE_NOT_READY;
+    }
+
     ULONG head = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
     AeroGpuLegacyRingUpdateHeadSeqLocked(Adapter, head);
     head = Adapter->LegacyRingHeadIndex;
@@ -2982,16 +2992,23 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     if (InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         return STATUS_DEVICE_NOT_READY;
     }
-    if (!AeroGpuV1SubmitPathUsable(Adapter)) {
-        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
-        return STATUS_DEVICE_NOT_READY;
-    }
 
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->RingLock, &oldIrql);
 
     struct aerogpu_ring_header* ringHeader = (struct aerogpu_ring_header*)Adapter->RingVa;
     Adapter->RingHeader = ringHeader;
+
+    /*
+     * Validate ring state under RingLock to avoid racing teardown (StopDevice ->
+     * AeroGpuRingCleanup) while we read ring header fields / touch the ring
+     * buffer.
+     */
+    if (!AeroGpuV1SubmitPathUsable(Adapter)) {
+        KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
+        InterlockedIncrement64(&Adapter->PerfRingPushFailures);
+        return STATUS_DEVICE_NOT_READY;
+    }
 
     const uint32_t head = ringHeader->head;
     const uint32_t tail = Adapter->RingTail;
