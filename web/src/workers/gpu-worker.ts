@@ -1772,7 +1772,10 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   // were to upload sRGB-encoded bytes as if they were linear, we'd effectively double-encode
   // gamma and the scanout would appear incorrect.
   if (isSrgb) {
-    linearizeSrgbRgba8InPlace(out);
+    // `ensureScanoutRgbaCapacity` may return an oversized cached buffer. Only process the prefix
+    // we populated for this scanout to avoid O(capacity) work after a large mode was previously
+    // allocated (e.g. resolution downscale).
+    linearizeSrgbRgba8InPlace(out.subarray(0, outputBytes));
   }
 
   wddmScanoutWidth = width;
