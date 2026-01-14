@@ -944,6 +944,63 @@ void TestIndexedTriangleListUpInstancingRestoresStream0AndIb() {
   assert(std::memcmp(payload_ib, expected_indices_u32, sizeof(expected_indices_u32)) == 0);
 }
 
+void TestIndexedTriangleListUpLargeInstanceCountDoesNotReallocateUpIndexBuffer() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  // One instanced element reused for all instances.
+  constexpr uint32_t kInstanceCount = 300;
+  const InstanceData inst = {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}};
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x493;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(inst);
+  vb1.storage.resize(sizeof(inst));
+  std::memcpy(vb1.storage.data(), &inst, sizeof(inst));
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+
+  const Vec4 vertices[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+  };
+  const uint16_t indices_u16[3] = {0, 1, 2};
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | kInstanceCount;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | kInstanceCount;
+
+  const HRESULT hr = aerogpu::device_draw_indexed_primitive_up(
+      hDevice,
+      D3DDDIPT_TRIANGLELIST,
+      /*min_vertex_index=*/0,
+      /*num_vertices=*/3,
+      /*primitive_count=*/1,
+      indices_u16,
+      static_cast<D3DDDIFORMAT>(101), // D3DFMT_INDEX16
+      vertices,
+      sizeof(Vec4));
+  assert(hr == S_OK);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  // The UP path uploads indices into `up_index_buffer` and the instancing path
+  // expands indices into the same buffer. Ensure this does not trigger a mid-draw
+  // reallocation (which would emit DESTROY_RESOURCE for the UP index buffer).
+  const auto destroys = FindAllCmds<aerogpu_cmd_destroy_resource>(buf, len, AEROGPU_CMD_DESTROY_RESOURCE);
+  assert(destroys.empty());
+}
+
 void TestPrimitiveUpInstancingWithoutUserVsDoesNotEmitShaderBinds() {
   aerogpu::Adapter adapter{};
   aerogpu::Device dev(&adapter);
@@ -1246,6 +1303,7 @@ int main() {
   TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion();
   TestIndexedTriangleStripNegativeBaseVertex();
   TestIndexedTriangleListUpInstancingRestoresStream0AndIb();
+  TestIndexedTriangleListUpLargeInstanceCountDoesNotReallocateUpIndexBuffer();
   TestIndexedPrimitiveUpInstancingWithoutUserVsDoesNotEmitShaderBinds();
   return 0;
 }

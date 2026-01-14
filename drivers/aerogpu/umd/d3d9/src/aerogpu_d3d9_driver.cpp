@@ -23391,6 +23391,9 @@ static HRESULT device_draw_indexed_primitive2_locked(
     return E_INVALIDARG;
   }
   const uint32_t ib_size = static_cast<uint32_t>(ib_size_u64);
+  const bool single_draw_safe =
+      (pDraw->PrimitiveType == D3DDDIPT_TRIANGLELIST || pDraw->PrimitiveType == D3DDDIPT_LINELIST ||
+       pDraw->PrimitiveType == D3DDDIPT_POINTLIST);
 
   const uint64_t vertex_count_u64 = static_cast<uint64_t>(pDraw->MinIndex) + static_cast<uint64_t>(pDraw->NumVertices);
   const uint64_t vb_size_u64 = vertex_count_u64 * static_cast<uint64_t>(pDraw->VertexStreamZeroStride);
@@ -23399,6 +23402,8 @@ static HRESULT device_draw_indexed_primitive2_locked(
   }
 
   HRESULT hr = S_OK;
+  bool instancing_active = false;
+  uint32_t instancing_instance_count = 1;
 
   // Validate instancing configuration up-front so invalid-call failures do not
   // emit shader binds or UP uploads/bindings.
@@ -23427,7 +23432,12 @@ static HRESULT device_draw_indexed_primitive2_locked(
           break;
         }
       }
-      if (!(cfg.instance_count == 1 && !has_instanced_stream) && !dev->user_vs) {
+      const bool instancing_enabled = !(cfg.instance_count == 1 && !has_instanced_stream);
+      if (instancing_enabled) {
+        instancing_active = true;
+        instancing_instance_count = cfg.instance_count;
+      }
+      if (instancing_enabled && !dev->user_vs) {
         return kD3DErrInvalidCall;
       }
     }
@@ -23481,7 +23491,16 @@ static HRESULT device_draw_indexed_primitive2_locked(
     return hr;
   }
 
-  hr = ensure_up_index_buffer_locked(dev, ib_size);
+  uint32_t ib_alloc_size = ib_size;
+  if (instancing_active && single_draw_safe) {
+    const uint64_t expanded_index_bytes_u64 =
+        static_cast<uint64_t>(index_count) * static_cast<uint64_t>(instancing_instance_count) * 4u;
+    if (expanded_index_bytes_u64 != 0 && expanded_index_bytes_u64 <= 0x7FFFFFFFu) {
+      ib_alloc_size = std::max(ib_alloc_size, static_cast<uint32_t>(expanded_index_bytes_u64));
+    }
+  }
+
+  hr = ensure_up_index_buffer_locked(dev, ib_alloc_size);
   if (FAILED(hr)) {
     return hr;
   }
