@@ -86,6 +86,8 @@ Minimum supported commands:
 - `aerogpu_dbgctl --query-fence`  
   Prints the last submitted fence and last completed fence, plus sticky error
   counters (`error_irq_count` / `last_error_fence`) when supported by the KMD.
+  On newer KMDs, this command also prints whether the device error is currently
+  latched (device-lost state; best-effort via `--query-error`).
 
 - `aerogpu_dbgctl --query-error`  
   Dumps the last recorded device error snapshot via `AEROGPU_ESCAPE_OP_QUERY_ERROR`, including:

@@ -3141,6 +3141,28 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     return 2;
   }
 
+  bool latchedValid = false;
+  bool latched = false;
+  {
+    aerogpu_escape_query_error_out qe;
+    ZeroMemory(&qe, sizeof(qe));
+    qe.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+    qe.hdr.size = sizeof(qe);
+    qe.hdr.reserved0 = 0;
+    NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
+    if (NT_SUCCESS(stErr)) {
+      bool supported = true;
+      if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+        supported = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+      }
+      if (supported && (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+        latchedValid = true;
+        latched = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0;
+      }
+    }
+  }
+
   wprintf(L"Last submitted fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_submitted_fence,
           (unsigned long long)q.last_submitted_fence);
   wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
@@ -3149,6 +3171,11 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.error_irq_count);
   wprintf(L"Last error fence:     0x%I64x (%I64u)\n", (unsigned long long)q.last_error_fence,
           (unsigned long long)q.last_error_fence);
+  if (latchedValid) {
+    wprintf(L"Device error latched: %s\n", latched ? L"true" : L"false");
+  } else {
+    wprintf(L"Device error latched: (unknown; use --query-error)\n");
+  }
   return 0;
 }
 
@@ -6938,6 +6965,28 @@ static int DoQueryFenceJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::
     return 2;
   }
 
+  bool latchedValid = false;
+  bool latched = false;
+  {
+    aerogpu_escape_query_error_out qe;
+    ZeroMemory(&qe, sizeof(qe));
+    qe.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+    qe.hdr.size = sizeof(qe);
+    qe.hdr.reserved0 = 0;
+    const NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
+    if (NT_SUCCESS(stErr)) {
+      bool supported = true;
+      if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+        supported = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+      }
+      if (supported && (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+        latchedValid = true;
+        latched = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0;
+      }
+    }
+  }
+
   JsonWriter w(out);
   w.BeginObject();
   w.Key("schema_version");
@@ -6952,6 +7001,12 @@ static int DoQueryFenceJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::
   JsonWriteU64HexDec(w, "last_completed_fence", q.last_completed_fence);
   JsonWriteU64HexDec(w, "error_irq_count", q.error_irq_count);
   JsonWriteU64HexDec(w, "last_error_fence", q.last_error_fence);
+  w.Key("latched");
+  if (latchedValid) {
+    w.Bool(latched);
+  } else {
+    w.Null();
+  }
   w.EndObject();
   w.EndObject();
   out->push_back('\n');
