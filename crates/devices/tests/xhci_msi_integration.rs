@@ -110,3 +110,25 @@ fn xhci_intx_fallback_routes_through_pci_intx_router() {
     assert_eq!(interrupts.get_pending(), None);
 }
 
+#[test]
+fn xhci_irq_level_is_gated_by_pci_command_intx_disable() {
+    let mut dev = XhciPciDevice::default();
+
+    dev.raise_event_interrupt();
+    assert!(dev.irq_level(), "xHCI should assert legacy INTx when MSI is disabled");
+
+    // PCI command bit 10 disables legacy INTx assertion.
+    dev.config_mut().set_command(1 << 10);
+    assert!(
+        !dev.irq_level(),
+        "IRQ must be suppressed when PCI COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx without touching the pending interrupt state: the asserted interrupt should
+    // become visible again.
+    dev.config_mut().set_command(0);
+    assert!(dev.irq_level());
+
+    dev.clear_event_interrupt();
+    assert!(!dev.irq_level());
+}
