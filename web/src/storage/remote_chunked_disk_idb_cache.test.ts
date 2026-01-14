@@ -406,6 +406,77 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     }
   });
 
+  it("closes the IDB cache if it fails after open (e.g. getStatus quota failure)", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const { baseUrl, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const originalOpen = IdbRemoteChunkCache.open;
+    let closed = false;
+    IdbRemoteChunkCache.open = (async () => {
+      return {
+        getStatus: async () => {
+          throw new IdbRemoteChunkCacheQuotaError();
+        },
+        close: () => {
+          closed = true;
+        },
+      } as unknown as IdbRemoteChunkCache;
+    }) as unknown as typeof IdbRemoteChunkCache.open;
+
+    try {
+      const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        cacheBackend: "idb",
+        cacheLimitBytes: chunkSize * 8,
+        prefetchSequentialChunks: 0,
+        retryBaseDelayMs: 0,
+      });
+
+      expect(closed).toBe(true);
+      expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+      await disk.close();
+    } finally {
+      IdbRemoteChunkCache.open = originalOpen;
+    }
+  });
+
   it("disables persistent caching entirely when cacheLimitBytes is 0", async () => {
     const chunkSize = 512 * 1024;
     const totalSize = chunkSize;

@@ -590,8 +590,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
       disk.remoteEtag = probe.etag;
       disk.remoteLastModified = probe.lastModified;
+      let idbCache: IdbRemoteChunkCache | null = null;
       try {
-        disk.idbCache = await IdbRemoteChunkCache.open({
+        idbCache = await IdbRemoteChunkCache.open({
           cacheKey,
           signature: {
             imageId: parts.imageId,
@@ -603,16 +604,19 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
           },
           cacheLimitBytes: resolved.cacheLimitBytes,
         });
-        const status = await disk.idbCache.getStatus();
+        const status = await idbCache.getStatus();
+        disk.idbCache = idbCache;
         disk.cachedBytes = status.bytesUsed;
       } catch (err) {
         if (err instanceof IdbRemoteChunkCacheQuotaError) {
           // If the cache cannot be initialized due to quota pressure, treat caching as disabled
           // and continue with network-only reads.
+          idbCache?.close();
           disk.idbCacheDisabled = true;
           disk.idbCache = null;
           disk.cachedBytes = 0;
         } else {
+          idbCache?.close();
           throw err;
         }
       }

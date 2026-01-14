@@ -1205,9 +1205,10 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
     let cache: ChunkCache;
     const openIdbCache = async (): Promise<ChunkCache> => {
+      let idbCache: IdbRemoteChunkCache | null = null;
       try {
         const cacheKey = await RemoteCacheManager.deriveCacheKey(cacheKeyParts);
-        const idbCache = await IdbRemoteChunkCache.open({
+        idbCache = await IdbRemoteChunkCache.open({
           cacheKey,
           signature: {
             imageId: cacheKeyParts.imageId,
@@ -1222,6 +1223,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
         const status = await idbCache.getStatus();
         return new IdbChunkCache(idbCache, manifest, status);
       } catch (err) {
+        idbCache?.close();
         if (err instanceof IdbRemoteChunkCacheQuotaError) {
           // If the cache cannot be initialized due to quota pressure, treat caching as disabled
           // and continue with network-only reads.
