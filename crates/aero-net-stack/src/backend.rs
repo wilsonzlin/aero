@@ -1,5 +1,11 @@
 use std::collections::VecDeque;
+
+// `std::time::Instant` panics at runtime on wasm32-unknown-unknown. Use `web_time::Instant` so the
+// net stack can safely run in browser/Node environments.
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use aero_net_backend::NetworkBackend;
 
