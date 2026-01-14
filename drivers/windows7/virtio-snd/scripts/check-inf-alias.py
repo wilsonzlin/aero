@@ -25,6 +25,49 @@ import sys
 from pathlib import Path
 
 
+def _first_nonblank_ascii_byte(*, line: bytes, first_line: bool) -> int | None:
+    """
+    Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs.
+
+    This is robust to UTF-16LE/BE encoded INFs where each ASCII character is
+    separated by a NUL byte.
+    """
+
+    if first_line:
+        # Strip BOMs for *detection only*. Returned content still includes them.
+        if line.startswith(b"\xef\xbb\xbf"):
+            line = line[3:]
+        elif line.startswith(b"\xff\xfe") or line.startswith(b"\xfe\xff"):
+            line = line[2:]
+
+    for b in line:
+        if b in (0x00, 0x09, 0x0A, 0x0D, 0x20):  # NUL, tab, LF, CR, space
+            continue
+        return b
+    return None
+
+
+def _decode_lines_for_diff(data: bytes) -> list[str]:
+    """
+    Decode bytes for a readable unified diff.
+
+    The comparison is byte-for-byte, but when files drift we want the diff output
+    to be readable even if the INF is UTF-16 encoded (with or without a BOM).
+    """
+
+    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+        text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
+    elif data.startswith(b"\xef\xbb\xbf"):
+        text = data.decode("utf-8-sig", errors="replace")
+    else:
+        text = data.decode("utf-8", errors="replace")
+        # If this was UTF-16 without a BOM, it will look like NUL-padded UTF-8.
+        if "\x00" in text:
+            text = text.replace("\x00", "")
+
+    return text.splitlines(keepends=True)
+
+
 def _functional_bytes(path: Path) -> bytes:
     """
     Return the file content starting from the first section header line.
@@ -38,14 +81,16 @@ def _functional_bytes(path: Path) -> bytes:
     lines = data.splitlines(keepends=True)
 
     for i, line in enumerate(lines):
-        stripped = line.lstrip(b" \t")
+        first = _first_nonblank_ascii_byte(line=line, first_line=(i == 0))
+        if first is None:
+            continue
 
         # First section header (e.g. "[Version]") starts the functional region.
-        if stripped.startswith(b"["):
+        if first == ord("["):
             return b"".join(lines[i:])
 
-        # Ignore leading comments and blank lines.
-        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
+        # Ignore leading comments.
+        if first == ord(";"):
             continue
 
         # Unexpected preamble content (not comment, not blank, not section):
@@ -86,8 +131,8 @@ def main() -> int:
     sys.stderr.write("virtio-snd INF alias drift detected.\n")
     sys.stderr.write("The alias INF must match the canonical INF from [Version] onward.\n\n")
 
-    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
-    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    canonical_lines = _decode_lines_for_diff(canonical_body)
+    alias_lines = _decode_lines_for_diff(alias_body)
 
     # Use repo-relative paths in the diff output to keep it readable and stable
     # across machines/CI environments.
