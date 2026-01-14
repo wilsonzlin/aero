@@ -829,6 +829,81 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
     }
   });
 
+  it("drops queued hid:sendReport tasks when per-device pending bytes exceeds maxPendingSendBytesPerDevice", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const device = new FakeHidDevice();
+      const target = new TestTarget();
+      // Keep the byte cap small so the test can exercise dropping deterministically.
+      const manager = new WebHidPassthroughManager({
+        hid: null,
+        target,
+        maxPendingDeviceSends: 100,
+        maxPendingSendBytesPerDevice: 6,
+      });
+      const status = new Int32Array(new SharedArrayBuffer(64 * 4));
+      manager.setInputReportRing(null, status);
+
+      await manager.attachKnownDevice(device as unknown as HIDDevice);
+      const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
+      const deviceId = attach.deviceId as string;
+
+      const first = deferred<void>();
+      device.sendReport.mockImplementationOnce(() => first.promise);
+
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 1,
+        data: new Uint8Array([1]).buffer,
+      });
+
+      // Each queued send is 3 bytes. With a 6-byte cap, only the first two should be queued.
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 2,
+        data: new Uint8Array([2, 2, 2]).buffer,
+      });
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 3,
+        data: new Uint8Array([3, 3, 3]).buffer,
+      });
+      // This third queued send should be dropped because it would push pendingBytes to 9 (> 6).
+      manager.handleWorkerMessage({
+        type: "hid:sendReport",
+        deviceId,
+        reportType: "output",
+        reportId: 4,
+        data: new Uint8Array([4, 4, 4]).buffer,
+      });
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+      first.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(3);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+      expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+      expect(device.sendReport.mock.calls[2]![0]).toBe(3);
+      expect(Atomics.load(status, StatusIndex.IoHidOutputReportDropCounter)).toBe(1);
+      expect(warn).toHaveBeenCalled();
+      const message = warn.mock.calls.map((c) => String(c[0] ?? "")).join("\n");
+      expect(message).toMatch(/pendingBytes=/i);
+      expect(message).toMatch(/maxPendingSendBytesPerDevice=/i);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("responds with an error when hid:getFeatureReport arrives while the per-device pending queue is full", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
