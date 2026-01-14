@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::btree_map::Entry;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdHdr, AerogpuCmdOpcode,
@@ -682,17 +683,35 @@ impl AeroGpuExecutor {
                     if desc.signal_fence > regs.completed_fence {
                         inserted_in_flight = true;
                         already_completed = self.completed_before_submit.remove(&desc.signal_fence);
-                        self.in_flight.insert(
-                            desc.signal_fence,
-                            InFlightSubmission {
-                                desc: desc.clone(),
-                                kind,
-                                completed_backend: already_completed,
-                                vblank_ready: kind == PendingFenceKind::Immediate,
-                            },
-                        );
+                        let incoming = InFlightSubmission {
+                            desc: desc.clone(),
+                            kind,
+                            completed_backend: already_completed,
+                            vblank_ready: kind == PendingFenceKind::Immediate,
+                        };
 
-                        if already_completed && kind == PendingFenceKind::Immediate {
+                        match self.in_flight.entry(desc.signal_fence) {
+                            Entry::Vacant(v) => {
+                                v.insert(incoming);
+                            }
+                            Entry::Occupied(mut o) => {
+                                // Some guest drivers may reuse fence values with NO_IRQ set for
+                                // best-effort internal submissions. Avoid clobbering the original
+                                // submission's metadata (PRESENT, wants_irq) by merging entries.
+                                o.get_mut().merge(incoming);
+                            }
+                        }
+
+                        // If the backend completed the fence before we processed the corresponding
+                        // ring entry, we may be able to advance immediately.
+                        if already_completed
+                            && matches!(
+                                self.in_flight
+                                    .get(&desc.signal_fence)
+                                    .map(|e| e.kind),
+                                Some(PendingFenceKind::Immediate)
+                            )
+                        {
                             self.advance_completed_fence(regs, mem);
                         }
                     }
@@ -1317,10 +1336,129 @@ struct InFlightSubmission {
 }
 
 impl InFlightSubmission {
+    fn merge(&mut self, other: InFlightSubmission) {
+        // Preserve forward-compat bits with OR semantics, but treat NO_IRQ specially: a fence
+        // should raise an IRQ if *any* submission with that fence wants one.
+        let no_irq = (self.desc.flags & other.desc.flags) & AeroGpuSubmitDesc::FLAG_NO_IRQ;
+        let other_bits = (self.desc.flags | other.desc.flags) & !AeroGpuSubmitDesc::FLAG_NO_IRQ;
+        self.desc.flags = other_bits | no_irq;
+
+        // Prefer the more restrictive completion kind: if any submission wants vblank pacing,
+        // the fence must remain gated on vblank.
+        let new_kind = if self.kind == PendingFenceKind::Vblank || other.kind == PendingFenceKind::Vblank
+        {
+            PendingFenceKind::Vblank
+        } else {
+            PendingFenceKind::Immediate
+        };
+
+        if self.kind == PendingFenceKind::Immediate && new_kind == PendingFenceKind::Vblank {
+            // Upgrading from immediate to vblank-gated: force the fence to wait for the next vblank
+            // tick (even if the immediate entry previously treated it as ready).
+            self.vblank_ready = false;
+        }
+        self.kind = new_kind;
+
+        self.completed_backend |= other.completed_backend;
+
+        if self.kind == PendingFenceKind::Immediate {
+            self.vblank_ready = true;
+        }
+    }
+
     fn is_ready(&self) -> bool {
         match self.kind {
             PendingFenceKind::Immediate => self.completed_backend,
             PendingFenceKind::Vblank => self.completed_backend && self.vblank_ready,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::ring::{AEROGPU_RING_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, RING_HEAD_OFFSET, RING_TAIL_OFFSET};
+    use memory::{Bus, MemoryBus};
+
+    fn write_ring_header(
+        mem: &mut dyn MemoryBus,
+        gpa: u64,
+        entry_count: u32,
+        head: u32,
+        tail: u32,
+    ) {
+        let stride = AeroGpuSubmitDesc::SIZE_BYTES;
+        let size_bytes = u32::try_from(
+            AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride),
+        )
+        .unwrap();
+
+        mem.write_u32(gpa, AEROGPU_RING_MAGIC);
+        mem.write_u32(gpa + 4, AeroGpuRegs::default().abi_version);
+        mem.write_u32(gpa + 8, size_bytes);
+        mem.write_u32(gpa + 12, entry_count);
+        mem.write_u32(gpa + 16, stride);
+        mem.write_u32(gpa + 20, 0);
+        mem.write_u32(gpa + RING_HEAD_OFFSET, head);
+        mem.write_u32(gpa + RING_TAIL_OFFSET, tail);
+    }
+
+    fn write_submit_desc(mem: &mut dyn MemoryBus, gpa: u64, fence: u64, flags: u32) {
+        mem.write_u32(gpa, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(gpa + 4, flags);
+        mem.write_u32(gpa + 8, 0);
+        mem.write_u32(gpa + 12, 0);
+        mem.write_u64(gpa + 16, 0);
+        mem.write_u32(gpa + 24, 0);
+        mem.write_u64(gpa + 32, 0);
+        mem.write_u32(gpa + 40, 0);
+        mem.write_u64(gpa + 48, fence);
+    }
+
+    #[test]
+    fn duplicate_fence_entries_preserve_irq_request() {
+        let mut mem = Bus::new(0x4000);
+        let ring_gpa = 0x1000u64;
+
+        let entry_count = 8u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, 2);
+
+        let fence = 7u64;
+
+        // Two descriptors reuse the same fence:
+        // - First wants an IRQ (normal submission).
+        // - Second suppresses IRQ delivery (Win7 KMD internal submission behavior).
+        let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        write_submit_desc(&mut mem, desc0_gpa, fence, 0);
+        let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + stride;
+        write_submit_desc(&mut mem, desc1_gpa, fence, AeroGpuSubmitDesc::FLAG_NO_IRQ);
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            irq_enable: irq_bits::FENCE,
+            ..Default::default()
+        };
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+
+        exec.process_doorbell(&mut regs, &mut mem);
+        assert_eq!(regs.completed_fence, 0);
+        assert_eq!(regs.irq_status & irq_bits::FENCE, 0);
+
+        exec.complete_fence(&mut regs, &mut mem, fence);
+        assert_eq!(regs.completed_fence, fence);
+        assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
     }
 }
