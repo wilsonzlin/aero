@@ -24,6 +24,15 @@ pub const INDEX_FORMAT_U16: u32 = 0;
 /// `IndexPullingParams.index_format` value for 32-bit indices.
 pub const INDEX_FORMAT_U32: u32 = 1;
 
+/// Base `@binding` number reserved for index pulling resources (params + index buffer).
+///
+/// Index pulling is typically bound alongside IA vertex pulling in
+/// [`crate::runtime::vertex_pulling::VERTEX_PULLING_GROUP`]. To avoid collisions with the vertex
+/// pulling vertex-buffer bindings, we reserve bindings after the *maximum* possible vertex-buffer
+/// range (`MAX_WGPU_VERTEX_BUFFERS`).
+pub const INDEX_PULLING_BINDING_BASE: u32 =
+    VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + MAX_WGPU_VERTEX_BUFFERS;
+
 /// Canonical `@binding` number (within the chosen bind group) for [`IndexPullingParams`].
 ///
 /// When used alongside [`crate::runtime::vertex_pulling`], this is intended to live in
@@ -33,8 +42,7 @@ pub const INDEX_FORMAT_U32: u32 = 1;
 ///
 /// It is placed immediately after the maximum possible vertex-buffer bindings, i.e. after
 /// `VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + MAX_WGPU_VERTEX_BUFFERS - 1`.
-pub const INDEX_PULLING_PARAMS_BINDING: u32 =
-    VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + MAX_WGPU_VERTEX_BUFFERS;
+pub const INDEX_PULLING_PARAMS_BINDING: u32 = INDEX_PULLING_BINDING_BASE;
 
 /// Canonical `@binding` number (within the chosen bind group) for the index buffer (`array<u32>`).
 ///

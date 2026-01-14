@@ -3064,6 +3064,91 @@ impl AerogpuD3d11Executor {
             vertex_pulling_cs_wgsl = Some(format!("{vp_cs_prelude}\n{GEOMETRY_PREPASS_CS_WGSL}"));
             vertex_pulling_bgl = Some(vp_bgl);
             vertex_pulling_bg = Some(vp_bg);
+        } else if opcode == OPCODE_DRAW_INDEXED {
+            // Even without an input layout, indexed draws still need index pulling when executing
+            // the IA/VS stages in compute. Bind the real index buffer + params so future VS-as-
+            // compute implementations can resolve `SV_VertexID` correctly.
+            let ib = self
+                .state
+                .index_buffer
+                .expect("checked DRAW_INDEXED precondition above");
+            let ib_buf = self
+                .resources
+                .buffers
+                .get(&ib.buffer)
+                .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+
+            let index_format = match ib.format {
+                wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
+                wgpu::IndexFormat::Uint32 => super::index_pulling::INDEX_FORMAT_U32,
+            };
+            let params = IndexPullingParams {
+                first_index: vertex_pulling_draw.first_index,
+                base_vertex: vertex_pulling_draw.base_vertex,
+                index_format,
+                _pad0: 0,
+            };
+            let params_bytes = params.to_le_bytes();
+            let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd index pulling params"),
+                size: params_bytes.len() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+            {
+                let mut mapped = params_buffer.slice(..).get_mapped_range_mut();
+                mapped.copy_from_slice(&params_bytes);
+            }
+            params_buffer.unmap();
+
+            let ip_bgl_entries = [
+                wgpu::BindGroupLayoutEntry {
+                    binding: INDEX_PULLING_PARAMS_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: INDEX_PULLING_BUFFER_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ];
+            let ip_bgl = self
+                .bind_group_layout_cache
+                .get_or_create(&self.device, &ip_bgl_entries);
+            let ip_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aerogpu_cmd index pulling bind group"),
+                layout: ip_bgl.layout.as_ref(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: INDEX_PULLING_PARAMS_BINDING,
+                        resource: params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: INDEX_PULLING_BUFFER_BINDING,
+                        resource: ib_buf.buffer.as_entire_binding(),
+                    },
+                ],
+            });
+
+            let ip_wgsl = super::index_pulling::wgsl_index_pulling_lib(
+                VERTEX_PULLING_GROUP,
+                INDEX_PULLING_PARAMS_BINDING,
+                INDEX_PULLING_BUFFER_BINDING,
+            );
+            vertex_pulling_cs_wgsl = Some(format!("{ip_wgsl}\n{GEOMETRY_PREPASS_CS_WGSL}"));
+            vertex_pulling_bgl = Some(ip_bgl);
+            vertex_pulling_bg = Some(ip_bg);
         }
 
         // Build compute prepass pipeline + bind group.
