@@ -308,8 +308,9 @@ struct ManifestV1 {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ManifestChunkV1 {
-    size: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     sha256: Option<String>,
 }
 
@@ -1684,11 +1685,9 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
             let expected_size =
                 chunk_size_at_index(manifest.total_size, manifest.chunk_size, idx_u64)
                     .with_context(|| format!("compute expected size for chunk {idx_u64}"))?;
-            if chunk.size != expected_size {
-                bail!(
-                    "manifest chunk[{idx_u64}].size mismatch: expected {expected_size}, got {}",
-                    chunk.size
-                );
+            let actual_size = chunk.size.unwrap_or(expected_size);
+            if actual_size != expected_size {
+                bail!("manifest chunk[{idx_u64}].size mismatch: expected {expected_size}, got {actual_size}");
             }
             if let Some(sha256) = &chunk.sha256 {
                 validate_sha256_hex(sha256)
@@ -2042,7 +2041,8 @@ fn expected_chunk_size(manifest: &ManifestV1, index: u64) -> Result<u64> {
         let chunk = chunks
             .get(idx)
             .ok_or_else(|| anyhow!("manifest is missing entry for chunk {index}"))?;
-        Ok(chunk.size)
+        let derived = chunk_size_at_index(manifest.total_size, manifest.chunk_size, index)?;
+        Ok(chunk.size.unwrap_or(derived))
     } else {
         chunk_size_at_index(manifest.total_size, manifest.chunk_size, index)
     }
@@ -2673,7 +2673,10 @@ fn build_manifest_v1(
             ),
         };
 
-        chunks.push(ManifestChunkV1 { size, sha256 });
+        chunks.push(ManifestChunkV1 {
+            size: Some(size),
+            sha256,
+        });
     }
 
     Ok(ManifestV1 {
@@ -3550,9 +3553,9 @@ mod tests {
         assert_eq!(manifest.chunk_count, 3);
         let chunks = manifest.chunks.expect("chunks present");
         assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].size, 4);
-        assert_eq!(chunks[1].size, 4);
-        assert_eq!(chunks[2].size, 2);
+        assert_eq!(chunks[0].size, Some(4));
+        assert_eq!(chunks[1].size, Some(4));
+        assert_eq!(chunks[2].size, Some(2));
         assert_eq!(chunks[0].sha256, None);
         Ok(())
     }
@@ -3590,7 +3593,7 @@ mod tests {
             chunk_count: 1,
             chunk_index_width: CHUNK_INDEX_WIDTH as u32,
             chunks: Some(vec![ManifestChunkV1 {
-                size: 1,
+                size: Some(1),
                 sha256: None,
             }]),
         };
@@ -3672,8 +3675,8 @@ mod tests {
   "chunkIndexWidth": 8,
   "chunks": [
     { "size": 1024, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    { "size": 1024 },
-    { "size": 512 }
+    { },
+    { }
   ]
 }
 "#;
@@ -3681,7 +3684,9 @@ mod tests {
         assert_eq!(manifest.image_id, "demo");
         let chunks = manifest.chunks.as_ref().expect("chunks present");
         assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].size, 1024);
+        assert_eq!(chunks[0].size, Some(1024));
+        assert_eq!(chunks[1].size, None);
+        assert_eq!(chunks[2].size, None);
         assert_eq!(
             chunks[0].sha256.as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
