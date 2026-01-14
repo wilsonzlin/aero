@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <excpt.h>
 #include <mutex>
 #include <new>
 #include <tuple>
@@ -6071,6 +6072,14 @@ size_t dxbc_size_from_header(const void* pCode) {
   return 0;
 }
 
+static size_t dxbc_size_from_header_noexcept(const void* pCode) {
+  __try {
+    return dxbc_size_from_header(pCode);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return 0;
+  }
+}
+
 SIZE_T APIENTRY CalcPrivateVertexShaderSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATEVERTEXSHADER*) {
   return sizeof(AeroGpuShader);
 }
@@ -6152,7 +6161,7 @@ struct CreateGeometryShaderWithStreamOutputImpl<Ret(AEROGPU_APIENTRY*)(Args...)>
         using Pointee = std::remove_pointer_t<T>;
         if constexpr (std::is_void_v<Pointee> || std::is_arithmetic_v<Pointee> || std::is_enum_v<Pointee>) {
           const void* maybe_code = static_cast<const void*>(v);
-          const size_t maybe_size = dxbc_size_from_header(maybe_code);
+          const size_t maybe_size = dxbc_size_from_header_noexcept(maybe_code);
           if (maybe_size) {
             shader_code = maybe_code;
             shader_code_size = maybe_size;
@@ -6165,7 +6174,7 @@ struct CreateGeometryShaderWithStreamOutputImpl<Ret(AEROGPU_APIENTRY*)(Args...)>
         // first field to recover the bytecode.
         const void* code = nullptr;
         std::memcpy(&code, v, sizeof(code));
-        const size_t size = dxbc_size_from_header(code);
+        const size_t size = dxbc_size_from_header_noexcept(code);
         if (size) {
           shader_code = code;
           shader_code_size = size;
