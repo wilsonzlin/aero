@@ -823,6 +823,118 @@ static void TestPrepareHardwareMissingInterruptResourceFails(void)
     WdfTestDestroyDevice(dev);
 }
 
+static void TestPrepareHardwarePrefersMsixWhenPresent(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR rawDescs[2];
+    CM_PARTIAL_RESOURCE_DESCRIPTOR transDescs[2];
+    WDFCMRESLIST__ rawList;
+    WDFCMRESLIST__ transList;
+    volatile UCHAR isrStatus;
+    NTSTATUS st;
+
+    dev = WdfTestCreateDevice();
+    assert(dev != NULL);
+
+    /*
+     * Provide both a legacy INTx descriptor and an MSI-X descriptor. The helper
+     * should prefer message-signaled interrupts when present.
+     */
+    memset(rawDescs, 0, sizeof(rawDescs));
+    rawDescs[0].Type = CmResourceTypeInterrupt;
+    rawDescs[0].Flags = 0;
+    rawDescs[1].Type = CmResourceTypeInterrupt;
+    rawDescs[1].Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
+    rawDescs[1].u.MessageInterrupt.MessageCount = 4;
+
+    memset(transDescs, 0, sizeof(transDescs));
+    transDescs[0].Type = CmResourceTypeInterrupt;
+    transDescs[0].Flags = 0;
+    transDescs[1].Type = CmResourceTypeInterrupt;
+    transDescs[1].Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
+    transDescs[1].u.MessageInterrupt.MessageCount = 4;
+
+    rawList.Count = 2;
+    rawList.Descriptors = rawDescs;
+    transList.Count = 2;
+    transList.Descriptors = transDescs;
+
+    isrStatus = 0;
+    st = VirtioPciInterruptsPrepareHardware(
+        dev,
+        &interrupts,
+        &rawList,
+        &transList,
+        2 /* QueueCount */,
+        &isrStatus,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.Mode == VirtioPciInterruptModeMsix);
+    assert(interrupts.u.Msix.MessageCount == 4);
+    assert(interrupts.u.Msix.UsedVectorCount == 3); /* 1 config + 2 queues */
+
+    VirtioPciInterruptsReleaseHardware(&interrupts);
+    WdfTestDestroyDevice(dev);
+}
+
+static void TestPrepareHardwareFallsBackToIntxWhenMessageRawMissing(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR rawDescs[1];
+    CM_PARTIAL_RESOURCE_DESCRIPTOR transDescs[2];
+    WDFCMRESLIST__ rawList;
+    WDFCMRESLIST__ transList;
+    volatile UCHAR isrStatus;
+    NTSTATUS st;
+
+    dev = WdfTestCreateDevice();
+    assert(dev != NULL);
+
+    /*
+     * Translated list contains an MSI-X descriptor, but the raw list is missing
+     * the matching entry. VirtioPciFindInterruptResources should ignore it and
+     * fall back to the legacy INTx descriptor.
+     */
+    memset(rawDescs, 0, sizeof(rawDescs));
+    rawDescs[0].Type = CmResourceTypeInterrupt;
+    rawDescs[0].Flags = 0;
+
+    memset(transDescs, 0, sizeof(transDescs));
+    transDescs[0].Type = CmResourceTypeInterrupt;
+    transDescs[0].Flags = 0;
+    transDescs[1].Type = CmResourceTypeInterrupt;
+    transDescs[1].Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
+    transDescs[1].u.MessageInterrupt.MessageCount = 4;
+
+    rawList.Count = 1;
+    rawList.Descriptors = rawDescs;
+    transList.Count = 2;
+    transList.Descriptors = transDescs;
+
+    isrStatus = 0;
+    st = VirtioPciInterruptsPrepareHardware(
+        dev,
+        &interrupts,
+        &rawList,
+        &transList,
+        2 /* QueueCount */,
+        &isrStatus,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.Mode == VirtioPciInterruptModeIntx);
+
+    VirtioPciInterruptsReleaseHardware(&interrupts);
+    WdfTestDestroyDevice(dev);
+}
+
 static void TestPrepareHardwareQueueCountTooLargeFails(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -2075,6 +2187,8 @@ int main(void)
     TestMsixZeroQueuesConfigOnly();
     TestMsixPrepareHardwareMessageCountZeroFails();
     TestPrepareHardwareMissingInterruptResourceFails();
+    TestPrepareHardwarePrefersMsixWhenPresent();
+    TestPrepareHardwareFallsBackToIntxWhenMessageRawMissing();
     TestPrepareHardwareQueueCountTooLargeFails();
     TestIntxNullIsrStatusRegisterReturnsFalse();
     TestMsixLimitedVectorRouting();
