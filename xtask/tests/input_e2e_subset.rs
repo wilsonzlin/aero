@@ -66,6 +66,7 @@ fn input_e2e_appends_extra_playwright_args_after_spec_list() {
         .args(["input", "--e2e", "--", "--project=chromium"])
         .env_remove("AERO_NODE_DIR")
         .env_remove("AERO_WEB_DIR")
+        .env_remove("WEB_DIR")
         .env("AERO_XTASK_TEST_LOG", &log_path)
         .env("PATH", path)
         .assert()

@@ -578,7 +578,8 @@ fn resolve_node_dir_for_input(repo_root: &Path, cli_override: Option<&str>) -> R
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string())
         .or_else(|| env_nonempty("AERO_NODE_DIR"))
-        .or_else(|| env_nonempty("AERO_WEB_DIR"));
+        .or_else(|| env_nonempty("AERO_WEB_DIR"))
+        .or_else(|| env_nonempty("WEB_DIR"));
     if let Some(dir) = override_dir {
         let path = PathBuf::from(&dir);
         let resolved = if path.is_absolute() {
