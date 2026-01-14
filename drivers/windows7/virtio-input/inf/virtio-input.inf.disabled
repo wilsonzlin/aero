@@ -9,8 +9,10 @@
 ;
 ; Policy:
 ; - This file is a *filename alias only*.
-; - From the first section header (`[Version]`) onward, it must remain byte-for-byte
-;   identical to `aero_virtio_input.inf` (only the leading banner/comments may differ).
+; - From the first section header (`[Version]`) onward, it must remain
+;   byte-for-byte identical to `aero_virtio_input.inf` (only the leading
+;   banner/comments may differ).
+; - Because it is identical, it does not change HWID matching behavior.
 ;
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
