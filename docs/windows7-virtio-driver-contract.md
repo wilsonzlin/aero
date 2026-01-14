@@ -1086,6 +1086,11 @@ Compatibility note (non-normative):
 - Some virtio-snd implementations may complete `eventq` buffers with standard virtio-snd events (e.g., JACK connect/disconnect,
   PCM period elapsed, XRUN, control notify).
 - The Win7 virtio-snd driver MUST tolerate unexpected `eventq` traffic without impacting audio streaming.
+- Additionally, the Win7 virtio-snd driver may optionally use some PCM events as **best-effort enhancements** (while still
+  remaining correct without them):
+  - `VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED`: can be treated as an additional wakeup source for the WaveRT “period tick” loop (DPC),
+    coalescing duplicate wakeups so WaveRT notifications/PacketCount are not double-advanced.
+  - `VIRTIO_SND_EVT_PCM_XRUN`: can be treated as a hint to attempt best-effort stream recovery (for example, `STOP`/`START`).
 - Additionally, when JACK events are present, the Win7 virtio-snd driver wires them into the PortCls topology miniport:
   - `VIRTIO_SND_EVT_JACK_*` updates `KSPROPERTY_JACK_DESCRIPTION*` connection state.
   - The driver generates `KSEVENTSETID_Jack` / `KSEVENT_JACK_INFO_CHANGE` so user-mode can refresh plug/unplug state without polling.
