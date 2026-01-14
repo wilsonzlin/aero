@@ -212,14 +212,28 @@ def _powershell_brace_balance(text: str) -> tuple[int, _ScanState, int]:
 
 
 class PowerShellBraceBalanceTests(unittest.TestCase):
-    def test_invoke_harness_braces_balance(self) -> None:
-        ps_path = Path(__file__).resolve().parents[1] / "Invoke-AeroVirtioWin7Tests.ps1"
-        text = ps_path.read_text(encoding="utf-8", errors="replace")
+    def test_host_harness_powershell_scripts_parse_balanced(self) -> None:
+        """
+        The Win7 host harness has several PowerShell entrypoints that are not executed by the Python
+        unit tests, so syntax regressions can slip in unnoticed.
 
-        depth, state, embedded = _powershell_brace_balance(text)
-        self.assertEqual(state, _ScanState.NORMAL, f"ended in state={state}")
-        self.assertEqual(depth, 0, f"brace depth should be 0 at EOF (got {depth})")
-        self.assertEqual(embedded, 0, f"unclosed embedded $(...) expression(s): {embedded}")
+        Perform a best-effort structural scan to catch missing/extra braces (and unclosed embedded
+        $() expressions inside expandable strings) without requiring PowerShell to be installed.
+        """
+        harness_dir = Path(__file__).resolve().parents[1]
+        scripts = [
+            "Invoke-AeroVirtioWin7Tests.ps1",
+            "New-AeroWin7TestImage.ps1",
+            "AeroVirtioWin7QemuArgs.ps1",
+            "Start-AeroWin7Installer.ps1",
+        ]
+        for name in scripts:
+            with self.subTest(script=name):
+                text = (harness_dir / name).read_text(encoding="utf-8", errors="replace")
+                depth, state, embedded = _powershell_brace_balance(text)
+                self.assertEqual(state, _ScanState.NORMAL, f"{name}: ended in state={state}")
+                self.assertEqual(depth, 0, f"{name}: brace depth should be 0 at EOF (got {depth})")
+                self.assertEqual(embedded, 0, f"{name}: unclosed embedded $(...) expression(s): {embedded}")
 
 
 if __name__ == "__main__":

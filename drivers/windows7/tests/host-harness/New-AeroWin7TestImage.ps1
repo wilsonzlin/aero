@@ -501,7 +501,8 @@ if errorlevel 1 (
   echo [AERO] ERROR: pnputil failed for "$infMediaPath" >> "%LOG%"
   exit /b 1
 )
-"@)
+"@
+    )
   }
 
   $installDriversCmd = @"
