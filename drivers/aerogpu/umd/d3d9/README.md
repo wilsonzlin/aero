@@ -395,6 +395,7 @@ Implementation notes (bring-up):
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
 - For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (uploaded
   into a reserved VS constant range by the UMD via `ensure_fixedfunc_wvp_constants_locked()`).
+  - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP constants + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
   - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
