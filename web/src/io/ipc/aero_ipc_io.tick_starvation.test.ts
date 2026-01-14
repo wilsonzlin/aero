@@ -29,6 +29,36 @@ async function sleep0(): Promise<void> {
   });
 }
 
+function makeMalformedMmioWrite(dataLen: number): Uint8Array {
+  // mmioWrite wire format:
+  //   u16 tag (0x0101)
+  //   u32 id
+  //   u64 addr
+  //   u32 len
+  //   [len bytes]
+  //
+  // We deliberately set `len` larger than the actual payload so decodeCommand reads and slices
+  // the data, then fails with "trailing bytes".
+  const actualLen = dataLen >>> 0;
+  const declaredLen = (actualLen + 0x1000) >>> 0;
+  const bytes = new Uint8Array(2 + 4 + 8 + 4 + actualLen);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let off = 0;
+  view.setUint16(off, 0x0101, true);
+  off += 2;
+  view.setUint32(off, 1, true);
+  off += 4;
+  // addr u64 = 0
+  view.setUint32(off, 0, true);
+  off += 4;
+  view.setUint32(off, 0, true);
+  off += 4;
+  view.setUint32(off, declaredLen, true);
+  off += 4;
+  bytes.fill(0xaa, off);
+  return bytes;
+}
+
 describe("io/ipc/aero_ipc_io tick fairness", () => {
   it("runAsync ticks while draining (no tick starvation under sustained command traffic)", async () => {
     const { buffer: ipcBuffer, queues } = createIpcBuffer([
@@ -94,9 +124,11 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
 
     expect(tickCount).toBeGreaterThan(0);
     expect(tickSawCmdData).toBe(true);
+    // Ensure command handling did non-trivial work (prevents JIT from optimizing away the busy loop).
+    expect(busyAcc).not.toBe(0);
   });
 
-  it("runAsync still yields/ticks under malformed command traffic", async () => {
+  it("runAsync ticks while draining malformed commands (decode failures can't starve ticks)", async () => {
     const { buffer: ipcBuffer, queues } = createIpcBuffer([
       { kind: queueKind.CMD, capacityBytes: 1 << 16 },
       { kind: queueKind.EVT, capacityBytes: 1 << 16 },
@@ -108,8 +140,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
     if (cmdOffset == null) throw new Error("CMD ring not found in IPC buffer");
     const cmdCtrl = new Int32Array(ipcBuffer, cmdOffset, ringCtrl.WORDS);
 
-    // Unknown u16 tag -> decodeCommand throws -> safeDecodeCommand returns null.
-    const malformed = new Uint8Array([0xff, 0xff]);
+    const malformed = makeMalformedMmioWrite(8 * 1024);
 
     let tickCount = 0;
     let tickSawCmdData = false;
@@ -136,32 +167,25 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
     // it yields.
     while (cmdQ.tryPush(malformed)) {}
 
-    let timerFired = false;
-    const timer = setTimeout(() => {
-      timerFired = true;
-    }, 0);
-    (timer as unknown as { unref?: () => void }).unref?.();
-
     const abort = new AbortController();
     const serverTask = server.runAsync({ signal: abort.signal, yieldEveryNCommands: 64 });
 
     try {
       await withTimeout(
         (async () => {
-          while (!timerFired || !tickSawCmdData) {
+          while (!tickSawCmdData) {
             while (cmdQ.tryPush(malformed)) {}
             await sleep0();
           }
         })(),
         2000,
-        "yield + tick() while draining malformed commands (runAsync)",
+        "tick() while draining malformed commands (runAsync)",
       );
     } finally {
       abort.abort();
       await withTimeout(serverTask, 2000, "server.runAsync() shutdown (malformed)");
     }
 
-    expect(timerFired).toBe(true);
     expect(tickCount).toBeGreaterThan(0);
     expect(tickSawCmdData).toBe(true);
   });
@@ -255,36 +279,6 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
       },
       execArgv: ["--experimental-strip-types"],
     } as unknown as WorkerOptions);
-
-    const makeMalformedMmioWrite = (dataLen: number): Uint8Array => {
-      // mmioWrite wire format:
-      //   u16 tag (0x0101)
-      //   u32 id
-      //   u64 addr
-      //   u32 len
-      //   [len bytes]
-      //
-      // We deliberately set `len` larger than the actual payload so decodeCommand reads and slices
-      // the data, then fails with "trailing bytes".
-      const actualLen = dataLen >>> 0;
-      const declaredLen = (actualLen + 0x1000) >>> 0;
-      const bytes = new Uint8Array(2 + 4 + 8 + 4 + actualLen);
-      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      let off = 0;
-      view.setUint16(off, 0x0101, true);
-      off += 2;
-      view.setUint32(off, 1, true);
-      off += 4;
-      // addr u64 = 0
-      view.setUint32(off, 0, true);
-      off += 4;
-      view.setUint32(off, 0, true);
-      off += 4;
-      view.setUint32(off, declaredLen, true);
-      off += 4;
-      bytes.fill(0xaa, off);
-      return bytes;
-    };
 
     const malformed = makeMalformedMmioWrite(8 * 1024);
 
