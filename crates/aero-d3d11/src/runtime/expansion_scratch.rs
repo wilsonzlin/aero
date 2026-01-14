@@ -477,11 +477,9 @@ impl ExpansionScratchAllocator {
         }
         let (args_size, align) = DrawIndexedIndirectArgs::layout();
         // Sized to match `runtime::gs_translate::GsPrepassCounters` (4 x u32 / 16 bytes).
-        let size = args_size.checked_add(16).ok_or_else(|| {
-            ExpansionScratchError::InvalidDescriptor(
-                "indirect args allocation overflows when adding GS prepass counters",
-            )
-        })?;
+        let size = args_size.checked_add(16).ok_or(ExpansionScratchError::InvalidDescriptor(
+            "indirect args allocation overflows when adding GS prepass counters",
+        ))?;
         self.alloc_inner(device, size, align)
     }
 
