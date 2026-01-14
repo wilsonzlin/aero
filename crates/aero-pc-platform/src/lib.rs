@@ -33,6 +33,7 @@ use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
+use aero_platform::interrupts::mmio::{IoApicMmio, LapicMmio};
 use aero_platform::interrupts::PlatformInterrupts;
 use aero_platform::io::{IoPortBus, PortIoDevice};
 use aero_platform::memory::MemoryBus;
@@ -916,90 +917,6 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
             .ram_mut()
             .get_slice_mut(addr, len)
             .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
-    }
-}
-
-struct IoApicMmio {
-    interrupts: Rc<RefCell<PlatformInterrupts>>,
-}
-
-impl MmioHandler for IoApicMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        let size = size.clamp(1, 8);
-        let interrupts = self.interrupts.borrow_mut();
-        let mut out = 0u64;
-        for i in 0..size {
-            let off = offset.wrapping_add(i as u64);
-            let word_offset = off & !3;
-            let shift = ((off & 3) * 8) as u32;
-            let word = interrupts.ioapic_mmio_read(word_offset) as u64;
-            let byte = (word >> shift) & 0xFF;
-            out |= byte << (i * 8);
-        }
-        out
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        let size = size.clamp(1, 8);
-        let mut interrupts = self.interrupts.borrow_mut();
-
-        let mut idx = 0usize;
-        while idx < size {
-            let off = offset.wrapping_add(idx as u64);
-            let word_offset = off & !3;
-            let start_in_word = (off & 3) as usize;
-            let mut word = interrupts.ioapic_mmio_read(word_offset);
-
-            for byte_idx in start_in_word..4 {
-                if idx >= size {
-                    break;
-                }
-                let off = offset.wrapping_add(idx as u64);
-                if (off & !3) != word_offset {
-                    break;
-                }
-                let byte = ((value >> (idx * 8)) & 0xFF) as u32;
-                let shift = (byte_idx * 8) as u32;
-                word &= !(0xFF_u32 << shift);
-                word |= byte << shift;
-                idx += 1;
-            }
-
-            interrupts.ioapic_mmio_write(word_offset, word);
-        }
-    }
-}
-
-struct LapicMmio {
-    interrupts: Rc<RefCell<PlatformInterrupts>>,
-}
-
-impl MmioHandler for LapicMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        let size = size.clamp(1, 8);
-        let interrupts = self.interrupts.borrow();
-        let mut buf = [0u8; 8];
-        interrupts.lapic_mmio_read(offset, &mut buf[..size]);
-        u64::from_le_bytes(buf)
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        let size = size.clamp(1, 8);
-        let interrupts = self.interrupts.borrow();
-        let bytes = value.to_le_bytes();
-        interrupts.lapic_mmio_write(offset, &bytes[..size]);
     }
 }
 
@@ -2209,18 +2126,14 @@ impl PcPlatform {
             .map_mmio(
                 LAPIC_MMIO_BASE,
                 LAPIC_MMIO_SIZE,
-                Box::new(LapicMmio {
-                    interrupts: interrupts.clone(),
-                }),
+                Box::new(LapicMmio::from_platform_interrupts(interrupts.clone())),
             )
             .unwrap();
         memory
             .map_mmio(
                 IOAPIC_MMIO_BASE,
                 IOAPIC_MMIO_SIZE,
-                Box::new(IoApicMmio {
-                    interrupts: interrupts.clone(),
-                }),
+                Box::new(IoApicMmio::from_platform_interrupts(interrupts.clone())),
             )
             .unwrap();
         memory

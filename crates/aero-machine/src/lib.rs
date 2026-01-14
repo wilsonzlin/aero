@@ -97,7 +97,7 @@ use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 use aero_platform::interrupts::{
-    InterruptController as PlatformInterruptController, InterruptInput, PlatformInterrupts,
+    InterruptController as PlatformInterruptController, InterruptInput, IoApicMmio, PlatformInterrupts,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
@@ -2660,66 +2660,8 @@ impl aero_platform::io::PortIoDevice for AeroGpuVgaPortWindow {
 }
 
 // -----------------------------------------------------------------------------
-// PC platform MMIO adapters (LAPIC / IOAPIC / HPET)
+// PC platform MMIO adapters
 // -----------------------------------------------------------------------------
-
-struct IoApicMmio {
-    interrupts: Rc<RefCell<PlatformInterrupts>>,
-}
-
-impl MmioHandler for IoApicMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        let size = size.clamp(1, 8);
-        let interrupts = self.interrupts.borrow_mut();
-        let mut out = 0u64;
-        for i in 0..size {
-            let off = offset.wrapping_add(i as u64);
-            let word_offset = off & !3;
-            let shift = ((off & 3) * 8) as u32;
-            let word = interrupts.ioapic_mmio_read(word_offset) as u64;
-            let byte = (word >> shift) & 0xFF;
-            out |= byte << (i * 8);
-        }
-        out
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        let size = size.clamp(1, 8);
-        let mut interrupts = self.interrupts.borrow_mut();
-
-        let mut idx = 0usize;
-        while idx < size {
-            let off = offset.wrapping_add(idx as u64);
-            let word_offset = off & !3;
-            let start_in_word = (off & 3) as usize;
-            let mut word = interrupts.ioapic_mmio_read(word_offset);
-
-            for byte_idx in start_in_word..4 {
-                if idx >= size {
-                    break;
-                }
-                let off = offset.wrapping_add(idx as u64);
-                if (off & !3) != word_offset {
-                    break;
-                }
-                let byte = ((value >> (idx * 8)) & 0xFF) as u32;
-                let shift = (byte_idx * 8) as u32;
-                word &= !(0xFF_u32 << shift);
-                word |= byte << shift;
-                idx += 1;
-            }
-
-            interrupts.ioapic_mmio_write(word_offset, word);
-        }
-    }
-}
-
 struct HpetMmio {
     hpet: Rc<RefCell<hpet::Hpet<ManualClock>>>,
     interrupts: Rc<RefCell<PlatformInterrupts>>,
@@ -3295,9 +3237,7 @@ impl Machine {
         // running vCPU's LAPIC instance.
         self.mem
             .map_mmio_once(IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, || {
-                Box::new(IoApicMmio {
-                    interrupts: interrupts.clone(),
-                })
+                Box::new(IoApicMmio::from_platform_interrupts(interrupts.clone()))
             });
         self.mem
             .map_mmio_once(hpet::HPET_MMIO_BASE, hpet::HPET_MMIO_SIZE, || {
