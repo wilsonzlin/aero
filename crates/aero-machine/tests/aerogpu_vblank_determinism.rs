@@ -1,4 +1,5 @@
 use aero_machine::{Machine, MachineConfig};
+use aero_devices_gpu::vblank::period_ns_from_hz;
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use pretty_assertions::assert_eq;
 
@@ -42,7 +43,10 @@ fn aerogpu_vblank_is_deterministic_and_survives_snapshot_restore() {
         bar0,
         proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS,
     ) as u64;
-    assert_eq!(period_ns, 16_666_667);
+    assert_eq!(
+        period_ns,
+        period_ns_from_hz(Some(60)).expect("60Hz vblank must be enabled by default")
+    );
 
     // Vblank counters start at 0 before scanout is enabled.
     assert_eq!(
