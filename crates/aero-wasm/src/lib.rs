@@ -3291,11 +3291,16 @@ impl Machine {
     /// Create a new canonical full-system Aero machine.
     ///
     /// # vCPU count / SMP
-    /// The default JS constructor configures `cpu_count=1`. Aero does not implement SMP/multi-vCPU
-    /// execution yet (BSP-only); `cpu_count > 1` is currently useful only for firmware/ACPI
-    /// topology validation.
+    /// This JS constructor uses the canonical browser defaults, which currently configure
+    /// `cpu_count=1`.
     ///
-    /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
+    /// To request a different CPU count, use [`Machine::new_with_cpu_count`] (or
+    /// [`Machine::new_with_config`]).
+    ///
+    /// Note: SMP is still **bring-up only** (not a robust multi-vCPU environment yet). For real
+    /// guest boots, prefer `cpu_count=1`.
+    ///
+    /// See `docs/21-smp.md#status-today` and `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
         let cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
@@ -3321,10 +3326,11 @@ impl Machine {
     /// This is a constructor-like alternative to `new(ram_size_bytes)` that lets JS opt into SMP
     /// by configuring `cpu_count` for firmware topology publication (SMBIOS + ACPI).
     ///
-    /// Note: the canonical `aero_machine::Machine` execution loop is still BSP-only today, so
-    /// `cpu_count > 1` does not (yet) run multiple vCPUs in parallel.
+    /// Note: `aero_machine::Machine` supports basic SMP bring-up (AP wait-for-SIPI + INIT/SIPI via
+    /// LAPIC ICR + bounded cooperative AP execution), but SMP is still **bring-up only** (not a
+    /// robust multi-vCPU environment yet). For real guest boots, prefer `cpu_count=1`.
     ///
-    /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
+    /// See `docs/21-smp.md#status-today` and `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
     pub fn new_with_cpu_count(ram_size_bytes: u32, cpu_count: u8) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
         cfg.cpu_count = cpu_count;

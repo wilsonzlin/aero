@@ -38,7 +38,8 @@ pub struct PcMachineConfig {
     ///
     /// Note: `PcMachine` currently executes only the bootstrap processor (CPU0). Application
     /// processors are not scheduled yet; setting `cpu_count > 1` is intended for SMP firmware/OS
-    /// bring-up experimentation and topology validation.
+    /// bring-up experimentation and topology validation. For real guest boots, prefer
+    /// `cpu_count=1`.
     ///
     /// See `docs/21-smp.md` for the SMP bring-up plan and progress tracker.
     pub cpu_count: u8,

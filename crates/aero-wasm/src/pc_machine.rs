@@ -29,10 +29,11 @@ impl PcMachine {
     /// RAM inside the wasm module rather than using the `guest_ram_layout` shared-memory contract.
     ///
     /// # vCPU count / SMP
-    /// This constructor always uses `cpu_count=1`. SMP (multi-vCPU) is not implemented yet, so the
-    /// CPU count cannot be configured.
+    /// This constructor always uses `cpu_count=1`. `aero_machine::PcMachine` still executes only
+    /// the bootstrap processor (BSP), so multi-vCPU guests are not expected to run robustly yet and
+    /// the CPU count is not configurable via this JS API.
     ///
-    /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
+    /// See `docs/21-smp.md#status-today` and `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32, smbios_uuid_seed: Option<u64>) -> Result<Self, JsValue> {
         // The BIOS expects to use the EBDA at 0x9F000, so enforce a minimum RAM size.

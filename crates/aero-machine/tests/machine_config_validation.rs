@@ -19,12 +19,16 @@ fn cpu_count_must_be_non_zero() {
         "error message must include the configured cpu_count; got: {msg}"
     );
     assert!(
-        msg.contains("SMP"),
-        "error message must explain that SMP is not implemented yet; got: {msg}"
+        msg.contains("SMP is still bring-up only"),
+        "error message must explain that SMP is still bring-up only; got: {msg}"
+    );
+    assert!(
+        msg.contains("docs/21-smp.md"),
+        "error message must point to relevant docs; got: {msg}"
     );
     assert!(
         msg.contains("docs/09-bios-firmware.md"),
-        "error message must point to relevant docs; got: {msg}"
+        "error message must also point to the firmware SMP boot docs; got: {msg}"
     );
 }
 

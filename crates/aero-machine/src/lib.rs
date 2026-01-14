@@ -172,12 +172,14 @@ pub struct MachineConfig {
     ///
     /// Must be >= 1.
     ///
-    /// Note: CPU execution in [`Machine`] is still BSP-only today; SMP/multi-vCPU scheduling and AP
-    /// bring-up are not implemented yet. `cpu_count > 1` is currently useful for firmware/ACPI
-    /// topology contract testing (for example, validating MADT contents) but does not create
-    /// additional executing cores.
+    /// `aero_machine::Machine` supports configuring `cpu_count > 1` for **SMP bring-up**:
+    /// per-vCPU LAPIC state/MMIO routing, AP wait-for-SIPI state, INIT+SIPI delivery via the LAPIC
+    /// ICR, and a bounded cooperative AP execution loop inside [`Machine::run_slice`].
     ///
-    /// See `docs/21-smp.md` for the SMP bring-up plan and progress tracker.
+    /// This is sufficient for SMP contract tests, but it is **not** a full SMP scheduler or
+    /// parallel vCPU execution environment yet. For real guest boots, prefer `cpu_count=1`.
+    ///
+    /// See `docs/21-smp.md` for the current SMP status and roadmap.
     pub cpu_count: u8,
     /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
     ///
@@ -556,7 +558,7 @@ impl fmt::Display for MachineError {
             MachineError::InvalidCpuCount(count) => {
                 write!(
                     f,
-                    "invalid cpu_count={count}; must be >= 1. Note: SMP/multi-vCPU execution is not implemented yet (BSP-only). See docs/09-bios-firmware.md#smp-boot-bsp--aps and instructions/integration.md"
+                    "invalid cpu_count={count}; must be >= 1. Note: SMP is still bring-up only (not a robust multi-vCPU environment yet); use cpu_count=1 for real guest boots. See docs/21-smp.md#status-today and docs/09-bios-firmware.md#smp-boot-bsp--aps"
                 )
             }
             MachineError::InvalidDiskSize(len) => write!(
