@@ -136,7 +136,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     m.write_physical_u8(scratch_base + 2, 0xCC);
     m.write_physical_u8(scratch_base + 3, 0x00);
 
-    let (bar0_base, bar1_base) = {
+    let (bar0_base, bar1_base, command) = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
@@ -146,10 +146,21 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         (
             cfg.bar_range(0).expect("AeroGPU BAR0 must exist").base,
             cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base,
+            cfg.command(),
         )
     };
     assert_ne!(bar0_base, 0);
     assert_ne!(bar1_base, 0);
+
+    // Scanout reads behave like device-initiated DMA; enable PCI Bus Master Enable (BME) so the
+    // host-side display_present path can legally read the scanout buffer.
+    {
+        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg
+            .bus_mut()
+            .write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
+    }
 
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
     m.write_physical_u32(
@@ -195,4 +206,3 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_eq!(m.display_resolution(), (u32::from(width), u32::from(height)));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 }
-
