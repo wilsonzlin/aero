@@ -4415,8 +4415,8 @@ fn emit_instructions(
                     });
                 }
 
-                let index_u = emit_src_vec4_u32(index, inst_index, "ld_structured", ctx)?;
-                let offset_u = emit_src_vec4_u32(offset, inst_index, "ld_structured", ctx)?;
+                let index_u = emit_src_vec4_u32_int(index, inst_index, "ld_structured", ctx)?;
+                let offset_u = emit_src_vec4_u32_int(offset, inst_index, "ld_structured", ctx)?;
                 let base_name = format!("ld_uav_struct_base{inst_index}");
                 w.line(&format!(
                     "let {base_name}: u32 = ((({index_u}).x) * {stride}u + (({offset_u}).x)) / 4u;"
@@ -4584,7 +4584,7 @@ fn emit_instructions(
             Sm4Inst::LdUavRaw { dst, addr, uav } => {
                 // Raw UAV buffer loads operate on byte offsets. Model UAV buffers as a storage
                 // `array<u32>` and derive a word index from the byte address.
-                let addr_u = emit_src_vec4_u32(addr, inst_index, "ld_uav_raw", ctx)?;
+                let addr_u = emit_src_vec4_u32_int(addr, inst_index, "ld_uav_raw", ctx)?;
                 let base_name = format!("ld_uav_raw_base{inst_index}");
                 w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
 
