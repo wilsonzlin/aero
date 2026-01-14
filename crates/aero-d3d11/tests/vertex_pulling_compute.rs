@@ -1305,7 +1305,7 @@ fn compute_can_vertex_pull_u16_and_i16_formats_unaligned_shift16() {
         push_u16(&mut vb, 40);
         assert_eq!(vb.len(), 2 + 32 * 2);
 
-        while vb.len() % 4 != 0 {
+        while !vb.len().is_multiple_of(4) {
             vb.push(0);
         }
 
