@@ -138,6 +138,42 @@ impl IdeChannel {
         }
     }
 
+    fn selected_drive_present(&self) -> bool {
+        self.drives
+            .get(self.selected)
+            .map(|d| d.is_some())
+            .unwrap_or(false)
+    }
+
+    fn read_drive_address(&self) -> u8 {
+        // ATA "Drive Address" register (control block offset +1).
+        //
+        // Exact semantics vary across controllers and the ATA spec is nuanced. For legacy IDE
+        // probing we mainly need a value that:
+        // - reads as 0xFF (open bus) when the selected drive is absent
+        // - is stable and non-zero when a drive is present
+        // - changes when the guest selects master vs slave
+        //
+        // We model this as a readback of the head select (bits 0..=3) and drive select lines
+        // (bits 4..=5, active-low), with bits 6..=7 high as commonly observed on real hardware.
+        if !self.selected_drive_present() {
+            return 0xFF;
+        }
+
+        let head = self.drive_head & 0x0F;
+
+        // nDS0/nDS1 are active-low drive select signals. Exactly one should be asserted (0) at a
+        // time. If an invalid `selected` ever occurs, keep both deasserted (1) to avoid panics and
+        // return a sensible, non-zero value.
+        let (n_ds0, n_ds1) = match self.selected {
+            0 => (0u8, 1u8), // master (device 0) selected
+            1 => (1u8, 0u8), // slave (device 1) selected
+            _ => (1u8, 1u8),
+        };
+
+        0xC0 | head | (n_ds1 << 4) | (n_ds0 << 5)
+    }
+
     fn interrupts_enabled(&self) -> bool {
         // Device control bit 1: nIEN (0 = enabled).
         self.dev_ctl & 0x02 == 0
@@ -825,23 +861,80 @@ mod tests {
     use super::*;
     use crate::bus::TestIrqLine;
 
+    use aero_storage::{MemBackend, RawDisk, VirtualDisk};
+
+    fn make_drive(pattern: [u8; 4]) -> AtaDrive {
+        let capacity = 16 * SECTOR_SIZE as u64;
+        let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut sector = vec![0u8; SECTOR_SIZE];
+        sector[0..4].copy_from_slice(&pattern);
+        disk.write_sectors(1, &sector).unwrap();
+        AtaDrive::new(Box::new(disk)).unwrap()
+    }
+
     fn setup_controller() -> (IdeController, TestIrqLine, TestIrqLine) {
         let irq14 = TestIrqLine::default();
         let irq15 = TestIrqLine::default();
         let mut ctl = IdeController::new(Box::new(irq14.clone()), Box::new(irq15.clone()));
 
-        use aero_storage::{MemBackend, RawDisk, VirtualDisk};
-
-        let capacity = 16 * SECTOR_SIZE as u64;
-        let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
-        let mut sector = vec![0u8; SECTOR_SIZE];
-        sector[0..4].copy_from_slice(&[1, 2, 3, 4]);
-        disk.write_sectors(1, &sector).unwrap();
-
-        let drive = AtaDrive::new(Box::new(disk)).unwrap();
-        ctl.attach_drive(IdeChannelId::Primary, 0, drive);
+        ctl.attach_drive(IdeChannelId::Primary, 0, make_drive([1, 2, 3, 4]));
 
         (ctl, irq14, irq15)
+    }
+
+    fn setup_controller_two_drives() -> (IdeController, TestIrqLine, TestIrqLine) {
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14.clone()), Box::new(irq15.clone()));
+        ctl.attach_drive(IdeChannelId::Primary, 0, make_drive([1, 2, 3, 4]));
+        ctl.attach_drive(IdeChannelId::Primary, 1, make_drive([5, 6, 7, 8]));
+        (ctl, irq14, irq15)
+    }
+
+    #[test]
+    fn drive_address_is_ff_when_no_drive_present() {
+        let irq14 = TestIrqLine::default();
+        let irq15 = TestIrqLine::default();
+        let mut ctl = IdeController::new(Box::new(irq14), Box::new(irq15));
+
+        assert_eq!(ctl.read_u8(PRIMARY_CTRL + 1), 0xFF);
+        assert_eq!(ctl.read_u8(SECONDARY_CTRL + 1), 0xFF);
+    }
+
+    #[test]
+    fn drive_address_is_deterministic_when_drive_present() {
+        let (mut ctl, _irq14, _irq15) = setup_controller();
+
+        let a0 = ctl.read_u8(PRIMARY_CTRL + 1);
+        let a1 = ctl.read_u8(PRIMARY_CTRL + 1);
+        assert_eq!(a0, a1);
+        assert_ne!(a0, 0);
+        assert_ne!(a0, 0xFF);
+
+        // Secondary channel has no drives in this setup.
+        assert_eq!(ctl.read_u8(SECONDARY_CTRL + 1), 0xFF);
+    }
+
+    #[test]
+    fn drive_address_changes_with_selected_drive() {
+        // With only the master present, selecting the slave should float the bus high.
+        let (mut ctl, _irq14, _irq15) = setup_controller();
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0); // master, LBA
+        let master_addr = ctl.read_u8(PRIMARY_CTRL + 1);
+        ctl.write_u8(PRIMARY_BASE + 6, 0xF0); // slave, LBA
+        let slave_addr = ctl.read_u8(PRIMARY_CTRL + 1);
+        assert_ne!(master_addr, slave_addr);
+        assert_eq!(slave_addr, 0xFF);
+
+        // With both drives present, selecting master vs slave should produce two stable values.
+        let (mut ctl, _irq14, _irq15) = setup_controller_two_drives();
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0); // master, LBA
+        let master_addr = ctl.read_u8(PRIMARY_CTRL + 1);
+        ctl.write_u8(PRIMARY_BASE + 6, 0xF0); // slave, LBA
+        let slave_addr = ctl.read_u8(PRIMARY_CTRL + 1);
+        assert_ne!(master_addr, slave_addr);
+        assert_ne!(master_addr, 0xFF);
+        assert_ne!(slave_addr, 0xFF);
     }
 
     #[test]
