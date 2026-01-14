@@ -2103,7 +2103,6 @@ pub fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, AerogpuC
 ///
 /// This helper is intended for device models that want to inspect command stream contents for fence
 /// pacing, but do not want to allocate/copy potentially large streams in the common case.
-#[allow(clippy::result_unit_err)]
 pub fn cmd_stream_has_vsync_present_reader<F>(
     mut read: F,
     cmd_gpa: u64,
