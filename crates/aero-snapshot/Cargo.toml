@@ -21,3 +21,28 @@ memory = { path = "../memory" }
 aero-net-stack = { path = "../aero-net-stack" }
 proptest = "1.5"
 rand = "0.8"
+
+[[test]]
+name = "io_snapshot_bridge"
+path = "tests/io_snapshot_bridge.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "network_device_roundtrip"
+path = "tests/network_device_roundtrip.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "network_device_blobs_roundtrip"
+path = "tests/network_device_blobs_roundtrip.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "net_stack_legacy_io_snapshot_bridge"
+path = "tests/net_stack_legacy_io_snapshot_bridge.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "e1000_io_snapshot_bridge"
+path = "tests/e1000_io_snapshot_bridge.rs"
+required-features = ["io-snapshot"]

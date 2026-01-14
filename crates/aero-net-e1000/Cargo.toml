@@ -21,3 +21,28 @@ nt-packetlib = { path = "../nt-packetlib" }
 [dev-dependencies]
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-devices = { path = "../devices" }
+
+[[test]]
+name = "snapshot"
+path = "tests/snapshot.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "snapshot_roundtrip"
+path = "tests/snapshot_roundtrip.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "e1000_snapshot_roundtrip"
+path = "tests/e1000_snapshot_roundtrip.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "host_queue_runtime_bounds"
+path = "tests/host_queue_runtime_bounds.rs"
+required-features = ["io-snapshot"]
+
+[[test]]
+name = "host_queue_restore_bounds"
+path = "tests/host_queue_restore_bounds.rs"
+required-features = ["io-snapshot"]

@@ -26,3 +26,8 @@ harness = false
 [[bench]]
 name = "translate"
 harness = false
+
+[[test]]
+name = "aero_mem_open_bus"
+path = "tests/aero_mem_open_bus.rs"
+required-features = ["aero-mem-bus"]

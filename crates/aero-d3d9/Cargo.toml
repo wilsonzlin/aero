@@ -64,3 +64,8 @@ path = "../../tests/d3d9_vertex_input.rs"
 [[bench]]
 name = "shader_translation"
 harness = false
+
+[[test]]
+name = "dxbc_parser"
+path = "tests/dxbc_parser.rs"
+required-features = ["dxbc-robust"]

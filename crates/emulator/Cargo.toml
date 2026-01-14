@@ -83,6 +83,56 @@ hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
 proptest = "1.4"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 
+[[test]]
+name = "xhci_mmio_gating"
+path = "tests/xhci_mmio_gating.rs"
+required-features = ["legacy-usb-xhci"]
+
+[[test]]
+name = "ac97_smoke_wav"
+path = "tests/ac97_smoke_wav.rs"
+required-features = ["legacy-audio"]
+
+[[test]]
+name = "hda_dsp_smoke"
+path = "tests/hda_dsp_smoke.rs"
+required-features = ["legacy-audio"]
+
+[[test]]
+name = "audio_dsp_golden_wav"
+path = "tests/audio_dsp_golden_wav.rs"
+required-features = ["legacy-audio"]
+
+[[test]]
+name = "aerogpu_legacy_device"
+path = "tests/aerogpu_legacy_device.rs"
+required-features = ["aerogpu-legacy"]
+
+[[test]]
+name = "aerogpu_end_to_end"
+path = "tests/aerogpu_end_to_end.rs"
+required-features = ["aerogpu-native"]
+
+[[test]]
+name = "aerogpu_d3d9_triangle_end_to_end"
+path = "tests/aerogpu_d3d9_triangle_end_to_end.rs"
+required-features = ["aerogpu-native"]
+
+[[test]]
+name = "aerogpu_transfer_writeback"
+path = "tests/aerogpu_transfer_writeback.rs"
+required-features = ["aerogpu-native"]
+
+[[test]]
+name = "aerogpu_exec_present"
+path = "tests/aerogpu_exec_present.rs"
+required-features = ["aerogpu-exec"]
+
+[[test]]
+name = "aerogpu_webgpu_present"
+path = "tests/aerogpu_webgpu_present.rs"
+required-features = ["aerogpu-webgpu"]
+
 [[bench]]
 name = "dsp"
 harness = false

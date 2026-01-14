@@ -21,3 +21,8 @@ memory = { path = "../memory" }
 pollster = { version = "0.3", optional = true }
 
 [dev-dependencies]
+
+[[test]]
+name = "aerogpu_end_to_end"
+path = "tests/aerogpu_end_to_end.rs"
+required-features = ["wgpu-backend"]

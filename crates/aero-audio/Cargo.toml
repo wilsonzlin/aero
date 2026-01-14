@@ -21,6 +21,11 @@ serde_json = "1.0"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = "0.5"
 
+[[test]]
+name = "hda_snapshot_roundtrip"
+path = "tests/hda_snapshot_roundtrip.rs"
+required-features = ["io-snapshot"]
+
 [[bench]]
 name = "audio_ring"
 harness = false

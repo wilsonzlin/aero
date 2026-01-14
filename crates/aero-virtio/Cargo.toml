@@ -20,3 +20,23 @@ aero-storage = { path = "../aero-storage" }
 aero-memory = { package = "memory", path = "../memory" }
 nt-packetlib = { path = "../nt-packetlib" }
 virtio-gpu-proto = { path = "../virtio-gpu-proto" }
+
+[[test]]
+name = "virtio_snd"
+path = "tests/virtio_snd.rs"
+required-features = ["snd"]
+
+[[test]]
+name = "virtio_snd_malformed_chains"
+path = "tests/virtio_snd_malformed_chains.rs"
+required-features = ["snd"]
+
+[[test]]
+name = "virtio_snd_rx"
+path = "tests/virtio_snd_rx.rs"
+required-features = ["snd"]
+
+[[test]]
+name = "virtio_snd_rx_captures_samples"
+path = "tests/virtio_snd_rx_captures_samples.rs"
+required-features = ["snd"]
