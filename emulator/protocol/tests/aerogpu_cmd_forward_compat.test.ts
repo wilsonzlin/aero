@@ -14,6 +14,7 @@ import {
   AerogpuBlendOp,
   AerogpuCmdOpcode,
   decodeCmdBindShadersPayload,
+  decodeCmdBindShadersPayloadFromPacket,
   decodeCmdCreateShaderDxbcPayload,
   decodeCmdStreamView,
   decodeCmdSetBlendState,
@@ -244,15 +245,37 @@ test("BIND_SHADERS decoders accept append-only extensions for additional stages"
   const decodedExt = decodeCmdBindShadersPayload(extended, packetsExt[0]!.offsetBytes);
   const decodedExtTrailing = decodeCmdBindShadersPayload(extendedWithTrailing, packetsExtTrailing[0]!.offsetBytes);
 
+  // Packet-based decoders should agree with the byte+offset helpers.
+  assert.deepEqual(decodeCmdBindShadersPayloadFromPacket(packetsBase[0]!), decodedBase);
+  assert.deepEqual(decodeCmdBindShadersPayloadFromPacket(packetsExt[0]!), decodedExt);
+  assert.deepEqual(decodeCmdBindShadersPayloadFromPacket(packetsExtTrailing[0]!), decodedExtTrailing);
+
+  // Simulated legacy decoder: reads only the original VS/PS/CS fields (ignores any appended bytes).
+  const decodeLegacy = (bytes: Uint8Array, cmdOffset: number) => {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return {
+      vs: view.getUint32(cmdOffset + 8, true),
+      ps: view.getUint32(cmdOffset + 12, true),
+      cs: view.getUint32(cmdOffset + 16, true),
+      reserved0: view.getUint32(cmdOffset + 20, true),
+    };
+  };
+  const legacyBase = decodeLegacy(base, packetsBase[0]!.offsetBytes);
+  const legacyExt = decodeLegacy(extended, packetsExt[0]!.offsetBytes);
+  const legacyExtTrailing = decodeLegacy(extendedWithTrailing, packetsExtTrailing[0]!.offsetBytes);
+
   // Legacy decode: original VS/PS/CS fields remain stable even when newer guests append fields.
   assert.deepEqual(
     { vs: decodedBase.vs, ps: decodedBase.ps, cs: decodedBase.cs, reserved0: decodedBase.reserved0 },
     { vs: decodedExt.vs, ps: decodedExt.ps, cs: decodedExt.cs, reserved0: decodedExt.reserved0 },
   );
+  assert.deepEqual(legacyBase, legacyExt);
+  assert.deepEqual(legacyExtTrailing, legacyExt);
   assert.deepEqual(
     { vs: decodedBase.vs, ps: decodedBase.ps, cs: decodedBase.cs, reserved0: decodedBase.reserved0 },
     { vs: 1, ps: 2, cs: 3, reserved0: 0 },
   );
+  assert.deepEqual(legacyBase, { vs: 1, ps: 2, cs: 3, reserved0: 0 });
   assert.equal(decodedBase.ex, undefined);
 
   // Extended decode: appended GS/HS/DS handles are available to decoders that understand them.
