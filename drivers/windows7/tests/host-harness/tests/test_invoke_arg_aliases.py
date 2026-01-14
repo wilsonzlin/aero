@@ -171,6 +171,20 @@ class HarnessArgAliasTests(unittest.TestCase):
         )
         self.assertTrue(args.with_virtio_tablet)
 
+    def test_qmp_preflight_pci_aliases_set_flag(self) -> None:
+        for flag in ("--qemu-preflight-pci", "--qmp-preflight-pci"):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.qemu_preflight_pci)
+
     def test_vectors_override_flags_parse(self) -> None:
         args = self._parse(
             [

@@ -60,5 +60,11 @@ test(
       help.includes("--with-snd-buffer-limits"),
       `expected --help to mention --with-snd-buffer-limits\n\n${help}`,
     );
+
+    // PCI ID preflight should remain discoverable (optional but useful for catching QEMU misconfiguration early).
+    assert.ok(
+      help.includes("--qemu-preflight-pci"),
+      `expected --help to mention --qemu-preflight-pci\n\n${help}`,
+    );
   },
 );
