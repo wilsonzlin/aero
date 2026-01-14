@@ -21,6 +21,7 @@ static DRIVER_DISPATCH VirtIoSndDispatchCreate;
 static DRIVER_DISPATCH VirtIoSndDispatchCleanup;
 static DRIVER_DISPATCH VirtIoSndDispatchClose;
 static DRIVER_DISPATCH VirtIoSndDispatchDeviceControl;
+static DRIVER_DISPATCH VirtIoSndDispatchUnsupported;
 static NTSTATUS VirtIoSndStartDevice(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp, _In_ PRESOURCELIST ResourceList);
 
 /* Dedicated diag device object extension (\\.\aero_virtio_snd_diag). */
@@ -57,6 +58,17 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     DriverObject->MajorFunction[IRP_MJ_CLEANUP] = VirtIoSndDispatchCleanup;
     DriverObject->MajorFunction[IRP_MJ_CLOSE] = VirtIoSndDispatchClose;
     DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = VirtIoSndDispatchDeviceControl;
+    /*
+     * The optional diagnostic device (\\.\aero_virtio_snd_diag) is a standalone
+     * control device object and is not part of the PortCls device stack. Ensure
+     * unexpected IRPs (ReadFile/WriteFile/etc.) do not get forwarded to PortCls.
+     */
+    DriverObject->MajorFunction[IRP_MJ_READ] = VirtIoSndDispatchUnsupported;
+    DriverObject->MajorFunction[IRP_MJ_WRITE] = VirtIoSndDispatchUnsupported;
+    DriverObject->MajorFunction[IRP_MJ_QUERY_INFORMATION] = VirtIoSndDispatchUnsupported;
+    DriverObject->MajorFunction[IRP_MJ_SET_INFORMATION] = VirtIoSndDispatchUnsupported;
+    DriverObject->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] = VirtIoSndDispatchUnsupported;
+    DriverObject->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = VirtIoSndDispatchUnsupported;
     return STATUS_SUCCESS;
 }
 
@@ -225,6 +237,14 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     stack = IoGetCurrentIrpStackLocation(Irp);
     dx = (PVIRTIOSND_DEVICE_EXTENSION)DeviceObject->DeviceExtension;
 
+    {
+        PVIRTIOSND_DIAG_DEVICE_EXTENSION diag;
+        diag = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)(DeviceObject ? DeviceObject->DeviceExtension : NULL);
+        if (diag != NULL && diag->Signature == VIRTIOSND_DIAG_SIGNATURE) {
+            return VirtIoSndCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        }
+    }
+
     if (dx == NULL || dx->Signature != VIRTIOSND_DX_SIGNATURE || dx->Self != DeviceObject) {
         return PcDispatchIrp(DeviceObject, Irp);
     }
@@ -323,6 +343,18 @@ static NTSTATUS VirtIoSndCompleteIrp(_Inout_ PIRP Irp, _In_ NTSTATUS Status, _In
     Irp->IoStatus.Information = Information;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return Status;
+}
+
+_Use_decl_annotations_
+static NTSTATUS VirtIoSndDispatchUnsupported(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PVIRTIOSND_DIAG_DEVICE_EXTENSION diag;
+
+    diag = (PVIRTIOSND_DIAG_DEVICE_EXTENSION)(DeviceObject ? DeviceObject->DeviceExtension : NULL);
+    if (diag != NULL && diag->Signature == VIRTIOSND_DIAG_SIGNATURE) {
+        return VirtIoSndCompleteIrp(Irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    }
+    return PcDispatchIrp(DeviceObject, Irp);
 }
 
 _Use_decl_annotations_
