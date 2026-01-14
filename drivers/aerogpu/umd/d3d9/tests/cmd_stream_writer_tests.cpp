@@ -11303,6 +11303,108 @@ bool TestOpenResourceRejectsUnsupportedNon2dType() {
                "failed OpenResource must not emit IMPORT_SHARED_SURFACE");
 }
 
+bool TestOpenResourceRejectsNonSquareCubeTexture() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  // Bind a span-backed command buffer so we can assert that no IMPORT_SHARED_SURFACE
+  // packets are emitted when OpenResource fails validation.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 1;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = 0;
+  priv.reserved0 = 0;
+
+  // Depth==6 is interpreted by the host as a cube texture; cube textures must be square.
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
+  open_res.type = 3u;
+  open_res.format = 22u; // D3DFMT_X8R8G8B8
+  open_res.width = 16;
+  open_res.height = 8; // non-square
+  open_res.depth = 6;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  if (!Check(cleanup.device_funcs.pfnOpenResource != nullptr, "OpenResource entrypoint")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == D3DERR_INVALIDCALL, "OpenResource rejects non-square cube textures")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate == nullptr, "OpenResource failure does not return a handle")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates after failed OpenResource")) {
+    return false;
+  }
+  return Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_IMPORT_SHARED_SURFACE) == 0,
+               "failed OpenResource must not emit IMPORT_SHARED_SURFACE");
+}
+
 bool TestOpenResourceArrayTextureEmitsArrayLayers() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -29768,6 +29870,7 @@ int main() {
   failures += !aerogpu::TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
   failures += !aerogpu::TestOpenResourceRejectsUnsupportedNon2dType();
+  failures += !aerogpu::TestOpenResourceRejectsNonSquareCubeTexture();
   failures += !aerogpu::TestOpenResourceArrayTextureEmitsArrayLayers();
   failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
   failures += !aerogpu::TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2();

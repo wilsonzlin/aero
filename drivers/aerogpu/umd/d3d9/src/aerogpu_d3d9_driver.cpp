@@ -10045,6 +10045,17 @@ static HRESULT device_open_resource_impl(
     }
   }
 
+  // The AeroGPU host executor interprets `array_layers==6` as a cube texture.
+  // Cube textures must be square; reject invalid descriptors early so we don't
+  // import a handle that later command-stream execution will treat as a cube.
+  if (open_size_bytes == 0 &&
+      res->depth == 6 &&
+      res->width != 0 &&
+      res->height != 0 &&
+      res->width != res->height) {
+    return D3DERR_INVALIDCALL;
+  }
+
   // Prefer a reconstructed size when the runtime provides a description; fall
   // back to the size_bytes persisted in allocation private data.
   if (open_size_bytes) {
