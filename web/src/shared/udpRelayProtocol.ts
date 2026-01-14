@@ -6,6 +6,14 @@ export const UDP_RELAY_V2_AF_IPV4 = 0x04;
 export const UDP_RELAY_V2_AF_IPV6 = 0x06;
 export const UDP_RELAY_V2_TYPE_DATAGRAM = 0x00;
 
+// v2 header lengths.
+//
+// Keep in sync with:
+// - proxy/webrtc-udp-relay/internal/udpproto.MaxFrameOverheadBytes (IPv6)
+// - proxy/webrtc-udp-relay/PROTOCOL.md
+export const UDP_RELAY_V2_IPV4_HEADER_LEN = 12;
+export const UDP_RELAY_V2_IPV6_HEADER_LEN = 24;
+
 // Keep in sync with proxy/webrtc-udp-relay/internal/udpproto.DefaultMaxPayload and
 // proxy/webrtc-udp-relay/PROTOCOL.md.
 export const UDP_RELAY_DEFAULT_MAX_PAYLOAD = 1200;
@@ -177,8 +185,12 @@ export function decodeUdpRelayV2Datagram(
   if (maxPayload < 0) {
     throw new RangeError(`maxPayload must be >= 0 (got ${maxPayload})`);
   }
-  if (frame.length < 12) {
-    throw new UdpRelayDecodeError('too_short', `frame too short: ${frame.length} < 12`);
+  // Check for the minimum possible v2 frame (IPv4).
+  if (frame.length < UDP_RELAY_V2_IPV4_HEADER_LEN) {
+    throw new UdpRelayDecodeError(
+      'too_short',
+      `frame too short: ${frame.length} < ${UDP_RELAY_V2_IPV4_HEADER_LEN}`,
+    );
   }
   if (!isV2Prefix(frame)) {
     throw new UdpRelayDecodeError('invalid_v2', 'missing v2 prefix');
