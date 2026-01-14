@@ -2330,6 +2330,14 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       PrintBytesAndMiB((ULONGLONG)qp.contig_pool_bytes_saved);
       wprintf(L"\n");
     }
+
+    if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) +
+                           sizeof(qp.alloc_table_readonly_entries)) {
+      wprintf(L"  alloc_table: count=%I64u entries=%I64u readonly_entries=%I64u\n",
+              (unsigned long long)qp.alloc_table_count,
+              (unsigned long long)qp.alloc_table_entries,
+              (unsigned long long)qp.alloc_table_readonly_entries);
+    }
   };
 
   const auto DumpUmdPrivateSummary = [&]() {
@@ -3135,6 +3143,20 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
       JsonWriteU64HexDec(w, "hit", qp.contig_pool_hit);
       JsonWriteU64HexDec(w, "miss", qp.contig_pool_miss);
       JsonWriteBytesAndMiB(w, "bytes_saved", (uint64_t)qp.contig_pool_bytes_saved);
+    }
+    w.EndObject();
+
+    w.Key("alloc_table");
+    w.BeginObject();
+    const bool haveAllocTable =
+        (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) +
+                           sizeof(qp.alloc_table_readonly_entries));
+    w.Key("available");
+    w.Bool(haveAllocTable);
+    if (haveAllocTable) {
+      JsonWriteU64HexDec(w, "count", qp.alloc_table_count);
+      JsonWriteU64HexDec(w, "entries", qp.alloc_table_entries);
+      JsonWriteU64HexDec(w, "readonly_entries", qp.alloc_table_readonly_entries);
     }
     w.EndObject();
 

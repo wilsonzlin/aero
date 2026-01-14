@@ -544,6 +544,9 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, contig_pool_hit);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, contig_pool_miss);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, contig_pool_bytes_saved);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, alloc_table_count);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, alloc_table_entries);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, alloc_table_readonly_entries);
 
   PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, signal_fence);
   PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, cmd_gpa);

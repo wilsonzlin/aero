@@ -428,6 +428,11 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfContigPoolMiss;
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfContigPoolBytesSaved;
 
+    /* Per-submit allocation table counters (alloc_id -> gpa mapping). */
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfAllocTableCount;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfAllocTableEntries;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfAllocTableReadonlyEntries;
+
     /* dbgctl selftest statistics (AEROGPU_ESCAPE_OP_SELFTEST). */
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfSelftestCount;
     volatile LONG PerfSelftestLastErrorCode; /* enum aerogpu_dbgctl_selftest_error */

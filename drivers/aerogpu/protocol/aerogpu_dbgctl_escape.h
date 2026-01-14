@@ -256,6 +256,18 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u64 contig_pool_hit;
   aerogpu_escape_u64 contig_pool_miss;
   aerogpu_escape_u64 contig_pool_bytes_saved;
+
+  /*
+   * Allocation table statistics (appended).
+   *
+   * These counters are intended as a low-friction sanity signal for per-submit
+   * alloc table construction, including propagation of READONLY semantics.
+   *
+   * Callers must check `hdr.size` before reading them.
+   */
+  aerogpu_escape_u64 alloc_table_count;
+  aerogpu_escape_u64 alloc_table_entries;
+  aerogpu_escape_u64 alloc_table_readonly_entries;
 } aerogpu_escape_query_perf_out;
 
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID (1u << 31)
@@ -264,7 +276,7 @@ typedef struct aerogpu_escape_query_perf_out {
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID (1u << 2)
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 240);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 264);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
@@ -298,6 +310,9 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, get_scanlin
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, contig_pool_hit) == 216);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, contig_pool_miss) == 224);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) == 232);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, alloc_table_count) == 240);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, alloc_table_entries) == 248);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) == 256);
 
 /*
  * Must remain stable across x86/x64.
