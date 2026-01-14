@@ -4456,17 +4456,17 @@ mod tests {
         let struct_pos = wgsl
             .find("struct GsPrepassState {")
             .expect("expected GsPrepassState struct");
-        let out_indirect_pos = wgsl[struct_pos..]
-            .find("out_indirect: DrawIndexedIndirectArgs,")
+        let indirect_pos = wgsl[struct_pos..]
+            .find("indirect: DrawIndexedIndirectArgs,")
             .map(|p| p + struct_pos)
-            .expect("expected out_indirect field");
+            .expect("expected indirect field");
         let counters_pos = wgsl[struct_pos..]
             .find("counters: GsPrepassCounters,")
             .map(|p| p + struct_pos)
             .expect("expected counters field");
         assert!(
-            out_indirect_pos < counters_pos,
-            "expected DrawIndexedIndirectArgs (out_indirect) to appear before counters in GsPrepassState:\n{wgsl}"
+            indirect_pos < counters_pos,
+            "expected DrawIndexedIndirectArgs (indirect) to appear before counters in GsPrepassState:\n{wgsl}"
         );
         assert!(
             wgsl.contains(
