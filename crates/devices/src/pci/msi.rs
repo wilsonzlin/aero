@@ -25,6 +25,11 @@ impl Default for MsiCapability {
 }
 
 impl MsiCapability {
+    /// Bitmask of supported vectors in the optional per-vector mask/pending registers.
+    ///
+    /// This MSI capability implementation is intentionally single-vector, so only bit 0 is valid.
+    const SUPPORTED_VECTOR_MASK: u32 = 0x1;
+
     /// Create a single-vector MSI capability.
     ///
     /// The returned capability is initially disabled and has zeroed message address/data.
@@ -199,16 +204,24 @@ impl PciCapability for MsiCapability {
             config[base + 0x0f] = 0;
 
             if self.per_vector_masking {
-                Self::write_u32(config, base + 0x10, self.mask_bits);
-                Self::write_u32(config, base + 0x14, self.pending_bits);
+                Self::write_u32(config, base + 0x10, self.mask_bits & Self::SUPPORTED_VECTOR_MASK);
+                Self::write_u32(
+                    config,
+                    base + 0x14,
+                    self.pending_bits & Self::SUPPORTED_VECTOR_MASK,
+                );
             }
         } else {
             Self::write_u16(config, base + 0x08, self.message_data);
             config[base + 0x0a] = 0;
             config[base + 0x0b] = 0;
             if self.per_vector_masking {
-                Self::write_u32(config, base + 0x0c, self.mask_bits);
-                Self::write_u32(config, base + 0x10, self.pending_bits);
+                Self::write_u32(config, base + 0x0c, self.mask_bits & Self::SUPPORTED_VECTOR_MASK);
+                Self::write_u32(
+                    config,
+                    base + 0x10,
+                    self.pending_bits & Self::SUPPORTED_VECTOR_MASK,
+                );
             }
         }
     }
@@ -247,6 +260,11 @@ impl PciCapability for MsiCapability {
             } else {
                 Self::read_u32(config, base + 0x10)
             };
+
+            // Only the low bit is valid for our single-vector MSI implementation. Treat other bits
+            // as reserved and read-as-zero, write-ignored.
+            self.mask_bits &= Self::SUPPORTED_VECTOR_MASK;
+            self.pending_bits &= Self::SUPPORTED_VECTOR_MASK;
         } else {
             self.mask_bits = 0;
             self.pending_bits = 0;
