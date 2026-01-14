@@ -4010,6 +4010,11 @@ impl AerogpuD3d11Executor {
 
         // Tessellation (HS/DS) and geometry-shader emulation share this compute-prepass entrypoint.
 
+        // Even on backends that do support compute, we allow unit tests to force these capability
+        // flags off. Validate them here so the emulation path fails with a clear error rather than
+        // silently proceeding.
+        self.validate_gs_hs_ds_emulation_capabilities()?;
+
         let Some(next) = stream.iter.peek() else {
             return Ok(());
         };
@@ -19449,22 +19454,26 @@ fn main() {{
                 * crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH as u64
                 * 16;
 
-            let vs_out = exec
-                .expansion_scratch
-                .alloc_metadata(&exec.device, vs_out_size, 16)
-                .expect("vs_out alloc");
-            let hs_out = exec
-                .expansion_scratch
-                .alloc_metadata(&exec.device, vs_out_size, 16)
-                .expect("hs_out alloc");
-            let patch_consts = exec
-                .expansion_scratch
-                .alloc_metadata(&exec.device, patch_consts_size, 16)
-                .expect("patch consts alloc");
-            let tess_factors = exec
-                .expansion_scratch
-                .alloc_metadata(&exec.device, tess_factors_size, 16)
-                .expect("tess factors alloc");
+            // Use distinct backing buffers for each allocation. WebGPU validation tracks storage
+            // usage at the buffer level, so binding sub-allocations from the same buffer as both
+            // `read` and `read_write` would trigger a resource usage conflict.
+            let scratch_usage = wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST;
+            let mk_scratch = |label: &'static str, size: u64| ExpansionScratchAlloc {
+                buffer: Arc::new(exec.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage: scratch_usage,
+                    mapped_at_creation: false,
+                })),
+                offset: 0,
+                size,
+            };
+            let vs_out = mk_scratch("hs compute passes vs_out_regs", vs_out_size);
+            let hs_out = mk_scratch("hs compute passes hs_out_regs", vs_out_size);
+            let patch_consts = mk_scratch("hs compute passes patch constants", patch_consts_size);
+            let tess_factors = mk_scratch("hs compute passes tess factors", tess_factors_size);
 
             let mut vs_out_data: Vec<f32> = Vec::with_capacity(vertex_count * 4);
             for i in 0..vertex_count {
@@ -20354,12 +20363,39 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             // Force the compute capability off, regardless of what the host adapter supports.
             exec.caps.supports_compute = false;
 
-            // Make the state look like it needs GS emulation. The stream itself does not contain a
-            // GS bind command yet; this is a direct state injection for unit testing.
-            exec.state.render_targets.push(Some(1));
-            exec.state.gs = Some(123);
+            // Set up a minimal draw that binds a geometry shader. This should force the executor
+            // into the GS/HS/DS emulation path, which requires compute support.
+            const RT: u32 = 1;
+            const VS: u32 = 2;
+            const PS: u32 = 3;
+            const GS: u32 = 123;
+
+            const DXBC_VS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            const DXBC_PS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+            const DXBC_GS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/gs_passthrough.dxbc");
 
             let mut writer = AerogpuCmdWriter::new();
+            writer.create_texture2d(
+                RT,
+                AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                4,
+                4,
+                1,
+                1,
+                0,
+                0,
+                0,
+            );
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
             writer.draw(3, 1, 0, 0);
             let stream = writer.finish();
 
@@ -21891,6 +21927,8 @@ fn cs_main() {
                 include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
             const DXBC_PS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+            const DXBC_GS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/gs_passthrough.dxbc");
 
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
@@ -21907,6 +21945,7 @@ fn cs_main() {
             );
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
             writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
             writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
@@ -21957,6 +21996,8 @@ fn cs_main() {
                 include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
             const DXBC_PS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+            const DXBC_GS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/gs_passthrough.dxbc");
 
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
@@ -21973,6 +22014,7 @@ fn cs_main() {
             );
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
             writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
             writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
