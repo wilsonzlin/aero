@@ -14,6 +14,7 @@ declare global {
       error?: string;
       pass?: boolean;
       sample?: number[];
+      sampleNoCursor?: number[];
       expected?: number[];
     };
   }
@@ -226,6 +227,7 @@ async function main() {
 
     const expected = [0, 0, 255, 255];
     let sample: number[] = [0, 0, 0, 0];
+    let sampleNoCursor: number[] = [0, 0, 0, 0];
 
     const deadlineMs = performance.now() + 3000;
     while (performance.now() < deadlineMs) {
@@ -236,15 +238,22 @@ async function main() {
       await sleep(25);
     }
 
-    const pass = sample.join(",") === expected.join(",");
+    // Also sanity-check that when `includeCursor=false`, the cursor is not composited into the
+    // screenshot output. This helps ensure we're exercising the cursor overlay path (not just a
+    // coincidentally-blue framebuffer pixel).
+    const noCursorShot = await requestScreenshot(false);
+    sampleNoCursor = samplePixel(new Uint8Array(noCursorShot.pixels), noCursorShot.width, 0, 0);
+
+    const pass = sample.join(",") === expected.join(",") && sampleNoCursor.join(",") !== expected.join(",");
     log(`sample=${sample.join(",")}`);
+    log(`sampleNoCursor=${sampleNoCursor.join(",")}`);
     log(`expected=${expected.join(",")}`);
     log(pass ? "PASS" : "FAIL");
 
     frameScheduler.stop();
     coordinator.stop();
 
-    window.__aeroTest = { ready: true, pass, sample, expected };
+    window.__aeroTest = { ready: true, pass, sample, sampleNoCursor, expected };
   } catch (err) {
     coordinator.stop();
     renderError(err instanceof Error ? err.message : String(err));

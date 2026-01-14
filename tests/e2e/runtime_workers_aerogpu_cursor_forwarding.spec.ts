@@ -21,5 +21,5 @@ test("runtime workers: AeroGPU cursor MMIO state is forwarded to the GPU present
 
   expect((result as any).pass).toBe(true);
   expect((result as any).sample).toEqual([0, 0, 255, 255]);
+  expect((result as any).sampleNoCursor).not.toEqual([0, 0, 255, 255]);
 });
-
