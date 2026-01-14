@@ -3555,6 +3555,55 @@ impl Machine {
         aero_mmu::MemoryBus::write_u32(&mut bus, LAPIC_MMIO_BASE + offset, value);
     }
 
+    /// Debug/testing helper: assert ("raise") a platform GSI (Global System Interrupt) input line.
+    ///
+    /// This is intended for `crates/aero-machine/tests/*` integration tests that need to drive
+    /// platform interrupt input pins deterministically without reaching into internal device
+    /// models.
+    ///
+    /// When the PC platform is enabled, this forwards to
+    /// [`PlatformInterrupts::raise_irq`] with [`InterruptInput::Gsi`]. When the PC platform is not
+    /// enabled, this is a no-op.
+    pub fn raise_gsi(&mut self, gsi: u32) {
+        let Some(interrupts) = &self.interrupts else {
+            return;
+        };
+        interrupts.borrow_mut().raise_irq(InterruptInput::Gsi(gsi));
+    }
+
+    /// Debug/testing helper: deassert ("lower") a platform GSI (Global System Interrupt) input
+    /// line.
+    ///
+    /// See [`Machine::raise_gsi`]. When the PC platform is disabled, this is a no-op.
+    pub fn lower_gsi(&mut self, gsi: u32) {
+        let Some(interrupts) = &self.interrupts else {
+            return;
+        };
+        interrupts.borrow_mut().lower_irq(InterruptInput::Gsi(gsi));
+    }
+
+    /// Debug/testing helper: assert ("raise") an ISA IRQ input line (0-15).
+    ///
+    /// This forwards to [`PlatformInterrupts::raise_irq`] when the PC platform is enabled;
+    /// otherwise it is a no-op.
+    pub fn raise_isa_irq(&mut self, irq: u8) {
+        let Some(interrupts) = &self.interrupts else {
+            return;
+        };
+        interrupts.borrow_mut().raise_irq(InterruptInput::IsaIrq(irq));
+    }
+
+    /// Debug/testing helper: deassert ("lower") an ISA IRQ input line (0-15).
+    ///
+    /// This forwards to [`PlatformInterrupts::lower_irq`] when the PC platform is enabled;
+    /// otherwise it is a no-op.
+    pub fn lower_isa_irq(&mut self, irq: u8) {
+        let Some(interrupts) = &self.interrupts else {
+            return;
+        };
+        interrupts.borrow_mut().lower_irq(InterruptInput::IsaIrq(irq));
+    }
+
     /// Debug/testing helper: write a single guest physical byte.
     pub fn write_physical_u8(&mut self, paddr: u64, value: u8) {
         self.mem.write_u8(paddr, value);
