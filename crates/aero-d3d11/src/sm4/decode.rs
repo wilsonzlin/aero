@@ -816,8 +816,10 @@ pub fn decode_instruction(
 
     let inst = match opcode {
         OPCODE_IF => {
-            // `if` and `ifc` share the same opcode ID (`OPCODE_IF`); the opcode token's "instruction
-            // test" field differentiates them.
+            // Canonically, SM4/SM5 token streams use distinct opcode IDs for `if` (OPCODE_IF) and
+            // compare-based `ifc` (OPCODE_IFC). In practice, some toolchains encode `ifc_*` using
+            // `OPCODE_IF` with a non-boolean instruction-test value in the opcode token; handle
+            // that encoding here as well.
             //
             // - 0/1: `if_z` / `if_nz`
             // - 2..=7: `ifc_*` with an in-token comparison operator.
