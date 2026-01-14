@@ -213,6 +213,7 @@ fn pc_platform_ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
         per_vector_masking,
         "AHCI MSI capability should support per-vector masking"
     );
+    let pending_off = if is_64bit { cap + 0x14 } else { cap + 0x10 };
 
     let vector: u8 = 0x46;
     pci_cfg_write_u32(&mut pc, bdf, cap + 0x04, 0xFEE0_0000); // addr low (dest=0)
@@ -269,6 +270,11 @@ fn pc_platform_ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
     // Polling INTx should not produce any interrupt (INTx is disabled and MSI is masked).
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().get_pending(), None);
+    assert_ne!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to be guest-visible while vector is masked"
+    );
 
     // Unmask MSI in canonical PCI config space.
     if is_64bit {
@@ -286,6 +292,11 @@ fn pc_platform_ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
     // while masked.
     pc.process_ahci();
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector));
+    assert_eq!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to clear after delivery"
+    );
 }
 
 #[test]
