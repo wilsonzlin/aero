@@ -110,13 +110,19 @@ Feature matrix for the Win7 WDK-backed UMDs:
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
 
-Host-side unit tests that exercise Map/Unmap and the newer resource/layout behavior live in:
+Host-side unit tests (portable; no WDK required) for command-stream encoding and validation live under
+`drivers/aerogpu/umd/d3d10_11/tests/` (see `CMakeLists.txt` for the full list of `aerogpu_d3d10_11_*_tests`):
 
 - `drivers/aerogpu/umd/d3d10_11/tests/map_unmap_tests.cpp` (CMake target: `aerogpu_d3d10_11_map_unmap_tests`; portable ABI build, no WDK required) covers Map/Unmap upload + staging readback, including mip/array layout (`TestGuestBackedTexture2DMipArray*`) and BC format paths (`Test*BcTexture*`).
   - Quick run (from repo root):
     - `cmake -S drivers/aerogpu/umd/d3d10_11/tests -B out/umd_d3d10_11_tests && cmake --build out/umd_d3d10_11_tests && ctest --test-dir out/umd_d3d10_11_tests -V`
 - `drivers/aerogpu/umd/d3d10_11/tests/dxgi_format_tests.cpp` (CMake target: `aerogpu_d3d10_11_dxgi_format_tests`) covers DXGI→AeroGPU format mapping and ABI-gated sRGB/BC policies in `src/aerogpu_dxgi_format.h`.
 - `drivers/aerogpu/umd/d3d10_11/tests/state_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_state_packets_tests`) covers fixed-function state packet encoding (`SET_BLEND_STATE`, `SET_RASTERIZER_STATE`, `SET_DEPTH_STENCIL_STATE`) and protocol invariants (size/alignment, default-state behavior).
+- `drivers/aerogpu/umd/d3d10_11/tests/blend_state_validation_tests.cpp` (CMake target: `aerogpu_d3d10_11_blend_state_validation_tests`) covers blend-state validation rules and protocol limits (non-uniform per-RT blend state rejected, alpha-to-coverage rejected, limited blend factors/ops).
+- `drivers/aerogpu/umd/d3d10_11/tests/viewport_scissor_validation_tests.cpp` (CMake target: `aerogpu_d3d10_11_viewport_scissor_validation_tests`) covers single-viewport/scissor validation behavior (`E_NOTIMPL` surfaced for mismatched arrays; best-effort slot 0 is applied).
+- `drivers/aerogpu/umd/d3d10_11/tests/render_targets_tests.cpp` (CMake target: `aerogpu_d3d10_11_render_targets_tests`) and `drivers/aerogpu/umd/d3d10_11/tests/mrt_tests.cpp` (CMake target: `aerogpu_d3d10_11_mrt_tests`) cover `SET_RENDER_TARGETS` packet encoding and MRT invariants (including slot/gap preservation).
+- `drivers/aerogpu/umd/d3d10_11/tests/render_target_tests.cpp` (CMake target: `aerogpu_d3d10_11_render_target_tests`) is an end-to-end harness that opens an adapter/device (`OpenAdapter10`) and validates render-target binding behavior.
+- `drivers/aerogpu/umd/d3d10_11/tests/gs_shader_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_shader_packets_tests`) and `drivers/aerogpu/umd/d3d10_11/tests/gs_resource_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_resource_packets_tests`) cover GS create/bind and geometry-stage resource binding packet encoding (including the `stage_ex` ABI encoding).
 - Host-side command-stream execution tests for the WebGPU-backed executor live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`), including smoke coverage for `AEROGPU_CMD_*` packets, GS translation (`runtime/gs_translate.rs`), and strip restart semantics (`runtime/strip_to_list.rs`).
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/` (run via `cargo test -p aero-gpu`)
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
