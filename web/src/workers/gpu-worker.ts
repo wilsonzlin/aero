@@ -2660,42 +2660,6 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
     return;
   }
 
-  if (err instanceof PresenterError) {
-    // WebGPU validation errors can surface asynchronously as `GPUUncapturedErrorEvent`s.
-    // Surface these as structured diagnostics events instead of treating them as fatal worker errors.
-    if (err.code === "webgpu_uncaptured_error") {
-      const msgLower = err.message.toLowerCase();
-      const cause = err.cause as unknown as { name?: unknown; message?: unknown } | null;
-      const causeName = typeof cause?.name === "string" ? cause.name.toLowerCase() : "";
-      const causeMessage = typeof cause?.message === "string" ? cause.message.toLowerCase() : "";
-      const haystack = `${causeName} ${causeMessage} ${msgLower}`;
-
-      let severity: GpuRuntimeErrorEvent["severity"] = "error";
-      let category = "Unknown";
-      if (haystack.includes("outofmemory") || haystack.includes("out of memory")) {
-        severity = "fatal";
-        category = "OutOfMemory";
-      } else if (haystack.includes("validation")) {
-        category = "Validation";
-      } else if (haystack.includes("device lost") || haystack.includes("devicelost")) {
-        category = "DeviceLost";
-      }
-
-      emitGpuEvent({
-        time_ms: performance.now(),
-        backend_kind: backend ?? backendKindForEvent(),
-        severity,
-        category,
-        message: err.message,
-        details: {
-          code: err.code,
-          cause: err.cause,
-        },
-      });
-      return;
-    }
-  }
-
   const backend_kind = backend ?? presenter?.backend ?? backendKindForEvent();
   // Best-effort init-vs-runtime classification:
   // - before READY is sent: treat as init failure (often fatal)
