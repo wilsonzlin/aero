@@ -233,3 +233,178 @@ fn pc_platform_nvme_msi_fires_when_intx_disabled() {
     assert_eq!(pc.interrupts.borrow().get_pending(), None);
     assert!(!pc.interrupts.borrow().gsi_level(gsi));
 }
+
+#[test]
+fn pc_platform_nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_nvme: true,
+            enable_ahci: false,
+            enable_uhci: false,
+            ..Default::default()
+        },
+    );
+    let bdf = NVME_CONTROLLER.bdf;
+
+    // Switch the platform into APIC mode (MSI delivers to LAPIC).
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Program MSI for the NVMe controller, but start with the vector masked.
+    let msi_off = find_pci_capability(&mut pc, bdf, PCI_CAP_ID_MSI);
+    let ctrl = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, msi_off + 0x02);
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(
+        per_vector_masking,
+        "NVMe MSI capability should support per-vector masking for pending-bit tests"
+    );
+
+    let vector: u8 = 0x45;
+    // Standard xAPIC physical destination MSI address for destination APIC ID 0.
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msi_off + 0x04,
+        0xfee0_0000,
+    );
+    if is_64bit {
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x08,
+            0,
+        );
+        write_cfg_u16(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x0c,
+            u16::from(vector),
+        );
+        // Mask/pending registers for 64-bit MSI live at +0x10/+0x14.
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x10,
+            1,
+        );
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x14,
+            0,
+        );
+    } else {
+        write_cfg_u16(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x08,
+            u16::from(vector),
+        );
+        // Mask/pending registers for 32-bit MSI live at +0x0c/+0x10.
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x0c,
+            1,
+        );
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x10,
+            0,
+        );
+    }
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msi_off + 0x02,
+        ctrl | 0x0001,
+    );
+
+    // Enable Memory Space + Bus Mastering + INTx Disable.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0406);
+
+    let bar0_base = read_nvme_bar0_base(&mut pc);
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    // Configure + enable controller.
+    pc.memory.write_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    pc.memory.write_u64(bar0_base + 0x0028, asq); // ASQ
+    pc.memory.write_u64(bar0_base + 0x0030, acq); // ACQ
+    pc.memory.write_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    // Admin IDENTIFY (controller) command in SQ0 entry 0.
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    pc.memory.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    pc.memory.write_u32(bar0_base + 0x1000, 1);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // First process: NVMe posts a completion and attempts MSI delivery, but the vector is masked so
+    // MSI is suppressed and a pending bit is latched inside the device model.
+    pc.process_nvme();
+    assert_eq!(
+        pc.interrupts.borrow().get_pending(),
+        None,
+        "masked MSI should suppress delivery"
+    );
+
+    // Now unmask MSI in the canonical PCI config space.
+    if is_64bit {
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x10,
+            0,
+        );
+    } else {
+        write_cfg_u32(
+            &mut pc,
+            bdf.bus,
+            bdf.device,
+            bdf.function,
+            msi_off + 0x0c,
+            0,
+        );
+    }
+
+    // Second process: the interrupt condition is still asserted (no new rising edge), so delivery
+    // should occur only if the pending bit survived canonical-config mirroring.
+    pc.process_nvme();
+    assert_eq!(
+        pc.interrupts.borrow().get_pending(),
+        Some(vector),
+        "MSI should re-deliver after unmask due to the pending bit"
+    );
+}
