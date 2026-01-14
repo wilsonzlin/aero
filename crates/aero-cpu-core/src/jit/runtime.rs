@@ -826,6 +826,7 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::panic;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[derive(Default)]
@@ -936,7 +937,13 @@ mod tests {
         static LAST_PANIC_LOC: RefCell<Option<(String, u32)>> = RefCell::new(None);
     }
 
+    // `std::panic::set_hook` installs a process-wide hook. Even though our CI/safe-run environment
+    // forces single-threaded test execution, other runners may execute tests concurrently. Guard
+    // against racy hook replacement by serializing access here.
+    static PANIC_HOOK_LOCK: Mutex<()> = Mutex::new(());
+
     fn capture_panic_location(f: impl FnOnce()) -> (String, u32) {
+        let _guard = PANIC_HOOK_LOCK.lock().expect("panic hook lock poisoned");
         LAST_PANIC_LOC.with(|cell| cell.borrow_mut().take());
         let prev = panic::take_hook();
         panic::set_hook(Box::new(|info| {
