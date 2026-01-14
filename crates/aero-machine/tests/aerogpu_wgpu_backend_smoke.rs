@@ -251,8 +251,8 @@ fn aerogpu_wgpu_backend_smoke_executes_acmd_and_updates_scanout() {
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
 
     let start = Instant::now();
-    let mut completed = 0u64;
-    let mut page_fence = 0u64;
+    let mut completed;
+    let mut page_fence;
     loop {
         m.process_aerogpu();
 
@@ -304,5 +304,5 @@ fn aerogpu_wgpu_backend_smoke_executes_acmd_and_updates_scanout() {
     assert_eq!(fb.len(), (width * height) as usize);
 
     let green = u32::from_le_bytes([0, 255, 0, 255]);
-    assert!(fb.iter().any(|&px| px == green));
+    assert!(fb.contains(&green));
 }
