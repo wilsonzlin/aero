@@ -1092,7 +1092,10 @@ def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInt
             #
             # but accept other ways of explicitly creating/touching the key.
             flags = _try_parse_inf_int(parts[3] if len(parts) > 3 else "")
-            if value_name == "" and flags is not None and (flags & 0x10):
+            # "Equivalent key creation" forms:
+            # - FLG_ADDREG_KEYONLY (0x10) (recommended)
+            # - setting any value under the key (including the default value name)
+            if value_name == "" and (len(parts) >= 5 or (flags is not None and (flags & 0x10))):
                 interrupt_mgmt_lines.append(InfRegLineOccurrence(line_no=line_no, raw_line=f"{file.as_posix()}:{line_no}: {line}"))
             elif value_name:
                 interrupt_mgmt_lines.append(InfRegLineOccurrence(line_no=line_no, raw_line=f"{file.as_posix()}:{line_no}: {line}"))
@@ -1264,6 +1267,20 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
             f"internal unit-test failed: expected MessageNumberLimit=8, got: {[o.value for o in scan.message_number_limit]}"
         )
 
+    # Also accept "equivalent key creation" where a value under Interrupt Management
+    # is written (including the default value name), even without FLG_ADDREG_KEYONLY.
+    default_value_key = r"""
+[Foo]
+HKR, "Interrupt Management",, 0x00010001, 0
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+"""
+    scan2, errors2 = scan_inf_msi_interrupt_settings(default_value_key, file=Path("<unit-test>"))
+    if errors2:
+        fail(format_error("internal unit-test failed: scan_inf_msi_interrupt_settings returned errors:", errors2))
+    if not scan2.interrupt_management_key_lines:
+        fail("internal unit-test failed: expected default-value Interrupt Management key line to be detected")
+
 
 def _self_test_validate_win7_virtio_inf_msi_settings() -> None:
     bad = r"""
@@ -1308,8 +1325,30 @@ CopyFiles = Foo
 [Install.NT.HW]
 AddReg = MsiReg
 
+    [MsiReg]
+    HKR, "Interrupt Management",,0x00000010
+    HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+    HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+"""
+
+    good_default_key = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT]
+CopyFiles = Foo
+
+[Install.NT.HW]
+AddReg = MsiReg
+
 [MsiReg]
-HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management",,0x00010001, 0
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
 """
@@ -1461,6 +1500,17 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
                 format_error(
                     "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly failed for a well-formed sample INF:",
                     good_errors,
+                )
+            )
+
+        good_default_key_path = Path(td) / "good-default-key.inf"
+        good_default_key_path.write_text(good_default_key, encoding="utf-8")
+        good_default_key_errors = validate_win7_virtio_inf_msi_settings("virtio-net", good_default_key_path)
+        if good_default_key_errors:
+            fail(
+                format_error(
+                    "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly failed for an INF that creates the Interrupt Management key by setting a default value:",
+                    good_default_key_errors,
                 )
             )
 
@@ -1893,7 +1943,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                     if subkey == "interrupt management":
                         value_name = _normalize_inf_reg_value_name(parts[2] if len(parts) > 2 else "")
                         flags = _try_parse_inf_int(parts[3] if len(parts) > 3 else "")
-                        if value_name or (flags is not None and (flags & 0x10)):
+                        if value_name or (value_name == "" and len(parts) >= 5) or (flags is not None and (flags & 0x10)):
                             found_interrupt_key = f"{inf_path.as_posix()}:{line_no}: {line}"
                     if subkey != "interrupt management\\messagesignaledinterruptproperties":
                         continue
