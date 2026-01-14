@@ -12,14 +12,16 @@ fn tier1_compilation_byte_len_excludes_trailing_invalid() {
     // at the unsupported instruction. The `byte_len` metadata should cover only the executed bytes
     // (ie. exclude the trailing Invalid instruction).
     let entry = 0x1000u64;
-    let mut bus = SimpleBus::new(0x2000);
-    let invalid = tier1_common::pick_invalid_opcode(64);
-    bus.load(entry, &[0x53, invalid]);
+    for bitness in [16u32, 32, 64] {
+        let mut bus = SimpleBus::new(0x2000);
+        let invalid = tier1_common::pick_invalid_opcode(bitness);
+        bus.load(entry, &[0x53, invalid]);
 
-    let compilation =
-        compile_tier1_block(&bus, entry, 64, BlockLimits::default()).expect("compile_tier1_block");
+        let compilation = compile_tier1_block(&bus, entry, bitness, BlockLimits::default())
+            .expect("compile_tier1_block");
 
-    assert!(compilation.exit_to_interpreter);
-    assert_eq!(compilation.instruction_count, 1);
-    assert_eq!(compilation.byte_len, 1);
+        assert!(compilation.exit_to_interpreter);
+        assert_eq!(compilation.instruction_count, 1);
+        assert_eq!(compilation.byte_len, 1);
+    }
 }
