@@ -46,7 +46,7 @@ fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
     // def c0, 0.5, -1.0, 2.0, 8.0
     // def c1, 0.0, 0.0, 0.0, 0.0
     // setp_gt p0, c0, c1
-    // exp_sat (p0) r0, c0
+    // exp_sat_x2 (p0) r0, c0
     // mov oC0, r0
     // end
     let tokens = vec![
@@ -70,10 +70,10 @@ fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
         dst_token(19, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
-        // exp_sat (p0.x) r0, c0
+        // exp_sat_x2 (p0.x) r0, c0
         // - predication bit: 0x1000_0000
-        // - saturate bit: 0x0010_0000 (bit 20)
-        opcode_token(14, 3) | 0x1000_0000 | (1u32 << 20),
+        // - result modifier bits (20..23): saturate + mul2 shift = 0b0011 => 3 << 20
+        opcode_token(14, 3) | 0x1000_0000 | (3u32 << 20),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(19, 0, 0x00, 0), // p0.x
@@ -94,6 +94,7 @@ fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
 
     assert!(wgsl.wgsl.contains("exp2("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("if (p0.x)"), "wgsl:\n{}", wgsl.wgsl);
 }
 
