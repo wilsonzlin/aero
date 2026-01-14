@@ -14,6 +14,9 @@ const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 // `stage_ex` values use DXBC program-type numbering (SM4/SM5 version token).
+//
+// Note: DXBC program types 0/1 (Pixel/Vertex) are intentionally invalid in AeroGPU's stage_ex
+// encoding; those stages must be represented via the legacy `shader_stage` field.
 const STAGE_EX_HULL: u32 = 3;
 const STAGE_EX_DOMAIN: u32 = 4;
 
