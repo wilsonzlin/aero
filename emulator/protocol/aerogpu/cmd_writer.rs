@@ -793,11 +793,11 @@ impl AerogpuCmdWriter {
         slot: u32,
         texture: AerogpuHandle,
     ) {
+        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         let base = self.append_raw(
             AerogpuCmdOpcode::SetTexture,
             size_of::<AerogpuCmdSetTexture>(),
         );
-        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetTexture, shader_stage),
             shader_stage,
@@ -924,6 +924,7 @@ impl AerogpuCmdWriter {
         samplers: &[AerogpuHandle],
     ) {
         assert!(samplers.len() <= u32::MAX as usize);
+        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         let samplers_size = size_of::<AerogpuHandle>()
             .checked_mul(samplers.len())
             .expect("SET_SAMPLERS packet too large (usize overflow)");
@@ -931,7 +932,6 @@ impl AerogpuCmdWriter {
             .checked_add(samplers_size)
             .expect("SET_SAMPLERS packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::SetSamplers, unpadded_size);
-        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetSamplers, shader_stage),
             shader_stage,
@@ -986,8 +986,8 @@ impl AerogpuCmdWriter {
         sampler: AerogpuHandle,
     ) {
         let unpadded_size = size_of::<AerogpuCmdSetSamplers>() + size_of::<AerogpuHandle>();
-        let base = self.append_raw(AerogpuCmdOpcode::SetSamplers, unpadded_size);
         let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
+        let base = self.append_raw(AerogpuCmdOpcode::SetSamplers, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetSamplers, shader_stage),
             shader_stage,
@@ -1017,6 +1017,7 @@ impl AerogpuCmdWriter {
         bindings: &[AerogpuConstantBufferBinding],
     ) {
         assert!(bindings.len() <= u32::MAX as usize);
+        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         let bindings_size = size_of::<AerogpuConstantBufferBinding>()
             .checked_mul(bindings.len())
             .expect("SET_CONSTANT_BUFFERS packet too large (usize overflow)");
@@ -1024,7 +1025,6 @@ impl AerogpuCmdWriter {
             .checked_add(bindings_size)
             .expect("SET_CONSTANT_BUFFERS packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::SetConstantBuffers, unpadded_size);
-        let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetConstantBuffers, shader_stage),
             shader_stage,
@@ -1299,8 +1299,8 @@ impl AerogpuCmdWriter {
     ) {
         let unpadded_size =
             size_of::<AerogpuCmdSetConstantBuffers>() + size_of::<AerogpuConstantBufferBinding>();
-        let base = self.append_raw(AerogpuCmdOpcode::SetConstantBuffers, unpadded_size);
         let (shader_stage, reserved0) = encode_shader_stage_with_ex(shader_stage, stage_ex);
+        let base = self.append_raw(AerogpuCmdOpcode::SetConstantBuffers, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetConstantBuffers, shader_stage),
             shader_stage,
@@ -1365,8 +1365,8 @@ impl AerogpuCmdWriter {
         let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsF>()
             .checked_add(payload_size)
             .expect("SET_SHADER_CONSTANTS_F packet too large (usize overflow)");
-        let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsF, unpadded_size);
         let (stage, reserved0) = encode_shader_stage_with_ex(stage, stage_ex);
+        let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsF, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderConstantsF, stage),
             stage,

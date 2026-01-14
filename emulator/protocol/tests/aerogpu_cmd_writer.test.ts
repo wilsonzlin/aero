@@ -759,6 +759,21 @@ test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, 
   assert.equal(cursor, bytes.byteLength);
 });
 
+test("AerogpuCmdWriter optional stageEx=Pixel uses legacy encoding (shaderStage=PIXEL, reserved0=0)", () => {
+  const w = new AerogpuCmdWriter();
+  w.setTexture(AerogpuShaderStage.Pixel, 0, 99, AerogpuShaderStageEx.Pixel);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetTexture);
+  assert.equal(view.getUint32(pkt0 + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(pkt0 + 20, true), 0);
+
+  assert.equal(bytes.byteLength, AEROGPU_CMD_STREAM_HEADER_SIZE + AEROGPU_CMD_SET_TEXTURE_SIZE);
+});
+
 test("AerogpuCmdWriter emits stage_ex packets and extended BindShaders encoding", () => {
   const w = new AerogpuCmdWriter();
   w.bindShadersEx(1, 2, 3, 4, 5, 6);
