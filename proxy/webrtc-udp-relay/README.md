@@ -815,6 +815,25 @@ be reachable or may be advertising the wrong external address.
 
 See "Destination policy (UDP egress)" above.
 
+### Startup security warnings
+
+On startup, the relay logs `WARN` lines with prefix `startup security warning:` when it detects
+potentially unsafe or suspicious configurations (defense in depth). These warnings are **not fatal**
+but are intended to help operators avoid accidental open-proxy or DoS-prone deployments.
+
+Examples of conditions that trigger warnings include:
+
+- `AUTH_MODE=none` (unauthenticated relay)
+- `ALLOWED_ORIGINS` contains `*` (allows any Origin)
+- `UDP_INBOUND_FILTER_MODE=any` (full-cone inbound UDP; less safe)
+- `DESTINATION_POLICY_PRESET=dev` or `ALLOW_PRIVATE_NETWORKS=true` in `--mode=prod` (broad UDP egress)
+- `MAX_SESSIONS=0` in `--mode=prod` (unlimited sessions)
+- `L2_BACKEND_AUTH_FORWARD_MODE=query` when relay auth is enabled (forwards credentials via query params)
+- Unusually large WebRTC/SCTP caps or timeouts (weakens oversized message DoS hardening):
+  - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES`
+  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES`
+  - `WEBRTC_SESSION_CONNECT_TIMEOUT`
+
 ## Build verification
 
 ```bash
