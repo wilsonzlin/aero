@@ -766,18 +766,23 @@ static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& 
   if (bytes < sizeof(SRB_IO_CONTROL) + kQueryInfoV1Len) {
     log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned too few bytes=%lu (expected >=%zu)", bytes,
              sizeof(SRB_IO_CONTROL) + kQueryInfoV1Len);
+    SetLastError(ERROR_BAD_LENGTH);
     return std::nullopt;
   }
 
   ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
   if (ctrl->ReturnCode != 0) {
     log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned ReturnCode=0x%08lx", ctrl->ReturnCode);
+    // Surface miniport ReturnCode to callers that capture GetLastError() (e.g. virtio-blk-reset marker).
+    // This is typically an NTSTATUS, but it's still more actionable than leaving the last error as 0.
+    SetLastError(static_cast<DWORD>(ctrl->ReturnCode));
     return std::nullopt;
   }
   const size_t payload_bytes = (bytes > sizeof(SRB_IO_CONTROL)) ? (bytes - sizeof(SRB_IO_CONTROL)) : 0;
   size_t returned_len = std::min<size_t>(payload_bytes, ctrl->Length);
   if (returned_len < kQueryInfoV1Len) {
     log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT returned Length=%lu (expected >=%zu)", ctrl->Length, kQueryInfoV1Len);
+    SetLastError(ERROR_BAD_LENGTH);
     return std::nullopt;
   }
 
@@ -820,6 +825,7 @@ static bool ForceAerovblkMiniportReset(Logger& log, HANDLE hPhysicalDrive, bool*
   }
   if (bytes < sizeof(SRB_IO_CONTROL)) {
     log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(force reset) returned too few bytes=%lu", bytes);
+    SetLastError(ERROR_BAD_LENGTH);
     return false;
   }
 
@@ -830,6 +836,8 @@ static bool ForceAerovblkMiniportReset(Logger& log, HANDLE hPhysicalDrive, bool*
   }
   if (ctrl->ReturnCode != 0) {
     log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(force reset) ReturnCode=0x%08lx", ctrl->ReturnCode);
+    // Surface miniport ReturnCode to callers that capture GetLastError() (e.g. virtio-blk-reset marker).
+    SetLastError(static_cast<DWORD>(ctrl->ReturnCode));
     return false;
   }
 
