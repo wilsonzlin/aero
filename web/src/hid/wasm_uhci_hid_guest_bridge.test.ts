@@ -189,7 +189,8 @@ describe("hid/WasmUhciHidGuestBridge", () => {
     const webhid_push_input_report = vi.fn();
     const webhid_drain_output_reports = vi.fn(() => []);
     const webhid_drain_feature_report_requests = vi.fn(() => [{ deviceId: 1, requestId: 7, reportId: 3 }]);
-    const webhid_complete_feature_report_request = vi.fn(() => true);
+    const webhid_complete_feature_report_request = vi.fn();
+    const webhid_fail_feature_report_request = vi.fn();
 
     const uhci: UhciRuntimeHidApi = {
       webhid_attach,
@@ -198,6 +199,7 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       webhid_drain_output_reports,
       webhid_drain_feature_report_requests,
       webhid_complete_feature_report_request,
+      webhid_fail_feature_report_request,
     };
 
     const host = {
@@ -215,10 +217,10 @@ describe("hid/WasmUhciHidGuestBridge", () => {
 
     const data = new Uint8Array([1, 2, 3]);
     expect(guest.completeFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, data })).toBe(true);
-    expect(webhid_complete_feature_report_request).toHaveBeenCalledWith(1, 7, 3, true, data);
+    expect(webhid_complete_feature_report_request).toHaveBeenCalledWith(1, 7, 3, data);
 
     expect(guest.failFeatureReportRequest?.({ deviceId: 1, requestId: 7, reportId: 3, error: "nope" })).toBe(true);
-    expect(webhid_complete_feature_report_request).toHaveBeenCalledWith(1, 7, 3, false);
+    expect(webhid_fail_feature_report_request).toHaveBeenCalledWith(1, 7, 3);
   });
 
   it("caps feature report forwarding per tick", () => {

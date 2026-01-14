@@ -53,7 +53,7 @@ import { installIoInputTelemetryBackendOnAeroGlobal } from "./runtime/io_input_t
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
 import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
-import { DiskManager } from "./storage/disk_manager";
+import { DiskManager, type RemoteCacheStatusSerializable } from "./storage/disk_manager";
 import type { DiskImageMetadata, MountConfig } from "./storage/metadata";
 import { OPFS_DISKS_PATH, OPFS_LEGACY_IMAGES_DIR } from "./storage/metadata";
 import { RuntimeDiskClient, type OpenResult } from "./storage/runtime_disk_client";
@@ -3151,6 +3151,107 @@ function renderDisksPanel(): HTMLElement {
     remoteCacheMiB.disabled = remoteCacheUnbounded.checked;
   });
 
+  const remoteCachesStatus = el("div", { class: "mono muted", text: "" });
+  const remoteCachesTableBody = el("tbody");
+  const remoteCachesTable = el(
+    "table",
+    {},
+    el(
+      "thead",
+      {},
+      el(
+        "tr",
+        {},
+        el("th", { text: "Cache key" }),
+        el("th", { text: "Cached bytes" }),
+        el("th", { text: "Last accessed" }),
+        el("th", { text: "Delivery" }),
+        el("th", { text: "Image" }),
+      ),
+    ),
+    remoteCachesTableBody,
+  );
+
+  let remoteCaches: RemoteCacheStatusSerializable[] = [];
+  let remoteCacheCorruptKeys: string[] = [];
+
+  function renderRemoteCachesTable(): void {
+    remoteCachesTableBody.replaceChildren();
+
+    if (!manager) {
+      remoteCachesStatus.textContent = "";
+      remoteCachesTableBody.append(el("tr", {}, el("td", { colspan: "5", class: "muted", text: "Initializing…" })));
+      return;
+    }
+
+    const totalBytes = remoteCaches.reduce((sum, c) => sum + c.cachedBytes, 0);
+    remoteCachesStatus.textContent =
+      `Remote caches: ${remoteCaches.length} valid, ${remoteCacheCorruptKeys.length} corrupt` +
+      (remoteCaches.length > 0 ? `, ~${formatBytes(totalBytes)} cached` : "");
+
+    if (remoteCaches.length === 0 && remoteCacheCorruptKeys.length === 0) {
+      remoteCachesTableBody.append(el("tr", {}, el("td", { colspan: "5", class: "muted", text: "No caches found." })));
+      return;
+    }
+
+    for (const c of remoteCaches) {
+      const last =
+        typeof c.lastAccessedAtMs === "number" && Number.isFinite(c.lastAccessedAtMs) && c.lastAccessedAtMs > 0
+          ? new Date(c.lastAccessedAtMs).toLocaleString()
+          : "unknown";
+      const imageLabel = `${c.imageId}@${c.imageVersion}`;
+      remoteCachesTableBody.append(
+        el(
+          "tr",
+          {},
+          el("td", { class: "mono", title: c.cacheKey, text: c.cacheKey }),
+          el("td", { text: formatBytes(c.cachedBytes) }),
+          el("td", { class: "mono", text: last }),
+          el("td", { class: "mono", text: c.deliveryType }),
+          el("td", { class: "mono", title: imageLabel, text: imageLabel }),
+        ),
+      );
+    }
+
+    // Append corrupt entries last.
+    for (const key of remoteCacheCorruptKeys) {
+      remoteCachesTableBody.append(
+        el(
+          "tr",
+          { class: "missing" },
+          el("td", { class: "mono", title: key, text: key }),
+          el("td", { class: "muted", text: "unknown" }),
+          el("td", { class: "muted", text: "unknown" }),
+          el("td", { class: "muted", text: "unknown" }),
+          el("td", { class: "muted", text: "(corrupt)" }),
+        ),
+      );
+    }
+  }
+
+  async function refreshRemoteCaches(): Promise<void> {
+    try {
+      if (!manager) manager = await diskManagerPromise;
+      const res = await manager.listRemoteCaches();
+      remoteCaches = res.caches;
+      remoteCacheCorruptKeys = res.corruptKeys;
+      renderRemoteCachesTable();
+    } catch (err) {
+      remoteCachesStatus.textContent = `Remote cache list failed: ${err instanceof Error ? err.message : String(err)}`;
+      remoteCachesTableBody.replaceChildren(
+        el("tr", {}, el("td", { colspan: "5", class: "muted", text: "Failed to list caches." })),
+      );
+    }
+  }
+
+  const refreshRemoteCachesBtn = el("button", {
+    text: "Refresh remote caches",
+    onclick: () => {
+      remoteCachesStatus.textContent = "";
+      void refreshRemoteCaches();
+    },
+  }) as HTMLButtonElement;
+
   const addRemoteBtn = el("button", {
     text: "Add remote disk",
     onclick: async () => {
@@ -3261,6 +3362,8 @@ function renderDisksPanel(): HTMLElement {
   void refresh().catch((err) => {
     status.textContent = err instanceof Error ? err.message : String(err);
   });
+  // Populate the remote cache table on first render (best-effort).
+  void refreshRemoteCaches().catch(() => {});
   return el(
     "div",
     { class: "panel" },
@@ -3295,6 +3398,10 @@ function renderDisksPanel(): HTMLElement {
       remoteCacheUnbounded,
       addRemoteBtn,
     ),
+    el("h3", { text: "Remote caches" }),
+    el("div", { class: "row" }, refreshRemoteCachesBtn),
+    remoteCachesStatus,
+    remoteCachesTable,
     status,
     table,
   );

@@ -51,7 +51,8 @@ export type UhciRuntimeHidApi = {
   webhid_fail_feature_report_request?(deviceId: number, requestId: number, reportId: number): void;
 
   /**
-   * Legacy completion API (pre `webhid_complete_feature_report_request`) used by older WASM builds.
+   * Legacy completion API (pre `webhid_complete_feature_report_request` / `webhid_fail_feature_report_request`)
+   * used by older WASM builds.
    */
   webhid_push_feature_report_result?(
     deviceId: number,
