@@ -29,7 +29,20 @@ import {
   publishCursorState,
 } from "../ipc/cursor_state";
 
-const WORKER_MESSAGE_TIMEOUT_MS = 15_000;
+const nodeMajor = (() => {
+  const major = Number.parseInt(process.versions.node.split(".", 1)[0] ?? "", 10);
+  return Number.isFinite(major) ? major : 0;
+})();
+
+const WORKER_MESSAGE_TIMEOUT_MS = (() => {
+  // Under newer Node majors and/or when Vitest runs multiple forks in parallel, worker startup +
+  // TypeScript-strip loaders + WASM initialization can take significantly longer. Keep the default
+  // tight for CI baseline (Node 22.x), but give newer majors more room so these tests don't flake
+  // under host contention.
+  if (nodeMajor >= 25) return 45_000;
+  if (nodeMajor >= 23) return 30_000;
+  return 15_000;
+})();
 const TEST_TIMEOUT_MS = 70_000;
 
 async function waitForWorkerMessage(
