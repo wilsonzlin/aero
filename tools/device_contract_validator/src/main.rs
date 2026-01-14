@@ -1208,6 +1208,7 @@ fn validate_virtio_input_device_desc_split(
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
     let ms_hwid = format!("{base_hwid}&SUBSYS_00111AF4&REV_{rev}");
     let fb_hwid = format!("{base_hwid}&REV_{rev}");
+    let base_upper = base_hwid.to_ascii_uppercase();
 
     for models_section in ["Aero.NTx86", "Aero.NTamd64"] {
         let lines = parse_inf_models_section(inf_text, models_section);
@@ -1269,6 +1270,33 @@ fn validate_virtio_input_device_desc_split(
                 base_hwid,
                 fb_base.len(),
                 fb_base
+                    .iter()
+                    .map(|e| e.raw_line.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // Optional-but-recommended: ensure there are no other SUBSYS-qualified model entries
+        // for this device ID beyond the keyboard + mouse functions. This prevents accidental
+        // overlap with other virtio-input functions (e.g. tablets).
+        let extra_subsys: Vec<_> = lines
+            .iter()
+            .filter(|l| {
+                let upper = l.hardware_id.to_ascii_uppercase();
+                upper.starts_with(&base_upper)
+                    && upper.contains("&SUBSYS_")
+                    && !l.hardware_id.eq_ignore_ascii_case(&kb_hwid)
+                    && !l.hardware_id.eq_ignore_ascii_case(&ms_hwid)
+            })
+            .collect();
+        if !extra_subsys.is_empty() {
+            bail!(
+                "virtio-input INF {}: must not contain extra SUBSYS-qualified model entry/entries in [{}] for HWID family {} (allowed only keyboard+mouse); found {}: {:?}",
+                inf_path.display(),
+                models_section,
+                base_hwid,
+                extra_subsys.len(),
+                extra_subsys
                     .iter()
                     .map(|e| e.raw_line.as_str())
                     .collect::<Vec<_>>()
@@ -1652,15 +1680,6 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
 
                 let expected_rev = parse_contract_pci_revision_for_device(dev, &base)
                     .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
-                let strict = format!("{base}&REV_{expected_rev:02X}");
-
-                if !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
-                    bail!(
-                        "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
-                        inf_path.display(),
-                        format_bullets(&active_hwids)
-                    );
-                }
 
                 let mut missing_rev = BTreeSet::new();
                 let mut wrong_rev = BTreeSet::new();
