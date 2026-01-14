@@ -168,6 +168,28 @@ affecting streaming.
 The harness validates correct render/capture/duplex behavior under QEMU; for eventq-specific debugging, use the
 virtio-snd `DebugLogs` build and capture kernel debug output while running the selftest.
 
+### virtio-input QEMU compatibility mode (`CompatIdName`)
+
+The Win7 virtio-input driver is **strict by default** (Aero contract v1): it expects the Aero `ID_NAME` strings and
+contract `ID_DEVIDS` values.
+
+Stock QEMU virtio-input devices often report non-Aero `ID_NAME` strings (for example `QEMU Virtio Keyboard`) and may
+not satisfy strict `ID_DEVIDS` validation. If the virtio-input driver fails to start under QEMU (Code 10 /
+`STATUS_NOT_SUPPORTED`) due to identifier mismatches, enable the driver's opt-in compatibility mode:
+
+```bat
+reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
+  /v CompatIdName /t REG_DWORD /d 1 /f
+```
+
+Then reboot (or disable/enable the device).
+
+To bake this into a guest image created by the in-tree provisioning scripts, generate provisioning media with:
+
+- `New-AeroWin7TestImage.ps1 -EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`)
+
+Disable compat mode when validating strict Aero contract conformance.
+
 ### Building (Windows)
 
 See `guest-selftest/README.md`.
