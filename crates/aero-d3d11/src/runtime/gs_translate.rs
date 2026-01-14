@@ -41,16 +41,18 @@
 //! Resource support is also intentionally limited:
 //! - Read-only Texture2D ops (`sample`, `sample_l`, `ld`, `resinfo`)
 //! - Read-only SRV buffer ops (`ld_raw`, `ld_structured`, `bufinfo`)
+//! - SM5 UAV buffer ops (`ld_uav_raw`, `ld_structured_uav`, `store_raw`, `store_structured`,
+//!   `atomic_add`, `bufinfo` on `u#`)
 //!
-//! Resource writes/stores/UAVs/atomics and barrier/synchronization instructions are not supported,
-//! and any
-//! unsupported instruction or operand shape is rejected by translation.
+//! Other resource writes/stores (typed UAV stores, texture stores), and barrier/synchronization
+//! instructions are not supported, and any unsupported instruction or operand shape is rejected by
+//! translation.
 
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
     BIND_GROUP_INTERNAL_EMULATION, EXPANDED_VERTEX_MAX_VARYINGS,
 };
 use crate::sm4::ShaderStage;
@@ -282,9 +284,13 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::ResInfo { .. } => "resinfo",
         Sm4Inst::Ld { .. } => "ld",
         Sm4Inst::LdRaw { .. } => "ld_raw",
+        Sm4Inst::LdUavRaw { .. } => "ld_uav_raw",
         Sm4Inst::StoreRaw { .. } => "store_raw",
         Sm4Inst::LdStructured { .. } => "ld_structured",
+        Sm4Inst::LdStructuredUav { .. } => "ld_structured_uav",
         Sm4Inst::StoreStructured { .. } => "store_structured",
+        Sm4Inst::StoreUavTyped { .. } => "store_uav_typed",
+        Sm4Inst::AtomicAdd { .. } => "atomic_add",
         Sm4Inst::BufInfoRaw { .. }
         | Sm4Inst::BufInfoStructured { .. }
         | Sm4Inst::BufInfoRawUav { .. }
@@ -690,6 +696,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     let mut texture2d_decls: BTreeSet<u32> = BTreeSet::new();
     let mut sampler_decls: BTreeSet<u32> = BTreeSet::new();
     let mut srv_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
+    let mut uav_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
+    let mut uav_typed2d_decls: BTreeSet<u32> = BTreeSet::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
@@ -728,6 +736,21 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         }
                     })
                     .or_insert((*kind, *stride));
+            }
+            Sm4Decl::UavBuffer { slot, stride, kind } => {
+                // Ignore duplicate declarations as long as they agree on buffer kind, keeping the
+                // largest stride.
+                uav_buffer_decls
+                    .entry(*slot)
+                    .and_modify(|(existing_kind, existing_stride)| {
+                        if *existing_kind == *kind {
+                            *existing_stride = (*existing_stride).max(*stride);
+                        }
+                    })
+                    .or_insert((*kind, *stride));
+            }
+            Sm4Decl::UavTyped2D { slot, .. } => {
+                uav_typed2d_decls.insert(*slot);
             }
             Sm4Decl::InputSiv {
                 reg,
@@ -786,6 +809,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     let mut used_textures: BTreeSet<u32> = BTreeSet::new();
     let mut used_samplers: BTreeSet<u32> = BTreeSet::new();
     let mut used_srv_buffers: BTreeSet<u32> = BTreeSet::new();
+    let mut used_uav_buffers: BTreeSet<u32> = BTreeSet::new();
+    let mut used_uavs_atomic: BTreeSet<u32> = BTreeSet::new();
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         // Unwrap instruction-level predication so register scanning sees the underlying opcode.
@@ -1620,6 +1645,42 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                 }
                 used_srv_buffers.insert(buffer.slot);
             }
+            Sm4Inst::LdUavRaw { dst, addr, uav } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    addr,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "ld_uav_raw",
+                    &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
+                )?;
+                if uav_typed2d_decls.contains(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_uav_raw",
+                        msg: format!(
+                            "uav slot u{} used by ld_uav_raw is declared as a typed UAV (dcl_uav_typed) but GS prepass only supports UAV buffers",
+                            uav.slot
+                        ),
+                    });
+                }
+                if !uav_buffer_decls.contains_key(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_uav_raw",
+                        msg: format!(
+                            "uav u{} used by ld_uav_raw is missing a dcl_uav_raw/dcl_uav_structured declaration",
+                            uav.slot
+                        ),
+                    });
+                }
+                used_uav_buffers.insert(uav.slot);
+            }
             Sm4Inst::LdStructured {
                 dst,
                 index,
@@ -1663,6 +1724,200 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                 }
                 used_srv_buffers.insert(buffer.slot);
             }
+            Sm4Inst::LdStructuredUav {
+                dst,
+                index,
+                offset,
+                uav,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [index, offset] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "ld_structured_uav",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+                if uav_typed2d_decls.contains(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_structured_uav",
+                        msg: format!(
+                            "uav slot u{} used by ld_structured_uav is declared as a typed UAV (dcl_uav_typed) but GS prepass only supports UAV buffers",
+                            uav.slot
+                        ),
+                    });
+                }
+                let Some((kind, stride)) = uav_buffer_decls.get(&uav.slot).copied() else {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_structured_uav",
+                        msg: format!(
+                            "uav u{} used by ld_structured_uav is missing a dcl_uav_structured declaration",
+                            uav.slot
+                        ),
+                    });
+                };
+                if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "ld_structured_uav",
+                        msg: format!(
+                            "uav u{} used by ld_structured_uav must be a structured buffer with stride multiple of 4 (kind={kind:?}, stride={stride})",
+                            uav.slot
+                        ),
+                    });
+                }
+                used_uav_buffers.insert(uav.slot);
+            }
+            Sm4Inst::StoreRaw {
+                uav,
+                addr,
+                value,
+                mask: _,
+            } => {
+                for src in [addr, value] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "store_raw",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+                if uav_typed2d_decls.contains(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_raw",
+                        msg: format!(
+                            "uav slot u{} used by store_raw is declared as a typed UAV (dcl_uav_typed) but GS prepass only supports UAV buffers",
+                            uav.slot
+                        ),
+                    });
+                }
+                if !uav_buffer_decls.contains_key(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_raw",
+                        msg: format!(
+                            "uav u{} used by store_raw is missing a dcl_uav_raw/dcl_uav_structured declaration",
+                            uav.slot
+                        ),
+                    });
+                }
+                used_uav_buffers.insert(uav.slot);
+            }
+            Sm4Inst::StoreStructured {
+                uav,
+                index,
+                offset,
+                value,
+                mask: _,
+            } => {
+                for src in [index, offset, value] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "store_structured",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+                if uav_typed2d_decls.contains(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_structured",
+                        msg: format!(
+                            "uav slot u{} used by store_structured is declared as a typed UAV (dcl_uav_typed) but GS prepass only supports UAV buffers",
+                            uav.slot
+                        ),
+                    });
+                }
+                let Some((kind, stride)) = uav_buffer_decls.get(&uav.slot).copied() else {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_structured",
+                        msg: format!(
+                            "uav u{} used by store_structured is missing a dcl_uav_structured declaration",
+                            uav.slot
+                        ),
+                    });
+                };
+                if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "store_structured",
+                        msg: format!(
+                            "uav u{} used by store_structured must be a structured buffer with stride multiple of 4 (kind={kind:?}, stride={stride})",
+                            uav.slot
+                        ),
+                    });
+                }
+                used_uav_buffers.insert(uav.slot);
+            }
+            Sm4Inst::AtomicAdd {
+                dst,
+                uav,
+                addr,
+                value,
+            } => {
+                if let Some(dst) = dst {
+                    bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                }
+                for src in [addr, value] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "atomic_add",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+                if uav_typed2d_decls.contains(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "atomic_add",
+                        msg: format!(
+                            "uav slot u{} used by atomic_add is declared as a typed UAV (dcl_uav_typed) but GS prepass only supports UAV buffers",
+                            uav.slot
+                        ),
+                    });
+                }
+                if !uav_buffer_decls.contains_key(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "atomic_add",
+                        msg: format!(
+                            "uav u{} used by atomic_add is missing a dcl_uav_raw/dcl_uav_structured declaration",
+                            uav.slot
+                        ),
+                    });
+                }
+                used_uav_buffers.insert(uav.slot);
+                used_uavs_atomic.insert(uav.slot);
+            }
             Sm4Inst::BufInfoRaw { dst, buffer }
             | Sm4Inst::BufInfoStructured { dst, buffer, .. } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
@@ -1687,6 +1942,35 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     });
                 }
                 used_srv_buffers.insert(buffer.slot);
+            }
+            Sm4Inst::BufInfoRawUav { dst, uav }
+            | Sm4Inst::BufInfoStructuredUav {
+                dst,
+                uav,
+                stride_bytes: _,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                if uav_typed2d_decls.contains(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: opcode_name(inst),
+                        msg: format!(
+                            "uav slot u{} used by bufinfo is declared as a typed UAV (dcl_uav_typed) but GS prepass only supports UAV buffers",
+                            uav.slot
+                        ),
+                    });
+                }
+                if !uav_buffer_decls.contains_key(&uav.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: opcode_name(inst),
+                        msg: format!(
+                            "uav u{} used by bufinfo is missing a dcl_uav_raw/dcl_uav_structured declaration",
+                            uav.slot
+                        ),
+                    });
+                }
+                used_uav_buffers.insert(uav.slot);
             }
             Sm4Inst::Emit { stream } => {
                 if *stream != 0 {
@@ -1790,12 +2074,26 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     w.line("struct ExpandedVertexBuffer { data: array<ExpandedVertex> };");
     w.line("struct U32Buffer { data: array<u32> };");
     w.line("struct Vec4F32Buffer { data: array<vec4<f32>> };");
-    if !used_srv_buffers.is_empty() {
+    let needs_u32_struct = !used_srv_buffers.is_empty()
+        || used_uav_buffers
+            .iter()
+            .any(|slot| !used_uavs_atomic.contains(slot));
+    let needs_atomic_struct = !used_uavs_atomic.is_empty();
+    if needs_u32_struct || needs_atomic_struct {
         // Match the storage-buffer wrapper used by the signature-driven shader translator
-        // (`shader_translate.rs`) so SRV buffer semantics stay consistent across translation paths.
-        w.line("struct AeroStorageBufferU32 { data: array<u32> };");
+        // (`shader_translate.rs`) so SRV/UAV buffer semantics stay consistent across translation
+        // paths.
+        //
+        // WGSL requires storage buffers to have a `struct` as the top-level type; arrays cannot be
+        // declared directly as a `var<storage>`.
+        if needs_u32_struct {
+            w.line("struct AeroStorageBufferU32 { data: array<u32> };");
+        }
+        if needs_atomic_struct {
+            w.line("struct AeroStorageBufferAtomicU32 { data: array<atomic<u32>> };");
+        }
+        w.line("");
     }
-    w.line("");
 
     // Match `runtime/indirect_args.rs` (`DrawIndexedIndirectArgs`).
     w.line("struct DrawIndexedIndirectArgs {");
@@ -1930,6 +2228,24 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
         ));
     }
     if !used_samplers.is_empty() {
+        w.line("");
+    }
+    for &slot in &used_uav_buffers {
+        if used_uavs_atomic.contains(&slot) {
+            w.line(&format!(
+                "@group({}) @binding({}) var<storage, read_write> u{slot}: AeroStorageBufferAtomicU32;",
+                BIND_GROUP_INTERNAL_EMULATION,
+                BINDING_BASE_UAV + slot
+            ));
+        } else {
+            w.line(&format!(
+                "@group({}) @binding({}) var<storage, read_write> u{slot}: AeroStorageBufferU32;",
+                BIND_GROUP_INTERNAL_EMULATION,
+                BINDING_BASE_UAV + slot
+            ));
+        }
+    }
+    if !used_uav_buffers.is_empty() {
         w.line("");
     }
 
@@ -3366,6 +3682,46 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     let rhs = maybe_saturate(dst.saturate, f_name);
                     emit_write_masked(&mut w, inst_index, "ld_raw", dst.reg, dst.mask, rhs)?;
                 }
+                Sm4Inst::LdUavRaw { dst, addr, uav } => {
+                    // Raw UAV loads operate on byte offsets. Model UAV buffers as a storage
+                    // `array<u32>` and derive a word index from the byte address.
+                    let addr_u32 =
+                        emit_src_scalar_u32_addr(inst_index, "ld_uav_raw", addr, &input_sivs)?;
+                    let base_name = format!("ld_uav_raw_base{inst_index}");
+                    w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
+
+                    let mask_bits = dst.mask.0 & 0xF;
+                    let load_lane = |bit: u8, offset: u32| {
+                        if (mask_bits & bit) != 0 {
+                            if used_uavs_atomic.contains(&uav.slot) {
+                                format!(
+                                    "atomicLoad(&u{}.data[{base_name} + {offset}u])",
+                                    uav.slot
+                                )
+                            } else {
+                                format!("u{}.data[{base_name} + {offset}u]", uav.slot)
+                            }
+                        } else {
+                            "0u".to_owned()
+                        }
+                    };
+
+                    let u_name = format!("ld_uav_raw_u{inst_index}");
+                    w.line(&format!(
+                        "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                        load_lane(1, 0),
+                        load_lane(2, 1),
+                        load_lane(4, 2),
+                        load_lane(8, 3),
+                    ));
+                    let f_name = format!("ld_uav_raw_f{inst_index}");
+                    w.line(&format!(
+                        "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                    ));
+
+                    let rhs = maybe_saturate(dst.saturate, f_name);
+                    emit_write_masked(&mut w, inst_index, "ld_uav_raw", dst.reg, dst.mask, rhs)?;
+                }
                 Sm4Inst::LdStructured {
                     dst,
                     index,
@@ -3391,9 +3747,16 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         emit_src_scalar_u32_addr(inst_index, "ld_structured", index, &input_sivs)?;
                     let offset_u32 =
                         emit_src_scalar_u32_addr(inst_index, "ld_structured", offset, &input_sivs)?;
+                    // Keep index/offset in locals before multiplying by `stride`. Some address
+                    // operands are constant immediates (often from float-literal bit patterns), and
+                    // constant folding of overflowing `u32` multiplications can fail WGSL parsing.
+                    let index_name = format!("ld_struct_index{inst_index}");
+                    let offset_name = format!("ld_struct_offset{inst_index}");
+                    w.line(&format!("var {index_name}: u32 = ({index_u32});"));
+                    w.line(&format!("var {offset_name}: u32 = ({offset_u32});"));
                     let base_name = format!("ld_struct_base{inst_index}");
                     w.line(&format!(
-                        "let {base_name}: u32 = (({index_u32}) * {stride}u + ({offset_u32})) / 4u;"
+                        "let {base_name}: u32 = (({index_name}) * {stride}u + ({offset_name})) / 4u;"
                     ));
 
                     let mask_bits = dst.mask.0 & 0xF;
@@ -3421,6 +3784,234 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     let rhs = maybe_saturate(dst.saturate, f_name);
                     emit_write_masked(&mut w, inst_index, "ld_structured", dst.reg, dst.mask, rhs)?;
                 }
+                Sm4Inst::LdStructuredUav {
+                    dst,
+                    index,
+                    offset,
+                    uav,
+                } => {
+                    let Some((kind, stride)) = uav_buffer_decls.get(&uav.slot).copied() else {
+                        return Err(GsTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "ld_structured_uav",
+                        });
+                    };
+                    if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                        return Err(GsTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "ld_structured_uav",
+                        });
+                    }
+
+                    let index_u32 = emit_src_scalar_u32_addr(
+                        inst_index,
+                        "ld_structured_uav",
+                        index,
+                        &input_sivs,
+                    )?;
+                    let offset_u32 = emit_src_scalar_u32_addr(
+                        inst_index,
+                        "ld_structured_uav",
+                        offset,
+                        &input_sivs,
+                    )?;
+                    let index_name = format!("ld_uav_struct_index{inst_index}");
+                    let offset_name = format!("ld_uav_struct_offset{inst_index}");
+                    w.line(&format!("var {index_name}: u32 = ({index_u32});"));
+                    w.line(&format!("var {offset_name}: u32 = ({offset_u32});"));
+                    let base_name = format!("ld_uav_struct_base{inst_index}");
+                    w.line(&format!(
+                        "let {base_name}: u32 = (({index_name}) * {stride}u + ({offset_name})) / 4u;"
+                    ));
+
+                    let mask_bits = dst.mask.0 & 0xF;
+                    let load_lane = |bit: u8, offset: u32| {
+                        if (mask_bits & bit) != 0 {
+                            if used_uavs_atomic.contains(&uav.slot) {
+                                format!(
+                                    "atomicLoad(&u{}.data[{base_name} + {offset}u])",
+                                    uav.slot
+                                )
+                            } else {
+                                format!("u{}.data[{base_name} + {offset}u]", uav.slot)
+                            }
+                        } else {
+                            "0u".to_owned()
+                        }
+                    };
+
+                    let u_name = format!("ld_uav_struct_u{inst_index}");
+                    w.line(&format!(
+                        "let {u_name}: vec4<u32> = vec4<u32>({}, {}, {}, {});",
+                        load_lane(1, 0),
+                        load_lane(2, 1),
+                        load_lane(4, 2),
+                        load_lane(8, 3),
+                    ));
+                    let f_name = format!("ld_uav_struct_f{inst_index}");
+                    w.line(&format!(
+                        "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                    ));
+
+                    let rhs = maybe_saturate(dst.saturate, f_name);
+                    emit_write_masked(
+                        &mut w,
+                        inst_index,
+                        "ld_structured_uav",
+                        dst.reg,
+                        dst.mask,
+                        rhs,
+                    )?;
+                }
+                Sm4Inst::StoreRaw {
+                    uav,
+                    addr,
+                    value,
+                    mask,
+                } => {
+                    // Raw UAV stores use byte offsets.
+                    let mask_bits = mask.0 & 0xF;
+                    if mask_bits != 0 {
+                        let addr_u32 =
+                            emit_src_scalar_u32_addr(inst_index, "store_raw", addr, &input_sivs)?;
+                        let base_name = format!("store_raw_base{inst_index}");
+                        w.line(&format!("let {base_name}: u32 = ({addr_u32}) / 4u;"));
+
+                        // Store raw bits. Buffer stores must preserve the underlying 32-bit lane
+                        // patterns.
+                        let value_u = emit_src_vec4_u32(inst_index, "store_raw", value, &input_sivs)?;
+                        let value_name = format!("store_raw_val{inst_index}");
+                        w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
+
+                        let comps = [
+                            ('x', 1u8, 0u32),
+                            ('y', 2u8, 1),
+                            ('z', 4u8, 2),
+                            ('w', 8u8, 3),
+                        ];
+                        for (c, bit, offset) in comps {
+                            if (mask_bits & bit) != 0 {
+                                if used_uavs_atomic.contains(&uav.slot) {
+                                    w.line(&format!(
+                                        "atomicStore(&u{}.data[{base_name} + {offset}u], ({value_name}).{c});",
+                                        uav.slot
+                                    ));
+                                } else {
+                                    w.line(&format!(
+                                        "u{}.data[{base_name} + {offset}u] = ({value_name}).{c};",
+                                        uav.slot
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                Sm4Inst::StoreStructured {
+                    uav,
+                    index,
+                    offset,
+                    value,
+                    mask,
+                } => {
+                    let mask_bits = mask.0 & 0xF;
+                    if mask_bits != 0 {
+                        let Some((kind, stride)) = uav_buffer_decls.get(&uav.slot).copied() else {
+                            return Err(GsTranslateError::UnsupportedInstruction {
+                                inst_index,
+                                opcode: "store_structured",
+                            });
+                        };
+                        if kind != BufferKind::Structured || stride == 0 || (stride % 4) != 0 {
+                            return Err(GsTranslateError::UnsupportedInstruction {
+                                inst_index,
+                                opcode: "store_structured",
+                            });
+                        }
+
+                        let index_u32 = emit_src_scalar_u32_addr(
+                            inst_index,
+                            "store_structured",
+                            index,
+                            &input_sivs,
+                        )?;
+                        let offset_u32 = emit_src_scalar_u32_addr(
+                            inst_index,
+                            "store_structured",
+                            offset,
+                            &input_sivs,
+                        )?;
+                        let index_name = format!("store_struct_index{inst_index}");
+                        let offset_name = format!("store_struct_offset{inst_index}");
+                        w.line(&format!("var {index_name}: u32 = ({index_u32});"));
+                        w.line(&format!("var {offset_name}: u32 = ({offset_u32});"));
+                        let base_name = format!("store_struct_base{inst_index}");
+                        w.line(&format!(
+                            "let {base_name}: u32 = (({index_name}) * {stride}u + ({offset_name})) / 4u;"
+                        ));
+
+                        let value_u = emit_src_vec4_u32(
+                            inst_index,
+                            "store_structured",
+                            value,
+                            &input_sivs,
+                        )?;
+                        let value_name = format!("store_struct_val{inst_index}");
+                        w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
+
+                        let comps = [
+                            ('x', 1u8, 0u32),
+                            ('y', 2u8, 1),
+                            ('z', 4u8, 2),
+                            ('w', 8u8, 3),
+                        ];
+                        for (c, bit, offset) in comps {
+                            if (mask_bits & bit) != 0 {
+                                if used_uavs_atomic.contains(&uav.slot) {
+                                    w.line(&format!(
+                                        "atomicStore(&u{}.data[{base_name} + {offset}u], ({value_name}).{c});",
+                                        uav.slot
+                                    ));
+                                } else {
+                                    w.line(&format!(
+                                        "u{}.data[{base_name} + {offset}u] = ({value_name}).{c};",
+                                        uav.slot
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                Sm4Inst::AtomicAdd {
+                    dst,
+                    uav,
+                    addr,
+                    value,
+                } => {
+                    let addr_u32 =
+                        emit_src_scalar_u32(inst_index, "atomic_add", addr, &input_sivs)?;
+                    let value_u32 =
+                        emit_src_scalar_u32(inst_index, "atomic_add", value, &input_sivs)?;
+                    let ptr = format!("&u{}.data[{addr_u32}]", uav.slot);
+
+                    match dst {
+                        Some(dst) => {
+                            let tmp = format!("atomic_old_{inst_index}");
+                            w.line(&format!("let {tmp}: u32 = atomicAdd({ptr}, {value_u32});"));
+                            let rhs = format!("vec4<f32>(bitcast<f32>({tmp}))");
+                            emit_write_masked(
+                                &mut w,
+                                inst_index,
+                                "atomic_add",
+                                dst.reg,
+                                dst.mask,
+                                rhs,
+                            )?;
+                        }
+                        None => {
+                            w.line(&format!("atomicAdd({ptr}, {value_u32});"));
+                        }
+                    }
+                }
                 Sm4Inst::BufInfoRaw { dst, buffer } => {
                     let dwords = format!("arrayLength(&t{}.data)", buffer.slot);
                     let bytes = format!("({dwords}) * 4u");
@@ -3439,6 +4030,32 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         });
                     }
                     let dwords = format!("arrayLength(&t{}.data)", buffer.slot);
+                    let byte_size = format!("({dwords}) * 4u");
+                    let stride = format!("{}u", stride_bytes);
+                    let elem_count = format!("({byte_size}) / ({stride})");
+                    let rhs = format!(
+                        "bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))"
+                    );
+                    emit_write_masked(&mut w, inst_index, "bufinfo", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::BufInfoRawUav { dst, uav } => {
+                    let dwords = format!("arrayLength(&u{}.data)", uav.slot);
+                    let bytes = format!("({dwords}) * 4u");
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))");
+                    emit_write_masked(&mut w, inst_index, "bufinfo", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::BufInfoStructuredUav {
+                    dst,
+                    uav,
+                    stride_bytes,
+                } => {
+                    if *stride_bytes == 0 {
+                        return Err(GsTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "bufinfo_structured_uav_stride_zero",
+                        });
+                    }
+                    let dwords = format!("arrayLength(&u{}.data)", uav.slot);
                     let byte_size = format!("({dwords}) * 4u");
                     let stride = format!("{}u", stride_bytes);
                     let elem_count = format!("({byte_size}) / ({stride})");
@@ -4162,6 +4779,15 @@ fn emit_src_scalar_u32_addr(
 ) -> Result<String, GsTranslateError> {
     // Match `shader_translate.rs`: address operands are consumed as raw integer bits; any float→int
     // numeric conversion must be expressed explicitly in DXBC.
+    emit_src_scalar_u32(inst_index, opcode, src, input_sivs)
+}
+
+fn emit_src_scalar_u32(
+    inst_index: usize,
+    opcode: &'static str,
+    src: &crate::sm4_ir::SrcOperand,
+    input_sivs: &HashMap<u32, InputSivInfo>,
+) -> Result<String, GsTranslateError> {
     let u = emit_src_vec4_u32(inst_index, opcode, src, input_sivs)?;
     Ok(format!("({u}).x"))
 }

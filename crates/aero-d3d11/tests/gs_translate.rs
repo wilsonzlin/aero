@@ -1,5 +1,5 @@
 use aero_d3d11::binding_model::{
-    BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BIND_GROUP_INTERNAL_EMULATION,
+    BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV, BIND_GROUP_INTERNAL_EMULATION,
 };
 use aero_d3d11::runtime::gs_translate::{
     translate_gs_module_to_wgsl_compute_prepass,
@@ -11,7 +11,7 @@ use aero_d3d11::{
     BufferKind, BufferRef, DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier,
     PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef, SamplerRef,
     ShaderModel, ShaderStage, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, Sm4TestBool,
-    SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
@@ -620,6 +620,180 @@ fn sm4_gs_bufinfo_structured_emits_elem_count_and_stride() {
     assert!(
         wgsl.contains("16u"),
         "expected structured bufinfo lowering to bake in the declared stride:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm5_gs_bufinfo_raw_uav_emits_group3_uav_buffer_decl() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::BufInfoRawUav {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                uav: UavRef { slot: 0 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains("struct AeroStorageBufferU32 { data: array<u32> };"),
+        "expected AeroStorageBufferU32 wrapper struct in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var<storage, read_write> u0: AeroStorageBufferU32;",
+            BINDING_BASE_UAV
+        )),
+        "expected group(3) UAV buffer declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("arrayLength(&u0.data)"),
+        "expected bufinfo_uav lowering to use arrayLength on the UAV buffer:\n{wgsl}"
+    );
+    assert!(wgsl.contains("* 4u"), "expected byte-size math:\n{wgsl}");
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm5_gs_ld_uav_raw_emits_uav_load() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 1,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::LdUavRaw {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                addr: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                uav: UavRef { slot: 1 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var<storage, read_write> u1: AeroStorageBufferU32;",
+            BINDING_BASE_UAV + 1
+        )),
+        "expected group(3) UAV buffer declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("u1.data[ld_uav_raw_base"),
+        "expected ld_uav_raw lowering to index u1.data:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm5_gs_atomic_add_emits_atomic_buffer_struct_and_atomic_add() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::AtomicAdd {
+                dst: Some(DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::X,
+                    saturate: false,
+                }),
+                uav: UavRef { slot: 0 },
+                addr: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                value: SrcOperand {
+                    kind: SrcKind::ImmediateF32([1; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains("struct AeroStorageBufferAtomicU32 { data: array<atomic<u32>> };"),
+        "expected atomic buffer wrapper struct in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var<storage, read_write> u0: AeroStorageBufferAtomicU32;",
+            BINDING_BASE_UAV
+        )),
+        "expected atomic UAV binding in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("atomicAdd(&u0.data["),
+        "expected atomicAdd lowering in WGSL:\n{wgsl}"
     );
     assert_wgsl_validates(&wgsl);
 }
