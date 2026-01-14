@@ -1645,6 +1645,12 @@ fn decode_alloc_table(
     }
 
     let mut seen = HashSet::new();
+    if seen.try_reserve(entry_count).is_err() {
+        decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+            AeroGpuAllocTableDecodeError::TooLarge,
+        ));
+        return (Some(header), Vec::new());
+    }
     for idx in 0..header.entry_count {
         let Some(entry_offset) = u64::from(idx).checked_mul(u64::from(header.entry_stride_bytes))
         else {
