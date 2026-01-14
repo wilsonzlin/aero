@@ -9,7 +9,8 @@ use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx;
 use aero_jit_x86::tier2::interp::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::ir::{
-    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId,
+    flag_to_set, BinOp, Block, BlockId, FlagValues, Function, Instr, Operand, Terminator, TraceIr,
+    TraceKind, ValueId,
 };
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
@@ -1172,7 +1173,28 @@ mod random_traces {
         let mut prologue: Vec<Instr> = Vec::new();
         let mut body: Vec<Instr> = Vec::new();
 
-        for _ in 0..instr_count {
+        // Add a small number of code-version guards in the prologue (matching the real trace
+        // builder and satisfying Tier-2 IR verifier invariants for linear traces).
+        if !code_versions.is_empty() && rng.gen_bool(0.35) {
+            let table_len = code_versions.len() as u64;
+            let guard_count = if rng.gen_bool(0.15) { 2 } else { 1 };
+            for _ in 0..guard_count {
+                let page = rng.gen_range(0..table_len);
+                let expected = if rng.gen_bool(0.8) {
+                    code_versions[page as usize]
+                } else {
+                    code_versions[page as usize].wrapping_add(1)
+                };
+                let exit_rip = 0x3000u64 + (rng.gen::<u16>() as u64);
+                prologue.push(Instr::GuardCodeVersion {
+                    page,
+                    expected,
+                    exit_rip,
+                });
+            }
+        }
+
+        while body.len() < instr_count {
             match rng.gen_range(0..100u32) {
                 0..=15 => {
                     let dst = v(next_value);
@@ -1190,7 +1212,7 @@ mod random_traces {
                     body.push(Instr::LoadReg { dst, reg });
                     values.push(dst);
                 }
-                34..=69 => {
+                34..=64 => {
                     if values.is_empty() {
                         continue;
                     }
@@ -1225,7 +1247,7 @@ mod random_traces {
                     });
                     values.push(dst);
                 }
-                70..=79 => {
+                65..=74 => {
                     let dst = v(next_value);
                     next_value += 1;
                     let base = gen_operand(rng, &values);
@@ -1241,7 +1263,7 @@ mod random_traces {
                     });
                     values.push(dst);
                 }
-                80..=84 => {
+                75..=79 => {
                     // Memory loads use constant, in-bounds addresses to keep the harness simple.
                     let dst = v(next_value);
                     next_value += 1;
@@ -1257,7 +1279,7 @@ mod random_traces {
                     });
                     values.push(dst);
                 }
-                85..=89 => {
+                80..=84 => {
                     // Memory stores use constant, in-bounds addresses to keep the harness simple.
                     //
                     // Note: the WASM test harness bumps the code-version table on memory writes.
@@ -1275,34 +1297,52 @@ mod random_traces {
                         width,
                     });
                 }
-                90..=94 => {
-                    // Code version guard.
-                    //
-                    // Keep these guards in the prologue for linear traces: Tier-2 expects
-                    // `Instr::GuardCodeVersion` to live in the prologue (or in the loop body prefix
-                    // for loop traces).
-                    //
-                    // Note: the generator also emits `StoreMem` ops, and the WASM test harness
-                    // bumps the code-version table on memory writes. Since guards are in the
-                    // prologue, these bumps do not affect guard checks within the same trace run.
-                    let table_len = code_versions.len() as u64;
-                    let page = if table_len != 0 {
-                        rng.gen_range(0..table_len)
-                    } else {
-                        0
-                    };
-                    let expected = if table_len != 0 && rng.gen_bool(0.7) {
-                        code_versions[page as usize]
-                    } else if table_len != 0 {
-                        code_versions[page as usize].wrapping_add(1)
-                    } else if rng.gen_bool(0.7) {
-                        0
-                    } else {
-                        1
-                    };
-                    let exit_rip = 0x3000u64 + (rng.gen::<u16>() as u64);
-                    prologue.push(Instr::GuardCodeVersion {
-                        page,
+                85..=89 => {
+                    let dst = v(next_value);
+                    next_value += 1;
+                    let flag = *[
+                        Flag::Cf,
+                        Flag::Pf,
+                        Flag::Af,
+                        Flag::Zf,
+                        Flag::Sf,
+                        Flag::Of,
+                    ]
+                    .choose(rng)
+                    .unwrap();
+                    body.push(Instr::LoadFlag { dst, flag });
+                    values.push(dst);
+                }
+                90..=92 => {
+                    // Directly set a random subset of flags.
+                    let mut mask = FlagSet::EMPTY;
+                    for flag in [Flag::Cf, Flag::Pf, Flag::Af, Flag::Zf, Flag::Sf, Flag::Of] {
+                        if rng.gen_bool(0.5) {
+                            mask = mask.union(flag_to_set(flag));
+                        }
+                    }
+                    if mask.is_empty() {
+                        mask = FlagSet::CF;
+                    }
+                    body.push(Instr::SetFlags {
+                        mask,
+                        values: FlagValues {
+                            cf: rng.gen(),
+                            pf: rng.gen(),
+                            af: rng.gen(),
+                            zf: rng.gen(),
+                            sf: rng.gen(),
+                            of: rng.gen(),
+                        },
+                    });
+                }
+                93..=95 => {
+                    // Conditional guard (side exit).
+                    let cond = gen_operand(rng, &values);
+                    let expected = rng.gen_bool(0.5);
+                    let exit_rip = 0x2000u64 + (rng.gen::<u16>() as u64);
+                    body.push(Instr::Guard {
+                        cond,
                         expected,
                         exit_rip,
                     });
