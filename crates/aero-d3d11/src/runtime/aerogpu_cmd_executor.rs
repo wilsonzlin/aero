@@ -11358,8 +11358,8 @@ impl AerogpuD3d11Executor {
 
                     if parsed_stage != stage {
                         return Err(format!(
-                            "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})"
-                            ));
+                            "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?}, stage_ex={stage_ex})"
+                        ));
                     }
 
                     let signatures = parse_signatures(&dxbc)
