@@ -19,7 +19,7 @@ async function withProxyServer<T>(
   }
 }
 
-function encodeDnsQuery(name: string, type: number, id: number, cls = 1): Buffer {
+function encodeDnsQuery(name: string, type: number, id: number, cls = 1, flags = 0x0100): Buffer {
   const labels = name.split(".").filter(Boolean);
   const nameParts: Buffer[] = [];
   let nameBytes = 1; // trailing 0
@@ -33,7 +33,7 @@ function encodeDnsQuery(name: string, type: number, id: number, cls = 1): Buffer
 
   const out = Buffer.allocUnsafe(12 + nameBytes + 4);
   out.writeUInt16BE(id & 0xffff, 0);
-  out.writeUInt16BE(0x0100, 2); // RD
+  out.writeUInt16BE(flags & 0xffff, 2);
   out.writeUInt16BE(1, 4); // QDCOUNT
   out.writeUInt16BE(0, 6);
   out.writeUInt16BE(0, 8);
@@ -228,7 +228,8 @@ test("GET /dns-query returns NOERROR with empty answers for unsupported QTYPE", 
 test("GET /dns-query enforces dohMaxQueryBytes (413)", async () => {
   await withProxyServer({ open: true, dohMaxQueryBytes: 20 }, async (baseUrl) => {
     const id = 0x5555;
-    const query = encodeDnsQuery("localhost", 1, id);
+    const queryFlags = 0x1110; // opcode=2 + RD + CD
+    const query = encodeDnsQuery("localhost", 1, id, 1, queryFlags);
     assert.ok(query.length > 20);
     const dnsParam = query.toString("base64url");
     const resp = await fetch(`${baseUrl}/dns-query?dns=${dnsParam}`);
@@ -237,13 +238,22 @@ test("GET /dns-query enforces dohMaxQueryBytes (413)", async () => {
     assert.equal(responseBuf.readUInt16BE(0), id);
     // FORMERR (1)
     assert.equal(responseBuf.readUInt16BE(2) & 0x000f, 1);
+    const expectedFlags =
+      0x8000 | // QR
+      (queryFlags & 0x7800) | // opcode
+      (queryFlags & 0x0100) | // RD
+      0x0080 | // RA
+      (queryFlags & 0x0010) | // CD
+      0x0001; // FORMERR (rcode=1)
+    assert.equal(responseBuf.readUInt16BE(2), expectedFlags);
   });
 });
 
 test("POST /dns-query enforces dohMaxQueryBytes (413)", async () => {
   await withProxyServer({ open: true, dohMaxQueryBytes: 20 }, async (baseUrl) => {
     const id = 0x6666;
-    const query = encodeDnsQuery("localhost", 1, id);
+    const queryFlags = 0x1110; // opcode=2 + RD + CD
+    const query = encodeDnsQuery("localhost", 1, id, 1, queryFlags);
     assert.ok(query.length > 20);
     const resp = await fetch(`${baseUrl}/dns-query`, {
       method: "POST",
@@ -255,6 +265,14 @@ test("POST /dns-query enforces dohMaxQueryBytes (413)", async () => {
     assert.equal(responseBuf.readUInt16BE(0), id);
     // FORMERR (1)
     assert.equal(responseBuf.readUInt16BE(2) & 0x000f, 1);
+    const expectedFlags =
+      0x8000 | // QR
+      (queryFlags & 0x7800) | // opcode
+      (queryFlags & 0x0100) | // RD
+      0x0080 | // RA
+      (queryFlags & 0x0010) | // CD
+      0x0001; // FORMERR (rcode=1)
+    assert.equal(responseBuf.readUInt16BE(2), expectedFlags);
   });
 });
 
