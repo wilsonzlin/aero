@@ -36,16 +36,18 @@ It:
 - optionally enables a QMP monitor to:
   - request a graceful QEMU shutdown so side-effectful devices (notably the `wav` audiodev backend) can flush/finalize
     their output files before verification
+  - trigger a virtio-blk runtime resize via `blockdev-resize` / legacy `block_resize` (when `--with-blk-resize` is enabled)
   - inject deterministic virtio-input events via `input-send-event` (when `--with-input-events` /
     `--with-virtio-input-events` or `--with-input-tablet-events`/`--with-tablet-events` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
      virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), and virtio-net
-     so older selftest binaries cannot accidentally pass
+      so older selftest binaries cannot accidentally pass
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
+  - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
 
 For convenience when scraping CI logs, the harness may also emit a host-side virtio-net marker when the guest
 includes large-transfer fields:
@@ -867,6 +869,24 @@ def _qmp_input_send_event_command(
     return _qmp_input_send_event_cmd(events, device=device)
 
 
+def _qmp_blockdev_resize_command(*, node_name: str, size: int) -> dict[str, object]:
+    """
+    Build a QMP `blockdev-resize` command (node-name based).
+
+    This helper exists primarily so host-harness unit tests can sanity-check command structure.
+    """
+    return {"execute": "blockdev-resize", "arguments": {"node-name": node_name, "size": int(size)}}
+
+
+def _qmp_block_resize_command(*, device: str, size: int) -> dict[str, object]:
+    """
+    Build a legacy QMP `block_resize` command (drive/BlockBackend id based).
+
+    This helper exists primarily so host-harness unit tests can sanity-check command structure.
+    """
+    return {"execute": "block_resize", "arguments": {"device": device, "size": int(size)}}
+
+
 def _qmp_deterministic_keyboard_events(*, qcode: str) -> list[dict[str, object]]:
     # Press + release a single key via qcode (stable across host layouts).
     return [
@@ -1203,6 +1223,35 @@ def _try_qmp_input_inject_virtio_input_tablet_events(endpoint: _QmpEndpoint) -> 
         tablet_device = send(s, [ev[5]], device=tablet_device)
 
         return _VirtioInputTabletQmpInjectInfo(tablet_device=tablet_device)
+
+def _try_qmp_virtio_blk_resize(endpoint: _QmpEndpoint, *, drive_id: str, new_bytes: int) -> str:
+    """
+    Resize the virtio-blk backing device via QMP.
+
+    Compatibility cascade:
+    - Try `blockdev-resize` (node-name based).
+    - Fall back to legacy `block_resize` (device/BlockBackend id based).
+    """
+    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        try:
+            _qmp_send_command(
+                s, _qmp_blockdev_resize_command(node_name=drive_id, size=int(new_bytes))
+            )
+            return "blockdev-resize"
+        except Exception as e_blockdev:
+            try:
+                _qmp_send_command(
+                    s, _qmp_block_resize_command(device=drive_id, size=int(new_bytes))
+                )
+                print(
+                    f"WARNING: QMP blockdev-resize failed; falling back to block_resize: {e_blockdev}",
+                    file=sys.stderr,
+                )
+                return "block_resize"
+            except Exception as e_legacy:
+                raise RuntimeError(
+                    f"QMP resize failed: blockdev-resize error={e_blockdev}; block_resize error={e_legacy}"
+                ) from e_legacy
 
 
 def _find_free_tcp_port() -> Optional[int]:
@@ -1653,6 +1702,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--with-blk-resize",
+        "--with-virtio-blk-resize",
+        "--require-virtio-blk-resize",
+        dest="with_blk_resize",
+        action="store_true",
+        help=(
+            "Run an end-to-end virtio-blk runtime resize test: wait for the guest "
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY marker, then grow the backing device via QMP "
+            "(blockdev-resize/block_resize) and require the guest virtio-blk-resize marker to PASS. "
+            "This requires a guest image provisioned with --test-blk-resize (or env var)."
+        ),
+    )
+    parser.add_argument(
+        "--blk-resize-delta-mib",
+        type=int,
+        default=64,
+        help="Delta in MiB to grow the virtio-blk backing device when --with-blk-resize is enabled (default: 64)",
+    )
+    parser.add_argument(
         "--require-virtio-net-msix",
         action="store_true",
         help="After drivers load, require that the virtio-net PCI function has MSI-X enabled (checked via QMP/QEMU introspection).",
@@ -1793,6 +1861,7 @@ def main() -> int:
     need_input_media_keys = bool(getattr(args, "with_input_media_keys", False))
     need_input_tablet_events = bool(getattr(args, "with_input_tablet_events", False))
     attach_virtio_tablet = bool(args.with_virtio_tablet or need_input_tablet_events)
+    need_blk_resize = bool(getattr(args, "with_blk_resize", False))
     need_msix_check = bool(
         args.require_virtio_net_msix or args.require_virtio_blk_msix or args.require_virtio_snd_msix
     )
@@ -1852,6 +1921,14 @@ def main() -> int:
 
     if args.virtio_snd_vectors is not None and not args.enable_virtio_snd:
         parser.error("--virtio-snd-vectors requires --with-virtio-snd/--enable-virtio-snd")
+    if need_blk_resize:
+        if args.virtio_transitional:
+            parser.error(
+                "--with-blk-resize is incompatible with --virtio-transitional "
+                "(blk resize uses the contract-v1 drive layout with id=drive0)"
+            )
+        if int(args.blk_resize_delta_mib) <= 0:
+            parser.error("--blk-resize-delta-mib must be > 0 when --with-blk-resize is enabled")
 
     if need_input_events:
         # In default (contract-v1) mode we already validate virtio-keyboard-pci/virtio-mouse-pci via
@@ -1923,12 +2000,14 @@ def main() -> int:
     # - --with-input-wheel
     # - --with-input-events-extended / --with-input-events-extra
     # - --with-input-tablet-events / --with-tablet-events
+    # - --with-blk-resize
     # - --require-virtio-*-msix
     use_qmp = (
         (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav")
         or need_input_events
         or need_input_media_keys
         or need_input_tablet_events
+        or need_blk_resize
         or need_msix_check
     )
     qmp_endpoint: Optional[_QmpEndpoint] = None
@@ -1953,7 +2032,13 @@ def main() -> int:
         if qmp_endpoint is None:
             port = _find_free_tcp_port()
             if port is None:
-                if need_input_events or need_input_media_keys or need_input_tablet_events or need_msix_check:
+                if (
+                    need_input_events
+                    or need_input_media_keys
+                    or need_input_tablet_events
+                    or need_blk_resize
+                    or need_msix_check
+                ):
                     req_flags: list[str] = []
                     if bool(args.with_input_events):
                         req_flags.append("--with-input-events/--with-virtio-input-events")
@@ -1965,6 +2050,8 @@ def main() -> int:
                         req_flags.append("--with-input-events-extended/--with-input-events-extra")
                     if need_input_tablet_events:
                         req_flags.append("--with-input-tablet-events/--with-tablet-events")
+                    if need_blk_resize:
+                        req_flags.append("--with-blk-resize")
                     if need_msix_check:
                         req_flags.append("--require-virtio-*-msix")
                     print(
@@ -1979,7 +2066,13 @@ def main() -> int:
                 )
             else:
                 qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
-    if (need_input_events or need_input_media_keys or need_input_tablet_events or need_msix_check) and qmp_endpoint is None:
+    if (
+        need_input_events
+        or need_input_media_keys
+        or need_input_tablet_events
+        or need_blk_resize
+        or need_msix_check
+    ) and qmp_endpoint is None:
         req_flags: list[str] = []
         if bool(args.with_input_events):
             req_flags.append("--with-input-events/--with-virtio-input-events")
@@ -1991,6 +2084,8 @@ def main() -> int:
             req_flags.append("--with-input-events-extended/--with-input-events-extra")
         if need_input_tablet_events:
             req_flags.append("--with-input-tablet-events/--with-tablet-events")
+        if need_blk_resize:
+            req_flags.append("--with-blk-resize")
         if need_msix_check:
             req_flags.append("--require-virtio-*-msix")
         print(
@@ -2298,6 +2393,14 @@ def main() -> int:
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             saw_virtio_blk_pass = False
             saw_virtio_blk_fail = False
+            virtio_blk_marker_time: Optional[float] = None
+            saw_virtio_blk_resize_ready = False
+            saw_virtio_blk_resize_pass = False
+            saw_virtio_blk_resize_fail = False
+            saw_virtio_blk_resize_skip = False
+            blk_resize_old_bytes: Optional[int] = None
+            blk_resize_new_bytes: Optional[int] = None
+            blk_resize_requested = False
             saw_virtio_input_pass = False
             saw_virtio_input_fail = False
             virtio_input_marker_time: Optional[float] = None
@@ -2375,8 +2478,38 @@ def main() -> int:
 
                     if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                         saw_virtio_blk_pass = True
+                        if virtio_blk_marker_time is None:
+                            virtio_blk_marker_time = time.monotonic()
                     if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
                         saw_virtio_blk_fail = True
+                        if virtio_blk_marker_time is None:
+                            virtio_blk_marker_time = time.monotonic()
+
+                    if not saw_virtio_blk_resize_ready:
+                        ready = _try_extract_virtio_blk_resize_ready(tail)
+                        if ready is not None:
+                            saw_virtio_blk_resize_ready = True
+                            blk_resize_old_bytes = int(ready.old_bytes)
+                            if need_blk_resize:
+                                delta_bytes = int(args.blk_resize_delta_mib) * 1024 * 1024
+                                blk_resize_new_bytes = _virtio_blk_resize_compute_new_bytes(
+                                    blk_resize_old_bytes, delta_bytes
+                                )
+                    if (
+                        not saw_virtio_blk_resize_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS" in tail
+                    ):
+                        saw_virtio_blk_resize_pass = True
+                    if (
+                        not saw_virtio_blk_resize_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL" in tail
+                    ):
+                        saw_virtio_blk_resize_fail = True
+                    if (
+                        not saw_virtio_blk_resize_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP" in tail
+                    ):
+                        saw_virtio_blk_resize_skip = True
                     if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                         saw_virtio_input_pass = True
                         if virtio_input_marker_time is None:
@@ -2617,6 +2750,25 @@ def main() -> int:
                             result_code = 1
                             break
 
+                    if need_blk_resize:
+                        if saw_virtio_blk_resize_skip:
+                            print(
+                                "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
+                                "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        if saw_virtio_blk_resize_fail:
+                            print(
+                                "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while --with-blk-resize was enabled",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+
                     if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                         saw_virtio_snd_pass = True
                     if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
@@ -2709,6 +2861,31 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                            if need_blk_resize:
+                                if saw_virtio_blk_resize_fail:
+                                    print(
+                                        "FAIL: VIRTIO_BLK_RESIZE_FAILED: selftest RESULT=PASS but virtio-blk-resize test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_blk_resize_pass:
+                                    if saw_virtio_blk_resize_skip:
+                                        print(
+                                            "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
+                                            "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_BLK_RESIZE: selftest RESULT=PASS but did not emit virtio-blk-resize test marker "
+                                            "while --with-blk-resize was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             if saw_virtio_input_fail:
                                 print(
                                     "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL",
@@ -3107,6 +3284,31 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+
+                        if need_blk_resize:
+                            if saw_virtio_blk_resize_fail:
+                                print(
+                                    "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while --with-blk-resize was enabled",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_blk_resize_pass:
+                                if saw_virtio_blk_resize_skip:
+                                    print(
+                                        "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
+                                        "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize was enabled",
+                                        file=sys.stderr,
+                                    )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         if need_input_events_extended:
                             if (
                                 saw_virtio_input_events_modifiers_fail
@@ -3278,6 +3480,60 @@ def main() -> int:
                 # report read loop (virtio-input-events|READY). Inject multiple times on a short interval to
                 # reduce flakiness from timing windows (reports may be dropped when no read is pending).
                 #
+                # When requested, resize the virtio-blk backing device after the guest has armed its polling
+                # loop (virtio-blk-resize|READY).
+                if (
+                    need_blk_resize
+                    and virtio_blk_marker_time is not None
+                    and not saw_virtio_blk_resize_ready
+                    and not saw_virtio_blk_resize_pass
+                    and not saw_virtio_blk_resize_fail
+                    and not saw_virtio_blk_resize_skip
+                    and time.monotonic() - virtio_blk_marker_time > 20.0
+                ):
+                    print(
+                        "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize marker after virtio-blk completed while "
+                        "--with-blk-resize was enabled (guest selftest too old or missing --test-blk-resize)",
+                        file=sys.stderr,
+                    )
+                    _print_tail(serial_log)
+                    result_code = 1
+                    break
+
+                if (
+                    need_blk_resize
+                    and saw_virtio_blk_resize_ready
+                    and not saw_virtio_blk_resize_pass
+                    and not saw_virtio_blk_resize_fail
+                    and not saw_virtio_blk_resize_skip
+                    and not blk_resize_requested
+                    and qmp_endpoint is not None
+                    and blk_resize_old_bytes is not None
+                    and blk_resize_new_bytes is not None
+                ):
+                    blk_resize_requested = True
+                    try:
+                        qmp_cmd = _try_qmp_virtio_blk_resize(
+                            qmp_endpoint, drive_id="drive0", new_bytes=int(blk_resize_new_bytes)
+                        )
+                        print(
+                            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|"
+                            f"old_bytes={int(blk_resize_old_bytes)}|new_bytes={int(blk_resize_new_bytes)}|qmp_cmd={qmp_cmd}"
+                        )
+                    except Exception as e:
+                        reason = _sanitize_marker_value(str(e) or type(e).__name__)
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason={reason}",
+                            file=sys.stderr,
+                        )
+                        print(
+                            f"FAIL: QMP_BLK_RESIZE_FAILED: failed to resize virtio-blk device via QMP: {e}",
+                            file=sys.stderr,
+                        )
+                        _print_tail(serial_log)
+                        result_code = 1
+                        break
+
                 # If the guest never emits READY/SKIP/PASS/FAIL after completing virtio-input, assume the
                 # guest selftest is too old (or misconfigured) and fail early to avoid burning the full
                 # virtio-net timeout.
@@ -3461,8 +3717,38 @@ def main() -> int:
                                 virtio_input_msix_marker = marker
                         if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                             saw_virtio_blk_pass = True
+                            if virtio_blk_marker_time is None:
+                                virtio_blk_marker_time = time.monotonic()
                         if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
                             saw_virtio_blk_fail = True
+                            if virtio_blk_marker_time is None:
+                                virtio_blk_marker_time = time.monotonic()
+
+                        if not saw_virtio_blk_resize_ready:
+                            ready = _try_extract_virtio_blk_resize_ready(tail)
+                            if ready is not None:
+                                saw_virtio_blk_resize_ready = True
+                                blk_resize_old_bytes = int(ready.old_bytes)
+                                if need_blk_resize:
+                                    delta_bytes = int(args.blk_resize_delta_mib) * 1024 * 1024
+                                    blk_resize_new_bytes = _virtio_blk_resize_compute_new_bytes(
+                                        blk_resize_old_bytes, delta_bytes
+                                    )
+                        if (
+                            not saw_virtio_blk_resize_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS" in tail
+                        ):
+                            saw_virtio_blk_resize_pass = True
+                        if (
+                            not saw_virtio_blk_resize_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL" in tail
+                        ):
+                            saw_virtio_blk_resize_fail = True
+                        if (
+                            not saw_virtio_blk_resize_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP" in tail
+                        ):
+                            saw_virtio_blk_resize_skip = True
                         if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                             saw_virtio_input_pass = True
                         if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
@@ -3647,6 +3933,31 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                                if need_blk_resize:
+                                    if saw_virtio_blk_resize_fail:
+                                        print(
+                                            "FAIL: VIRTIO_BLK_RESIZE_FAILED: selftest RESULT=PASS but virtio-blk-resize test reported FAIL",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+                                    if not saw_virtio_blk_resize_pass:
+                                        if saw_virtio_blk_resize_skip:
+                                            print(
+                                                "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
+                                                "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                                file=sys.stderr,
+                                            )
+                                        else:
+                                            print(
+                                                "FAIL: MISSING_VIRTIO_BLK_RESIZE: selftest RESULT=PASS but did not emit virtio-blk-resize test marker "
+                                                "while --with-blk-resize was enabled",
+                                                file=sys.stderr,
+                                            )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                                 if saw_virtio_input_fail:
                                     print(
                                         "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL",
@@ -3876,6 +4187,31 @@ def main() -> int:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: did not observe virtio-input-media-keys PASS marker while "
                                             "--with-input-media-keys was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                            if need_blk_resize:
+                                if saw_virtio_blk_resize_fail:
+                                    print(
+                                        "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while --with-blk-resize was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_blk_resize_pass:
+                                    if saw_virtio_blk_resize_skip:
+                                        print(
+                                            "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
+                                            "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -4783,6 +5119,66 @@ def _try_extract_marker_status(marker_line: str) -> Optional[str]:
     if "SKIP" in toks:
         return "SKIP"
     return None
+
+@dataclass(frozen=True)
+class _VirtioBlkResizeReadyInfo:
+    disk: Optional[int]
+    old_bytes: int
+
+
+def _try_extract_virtio_blk_resize_ready(tail: bytes) -> Optional[_VirtioBlkResizeReadyInfo]:
+    """
+    Extract the guest virtio-blk-resize READY marker from the serial tail.
+
+    Marker format:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
+    """
+    marker_line = _try_extract_last_marker_line(
+        tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY"
+    )
+    if marker_line is None:
+        return None
+    fields = _parse_marker_kv_fields(marker_line)
+    if "old_bytes" not in fields:
+        return None
+    try:
+        old_bytes = int(fields["old_bytes"], 0)
+    except Exception:
+        return None
+
+    disk: Optional[int] = None
+    if "disk" in fields:
+        try:
+            disk = int(fields["disk"], 0)
+        except Exception:
+            disk = None
+
+    return _VirtioBlkResizeReadyInfo(disk=disk, old_bytes=old_bytes)
+
+
+def _virtio_blk_resize_compute_new_bytes(old_bytes: int, delta_bytes: int) -> int:
+    """
+    Compute the new (grown) disk size for the virtio-blk runtime resize test.
+
+    Ensures:
+    - grow-only (new_bytes > old_bytes)
+    - 512-byte alignment (QEMU typically requires sector alignment)
+    """
+    old = int(old_bytes)
+    delta = int(delta_bytes)
+    if old < 0:
+        raise ValueError("old_bytes must be >= 0")
+    if delta <= 0:
+        raise ValueError("delta_bytes must be > 0")
+
+    new = old + delta
+    # Align up to 512 bytes.
+    align = 512
+    if new % align != 0:
+        new = ((new + align - 1) // align) * align
+    if new <= old:
+        new = old + align
+    return new
 
 
 def _emit_virtio_net_large_host_marker(tail: bytes) -> None:

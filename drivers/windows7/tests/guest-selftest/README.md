@@ -24,6 +24,10 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - sequential write + readback verification
     - `FlushFileBuffers` success check
     - sequential read pass
+  - Optional runtime resize test (`virtio-blk-resize`):
+    - Disabled by default; enable with `--test-blk-resize` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1`).
+    - Emits `...|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`, then waits for a host-side QMP resize and polls until
+      Windows reports a larger disk size (hard timeout, default 60s).
 - **virtio-net**
   - Detect a virtio network adapter (SetupAPI hardware IDs).
   - Wait for link + DHCP IPv4 address (non-APIPA).
@@ -200,29 +204,34 @@ Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` i
 
 The host harness parses these markers from COM1 serial:
 
-```
- AERO_VIRTIO_SELFTEST|START|...
- # virtio-blk/virtio-net/virtio-snd/virtio-input include interrupt diagnostics (`irq_mode` / `irq_message_count`) as
- # key/value fields so the host harness can mirror them into host-side markers (VIRTIO_*_IRQ).
- # virtio-blk additionally includes MSI-X routing fields and basic I/O throughput metrics (VIRTIO_BLK_IO).
- # Older guests may emit just `AERO_VIRTIO_SELFTEST|TEST|virtio-<dev>|PASS` with no extra fields.
- AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0x0000|msix_queue_vector=0x0001|write_ok=1|write_bytes=33554432|write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56
- AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...|irq_mode=msi|irq_message_count=1
- AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|messages=3|mapping=per-queue|...
- AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
- AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
- AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
-  
+ ```
+  AERO_VIRTIO_SELFTEST|START|...
+  # virtio-blk/virtio-net/virtio-snd/virtio-input include interrupt diagnostics (`irq_mode` / `irq_message_count`) as
+  # key/value fields so the host harness can mirror them into host-side markers (VIRTIO_*_IRQ).
+  # virtio-blk additionally includes MSI-X routing fields and basic I/O throughput metrics (VIRTIO_BLK_IO).
+  # Older guests may emit just `AERO_VIRTIO_SELFTEST|TEST|virtio-<dev>|PASS` with no extra fields.
+  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0x0000|msix_queue_vector=0x0001|write_ok=1|write_bytes=33554432|write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56
+  AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...|irq_mode=msi|irq_message_count=1
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|messages=3|mapping=per-queue|...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
+
+ # Optional: end-to-end virtio-blk runtime resize (requires host-side QMP resize):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>
+
  # Optional: end-to-end virtio-input event delivery (requires host-side QMP injection):
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
  #
  # Optional: end-to-end virtio-input mouse wheel delivery (requires host-side QMP injection and --test-input-events):
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|wheel_total=...|hwheel_total=...|...
-  # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires host-side QMP injection):
-  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
-  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
- 
+ #
+ # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires host-side QMP injection):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
  # virtio-snd may be SKIP/PASS/FAIL depending on flags and device presence.
  # Capture is reported separately as "virtio-snd-capture".
 #
@@ -273,6 +282,11 @@ Notes:
     (the marker is always emitted; `--require-input-msix` makes non-`mode=msix` fail the overall selftest)
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
+- The optional virtio-blk runtime resize marker is always emitted:
+  - Default (not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set`
+  - When `--test-blk-resize` (or `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1`) is enabled:
+    - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>` once the polling loop is armed
+    - then emits `...|PASS|...` when Windows observes a larger disk size, or `...|FAIL|reason=...|...` on timeout/errors.
 - The optional virtio-input end-to-end event delivery markers are always emitted:
   - Keyboard + relative mouse (`virtio-input-events`):
     - Default (not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`

@@ -454,6 +454,36 @@ Note: If the guest was provisioned without `--test-input-tablet-events` / `--tes
 When `-WithInputTabletEvents` / `-WithTabletEvents` / `--with-input-tablet-events` / `--with-tablet-events` is enabled,
 the host harness treats this as a hard failure.
 
+### virtio-blk runtime resize (QMP block resize)
+
+The guest selftest includes an opt-in `virtio-blk-resize` test that validates **dynamic capacity change** support:
+Windows should observe a larger disk size after the host resizes the backing device at runtime.
+
+To enable end-to-end testing:
+
+1. Provision the guest image so the scheduled selftest runs with `--test-blk-resize`
+   (or set env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1` in the guest).
+2. Run the Python host harness with `--with-blk-resize` so it:
+   - waits for `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`
+   - computes `new_bytes = old_bytes + delta` (default delta: 64 MiB)
+   - issues a QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
+   - requires `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|...`
+
+Example:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-blk-resize \
+  --blk-resize-delta-mib 64 \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
+When enabled, the harness also prints a host-side marker for log scraping/debugging:
+
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|old_bytes=...|new_bytes=...|qmp_cmd=...`
 ### virtio-snd (audio)
 
 If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:

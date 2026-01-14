@@ -70,7 +70,8 @@ struct Options {
   // This must be a directory on a virtio-backed volume (e.g. "D:\\aero-test\\").
   // If empty, the selftest will attempt to auto-detect a mounted virtio volume.
   std::wstring blk_root;
-  // Optional: attempt to detect virtio-blk runtime resize events (requires host-side action during the test).
+  // Optional: run an end-to-end virtio-blk runtime resize test.
+  // This requires host-side intervention during the run (QMP block resize).
   bool test_blk_resize = false;
   // Skip the virtio-snd test (emits a SKIP marker).
   bool disable_snd = false;
@@ -2523,34 +2524,16 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   return true;
 }
 
-struct VirtioBlkTestResult {
-  bool ok = false;
-
-  bool write_ok = false;
-  uint64_t write_bytes = 0;
-  double write_mbps = 0.0;
-
-  bool flush_ok = false;
-
-  // Read path includes both readback verification and a separate sequential read pass.
-  bool read_ok = false;
-  uint64_t read_bytes = 0;
-  double read_mbps = 0.0;
-
-  // Best-effort internal diagnostics; not currently emitted in the public marker.
-  bool verify_ok = false;
+struct VirtioBlkSelection {
+  DWORD disk_number = 0;
+  std::wstring base_dir;
 };
 
-static VirtioBlkTestResult VirtioBlkTest(Logger& log, const Options& opt,
-                                         std::optional<AerovblkQueryInfoResult>* miniport_info_out = nullptr,
-                                         DEVINST* devinst_out = nullptr) {
-  VirtioBlkTestResult out{};
-  if (miniport_info_out) miniport_info_out->reset();
-  if (devinst_out) *devinst_out = 0;
+static std::optional<VirtioBlkSelection> SelectVirtioBlkSelection(Logger& log, const Options& opt) {
   const auto disks = DetectVirtioDiskNumbers(log);
   if (disks.empty()) {
     log.LogLine("virtio-blk: no virtio disk devices detected");
-    return out;
+    return std::nullopt;
   }
 
   std::wstring base_dir;
@@ -2576,29 +2559,66 @@ static VirtioBlkTestResult VirtioBlkTest(Logger& log, const Options& opt,
     log.Logf("virtio-blk: unable to determine drive letter for test dir: %s",
              WideToUtf8(base_dir).c_str());
     log.LogLine("virtio-blk: specify --blk-root (e.g. D:\\aero-test\\) on a virtio volume");
-    return out;
+    return std::nullopt;
   }
 
   const auto base_disk = DiskNumberForDriveLetter(*base_drive);
   if (!base_disk.has_value()) {
     log.Logf("virtio-blk: unable to query disk number for %lc:", *base_drive);
     log.LogLine("virtio-blk: specify --blk-root (e.g. D:\\aero-test\\) on a virtio volume");
-    return out;
-  }
-
-  if (devinst_out) {
-    *devinst_out = FindDiskDevInstForDiskNumber(log, *base_disk);
+    return std::nullopt;
   }
 
   if (disks.count(*base_disk) == 0 && !DriveLetterLooksLikeVirtio(log, *base_drive)) {
     log.Logf("virtio-blk: test dir is on disk %lu (not detected as virtio)", *base_disk);
     log.LogLine("virtio-blk: ensure a virtio disk is formatted/mounted with a drive letter, or pass --blk-root");
-    return out;
+    return std::nullopt;
+  }
+
+  VirtioBlkSelection out{};
+  out.disk_number = *base_disk;
+  out.base_dir = std::move(base_dir);
+  return out;
+}
+
+struct VirtioBlkTestResult {
+  bool ok = false;
+
+  bool write_ok = false;
+  uint64_t write_bytes = 0;
+  double write_mbps = 0.0;
+
+  bool flush_ok = false;
+
+  // Read path includes both readback verification and a separate sequential read pass.
+  bool read_ok = false;
+  uint64_t read_bytes = 0;
+  double read_mbps = 0.0;
+
+  // Best-effort internal diagnostics; not currently emitted in the public marker.
+  bool verify_ok = false;
+};
+
+static VirtioBlkTestResult VirtioBlkTest(Logger& log, const Options& opt,
+                                         std::optional<AerovblkQueryInfoResult>* miniport_info_out = nullptr,
+                                         DEVINST* devinst_out = nullptr) {
+  VirtioBlkTestResult out{};
+  if (miniport_info_out) miniport_info_out->reset();
+  if (devinst_out) *devinst_out = 0;
+
+  const auto sel = SelectVirtioBlkSelection(log, opt);
+  if (!sel.has_value()) return out;
+
+  const DWORD disk_number = sel->disk_number;
+  const std::wstring& base_dir = sel->base_dir;
+
+  if (devinst_out) {
+    *devinst_out = FindDiskDevInstForDiskNumber(log, disk_number);
   }
 
   // Exercise aero_virtio_blk.sys miniport IOCTL_SCSI_MINIPORT query contract via \\.\PhysicalDrive<N>.
   {
-    HANDLE pd = OpenPhysicalDriveForIoctl(log, *base_disk);
+    HANDLE pd = OpenPhysicalDriveForIoctl(log, disk_number);
     if (pd == INVALID_HANDLE_VALUE) {
       log.LogLine("virtio-blk: miniport query FAIL (unable to open PhysicalDrive)");
       return out;
@@ -2871,47 +2891,128 @@ static void VirtioBlkResizeProbe(Logger& log) {
   CloseHandle(pd);
 }
 
-static bool VirtioBlkResizeTest(Logger& log) {
-  const auto disks = DetectVirtioDiskNumbers(log);
-  if (disks.empty()) {
-    log.LogLine("virtio-blk-resize: no virtio disks detected");
-    return false;
+struct VirtioBlkResizeTestResult {
+  bool ok = false;
+  std::string reason;
+  DWORD disk_number = 0;
+  uint64_t old_bytes = 0;
+  uint64_t new_bytes = 0;
+  uint64_t last_bytes = 0;
+  DWORD win32_error = ERROR_SUCCESS;
+  uint32_t elapsed_ms = 0;
+};
+
+static bool QueryDiskLengthBytes(HANDLE hPhysicalDrive, uint64_t* out_bytes, DWORD* out_err) {
+  if (out_err) *out_err = ERROR_SUCCESS;
+  if (!out_bytes) return false;
+  *out_bytes = 0;
+  if (hPhysicalDrive == INVALID_HANDLE_VALUE) return false;
+
+  GET_LENGTH_INFORMATION len{};
+  DWORD bytes = 0;
+  if (DeviceIoControl(hPhysicalDrive, IOCTL_DISK_GET_LENGTH_INFO, nullptr, 0, &len, sizeof(len), &bytes,
+                      nullptr) &&
+      bytes >= sizeof(len)) {
+    *out_bytes = static_cast<uint64_t>(len.Length);
+    return true;
+  }
+  DWORD err = GetLastError();
+
+  // Fallback: some stacks may not support IOCTL_DISK_GET_LENGTH_INFO. GeometryEx includes DiskSize.
+  DISK_GEOMETRY_EX geom{};
+  bytes = 0;
+  if (DeviceIoControl(hPhysicalDrive, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX, nullptr, 0, &geom, sizeof(geom), &bytes,
+                      nullptr) &&
+      bytes >= offsetof(DISK_GEOMETRY_EX, Data)) {
+    *out_bytes = static_cast<uint64_t>(geom.DiskSize.QuadPart);
+    return true;
   }
 
-  const DWORD disk_number = *disks.begin();
-  HANDLE pd = OpenPhysicalDriveForIoctl(log, disk_number);
-  if (pd == INVALID_HANDLE_VALUE) {
-    log.LogLine("virtio-blk-resize: unable to open PhysicalDrive for IOCTL");
-    return false;
-  }
-
-  const auto before_opt = QueryAerovblkCapacityChangeEvents(log, pd);
-  if (!before_opt.has_value()) {
-    log.LogLine("virtio-blk-resize: capacity_change_events not supported by driver");
-    CloseHandle(pd);
-    return false;
-  }
-  const uint64_t before = *before_opt;
-  log.Logf("virtio-blk-resize: waiting for resize event (before=%I64u)",
-           static_cast<unsigned long long>(before));
-
-  // Give the host time to resize the backing device and trigger a config interrupt.
-  Sleep(10000);
-
-  const auto after_opt = QueryAerovblkCapacityChangeEvents(log, pd);
-  CloseHandle(pd);
-
-  if (!after_opt.has_value()) {
-    log.LogLine("virtio-blk-resize: capacity_change_events not supported by driver (after)");
-    return false;
-  }
-  const uint64_t after = *after_opt;
-  log.Logf("virtio-blk-resize: capacity_change_events_after=%I64u",
-           static_cast<unsigned long long>(after));
-
-  if (after > before) return true;
-  log.LogLine("virtio-blk-resize: no resize events observed");
+  if (out_err) *out_err = GetLastError() ? GetLastError() : err;
   return false;
+}
+
+static VirtioBlkResizeTestResult VirtioBlkResizeTest(Logger& log, const Options& opt) {
+  VirtioBlkResizeTestResult out{};
+
+  const auto sel = SelectVirtioBlkSelection(log, opt);
+  if (!sel.has_value()) {
+    out.reason = "disk_not_found";
+    out.win32_error = ERROR_NOT_FOUND;
+    return out;
+  }
+  out.disk_number = sel->disk_number;
+
+  HANDLE pd = OpenPhysicalDriveForIoctl(log, out.disk_number);
+  if (pd == INVALID_HANDLE_VALUE) {
+    out.reason = "open_physical_drive_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+
+  uint64_t old_bytes = 0;
+  DWORD err = ERROR_SUCCESS;
+  if (!QueryDiskLengthBytes(pd, &old_bytes, &err)) {
+    out.reason = "query_old_size_failed";
+    out.win32_error = err;
+    CloseHandle(pd);
+    return out;
+  }
+  if (old_bytes == 0) {
+    out.reason = "invalid_old_size";
+    out.win32_error = ERROR_INVALID_DATA;
+    CloseHandle(pd);
+    return out;
+  }
+
+  out.old_bytes = old_bytes;
+  out.last_bytes = old_bytes;
+
+  // Signal the host harness that we are ready for it to issue a QMP block resize. The harness will
+  // parse old_bytes and compute a new target size (grow only) before triggering the resize.
+  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=%lu|old_bytes=%I64u",
+           static_cast<unsigned long>(out.disk_number), static_cast<unsigned long long>(out.old_bytes));
+
+  PerfTimer t;
+  constexpr double kTimeoutSec = 60.0;
+
+  while (t.SecondsSinceStart() < kTimeoutSec) {
+    // Best-effort: request an update so size changes are surfaced promptly.
+    DWORD ignored = 0;
+    (void)DeviceIoControl(pd, IOCTL_DISK_UPDATE_PROPERTIES, nullptr, 0, nullptr, 0, &ignored, nullptr);
+
+    uint64_t cur = 0;
+    err = ERROR_SUCCESS;
+    if (!QueryDiskLengthBytes(pd, &cur, &err)) {
+      out.reason = "query_new_size_failed";
+      out.win32_error = err;
+      break;
+    }
+
+    out.last_bytes = cur;
+    if (cur != old_bytes) {
+      if (cur > old_bytes) {
+        out.ok = true;
+        out.new_bytes = cur;
+        out.elapsed_ms = static_cast<uint32_t>(std::round(t.SecondsSinceStart() * 1000.0));
+      } else {
+        out.ok = false;
+        out.reason = "unexpected_shrink";
+        out.win32_error = ERROR_INVALID_DATA;
+      }
+      break;
+    }
+
+    Sleep(250);
+  }
+
+  if (!out.ok && out.reason.empty()) {
+    out.reason = "timeout";
+    out.win32_error = ERROR_TIMEOUT;
+  }
+
+  CloseHandle(pd);
+  return out;
 }
 
 struct VirtioInputTestResult {
@@ -8497,7 +8598,8 @@ static void PrintUsage() {
       "Options:\n"
       "  --blk-root <path>         Directory to use for virtio-blk file I/O test\n"
       "  --expect-blk-msi          Fail virtio-blk test if still using INTx (expected MSI/MSI-X)\n"
-      "  --test-blk-resize         Optional: detect virtio-blk runtime resize events (requires host action)\n"
+      "  --test-blk-resize         Run virtio-blk runtime resize test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1)\n"
       "  --http-url <url>          HTTP URL for TCP connectivity test (also expects <url>-large)\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
@@ -8675,6 +8777,10 @@ int wmain(int argc, wchar_t** argv) {
     opt.test_snd_capture = true;
   }
 
+  if (!opt.test_blk_resize && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE")) {
+    opt.test_blk_resize = true;
+  }
+
   if (!opt.test_input_events && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS")) {
     opt.test_input_events = true;
   }
@@ -8709,9 +8815,6 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
     opt.expect_blk_msi = true;
-  }
-  if (!opt.test_blk_resize && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE")) {
-    opt.test_blk_resize = true;
   }
 
   if (opt.disable_snd &&
@@ -8856,14 +8959,28 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   if (!opt.test_blk_resize) {
-    // Best-effort: query the resize counter for diagnostics, but emit SKIP by default since
-    // this subtest requires host-side intervention to actually trigger a resize/config interrupt.
+    // Best-effort: record the miniport's resize counter for diagnostics (driver-internal).
+    // This subtest requires host-side intervention to actually trigger a runtime resize.
     VirtioBlkResizeProbe(log);
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|not_supported");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set");
   } else {
-    const bool blk_resize_ok = VirtioBlkResizeTest(log);
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|%s", blk_resize_ok ? "PASS" : "FAIL");
-    all_ok = all_ok && blk_resize_ok;
+    const auto resize = VirtioBlkResizeTest(log, opt);
+    if (resize.ok) {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=%lu|old_bytes=%I64u|new_bytes=%I64u|elapsed_ms=%lu",
+               static_cast<unsigned long>(resize.disk_number),
+               static_cast<unsigned long long>(resize.old_bytes),
+               static_cast<unsigned long long>(resize.new_bytes),
+               static_cast<unsigned long>(resize.elapsed_ms));
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|reason=%s|disk=%lu|old_bytes=%I64u|last_bytes=%I64u|err=%lu",
+          resize.reason.empty() ? "unknown" : resize.reason.c_str(),
+          static_cast<unsigned long>(resize.disk_number),
+          static_cast<unsigned long long>(resize.old_bytes),
+          static_cast<unsigned long long>(resize.last_bytes),
+          static_cast<unsigned long>(resize.win32_error));
+    }
+    all_ok = all_ok && resize.ok;
   }
 
   const auto input = VirtioInputTest(log);
