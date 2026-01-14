@@ -14,12 +14,8 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 const DXBC_GS_POINT_TO_TRIANGLE: &[u8] = include_bytes!("fixtures/gs_point_to_triangle.dxbc");
 
-fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
+fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 #[derive(Clone, Copy)]
@@ -31,33 +27,20 @@ struct SigParam {
 }
 
 fn build_signature_chunk(params: &[SigParam]) -> Vec<u8> {
-    // Mirrors `aero_d3d11::signature::parse_signature_chunk` expectations.
-    let mut out = Vec::new();
-    out.extend_from_slice(&(params.len() as u32).to_le_bytes()); // param_count
-    out.extend_from_slice(&8u32.to_le_bytes()); // param_offset
-
-    let entry_size = 24usize;
-    let table_start = out.len();
-    out.resize(table_start + params.len() * entry_size, 0);
-
-    let mut strings = Vec::new();
-    for (i, p) in params.iter().enumerate() {
-        let semantic_name_offset = (8 + params.len() * entry_size + strings.len()) as u32;
-        strings.extend_from_slice(p.semantic_name.as_bytes());
-        strings.push(0);
-        let base = table_start + i * entry_size;
-        out[base..base + 4].copy_from_slice(&semantic_name_offset.to_le_bytes());
-        out[base + 4..base + 8].copy_from_slice(&p.semantic_index.to_le_bytes());
-        out[base + 8..base + 12].copy_from_slice(&0u32.to_le_bytes()); // system_value_type
-        out[base + 12..base + 16].copy_from_slice(&0u32.to_le_bytes()); // component_type
-        out[base + 16..base + 20].copy_from_slice(&p.register.to_le_bytes());
-        out[base + 20] = p.mask;
-        out[base + 21] = p.mask; // read_write_mask
-        out[base + 22] = 0; // stream
-        out[base + 23] = 0; // min_precision
-    }
-    out.extend_from_slice(&strings);
-    out
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .map(|p| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: p.semantic_name,
+            semantic_index: p.semantic_index,
+            system_value_type: 0,
+            component_type: 0,
+            register: p.register,
+            mask: p.mask,
+            read_write_mask: p.mask,
+            stream: 0,
+        })
+        .collect();
+    dxbc_test_utils::build_signature_chunk_v0(&entries)
 }
 
 fn tokens_to_bytes(tokens: &[u32]) -> Vec<u8> {
@@ -112,7 +95,11 @@ fn build_vs_pos_only_dxbc() -> Vec<u8> {
     tokens[1] = tokens.len() as u32;
 
     let shdr = tokens_to_bytes(&tokens);
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 fn build_ps_solid_green_dxbc() -> Vec<u8> {
@@ -151,7 +138,11 @@ fn build_ps_solid_green_dxbc() -> Vec<u8> {
     tokens[1] = tokens.len() as u32;
 
     let shdr = tokens_to_bytes(&tokens);
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
+    build_dxbc(&[
+        (FourCC(*b"ISGN"), isgn),
+        (FourCC(*b"OSGN"), osgn),
+        (FourCC(*b"SHDR"), shdr),
+    ])
 }
 
 #[repr(C)]
