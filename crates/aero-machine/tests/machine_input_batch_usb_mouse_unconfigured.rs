@@ -71,4 +71,3 @@ fn inject_input_batch_tracks_usb_mouse_state_before_configuration_when_ps2_is_ab
         UsbInResult::Data(vec![0x00, 0, 0, 0, 0])
     );
 }
-
