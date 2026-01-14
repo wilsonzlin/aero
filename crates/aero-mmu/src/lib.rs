@@ -854,7 +854,7 @@ impl Mmu {
                 return Ok(entry.translate(vaddr));
             }
 
-            match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
+            match self.check_perms(vaddr, entry.user, entry.writable, entry.nx, access, is_user) {
                 Ok(()) => {
                     let paddr = entry.translate(vaddr);
                     let needs_dirty = access.is_write() && !entry.dirty;
@@ -985,7 +985,7 @@ impl Mmu {
                 return Ok(entry.translate(vaddr));
             }
 
-            match self.check_perms_from_tlb(vaddr, entry, access, is_user) {
+            match self.check_perms(vaddr, entry.user, entry.writable, entry.nx, access, is_user) {
                 Ok(()) => return Ok(entry.translate(vaddr)),
                 Err(pf) => return Err(TranslateFault::PageFault(pf)),
             }
@@ -1089,17 +1089,6 @@ impl Mmu {
         } else {
             (1u64 << self.max_phys_bits) - 1
         }
-    }
-
-    #[inline]
-    fn check_perms_from_tlb(
-        &self,
-        vaddr: u64,
-        entry: &TlbEntry,
-        access: AccessType,
-        is_user: bool,
-    ) -> Result<(), PageFault> {
-        self.check_perms(vaddr, entry.user, entry.writable, entry.nx, access, is_user)
     }
 
     #[inline]
