@@ -192,9 +192,9 @@ mod tests {
         assert_eq!(ints.get_pending_for_apic(0), None);
         assert_eq!(ints.get_pending_for_apic(1), None);
 
-        ints.trigger_msi(msi_message(0xFF, 0x45));
+        ints.trigger_msi(msi_message(0xFF, 0x44));
 
-        assert_eq!(ints.get_pending_for_apic(0), Some(0x45));
-        assert_eq!(ints.get_pending_for_apic(1), Some(0x45));
+        assert_eq!(ints.get_pending_for_apic(0), Some(0x44));
+        assert_eq!(ints.get_pending_for_apic(1), Some(0x44));
     }
 }
