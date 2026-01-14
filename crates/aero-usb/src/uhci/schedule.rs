@@ -101,6 +101,80 @@ fn walk_link<M: MemoryBus + ?Sized>(
     *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestMem {
+        data: Vec<u8>,
+    }
+
+    impl TestMem {
+        fn new(size: usize) -> Self {
+            Self { data: vec![0; size] }
+        }
+
+        fn write_u32(&mut self, addr: u64, value: u32) {
+            let addr = addr as usize;
+            self.data[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    impl MemoryBus for TestMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            let start = paddr as usize;
+            let end = start.saturating_add(buf.len());
+            if end > self.data.len() {
+                buf.fill(0);
+                return;
+            }
+            buf.copy_from_slice(&self.data[start..end]);
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            let start = paddr as usize;
+            let end = start.saturating_add(buf.len());
+            if end > self.data.len() {
+                return;
+            }
+            self.data[start..end].copy_from_slice(buf);
+        }
+    }
+
+    #[test]
+    fn uhci_schedule_walk_terminates_on_self_referential_qh() {
+        // Frame list entry points at a QH that links to itself (horizontal), with no element chain.
+        let mut mem = TestMem::new(0x2000);
+        let mut hub = RootHub::new();
+        let mut usbsts = 0u16;
+        let mut usbint_causes = 0u16;
+        let mut ctx = ScheduleContext {
+            mem: &mut mem,
+            hub: &mut hub,
+            usbsts: &mut usbsts,
+            usbint_causes: &mut usbint_causes,
+        };
+
+        let flbaseadd = 0u32;
+        let qh_addr = 0x100u32;
+        let qh_link = qh_addr | LINK_PTR_QH;
+
+        // Frame list entry 0 -> QH.
+        ctx.mem.write_u32(flbaseadd as u64, qh_link);
+        // QH horizontal pointer -> itself.
+        ctx.mem.write_u32(qh_addr as u64, qh_link);
+        // QH element pointer -> terminate.
+        ctx.mem.write_u32(qh_addr as u64 + 4, LINK_PTR_TERMINATE);
+
+        // Should return (bounded traversal); without a cycle guard this would spin forever.
+        process_frame(&mut ctx, flbaseadd, 0);
+
+        // Cycle detection should flag a host system error / USB error interrupt.
+        assert_ne!(usbsts & USBSTS_USBERRINT, 0);
+        assert_ne!(usbsts & USBSTS_HSE, 0);
+    }
+}
+
 fn process_qh<M: MemoryBus + ?Sized>(
     ctx: &mut ScheduleContext<'_, M>,
     qh_addr: u32,
