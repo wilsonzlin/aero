@@ -53,15 +53,19 @@ When a geometry shader is active, a draw is executed as:
    - Assemble input primitives (point/line/triangle) from the post-VS data.
    - Execute the D3D GS logic as compute, using `EmitVertex` / `CutVertex` semantics.
    - Write expanded vertices into an output vertex buffer (storage).
-   - Some prepasses also write an expanded index buffer (for `draw_indexed_indirect`), while the current
-     synthetic-expansion fallback prepass only emits non-indexed vertices and uses `draw_indirect`.
+   - Some prepasses also write an expanded index buffer (indexed list form), which the executor may
+     expand into a dense vertex stream before rendering; the current synthetic-expansion fallback
+     prepass only emits non-indexed vertices and uses `draw_indirect`.
    - Write an **indirect draw args** struct so the subsequent render pass can draw without CPU readback.
 
 3. **Render expanded geometry**
    - Bind a render pipeline consisting of:
      - a small **passthrough VS** that reads the expanded vertex buffer, and
      - the original D3D pixel shader (translated to WGSL fragment).
-   - Issue `draw_indirect` / `draw_indexed_indirect` using the args buffer produced by step (2).
+   - Issue `draw_indirect` using the args buffer produced by step (2).
+     - If the compute prepass produced an expanded index buffer, the executor first expands the
+       indexed output into a dense (non-indexed) vertex stream so the render pass can stay
+       non-indexed. This avoids relying on `draw_indexed_indirect` on downlevel backends.
 
 Current status:
 
@@ -97,7 +101,10 @@ primitive topologies.
 Note: there is an in-tree GS→WGSL compute translator at `crates/aero-d3d11/src/runtime/gs_translate.rs`.
 It supports `pointlist`, `linestrip`, and `trianglestrip` GS output topologies. Strip topologies are
 lowered to indexed list topologies (`linestrip` → **line list**, `trianglestrip` → **triangle list**)
-suitable for `draw_indexed_indirect`.
+suitable for indexed list drawing.
+The executor currently converts indexed prepass outputs into a non-indexed vertex stream before
+rendering so it can always use `draw_indirect` (avoiding `draw_indexed_indirect` on downlevel
+backends).
 It is partially wired into the command executor via the translated-GS prepass paths for a small set
 of IA input topologies (including adjacency); other cases still fall back to synthetic expansion.
 
@@ -181,7 +188,7 @@ Implemented today:
   append-only tail (when present, the appended handles are authoritative), and draws route through a
   dedicated “compute prepass” path when any of these stages are bound.
 - **Compute→indirect→render pipeline plumbing**: the executor runs a compute prepass to write an
-   expanded buffer(s) + indirect args, then renders via `draw_indirect` / `draw_indexed_indirect`
+   expanded buffer(s) + indirect args, then renders via `draw_indirect`
    (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
   - **Translated GS prepass (real GS subset):** for draws with supported IA input topologies (including
     adjacency), a supported subset of SM4 GS DXBC is translated to WGSL compute and executed to
@@ -193,7 +200,8 @@ Implemented today:
     - indirect args (packed with counters into a single storage buffer binding to stay within the
       downlevel WebGPU `max_storage_buffers_per_shader_stage = 4` budget).
 
-    The subsequent render pass draws via `draw_indexed_indirect`.
+    The executor then expands the indexed output into a non-indexed vertex stream and the subsequent
+    render pass draws via `draw_indirect` (avoiding `draw_indexed_indirect` on downlevel backends).
   - **Synthetic-expansion prepass (fallback/scaffolding):** the built-in WGSL prepass is used as a
     fallback and for bring-up coverage tests (see `GEOMETRY_PREPASS_CS_WGSL` /
     `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in
