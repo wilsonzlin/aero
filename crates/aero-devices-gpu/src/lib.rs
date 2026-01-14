@@ -14,6 +14,10 @@
 //! - a BAR1-backed VRAM aperture that can also be aliased into the legacy VGA
 //!   (`0xA0000..0xC0000`) and VBE linear framebuffer mappings.
 #![forbid(unsafe_code)]
+//!
+//! By default, the crate is GPU-free. Enable the `aerogpu-native` feature (or its compatibility
+//! alias `wgpu-backend`) to execute command streams in-process via a WGPU/WebGPU-backed executor
+//! (intended for native tests).
 
 pub mod backend;
 pub mod device;
@@ -30,6 +34,8 @@ pub use backend::{
 };
 #[cfg(all(feature = "aerogpu-native", not(target_arch = "wasm32")))]
 pub use backend::NativeAeroGpuBackend;
+#[cfg(all(feature = "aerogpu-native", not(target_arch = "wasm32")))]
+pub use backend::NativeAeroGpuBackend as AerogpuWgpuBackend;
 pub use executor::{AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 pub use memory::MemoryBus;
 pub use pci::{

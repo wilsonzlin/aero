@@ -10,6 +10,8 @@ default = []
 # Native in-process executor backend wrapper (wgpu-based). Kept feature-gated so
 # `aero-devices-gpu` remains lightweight and WASM-friendly by default.
 aerogpu-native = ["dep:aero-gpu", "dep:pollster"]
+# Compatibility alias: the original proposal called this `wgpu-backend`.
+wgpu-backend = ["aerogpu-native"]
 
 [dependencies]
 aero-devices = { path = "../devices" }
