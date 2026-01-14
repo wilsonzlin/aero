@@ -32,6 +32,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+// Avoid prototype pollution when copying potentially-untrusted config objects.
+//
+// Setting `obj["__proto__"] = value` mutates the object's prototype. `defineProperty` always creates
+// an own data property instead.
+function safeRecordSet(record: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(record, key, { value, enumerable: true, configurable: true, writable: true });
+}
+
 /**
  * Remove secrets that must never be persisted in localStorage.
  *
@@ -58,7 +66,9 @@ export class AeroConfigManager {
   private readonly staticConfigUrl: string | undefined;
 
   private staticConfig: unknown = null;
-  private storedConfig: Record<string, unknown> = {};
+  // Use a null prototype so inherited `Object.prototype.*` values cannot affect config storage
+  // semantics (and so keys like "__proto__" are never treated as prototype setters).
+  private storedConfig: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   private state: ResolvedAeroConfig;
   private readonly listeners = new Set<AeroConfigListener>();
 
@@ -70,7 +80,12 @@ export class AeroConfigManager {
 
     const rawStored = loadStoredAeroConfig(this.storage);
     if (isRecord(rawStored)) {
-      this.storedConfig = { ...rawStored };
+      // Copy into a null-prototype object so stored config never observes inherited keys, and so
+      // malicious `"__proto__"` entries in localStorage cannot mutate the prototype chain.
+      this.storedConfig = Object.create(null) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(rawStored)) {
+        safeRecordSet(this.storedConfig, k, v);
+      }
       const scrubbed = sanitizeStoredConfig(this.storedConfig);
       // If secrets were present in persistent storage, re-save immediately so
       // they are removed from localStorage without waiting for a later update.
@@ -128,15 +143,19 @@ export class AeroConfigManager {
 
   updateStoredConfig(patch: Partial<AeroConfig>): void {
     const blockedKeys = this.state.lockedKeys;
-    const nextPatch: Partial<AeroConfig> = {};
+    // Use a null-prototype patch object so prototype pollution keys (e.g. "__proto__") never
+    // mutate the patch object's prototype.
+    const nextPatch: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     for (const [k, v] of Object.entries(patch) as [AeroConfigKey, AeroConfig[AeroConfigKey]][]) {
       if (blockedKeys.has(k)) continue;
-      (nextPatch as Record<string, unknown>)[k] = v;
+      safeRecordSet(nextPatch, k, v);
     }
 
     const parsed = parseAeroConfigOverrides(nextPatch);
     // Only apply keys that are valid after parsing; invalid inputs should be handled by the UI.
-    Object.assign(this.storedConfig, parsed.overrides as Record<string, unknown>);
+    for (const [k, v] of Object.entries(parsed.overrides as Record<string, unknown>)) {
+      safeRecordSet(this.storedConfig, k, v);
+    }
     sanitizeStoredConfig(this.storedConfig);
     saveStoredAeroConfig(this.storedConfig, this.storage);
 
@@ -145,7 +164,7 @@ export class AeroConfigManager {
   }
 
   resetToDefaults(): void {
-    this.storedConfig = {};
+    this.storedConfig = Object.create(null) as Record<string, unknown>;
     clearStoredAeroConfig(this.storage);
     this.recompute();
     this.emit();
