@@ -80,6 +80,7 @@ Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-vblank", "--vblan
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--out", "out.bin")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--cmd-out", "cmd.bin")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--alloc-out", "alloc.bin")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-last-cmd", "--cmd-out", "cmd.bin", "--alloc-out", "a.bin", "--alloc-out", "b.bin")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--read-gpa", "0x0", "4", "--out", "a.bin", "--out", "b.bin")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "nope")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--size", "4", "--read-gpa", "0x0", "4")

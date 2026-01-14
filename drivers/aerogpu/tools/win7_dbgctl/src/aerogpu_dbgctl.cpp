@@ -10552,6 +10552,17 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
+      if (dumpLastCmdAllocOutPath) {
+        fwprintf(stderr, L"--alloc-out specified multiple times\n");
+        PrintUsage();
+        if (g_json_output) {
+          std::string json;
+          JsonWriteTopLevelError(&json, "parse-args", NULL, "--alloc-out specified multiple times",
+                                 STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
       dumpLastCmdAllocOutPath = argv[++i];
       continue;
     }
