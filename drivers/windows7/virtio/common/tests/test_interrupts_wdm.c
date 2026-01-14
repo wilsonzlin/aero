@@ -31,6 +31,7 @@ typedef struct interrupts_test_ctx {
     ULONG last_message_id;
     USHORT last_queue_index;
     BOOLEAN last_is_config;
+    int trigger_once;
 } interrupts_test_ctx_t;
 
 static VOID evt_config(_Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrupts, _In_opt_ PVOID Cookie)
@@ -48,6 +49,32 @@ static VOID evt_queue(_Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrupts, _In_ USHORT
     assert(Interrupts == ctx->expected);
     ctx->queue_calls++;
     ctx->last_queue_index = QueueIndex;
+}
+
+static VOID evt_queue_trigger_message_interrupt_once(_Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrupts, _In_ USHORT QueueIndex, _In_opt_ PVOID Cookie)
+{
+    interrupts_test_ctx_t* ctx = (interrupts_test_ctx_t*)Cookie;
+    assert(ctx != NULL);
+    assert(Interrupts == ctx->expected);
+    assert(QueueIndex == 0);
+
+    ctx->queue_calls++;
+    ctx->last_queue_index = QueueIndex;
+
+    /*
+     * Simulate another interrupt arriving while the DPC is executing. This
+     * exercises DpcInFlight tracking across the "ISR queues DPC while DPC is
+     * running" case (common on SMP systems).
+     */
+    if (ctx->trigger_once == 0) {
+        ctx->trigger_once = 1;
+
+        assert(Interrupts->Mode == VirtioPciWdmInterruptModeMessage);
+        assert(Interrupts->u.Message.MessageInfo != NULL);
+
+        /* Trigger another interrupt for the same message (queue 0). */
+        assert(WdkTestTriggerMessageInterrupt(Interrupts->u.Message.MessageInfo, 1) != FALSE);
+    }
 }
 
 static VOID evt_dpc(
@@ -350,6 +377,45 @@ static void test_message_single_vector_default_mapping_dispatches_queue_work(voi
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_message_interrupt_during_dpc_requeues(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    NTSTATUS status;
+
+    desc = make_msg_desc(2); /* msg0=config, msg1=queue0 */
+    RtlZeroMemory(&ctx, sizeof(ctx));
+
+    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, evt_queue_trigger_message_interrupt_once, NULL, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    ctx.expected = &intr;
+
+    /* Trigger queue message (message 1) and run its DPC. The callback triggers another interrupt mid-DPC. */
+    assert(WdkTestTriggerMessageInterrupt(intr.u.Message.MessageInfo, 1) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intr.u.Message.MessageDpcs[1]) != FALSE);
+
+    /*
+     * A second interrupt occurred during the DPC and should have re-queued the
+     * KDPC. DpcInFlight should still be 1 (queued but not yet run).
+     */
+    assert(ctx.queue_calls == 1);
+    assert(intr.u.Message.IsrCount == 2);
+    assert(intr.u.Message.DpcCount == 1);
+    assert(intr.u.Message.MessageDpcs[1].Inserted != FALSE);
+    assert(intr.u.Message.DpcInFlight == 1);
+
+    /* Run the second queued DPC. */
+    assert(WdkTestRunQueuedDpc(&intr.u.Message.MessageDpcs[1]) != FALSE);
+    assert(ctx.queue_calls == 2);
+    assert(intr.u.Message.DpcCount == 2);
+    assert(intr.u.Message.DpcInFlight == 0);
+    assert(intr.u.Message.MessageDpcs[1].Inserted == FALSE);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 static void test_connect_failure_zeroes_state(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
@@ -459,6 +525,7 @@ int main(void)
     test_message_single_vector_default_mapping_dispatches_queue_work();
     test_message_isr_does_not_read_isr_status_byte();
     test_message_isr_dpc_routing_and_evt_dpc_override();
+    test_message_interrupt_during_dpc_requeues();
     test_connect_failure_zeroes_state();
     test_intx_evt_dpc_override();
     test_disconnect_waits_for_inflight_dpc();
