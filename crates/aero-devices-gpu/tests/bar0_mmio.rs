@@ -198,3 +198,22 @@ fn irq_status_enable_and_ack_semantics() {
     assert_eq!(dev.read(mmio::IRQ_STATUS, 4) as u32 & irq_bits::FENCE, 0);
     assert!(!dev.irq_level());
 }
+
+#[test]
+fn mmio_64bit_read_write_roundtrips() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command(1 << 1);
+
+    // 64-bit write to *_LO should populate both LO/HI dwords.
+    let ring_gpa = 0x1122_3344_5566_7788u64;
+    dev.write(mmio::RING_GPA_LO, 8, ring_gpa);
+    assert_eq!(dev.regs.ring_gpa, ring_gpa);
+    assert_eq!(dev.read(mmio::RING_GPA_LO, 8), ring_gpa);
+
+    // 64-bit read should stitch LO/HI dwords together.
+    dev.regs.completed_fence = 0x8877_6655_4433_2211u64;
+    assert_eq!(
+        dev.read(mmio::COMPLETED_FENCE_LO, 8),
+        dev.regs.completed_fence
+    );
+}
