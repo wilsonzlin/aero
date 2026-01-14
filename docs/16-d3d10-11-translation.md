@@ -291,6 +291,14 @@ SM4/5 instructions are tokenized 32-bit words:
 - N operand tokens with modifiers and swizzles
 - Optional extended tokens (resource dimension, sample controls, etc.)
 
+Note: The authoritative token bitfield layout is defined in the Windows SDK headers
+`d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h` (e.g. instruction length lives in
+bits 24..30 of the opcode token, operand type in bits 12..19, saturate in bit 13, etc.).
+
+At the time of writing, Aero's checked-in SM4/SM5 fixtures and unit tests use a simplified
+token encoding for bring-up (see `crates/aero-d3d11/src/sm4/opcode.rs`), so not all of the official
+DXBC bitfield layout is reflected in the current decoder implementation yet.
+
 Translator pipeline (conceptual):
 
 ```

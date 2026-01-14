@@ -2539,9 +2539,12 @@ fn decodes_integer_minmax_abs_neg_ops() {
 }
 
 #[test]
-fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
+fn sm5_uav_and_raw_buffer_opcode_constants_are_stable() {
     // These constants are used by compute/UAV decoding work; treat this test as a guard against
     // accidental renumbering.
+    //
+    // Note: these opcode IDs are specific to Aero's current SM4 token encoding used by
+    // fixtures/tests, and are *not* the Windows SDK `D3D11_SB_OPCODE_TYPE` values.
     assert_eq!(OPERAND_TYPE_NULL, 13);
     assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
     assert_eq!(OPCODE_SETP, 0x2c);
@@ -2647,8 +2650,9 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
 }
 
 #[test]
-fn sm5_tessellation_decl_opcode_constants_match_d3d11_tokenized_format() {
-    // Keep these in sync with `d3d11tokenizedprogramformat.h` (`D3D11_SB_OPCODE_TYPE`).
+fn sm5_tessellation_decl_opcode_constants_are_stable() {
+    // These opcode IDs are part of Aero's SM4 token encoding used by fixtures/tests.
+    // They are *not* the Windows SDK `D3D11_SB_OPCODE_TYPE` values.
     assert_eq!(OPCODE_DCL_HS_MAX_TESSFACTOR, 0x110);
     assert_eq!(OPCODE_DCL_HS_DOMAIN, 0x113);
     assert_eq!(OPCODE_DCL_HS_PARTITIONING, 0x114);

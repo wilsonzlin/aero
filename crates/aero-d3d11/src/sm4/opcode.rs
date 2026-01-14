@@ -1,13 +1,22 @@
-//! SM4/SM5 opcode and operand numeric constants.
+//! SM4/SM5 opcode and operand numeric constants used by Aero's SM4/SM5 decoder.
 //!
 //! The DXBC token stream encodes opcodes and operand kinds as numeric IDs in the
-//! low bits of each token. We only define the subset needed by the current
-//! translation pipeline (FL10_0 VS/PS).
+//! low bits of each token.
+//!
+//! Note: Aero's in-tree SM4/SM5 fixtures and unit tests currently use a
+//! **simplified / legacy** token encoding that is *not* bit-for-bit compatible
+//! with the Windows SDK `d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`
+//! definitions (e.g. real DXBC encodes instruction length in bits 24..30, and
+//! saturate/test bits live in the opcode token itself).
+//!
+//! As a result, the opcode numeric values in this module should be treated as
+//! **Aero-internal**, even if some comments reference DXBC mnemonics.
 
 /// Low 11 bits of an opcode token.
 pub const OPCODE_MASK: u32 = 0x7ff;
 
-/// Instruction length field (in DWORDs, including the opcode token).
+/// Instruction length field (in DWORDs, including the opcode token) in Aero's
+/// legacy SM4 token encoding.
 pub const OPCODE_LEN_SHIFT: u32 = 11;
 pub const OPCODE_LEN_MASK: u32 = 0x1fff;
 
@@ -67,20 +76,17 @@ pub const OPCODE_IDIV: u32 = 0x3d;
 
 // ---- Control flow (structured) ----
 //
-// Canonical opcode IDs from `d3d10tokenizedprogramformat.hpp` / `d3d11tokenizedprogramformat.hpp`.
+// Note: these are the opcode IDs used by Aero's current SM4 decoder/fixtures,
+// not the Windows SDK `D3D10_SB_OPCODE_TYPE` values.
 pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
 // Note: Some SM4/SM5 token streams encode compare-based `ifc_*` via `OPCODE_IF` with a non-boolean
 // instruction-test value in the opcode token (see `OPCODE_TEST_SHIFT`/`OPCODE_TEST_MASK`).
 /// `ifc` (structured `if` with an embedded comparison op).
-///
-/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_IFC`.
 pub const OPCODE_IFC: u32 = 0x2b;
 
 /// `setp` (set predicate register).
-///
-/// D3D10+ tokenized program format: `D3D10_SB_OPCODE_TYPE_SETP`.
 pub const OPCODE_SETP: u32 = 0x2c;
 
 // ---- Integer arithmetic ----
@@ -194,11 +200,8 @@ pub const OPCODE_RET: u32 = 0x3e;
 
 // Geometry shader stream emission / cutting.
 //
-// Values from the D3D10+ tokenized shader format opcode table:
-// `D3D10_SB_OPCODE_TYPE_EMIT`, `D3D10_SB_OPCODE_TYPE_CUT`,
-// `D3D10_SB_OPCODE_TYPE_EMIT_STREAM`, `D3D10_SB_OPCODE_TYPE_CUT_STREAM`,
-// `D3D10_SB_OPCODE_TYPE_EMITTHENCUT`, `D3D10_SB_OPCODE_TYPE_EMITTHENCUT_STREAM`
-// in the Windows SDK header `d3d10tokenizedprogramformat.h`.
+// Note: numeric values are Aero-internal (see module-level docs); names follow
+// the usual DXBC mnemonics.
 pub const OPCODE_EMIT: u32 = 0x3f;
 pub const OPCODE_CUT: u32 = 0x40;
 pub const OPCODE_EMIT_STREAM: u32 = 0x41;
