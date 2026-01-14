@@ -605,8 +605,9 @@ pub struct MachineConfig {
     ///
     /// This is the guest physical address used for:
     /// - the requested BAR0 base of the machine's Bochs/QEMU-compatible “Standard VGA” PCI function
-    ///   when [`MachineConfig::enable_pc_platform`] is `true` (the actual BAR base is assigned by
-    ///   BIOS POST / the PCI allocator unless this override is provided),
+    ///   when [`MachineConfig::enable_pc_platform`] is `true` (the LFB is routed through the PCI
+    ///   MMIO window / BAR router, and the actual BAR base is assigned by BIOS POST / the PCI
+    ///   allocator unless this override is provided),
     /// - the direct MMIO mapping when [`MachineConfig::enable_pc_platform`] is `false`, and
     /// - the BIOS VBE mode info `PhysBasePtr` (so guests learn the correct LFB address).
     ///

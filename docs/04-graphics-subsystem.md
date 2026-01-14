@@ -27,7 +27,11 @@ The canonical machine provides a legacy boot display using a **VGA + Bochs VBE (
 
 Canonical machine GPU device modes (today):
 
-- Boot graphics path (`enable_vga=true`, `enable_aerogpu=false`): `aero_gpu_vga::VgaDevice`. When the PC platform is enabled (`enable_pc_platform=true`), the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA” PCI function (currently `00:0c.0`) and routes the VBE linear framebuffer (LFB) through its BAR0 inside the PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator).
+- Boot graphics path (`enable_vga=true`, `enable_aerogpu=false`): `aero_gpu_vga::VgaDevice`.
+  - When `enable_pc_platform=false`, the VBE LFB is mapped directly at the configured LFB base.
+  - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
+    PCI function (currently `00:0c.0`) and routes the VBE LFB through PCI BAR0 inside the PCI MMIO
+    window / BAR router (BAR base assigned by BIOS POST / the PCI allocator).
 - AeroGPU device (MVP; `enable_aerogpu=true`, `enable_vga=false`): requires `enable_pc_platform=true`.
   - Exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`).
   - Wires BAR1-backed VRAM (legacy VGA window aliasing / VBE compatibility mapping).

@@ -86,10 +86,13 @@ bash ./scripts/ci/run-vga-vbe-tests.sh
 
 When `MachineConfig::enable_vga=true`, `aero_machine::Machine` wires the VGA/VBE device model for boot display.
 
-Note: when the PC platform is enabled (`enable_pc_platform=true`), the machine exposes a minimal
-Bochs/QEMU-compatible “Standard VGA” PCI function (currently `00:0c.0`) and routes the VBE LFB
-through its BAR0 inside the ACPI-reported PCI MMIO window (BAR base assigned by BIOS POST / the PCI
-allocator, and may be relocated when other PCI devices are present).
+Note: VBE LFB routing depends on `enable_pc_platform`:
+
+- When `enable_pc_platform=false`, the VBE LFB MMIO aperture is mapped directly at the configured base.
+- When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
+  PCI function (currently `00:0c.0`) and routes the VBE LFB through its BAR0 inside the ACPI-reported
+  PCI MMIO window / BAR router (BAR base assigned by BIOS POST / the PCI allocator, and may be
+  relocated when other PCI devices are present).
 
 Code pointers:
 

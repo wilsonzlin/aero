@@ -60,12 +60,15 @@ The canonical machine supports **two mutually-exclusive** display configurations
   - When `MachineConfig::enable_pc_platform=false`, the machine maps the LFB MMIO aperture directly
     at `MachineConfig::vga_lfb_base` (defaulting to `0xE000_0000` / `aero_gpu_vga::SVGA_LFB_BASE`).
   - When `MachineConfig::enable_pc_platform=true`, the canonical machine maps the LFB MMIO aperture
-    through a transitional Bochs/QEMU-compatible “Standard VGA” PCI function (`1234:1111` at
-    `00:0c.0`). The VBE LFB is exposed via BAR0 inside the PCI MMIO window; the BAR base is assigned
-    by BIOS POST / the PCI resource allocator (and may vary when other PCI devices are present)
-    unless pinned via `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`. The machine mirrors the
-    assigned BAR base into the BIOS VBE `PhysBasePtr` and the VGA device model so mode info and MMIO
-    routing remain coherent.
+    through a transitional Bochs/QEMU-compatible “Standard VGA” PCI function (`1234:1111` at `00:0c.0`;
+    see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`). The VBE LFB is exposed via BAR0 inside
+    the PCI MMIO window / BAR router; the BAR base is assigned by BIOS POST / the PCI resource
+    allocator (and may vary when other PCI devices are present) unless pinned via
+    `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`. The machine mirrors the assigned BAR base into
+    the BIOS VBE `PhysBasePtr` and the VGA device model so mode info and MMIO routing remain
+    coherent.
+  - Note: This transitional stub is not installed when AeroGPU is enabled, to avoid exposing two
+    VGA-class PCI devices.
 
 See also:
 
