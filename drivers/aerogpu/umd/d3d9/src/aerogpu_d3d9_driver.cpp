@@ -115,11 +115,11 @@ namespace aerogpu {
 // - render states
 // - sampler states
 // - fixed-function / legacy state caches (cached; used for deterministic Get*
-//   queries + state-block compatibility, and consulted by the minimal
-//   fixed-function fallback path where implemented):
+//   queries + state-block compatibility, and consulted by emulation paths where
+//   implemented (fixed-function fallback shaders, instancing expansion, etc)):
 //   - texture stage state (D3DTSS_*)
 //   - transforms / clip planes / clip status
-//   - software vertex processing / N-patch mode / stream source frequency
+//   - stream source frequency / software vertex processing / N-patch mode
 //   - shader int/bool constants
 //   - (WDK) lighting/material + palettes/current palette + gamma ramp
 // - texture bindings
