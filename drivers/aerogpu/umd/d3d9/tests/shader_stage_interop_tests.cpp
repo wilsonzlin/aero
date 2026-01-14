@@ -721,6 +721,167 @@ bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
   return true;
 }
 
+bool TestVsOnlyFogEnabledDoesNotSelectFogFixedfuncPs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;     // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;      // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;  // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;      // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;        // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;        // D3DFOG_LINEAR
+
+  // Set up VS-only interop: user VS bound, no user PS.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFFFF0000u},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF0000FFu},
+  };
+
+  // Baseline draw with fog disabled; record the selected fixed-function PS.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(VS-only, fog off)")) {
+    return false;
+  }
+
+  Shader* ps_off = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_off = dev->ps;
+    if (!Check(ps_off != nullptr, "VS-only: fixed-function PS bound (fog off)")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(ps_off, 0x20E40001u), "VS-only: fog-off PS does not reference c1 (fog color)")) {
+      return false;
+    }
+  }
+
+  // Reset the stream so we can validate that fog does not trigger fog constant uploads.
+  dev->cmd.reset();
+
+  // Enable linear fog. In VS-only interop, fog must be ignored (the fixed-function
+  // PS fallback must not expect TEXCOORD0.z fog coordinates from the user VS).
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, 0x3E4CCCCDu /*0.2f*/);
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, 0x3F4CCCCDu /*0.8f*/);
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(VS-only, fog on)")) {
+    return false;
+  }
+
+  Shader* ps_on = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_on = dev->ps;
+    if (!Check(ps_on != nullptr, "VS-only: fixed-function PS bound (fog on)")) {
+      return false;
+    }
+    if (!Check(ps_on == ps_off, "VS-only: fog does not change fixed-function PS selection")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(ps_on, 0x20E40001u), "VS-only: fog-on PS still does not reference c1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only fog enabled)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  // Ensure fog constant uploads (pixel shader c1..c2) did not occur.
+  size_t fog_const_uploads = 0;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
+        hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f)) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 1 && sc->vec4_count == 2) {
+        ++fog_const_uploads;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  if (!Check(fog_const_uploads == 0, "VS-only: fog does not upload fixed-function fog constants")) {
+    return false;
+  }
+
+  return CheckNoNullShaderBinds(buf, len);
+}
+
 bool TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -3069,6 +3230,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVsOnlyStage0StateUpdatesFixedfuncPs()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyFogEnabledDoesNotSelectFogFixedfuncPs()) {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails()) {
