@@ -258,14 +258,14 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
     - device endpoint doorbells are latched and can drive bounded transfer execution:
       - endpoint 0 control transfers (Setup/Data/Status TRBs), and
       - bulk/interrupt endpoints via Normal TRBs (via `transfer::XhciTransferExecutor`).
-      In the guest-visible MMIO path, ringing a non-zero doorbell also triggers an immediate bounded
-      `tick()` + event-ring service so transfers can make forward progress even if the outer
-      integration does not model a periodic controller tick.
+      Transfer execution is performed by the controller’s tick path (e.g. `tick_1ms` /
+      `step_1ms`) when DMA is enabled; MMIO doorbell writes only latch work, so wrappers must drive
+      periodic ticks for forward progress.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A small DMA read on the rising edge of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
-    - Some integrations cannot provide DMA during the MMIO write itself, so the controller may defer
-      the read + synthetic interrupt until the next tick once DMA is available (`pending_dma_on_run`).
+    - MMIO register writes do not perform DMA, so the controller defers the read + synthetic
+      interrupt until the next DMA-capable tick (`pending_dma_on_run`).
   - A level-triggered interrupt condition surfaced as `irq_level()` (interrupter 0 interrupt enable +
     pending; USBSTS.EINT is derived from pending), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
@@ -279,8 +279,9 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
     Event TRBs (queued host-side and delivered via interrupter 0 event ring when configured).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
   - Wraps `XhciController` (shared Rust model) and forwards MMIO reads/writes from the TS PCI device.
-  - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
-    disabled (the controller still updates register state, but must not touch guest RAM).
+  - Enforces **PCI BME DMA gating**: MMIO reads/writes never DMA, and stepping/polling only uses a
+    DMA-capable `GuestMemoryBus` when PCI `COMMAND.BME` is enabled (otherwise it uses
+    `tick_1ms_no_dma` and `poll()` becomes a no-op).
   - `step_frames()` advances controller time; when BME is enabled it also executes pending transfer
     ring work, processes doorbell 0-kicked command ring work, and drains queued events
     (`XhciController::tick_1ms`, alias `tick_1ms_and_service_event_ring`). When BME is disabled,
@@ -322,8 +323,8 @@ command/event behavior:
   (via `RingCursor`) and queues `Command Completion Event` TRBs for a small subset of commands used
   during bring-up: `No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`, `Configure Endpoint`,
   `Evaluate Context`, and endpoint commands `Stop Endpoint`, `Reset Endpoint`, `Set TR Dequeue Pointer`.
-  The doorbell 0 “kick” persists (`cmd_kick`), so subsequent MMIO accesses and periodic `tick_1ms`
-  calls can continue processing until the ring appears empty.
+  The doorbell 0 “kick” persists (`cmd_kick`), so periodic `tick_1ms` calls can continue processing
+  until the ring appears empty.
   These events are delivered to the guest only once the event ring is
   configured and `service_event_ring` is called (e.g. via the WASM bridge `step_frames()`/`poll()`
   hook).
