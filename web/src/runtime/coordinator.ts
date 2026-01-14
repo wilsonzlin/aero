@@ -505,6 +505,16 @@ export class WorkerCoordinator {
       return;
     }
 
+    // `vmRuntime` selects the overall VM runtime implementation (legacy vs machine). This affects:
+    // - which CPU worker script is spawned, and
+    // - machine-mode-only behaviours (e.g. IO worker device/disk initialization policies).
+    //
+    // It cannot be safely hot-swapped while workers are running, so force a full restart.
+    if (prevConfig && prevConfig.vmRuntime !== config.vmRuntime) {
+      this.restart();
+      return;
+    }
+
     // Switching the virtio-net PCI transport changes what the guest sees on the PCI bus
     // (device ID, BAR layout, and optional legacy I/O decode). This cannot be safely
     // hot-swapped, so force a full restart to apply the new mode.
@@ -2322,6 +2332,7 @@ function isWasmModuleCloneable(module: WebAssembly.Module): boolean {
 
 function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
   return (
+    a.vmRuntime === b.vmRuntime &&
     a.guestMemoryMiB === b.guestMemoryMiB &&
     a.enableWorkers === b.enableWorkers &&
     a.enableWebGPU === b.enableWebGPU &&

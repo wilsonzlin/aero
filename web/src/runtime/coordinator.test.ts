@@ -177,6 +177,70 @@ describe("runtime/coordinator", () => {
     expect(restartSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("restarts the VM when vmRuntime changes (legacy → machine)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      vmRuntime: "legacy",
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
+
+    coordinator.updateConfig({
+      vmRuntime: "machine",
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    });
+
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts the VM when vmRuntime changes (machine → legacy)", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      vmRuntime: "machine",
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
+
+    coordinator.updateConfig({
+      vmRuntime: "legacy",
+      guestMemoryMiB: 1,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    });
+
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("allows VM start when activeDiskImage is set even without OPFS SyncAccessHandle", () => {
     const coordinator = new WorkerCoordinator();
 
