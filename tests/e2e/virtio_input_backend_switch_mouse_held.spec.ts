@@ -590,51 +590,107 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timed out waiting for CPU worker import marker")), 5000);
-        const handler = (ev: MessageEvent): void => {
+        let timer = 0;
+        const cleanup = () => {
+          if (timer) clearTimeout(timer);
+          cpuWorker.removeEventListener("message", messageHandler);
+          cpuWorker.removeEventListener("error", errorHandler);
+          cpuWorker.removeEventListener("messageerror", messageErrorHandler);
+        };
+
+        const messageHandler = (ev: MessageEvent): void => {
           const data = ev.data as { type?: unknown; message?: unknown } | undefined;
           if (!data) return;
           if (data.type === "__aero_cpu_worker_imported") {
-            clearTimeout(timer);
-            cpuWorker.removeEventListener("message", handler);
+            cleanup();
             resolve();
             return;
           }
           if (data.type === "__aero_cpu_worker_import_failed") {
-            clearTimeout(timer);
-            cpuWorker.removeEventListener("message", handler);
+            cleanup();
             reject(
-              new Error(
-                `CPU worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`,
-              ),
+              new Error(`CPU worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`),
             );
           }
         };
-        cpuWorker.addEventListener("message", handler);
+        const errorHandler = (err: Event) => {
+          cleanup();
+          const e = err as any;
+          const message =
+            typeof e?.message === "string"
+              ? e.message
+              : typeof e?.error?.message === "string"
+                ? e.error.message
+                : String(err);
+          const filename = typeof e?.filename === "string" ? e.filename : "?";
+          const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+          const colno = typeof e?.colno === "number" ? e.colno : "?";
+          reject(new Error(`CPU worker wrapper error during import: ${message} (${filename}:${lineno}:${colno})`));
+        };
+        const messageErrorHandler = () => {
+          cleanup();
+          reject(new Error("CPU worker wrapper messageerror during import"));
+        };
+
+        cpuWorker.addEventListener("message", messageHandler);
+        cpuWorker.addEventListener("error", errorHandler);
+        cpuWorker.addEventListener("messageerror", messageErrorHandler);
+        timer = setTimeout(() => {
+          cleanup();
+          reject(new Error("Timed out waiting for CPU worker import marker"));
+        }, 20_000);
+        (timer as unknown as { unref?: () => void }).unref?.();
       });
 
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timed out waiting for io.worker import marker")), 5000);
-        const handler = (ev: MessageEvent): void => {
+        let timer = 0;
+        const cleanup = () => {
+          if (timer) clearTimeout(timer);
+          ioWorker.removeEventListener("message", messageHandler);
+          ioWorker.removeEventListener("error", errorHandler);
+          ioWorker.removeEventListener("messageerror", messageErrorHandler);
+        };
+
+        const messageHandler = (ev: MessageEvent): void => {
           const data = ev.data as { type?: unknown; message?: unknown } | undefined;
           if (!data) return;
           if (data.type === "__aero_io_worker_imported") {
-            clearTimeout(timer);
-            ioWorker.removeEventListener("message", handler);
+            cleanup();
             resolve();
             return;
           }
           if (data.type === "__aero_io_worker_import_failed") {
-            clearTimeout(timer);
-            ioWorker.removeEventListener("message", handler);
-            reject(
-              new Error(
-                `io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`,
-              ),
-            );
+            cleanup();
+            reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
           }
         };
-        ioWorker.addEventListener("message", handler);
+        const errorHandler = (err: Event) => {
+          cleanup();
+          const e = err as any;
+          const message =
+            typeof e?.message === "string"
+              ? e.message
+              : typeof e?.error?.message === "string"
+                ? e.error.message
+                : String(err);
+          const filename = typeof e?.filename === "string" ? e.filename : "?";
+          const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+          const colno = typeof e?.colno === "number" ? e.colno : "?";
+          reject(new Error(`io.worker wrapper error during import: ${message} (${filename}:${lineno}:${colno})`));
+        };
+        const messageErrorHandler = () => {
+          cleanup();
+          reject(new Error("io.worker wrapper messageerror during import"));
+        };
+
+        ioWorker.addEventListener("message", messageHandler);
+        ioWorker.addEventListener("error", errorHandler);
+        ioWorker.addEventListener("messageerror", messageErrorHandler);
+        timer = setTimeout(() => {
+          cleanup();
+          reject(new Error("Timed out waiting for io.worker import marker"));
+        }, 20_000);
+        (timer as unknown as { unref?: () => void }).unref?.();
       });
 
       ioWorker.postMessage({

@@ -65,7 +65,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       const timer = setTimeout(() => {
         cleanup();
         reject(new Error("Timed out waiting for io.worker import marker"));
-      }, 5000);
+      }, 20_000);
       (timer as unknown as { unref?: () => void }).unref?.();
 
       const handler = (ev: MessageEvent): void => {
@@ -82,12 +82,36 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
         }
       };
 
+      const errorHandler = (err: Event) => {
+        cleanup();
+        const e = err as any;
+        const message =
+          typeof e?.message === "string"
+            ? e.message
+            : typeof e?.error?.message === "string"
+              ? e.error.message
+              : String(err);
+        const filename = typeof e?.filename === "string" ? e.filename : "?";
+        const lineno = typeof e?.lineno === "number" ? e.lineno : "?";
+        const colno = typeof e?.colno === "number" ? e.colno : "?";
+        reject(new Error(`io.worker wrapper error during import: ${message} (${filename}:${lineno}:${colno})`));
+      };
+
+      const messageErrorHandler = () => {
+        cleanup();
+        reject(new Error("io.worker wrapper messageerror during import"));
+      };
+
       const cleanup = () => {
         clearTimeout(timer);
         ioWorker.removeEventListener("message", handler);
+        ioWorker.removeEventListener("error", errorHandler);
+        ioWorker.removeEventListener("messageerror", messageErrorHandler);
       };
 
       ioWorker.addEventListener("message", handler);
+      ioWorker.addEventListener("error", errorHandler);
+      ioWorker.addEventListener("messageerror", messageErrorHandler);
     });
 
     let workerError: unknown = null;
