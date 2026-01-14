@@ -201,7 +201,8 @@ Cross-process shared resources are expressed explicitly in the command stream:
 **not** use the numeric value of the user-mode shared `HANDLE` as `share_token`: for real
 NT handles the numeric value is process-local (commonly different after
 `DuplicateHandle`), and some D3D9Ex stacks use token-style shared handles that
-still must not be treated as a stable protocol key.
+still must not be treated as a stable protocol key (and should not be passed to
+`CloseHandle`).
 
 Canonical contract: on Win7/WDDM 1.1, the Win7 KMD generates a stable non-zero 64-bit
 `share_token` and persists it in the preserved WDDM allocation private driver data blob

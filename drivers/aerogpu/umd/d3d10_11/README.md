@@ -241,7 +241,7 @@ On Win7/WDDM 1.1, `share_token` must be stable across guest processes. AeroGPU d
 **not** use the numeric value of the user-mode shared `HANDLE` as `share_token`:
 for real NT handles the numeric value is process-local (commonly different after
 `DuplicateHandle`), and even token-style shared handles must not be treated as a
-stable protocol key.
+stable protocol key (and should not be passed to `CloseHandle`).
 
 Canonical contract: on Win7/WDDM 1.1, the Win7 KMD generates a stable non-zero
 `share_token` and persists it in the preserved WDDM allocation private driver data blob
