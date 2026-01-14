@@ -161,6 +161,9 @@ using aerogpu::shared_surface::FixupLegacyPrivForOpenResource;
 using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
 using aerogpu::d3d10_11::ValidateNoNullDdiTable;
 using aerogpu::d3d10_11::AnyNonNullHandles;
+using aerogpu::d3d10_11::D3dSrvMipLevelsIsAll;
+using aerogpu::d3d10_11::D3dViewDimensionIsTexture2D;
+using aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -5322,131 +5325,6 @@ void AEROGPU_APIENTRY DestroyElementLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HE
 SIZE_T AEROGPU_APIENTRY CalcPrivateRTVSize(D3D10DDI_HDEVICE, const D3D10DDIARG_CREATERENDERTARGETVIEW*) {
   AEROGPU_D3D10_TRACEF("CalcPrivateRenderTargetViewSize");
   return sizeof(AeroGpuRenderTargetView);
-}
-
-static bool D3dSrvMipLevelsIsAll(uint32_t view_mip_levels, uint32_t resource_mip_levels) {
-  // D3D10/11 use UINT(-1) for "all mip levels"; some headers/paths use 0.
-  if (view_mip_levels == 0 || view_mip_levels == 0xFFFFFFFFu) {
-    return true;
-  }
-  return view_mip_levels == resource_mip_levels;
-}
-
-static bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
-  bool ok = false;
-  // Prefer DDI-specific enumerators when available.
-  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
-  }
-
-  // Conservative fallback: the AeroGPU portable ABI models Texture2D as 3.
-  // If the above enumerators are not available, assume the same encoding.
-  if (!ok) {
-    ok = (view_dimension == 3u);
-  }
-  return ok;
-}
-
-static bool D3dViewDimensionIsTexture2DArray(uint32_t view_dimension) {
-  bool ok = false;
-  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  // Conservative fallback: D3D10/11 use 4 for Texture2DArray.
-  if (!ok) {
-    ok = (view_dimension == 4u);
-  }
-  return ok;
 }
 
 static HRESULT ValidateFullResourceRtvDesc(const AeroGpuResource* res,

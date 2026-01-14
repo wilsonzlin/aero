@@ -74,6 +74,8 @@ using aerogpu::d3d10_11::HasLiveCookie;
 using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
 using aerogpu::d3d10_11::ValidateNoNullDdiTable;
 using aerogpu::d3d10_11::AnyNonNullHandles;
+using aerogpu::d3d10_11::D3dViewDimensionIsTexture2D;
+using aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
@@ -5481,80 +5483,6 @@ static bool DxgiViewFormatTriviallyCompatible(const AeroGpuDevice* dev,
 static bool AerogpuFormatIsDepth(uint32_t aerogpu_format) {
   return aerogpu_format == AEROGPU_FORMAT_D24_UNORM_S8_UINT ||
          aerogpu_format == AEROGPU_FORMAT_D32_FLOAT;
-}
-
-static bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
-  bool ok = false;
-  bool have_enum = false;
-  // Prefer DDI-specific enumerators when available.
-  __if_exists(D3D10DDIRESOURCE_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_TEXTURE2D));
-  }
-  __if_exists(D3D11DDIRESOURCE_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_TEXTURE2D));
-  }
-  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
-  }
-  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
-    have_enum = true;
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
-  }
-
-  // Conservative fallback: the AeroGPU portable ABI models Texture2D as 3. Only
-  // use this when none of the relevant WDK enum constants exist, to avoid
-  // misclassifying other view dimensions on WDK builds.
-  if (!have_enum) {
-    ok = (view_dimension == 3u);
-  }
-  return ok;
-}
-
-static bool D3dViewDimensionIsTexture2DArray(uint32_t view_dimension) {
-  bool ok = false;
-  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
-    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
-  }
-
-  // Conservative fallback: D3D10/11 use 4 for Texture2DArray.
-  if (!ok) {
-    ok = (view_dimension == 4u);
-  }
-  return ok;
 }
 
 HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,

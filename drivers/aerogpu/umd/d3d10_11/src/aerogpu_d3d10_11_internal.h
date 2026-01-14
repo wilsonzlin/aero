@@ -224,6 +224,183 @@ inline bool AnyNonNullHandles(const THandle* handles, size_t count) {
   }
   return false;
 }
+
+// D3D view descriptor sentinel values.
+// D3D10/11 use UINT(-1) for "all mip levels"; some headers/paths use 0.
+constexpr uint32_t kD3DMipLevelsAll = 0xFFFFFFFFu;
+
+// View dimension values for the portable AeroGPU ABI (and common WDDM/DDI view
+// enums) used by our minimal view validation helpers.
+constexpr uint32_t kD3DViewDimensionTexture2D = 3u;
+constexpr uint32_t kD3DViewDimensionTexture2DArray = 4u;
+
+inline bool D3dSrvMipLevelsIsAll(uint32_t view_mip_levels, uint32_t resource_mip_levels) {
+  if (view_mip_levels == 0 || view_mip_levels == kD3DMipLevelsAll) {
+    return true;
+  }
+  return view_mip_levels == resource_mip_levels;
+}
+
+inline bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
+  bool ok = false;
+  bool have_enum = false;
+#if defined(_MSC_VER)
+  // Prefer DDI-specific enumerators when available (varies across WDK revisions).
+  __if_exists(D3D10DDIRESOURCE_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIRESOURCE_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_TEXTURE2D));
+  }
+  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
+  }
+  __if_exists(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2D));
+  }
+#endif
+
+  if (!have_enum) {
+    ok = (view_dimension == kD3DViewDimensionTexture2D);
+  }
+  return ok;
+}
+
+inline bool D3dViewDimensionIsTexture2DArray(uint32_t view_dimension) {
+  bool ok = false;
+  bool have_enum = false;
+#if defined(_MSC_VER)
+  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_RENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_DEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDISHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY) {
+    have_enum = true;
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11_DDI_SHADERRESOURCEVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+#endif
+
+  if (!have_enum) {
+    ok = (view_dimension == kD3DViewDimensionTexture2DArray);
+  }
+  return ok;
+}
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;
 constexpr uint32_t kMaxSamplerSlots = 16;
