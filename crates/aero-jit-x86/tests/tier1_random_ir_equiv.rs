@@ -284,11 +284,6 @@ struct GenCtx {
     insts: usize,
     // Value ids, plus their declared type.
     values: Vec<(ValueId, Width)>,
-    // W8 values that are known to be boolean-like (0 or 1). The Tier-1 IR interpreter treats
-    // condition values as `v & 1 != 0`, while Tier-1 WASM codegen currently uses `v != 0`.
-    // Translation only produces 0/1 conditions, so keep the random generator consistent with that
-    // contract to avoid false positives.
-    bool_values: Vec<ValueId>,
     // Known-safe guest addresses within the RAM window, always safe for 8-byte accesses.
     addr_values: Vec<ValueId>,
 }
@@ -299,7 +294,6 @@ impl GenCtx {
             b: IrBuilder::new(entry_rip),
             insts: 0,
             values: Vec::new(),
-            bool_values: Vec::new(),
             addr_values: Vec::new(),
         }
     }
@@ -312,17 +306,10 @@ impl GenCtx {
         self.values.push((id, width));
     }
 
-    fn record_bool(&mut self, id: ValueId) {
-        self.bool_values.push(id);
-    }
-
     fn const_int(&mut self, width: Width, value: u64) -> ValueId {
         self.insts += 1;
         let id = self.b.const_int(width, value);
         self.record(id, width);
-        if width == Width::W8 && (value & 0xff) <= 1 {
-            self.record_bool(id);
-        }
         id
     }
 
@@ -335,9 +322,6 @@ impl GenCtx {
         self.insts += 1;
         let id = self.b.read_reg(reg);
         self.record(id, width);
-        if matches!(reg, GuestReg::Flag(_)) {
-            self.record_bool(id);
-        }
         id
     }
 
@@ -393,7 +377,6 @@ impl GenCtx {
         self.insts += 1;
         let id = self.b.eval_cond(cond);
         self.record(id, Width::W8);
-        self.record_bool(id);
         id
     }
 
@@ -447,12 +430,8 @@ impl GenCtx {
         self.addr_values[rng.gen_range(0..self.addr_values.len())]
     }
 
-    fn pick_bool(&mut self, rng: &mut impl Rng) -> ValueId {
-        if !self.bool_values.is_empty() {
-            return self.bool_values[rng.gen_range(0..self.bool_values.len())];
-        }
-        // Fall back to a new constant boolean if we somehow failed to seed boolean values.
-        self.const_int(Width::W8, rng.gen_range(0..=1))
+    fn pick_w8(&mut self, rng: &mut impl Rng) -> ValueId {
+        self.pick_or_const(rng, Width::W8)
     }
 }
 
@@ -549,18 +528,13 @@ fn random_guest_gpr_reg(rng: &mut impl Rng) -> GuestReg {
 fn random_ir_block(rng: &mut impl Rng, entry_rip: u64) -> IrBlock {
     let mut ctx = GenCtx::new(entry_rip);
 
-    // Seed one value of each width so later instructions can always find operands without having to
-    // insert extra consts (keeping blocks bounded in size).
+    // Seed one value of each width so later instructions can always find operands without having
+    // to insert extra consts (keeping blocks bounded in size).
     for w in [Width::W8, Width::W16, Width::W32, Width::W64] {
         if !ctx.can_add(1) {
             break;
         }
-        if w == Width::W8 {
-            // Ensure we always have at least one boolean W8 value available for Select/CondJump.
-            ctx.const_int(w, rng.gen_range(0..=1));
-        } else {
-            ctx.const_int(w, rng.gen());
-        }
+        ctx.const_int(w, rng.gen());
     }
 
     // Seed a few safe memory addresses (safe for 8-byte loads/stores).
@@ -572,11 +546,6 @@ fn random_ir_block(rng: &mut impl Rng, entry_rip: u64) -> IrBlock {
         let addr = rng.gen_range(RAM_WINDOW_BASE..=addr_max);
         let v = ctx.const_int(Width::W64, addr);
         ctx.addr_values.push(v);
-    }
-
-    // Ensure we always have at least one bool-like W8 value (condition/flag sources).
-    if ctx.bool_values.is_empty() && ctx.can_add(1) {
-        ctx.read_reg(GuestReg::Flag(random_flag(rng)));
     }
 
     while ctx.insts < MAX_IR_INSTS {
@@ -616,7 +585,7 @@ fn random_ir_block(rng: &mut impl Rng, entry_rip: u64) -> IrBlock {
                 let src = ctx.pick_or_const(rng, width);
                 ctx.write_reg(reg, src);
             } else {
-                let src = ctx.pick_bool(rng);
+                let src = ctx.pick_w8(rng);
                 ctx.write_reg(GuestReg::Flag(random_flag(rng)), src);
             }
         } else if choice < 36 {
@@ -692,7 +661,7 @@ fn random_ir_block(rng: &mut impl Rng, entry_rip: u64) -> IrBlock {
                 break;
             }
             let w = random_width(rng);
-            let cond = ctx.pick_bool(rng);
+            let cond = ctx.pick_w8(rng);
             let if_true = ctx.pick_or_const(rng, w);
             let if_false = ctx.pick_or_const(rng, w);
             ctx.select(w, cond, if_true, if_false);
@@ -723,7 +692,7 @@ fn random_ir_block(rng: &mut impl Rng, entry_rip: u64) -> IrBlock {
             target: entry_rip.wrapping_add(rng.gen_range(0..0x1000u64)),
         }
     } else if term_choice < 80 {
-        let cond = ctx.pick_bool(rng);
+        let cond = ctx.pick_w8(rng);
         IrTerminator::CondJump {
             cond,
             target: entry_rip.wrapping_add(rng.gen_range(0..0x1000u64)),

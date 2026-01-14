@@ -289,7 +289,7 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                     GuestReg::Gpr { reg, width, high8 } => {
                         write_gpr_part(cpu, reg, width, high8, v)
                     }
-                    GuestReg::Flag(flag) => write_flag(cpu, flag, (v & 1) != 0),
+                    GuestReg::Flag(flag) => write_flag(cpu, flag, v != 0),
                 }
             }
             IrInst::Trunc { dst, src, width } => {
@@ -398,10 +398,10 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                 if_false,
                 width,
             } => {
-                let c = temps[cond.0 as usize] & 1;
+                let c = temps[cond.0 as usize] != 0;
                 let t = temps[if_true.0 as usize];
                 let e = temps[if_false.0 as usize];
-                temps[dst.0 as usize] = width.truncate(if c != 0 { t } else { e });
+                temps[dst.0 as usize] = width.truncate(if c { t } else { e });
             }
             IrInst::CallHelper { .. } => {
                 // The Tier-1 debug interpreter is only used to validate x86→IR translation. It has
@@ -422,8 +422,8 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
             target,
             fallthrough,
         } => {
-            let c = temps[cond.0 as usize] & 1;
-            cpu.rip = if c != 0 { target } else { fallthrough };
+            let c = temps[cond.0 as usize] != 0;
+            cpu.rip = if c { target } else { fallthrough };
             ExecResult::Continue
         }
         IrTerminator::IndirectJump { target } => {
