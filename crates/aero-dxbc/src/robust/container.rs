@@ -141,12 +141,9 @@ mod tests {
     fn rejects_excessive_chunk_count() {
         // Minimal DXBC header with an absurd chunk count. The robust parser must reject this
         // without attempting to allocate based on the untrusted count.
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"DXBC");
-        bytes.extend_from_slice(&[0u8; 16]); // checksum
-        bytes.extend_from_slice(&1u32.to_le_bytes()); // unknown field
-        bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
-        bytes.extend_from_slice(&(MAX_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk count
+        let mut bytes = crate::test_utils::build_container(&[]);
+        // chunk_count field is at offset 28.
+        bytes[28..32].copy_from_slice(&(MAX_DXBC_CHUNK_COUNT + 1).to_le_bytes()); // chunk_count
 
         let err = DxbcContainer::parse(&bytes).unwrap_err();
         assert!(

@@ -57,52 +57,28 @@ fn parse_empty_dxbc_is_ok() {
 fn parse_allows_misaligned_chunk_offsets() {
     // Some real-world DXBC containers (and fuzzed inputs) may not maintain strict
     // 4-byte alignment for chunk starts. The parser should handle this safely.
-    //
-    // Note: `test_utils::build_container` 4-byte aligns chunks, so we must build
-    // this container manually.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1]), (FourCC(*b"JUNK"), &[2, 3])]);
 
-    // total_size placeholder
-    bytes.extend_from_slice(&0u32.to_le_bytes());
-
-    let chunk_count = 2u32;
-    bytes.extend_from_slice(&chunk_count.to_le_bytes());
-
-    // Offsets for two chunks.
-    let offset_table_pos = bytes.len();
-    bytes.extend_from_slice(&[0u8; 8]);
-
-    // First chunk starts immediately after the offset table (40).
-    let chunk0_off = bytes.len() as u32;
-    bytes.extend_from_slice(b"SHDR");
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.push(1);
-
-    // Second chunk starts immediately after the first chunk without padding (49).
-    let chunk1_off = bytes.len() as u32;
-    bytes.extend_from_slice(b"JUNK");
-    bytes.extend_from_slice(&2u32.to_le_bytes());
-    bytes.extend_from_slice(&[2, 3]);
-
-    // Fill offsets.
-    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&chunk0_off.to_le_bytes());
-    bytes[offset_table_pos + 4..offset_table_pos + 8].copy_from_slice(&chunk1_off.to_le_bytes());
-
-    // Fill total_size.
-    let total_size = bytes.len() as u32;
-    bytes[24..28].copy_from_slice(&total_size.to_le_bytes());
-
-    // Sanity check: ensure we actually produced a misaligned offset for the
-    // second chunk.
+    // `build_container` always aligns chunks, so patch the blob to deliberately place the second
+    // chunk header at a misaligned offset (using the padding after the first chunk).
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
     let second_off = u32::from_le_bytes(
         bytes[offset_table_pos + 4..offset_table_pos + 8]
             .try_into()
             .unwrap(),
     ) as usize;
-    assert!(!second_off.is_multiple_of(4));
+    let misaligned_off = second_off - 1;
+    bytes.copy_within(second_off.., misaligned_off);
+    bytes[offset_table_pos + 4..offset_table_pos + 8]
+        .copy_from_slice(&(misaligned_off as u32).to_le_bytes());
+
+    // Also make the declared total_size non-4-aligned (the parser should treat the declared size
+    // as the authoritative bounds and ignore any trailing bytes).
+    let declared_total_size = (bytes.len() - 1) as u32;
+    bytes[24..28].copy_from_slice(&declared_total_size.to_le_bytes());
+
+    // Sanity check: ensure we actually produced a misaligned offset for the second chunk.
+    assert!(!misaligned_off.is_multiple_of(4));
 
     let file = DxbcFile::parse(&bytes).expect("parse should succeed");
     let chunks: Vec<_> = file.chunks().collect();
@@ -133,21 +109,8 @@ fn parse_ignores_trailing_bytes_beyond_total_size() {
 fn parse_allows_zero_sized_chunk_at_eof() {
     // A container with a single chunk whose header ends exactly at EOF and whose
     // payload length is 0. This exercises the boundary case data_start==total_size.
-    let total_size = 44u32;
-    let chunk_offset = 36u32;
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&total_size.to_le_bytes());
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
-    bytes.extend_from_slice(&chunk_offset.to_le_bytes());
-
-    bytes.extend_from_slice(b"JUNK");
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // size=0
-
-    assert_eq!(bytes.len(), total_size as usize);
+    let bytes = build_dxbc(&[(FourCC(*b"JUNK"), &[][..])]);
+    assert_eq!(bytes.len(), 44);
 
     let file = DxbcFile::parse(&bytes).expect("parse should succeed");
     let chunk = file.get_chunk(FourCC(*b"JUNK")).expect("missing JUNK");
@@ -245,13 +208,10 @@ fn malformed_total_size_truncates_offset_table_is_error() {
 
 #[test]
 fn malformed_truncated_chunk_offset_table_is_error() {
-    // DXBC header declaring one chunk, but missing the chunk offset table entry.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&32u32.to_le_bytes()); // total_size
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    // Start with a valid empty DXBC container, then patch the declared chunk_count so it claims
+    // one chunk but still has no chunk-offset entry.
+    let mut bytes = build_dxbc(&[]);
+    bytes[28..32].copy_from_slice(&1u32.to_le_bytes()); // chunk_count
     assert_eq!(bytes.len(), 32);
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
@@ -647,12 +607,8 @@ fn malformed_chunk_size_out_of_bounds_is_error() {
 fn rejects_excessive_chunk_count() {
     // DXBC header with an absurd chunk_count. The parser should reject this without attempting to
     // validate an enormous chunk-offset table.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
-    bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // chunk_count
+    let mut bytes = build_dxbc(&[]);
+    bytes[28..32].copy_from_slice(&u32::MAX.to_le_bytes()); // chunk_count
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }), "{err:?}");
