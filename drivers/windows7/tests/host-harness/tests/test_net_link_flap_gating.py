@@ -69,11 +69,18 @@ class VirtioNetLinkFlapGatingTests(unittest.TestCase):
         tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
         marker_line = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set"
         msg = h._virtio_net_link_flap_required_failure_message(tail, marker_line=marker_line)
-        self.assertEqual(
-            msg,
-            "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but "
-            "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)",
-        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED:"), msg)
+        # Keep the guidance flags stable (aliases are important for usability).
+        for flag in (
+            "--with-net-link-flap",
+            "--with-virtio-net-link-flap",
+            "--require-virtio-net-link-flap",
+            "--enable-virtio-net-link-flap",
+            "--test-net-link-flap",
+        ):
+            self.assertIn(flag, msg)
 
     def test_required_marker_missing(self) -> None:
         h = self.harness

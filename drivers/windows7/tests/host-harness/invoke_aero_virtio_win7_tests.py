@@ -1942,8 +1942,8 @@ def _try_qmp_set_link(endpoint: _QmpEndpoint, *, name: str, up: bool) -> None:
                 command="set_link",
             ):
                 raise RuntimeError(
-                    "unsupported QEMU: QMP does not support set_link (required for --with-net-link-flap). "
-                    "Upgrade QEMU or omit --with-net-link-flap."
+                    "unsupported QEMU: QMP does not support set_link (required for --with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap). "
+                    "Upgrade QEMU or omit --with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap."
                 )
             if isinstance(desc, str) and desc:
                 raise RuntimeError(f"QMP set_link failed: {desc}")
@@ -2833,20 +2833,20 @@ def _virtio_net_link_flap_skip_failure_message(tail: bytes, *, marker_line: Opti
         if prefix_str + "flag_not_set" in marker_line:
             return (
                 "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but "
-                "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
+                "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
             )
         if marker_line.startswith(prefix_str):
             reason = marker_line[len(prefix_str) :].strip()
             if reason:
                 return (
                     f"FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped ({reason}) "
-                    "but --with-net-link-flap was enabled"
+                    "but --with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled"
                 )
 
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set" in tail:
         return (
             "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but "
-            "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
+            "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
         )
 
     # Fallback: extract the skip reason token from the marker itself.
@@ -2860,9 +2860,9 @@ def _virtio_net_link_flap_skip_failure_message(tail: bytes, *, marker_line: Opti
             reason_str = reason.decode("utf-8", errors="replace").strip()
             return (
                 f"FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped ({reason_str}) "
-                "but --with-net-link-flap was enabled"
+                "but --with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled"
             )
-    return "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped but --with-net-link-flap was enabled"
+    return "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped but --with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled"
 
 
 def _virtio_net_link_flap_fail_failure_message(
@@ -2900,7 +2900,7 @@ def _virtio_net_link_flap_fail_failure_message(
             details = " (" + " ".join(parts) + ")"
     return (
         "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
-        f"--with-net-link-flap was enabled{details}"
+        f"--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled{details}"
     )
 
 
@@ -2940,7 +2940,7 @@ def _virtio_net_link_flap_required_failure_message(
         return _virtio_net_link_flap_skip_failure_message(tail, marker_line=marker_line)
     return (
         "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
-        "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
+        "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
     )
 
 
@@ -5254,7 +5254,9 @@ def main() -> int:
                     if need_input_tablet_events:
                         req_flags.append("--with-input-tablet-events/--with-tablet-events")
                     if need_net_link_flap:
-                        req_flags.append("--with-net-link-flap")
+                        req_flags.append(
+                            "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap"
+                        )
                     if need_blk_resize:
                         req_flags.append(
                             "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize"
@@ -5298,7 +5300,9 @@ def main() -> int:
         if need_input_tablet_events:
             req_flags.append("--with-input-tablet-events/--with-tablet-events")
         if need_net_link_flap:
-            req_flags.append("--with-net-link-flap")
+            req_flags.append(
+                "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap"
+            )
         if need_blk_resize:
             req_flags.append(
                 "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize"
@@ -8354,7 +8358,7 @@ def main() -> int:
                 ):
                     print(
                         "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap marker after virtio-net completed while "
-                        "--with-net-link-flap was enabled (guest selftest too old or missing --test-net-link-flap)",
+                        "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap was enabled (guest selftest too old or missing --test-net-link-flap)",
                         file=sys.stderr,
                     )
                     _print_tail(serial_log)
@@ -8587,7 +8591,7 @@ def main() -> int:
                             file=sys.stderr,
                         )
                         print(
-                            "FAIL: QMP_NET_LINK_FLAP_FAILED: --with-net-link-flap requires QMP, but QMP was not enabled",
+                            "FAIL: QMP_NET_LINK_FLAP_FAILED: --with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap requires QMP, but QMP was not enabled",
                             file=sys.stderr,
                         )
                         _print_tail(serial_log)

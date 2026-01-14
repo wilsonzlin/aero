@@ -60,20 +60,32 @@ class VirtioNetLinkFlapGatingTests(unittest.TestCase):
         h = self.harness
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set\n"
         msg = h._virtio_net_link_flap_required_failure_message(tail)
-        self.assertEqual(
-            msg,
-            "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but "
-            "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)",
-        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED:"), msg)
+        for flag in (
+            "--with-net-link-flap",
+            "--with-virtio-net-link-flap",
+            "--require-virtio-net-link-flap",
+            "--enable-virtio-net-link-flap",
+            "--test-net-link-flap",
+        ):
+            self.assertIn(flag, msg)
 
     def test_required_failure_message_missing(self) -> None:
         h = self.harness
         msg = h._virtio_net_link_flap_required_failure_message(b"some other output\n")
-        self.assertEqual(
-            msg,
-            "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
-            "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)",
-        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertTrue(msg.startswith("FAIL: MISSING_VIRTIO_NET_LINK_FLAP:"), msg)
+        for flag in (
+            "--with-net-link-flap",
+            "--with-virtio-net-link-flap",
+            "--require-virtio-net-link-flap",
+            "--enable-virtio-net-link-flap",
+            "--test-net-link-flap",
+        ):
+            self.assertIn(flag, msg)
 
 
 if __name__ == "__main__":

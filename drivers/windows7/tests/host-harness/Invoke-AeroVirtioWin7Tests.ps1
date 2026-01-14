@@ -6966,7 +6966,7 @@ try {
       )
     } catch {
       if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci) {
-        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents, -WithNetLinkFlap, -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize, -RequireNetMsix/-RequireVirtioNetMsix, -RequireBlkMsix/-RequireVirtioBlkMsix, -RequireSndMsix/-RequireVirtioSndMsix) or -QemuPreflightPci/-QmpPreflightPci: $_"
+        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents, -WithNetLinkFlap/-WithVirtioNetLinkFlap/-RequireVirtioNetLinkFlap/-EnableVirtioNetLinkFlap, -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize, -RequireNetMsix/-RequireVirtioNetMsix, -RequireBlkMsix/-RequireVirtioBlkMsix, -RequireSndMsix/-RequireVirtioSndMsix) or -QemuPreflightPci/-QmpPreflightPci: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -8593,7 +8593,7 @@ try {
       $scriptExitCode = 1
     }
     "QMP_SET_LINK_UNSUPPORTED" {
-      Write-Host "FAIL: QMP_SET_LINK_UNSUPPORTED: unsupported QEMU: QMP does not support set_link (required for -WithNetLinkFlap). Upgrade QEMU or omit -WithNetLinkFlap."
+      Write-Host "FAIL: QMP_SET_LINK_UNSUPPORTED: unsupported QEMU: QMP does not support set_link (required for -WithNetLinkFlap/-WithVirtioNetLinkFlap/-RequireVirtioNetLinkFlap/-EnableVirtioNetLinkFlap). Upgrade QEMU or omit net link flap testing."
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8841,7 +8841,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_NET_LINK_FLAP" {
-      Write-Host "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while -WithNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
+      Write-Host "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while -WithNetLinkFlap/-WithVirtioNetLinkFlap/-RequireVirtioNetLinkFlap/-EnableVirtioNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8926,7 +8926,7 @@ try {
       if (-not [string]::IsNullOrEmpty($cfgUpDelta)) { $detailsParts += "cfg_intr_up_delta=$cfgUpDelta" }
       $details = ""
       if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
-      Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while -WithNetLinkFlap was enabled$details"
+      Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while -WithNetLinkFlap/-WithVirtioNetLinkFlap/-RequireVirtioNetLinkFlap/-EnableVirtioNetLinkFlap was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8944,9 +8944,9 @@ try {
         elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but -WithNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
+        Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but -WithNetLinkFlap/-WithVirtioNetLinkFlap/-RequireVirtioNetLinkFlap/-EnableVirtioNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
       } else {
-        Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped ($reason) but -WithNetLinkFlap was enabled"
+        Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped ($reason) but -WithNetLinkFlap/-WithVirtioNetLinkFlap/-RequireVirtioNetLinkFlap/-EnableVirtioNetLinkFlap was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
