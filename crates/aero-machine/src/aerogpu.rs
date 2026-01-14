@@ -940,6 +940,9 @@ impl AeroGpuMmioDevice {
 
             self.completed_fence = 0;
             self.irq_status = 0;
+            self.error_code = pci::AerogpuErrorCode::None as u32;
+            self.error_fence = 0;
+            self.error_count = 0;
 
             if dma_enabled && self.ring_gpa != 0 {
                 let tail = mem.read_u32(self.ring_gpa + RING_TAIL_OFFSET);
@@ -1339,6 +1342,8 @@ mod tests {
     #[test]
     fn error_mmio_regs_latch_and_survive_irq_ack() {
         let mut dev = AeroGpuMmioDevice::default();
+
+        assert_ne!(dev.supported_features() & pci::AEROGPU_FEATURE_ERROR_INFO, 0);
 
         // Unmask ERROR IRQ delivery so `irq_level` reflects the status bit.
         dev.mmio_write_dword(
