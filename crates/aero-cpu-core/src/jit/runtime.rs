@@ -164,6 +164,55 @@ pub trait JitBackend {
     type Cpu;
 
     fn execute(&mut self, table_index: u32, cpu: &mut Self::Cpu) -> JitBlockExit;
+
+    /// Optional hook allowing a backend to expose a JIT-visible code-version table that lives in
+    /// backend-managed memory.
+    ///
+    /// When this returns `Some(table)`, [`JitRuntime`] will treat that table as the single source
+    /// of truth for page versions:
+    /// - `JitRuntime::page_versions()` snapshots and validations read from this table.
+    /// - `JitRuntime::on_guest_write(..)` bumps versions in this table.
+    ///
+    /// This is primarily intended for native WASM execution backends (e.g. Wasmtime) where
+    /// generated WASM code can only directly read version entries from its own linear memory.
+    ///
+    /// Backends that do not provide a JIT-visible table should return `None`; the runtime will use
+    /// an internal, owned table.
+    #[inline]
+    fn code_version_table(&mut self) -> Option<Box<dyn CodeVersionTable>> {
+        None
+    }
+}
+
+/// Backend-provided dense code-version table.
+///
+/// This trait exists to allow `aero-cpu-core` to remain `#![forbid(unsafe_code)]` while still
+/// supporting shared code-version tables owned by execution backends.
+///
+/// Implementations are expected to be cheap to call and may use interior mutability to update the
+/// underlying table.
+///
+/// ### Pointer stability contract
+/// [`CodeVersionTable::table_ptr_len`] must return a pointer that remains valid for `len_entries`
+/// `u32` entries for as long as the `CodeVersionTable` object is kept alive.
+pub trait CodeVersionTable: core::fmt::Debug + Send {
+    /// Number of `u32` entries in the dense table.
+    fn len(&self) -> usize;
+
+    /// Read the version entry at `idx` (`0 <= idx < len()`).
+    fn get(&self, idx: usize) -> u32;
+
+    /// Write the version entry at `idx` (`0 <= idx < len()`).
+    fn set(&self, idx: usize, value: u32);
+
+    /// Bump each entry in `start..=end` by 1 with wrapping semantics.
+    fn bump_range(&self, start: usize, end: usize);
+
+    /// Set all entries to 0.
+    fn reset(&self);
+
+    /// Returns the raw pointer/length for the underlying `u32[]` table.
+    fn table_ptr_len(&self) -> (*mut u32, usize);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,13 +244,21 @@ pub struct PageVersionTracker {
     /// require `2^32` writes to the same page between taking a snapshot and validating it. In
     /// practice this is vanishingly unlikely, and will become even less so if we only bump code
     /// pages in the future.
-    versions: Box<[Cell<u32>]>,
+    table: PageVersionTable,
 
     /// Snapshot generation counter.
     ///
     /// [`Self::reset`] increments this so compilation results derived from pre-reset snapshots are
     /// rejected even if the per-page version values happen to match (e.g. all zeros).
     generation: Cell<u64>,
+}
+
+#[derive(Debug)]
+enum PageVersionTable {
+    /// Runtime-owned, pointer-stable table.
+    Owned(Box<[Cell<u32>]>),
+    /// Backend-owned table.
+    External(Box<dyn CodeVersionTable>),
 }
 
 impl Default for PageVersionTracker {
@@ -213,7 +270,7 @@ impl Default for PageVersionTracker {
 impl core::fmt::Debug for PageVersionTracker {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PageVersionTracker")
-            .field("max_pages", &self.versions.len())
+            .field("max_pages", &self.versions_len())
             .field("generation", &self.generation.get())
             .finish()
     }
@@ -221,9 +278,10 @@ impl core::fmt::Debug for PageVersionTracker {
 
 impl Clone for PageVersionTracker {
     fn clone(&self) -> Self {
-        let out = Self::new(self.versions.len());
-        for i in 0..self.versions.len() {
-            out.versions[i].set(self.versions[i].get());
+        let len = self.versions_len();
+        let out = Self::new(len);
+        for i in 0..len {
+            out.set_version(i as u64, self.version(i as u64));
         }
         out.generation.set(self.generation.get());
         out
@@ -263,8 +321,19 @@ impl PageVersionTracker {
         let max_pages = max_pages.min(Self::MAX_TRACKED_PAGES);
         let mut versions = Vec::with_capacity(max_pages);
         versions.resize_with(max_pages, || Cell::new(0));
+        Self::from_owned(versions.into_boxed_slice())
+    }
+
+    fn from_owned(versions: Box<[Cell<u32>]>) -> Self {
         Self {
-            versions: versions.into_boxed_slice(),
+            table: PageVersionTable::Owned(versions),
+            generation: Cell::new(0),
+        }
+    }
+
+    fn from_external(table: Box<dyn CodeVersionTable>) -> Self {
+        Self {
+            table: PageVersionTable::External(table),
             generation: Cell::new(0),
         }
     }
@@ -280,9 +349,9 @@ impl PageVersionTracker {
     #[track_caller]
     pub fn ensure_table_len(&self, len: usize) {
         assert!(
-            len <= self.versions.len(),
+            len <= self.versions_len(),
             "requested code-version table length ({len}) exceeds configured max_pages ({})",
-            self.versions.len()
+            self.versions_len()
         );
     }
 
@@ -304,14 +373,27 @@ impl PageVersionTracker {
     ///
     /// Pointer stability: `ptr` remains valid for the lifetime of the tracker (no reallocations).
     pub fn table_ptr_len(&self) -> (*mut u32, usize) {
-        let len = self.versions.len();
-        if len == 0 {
-            // `Box<[T]>::as_ptr()` returns a non-null dangling pointer for empty slices, but JIT
-            // callers typically treat `len == 0` as "table disabled". Return a null pointer to
-            // make that intent explicit and avoid accidental dereference by embedding code.
-            (core::ptr::null_mut(), 0)
-        } else {
-            (self.versions.as_ptr() as *mut u32, len)
+        match &self.table {
+            PageVersionTable::Owned(versions) => {
+                let len = versions.len();
+                if len == 0 {
+                    // `Box<[T]>::as_ptr()` returns a non-null dangling pointer for empty slices,
+                    // but JIT callers typically treat `len == 0` as "table disabled". Return a null
+                    // pointer to make that intent explicit and avoid accidental dereference by
+                    // embedding code.
+                    (core::ptr::null_mut(), 0)
+                } else {
+                    (versions.as_ptr() as *mut u32, len)
+                }
+            }
+            PageVersionTable::External(table) => {
+                let (ptr, len) = table.table_ptr_len();
+                if len == 0 {
+                    (core::ptr::null_mut(), 0)
+                } else {
+                    (ptr, len)
+                }
+            }
         }
     }
 
@@ -320,10 +402,22 @@ impl PageVersionTracker {
     /// The returned pointer is valid for `self.versions_len()` entries. It remains valid for the
     /// lifetime of the tracker (no reallocations).
     pub fn table_ptr(&self) -> *const u32 {
-        if self.versions.is_empty() {
-            core::ptr::null()
-        } else {
-            self.versions.as_ptr() as *const u32
+        match &self.table {
+            PageVersionTable::Owned(versions) => {
+                if versions.is_empty() {
+                    core::ptr::null()
+                } else {
+                    versions.as_ptr() as *const u32
+                }
+            }
+            PageVersionTable::External(table) => {
+                let (ptr, len) = table.table_ptr_len();
+                if len == 0 {
+                    core::ptr::null()
+                } else {
+                    ptr as *const u32
+                }
+            }
         }
     }
 
@@ -343,12 +437,15 @@ impl PageVersionTracker {
     }
 
     pub fn version(&self, page: u64) -> u32 {
-        let len = self.versions.len() as u64;
+        let len = self.versions_len() as u64;
         if page >= len {
             return 0;
         }
         let idx = page as usize;
-        self.versions[idx].get()
+        match &self.table {
+            PageVersionTable::Owned(versions) => versions[idx].get(),
+            PageVersionTable::External(table) => table.get(idx),
+        }
     }
 
     /// Sets an explicit version for a page.
@@ -356,12 +453,15 @@ impl PageVersionTracker {
     /// This is primarily used by unit tests and tooling; normal execution should use
     /// [`Self::bump_write`].
     pub fn set_version(&self, page: u64, version: u32) {
-        let len = self.versions.len() as u64;
+        let len = self.versions_len() as u64;
         if page >= len {
             return;
         }
         let idx = page as usize;
-        self.versions[idx].set(version);
+        match &self.table {
+            PageVersionTable::Owned(versions) => versions[idx].set(version),
+            PageVersionTable::External(table) => table.set(idx, version),
+        }
     }
 
     pub fn bump_write(&self, paddr: u64, len: usize) {
@@ -369,7 +469,7 @@ impl PageVersionTracker {
             return;
         }
 
-        let max_pages = self.versions.len() as u64;
+        let max_pages = self.versions_len() as u64;
         if max_pages == 0 {
             return;
         }
@@ -385,9 +485,14 @@ impl PageVersionTracker {
         let end_page = end_page.min(max_pages - 1);
         let start_idx = start_page as usize;
         let end_idx = end_page as usize;
-        for i in start_idx..=end_idx {
-            let cell = &self.versions[i];
-            cell.set(cell.get().wrapping_add(1));
+        match &self.table {
+            PageVersionTable::Owned(versions) => {
+                for i in start_idx..=end_idx {
+                    let cell = &versions[i];
+                    cell.set(cell.get().wrapping_add(1));
+                }
+            }
+            PageVersionTable::External(table) => table.bump_range(start_idx, end_idx),
         }
     }
 
@@ -421,7 +526,10 @@ impl PageVersionTracker {
     ///
     /// This is primarily intended for tests and tooling.
     pub fn versions_len(&self) -> usize {
-        self.versions.len()
+        match &self.table {
+            PageVersionTable::Owned(versions) => versions.len(),
+            PageVersionTable::External(table) => table.len(),
+        }
     }
 
     /// Snapshot generation for page-version validation.
@@ -436,8 +544,13 @@ impl PageVersionTracker {
     /// after reset, with all entries set to 0.
     pub fn reset(&self) {
         self.generation.set(self.generation.get().wrapping_add(1));
-        for v in self.versions.iter() {
-            v.set(0);
+        match &self.table {
+            PageVersionTable::Owned(versions) => {
+                for v in versions.iter() {
+                    v.set(0);
+                }
+            }
+            PageVersionTable::External(table) => table.reset(),
         }
     }
 }
@@ -466,7 +579,19 @@ where
             .code_version_max_pages
             .min(PageVersionTracker::MAX_TRACKED_PAGES);
 
-        let page_versions = PageVersionTracker::new(config.code_version_max_pages);
+        let mut backend = backend;
+        let page_versions = if let Some(table) = backend.code_version_table() {
+            let len = table.len();
+            assert!(
+                len <= PageVersionTracker::MAX_TRACKED_PAGES,
+                "backend-provided code-version table length ({len}) exceeds PageVersionTracker::MAX_TRACKED_PAGES ({})",
+                PageVersionTracker::MAX_TRACKED_PAGES
+            );
+            config.code_version_max_pages = len;
+            PageVersionTracker::from_external(table)
+        } else {
+            PageVersionTracker::new(config.code_version_max_pages)
+        };
         let cache = CodeCache::new(config.cache_max_blocks, config.cache_max_bytes);
         let profile_capacity = HotnessProfile::recommended_capacity(config.cache_max_blocks);
         let profile = HotnessProfile::new_with_capacity(config.hot_threshold, profile_capacity);

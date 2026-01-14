@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime};
+use aero_cpu_core::jit::runtime::{CodeVersionTable, CompileRequestSink, JitBackend, JitRuntime};
 use aero_cpu_core::state::CpuState as CoreCpuState;
 
 use crate::tier1::Tier1WasmOptions;
@@ -117,6 +117,10 @@ where
         cpu: &mut Self::Cpu,
     ) -> aero_cpu_core::jit::runtime::JitBlockExit {
         self.0.borrow_mut().execute(table_index, cpu)
+    }
+
+    fn code_version_table(&mut self) -> Option<Box<dyn CodeVersionTable>> {
+        self.0.borrow_mut().code_version_table()
     }
 }
 

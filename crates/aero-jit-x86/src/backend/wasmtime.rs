@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, DEFAULT_CODE_VERSION_MAX_PAGES};
+use aero_cpu_core::jit::runtime::{
+    CodeVersionTable, JitBackend, JitBlockExit, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_cpu_core::state::CpuState as CoreCpuState;
 use wasmtime::{Caller, Config, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
@@ -35,6 +37,76 @@ struct HostExitState {
     mmio_exit: bool,
     jit_exit: bool,
     page_fault: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WasmtimeCodeVersionTable {
+    ptr: *mut u32,
+    len: usize,
+}
+
+// Safety: `WasmtimeCodeVersionTable` is a plain pointer+length pair. It does not provide any
+// implicit sharing; it is only safe to *move* between threads if the embedder ensures the backing
+// linear memory remains valid and is not concurrently accessed.
+unsafe impl Send for WasmtimeCodeVersionTable {}
+
+impl CodeVersionTable for WasmtimeCodeVersionTable {
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn get(&self, idx: usize) -> u32 {
+        if idx >= self.len {
+            return 0;
+        }
+        // Safety: `idx < len` and the backend guarantees `ptr` points to `len` `u32` entries.
+        unsafe { self.ptr.add(idx).read_unaligned() }
+    }
+
+    fn set(&self, idx: usize, value: u32) {
+        if idx >= self.len {
+            return;
+        }
+        // Safety: `idx < len` and the backend guarantees `ptr` points to `len` `u32` entries.
+        unsafe {
+            self.ptr.add(idx).write_unaligned(value);
+        }
+    }
+
+    fn bump_range(&self, start: usize, end: usize) {
+        if self.len == 0 || start > end {
+            return;
+        }
+        let end = end.min(self.len - 1);
+        for idx in start..=end {
+            // Safety: `idx < len` and the backend guarantees `ptr` points to `len` `u32` entries.
+            unsafe {
+                let entry = self.ptr.add(idx);
+                let cur = entry.read_unaligned();
+                entry.write_unaligned(cur.wrapping_add(1));
+            }
+        }
+    }
+
+    fn reset(&self) {
+        if self.len == 0 {
+            return;
+        }
+        for idx in 0..self.len {
+            // Safety: `idx < len` and the backend guarantees `ptr` points to `len` `u32` entries.
+            unsafe {
+                self.ptr.add(idx).write_unaligned(0);
+            }
+        }
+    }
+
+    fn table_ptr_len(&self) -> (*mut u32, usize) {
+        if self.len == 0 {
+            (core::ptr::null_mut(), 0)
+        } else {
+            (self.ptr, self.len)
+        }
+    }
 }
 
 impl HostExitState {
@@ -80,6 +152,16 @@ pub struct WasmtimeBackend<Cpu> {
     memory: Memory,
     cpu_ptr: i32,
     jit_ctx_ptr: i32,
+    /// Pointer/length of the dense `u32` code-version table in linear memory.
+    ///
+    /// `*_ptr` is a wasm32 byte offset; `*_host_ptr` is the corresponding host pointer into
+    /// Wasmtime's mapped linear memory.
+    ///
+    /// Pointer stability: this backend configures a fixed-size memory (max = min) and uses
+    /// `Config::memory_reservation` to ensure the linear memory base pointer does not move.
+    code_version_table_ptr: u32,
+    code_version_table_len: u32,
+    code_version_table_host_ptr: *mut u32,
     blocks: Vec<TypedFunc<(i32, i32), i64>>,
     _phantom: PhantomData<Cpu>,
 }
@@ -223,6 +305,18 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             }
         }
 
+        let code_version_table_host_ptr = if code_version_table_len == 0 {
+            core::ptr::null_mut()
+        } else {
+            // Safety: `code_version_table_ptr` is computed to be in-bounds and 4-byte aligned.
+            unsafe {
+                memory
+                    .data_mut(&mut store)
+                    .as_mut_ptr()
+                    .add(code_version_table_ptr as usize) as *mut u32
+            }
+        };
+
         Self {
             engine,
             store,
@@ -230,6 +324,9 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             memory,
             cpu_ptr,
             jit_ctx_ptr,
+            code_version_table_ptr,
+            code_version_table_len,
+            code_version_table_host_ptr,
             blocks: Vec::new(),
             _phantom: PhantomData,
         }
@@ -338,25 +435,16 @@ where
         let pre_state = cpu.tier1_state().clone();
         let ram_len = usize::try_from(self.cpu_ptr).expect("cpu_ptr must be non-negative");
         let pre_ram = self.memory.data(&self.store)[..ram_len].to_vec();
-        let pre_code_versions: Option<(usize, Vec<u8>)> = {
+        let pre_code_versions: Option<(usize, Vec<u8>)> = if self.code_version_table_len == 0 {
+            None
+        } else {
             let mem = self.memory.data(&self.store);
-            let cpu_base = self.cpu_ptr as usize;
-            let ptr_off = cpu_base + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize;
-            let len_off = cpu_base + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize;
-
-            let mut buf = [0u8; 4];
-            buf.copy_from_slice(&mem[len_off..len_off + 4]);
-            let table_len = u32::from_le_bytes(buf) as usize;
-            if table_len == 0 {
-                None
-            } else {
-                buf.copy_from_slice(&mem[ptr_off..ptr_off + 4]);
-                let table_ptr = u32::from_le_bytes(buf) as usize;
-                let table_bytes = table_len
-                    .checked_mul(4)
-                    .expect("code version table byte size overflow");
-                Some((table_ptr, mem[table_ptr..table_ptr + table_bytes].to_vec()))
-            }
+            let table_ptr = self.code_version_table_ptr as usize;
+            let table_len = self.code_version_table_len as usize;
+            let table_bytes = table_len
+                .checked_mul(4)
+                .expect("code version table byte size overflow");
+            Some((table_ptr, mem[table_ptr..table_ptr + table_bytes].to_vec()))
         };
 
         self.store.data_mut().exit.reset();
@@ -418,6 +506,15 @@ where
             exit_to_interpreter,
             committed: true,
         }
+    }
+
+    fn code_version_table(&mut self) -> Option<Box<dyn CodeVersionTable>> {
+        // This backend always configures the `(ptr,len)` slots in the Tier-2 context ABI. When the
+        // table does not fit, `len` is 0 and JIT code treats the table as disabled.
+        Some(Box::new(WasmtimeCodeVersionTable {
+            ptr: self.code_version_table_host_ptr,
+            len: self.code_version_table_len as usize,
+        }))
     }
 }
 
