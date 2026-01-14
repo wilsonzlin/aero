@@ -8727,6 +8727,49 @@ bool TestDrawIndexedInstancedEncodesInstanceFields() {
   return true;
 }
 
+bool TestDrawAutoEncodesNoopDraw() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(draw auto)")) {
+    return false;
+  }
+
+  dev.harness.last_stream.clear();
+  dev.device_funcs.pfnDrawAuto(dev.hDevice);
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after DrawAuto")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc draw_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_DRAW);
+  if (!Check(draw_loc.hdr != nullptr, "DRAW emitted for DrawAuto")) {
+    return false;
+  }
+  const auto* draw = reinterpret_cast<const aerogpu_cmd_draw*>(stream + draw_loc.offset);
+  if (!Check(draw->vertex_count == 0, "DrawAuto vertex_count encoded as 0")) {
+    return false;
+  }
+  if (!Check(draw->instance_count == 1, "DrawAuto instance_count encoded as 1")) {
+    return false;
+  }
+  if (!Check(draw->first_vertex == 0, "DrawAuto first_vertex encoded as 0")) {
+    return false;
+  }
+  if (!Check(draw->first_instance == 0, "DrawAuto first_instance encoded as 0")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -8815,6 +8858,7 @@ int main() {
   ok &= TestSetBlendStateEncodesConstantFactor();
   ok &= TestDrawInstancedEncodesInstanceFields();
   ok &= TestDrawIndexedInstancedEncodesInstanceFields();
+  ok &= TestDrawAutoEncodesNoopDraw();
 
   if (!ok) {
     return 1;
