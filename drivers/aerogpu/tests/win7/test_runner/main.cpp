@@ -372,7 +372,7 @@ static std::wstring QuoteArgForCreateProcess(const std::wstring& arg) {
 
   bool needs_quotes = false;
   for (size_t i = 0; i < arg.size(); ++i) {
-    if (arg[i] == L' ' || arg[i] == L'\t') {
+    if (arg[i] == L' ' || arg[i] == L'\t' || arg[i] == L'"') {
       needs_quotes = true;
       break;
     }

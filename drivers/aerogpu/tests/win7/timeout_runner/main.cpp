@@ -18,13 +18,13 @@ static std::string QuoteArgForCreateProcess(const char* arg) {
   // From MSDN/CRT rules:
   // - Wrap in quotes if needed (spaces/tabs).
   // - Escape embedded quotes and backslashes preceding them.
-  if (!arg) {
+  if (!arg || !*arg) {
     return "\"\"";
   }
 
   bool needs_quotes = false;
   for (const char* p = arg; *p; ++p) {
-    if (*p == ' ' || *p == '\t') {
+    if (*p == ' ' || *p == '\t' || *p == '"') {
       needs_quotes = true;
       break;
     }
