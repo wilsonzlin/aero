@@ -5269,6 +5269,21 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(view_dim));
     return E_NOTIMPL;
   }
+  // If the header exposes MSAA RTV union variants but does not expose a view
+  // dimension discriminator, we cannot safely determine which union member is
+  // active. Reject to avoid accidentally accepting an MSAA view and silently
+  // binding it as a non-MSAA Texture2D.
+  if (!have_view_dim) {
+    bool has_msaa_union = false;
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DMSArray) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMSArray) { has_msaa_union = true; }
+    if (has_msaa_union) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing view dimension discriminator)");
+      return E_NOTIMPL;
+    }
+  }
 
   uint32_t mip_slice = 0;
   bool have_mip_slice = false;
@@ -5398,6 +5413,17 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV dimension=%u (only Texture2D supported)",
                          static_cast<unsigned>(view_dim));
     return E_NOTIMPL;
+  }
+  if (!have_view_dim) {
+    bool has_msaa_union = false;
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DMSArray) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMSArray) { has_msaa_union = true; }
+    if (has_msaa_union) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing view dimension discriminator)");
+      return E_NOTIMPL;
+    }
   }
 
   // Some newer headers expose depth-stencil view flags (read-only depth/stencil).
@@ -5547,6 +5573,17 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV dimension=%u (only Texture2D supported)",
                          static_cast<unsigned>(view_dim));
     return E_NOTIMPL;
+  }
+  if (!have_view_dim) {
+    bool has_msaa_union = false;
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DMSArray) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMS) { has_msaa_union = true; }
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMSArray) { has_msaa_union = true; }
+    if (has_msaa_union) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing view dimension discriminator)");
+      return E_NOTIMPL;
+    }
   }
 
   uint32_t most_detailed_mip = 0;
