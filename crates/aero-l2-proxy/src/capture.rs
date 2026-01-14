@@ -52,9 +52,7 @@ impl CaptureManager {
     }
 
     pub async fn open_session(&self, session_id: u64) -> Option<SessionCapture> {
-        let Some(dir) = self.dir.as_ref() else {
-            return None;
-        };
+        let dir = self.dir.as_ref()?;
 
         let ts_ms = now_ms();
         let filename = format!("{ts_ms:013}-session-{session_id}.pcapng");

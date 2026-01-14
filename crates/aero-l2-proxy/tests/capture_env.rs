@@ -1,13 +1,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::sync::Mutex;
 use std::time::Duration;
 
 use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct EnvVarGuard {
     key: &'static str,
@@ -76,7 +76,7 @@ fn reset_env(capture_dir: &str, capture_max_bytes: &str) -> Vec<EnvVarGuard> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn capture_env_creates_file_on_close() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
     let _guards = reset_env(dir.path().to_str().unwrap(), "0");
@@ -117,7 +117,7 @@ async fn capture_env_creates_file_on_close() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn capture_env_max_bytes_drops_frames() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
     let max_bytes = 250u64;
