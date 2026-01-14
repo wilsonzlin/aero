@@ -4089,6 +4089,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publish_rejects_too_many_chunks() -> Result<()> {
+        // Chunk count compatibility limit is enforced before any network calls. Create a sparse raw
+        // image large enough that chunkCount would exceed MAX_COMPAT_CHUNK_COUNT when chunkSize is
+        // 512 bytes.
+        let total_size = (MAX_COMPAT_CHUNK_COUNT + 1) * (SECTOR_SIZE as u64);
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .set_len(total_size)
+            .context("resize raw image")?;
+
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        args.file = tmp.path().to_path_buf();
+        args.format = InputFormat::Raw;
+        args.chunk_size = SECTOR_SIZE as u64;
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("exceeds the current compatibility limit"),
+            "unexpected error: {err:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn publish_rejects_non_sector_aligned_virtual_disk_size() -> Result<()> {
         use std::io::Write;
 
@@ -4289,6 +4326,26 @@ mod tests {
         assert!(
             err.to_string().to_ascii_lowercase().contains("chunksize")
                 && err.to_string().to_ascii_lowercase().contains("too large"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunk_count_exceeds_max_chunks() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: (SECTOR_SIZE as u64) * 10,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 10,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, 5).expect_err("expected max-chunks failure");
+        assert!(
+            err.to_string().contains("exceeds --max-chunks"),
             "unexpected error: {err}"
         );
     }
