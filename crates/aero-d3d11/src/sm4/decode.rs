@@ -98,8 +98,6 @@ impl fmt::Display for Sm4DecodeError {
 impl std::error::Error for Sm4DecodeError {}
 
 const DECLARATION_OPCODE_MIN: u32 = 0x100;
-const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
-const CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER: u32 = 3;
 
 pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError> {
     let declared_len = *program.tokens.get(1).unwrap_or(&0) as usize;
@@ -560,6 +558,47 @@ mod tests {
             "expected customdata class to be recorded after extended tokens, got decls={:?}",
             module.decls
         );
+    }
+
+    #[test]
+    fn immediate_constant_buffer_records_payload_after_extended_tokens() {
+        // The immediate constant buffer customdata class should be detected even when the opcode
+        // uses extended opcode tokens, and its payload should start *after* the class DWORD.
+        let version_token = 0x50u32; // ps_5_0
+
+        // customdata block: opcode (extended) + ext token + class token + 4 payload DWORDs
+        let customdata_len = 3u32 + 4u32;
+        let customdata_opcode = opcode_token(OPCODE_CUSTOMDATA, customdata_len) | OPCODE_EXTENDED_BIT;
+        let ext_token = 0u32; // terminates extended opcode token chain
+
+        let payload = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
+
+        let mut tokens = vec![
+            version_token,
+            0, // declared length patched below
+            customdata_opcode,
+            ext_token,
+            CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER,
+            payload[0],
+            payload[1],
+            payload[2],
+            payload[3],
+            opcode_token(OPCODE_RET, 1),
+        ];
+        tokens[1] = tokens.len() as u32;
+
+        let program = Sm4Program {
+            stage: ShaderStage::Pixel,
+            model: ShaderModel { major: 5, minor: 0 },
+            tokens,
+        };
+
+        let module = decode_program(&program).expect("decode should succeed");
+        assert!(matches!(module.instructions.as_slice(), [Sm4Inst::Ret]));
+        assert!(module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::ImmediateConstantBuffer { dwords } if dwords.as_slice() == payload
+        )));
     }
 }
 

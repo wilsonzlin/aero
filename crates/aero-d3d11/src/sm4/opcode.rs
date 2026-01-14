@@ -62,6 +62,13 @@ pub const OPCODE_IBFE: u32 = 0x69;
 /// Used for embedded comments, debug data, and immediate constant buffers.
 pub const OPCODE_CUSTOMDATA: u32 = 0x1f;
 
+// ---- Custom-data classes (`D3D10_SB_CUSTOMDATA_CLASS`) ----
+//
+// The class DWORD follows the `customdata` opcode token (after any extended opcode tokens).
+pub const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
+/// Embedded immediate constant buffer data (`dcl_immediateConstantBuffer { ... }`).
+pub const CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER: u32 = 3;
+
 // ---- Structured control flow ----
 
 /// `break` (structured break out of `loop`/`switch`).

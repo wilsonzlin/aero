@@ -644,7 +644,6 @@ fn skips_customdata_comment_without_ending_decl_section() {
 #[test]
 fn preserves_non_comment_customdata_and_does_not_end_decl_section() {
     const DCL_DUMMY: u32 = 0x100;
-    const CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER: u32 = 3;
 
     let mut body = Vec::<u32>::new();
 
