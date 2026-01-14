@@ -3231,6 +3231,49 @@ def _virtio_input_events_fail_failure_message(
     )
 
 
+def _virtio_input_events_skip_failure_message(
+    tail: bytes,
+    *,
+    marker_line: Optional[str] = None,
+    req_flags_desc: str = "--with-input-events",
+) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|")
+            or _try_extract_marker_status(marker) != "SKIP"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP"
+        )
+
+    reason = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
+
+    if reason == "flag_not_set":
+        return (
+            "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
+            f"{req_flags_desc} was enabled (provision the guest with --test-input-events)"
+        )
+    if reason:
+        return (
+            "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped "
+            f"({reason}) but {req_flags_desc} was enabled"
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped but "
+        f"{req_flags_desc} was enabled (provision the guest with --test-input-events)"
+    )
+
+
 def _virtio_input_events_extended_fail_failure_message(
     tail: bytes,
     *,
@@ -3385,6 +3428,48 @@ def _virtio_input_media_keys_fail_failure_message(tail: bytes, *, marker_line: O
     return (
         "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while "
         "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled"
+    )
+
+
+def _virtio_input_media_keys_skip_failure_message(
+    tail: bytes, *, marker_line: Optional[str] = None
+) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|")
+            or _try_extract_marker_status(marker) != "SKIP"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP"
+        )
+
+    reason = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
+
+    if reason == "flag_not_set":
+        return (
+            "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
+            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled "
+            "(provision the guest with --test-input-media-keys)"
+        )
+    if reason:
+        return (
+            f"FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped ({reason}) but "
+            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled"
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped but "
+        "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled "
+        "(provision the guest with --test-input-media-keys)"
     )
 
 
@@ -6876,8 +6961,11 @@ def main() -> int:
                     if need_input_events:
                         if saw_virtio_input_events_skip:
                             print(
-                                f"FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
-                                f"{input_events_req_flags_desc} was enabled (provision the guest with --test-input-events)",
+                                _virtio_input_events_skip_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_events_marker_line,
+                                    req_flags_desc=input_events_req_flags_desc,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6899,8 +6987,10 @@ def main() -> int:
                     if need_input_media_keys:
                         if saw_virtio_input_media_keys_skip:
                             print(
-                                "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                _virtio_input_media_keys_skip_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_media_keys_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -7465,8 +7555,11 @@ def main() -> int:
                                 if not saw_virtio_input_events_pass:
                                     if saw_virtio_input_events_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
-                                            f"{input_events_req_flags_desc} was enabled (provision the guest with --test-input-events)",
+                                            _virtio_input_events_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_events_marker_line,
+                                                req_flags_desc=input_events_req_flags_desc,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:
@@ -7493,8 +7586,10 @@ def main() -> int:
                                 if not saw_virtio_input_media_keys_pass:
                                     if saw_virtio_input_media_keys_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                            _virtio_input_media_keys_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_media_keys_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:
@@ -7970,8 +8065,11 @@ def main() -> int:
                             if not saw_virtio_input_events_pass:
                                 if saw_virtio_input_events_skip:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
-                                        f"{input_events_req_flags_desc} was enabled (provision the guest with --test-input-events)",
+                                        _virtio_input_events_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_events_marker_line,
+                                            req_flags_desc=input_events_req_flags_desc,
+                                        ),
                                         file=sys.stderr,
                                     )
                                 else:
@@ -7998,8 +8096,10 @@ def main() -> int:
                             if not saw_virtio_input_media_keys_pass:
                                 if saw_virtio_input_media_keys_skip:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                        "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                        _virtio_input_media_keys_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_media_keys_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                 else:
@@ -10126,8 +10226,11 @@ def main() -> int:
                                 if not saw_virtio_input_events_pass:
                                     if saw_virtio_input_events_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but "
-                                            f"{input_events_req_flags_desc} was enabled (provision the guest with --test-input-events)",
+                                            _virtio_input_events_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_events_marker_line,
+                                                req_flags_desc=input_events_req_flags_desc,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:
@@ -10154,8 +10257,10 @@ def main() -> int:
                                 if not saw_virtio_input_media_keys_pass:
                                     if saw_virtio_input_media_keys_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                            _virtio_input_media_keys_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_media_keys_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:

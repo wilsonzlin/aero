@@ -27,6 +27,12 @@ class PowerShellSkipMarkersUseExtractLastMarkerLineTests(unittest.TestCase):
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|"', body)
 
+    def test_virtio_input_leds_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_INPUT_LEDS_SKIPPED", r'"VIRTIO_INPUT_LEDS_FAILED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|"', body)
+        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", body)
+
     def test_virtio_blk_resize_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
         body = self._extract_case_body("VIRTIO_BLK_RESIZE_SKIPPED", r'"VIRTIO_BLK_RESIZE_FAILED"\s*\{')
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)
@@ -37,6 +43,21 @@ class PowerShellSkipMarkersUseExtractLastMarkerLineTests(unittest.TestCase):
         body = self._extract_case_body("VIRTIO_NET_LINK_FLAP_SKIPPED", r'"VIRTIO_NET_UDP_FAILED"\s*\{')
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|"', body)
+
+    def test_virtio_input_events_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body(
+            "VIRTIO_INPUT_EVENTS_SKIPPED",
+            r'"VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED"\s*\{',
+        )
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|"', body)
+        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", body)
+
+    def test_virtio_input_media_keys_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_INPUT_MEDIA_KEYS_SKIPPED", r'"VIRTIO_INPUT_MEDIA_KEYS_FAILED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|"', body)
+        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", body)
 
     def test_virtio_net_udp_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
         body = self._extract_case_body("VIRTIO_NET_UDP_SKIPPED", r'"QMP_NET_LINK_FLAP_FAILED"\s*\{')

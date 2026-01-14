@@ -8273,7 +8273,23 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_LEDS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped (flag_not_set) but -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled (provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
+      $reason = "unknown"
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+      }
+
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped (flag_not_set) but -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled (provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
+      } elseif ($reason -eq "unknown") {
+        Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped but -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled (provision the guest with --test-input-leds; newer guest selftests also accept --test-input-led)"
+      } else {
+        Write-Host "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped ($reason) but -WithInputLeds/-WithVirtioInputLeds/-RequireVirtioInputLeds/-EnableVirtioInputLeds was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8321,7 +8337,23 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (provision the guest with --test-input-events)"
+      $reason = "unknown"
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+      }
+
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (provision the guest with --test-input-events)"
+      } elseif ($reason -eq "unknown") {
+        Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (provision the guest with --test-input-events)"
+      } else {
+        Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped ($reason) but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra)"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8433,7 +8465,23 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled (provision the guest with --test-input-media-keys)"
+      $reason = "unknown"
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+      }
+
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled (provision the guest with --test-input-media-keys)"
+      } elseif ($reason -eq "unknown") {
+        Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped but -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled (provision the guest with --test-input-media-keys)"
+      } else {
+        Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped ($reason) but -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

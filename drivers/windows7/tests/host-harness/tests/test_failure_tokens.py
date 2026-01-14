@@ -475,6 +475,19 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("kbd_reports=1", msg)
         self.assertIn("--with-input-events", msg)
 
+    def test_virtio_input_events_skipped_token_includes_reason_when_present(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_events_skip_failure_message(
+            b"",
+            marker_line="AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set",
+            req_flags_desc="--with-input-events",
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_EVENTS_SKIPPED:"))
+        self.assertIn("flag_not_set", msg)
+        self.assertIn("--test-input-events", msg)
+
     def test_virtio_input_media_keys_fail_tokens_include_reason_and_err(self) -> None:
         h = self.harness
 
@@ -486,6 +499,18 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("reason=timeout", msg)
         self.assertIn("err=5", msg)
         self.assertIn("reports=1", msg)
+
+    def test_virtio_input_media_keys_skipped_token_includes_reason_when_present(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_media_keys_skip_failure_message(
+            b"",
+            marker_line="AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set",
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED:"))
+        self.assertIn("flag_not_set", msg)
+        self.assertIn("--test-input-media-keys", msg)
 
     def test_virtio_input_led_fail_tokens_include_reason_and_err(self) -> None:
         h = self.harness
