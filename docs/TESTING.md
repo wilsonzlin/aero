@@ -88,8 +88,9 @@ The unified runner executes (in order):
 4. `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`
 5. `cargo test --locked --workspace --all-features`
 6. `wasm-pack test --node` (in the WASM crate)
-7. `npm run test:unit`
-8. `npm run test:e2e`
+7. `cargo check --target wasm32-unknown-unknown -p aero-devices-storage -p aero-machine` (WASM build sanity)
+8. `npm run test:unit`
+9. `npm run test:e2e`
 
 By default it sets `AERO_REQUIRE_WEBGPU=0` (matching CI) unless you explicitly enable it.
 
