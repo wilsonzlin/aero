@@ -387,39 +387,46 @@ fn snapshot_device_states_mirrors_e1000_bar0_when_guest_clears_it_to_zero() {
     let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
     let bdf = profile::NIC_E1000_82540EM.bdf;
 
-    // BIOS POST must assign a non-zero base address to BAR0 (E1000 MMIO window).
-    let bar0_base = {
+    // BIOS POST must assign non-zero base addresses to BAR0 (MMIO) + BAR1 (I/O).
+    let (bar0_base, bar1_base) = {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
             .device_config(bdf)
             .expect("E1000 config function must exist");
-        cfg.bar_range(0).expect("E1000 BAR0 must exist").base
+        (
+            cfg.bar_range(0).expect("E1000 BAR0 must exist").base,
+            cfg.bar_range(1).expect("E1000 BAR1 must exist").base,
+        )
     };
     assert_ne!(bar0_base, 0, "expected E1000 BAR0 base to be assigned");
+    assert_ne!(bar1_base, 0, "expected E1000 BAR1 base to be assigned");
 
     // Ensure the device model observes the assigned BAR0 base before we clear it.
     {
         let dev = e1000.borrow();
+        assert_eq!(dev.pci_config_read(0x10, 4), u32::try_from(bar0_base).unwrap());
         assert_eq!(
-            dev.pci_config_read(0x10, 4),
-            u32::try_from(bar0_base).unwrap()
+            dev.pci_config_read(0x14, 4),
+            u32::try_from(bar1_base).unwrap() | 0x1
         );
     }
 
-    // Simulate a guest unassigning BAR0 by programming it to 0.
+    // Simulate a guest unassigning BAR0/BAR1 by programming them to 0.
     {
         let mut pci_cfg = pci_cfg.borrow_mut();
         pci_cfg.bus_mut().write_config(bdf, 0x10, 4, 0);
+        pci_cfg.bus_mut().write_config(bdf, 0x14, 4, 0);
     }
 
     // The E1000 device model maintains its own PCI config image; ensure it is still stale until we
     // take a snapshot (which should perform mirroring).
     {
         let dev = e1000.borrow();
+        assert_eq!(dev.pci_config_read(0x10, 4), u32::try_from(bar0_base).unwrap());
         assert_eq!(
-            dev.pci_config_read(0x10, 4),
-            u32::try_from(bar0_base).unwrap()
+            dev.pci_config_read(0x14, 4),
+            u32::try_from(bar1_base).unwrap() | 0x1
         );
     }
 
@@ -429,5 +436,135 @@ fn snapshot_device_states_mirrors_e1000_bar0_when_guest_clears_it_to_zero() {
     {
         let dev = e1000.borrow();
         assert_eq!(dev.pci_config_read(0x10, 4), 0);
+        // BAR1 is an I/O BAR, so bit0 must remain set even when the base is 0.
+        assert_eq!(dev.pci_config_read(0x14, 4), 0x1);
+    }
+}
+
+#[test]
+fn snapshot_device_states_mirrors_nvme_bar0_when_guest_clears_it_to_zero() {
+    let vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_nvme: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let nvme = vm.nvme().expect("nvme enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::NVME_CONTROLLER.bdf;
+
+    let bar = 0u8;
+    let bar_cfg_offset = 0x10u16 + u16::from(bar) * 4;
+
+    // BIOS POST must assign a non-zero base address to BAR0 (NVMe MMIO window).
+    let bar0_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("NVMe config function must exist");
+        cfg.bar_range(bar).expect("NVMe BAR0 must exist").base
+    };
+    assert_ne!(bar0_base, 0, "expected NVMe BAR0 base to be assigned");
+
+    // Ensure the device model observes the assigned BAR0 base before we clear it.
+    {
+        let dev = nvme.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar0_base);
+    }
+
+    // Simulate a guest unassigning BAR0 by programming it to 0. NVMe BAR0 is 64-bit, so clear
+    // both halves.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, bar_cfg_offset, 4, 0);
+        pci_cfg
+            .bus_mut()
+            .write_config(bdf, bar_cfg_offset + 4, 4, 0);
+    }
+
+    // Ensure the device model is still stale until snapshot.
+    {
+        let dev = nvme.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar0_base);
+    }
+
+    // Snapshotting must mirror BAR0 base=0 into the NVMe device model.
+    let _ = <Machine as aero_snapshot::SnapshotSource>::device_states(&vm);
+    {
+        let dev = nvme.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
+    }
+}
+
+#[test]
+fn snapshot_device_states_mirrors_virtio_blk_bar0_when_guest_clears_it_to_zero() {
+    let vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_blk: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let virtio_blk = vm.virtio_blk().expect("virtio-blk enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::VIRTIO_BLK.bdf;
+
+    let bar = 0u8;
+    let bar_cfg_offset = 0x10u16 + u16::from(bar) * 4;
+
+    // BIOS POST must assign a non-zero base address to BAR0 (virtio-pci MMIO window).
+    let bar0_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("virtio-blk config function must exist");
+        cfg.bar_range(bar).expect("virtio-blk BAR0 must exist").base
+    };
+    assert_ne!(bar0_base, 0, "expected virtio-blk BAR0 base to be assigned");
+
+    // Ensure the device model observes the assigned BAR0 base before we clear it.
+    {
+        let dev = virtio_blk.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar0_base);
+    }
+
+    // Simulate a guest unassigning BAR0 by programming it to 0. Virtio BAR0 is 64-bit, so clear
+    // both halves.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, bar_cfg_offset, 4, 0);
+        pci_cfg
+            .bus_mut()
+            .write_config(bdf, bar_cfg_offset + 4, 4, 0);
+    }
+
+    // Ensure the device model is still stale until snapshot.
+    {
+        let dev = virtio_blk.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar0_base);
+    }
+
+    // Snapshotting must mirror BAR0 base=0 into the virtio-blk device model.
+    let _ = <Machine as aero_snapshot::SnapshotSource>::device_states(&vm);
+    {
+        let dev = virtio_blk.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
     }
 }
