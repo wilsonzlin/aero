@@ -15301,7 +15301,7 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSetTextureUpdatesBoundPsToModulateWithou
   // Create and bind a small texture at stage0. Without issuing another draw,
   // SetTexture must update the fixed-function PS selection.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
@@ -15435,7 +15435,7 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSelectArg1TextureUsesTextureOnly() {
 
   // Create and bind a small texture at stage0.
   D3D9DDIARG_CREATERESOURCE create_tex{};
-  create_tex.type = 0;
+  create_tex.type = kD3dRTypeTexture;
   create_tex.format = 22u; // D3DFMT_X8R8G8B8
   create_tex.width = 2;
   create_tex.height = 2;
