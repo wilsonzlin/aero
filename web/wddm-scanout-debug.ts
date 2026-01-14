@@ -202,7 +202,12 @@ async function main() {
   canvasEl.style.width = `${Math.min(640, WIDTH * 2)}px`;
   canvasEl.style.height = `${Math.min(640, HEIGHT * 2)}px`;
 
-  const baseSegments = allocateSharedMemorySegments({ guestRamMiB: 256 });
+  // Keep the allocation small so the page loads quickly (the wasm32 runtime always
+  // reserves a fixed 128MiB region, so allocating a huge guest_size here is wasted).
+  //
+  // We also disable VRAM for this diagnostic page: the goal is to validate scanout
+  // state + pitch + BGRX->RGBA alpha semantics without needing BAR1-backed surfaces.
+  const baseSegments = allocateSharedMemorySegments({ guestRamMiB: 8, vramMiB: 0 });
 
   // Small shared framebuffer used only for the legacy path in this diagnostic page.
   const strideBytes = WIDTH * 4;
@@ -273,7 +278,9 @@ async function main() {
   const maxPitch = Math.max(rowBytes, paddedPitch);
   const requiredMaxBytes = maxPitch * (HEIGHT - 1) + rowBytes;
 
-  const BUF0_PADDR = 0x0100_0000;
+  // Keep this clear of the demo shared framebuffer offsets (0x20_0000) so this page
+  // stays compatible with other harnesses that embed a framebuffer into guest RAM.
+  const BUF0_PADDR = 0x0010_0000;
   const BUF1_PADDR = BUF0_PADDR + alignUp(requiredMaxBytes, 0x1000) + 0x1000;
 
   const applyWddmBuffers = (pitchBytes: number, xByte: number) => {
