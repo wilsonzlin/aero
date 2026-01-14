@@ -604,8 +604,9 @@ pub struct MachineConfig {
     /// Optional override for the legacy VGA/VBE Bochs VBE linear framebuffer (LFB) base address.
     ///
     /// This is the guest physical address used for:
-    /// - the LFB MMIO mapping when [`MachineConfig::enable_pc_platform`] is `true` (the LFB lives
-    ///   inside the ACPI-reported PCI MMIO window, but is not exposed as a separate PCI function),
+    /// - the requested BAR0 base of the machine's Bochs/QEMU-compatible “Standard VGA” PCI function
+    ///   when [`MachineConfig::enable_pc_platform`] is `true` (the actual BAR base is assigned by
+    ///   BIOS POST / the PCI allocator unless this override is provided),
     /// - the direct MMIO mapping when [`MachineConfig::enable_pc_platform`] is `false`, and
     /// - the BIOS VBE mode info `PhysBasePtr` (so guests learn the correct LFB address).
     ///
