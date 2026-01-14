@@ -1548,10 +1548,7 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
                 scan_src(lod);
             }
             Sm4Inst::Ld {
-                dst: _,
-                coord,
-                lod,
-                ..
+                dst: _, coord, lod, ..
             } => {
                 scan_src(coord);
                 scan_src(lod);

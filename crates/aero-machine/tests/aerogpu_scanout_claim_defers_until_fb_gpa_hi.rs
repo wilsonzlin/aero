@@ -86,4 +86,3 @@ fn aerogpu_scanout_claim_defers_until_fb_gpa_hi_is_written() {
     assert_eq!(m.display_resolution(), (1, 1));
     assert_eq!(m.display_framebuffer(), &[0xFFAA_BBCC]);
 }
-

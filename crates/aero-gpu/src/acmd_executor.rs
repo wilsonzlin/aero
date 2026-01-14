@@ -482,9 +482,7 @@ mod tests {
         EXEC.get_or_init(|| {
             let exec = match pollster::block_on(AeroGpuAcmdExecutor::new_headless()) {
                 Ok(exec) => exec,
-                Err(GpuError::Backend(message))
-                    if message == "no suitable wgpu adapter found" =>
-                {
+                Err(GpuError::Backend(message)) if message == "no suitable wgpu adapter found" => {
                     return None;
                 }
                 Err(err) => panic!("failed to create AeroGpuAcmdExecutor: {err}"),
@@ -652,8 +650,7 @@ mod tests {
             exec.execute_submission(&w.finish(), None).unwrap();
 
             // The scanout should be cleared rather than pointing at a destroyed texture.
-            let scanout =
-                pollster::block_on(exec.read_presented_scanout_rgba8(SCANOUT)).unwrap();
+            let scanout = pollster::block_on(exec.read_presented_scanout_rgba8(SCANOUT)).unwrap();
             assert!(
                 scanout.is_none(),
                 "expected scanout to be cleared after destroy"
@@ -762,7 +759,9 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{label}: execute_submission failed: {e:?}"));
 
                 let scanout = pollster::block_on(exec.read_presented_scanout_rgba8(SCANOUT))
-                    .unwrap_or_else(|e| panic!("{label}: read_presented_scanout_rgba8 failed: {e:?}"))
+                    .unwrap_or_else(|e| {
+                        panic!("{label}: read_presented_scanout_rgba8 failed: {e:?}")
+                    })
                     .expect("{label}: scanout should exist after present");
                 assert_eq!((scanout.0, scanout.1), (1, 1), "{label}");
                 assert_eq!(&scanout.2[0..4], &[0, 0, 0, 255], "{label}");

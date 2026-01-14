@@ -3,9 +3,8 @@ use std::collections::BTreeMap;
 
 use crate::sm4_ir::{
     BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, OperandModifier, RegFile,
-    RegisterRef,
-    SamplerRef, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef,
-    UavRef, WriteMask,
+    RegisterRef, SamplerRef, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand,
+    Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 use super::opcode::*;

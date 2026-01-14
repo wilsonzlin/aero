@@ -92,4 +92,3 @@ fn machine_usb_xhci_attach_is_noop_when_xhci_is_disabled() {
     m.usb_xhci_attach_root(0, Box::new(UsbHubDevice::with_port_count(1)))
         .expect("no-op attach should succeed when xHCI is disabled");
 }
-

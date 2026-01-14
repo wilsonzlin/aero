@@ -104,9 +104,12 @@ fn decodes_geometry_shader_emit_stream_and_cut_stream() {
         module.decls
     );
 
-    assert_eq!(module.instructions, vec![
-        Sm4Inst::Emit { stream: 2 },
-        Sm4Inst::Cut { stream: 3 },
-        Sm4Inst::Ret,
-    ]);
+    assert_eq!(
+        module.instructions,
+        vec![
+            Sm4Inst::Emit { stream: 2 },
+            Sm4Inst::Cut { stream: 3 },
+            Sm4Inst::Ret,
+        ]
+    );
 }

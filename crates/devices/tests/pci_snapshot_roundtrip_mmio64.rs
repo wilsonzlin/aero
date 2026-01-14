@@ -98,8 +98,14 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0xFFFF_FFFF);
     cfg_write(&mut cfg, &mut bus, bdf, 0x14, 4, 0xFFFF_FFFF);
     let (expected_probe_lo, expected_probe_hi) = mmio64_probe_masks(BAR0_SIZE);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), expected_probe_lo);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), expected_probe_hi);
+    assert_eq!(
+        cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4),
+        expected_probe_lo
+    );
+    assert_eq!(
+        cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4),
+        expected_probe_hi
+    );
 
     // Program BAR0 above 4GiB.
     let requested_lo = 0x2345_6000;
@@ -147,8 +153,14 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_probe_state() {
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0xFFFF_FFFF);
     cfg_write(&mut cfg, &mut bus, bdf, 0x14, 4, 0xFFFF_FFFF);
     let (expected_probe_lo, expected_probe_hi) = mmio64_probe_masks(BAR0_SIZE);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), expected_probe_lo);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), expected_probe_hi);
+    assert_eq!(
+        cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4),
+        expected_probe_lo
+    );
+    assert_eq!(
+        cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4),
+        expected_probe_hi
+    );
 
     let bus_snapshot = PciBusSnapshot::save_from(&bus);
     let bus_bytes = bus_snapshot.save_state();
@@ -163,8 +175,14 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_probe_state() {
     restored.restore_into(&mut bus2).unwrap();
 
     // Probe state should survive restore.
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), expected_probe_lo);
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), expected_probe_hi);
+    assert_eq!(
+        cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4),
+        expected_probe_lo
+    );
+    assert_eq!(
+        cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4),
+        expected_probe_hi
+    );
     assert!(bus2.mapped_bars().is_empty());
 
     // And programming the BAR should clear probe state and behave normally after restore.

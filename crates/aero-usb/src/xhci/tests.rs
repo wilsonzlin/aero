@@ -1032,7 +1032,10 @@ fn command_ring_address_device_resets_ep0_control_td_state() {
     ctrl.attach_device(0, Box::new(DummyUsbDevice));
 
     let completion = ctrl.enable_slot(&mut mem);
-    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
     let slot_id = completion.slot_id;
     assert_ne!(slot_id, 0);
 

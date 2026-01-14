@@ -1804,7 +1804,10 @@ fn tier2_loop_trace_cross_page_store_bumps_both_pages_interpreter_matches_wasm()
                 value: 0x1122_3344_5566_7788,
             },
             // Loop termination threshold for the regression "no invalidation" path.
-            Instr::Const { dst: v(2), value: 3 },
+            Instr::Const {
+                dst: v(2),
+                value: 3,
+            },
         ],
         body: vec![
             Instr::GuardCodeVersion {
@@ -1822,7 +1825,10 @@ fn tier2_loop_trace_cross_page_store_bumps_both_pages_interpreter_matches_wasm()
                 dst: v(3),
                 reg: Gpr::Rax,
             },
-            Instr::Const { dst: v(4), value: 1 },
+            Instr::Const {
+                dst: v(4),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(5),
                 op: BinOp::Add,
@@ -1870,14 +1876,14 @@ fn tier2_loop_trace_cross_page_store_bumps_both_pages_interpreter_matches_wasm()
 
     let mut interp_state = init_state.clone();
     let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
-    let expected = aero_jit_x86::tier2::interp::run_trace(
-        &trace,
-        &env,
-        &mut bus,
-        &mut interp_state,
-        5,
+    let expected =
+        aero_jit_x86::tier2::interp::run_trace(&trace, &env, &mut bus, &mut interp_state, 5);
+    assert_eq!(
+        expected.exit,
+        RunExit::Invalidate {
+            next_rip: entry_rip
+        }
     );
-    assert_eq!(expected.exit, RunExit::Invalidate { next_rip: entry_rip });
     assert_eq!(
         env.page_versions.version(page0),
         initial_page0.wrapping_add(1)

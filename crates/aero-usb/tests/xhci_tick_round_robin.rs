@@ -136,4 +136,3 @@ fn xhci_tick_round_robins_active_endpoints_to_avoid_starvation() {
     }
     assert_eq!(calls_after_second, expected_all);
 }
-

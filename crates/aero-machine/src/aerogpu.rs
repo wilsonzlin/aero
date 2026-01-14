@@ -1076,7 +1076,9 @@ impl AeroGpuMmioDevice {
 
             x if x == pci::AEROGPU_MMIO_REG_ERROR_CODE as u64 => self.error_code,
             x if x == pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64 => self.error_fence as u32,
-            x if x == pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64 => (self.error_fence >> 32) as u32,
+            x if x == pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64 => {
+                (self.error_fence >> 32) as u32
+            }
             x if x == pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64 => self.error_count,
 
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64 => self.scanout0_enable as u32,
@@ -1339,15 +1341,27 @@ mod tests {
         let mut dev = AeroGpuMmioDevice::default();
 
         // Unmask ERROR IRQ delivery so `irq_level` reflects the status bit.
-        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64, pci::AEROGPU_IRQ_ERROR);
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64,
+            pci::AEROGPU_IRQ_ERROR,
+        );
 
         assert_eq!(
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_CODE as u64),
             pci::AerogpuErrorCode::None as u32
         );
-        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64), 0);
-        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64), 0);
-        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64), 0);
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64),
+            0
+        );
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64),
+            0
+        );
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64),
+            0
+        );
 
         dev.record_error(pci::AerogpuErrorCode::Backend, 42);
 
@@ -1360,8 +1374,14 @@ mod tests {
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64),
             42
         );
-        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64), 0);
-        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64), 1);
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64),
+            0
+        );
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64),
+            1
+        );
 
         // IRQ_ACK clears only the status bit; the error payload remains latched.
         dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_IRQ_ACK as u64, pci::AEROGPU_IRQ_ERROR);
@@ -1375,7 +1395,13 @@ mod tests {
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64),
             42
         );
-        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64), 0);
-        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64), 1);
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64),
+            0
+        );
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64),
+            1
+        );
     }
 }

@@ -1362,9 +1362,7 @@ fn emit_op_line(
             }
             // D3D9 `dst`: x is always 1.0; y/z/w are pairwise products of src0 and src1.
             let e = apply_float_result_modifiers(
-                format!(
-                    "vec4<f32>(1.0, ({a}).y * ({b}).y, ({a}).z * ({b}).z, ({a}).w * ({b}).w)"
-                ),
+                format!("vec4<f32>(1.0, ({a}).y * ({b}).y, ({a}).z * ({b}).z, ({a}).w * ({b}).w)"),
                 modifiers,
             )?;
             emit_assign(dst, e)

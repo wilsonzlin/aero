@@ -7743,8 +7743,13 @@ impl Machine {
                 Some(&mut pci),
             );
         } else {
-            self.bios
-                .post_with_pci_and_cdrom(&mut self.cpu.state, bus, &mut self.disk, cdrom, None);
+            self.bios.post_with_pci_and_cdrom(
+                &mut self.cpu.state,
+                bus,
+                &mut self.disk,
+                cdrom,
+                None,
+            );
         }
 
         // The firmware's BDA initialization derives the "fixed disk count" (0x40:0x75) from the
@@ -8554,13 +8559,8 @@ impl Machine {
                 .as_mut()
                 .map(|iso| iso as &mut dyn firmware::bios::CdromDevice);
             let bus: &mut dyn BiosBus = &mut self.mem;
-            self.bios.dispatch_interrupt(
-                vector,
-                &mut self.cpu.state,
-                bus,
-                &mut self.disk,
-                cdrom,
-            );
+            self.bios
+                .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk, cdrom);
         }
         if force_vbe_no_clear {
             // Restore the guest-visible BX value (don't leak our forced no-clear flag).

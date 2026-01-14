@@ -152,7 +152,9 @@ async fn run_layout_pass_case(
     let out_args_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("tess_layout out_args"),
         size: args_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
 
@@ -242,11 +244,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
     // --- Layout pass shader under test ---
     let layout_wgsl = wgsl_tessellation_layout_pass(
-        /*group=*/ 0,
-        /*params_binding=*/ 0,
-        /*hs_tess_factors_binding=*/ 1,
-        /*out_patch_meta_binding=*/ 2,
-        /*out_indirect_args_binding=*/ 3,
+        /*group=*/ 0, /*params_binding=*/ 0, /*hs_tess_factors_binding=*/ 1,
+        /*out_patch_meta_binding=*/ 2, /*out_indirect_args_binding=*/ 3,
         /*out_debug_binding=*/ 4,
     );
 
@@ -507,11 +506,21 @@ fn tessellation_layout_pass_prefix_sums_and_indirect_args_match_expected() {
         // Per-patch offsets must be monotonic and contiguous.
         let mut running_v = 0u32;
         let mut running_i = 0u32;
-        for (patch_id, (level, v_base, i_base, v_count, i_count)) in meta.iter().copied().enumerate()
+        for (patch_id, (level, v_base, i_base, v_count, i_count)) in
+            meta.iter().copied().enumerate()
         {
-            assert_eq!(level, tess_factor as u32, "tess_level mismatch for patch {patch_id}");
-            assert_eq!(v_base, running_v, "vertex_base mismatch for patch {patch_id}");
-            assert_eq!(i_base, running_i, "index_base mismatch for patch {patch_id}");
+            assert_eq!(
+                level, tess_factor as u32,
+                "tess_level mismatch for patch {patch_id}"
+            );
+            assert_eq!(
+                v_base, running_v,
+                "vertex_base mismatch for patch {patch_id}"
+            );
+            assert_eq!(
+                i_base, running_i,
+                "index_base mismatch for patch {patch_id}"
+            );
             assert_eq!(
                 v_count, expected_vertex_count,
                 "vertex_count mismatch for patch {patch_id}"
@@ -593,7 +602,8 @@ fn tessellation_layout_pass_clamps_to_capacity_and_sets_debug_flag() {
         assert_eq!(args.first_instance, 0);
 
         // Ensure everything is within capacity.
-        for (patch_id, (_level, v_base, i_base, v_count, i_count)) in meta.iter().copied().enumerate()
+        for (patch_id, (_level, v_base, i_base, v_count, i_count)) in
+            meta.iter().copied().enumerate()
         {
             assert!(
                 v_base + v_count <= max_vertices,

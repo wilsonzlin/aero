@@ -37,9 +37,19 @@ fn xhci_snapshot_roundtrip_preserves_pending_events() {
 
     restored.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
     restored.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    restored.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    restored.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
     restored.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    restored.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    restored.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (ring_base >> 32) as u32,
+    );
     restored.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     restored.service_event_ring(&mut mem);
@@ -80,4 +90,3 @@ fn xhci_snapshot_roundtrip_preserves_dropped_event_counter() {
     assert_eq!(restored.dropped_event_trbs(), dropped);
     assert_eq!(restored.pending_event_count(), pending);
 }
-

@@ -1248,7 +1248,10 @@ mod tests {
 
         let entry = mgr.textures.get(&1).expect("texture must exist");
         assert_eq!(entry.selection.actual, wgpu::TextureFormat::Rgba8Unorm);
-        assert_eq!(entry.selection.upload_transform, TextureUploadTransform::Bc1ToRgba8);
+        assert_eq!(
+            entry.selection.upload_transform,
+            TextureUploadTransform::Bc1ToRgba8
+        );
     }
 
     #[test]

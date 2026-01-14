@@ -2256,11 +2256,23 @@ mod tests {
         assert!(!ctl.primary_irq_pending());
 
         let bm_st_primary = ctl.io_read(BM_BASE + 2, 1) as u8;
-        assert_eq!(bm_st_primary & 0x07, 0, "primary BMIDE status should be unaffected");
+        assert_eq!(
+            bm_st_primary & 0x07,
+            0,
+            "primary BMIDE status should be unaffected"
+        );
 
         let bm_st_secondary = ctl.io_read(BM_BASE + 8 + 2, 1) as u8;
-        assert_eq!(bm_st_secondary & 0x07, 0x06, "secondary BMIDE status should have IRQ+ERR set");
-        assert_ne!(bm_st_secondary & (1 << 5), 0, "secondary DMA capability bit should be set");
+        assert_eq!(
+            bm_st_secondary & 0x07,
+            0x06,
+            "secondary BMIDE status should have IRQ+ERR set"
+        );
+        assert_ne!(
+            bm_st_secondary & (1 << 5),
+            0,
+            "secondary DMA capability bit should be set"
+        );
 
         // ATAPI uses Sector Count as interrupt reason; errors should transition to status phase.
         let irq_reason = ctl.io_read(cmd_base + ATA_REG_SECTOR_COUNT, 1) as u8;

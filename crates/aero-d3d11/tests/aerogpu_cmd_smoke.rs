@@ -199,7 +199,13 @@ fn insert_viewport_nan_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
         .copy_from_slice(&total_size.to_le_bytes());
 }
 
-fn insert_viewport_oob_and_duplicate_last_draw(bytes: &mut Vec<u8>, x: f32, y: f32, width: f32, height: f32) {
+fn insert_viewport_oob_and_duplicate_last_draw(
+    bytes: &mut Vec<u8>,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) {
     // Insert an out-of-bounds viewport update + duplicate the last draw before Present. This is
     // used to validate that a *valid* viewport which becomes empty after clamping to the render
     // target causes the draw to be skipped (D3D semantics) instead of being treated as a protocol
@@ -215,10 +221,13 @@ fn insert_viewport_oob_and_duplicate_last_draw(bytes: &mut Vec<u8>, x: f32, y: f
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32
+        {
             last_draw = Some((cursor, size));
         }
-        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+        if opcode == AerogpuCmdOpcode::Present as u32
+            || opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
             present_offset = Some(cursor);
             break;
         }
@@ -414,7 +423,13 @@ fn insert_scissor_disable_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
     bytes.splice(present_off..present_off, insert);
 }
 
-fn insert_scissor_oob_and_duplicate_last_draw(bytes: &mut Vec<u8>, x: i32, y: i32, width: i32, height: i32) {
+fn insert_scissor_oob_and_duplicate_last_draw(
+    bytes: &mut Vec<u8>,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) {
     // Insert a scissor rect that becomes empty after clamping to the render target, plus a
     // duplicate draw, immediately before Present. This validates that an empty scissor causes the
     // draw to be skipped instead of being treated as "scissor disabled".
@@ -429,10 +444,13 @@ fn insert_scissor_oob_and_duplicate_last_draw(bytes: &mut Vec<u8>, x: i32, y: i3
             break;
         }
 
-        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32
+        {
             last_draw = Some((cursor, size));
         }
-        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+        if opcode == AerogpuCmdOpcode::Present as u32
+            || opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
             present_offset = Some(cursor);
             break;
         }
