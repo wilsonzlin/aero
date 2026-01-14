@@ -1623,6 +1623,17 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
         return NULL;
     }
 
+    /*
+     * Pool allocations are page-rounded. Ensure the tail slack (bytes beyond the requested Size)
+     * is zeroed so no stale kernel data is left in memory that might be observed by the device
+     * (for example if a host-side implementation were to DMA whole pages).
+     *
+     * This preserves the "no-init" contract for [0, Size) while making the page tail deterministic.
+     */
+    if (poolEligible && allocSize > Size) {
+        RtlZeroMemory((PUCHAR)va + Size, allocSize - Size);
+    }
+
     *Pa = MmGetPhysicalAddress(va);
     return va;
 }
