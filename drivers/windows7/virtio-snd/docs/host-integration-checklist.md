@@ -94,6 +94,8 @@ To quickly confirm what Windows (and the driver) selected at runtime:
 - `aero-virtio-selftest.exe` emits a `virtio-snd-irq|INFO|...` line indicating the observed interrupt mode:
   - `virtio-snd-irq|INFO|mode=intx`
   - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface)
+    - Includes per-queue MSI-X routing (`msix_queue0_vector..msix_queue3_vector`) and diagnostic counters
+      (`interrupt_count`, `dpc_count`, `drain0..drain3`).
   - `virtio-snd-irq|INFO|mode=none|...` (polling-only; no interrupt objects are connected)
   - `virtio-snd-irq|INFO|mode=msi|messages=<n>` (fallback: message interrupts; does not distinguish MSI vs MSI-X)
 

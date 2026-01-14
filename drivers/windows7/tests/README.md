@@ -168,6 +168,8 @@ Note:
   - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>` (message interrupts; does not distinguish MSI vs MSI-X)
   - virtio-snd may also emit richer MSI-X diagnostics (when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface):
     - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...`
+      - Includes per-queue MSI-X routing (`msix_queue0_vector..msix_queue3_vector`) and diagnostic counters
+        (`interrupt_count`, `dpc_count`, `drain0..drain3`).
     - `virtio-snd-irq|INFO|mode=none|...` (polling-only; no interrupt objects are connected)
   The host harness mirrors these into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping.
 - When the guest includes `irq_*` fields on its per-test markers, the host harness may also emit stable per-device host

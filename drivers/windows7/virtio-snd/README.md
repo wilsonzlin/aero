@@ -73,6 +73,9 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
   - The selftest also emits a `virtio-snd-irq|INFO|...` line describing the observed interrupt mode:
     - `virtio-snd-irq|INFO|mode=intx|...`
     - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....|...`
+      - When the optional `\\.\aero_virtio_snd_diag` interface is available, this line also includes:
+        - `msix_queue1_vector..msix_queue3_vector` (per-queue MSI-X routing)
+        - `interrupt_count`, `dpc_count`, and `drain0..drain3` counters (diagnostics)
     - `virtio-snd-irq|INFO|mode=none|...` (polling-only; no interrupt objects are connected)
     - (On older images/drivers where the diag interface is unavailable, the selftest falls back to best-effort PnP
       resource inspection and may report `mode=msi` with only a message count.)
