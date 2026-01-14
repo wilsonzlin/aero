@@ -197,6 +197,18 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     );
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
 
+    // Host-side scanout reads are gated by PCI COMMAND.BME to match device DMA semantics; emulate
+    // what the WDDM driver does during start-device.
+    {
+        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(profile::AEROGPU.bdf)
+            .expect("AeroGPU device missing from PCI bus");
+        cfg.set_command(cfg.command() | (1 << 2));
+    }
+
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
     assert_eq!(m.display_resolution(), (u32::from(width), u32::from(height)));
