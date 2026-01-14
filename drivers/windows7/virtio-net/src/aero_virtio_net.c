@@ -225,6 +225,28 @@ static BOOLEAN AerovNetMacEqual(_In_reads_(ETH_LENGTH_OF_ADDRESS) const UCHAR* A
   return (RtlCompareMemory(A, B, ETH_LENGTH_OF_ADDRESS) == ETH_LENGTH_OF_ADDRESS) ? TRUE : FALSE;
 }
 
+static BOOLEAN AerovNetIsValidIpv4HeaderChecksum(_In_reads_bytes_(IpHdrLen) const UCHAR* Ip, _In_ ULONG IpHdrLen) {
+  ULONG Sum;
+  ULONG I;
+
+  if (!Ip || IpHdrLen < 20u || (IpHdrLen & 1u) != 0u) {
+    return FALSE;
+  }
+
+  Sum = 0;
+  for (I = 0; I < IpHdrLen; I += 2u) {
+    Sum += ((ULONG)Ip[I] << 8) | (ULONG)Ip[I + 1u];
+  }
+
+  while ((Sum >> 16) != 0) {
+    Sum = (Sum & 0xFFFFu) + (Sum >> 16);
+  }
+
+  // For a valid IPv4 header checksum, the one's-complement sum of all 16-bit
+  // words (including the checksum field) is 0xFFFF.
+  return ((USHORT)Sum == 0xFFFFu) ? TRUE : FALSE;
+}
+
 static BOOLEAN AerovNetAcceptFrame(_In_ const AEROVNET_ADAPTER* Adapter, _In_reads_bytes_(FrameLen) const UCHAR* Frame, _In_ ULONG FrameLen) {
   const UCHAR* Dst;
   ULONG Filter;
@@ -318,8 +340,18 @@ static VOID AerovNetIndicateRxChecksum(_In_ const AEROVNET_ADAPTER* Adapter, _In
   CsumInfo.Value = 0;
 
   if (FrameInfo.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4) {
-    // IPv4 includes a header checksum.
-    CsumInfo.Receive.IpChecksumSucceeded = 1;
+    // IPv4 includes a header checksum. virtio-net's DATA_VALID flag indicates
+    // L4 checksum validity; validate the IPv4 header checksum directly to avoid
+    // claiming success without verification.
+    {
+      const ULONG IpOffset = (ULONG)FrameInfo.L3Offset;
+      const ULONG IpHdrLen = (ULONG)FrameInfo.L3Len;
+      if (IpOffset + IpHdrLen <= FrameLen && AerovNetIsValidIpv4HeaderChecksum(Frame + IpOffset, IpHdrLen)) {
+        CsumInfo.Receive.IpChecksumSucceeded = 1;
+      } else {
+        CsumInfo.Receive.IpChecksumFailed = 1;
+      }
+    }
 
     // Do not claim L4 checksum validity on fragmented packets: the checksum
     // covers the reassembled payload, which this miniport does not validate.
