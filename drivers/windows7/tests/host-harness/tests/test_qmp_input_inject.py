@@ -80,6 +80,97 @@ class QmpInputInjectionTests(unittest.TestCase):
             h._qmp_send_command = old_send
             h.time.sleep = old_sleep
 
+    def test_injects_media_keys_targeted_by_device_id_when_supported(self) -> None:
+        h = self.harness
+
+        sent: list[dict[str, object]] = []
+
+        def fake_connect(endpoint, *, timeout_seconds: float = 5.0):
+            return _DummySock()
+
+        def fake_send_command(sock, cmd):
+            sent.append(cmd)
+            return {"return": {}}
+
+        old_connect = h._qmp_connect
+        old_send = h._qmp_send_command
+        old_sleep = h.time.sleep
+        try:
+            h._qmp_connect = fake_connect
+            h._qmp_send_command = fake_send_command
+            h.time.sleep = lambda _: None
+
+            info = h._try_qmp_input_inject_virtio_input_media_keys(
+                h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=4444)
+            )
+
+            self.assertEqual(info.keyboard_device, h._VIRTIO_INPUT_QMP_KEYBOARD_ID)
+            self.assertEqual(info.qcode, "volumeup")
+
+            # 2 commands: volumeup down + up.
+            self.assertEqual(len(sent), 2)
+            for cmd in sent:
+                self.assertEqual(cmd["execute"], "input-send-event")
+                self.assertEqual(cmd["arguments"]["device"], h._VIRTIO_INPUT_QMP_KEYBOARD_ID)
+
+            ev0 = sent[0]["arguments"]["events"][0]
+            ev1 = sent[1]["arguments"]["events"][0]
+            self.assertEqual(ev0["type"], "key")
+            self.assertTrue(ev0["data"]["down"])
+            self.assertEqual(ev0["data"]["key"]["type"], "qcode")
+            self.assertEqual(ev0["data"]["key"]["data"], "volumeup")
+            self.assertEqual(ev1["type"], "key")
+            self.assertFalse(ev1["data"]["down"])
+            self.assertEqual(ev1["data"]["key"]["type"], "qcode")
+            self.assertEqual(ev1["data"]["key"]["data"], "volumeup")
+        finally:
+            h._qmp_connect = old_connect
+            h._qmp_send_command = old_send
+            h.time.sleep = old_sleep
+
+    def test_media_keys_falls_back_to_broadcast_when_device_routing_rejected(self) -> None:
+        h = self.harness
+
+        sent: list[dict[str, object]] = []
+
+        def fake_connect(endpoint, *, timeout_seconds: float = 5.0):
+            return _DummySock()
+
+        def fake_send_command(sock, cmd):
+            sent.append(cmd)
+            if "device" in cmd.get("arguments", {}):
+                raise RuntimeError("device routing unsupported")
+            return {"return": {}}
+
+        old_connect = h._qmp_connect
+        old_send = h._qmp_send_command
+        old_sleep = h.time.sleep
+        try:
+            h._qmp_connect = fake_connect
+            h._qmp_send_command = fake_send_command
+            h.time.sleep = lambda _: None
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                info = h._try_qmp_input_inject_virtio_input_media_keys(
+                    h._QmpEndpoint(tcp_host="127.0.0.1", tcp_port=4444)
+                )
+
+            self.assertIsNone(info.keyboard_device)
+            self.assertEqual(info.qcode, "volumeup")
+
+            # First key event: device attempt fails, then broadcast succeeds.
+            # Second key event: broadcast only (device already dropped).
+            self.assertEqual(len(sent), 3)
+            self.assertIn("device", sent[0]["arguments"])
+            self.assertNotIn("device", sent[1]["arguments"])
+            self.assertNotIn("device", sent[2]["arguments"])
+            self.assertIn("falling back to broadcast", stderr.getvalue())
+        finally:
+            h._qmp_connect = old_connect
+            h._qmp_send_command = old_send
+            h.time.sleep = old_sleep
+
     def test_injects_wheel_events_when_enabled(self) -> None:
         h = self.harness
 

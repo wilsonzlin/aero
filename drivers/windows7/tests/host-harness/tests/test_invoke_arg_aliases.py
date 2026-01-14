@@ -124,6 +124,27 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.with_snd_buffer_limits)
 
+                self.assertTrue(args.with_snd_buffer_limits)
+
+    def test_virtio_input_media_keys_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-input-media-keys",
+            "--with-virtio-input-media-keys",
+            "--enable-virtio-input-media-keys",
+            "--require-virtio-input-media-keys",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_input_media_keys)
+
     def test_with_input_events_extended_aliases_set_flag(self) -> None:
         for flag in ("--with-input-events-extended", "--with-input-events-extra"):
             with self.subTest(flag=flag):
