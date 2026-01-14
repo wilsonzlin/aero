@@ -393,8 +393,15 @@ impl AeroGpuPciDevice {
         let mut out = 0u64;
         let vram = self.vga.vram();
         for i in 0..size {
-            let idx = offset.wrapping_add(i as u64) as usize;
-            let b = vram.get(idx).copied().unwrap_or(0xFF) as u64;
+            // Defensive: avoid wrapping physical address arithmetic on malformed offsets.
+            let Some(addr) = offset.checked_add(i as u64) else {
+                out |= 0xFFu64 << (i * 8);
+                continue;
+            };
+            let b = usize::try_from(addr)
+                .ok()
+                .and_then(|idx| vram.get(idx).copied())
+                .unwrap_or(0xFF) as u64;
             out |= b << (i * 8);
         }
         out
@@ -410,7 +417,13 @@ impl AeroGpuPciDevice {
         let vram_len = self.vga.vram().len();
         let vram = self.vga.vram_mut();
         for i in 0..size {
-            let idx = offset.wrapping_add(i as u64) as usize;
+            // Defensive: avoid wrapping physical address arithmetic on malformed offsets.
+            let Some(addr) = offset.checked_add(i as u64) else {
+                continue;
+            };
+            let Some(idx) = usize::try_from(addr).ok() else {
+                continue;
+            };
             if idx >= vram_len {
                 continue;
             }
