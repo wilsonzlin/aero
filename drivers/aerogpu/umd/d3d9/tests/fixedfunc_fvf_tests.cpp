@@ -229,9 +229,16 @@ std::vector<const aerogpu_cmd_hdr*> CollectOpcodes(const uint8_t* buf, size_t ca
   return out;
 }
 
+// Helper (defined later): count SET_SHADER_CONSTANTS_F uploads for a given VS
+// constant range.
+size_t CountVsConstantUploads(const uint8_t* buf,
+                              size_t capacity,
+                              uint32_t start_register,
+                              uint32_t vec4_count);
+
 struct CleanupDevice {
   D3D9DDI_ADAPTERFUNCS adapter_funcs{};
-  D3D9DDI_DEVICEFUNCS device_funcs{};
+  D3D9DDI_DEVICEFUNCS device_funcs{};  
   D3DDDI_HADAPTER hAdapter{};
   D3DDDI_HDEVICE hDevice{};
   std::vector<D3DDDI_HRESOURCE> resources{};
@@ -1013,7 +1020,6 @@ bool TestFvfXyzDiffuseRedundantSetTransformDoesNotReuploadWvp() {
   if (!CreateDevice(&cleanup)) {
     return false;
   }
-
   if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
     return false;
   }
@@ -1104,6 +1110,144 @@ bool TestFvfXyzDiffuseRedundantSetTransformDoesNotReuploadWvp() {
   }
   if (!Check(wvp_uploads == 1, "WVP constants uploaded once despite redundant SetTransform")) {
     return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use a fixed-function XYZ|DIFFUSE draw so WVP constants are required.
+  const VertexXyzDiffuse tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
+      {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
+      {-1.0f, 1.0f, 0.0f, 0xFF0000FFu},
+  };
+
+  // First draw: uploads WVP and clears the dirty flag.
+  dev->cmd.reset();
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(initial XYZ|DIFFUSE)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(initial XYZ|DIFFUSE)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240, /*vec4_count=*/4) == 1,
+             "initial draw emits one WVP constant upload")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "initial draw cleared fixedfunc_matrix_dirty")) {
+      return false;
+    }
+  }
+
+  // If the app writes overlapping VS constants (c240..c243), the fixed-function WVP
+  // constants must be treated as clobbered and re-uploaded.
+  const float junk_vec4[4] = {123.0f, 456.0f, 789.0f, 1011.0f};
+  hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice, kD3dShaderStageVs, /*start_reg=*/240, junk_vec4, 1);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, c240, 1)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_matrix_dirty, "SetShaderConstF overlap marks fixedfunc_matrix_dirty")) {
+      return false;
+    }
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after const clobber)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(after const clobber)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240, /*vec4_count=*/4) == 1,
+             "WVP constant upload re-emitted after const clobber")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "const-clobber draw cleared fixedfunc_matrix_dirty")) {
+      return false;
+    }
+  }
+
+  // If the app binds a user VS, it may write overlapping constants. Ensure the
+  // driver forces a WVP constant re-upload when switching back to fixed-function.
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStageVs,
+                                            fixedfunc::kVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS user)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_matrix_dirty, "binding user VS marks fixedfunc_matrix_dirty")) {
+      return false;
+    }
+  }
+
+  // Unbind the user VS. This call should switch back to fixed-function pipeline
+  // and re-upload WVP constants immediately (without waiting for a draw).
+  D3D9DDI_HSHADER hNull{};
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStageVs, hNull);
+  if (!Check(hr == S_OK, "SetShader(VS NULL)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(after VS unbind)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240, /*vec4_count=*/4) == 1,
+             "WVP constant upload re-emitted after switching back from user VS")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "SetShader(VS NULL) cleared fixedfunc_matrix_dirty")) {
+      return false;
+    }
   }
 
   return true;
@@ -6233,6 +6377,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseRedundantSetTransformDoesNotReuploadWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
