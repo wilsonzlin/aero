@@ -9063,6 +9063,15 @@ bool TestFvfXyzNormalLightingSelectsLitVs() {
                "VS bytecode == fixedfunc::kVsWvpLitPosNormal (lit)")) {
       return false;
     }
+    // Ensure the lit shader references the reserved lighting constant layout
+    // (c208..c236) rather than the legacy c244+ range.
+    if (!Check(ShaderReferencesConstRegister(dev->vs, kFixedfuncLightingStartRegister),
+               "lit VS references lighting start register c208")) {
+      return false;
+    }
+    if (!Check(!ShaderReferencesConstRegister(dev->vs, 244u), "lit VS does not reference legacy c244 layout")) {
+      return false;
+    }
   }
 
   return true;
@@ -9133,6 +9142,13 @@ bool TestFvfXyzNormalTex1LightingSelectsLitVs() {
     }
     if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpLitPosNormalTex1),
                "VS bytecode == fixedfunc::kVsWvpLitPosNormalTex1 (lit)")) {
+      return false;
+    }
+    if (!Check(ShaderReferencesConstRegister(dev->vs, kFixedfuncLightingStartRegister),
+               "lit TEX1 VS references lighting start register c208")) {
+      return false;
+    }
+    if (!Check(!ShaderReferencesConstRegister(dev->vs, 244u), "lit TEX1 VS does not reference legacy c244 layout")) {
       return false;
     }
   }
