@@ -50,6 +50,41 @@ fn stage_ex_legacy_compute_reserved0_zero_does_not_decode_as_pixel() {
 }
 
 #[test]
+fn cmd_writer_stage_ex_option_overrides_shader_stage() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_texture_stage_ex(
+        AerogpuShaderStage::Vertex,
+        Some(AerogpuShaderStageEx::Geometry),
+        0,
+        99,
+    );
+    let buf = w.finish();
+    let cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetTexture as u32);
+
+    let shader_stage = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetTexture, shader_stage)
+            ..cursor + offset_of!(AerogpuCmdSetTexture, shader_stage) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    let reserved0 = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetTexture, reserved0)
+            ..cursor + offset_of!(AerogpuCmdSetTexture, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+
+    // When stage_ex is provided, the packet must be encoded as a compute-stage packet with a
+    // non-zero reserved0 discriminator (see `encode_stage_ex`).
+    assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+    assert_eq!(reserved0, AerogpuShaderStageEx::Geometry as u32);
+}
+
+#[test]
 fn cmd_writer_legacy_bindings_write_reserved0_zero() {
     let mut w = AerogpuCmdWriter::new();
     w.set_texture(AerogpuShaderStage::Pixel, 0, 99);
