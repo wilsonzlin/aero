@@ -208,7 +208,10 @@ In the current TypeScript runtime this role is split between:
 4. **Output report execution**
    - Receive worker requests to send an output/feature report.
    - Call `device.sendReport(...)` / `device.sendFeatureReport(...)`.
-5. **WebUSB transfer execution** (if using WebUSB passthrough)
+5. **Feature report read execution** (`GET_REPORT Feature`)
+   - Receive worker requests to read a feature report.
+   - Call `device.receiveFeatureReport(...)` and return the bytes back to the worker asynchronously.
+6. **WebUSB transfer execution** (if using WebUSB passthrough)
    - Receive `UsbHostAction` requests from the worker (control/bulk transfers).
    - Execute the corresponding WebUSB call and return a `UsbHostCompletion`.
 
