@@ -6,6 +6,16 @@ use aero_shared::scanout_state::{
     SCANOUT_FORMAT_B8G8R8X8, SCANOUT_FORMAT_B8G8R8X8_SRGB,
 };
 
+// -----------------------------------------------------------------------------
+// Defensive caps (host readback paths)
+// -----------------------------------------------------------------------------
+//
+// `AeroGpu*Config::read_rgba` reads guest-controlled scanout/cursor bitmaps and returns a host-owned
+// `Vec<u8>` containing RGBA8 pixels. Since the guest controls width/height/pitch, these helpers
+// must not allocate unbounded memory.
+const MAX_HOST_SCANOUT_RGBA8888_BYTES: usize = 64 * 1024 * 1024; // 16,777,216 pixels (~4K@32bpp)
+const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixels (~1024x1024)
+
 // Values derived from the canonical `aero-protocol` definition of `enum aerogpu_format`.
 //
 // Format semantics (mirrors `drivers/aerogpu/protocol/aerogpu_pci.h` and
@@ -252,12 +262,23 @@ impl AeroGpuScanoutConfig {
             return None;
         }
 
+        // Validate GPA arithmetic does not wrap.
+        let pitch_u64 = u64::from(self.pitch_bytes);
+        let row_bytes_u64 = u64::try_from(row_bytes).ok()?;
+        let last_row_gpa = self
+            .fb_gpa
+            .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
+        last_row_gpa.checked_add(row_bytes_u64)?;
+
         let out_len = width.checked_mul(height)?.checked_mul(4)?;
+        if out_len > MAX_HOST_SCANOUT_RGBA8888_BYTES {
+            return None;
+        }
         let mut out = vec![0u8; out_len];
         let mut row_buf = vec![0u8; row_bytes];
 
         for y in 0..height {
-            let row_gpa = self.fb_gpa + (y as u64) * (self.pitch_bytes as u64);
+            let row_gpa = self.fb_gpa + (y as u64) * pitch_u64;
             mem.read_physical(row_gpa, &mut row_buf);
             let dst_row = &mut out[y * width * 4..(y + 1) * width * 4];
 
@@ -397,6 +418,9 @@ impl AeroGpuCursorConfig {
         last_row_gpa.checked_add(row_bytes_u64)?;
 
         let out_len = width.checked_mul(height)?.checked_mul(4)?;
+        if out_len > MAX_HOST_CURSOR_RGBA8888_BYTES {
+            return None;
+        }
         let mut out = vec![0u8; out_len];
         let mut row_buf = vec![0u8; row_bytes];
 
@@ -585,6 +609,60 @@ mod tests {
             cfg.read_rgba(&mut mem).unwrap(),
             vec![1, 2, 3, 4, 10, 20, 30, 40]
         );
+    }
+
+    #[test]
+    fn scanout_read_rgba_rejects_overflowing_fb_gpa() {
+        let mut mem = VecMemory::new(0x1000);
+
+        // Force `fb_gpa + (height-1)*pitch_bytes` overflow while keeping the scanout dimensions
+        // otherwise valid.
+        let cfg = AeroGpuScanoutConfig {
+            enable: true,
+            width: 1,
+            height: 2,
+            pitch_bytes: 4,
+            fb_gpa: u64::MAX - 1,
+            format: AeroGpuFormat::R8G8B8A8Unorm,
+        };
+
+        assert!(cfg.read_rgba(&mut mem).is_none());
+    }
+
+    #[test]
+    fn scanout_read_rgba_is_capped() {
+        let mut mem = VecMemory::new(0x1000);
+
+        let pixel_count = MAX_HOST_SCANOUT_RGBA8888_BYTES / 4 + 1;
+        let height = u32::try_from(pixel_count).expect("pixel_count fits u32");
+        let cfg = AeroGpuScanoutConfig {
+            enable: true,
+            width: 1,
+            height,
+            pitch_bytes: 4,
+            fb_gpa: 0x100,
+            format: AeroGpuFormat::R8G8B8A8Unorm,
+        };
+
+        assert!(cfg.read_rgba(&mut mem).is_none());
+    }
+
+    #[test]
+    fn cursor_read_rgba_is_capped() {
+        let mut mem = VecMemory::new(0x1000);
+
+        // 1024x1024 at 4Bpp is exactly 4MiB; exceed it by one row.
+        let cfg = AeroGpuCursorConfig {
+            enable: true,
+            width: 1024,
+            height: 1025,
+            pitch_bytes: 1024 * 4,
+            fb_gpa: 0x100,
+            format: AeroGpuFormat::R8G8B8A8Unorm,
+            ..Default::default()
+        };
+
+        assert!(cfg.read_rgba(&mut mem).is_none());
     }
 
     #[test]
