@@ -10512,6 +10512,11 @@ impl snapshot::SnapshotTarget for Machine {
         // `aero_snapshot` restore is section-order-independent, so this must not happen in a
         // per-section callback like `restore_cpu_state`.
         self.restored_disk_overlays = None;
+        // Storage controller snapshots (IDE/ATAPI) intentionally drop attached host backends, so
+        // any install media handle we currently hold is stale after restore and can interfere with
+        // re-attaching the same ISO on OPFS (sync access handles are exclusive per file). Drop it
+        // eagerly so restore leaves the machine in a "backends must be reattached" state.
+        self.install_media = None;
         // Reset host-side UHCI tick remainder before applying any snapshot sections. Newer
         // snapshots restore this field from `DeviceId::USB`; older snapshots will leave it at the
         // deterministic default (0).
@@ -12235,6 +12240,58 @@ mod tests {
             m.install_media.is_none(),
             "install media backend should be detached after eject_install_media"
         );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn snapshot_restore_drops_install_media_backend_handle() {
+        use aero_storage::{MemBackend, RawDisk};
+
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 8 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_ide: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let iso_bytes = vec![0u8; 2048 * 16];
+        let disk = RawDisk::open(MemBackend::from_vec(iso_bytes)).unwrap();
+        m.attach_install_media_iso_and_set_overlay_ref(Box::new(disk), "/state/win7.iso")
+            .unwrap();
+        assert!(
+            m.install_media.is_some(),
+            "expected install media backend to be attached before snapshot"
+        );
+
+        let snap = m.take_snapshot_full().unwrap();
+
+        // Mutate state away from the snapshot.
+        m.eject_install_media();
+        assert!(
+            m.install_media.is_none(),
+            "expected install media backend to be detached after explicit eject"
+        );
+        assert!(
+            m.ide_secondary_master_atapi_overlay.is_none(),
+            "expected install media overlay ref to be cleared after explicit eject"
+        );
+
+        m.restore_snapshot_bytes(&snap).unwrap();
+
+        // Snapshot restore drops host backends; install media must be reattached by the platform.
+        assert!(
+            m.install_media.is_none(),
+            "install media backend should be detached after snapshot restore"
+        );
+        // Overlay refs are part of snapshot state and should be restored so the host can reattach.
+        let overlay = m
+            .ide_secondary_master_atapi_overlay
+            .as_ref()
+            .expect("install media overlay ref should be restored from snapshot");
+        assert_eq!(overlay.disk_id, Machine::DISK_ID_INSTALL_MEDIA);
+        assert_eq!(overlay.base_image, "/state/win7.iso");
+        assert_eq!(overlay.overlay_image, "");
     }
 
     #[test]
