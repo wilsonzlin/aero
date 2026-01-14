@@ -120,3 +120,5 @@ The Win7 guest validation suite includes targeted coverage for these paths:
 - `drivers/aerogpu/tests/win7/d3d9_fixedfunc_textured_wvp` validates the fixed-function WVP transform path for
   `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (order-sensitive WVP, stage0 texture sampling + MODULATE, and both
   `SetVertexDeclaration`-inferred FVF and explicit `SetFVF` paths).
+- `drivers/aerogpu/tests/win7/d3d9_fixedfunc_lighting_directional` validates the minimal fixed-function lighting bring-up
+  subset for `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (directional light 0 + material + `D3DRS_LIGHTING`).
