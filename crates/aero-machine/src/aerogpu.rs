@@ -11,10 +11,10 @@ use aero_devices_gpu::ring::{
 };
 use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
 use aero_devices_gpu::AeroGpuFormat;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
-use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
@@ -330,10 +330,7 @@ impl AeroGpuMmioDevice {
                 PendingFenceKind::Immediate => 0u8,
                 PendingFenceKind::Vblank => 1u8,
             };
-            enc = enc
-                .u64(fence.fence_value)
-                .bool(fence.wants_irq)
-                .u8(kind);
+            enc = enc.u64(fence.fence_value).bool(fence.wants_irq).u8(kind);
         }
 
         // Backend completed fences (unordered); sort for deterministic encoding.

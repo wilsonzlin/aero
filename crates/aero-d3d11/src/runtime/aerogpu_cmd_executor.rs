@@ -3802,7 +3802,8 @@ impl AerogpuD3d11Executor {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(
-                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES + GEOMETRY_PREPASS_COUNTER_SIZE_BYTES,
+                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES
+                            + GEOMETRY_PREPASS_COUNTER_SIZE_BYTES,
                     ),
                 },
                 count: None,
@@ -5237,8 +5238,8 @@ impl AerogpuD3d11Executor {
             if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
                 let size = wgpu::BufferSize::new(expanded_vertex_alloc.size)
                     .expect("expanded vertex allocation must be non-empty");
-                render_bind_groups.push(Arc::new(
-                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                render_bind_groups.push(Arc::new(self.device.create_bind_group(
+                    &wgpu::BindGroupDescriptor {
                         label: Some("aerogpu_cmd expanded draw emulation bind group"),
                         layout: pipeline_bindings.group_layouts[group_index].layout.as_ref(),
                         entries: &[wgpu::BindGroupEntry {
@@ -5249,8 +5250,8 @@ impl AerogpuD3d11Executor {
                                 size: Some(size),
                             }),
                         }],
-                    }),
-                ));
+                    },
+                )));
                 continue;
             }
 
@@ -5274,7 +5275,8 @@ impl AerogpuD3d11Executor {
                 srv_buffer_scratch: &self.srv_buffer_scratch,
                 storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
                     .max(1),
-                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size as u64,
+                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                    as u64,
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view: &self.dummy_texture_view,

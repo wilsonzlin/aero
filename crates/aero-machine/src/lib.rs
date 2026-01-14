@@ -3758,11 +3758,10 @@ fn apply_aerogpu_snapshot_v2(
             if bytes.len() < off.saturating_add(8) {
                 break;
             }
-            let len_bytes = bytes
-                .get(off + 4..off + 8)
-                .unwrap_or(&[0u8, 0u8, 0u8, 0u8]);
-            let byte_len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                as usize;
+            let len_bytes = bytes.get(off + 4..off + 8).unwrap_or(&[0u8, 0u8, 0u8, 0u8]);
+            let byte_len =
+                u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                    as usize;
             let payload_off = off.saturating_add(8);
             let payload_end = payload_off.saturating_add(byte_len);
             if bytes.len() < payload_end {
