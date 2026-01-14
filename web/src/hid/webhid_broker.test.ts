@@ -1426,6 +1426,115 @@ describe("hid/WebHidBroker", () => {
     broker.destroy();
   });
 
+  it("does not send buffered output ring reports if hid.attachResult fails", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    port.autoAttachResult = false;
+    let attachedId: number | null = null;
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        attachedId = (msg as { deviceId: number }).deviceId;
+      }
+    };
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(attachedId).toBeTruthy();
+    const id = attachedId!;
+
+    expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(device.sendReport).not.toHaveBeenCalled();
+
+    port.emit({ type: "hid.attachResult", deviceId: id, ok: false, error: "boom" });
+    await expect(attachPromise).rejects.toThrow("boom");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(device.sendReport).not.toHaveBeenCalled();
+    expect(broker.getState().attachedDeviceIds).not.toContain(id);
+
+    broker.destroy();
+  });
+
+  it("does not send buffered hid.sendReport messages if hid.attachResult fails", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    port.autoAttachResult = false;
+    let attachedId: number | null = null;
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        attachedId = (msg as { deviceId: number }).deviceId;
+      }
+    };
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(attachedId).toBeTruthy();
+    const id = attachedId!;
+
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).not.toHaveBeenCalled();
+
+    port.emit({ type: "hid.attachResult", deviceId: id, ok: false, error: "boom" });
+    await expect(attachPromise).rejects.toThrow("boom");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).not.toHaveBeenCalled();
+    expect(broker.getState().attachedDeviceIds).not.toContain(id);
+
+    broker.destroy();
+  });
+
+  it("responds to hid.getFeatureReport messages queued before hid.attachResult when attach fails", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    port.autoAttachResult = false;
+    let attachedId: number | null = null;
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        attachedId = (msg as { deviceId: number }).deviceId;
+      }
+    };
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(attachedId).toBeTruthy();
+    const id = attachedId!;
+
+    port.emit({ type: "hid.getFeatureReport", requestId: 123, deviceId: id, reportId: 7 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.receiveFeatureReport).not.toHaveBeenCalled();
+    expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult")).toBe(false);
+
+    port.emit({ type: "hid.attachResult", deviceId: id, ok: false, error: "boom" });
+    await expect(attachPromise).rejects.toThrow("boom");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const result = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult") as any;
+    expect(result).toBeTruthy();
+    expect(result.msg).toMatchObject({ requestId: 123, deviceId: id, reportId: 7, ok: false });
+    expect(String(result.msg.error)).toContain("boom");
+    expect(device.receiveFeatureReport).not.toHaveBeenCalled();
+
+    broker.destroy();
+  });
+
   it("does not block other devices when output ring sends are pending", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
