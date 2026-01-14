@@ -3514,10 +3514,35 @@ try {
                 $unlistedCount = ($files.Count - $listedCount)
             }
 
+            $extMap = @{}
+            foreach ($e in $files) {
+                try {
+                    $p = "" + $e.relative_path_normalized
+                    $ext = ""
+                    try { $ext = "" + [System.IO.Path]::GetExtension($p) } catch { $ext = "" }
+                    $ext = $ext.ToLower()
+                    if (-not $ext -or $ext.Length -eq 0) { $ext = "<none>" }
+                    if ($extMap.ContainsKey($ext)) {
+                        $extMap[$ext] = ([int]$extMap[$ext]) + 1
+                    } else {
+                        $extMap[$ext] = 1
+                    }
+                } catch { }
+            }
+            $extStats = @()
+            foreach ($k in $extMap.Keys) {
+                $extStats += @{
+                    extension = "" + $k
+                    count = [int]$extMap[$k]
+                }
+            }
+            $extStats = @($extStats | Sort-Object count -Descending, extension)
+
             $toolsData.files = $files
             $toolsData.exe_files = $exeFiles
             $toolsData.total_size_bytes = $totalBytes
             $toolsData.total_exe_size_bytes = $totalExeBytes
+            $toolsData.extension_stats = $extStats
             $toolsData.manifest_present = $manifestPresent
             $toolsData.manifest_parse_ok = $manifestParseOk
             $toolsData.manifest_includes_tools = $manifestIncludesTools
@@ -3542,9 +3567,52 @@ try {
                 if ($e.file_version) { $line += " filever=" + $e.file_version }
                 $toolsDetails += $line
             }
-            $otherCount = $files.Count - $exeFiles.Count
-            if ($otherCount -gt 0) {
-                $toolsDetails += ("Other (non-EXE) file(s): " + $otherCount + " (see report.json)")
+
+            if ($extStats -and $extStats.Count -gt 0) {
+                $parts = @()
+                $shown = 0
+                $maxParts = 10
+                foreach ($p in $extStats) {
+                    if ($shown -ge $maxParts) { break }
+                    $parts += ("" + $p.extension + "=" + $p.count)
+                    $shown++
+                }
+                $toolsDetails += ("Extensions: " + ($parts -join ", "))
+                if ($extStats.Count -gt $maxParts) {
+                    $toolsDetails += ("Extensions: ... and " + ($extStats.Count - $maxParts).ToString() + " more (see report.json)")
+                }
+            }
+
+            $otherFiles = @()
+            foreach ($f in $files) {
+                try {
+                    $rp = "" + $f.relative_path_normalized
+                    $ext = ""
+                    try { $ext = "" + [System.IO.Path]::GetExtension($rp) } catch { $ext = "" }
+                    if ($ext -and ($ext.ToLower() -eq ".exe")) { continue }
+                } catch { }
+                $otherFiles += $f
+            }
+
+            if ($otherFiles.Count -gt 0) {
+                $toolsDetails += ("Other (non-EXE) file(s): " + $otherFiles.Count)
+                $maxList = 25
+                $shown = 0
+                foreach ($e in $otherFiles) {
+                    if ($shown -ge $maxList) { break }
+                    $line = "" + $e.relative_path
+                    if ($e.sha256) {
+                        $h = "" + $e.sha256
+                        $hs = $h
+                        if ($hs.Length -gt 12) { $hs = $hs.Substring(0, 12) }
+                        $line += " sha256=" + $hs + "..."
+                    }
+                    $toolsDetails += $line
+                    $shown++
+                }
+                if ($otherFiles.Count -gt $maxList) {
+                    $toolsDetails += ("... and " + ($otherFiles.Count - $maxList).ToString() + " more (see report.json)")
+                }
             }
             if ($manifestCorrelationAvailable) {
                 $toolsDetails += ("Manifest correlation: listed_present=" + $listedCount + ", unlisted_present=" + $unlistedCount + ", manifest_includes_tools=" + $manifestIncludesTools + ", manifest_tools_files_listed=" + $manifestToolsFilesListed)
