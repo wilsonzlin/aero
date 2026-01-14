@@ -324,6 +324,19 @@ constexpr HRESULT kD3DErrInvalidCall = static_cast<HRESULT>(0x8876086CL);
 // definition so the file doesn't depend on d3d9.h.
 constexpr HRESULT kD3dErrDeviceLost = static_cast<HRESULT>(0x88760868L);
 
+// In WDK builds, the D3D9 DDI boundary can also surface device removal/hang
+// HRESULTs. If the runtime submission callback reports one of these, preserve it
+// so callers see a stable and semantically-correct code.
+#if defined(D3DDDIERR_DEVICEHUNG)
+constexpr HRESULT kD3dDdiErrDeviceHung = D3DDDIERR_DEVICEHUNG;
+#endif
+#if defined(D3DDDIERR_DEVICEREMOVED)
+constexpr HRESULT kD3dDdiErrDeviceRemoved = D3DDDIERR_DEVICEREMOVED;
+#endif
+#if defined(D3DERR_DEVICEREMOVED)
+constexpr HRESULT kD3dErrDeviceRemoved = D3DERR_DEVICEREMOVED;
+#endif
+
 // S_PRESENT_OCCLUDED (0x08760868) is returned by CheckDeviceState/PresentEx when
 // the target window is occluded/minimized. Prefer the SDK macro when available
 // but provide a fallback so repo builds don't need d3d9.h.
@@ -467,8 +480,34 @@ inline bool device_is_lost(const Device* dev) {
   return dev && dev->device_lost.load(std::memory_order_acquire);
 }
 
+inline HRESULT device_lost_hresult(const Device* dev) {
+  if (!dev) {
+    return kD3dErrDeviceLost;
+  }
+  const HRESULT lost_hr = static_cast<HRESULT>(dev->device_lost_hr.load(std::memory_order_acquire));
+  // If the submission callback already returned a DDI/device-removed style code,
+  // preserve it so callers don't lose the more specific failure reason.
+#if defined(D3DDDIERR_DEVICEREMOVED)
+  if (lost_hr == kD3dDdiErrDeviceRemoved) {
+    return lost_hr;
+  }
+#endif
+#if defined(D3DDDIERR_DEVICEHUNG)
+  if (lost_hr == kD3dDdiErrDeviceHung) {
+    return lost_hr;
+  }
+#endif
+#if defined(D3DERR_DEVICEREMOVED)
+  if (lost_hr == kD3dErrDeviceRemoved) {
+    return lost_hr;
+  }
+#endif
+  // Default: D3D9-level device-lost error.
+  return kD3dErrDeviceLost;
+}
+
 inline HRESULT device_lost_override(Device* dev, HRESULT hr) {
-  return device_is_lost(dev) ? kD3dErrDeviceLost : hr;
+  return device_is_lost(dev) ? device_lost_hresult(dev) : hr;
 }
 
 void mark_device_lost_from_submit(Device* dev, HRESULT hr, bool is_present, WddmSubmitCallbackKind cb_kind) {
@@ -3554,7 +3593,7 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
     return E_INVALIDARG;
   }
   if (device_is_lost(dev)) {
-    return kD3dErrDeviceLost;
+    return device_lost_hresult(dev);
   }
 
   // Only track allocations when running on the WDDM path. Repo/compat builds
@@ -3612,7 +3651,7 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
     // Split the submission and retry.
     (void)submit(dev);
     if (device_is_lost(dev)) {
-      return kD3dErrDeviceLost;
+      return device_lost_hresult(dev);
     }
 
     if (write) {
@@ -3643,7 +3682,7 @@ HRESULT track_draw_state_locked(Device* dev) {
     return E_INVALIDARG;
   }
   if (device_is_lost(dev)) {
-    return kD3dErrDeviceLost;
+    return device_lost_hresult(dev);
   }
 
   if (dev->wddm_context.hContext == 0) {
@@ -7197,7 +7236,7 @@ HRESULT flush_locked(Device* dev) {
     return S_OK;
   }
   if (device_is_lost(dev)) {
-    return kD3dErrDeviceLost;
+    return device_lost_hresult(dev);
   }
   if (dev->cmd.empty()) {
     // If we have pending EVENT queries waiting for a submission fence, allow
@@ -7207,7 +7246,7 @@ HRESULT flush_locked(Device* dev) {
     if (!dev->pending_event_queries.empty()) {
       (void)submit(dev);
       if (device_is_lost(dev)) {
-        return kD3dErrDeviceLost;
+        return device_lost_hresult(dev);
       }
     }
     return S_OK;
@@ -7955,7 +7994,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
   }
 #endif
-
+ 
   auto res = std::make_unique<Resource>();
   res->handle = allocate_global_handle(dev->adapter);
   res->type = create_type_u32;
@@ -8694,20 +8733,33 @@ static HRESULT device_open_resource_impl(
   res->pool = d3d9_resource_pool(*pOpenResource);
   const uint32_t open_size_bytes = d3d9_resource_size(*pOpenResource);
 
-  // AeroGPU cannot represent non-2D textures/surfaces in the protocol. Reject
-  // shared allocations that describe volume/cube resources to avoid importing a
-  // handle that the host will interpret incorrectly.
-  if (open_size_bytes == 0 && res->depth > 1) {
-    return D3DERR_INVALIDCALL;
-  }
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  // AeroGPU cannot represent volume/cube textures in the protocol. Reject shared
+  // allocations that describe them to avoid importing a handle that the host
+  // will interpret incorrectly.
+  //
+  // Note: D3D9Ex may use `Depth` for 2D texture arrays; allow Depth>1 for 2D
+  // resources and only reject explicit volume/cube resource types.
   if (open_size_bytes == 0) {
+    // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
+    constexpr uint32_t kD3dRTypeTexture = 3u;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     const D3DDDIRESTYPE open_type = static_cast<D3DDDIRESTYPE>(res->type);
     if (open_type == D3DDDIRESTYPE_CUBETEXTURE || open_type == D3DDDIRESTYPE_VOLUMETEXTURE || open_type == D3DDDIRESTYPE_VOLUME) {
       return D3DERR_INVALIDCALL;
     }
-  }
+#else
+    constexpr uint32_t kD3dRTypeVolume = 2u;
+    constexpr uint32_t kD3dRTypeVolumeTexture = 4u;
+    constexpr uint32_t kD3dRTypeCubeTexture = 5u;
+    if (res->type == kD3dRTypeCubeTexture || res->type == kD3dRTypeVolumeTexture || res->type == kD3dRTypeVolume) {
+      return D3DERR_INVALIDCALL;
+    }
 #endif
+    // Without an explicit 2D texture type, treat Depth>1 as a non-2D resource.
+    if (res->depth > 1 && res->type != kD3dRTypeTexture) {
+      return D3DERR_INVALIDCALL;
+    }
+  }
 
   const aerogpu_wddm_alloc_priv_v2* priv2 = nullptr;
   if (priv.version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 &&
@@ -9805,7 +9857,7 @@ HRESULT AEROGPU_D3D9_CALL device_check_device_state(
   }
   auto* dev = as_device(hDevice);
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   if (hwnd_is_occluded(hWnd)) {
     return trace.ret(kSPresentOccluded);
@@ -17696,7 +17748,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
@@ -17920,7 +17972,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(E_INVALIDARG);
   }
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
@@ -17930,7 +17982,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
 
   const bool fixedfunc_active =
@@ -18058,7 +18110,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive_up(
     return trace.ret(E_INVALIDARG);
   }
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
@@ -18094,7 +18146,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return E_INVALIDARG;
   }
   if (device_is_lost(dev)) {
-    return kD3dErrDeviceLost;
+    return device_lost_hresult(dev);
   }
   if (pDraw->PrimitiveCount == 0) {
     return S_OK;
@@ -18104,7 +18156,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (device_is_lost(dev)) {
-    return kD3dErrDeviceLost;
+    return device_lost_hresult(dev);
   }
 
   const bool fixedfunc_active =
@@ -18218,7 +18270,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     return E_INVALIDARG;
   }
   if (device_is_lost(dev)) {
-    return kD3dErrDeviceLost;
+    return device_lost_hresult(dev);
   }
   if (pDraw->PrimitiveCount == 0) {
     return S_OK;
@@ -18238,7 +18290,7 @@ static HRESULT device_draw_indexed_primitive2_locked(
     return E_INVALIDARG;
   }
   if (device_is_lost(dev)) {
-    return kD3dErrDeviceLost;
+    return device_lost_hresult(dev);
   }
 
   const bool fixedfunc_active =
@@ -18471,7 +18523,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   if (primitive_count == 0) {
     return trace.ret(S_OK);
@@ -18910,7 +18962,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
   auto* dev = as_device(hDevice);
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   const D3DDDI_HRESOURCE src_handle = d3d9_present_src(*pPresentEx);
   const uint32_t sync_interval = d3d9_present_sync_interval(*pPresentEx);
@@ -18940,7 +18992,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       retire_completed_presents_locked(dev);
       (void)submit(dev, /*is_present=*/false);
       if (device_is_lost(dev)) {
-        return trace.ret(kD3dErrDeviceLost);
+        return trace.ret(device_lost_hresult(dev));
       }
 
       dev->present_count++;
@@ -18969,7 +19021,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
       (void)submit(dev, /*is_present=*/false);
       if (device_is_lost(dev)) {
-        return trace.ret(kD3dErrDeviceLost);
+        return trace.ret(device_lost_hresult(dev));
       }
 
       // Composite the device-managed cursor (if enabled) over the present
@@ -19008,7 +19060,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
       const uint64_t submit_fence = submit(dev, /*is_present=*/true);
       if (device_is_lost(dev)) {
-        return trace.ret(kD3dErrDeviceLost);
+        return trace.ret(device_lost_hresult(dev));
       }
       const uint64_t present_fence = submit_fence;
       if (present_fence) {
@@ -19285,7 +19337,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
     }
   }
   if (device_is_lost(dev)) {
-    present_hr = kD3dErrDeviceLost;
+    present_hr = device_lost_hresult(dev);
   }
 
   const HRESULT trace_hr = trace.ret(present_hr);
@@ -19308,7 +19360,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 
   auto* dev = as_device(hDevice);
   if (device_is_lost(dev)) {
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   const D3DDDI_HRESOURCE src_handle = d3d9_present_src(*pPresent);
   const uint32_t sync_interval = d3d9_present_sync_interval(*pPresent);
@@ -19343,7 +19395,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
       retire_completed_presents_locked(dev);
       (void)submit(dev, /*is_present=*/false);
       if (device_is_lost(dev)) {
-        return trace.ret(kD3dErrDeviceLost);
+        return trace.ret(device_lost_hresult(dev));
       }
 
       dev->present_count++;
@@ -19381,7 +19433,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
     (void)submit(dev, /*is_present=*/false);
     if (device_is_lost(dev)) {
-      return trace.ret(kD3dErrDeviceLost);
+      return trace.ret(device_lost_hresult(dev));
     }
 
     // Composite the device-managed cursor (if enabled) over the present source
@@ -19415,7 +19467,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 
     const uint64_t submit_fence = submit(dev, /*is_present=*/true);
     if (device_is_lost(dev)) {
-      return trace.ret(kD3dErrDeviceLost);
+      return trace.ret(device_lost_hresult(dev));
     }
     const uint64_t present_fence = submit_fence;
     if (present_fence) {
@@ -20125,7 +20177,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     if (pGetQueryData->pData && data_size != 0) {
       std::memset(pGetQueryData->pData, 0, data_size);
     }
-    return trace.ret(kD3dErrDeviceLost);
+    return trace.ret(device_lost_hresult(dev));
   }
   auto* q = as_query(pGetQueryData->hQuery);
   if (!q) {
@@ -20188,7 +20240,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
           if (need_data && pGetQueryData->pData && data_size != 0) {
             std::memset(pGetQueryData->pData, 0, data_size);
           }
-          return trace.ret(kD3dErrDeviceLost);
+          return trace.ret(device_lost_override(dev, flush_hr));
         }
       }
     }
@@ -20212,7 +20264,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
         if (need_data && pGetQueryData->pData && data_size != 0) {
           std::memset(pGetQueryData->pData, 0, data_size);
         }
-        return trace.ret(kD3dErrDeviceLost);
+        return trace.ret(device_lost_override(dev, flush_hr));
       }
     }
     fence_value = q->fence_value.load(std::memory_order_acquire);

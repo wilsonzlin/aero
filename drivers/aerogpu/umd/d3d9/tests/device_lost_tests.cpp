@@ -7,8 +7,18 @@
 namespace aerogpu {
 namespace {
  
-// D3DERR_DEVICELOST from d3d9.h.
-constexpr HRESULT kD3dErrDeviceLost = 0x88760868L;
+// Stable device-lost HRESULT expected from hot DDIs.
+//
+// Portable builds return D3DERR_DEVICELOST; WDK builds may surface DDI-level
+// device-hung codes that are more specific.
+#if defined(D3DDDIERR_DEVICEHUNG)
+constexpr HRESULT kExpectedDeviceLostHr = D3DDDIERR_DEVICEHUNG;
+constexpr HRESULT kStoredDeviceLostHr = D3DDDIERR_DEVICEHUNG;
+#else
+constexpr HRESULT kExpectedDeviceLostHr = 0x88760868L; // D3DERR_DEVICELOST
+// Any failing HRESULT is fine here; the driver maps it to D3DERR_DEVICELOST.
+constexpr HRESULT kStoredDeviceLostHr = E_FAIL;
+#endif
  
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -100,14 +110,14 @@ bool TestDeviceLostDdiReturnsStableError() {
   // Manually force the device-lost state (portable build can't trigger real
   // WDDM submission failures).
   dev->device_lost.store(true, std::memory_order_release);
-  dev->device_lost_hr.store(static_cast<int32_t>(E_FAIL), std::memory_order_release);
+  dev->device_lost_hr.store(static_cast<int32_t>(kStoredDeviceLostHr), std::memory_order_release);
   dev->device_lost_reason.store(static_cast<uint32_t>(DeviceLostReason::WddmSubmitRender), std::memory_order_release);
  
   if (!Check(cleanup.device_funcs.pfnCheckDeviceState != nullptr, "CheckDeviceState must be available")) {
     return false;
   }
   hr = cleanup.device_funcs.pfnCheckDeviceState(create_dev.hDevice, nullptr);
-  if (!Check(hr == kD3dErrDeviceLost, "CheckDeviceState returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "CheckDeviceState returns DEVICELOST when device is lost")) {
     return false;
   }
  
@@ -115,7 +125,7 @@ bool TestDeviceLostDdiReturnsStableError() {
     return false;
   }
   hr = cleanup.device_funcs.pfnFlush(create_dev.hDevice);
-  if (!Check(hr == kD3dErrDeviceLost, "Flush returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "Flush returns DEVICELOST when device is lost")) {
     return false;
   }
  
@@ -129,7 +139,7 @@ bool TestDeviceLostDdiReturnsStableError() {
   get_query_data.data_size = sizeof(query_data);
   get_query_data.flags = 0;
   hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_query_data);
-  if (!Check(hr == kD3dErrDeviceLost, "GetQueryData returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "GetQueryData returns DEVICELOST when device is lost")) {
     return false;
   }
   if (!Check(query_data == 0, "GetQueryData zeros output buffer when device is lost")) {
@@ -140,7 +150,7 @@ bool TestDeviceLostDdiReturnsStableError() {
     return false;
   }
   hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 0);
-  if (!Check(hr == kD3dErrDeviceLost, "DrawPrimitive returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "DrawPrimitive returns DEVICELOST when device is lost")) {
     return false;
   }
 
@@ -158,7 +168,7 @@ bool TestDeviceLostDdiReturnsStableError() {
   draw_rect.pNumSegs = rect_segs;
   draw_rect.pRectPatchInfo = &rect_info;
   hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect);
-  if (!Check(hr == kD3dErrDeviceLost, "DrawRectPatch returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "DrawRectPatch returns DEVICELOST when device is lost")) {
     return false;
   }
 
@@ -176,7 +186,7 @@ bool TestDeviceLostDdiReturnsStableError() {
   draw_tri.pNumSegs = tri_segs;
   draw_tri.pTriPatchInfo = &tri_info;
   hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri);
-  if (!Check(hr == kD3dErrDeviceLost, "DrawTriPatch returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "DrawTriPatch returns DEVICELOST when device is lost")) {
     return false;
   }
 
@@ -185,7 +195,7 @@ bool TestDeviceLostDdiReturnsStableError() {
   }
   D3D9DDIARG_PRESENT present{};
   hr = cleanup.device_funcs.pfnPresent(create_dev.hDevice, &present);
-  if (!Check(hr == kD3dErrDeviceLost, "Present returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "Present returns DEVICELOST when device is lost")) {
     return false;
   }
  
@@ -194,7 +204,7 @@ bool TestDeviceLostDdiReturnsStableError() {
   }
   D3D9DDIARG_PRESENTEX present_ex{};
   hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present_ex);
-  if (!Check(hr == kD3dErrDeviceLost, "PresentEx returns DEVICELOST when device is lost")) {
+  if (!Check(hr == kExpectedDeviceLostHr, "PresentEx returns DEVICELOST when device is lost")) {
     return false;
   }
  
