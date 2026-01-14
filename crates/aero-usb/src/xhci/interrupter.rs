@@ -15,8 +15,10 @@ pub const IMAN_IE: u32 = 1 << 1;
 
 /// Event Ring Dequeue Pointer (ERDP) - Event Handler Busy bit.
 ///
-/// This bit has nuanced semantics in the xHCI specification. We preserve it as a guest-visible flag
-/// but do not currently model the interrupt moderation/handshake behaviour that depends on it.
+/// In xHCI, software commonly writes ERDP with this bit set as part of the interrupt acknowledgement
+/// handshake. The Aero model treats ERDP.EHB as a transient write-1-to-ack bit:
+/// - writing ERDP with EHB set clears IMAN.IP, and
+/// - EHB is not latched in the stored ERDP value (reads typically return it as 0).
 pub const ERDP_EHB: u64 = 1 << 3;
 
 #[derive(Clone, Copy)]
