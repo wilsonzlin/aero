@@ -17,6 +17,8 @@ What is validated:
       - upload verification SHA-256 matches the deterministic payload
   - Default HTTP port/path alignment:
       guest default http_url vs harness defaults (port + path)
+  - Default UDP port alignment:
+      guest default udp_port vs harness defaults (Python --udp-port / PowerShell -UdpPort)
   - Stable QMP device IDs for virtio-input routing:
       aero_virtio_kbd0 / aero_virtio_mouse0 / aero_virtio_tablet0
       (Python harness vs PowerShell harness)
@@ -124,6 +126,39 @@ def _normalize_etag_token(token: str) -> str:
 class _HttpDefaults:
     port: int
     path: str
+
+
+def _parse_guest_udp_default(text: str) -> int:
+    m = _re_search(
+        r"\bUSHORT\s+udp_port\s*=\s*(?P<port>\d+)\s*;",
+        text,
+        file=GUEST_SELFTEST_MAIN,
+        desc="default Options.udp_port",
+        flags=re.M,
+    )
+    return int(m.group("port"), 10)
+
+
+def _parse_python_udp_default(text: str) -> int:
+    port_m = _re_search(
+        r'"\-\-udp-port".*?^\s*default\s*=\s*(?P<port>\d+)\s*,',
+        text,
+        file=PY_HARNESS,
+        desc="argparse default for --udp-port",
+        flags=re.M | re.S,
+    )
+    return int(port_m.group("port"), 10)
+
+
+def _parse_ps_udp_default(text: str) -> int:
+    port_m = _re_search(
+        r"\[int\]\$UdpPort\s*=\s*(?P<port>\d+)\s*,",
+        text,
+        file=PS_HARNESS,
+        desc="param default for $UdpPort",
+        flags=re.M,
+    )
+    return int(port_m.group("port"), 10)
 
 
 def _parse_guest_http_defaults(text: str) -> _HttpDefaults:
@@ -319,6 +354,21 @@ def main() -> int:
             f"(ps port={ps_http.port} path={ps_http.path!r}; guest port={guest_http.port} path={guest_http.path!r})"
         )
 
+    # Default UDP port alignment between guest and harnesses.
+    guest_udp_port = _parse_guest_udp_default(guest_text)
+    py_udp_port = _parse_python_udp_default(py_text)
+    ps_udp_port = _parse_ps_udp_default(ps_text)
+    if py_udp_port != guest_udp_port:
+        errors.append(
+            f"{PY_HARNESS.as_posix()}: Python harness --udp-port default does not match guest selftest Options.udp_port "
+            f"(python={py_udp_port} guest={guest_udp_port})"
+        )
+    if ps_udp_port != guest_udp_port:
+        errors.append(
+            f"{PS_HARNESS.as_posix()}: PowerShell harness -UdpPort default does not match guest selftest Options.udp_port "
+            f"(ps={ps_udp_port} guest={guest_udp_port})"
+        )
+
     # QMP virtio-input IDs must match between harness implementations.
     py_qmp_kbd = _re_search(
         r'^_VIRTIO_INPUT_QMP_KEYBOARD_ID\s*=\s*"(?P<id>[^"]+)"\s*$',
@@ -394,4 +444,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
