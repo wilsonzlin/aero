@@ -43,6 +43,36 @@ pub trait IsoBackend {
     fn read_sectors(&mut self, lba: u32, buf: &mut [u8]) -> io::Result<()>;
 }
 
+// Compile-time guard that we can implement ISO backends using !Send JS/DOM handles in the browser
+// build (e.g. OPFS backends when `wasm32` + atomics).
+#[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
+mod wasm_send_bounds_check {
+    use std::io;
+    use std::rc::Rc;
+
+    use aero_storage::VirtualDisk;
+
+    use super::{AtapiCdrom, IsoBackend};
+
+    struct NotSendIsoBackend(Rc<()>);
+
+    impl IsoBackend for NotSendIsoBackend {
+        fn sector_count(&self) -> u32 {
+            0
+        }
+
+        fn read_sectors(&mut self, _lba: u32, buf: &mut [u8]) -> io::Result<()> {
+            buf.fill(0);
+            Ok(())
+        }
+    }
+
+    fn _assert_accepts_non_send_virtual_disk(disk: Box<dyn VirtualDisk>) -> io::Result<AtapiCdrom> {
+        AtapiCdrom::new_from_virtual_disk(disk)
+    }
+}
+
 /// Adapter that exposes an [`aero_storage::VirtualDisk`] (byte-addressed) as an ATAPI/ISO9660
 /// sector device (2048-byte sectors).
 ///
