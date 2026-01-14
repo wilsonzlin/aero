@@ -861,9 +861,7 @@ fn translate_hs(
     io_pc.hs_pc_patch_constant_reg_masks = hs_pc_layout.patch_constant_reg_masks.clone();
     io_pc.hs_pc_tess_factor_writes = hs_pc_layout.tess_factor_writes.clone();
     io_pc.hs_pc_tess_factor_stride = hs_pc_layout.tess_factor_stride;
-    let hs_pc_out_stride = hs_pc_layout
-        .patch_constant_reg_count
-        .max(1);
+    let hs_pc_out_stride = hs_pc_layout.patch_constant_reg_count.max(1);
 
     let mut outputs_reflection = io_cp.outputs_reflection_vertex();
     outputs_reflection.extend(io_pc.outputs_reflection_vertex());

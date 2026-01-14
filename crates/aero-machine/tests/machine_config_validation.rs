@@ -268,7 +268,10 @@ fn vga_lfb_base_that_overflows_pci_mmio_window_is_rejected_when_pc_platform_is_e
         Ok(_) => panic!("expected overflowing vga_lfb_base to be rejected"),
         Err(e) => e,
     };
-    assert!(matches!(err, MachineError::VgaLfbOutsidePciMmioWindow { .. }));
+    assert!(matches!(
+        err,
+        MachineError::VgaLfbOutsidePciMmioWindow { .. }
+    ));
 }
 
 #[test]

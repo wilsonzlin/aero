@@ -215,8 +215,10 @@ fn replays_aerogpu_cmd_indexed_triangle_fixture_and_matches_hash() {
 
 #[test]
 fn replays_aerogpu_cmd_indexed_triangle_u16_fixture_and_matches_hash() {
-    let bytes = fs::read(fixture_path("aerogpu_cmd_indexed_triangle_u16.aerogputrace"))
-        .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    let bytes = fs::read(fixture_path(
+        "aerogpu_cmd_indexed_triangle_u16.aerogputrace",
+    ))
+    .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
     pollster::block_on(async {
         let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
             return;
