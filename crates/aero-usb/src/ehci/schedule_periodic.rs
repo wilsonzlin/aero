@@ -221,7 +221,7 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
     let total_bytes = ((token & QTD_TOKEN_BYTES_MASK) >> QTD_TOKEN_BYTES_SHIFT) as usize;
     let ioc = (token & QTD_TOKEN_IOC) != 0;
 
-    let Some(dev) = ctx.hub.device_mut_for_address(dev_addr) else {
+    let Some(mut dev) = ctx.hub.device_mut_for_address(dev_addr) else {
         token |= QTD_STATUS_HALTED | QTD_STATUS_TRANSACTION_ERROR;
         token &= !QTD_STATUS_ACTIVE;
         ctx.mem.write_u32(token_addr, token);
@@ -252,7 +252,7 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
 
             match dev.handle_setup(setup) {
                 UsbOutResult::Ack => {
-                    complete_qtd(ctx, qtd_addr, token, 0, false);
+                    complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, 0, false);
                     if ioc {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
@@ -260,14 +260,14 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
                 }
                 UsbOutResult::Nak => QtdProgress::Nak,
                 UsbOutResult::Stall => {
-                    complete_qtd(ctx, qtd_addr, token, 8, true);
+                    complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, 8, true);
                     if ioc {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
                     QtdProgress::Advanced { stop: true }
                 }
                 UsbOutResult::Timeout => {
-                    complete_qtd(ctx, qtd_addr, token, 8, true);
+                    complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, 8, true);
                     if ioc {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
@@ -283,7 +283,7 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
 
             match dev.handle_out(endpoint, &out_data) {
                 UsbOutResult::Ack => {
-                    complete_qtd(ctx, qtd_addr, token, 0, false);
+                    complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, 0, false);
                     if ioc {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
@@ -291,14 +291,14 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
                 }
                 UsbOutResult::Nak => QtdProgress::Nak,
                 UsbOutResult::Stall => {
-                    complete_qtd(ctx, qtd_addr, token, total_bytes, true);
+                    complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, total_bytes, true);
                     if ioc {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
                     QtdProgress::Advanced { stop: true }
                 }
                 UsbOutResult::Timeout => {
-                    complete_qtd(ctx, qtd_addr, token, total_bytes, true);
+                    complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, total_bytes, true);
                     if ioc {
                         *ctx.usbsts |= USBSTS_USBINT;
                     }
@@ -315,7 +315,7 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
                     write_qtd_buffer(ctx.mem, qtd_addr, &data);
                 }
                 let remaining = total_bytes.saturating_sub(data.len());
-                complete_qtd(ctx, qtd_addr, token, remaining, false);
+                complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, remaining, false);
                 if ioc {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
@@ -323,14 +323,14 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
             }
             UsbInResult::Nak => QtdProgress::Nak,
             UsbInResult::Stall => {
-                complete_qtd(ctx, qtd_addr, token, total_bytes, true);
+                complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, total_bytes, true);
                 if ioc {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
                 QtdProgress::Advanced { stop: true }
             }
             UsbInResult::Timeout => {
-                complete_qtd(ctx, qtd_addr, token, total_bytes, true);
+                complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, total_bytes, true);
                 if ioc {
                     *ctx.usbsts |= USBSTS_USBINT;
                 }
@@ -339,7 +339,7 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
         },
         _ => {
             // Reserved PID.
-            complete_qtd(ctx, qtd_addr, token, total_bytes, true);
+            complete_qtd(ctx.mem, ctx.usbsts, qtd_addr, token, total_bytes, true);
             if ioc {
                 *ctx.usbsts |= USBSTS_USBINT;
             }
@@ -349,7 +349,8 @@ fn process_single_qtd<M: MemoryBus + ?Sized>(
 }
 
 fn complete_qtd<M: MemoryBus + ?Sized>(
-    ctx: &mut PeriodicScheduleContext<'_, M>,
+    mem: &mut M,
+    usbsts: &mut u32,
     qtd_addr: u32,
     mut token: u32,
     remaining: usize,
@@ -362,7 +363,7 @@ fn complete_qtd<M: MemoryBus + ?Sized>(
 
     if error {
         token |= QTD_STATUS_HALTED | QTD_STATUS_TRANSACTION_ERROR;
-        *ctx.usbsts |= USBSTS_USBERRINT;
+        *usbsts |= USBSTS_USBERRINT;
     } else {
         // Successful completion clears all sticky error bits and halt.
         token &= !(QTD_STATUS_HALTED
@@ -376,7 +377,7 @@ fn complete_qtd<M: MemoryBus + ?Sized>(
     }
 
     // Write updated token back to guest memory.
-    ctx.mem.write_u32(token_addr, token);
+    mem.write_u32(token_addr, token);
 }
 
 fn read_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, out: &mut [u8]) {

@@ -1,6 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use aero_usb::ehci::regs::{
+    reg_portsc, CONFIGFLAG_CF, PORTSC_PED, PORTSC_PO, PORTSC_PR as EHCI_PORTSC_PR, REG_CONFIGFLAG,
+};
+use aero_usb::ehci::EhciController;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs::REG_PORTSC1;
 use aero_usb::uhci::UhciController;
@@ -26,10 +30,6 @@ const TD2: u32 = 0x3040;
 
 const BUF_SETUP: u32 = 0x4000;
 const BUF_DATA: u32 = 0x5000;
-
-// EHCI PORTSC bits we care about.
-const EHCI_PORT_RESET: u32 = 1 << 8;
-const EHCI_PORT_OWNER: u32 = 1 << 13;
 
 fn uhci_reset_root_port(uhci: &mut UhciController, mem: &mut TestMemory) {
     // Prevent the schedule from running while we're just advancing root hub timers.
@@ -84,17 +84,15 @@ fn uhci_get_device_descriptor(uhci: &mut UhciController, mem: &mut TestMemory) -
     mem.data[BUF_DATA as usize..BUF_DATA as usize + 18].to_vec()
 }
 
-fn ehci_reset_port(mux: &Rc<RefCell<Usb2PortMux>>, port: usize) {
-    mux.borrow_mut()
-        .ehci_write_portsc_masked(port, EHCI_PORT_RESET, EHCI_PORT_RESET);
+fn ehci_reset_port(ehci: &mut EhciController, mem: &mut TestMemory, port: usize) {
+    ehci.mmio_write(reg_portsc(port), 4, EHCI_PORTSC_PR);
     for _ in 0..50 {
-        mux.borrow_mut().ehci_tick_1ms(port);
+        ehci.tick_1ms(mem);
     }
 }
 
-fn ehci_get_device_descriptor(mux: &Rc<RefCell<Usb2PortMux>>) -> Option<Vec<u8>> {
-    let mut mux_ref = mux.borrow_mut();
-    let dev = mux_ref.ehci_device_mut_for_address(0)?;
+fn ehci_get_device_descriptor(ehci: &mut EhciController) -> Option<Vec<u8>> {
+    let mut dev = ehci.hub_mut().device_mut_for_address(0)?;
     let setup = SetupPacket {
         bm_request_type: 0x80,
         b_request: 0x06,
@@ -118,6 +116,9 @@ fn usb2_companion_routing_swaps_reachability_between_uhci_and_ehci() {
     let mut uhci = UhciController::new();
     uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
 
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
     // Attach a full-speed device to the shared physical port while the mux is still routing to the
     // companion controller (CONFIGFLAG=0).
     let keyboard = UsbHidKeyboardHandle::new();
@@ -134,36 +135,41 @@ fn usb2_companion_routing_swaps_reachability_between_uhci_and_ehci() {
     assert_eq!(desc, expected);
 
     // EHCI should not be able to route to the device while CONFIGFLAG=0.
-    assert!(mux.borrow_mut().ehci_device_mut_for_address(0).is_none());
+    assert!(ehci.hub_mut().device_mut_for_address(0).is_none());
 
-    // Now let the guest claim the port for EHCI: set CONFIGFLAG and clear PORT_OWNER.
-    mux.borrow_mut().set_configflag(true);
-    mux.borrow_mut()
-        .ehci_write_portsc_masked(0, 0, EHCI_PORT_OWNER);
+    // Now let the guest claim the port for EHCI via CONFIGFLAG. The controller models the
+    // CONFIGFLAG 0->1 transition by clearing PORTSC.PORT_OWNER on all ports.
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(portsc & PORTSC_PO, 0, "CONFIGFLAG should clear PORT_OWNER");
 
     // UHCI view should no longer be able to reach the device.
     assert!(uhci.hub_mut().device_mut_for_address(0).is_none());
 
     // Reset the port through the EHCI view and ensure a control transfer succeeds.
-    ehci_reset_port(&mux, 0);
-    let ehci_desc = ehci_get_device_descriptor(&mux).expect("device should be reachable via EHCI");
+    ehci_reset_port(&mut ehci, &mut mem, 0);
+    let ehci_desc =
+        ehci_get_device_descriptor(&mut ehci).expect("device should be reachable via EHCI");
     assert_eq!(ehci_desc, expected);
 
     // Stress: toggle ownership back and forth a few times and ensure both sides can make forward
     // progress without panicking.
     for i in 0..3 {
-        // Hand back to companion.
-        mux.borrow_mut()
-            .ehci_write_portsc_masked(0, EHCI_PORT_OWNER, EHCI_PORT_OWNER);
+        // Hand back to companion. EHCI requires the port to be disabled before PORT_OWNER writes.
+        let portsc = ehci.mmio_read(reg_portsc(0), 4);
+        ehci.mmio_write(reg_portsc(0), 4, portsc & !PORTSC_PED);
+        let portsc = ehci.mmio_read(reg_portsc(0), 4);
+        assert_eq!(portsc & PORTSC_PED, 0, "port must be disabled before handoff");
+        ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_PO);
         uhci_reset_root_port(&mut uhci, &mut mem);
         let desc = uhci_get_device_descriptor(&mut uhci, &mut mem);
         assert_eq!(desc, expected, "UHCI descriptor mismatch after toggle {i}");
 
         // And back to EHCI.
-        mux.borrow_mut()
-            .ehci_write_portsc_masked(0, 0, EHCI_PORT_OWNER);
-        ehci_reset_port(&mux, 0);
-        let desc = ehci_get_device_descriptor(&mux).expect("EHCI descriptor after toggle");
+        let portsc = ehci.mmio_read(reg_portsc(0), 4);
+        ehci.mmio_write(reg_portsc(0), 4, portsc & !PORTSC_PO);
+        ehci_reset_port(&mut ehci, &mut mem, 0);
+        let desc = ehci_get_device_descriptor(&mut ehci).expect("EHCI descriptor after toggle");
         assert_eq!(desc, expected, "EHCI descriptor mismatch after toggle {i}");
     }
 }

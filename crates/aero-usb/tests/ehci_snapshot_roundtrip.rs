@@ -132,13 +132,13 @@ fn ehci_snapshot_roundtrip_preserves_regs_port_timer_and_topology() {
 
     // The device should be reachable on the enabled port; verify it responds to a standard control
     // request after restore.
-    let dev = restored
+    let mut dev = restored
         .hub_mut()
         .device_mut_for_address(0)
         .expect("device should be reachable after reset");
 
     control_no_data(
-        dev,
+        &mut dev,
         SetupPacket {
             bm_request_type: 0x00,
             b_request: 0x05, // SET_ADDRESS
@@ -149,7 +149,7 @@ fn ehci_snapshot_roundtrip_preserves_regs_port_timer_and_topology() {
     );
 
     let desc = control_in(
-        dev,
+        &mut dev,
         SetupPacket {
             bm_request_type: 0x80,
             b_request: 0x06, // GET_DESCRIPTOR

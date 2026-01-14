@@ -1,10 +1,15 @@
 use alloc::boxed::Box;
+use alloc::rc::Rc;
 use alloc::vec::Vec;
+
+use core::cell::{Ref, RefCell, RefMut};
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotResult};
 
 use crate::device::AttachedUsbDevice;
+use crate::hub::{RootHubDevice, RootHubDeviceMut};
+use crate::usb2_port::Usb2PortMux;
 use crate::{UsbDeviceModel, UsbHubAttachError};
 
 use super::regs::*;
@@ -27,10 +32,10 @@ struct Port {
     powered: bool,
     /// Port ownership bit (`PORTSC.PORT_OWNER`, bit 13).
     ///
-    /// When `true`, the port is treated as owned by a companion controller (UHCI/OHCI). Aero does
-    /// not yet model companion controllers, so `PORT_OWNER=1` conservatively makes the attached
-    /// device unreachable from the EHCI controller (while still reporting physical connection via
-    /// `CCS`).
+    /// When `true`, the port is treated as owned by a companion controller (UHCI/OHCI). If this
+    /// root hub port is backed by a [`Usb2PortMux`], ownership handoff is handled by the mux and
+    /// the device will be routed to the companion controller; otherwise `PORT_OWNER=1` makes the
+    /// device unreachable from EHCI.
     port_owner: bool,
 }
 
@@ -316,23 +321,237 @@ impl Port {
     }
 }
 
+enum RootHubPortSlot {
+    Local(Port),
+    Usb2Mux {
+        mux: Rc<RefCell<Usb2PortMux>>,
+        port: usize,
+    },
+}
+
+impl RootHubPortSlot {
+    fn has_device(&self) -> bool {
+        match self {
+            RootHubPortSlot::Local(p) => p.device.is_some(),
+            RootHubPortSlot::Usb2Mux { mux, port } => mux.borrow().port_device(*port).is_some(),
+        }
+    }
+
+    fn attach(&mut self, model: Box<dyn UsbDeviceModel>) {
+        match self {
+            RootHubPortSlot::Local(p) => p.attach(model),
+            RootHubPortSlot::Usb2Mux { mux, port } => mux.borrow_mut().attach(*port, model),
+        }
+    }
+
+    fn detach(&mut self) {
+        match self {
+            RootHubPortSlot::Local(p) => p.detach(),
+            RootHubPortSlot::Usb2Mux { mux, port } => mux.borrow_mut().detach(*port),
+        }
+    }
+
+    fn port_device(&self) -> Option<RootHubDevice<'_>> {
+        match self {
+            RootHubPortSlot::Local(p) => p.device.as_ref().map(RootHubDevice::Direct),
+            RootHubPortSlot::Usb2Mux { mux, port } => {
+                let mux_ref = mux.borrow();
+                if mux_ref.port_device(*port).is_none() {
+                    return None;
+                }
+                Some(RootHubDevice::Muxed(Ref::map(mux_ref, |m| {
+                    m.port_device(*port).expect("checked is_some above")
+                })))
+            }
+        }
+    }
+
+    fn port_device_mut(&mut self) -> Option<RootHubDeviceMut<'_>> {
+        match self {
+            RootHubPortSlot::Local(p) => p.device.as_mut().map(RootHubDeviceMut::Direct),
+            RootHubPortSlot::Usb2Mux { mux, port } => {
+                let mux_ref = mux.borrow_mut();
+                if mux_ref.port_device(*port).is_none() {
+                    return None;
+                }
+                Some(RootHubDeviceMut::Muxed(RefMut::map(mux_ref, |m| {
+                    m.port_device_mut(*port).expect("checked is_some above")
+                })))
+            }
+        }
+    }
+
+    fn read_portsc(&self) -> u32 {
+        match self {
+            RootHubPortSlot::Local(p) => p.read_portsc(),
+            RootHubPortSlot::Usb2Mux { mux, port } => mux.borrow().ehci_read_portsc(*port),
+        }
+    }
+
+    fn write_portsc_masked(&mut self, value: u32, mut write_mask: u32) {
+        match self {
+            RootHubPortSlot::Local(p) => p.write_portsc(value, write_mask),
+            RootHubPortSlot::Usb2Mux { mux, port } => {
+                // PORT_OWNER is only writable when the port is disabled. Match the local root hub
+                // semantics by masking out the PO bit if the mux's EHCI view reports it enabled.
+                if write_mask & PORTSC_PO != 0 {
+                    let cur = mux.borrow().ehci_read_portsc(*port);
+                    if cur & PORTSC_PED != 0 {
+                        write_mask &= !PORTSC_PO;
+                    }
+                }
+                mux.borrow_mut()
+                    .ehci_write_portsc_masked(*port, value, write_mask);
+            }
+        }
+    }
+
+    fn any_port_change(&self) -> bool {
+        match self {
+            RootHubPortSlot::Local(p) => p.connect_change || p.enable_change || p.over_current_change,
+            RootHubPortSlot::Usb2Mux { mux, port } => {
+                let st = mux.borrow().ehci_read_portsc(*port);
+                (st & (PORTSC_CSC | PORTSC_PEDC)) != 0
+            }
+        }
+    }
+
+    fn set_port_owner(&mut self, owner: bool) -> bool {
+        match self {
+            RootHubPortSlot::Local(p) => p.set_port_owner(owner),
+            RootHubPortSlot::Usb2Mux { mux, port } => {
+                let before = mux.borrow().ehci_read_portsc(*port) & PORTSC_PO != 0;
+                let value = if owner { PORTSC_PO } else { 0 };
+                mux.borrow_mut()
+                    .ehci_write_portsc_masked(*port, value, PORTSC_PO);
+                let after = mux.borrow().ehci_read_portsc(*port) & PORTSC_PO != 0;
+                before != after
+            }
+        }
+    }
+
+    fn save_snapshot_record(&self) -> Vec<u8> {
+        match self {
+            RootHubPortSlot::Local(port) => {
+                let mut rec = Encoder::new()
+                    .bool(port.connected)
+                    .bool(port.connect_change)
+                    .bool(port.enabled)
+                    .bool(port.enable_change)
+                    .bool(port.over_current)
+                    .bool(port.over_current_change)
+                    .bool(port.reset)
+                    .u8(port.reset_countdown_ms)
+                    .bool(port.suspended)
+                    .bool(port.resuming)
+                    .u8(port.resume_countdown_ms)
+                    .bool(port.powered)
+                    .bool(port.port_owner)
+                    .bool(port.device.is_some());
+
+                if let Some(dev) = port.device.as_ref() {
+                    let dev_state = dev.save_state();
+                    rec = rec.u32(dev_state.len() as u32).bytes(&dev_state);
+                }
+
+                rec.finish()
+            }
+            RootHubPortSlot::Usb2Mux { mux, port } => mux.borrow().save_snapshot_ehci_port_record(*port),
+        }
+    }
+
+    fn load_snapshot_record(&mut self, buf: &[u8]) -> SnapshotResult<()> {
+        match self {
+            RootHubPortSlot::Local(port) => {
+                let mut pd = Decoder::new(buf);
+                port.connected = pd.bool()?;
+                port.connect_change = pd.bool()?;
+                port.enabled = pd.bool()?;
+                port.enable_change = pd.bool()?;
+                port.over_current = pd.bool()?;
+                port.over_current_change = pd.bool()?;
+                port.reset = pd.bool()?;
+                port.reset_countdown_ms = pd.u8()?;
+                port.suspended = pd.bool()?;
+                port.resuming = pd.bool()?;
+                port.resume_countdown_ms = pd.u8()?;
+                port.powered = pd.bool()?;
+                port.port_owner = pd.bool()?;
+
+                let has_device_state = pd.bool()?;
+                let device_state = if has_device_state {
+                    let len = pd.u32()? as usize;
+                    if len > MAX_USB_DEVICE_SNAPSHOT_BYTES {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "usb device snapshot too large",
+                        ));
+                    }
+                    Some(pd.bytes(len)?.to_vec())
+                } else {
+                    None
+                };
+                pd.finish()?;
+
+                if let Some(state) = device_state {
+                    if port.device.is_none() {
+                        if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&state)? {
+                            port.device = Some(dev);
+                        }
+                    }
+                    if let Some(dev) = port.device.as_mut() {
+                        dev.load_state(&state)?;
+                    }
+                } else {
+                    // Snapshot indicates no device attached.
+                    port.device = None;
+                }
+
+                // Ensure the device model observes the restored port suspended state.
+                port.propagate_suspended_state();
+
+                Ok(())
+            }
+            RootHubPortSlot::Usb2Mux { mux, port } => mux
+                .borrow_mut()
+                .load_snapshot_ehci_port_record(*port, buf),
+        }
+    }
+}
+
 /// EHCI root hub exposed via PORTSC registers.
 ///
 /// This is a minimal model intended for Windows driver bring-up. By default we expose 6 ports
 /// (`EhciController::new()`); use `EhciController::new_with_port_count()` to override.
 pub struct RootHub {
-    ports: Vec<Port>,
+    ports: Vec<RootHubPortSlot>,
 }
 
 impl RootHub {
     pub fn new(num_ports: usize) -> Self {
-        let mut ports = Vec::with_capacity(num_ports);
-        ports.extend((0..num_ports).map(|_| Port::new()));
+        let ports = (0..num_ports)
+            .map(|_| RootHubPortSlot::Local(Port::new()))
+            .collect();
         Self { ports }
     }
 
     pub fn num_ports(&self) -> usize {
         self.ports.len()
+    }
+
+    /// Replaces `root_port` backing storage with a shared USB2 mux port.
+    pub fn attach_usb2_port_mux(
+        &mut self,
+        root_port: usize,
+        mux: Rc<RefCell<Usb2PortMux>>,
+        mux_port: usize,
+    ) {
+        if root_port >= self.ports.len() {
+            return;
+        }
+        self.ports[root_port] = RootHubPortSlot::Usb2Mux {
+            mux,
+            port: mux_port,
+        };
     }
 
     pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
@@ -362,20 +581,19 @@ impl RootHub {
 
         // If only a root port is provided, attach directly to the root hub.
         if rest.is_empty() {
-            if self.ports[root_port].device.is_some() {
+            if self.ports[root_port].has_device() {
                 return Err(UsbHubAttachError::PortOccupied);
             }
             self.attach(root_port, model);
             return Ok(());
         }
 
-        let p = &mut self.ports[root_port];
-        let Some(root_dev) = p.device.as_mut() else {
+        let Some(mut root_dev) = self.port_device_mut(root_port) else {
             return Err(UsbHubAttachError::NoDevice);
         };
 
         let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
-        let mut hub_dev = root_dev;
+        let mut hub_dev: &mut AttachedUsbDevice = &mut root_dev;
         for &hop in hub_path {
             hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
         }
@@ -393,20 +611,19 @@ impl RootHub {
 
         // If only a root port is provided, detach directly from the root hub.
         if rest.is_empty() {
-            if self.ports[root_port].device.is_none() {
+            if !self.ports[root_port].has_device() {
                 return Err(UsbHubAttachError::NoDevice);
             }
             self.detach(root_port);
             return Ok(());
         }
 
-        let p = &mut self.ports[root_port];
-        let Some(root_dev) = p.device.as_mut() else {
+        let Some(mut root_dev) = self.port_device_mut(root_port) else {
             return Err(UsbHubAttachError::NoDevice);
         };
 
         let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
-        let mut hub_dev = root_dev;
+        let mut hub_dev: &mut AttachedUsbDevice = &mut root_dev;
         for &hop in hub_path {
             hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
         }
@@ -415,13 +632,13 @@ impl RootHub {
 
     /// Returns the device currently attached to the specified root port, regardless of whether the
     /// port is powered/enabled.
-    pub fn port_device(&self, port: usize) -> Option<&AttachedUsbDevice> {
-        self.ports.get(port)?.device.as_ref()
+    pub fn port_device(&self, port: usize) -> Option<RootHubDevice<'_>> {
+        self.ports.get(port)?.port_device()
     }
 
     /// Mutable variant of [`RootHub::port_device`].
-    pub fn port_device_mut(&mut self, port: usize) -> Option<&mut AttachedUsbDevice> {
-        self.ports.get_mut(port)?.device.as_mut()
+    pub fn port_device_mut(&mut self, port: usize) -> Option<RootHubDeviceMut<'_>> {
+        self.ports.get_mut(port)?.port_device_mut()
     }
 
     pub fn read_portsc(&self, port: usize) -> u32 {
@@ -438,43 +655,94 @@ impl RootHub {
         changed
     }
 
+    pub(crate) fn set_configflag(&mut self, configflag: bool) {
+        for p in &mut self.ports {
+            if let RootHubPortSlot::Usb2Mux { mux, .. } = p {
+                mux.borrow_mut().set_configflag(configflag);
+            }
+        }
+    }
+
+    pub(crate) fn set_configflag_for_restore(&mut self, configflag: bool) {
+        for p in &mut self.ports {
+            if let RootHubPortSlot::Usb2Mux { mux, .. } = p {
+                mux.borrow_mut().set_configflag_for_restore(configflag);
+            }
+        }
+    }
+
     pub fn write_portsc(&mut self, port: usize, value: u32) {
         self.write_portsc_masked(port, value, 0xffff_ffff);
     }
 
     pub(crate) fn write_portsc_masked(&mut self, port: usize, value: u32, write_mask: u32) {
         if let Some(p) = self.ports.get_mut(port) {
-            p.write_portsc(value, write_mask);
+            p.write_portsc_masked(value, write_mask);
         }
     }
 
     pub fn tick_1ms(&mut self) {
         for p in &mut self.ports {
-            p.tick_1ms();
+            match p {
+                RootHubPortSlot::Local(local) => {
+                    local.tick_1ms();
 
-            if !(p.enabled && p.powered) || p.suspended || p.resuming {
-                continue;
-            }
-            if let Some(dev) = p.device.as_mut() {
-                dev.tick_1ms();
+                    if !(local.enabled && local.powered) || local.suspended || local.resuming {
+                        continue;
+                    }
+                    if let Some(dev) = local.device.as_mut() {
+                        dev.tick_1ms();
+                    }
+                }
+                RootHubPortSlot::Usb2Mux { mux, port } => {
+                    mux.borrow_mut().ehci_tick_1ms(*port);
+                }
             }
         }
     }
 
     pub fn any_port_change(&self) -> bool {
-        self.ports
-            .iter()
-            .any(|p| p.connect_change || p.enable_change || p.over_current_change)
+        self.ports.iter().any(|p| p.any_port_change())
     }
 
-    pub fn device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
+    pub fn device_mut_for_address(&mut self, address: u8) -> Option<RootHubDeviceMut<'_>> {
         for p in &mut self.ports {
-            if p.port_owner || !(p.enabled && p.powered) || p.suspended || p.resuming {
-                continue;
-            }
-            if let Some(dev) = p.device.as_mut() {
-                if let Some(found) = dev.device_mut_for_address(address) {
-                    return Some(found);
+            match p {
+                RootHubPortSlot::Local(port) => {
+                    if port.port_owner || !(port.enabled && port.powered) || port.suspended || port.resuming {
+                        continue;
+                    }
+                    if let Some(dev) = port.device.as_mut() {
+                        if let Some(found) = dev.device_mut_for_address(address) {
+                            return Some(RootHubDeviceMut::Direct(found));
+                        }
+                    }
+                }
+                RootHubPortSlot::Usb2Mux { mux, port } => {
+                    let mut mux_ref = mux.borrow_mut();
+                    if !mux_ref.ehci_port_routable(*port) {
+                        continue;
+                    }
+
+                    // Ensure device exists and address is reachable before mapping the RefMut.
+                    {
+                        let Some(root_dev) = mux_ref.port_device_mut(*port) else {
+                            continue;
+                        };
+                        if root_dev.device_mut_for_address(address).is_none() {
+                            continue;
+                        }
+                    }
+
+                    let root_ref = RefMut::map(mux_ref, |m| {
+                        m.port_device_mut(*port)
+                            .expect("checked device exists above")
+                    });
+                    let found_ref = RefMut::map(root_ref, |dev| {
+                        dev.device_mut_for_address(address)
+                            .expect("checked address exists above")
+                    });
+                    return Some(RootHubDeviceMut::Muxed(found_ref));
                 }
             }
         }
@@ -484,28 +752,7 @@ impl RootHub {
     pub(crate) fn save_snapshot_ports(&self) -> Vec<u8> {
         let mut port_records = Vec::with_capacity(self.ports.len());
         for port in &self.ports {
-            let mut rec = Encoder::new()
-                .bool(port.connected)
-                .bool(port.connect_change)
-                .bool(port.enabled)
-                .bool(port.enable_change)
-                .bool(port.over_current)
-                .bool(port.over_current_change)
-                .bool(port.reset)
-                .u8(port.reset_countdown_ms)
-                .bool(port.suspended)
-                .bool(port.resuming)
-                .u8(port.resume_countdown_ms)
-                .bool(port.powered)
-                .bool(port.port_owner)
-                .bool(port.device.is_some());
-
-            if let Some(dev) = port.device.as_ref() {
-                let dev_state = dev.save_state();
-                rec = rec.u32(dev_state.len() as u32).bytes(&dev_state);
-            }
-
-            port_records.push(rec.finish());
+            port_records.push(port.save_snapshot_record());
         }
 
         Encoder::new().vec_bytes(&port_records).finish()
@@ -521,51 +768,7 @@ impl RootHub {
         }
 
         for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
-            let mut pd = Decoder::new(&rec);
-            port.connected = pd.bool()?;
-            port.connect_change = pd.bool()?;
-            port.enabled = pd.bool()?;
-            port.enable_change = pd.bool()?;
-            port.over_current = pd.bool()?;
-            port.over_current_change = pd.bool()?;
-            port.reset = pd.bool()?;
-            port.reset_countdown_ms = pd.u8()?;
-            port.suspended = pd.bool()?;
-            port.resuming = pd.bool()?;
-            port.resume_countdown_ms = pd.u8()?;
-            port.powered = pd.bool()?;
-            port.port_owner = pd.bool()?;
-
-            let has_device_state = pd.bool()?;
-            let device_state = if has_device_state {
-                let len = pd.u32()? as usize;
-                if len > MAX_USB_DEVICE_SNAPSHOT_BYTES {
-                    return Err(SnapshotError::InvalidFieldEncoding(
-                        "usb device snapshot too large",
-                    ));
-                }
-                Some(pd.bytes(len)?.to_vec())
-            } else {
-                None
-            };
-            pd.finish()?;
-
-            if let Some(state) = device_state {
-                if port.device.is_none() {
-                    if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&state)? {
-                        port.device = Some(dev);
-                    }
-                }
-                if let Some(dev) = port.device.as_mut() {
-                    dev.load_state(&state)?;
-                }
-            } else {
-                // Snapshot indicates no device attached.
-                port.device = None;
-            }
-
-            // Ensure the device model observes the restored port suspended state.
-            port.propagate_suspended_state();
+            port.load_snapshot_record(&rec)?;
         }
 
         Ok(())

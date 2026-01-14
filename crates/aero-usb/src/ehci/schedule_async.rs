@@ -267,7 +267,7 @@ fn process_qh<M: MemoryBus + ?Sized>(ctx: &mut AsyncScheduleContext<'_, M>, qh_a
     }
 
     // Resolve the device once per QH iteration.
-    let Some(dev) = ctx.hub.device_mut_for_address(dev_addr) else {
+    let Some(mut dev) = ctx.hub.device_mut_for_address(dev_addr) else {
         complete_current_qtd_with_error(
             ctx,
             qh_addr,

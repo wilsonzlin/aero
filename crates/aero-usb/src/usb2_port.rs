@@ -58,6 +58,24 @@ impl Usb2PortMux {
         }
     }
 
+    /// Restores CONFIGFLAG without triggering runtime side effects.
+    ///
+    /// At runtime, a CONFIGFLAG change can trigger ownership transitions that reset attached
+    /// devices. During snapshot restore we instead want to preserve device state, so this updates
+    /// the mux routing decision without calling `transfer_owner`.
+    pub(crate) fn set_configflag_for_restore(&mut self, configflag: bool) {
+        self.configflag = configflag;
+        for p in &mut self.ports {
+            p.effective_owner = if !self.configflag {
+                Usb2PortOwner::Companion
+            } else if p.port_owner {
+                Usb2PortOwner::Companion
+            } else {
+                Usb2PortOwner::Ehci
+            };
+        }
+    }
+
     pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
         let Some(p) = self.ports.get_mut(port) else {
             return;
@@ -162,6 +180,21 @@ impl Usb2PortMux {
         // PORT_OWNER writes can trigger ownership transitions. Handle ownership first so the
         // subsequent PORTSC state mutations apply to the currently visible controller.
         const PORT_OWNER: u32 = 1 << 13;
+        const CSC: u32 = 1 << 1;
+        const PEDC: u32 = 1 << 3;
+
+        let mut write_mask = write_mask;
+
+        // PORT_OWNER is only writable when the EHCI-visible port is disabled.
+        if write_mask & PORT_OWNER != 0 {
+            let Some(p) = self.ports.get(port) else {
+                return;
+            };
+            if p.ehci.enabled {
+                write_mask &= !PORT_OWNER;
+            }
+        }
+
         let owner_changed = if write_mask & PORT_OWNER != 0 {
             let Some(p) = self.ports.get_mut(port) else {
                 return;
@@ -183,6 +216,13 @@ impl Usb2PortMux {
         let Some(p) = self.ports.get_mut(port) else {
             return;
         };
+
+        // When the port is owned by the companion controller, EHCI should not drive reset/enable,
+        // but it should still allow software to clear latched change bits.
+        if p.effective_owner != Usb2PortOwner::Ehci {
+            write_mask &= CSC | PEDC;
+        }
+
         p.ehci.write_portsc_ehci(value, write_mask, &mut p.device);
     }
 
@@ -214,6 +254,50 @@ impl Usb2PortMux {
             return false;
         };
         p.effective_owner == Usb2PortOwner::Ehci && p.ehci.routable()
+    }
+
+    pub(crate) fn save_snapshot_ehci_port_record(&self, port: usize) -> Vec<u8> {
+        let Some(p) = self.ports.get(port) else {
+            return Vec::new();
+        };
+
+        // Prefix the per-view port snapshot record with the EHCI PORT_OWNER latch so restore can
+        // reconstruct routing decisions without relying on external defaults.
+        let view = p.save_snapshot_record(ViewKind::Ehci);
+        Encoder::new()
+            .bool(p.port_owner)
+            .u32(view.len() as u32)
+            .bytes(&view)
+            .finish()
+    }
+
+    pub(crate) fn load_snapshot_ehci_port_record(
+        &mut self,
+        port: usize,
+        buf: &[u8],
+    ) -> SnapshotResult<()> {
+        let Some(p) = self.ports.get_mut(port) else {
+            return Err(SnapshotError::InvalidFieldEncoding("usb2 mux port"));
+        };
+
+        let mut d = Decoder::new(buf);
+        p.port_owner = d.bool()?;
+        let view_len = d.u32()? as usize;
+        let view = d.bytes(view_len)?;
+        d.finish()?;
+
+        p.load_snapshot_record(ViewKind::Ehci, view)?;
+
+        // Recompute effective ownership without triggering transfer_owner/reset side effects.
+        p.effective_owner = if !self.configflag {
+            Usb2PortOwner::Companion
+        } else if p.port_owner {
+            Usb2PortOwner::Companion
+        } else {
+            Usb2PortOwner::Ehci
+        };
+
+        Ok(())
     }
 
     pub fn ehci_device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
@@ -424,9 +508,20 @@ impl Usb2MuxPort {
         if let Some(device_state) = device_state {
             if let Some(dev) = self.device.as_mut() {
                 dev.load_state(&device_state)?;
-            } else if let Some(dev) = AttachedUsbDevice::try_new_from_snapshot(&device_state)? {
+            } else if let Some(mut dev) = AttachedUsbDevice::try_new_from_snapshot(&device_state)? {
+                // `try_new_from_snapshot` only selects the concrete device model; the wrapper state
+                // must still be restored from the snapshot bytes.
+                dev.load_state(&device_state)?;
                 self.device = Some(dev);
             }
+        } else {
+            // Snapshot indicates no device attached.
+            self.device = None;
+        }
+
+        // Ensure the device model observes the restored suspended state.
+        if let Some(dev) = self.device.as_mut() {
+            dev.model_mut().set_suspended(st.suspended);
         }
 
         Ok(())

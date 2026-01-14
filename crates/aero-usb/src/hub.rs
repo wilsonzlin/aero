@@ -346,13 +346,6 @@ impl RootHubPortSlot {
         }
     }
 
-    fn tick_1ms(&mut self) {
-        match self {
-            RootHubPortSlot::Local(p) => p.tick_1ms(),
-            RootHubPortSlot::Usb2Mux { mux, port } => mux.borrow_mut().uhci_tick_1ms(*port),
-        }
-    }
-
     fn bus_reset(&mut self) {
         match self {
             RootHubPortSlot::Local(p) => {

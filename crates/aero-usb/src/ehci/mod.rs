@@ -220,6 +220,9 @@ impl EhciController {
             return;
         }
 
+        // Propagate CONFIGFLAG routing changes to any mux-backed ports.
+        self.hub.set_configflag(next != 0);
+
         let changed = if prev == 0 && next != 0 {
             // Claim ports for EHCI: clear PORT_OWNER.
             self.hub.set_all_port_owner(false)
@@ -596,6 +599,8 @@ impl IoSnapshot for EhciController {
         if let Some(cf) = r.u32(TAG_CONFIGFLAG)? {
             self.regs.configflag = cf & CONFIGFLAG_CF;
         }
+        self.hub
+            .set_configflag_for_restore(self.regs.configflag & CONFIGFLAG_CF != 0);
         // We currently model a 32-bit addressing controller; CTRLDSSEGMENT is unused.
         if let Some(seg) = r.u32(TAG_CTRLDSSEGMENT)? {
             self.write_ctrldssegment(seg);
