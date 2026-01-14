@@ -2236,6 +2236,35 @@ def _virtio_net_link_flap_skip_failure_message(tail: bytes) -> str:
         )
     return "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped but --with-net-link-flap was enabled"
 
+
+def _virtio_net_link_flap_required_failure_message(
+    tail: bytes,
+    *,
+    saw_pass: bool = False,
+    saw_fail: bool = False,
+    saw_skip: bool = False,
+) -> Optional[str]:
+    """
+    Enforce that virtio-net-link-flap ran and PASSed.
+
+    Returns:
+        A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
+    """
+    # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
+    # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
+    if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS" in tail:
+        return None
+    if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL" in tail:
+        return (
+            "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled"
+        )
+    if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP" in tail:
+        return _virtio_net_link_flap_skip_failure_message(tail)
+    return (
+        "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
+        "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
+    )
+
 def _virtio_input_led_skip_failure_message(tail: bytes) -> str:
     # Guest marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS/FAIL/SKIP|...
@@ -4789,18 +4818,17 @@ def main() -> int:
 
                     # Fail fast when the guest reports SKIP/FAIL for virtio-net-link-flap. This saves
                     # CI time when the guest image was provisioned without --test-net-link-flap.
-                    if need_net_link_flap:
-                        if saw_virtio_net_link_flap_skip:
-                            print(_virtio_net_link_flap_skip_failure_message(tail), file=sys.stderr)
-                            _print_tail(serial_log)
-                            result_code = 1
-                            break
-                        if saw_virtio_net_link_flap_fail:
-                            print(
-                                "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
-                                "--with-net-link-flap was enabled",
-                                file=sys.stderr,
-                            )
+                    if need_net_link_flap and (
+                        saw_virtio_net_link_flap_skip or saw_virtio_net_link_flap_fail
+                    ):
+                        msg = _virtio_net_link_flap_required_failure_message(
+                            tail,
+                            saw_pass=saw_virtio_net_link_flap_pass,
+                            saw_fail=saw_virtio_net_link_flap_fail,
+                            saw_skip=saw_virtio_net_link_flap_skip,
+                        )
+                        if msg is not None:
+                            print(msg, file=sys.stderr)
                             _print_tail(serial_log)
                             result_code = 1
                             break
@@ -5266,23 +5294,13 @@ def main() -> int:
                                     result_code = 1
                                     break
                             if need_net_link_flap:
-                                if saw_virtio_net_link_flap_fail:
-                                    print(
-                                        "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: selftest RESULT=PASS but virtio-net-link-flap test reported FAIL "
-                                        "while --with-net-link-flap was enabled",
-                                        file=sys.stderr,
-                                    )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
-                                if not saw_virtio_net_link_flap_pass:
-                                    if saw_virtio_net_link_flap_skip:
-                                        msg = _virtio_net_link_flap_skip_failure_message(tail)
-                                    else:
-                                        msg = (
-                                            "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: selftest RESULT=PASS but did not emit virtio-net-link-flap PASS marker "
-                                            "while --with-net-link-flap was enabled"
-                                        )
+                                msg = _virtio_net_link_flap_required_failure_message(
+                                    tail,
+                                    saw_pass=saw_virtio_net_link_flap_pass,
+                                    saw_fail=saw_virtio_net_link_flap_fail,
+                                    saw_skip=saw_virtio_net_link_flap_skip,
+                                )
+                                if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
@@ -5451,23 +5469,14 @@ def main() -> int:
                                 result_code = 1
                                 break
                         if need_net_link_flap:
-                            if saw_virtio_net_link_flap_fail:
-                                print(
-                                    "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled",
-                                    file=sys.stderr,
-                                )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
-                            if not saw_virtio_net_link_flap_pass:
-                                if saw_virtio_net_link_flap_skip:
-                                    print(_virtio_net_link_flap_skip_failure_message(tail), file=sys.stderr)
-                                else:
-                                    print(
-                                        "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
-                                        "--with-net-link-flap was enabled",
-                                        file=sys.stderr,
-                                    )
+                            msg = _virtio_net_link_flap_required_failure_message(
+                                tail,
+                                saw_pass=saw_virtio_net_link_flap_pass,
+                                saw_fail=saw_virtio_net_link_flap_fail,
+                                saw_skip=saw_virtio_net_link_flap_skip,
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -6736,23 +6745,13 @@ def main() -> int:
                                             break
 
                                 if need_net_link_flap:
-                                    if saw_virtio_net_link_flap_fail:
-                                        print(
-                                            "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: selftest RESULT=PASS but virtio-net-link-flap test reported FAIL "
-                                            "while --with-net-link-flap was enabled",
-                                            file=sys.stderr,
-                                        )
-                                        _print_tail(serial_log)
-                                        result_code = 1
-                                        break
-                                    if not saw_virtio_net_link_flap_pass:
-                                        if saw_virtio_net_link_flap_skip:
-                                            msg = _virtio_net_link_flap_skip_failure_message(tail)
-                                        else:
-                                            msg = (
-                                                "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: selftest RESULT=PASS but did not emit virtio-net-link-flap PASS marker "
-                                                "while --with-net-link-flap was enabled"
-                                            )
+                                    msg = _virtio_net_link_flap_required_failure_message(
+                                        tail,
+                                        saw_pass=saw_virtio_net_link_flap_pass,
+                                        saw_fail=saw_virtio_net_link_flap_fail,
+                                        saw_skip=saw_virtio_net_link_flap_skip,
+                                    )
+                                    if msg is not None:
                                         print(msg, file=sys.stderr)
                                         _print_tail(serial_log)
                                         result_code = 1
@@ -6918,23 +6917,14 @@ def main() -> int:
                                     result_code = 1
                                     break
                             if need_net_link_flap:
-                                if saw_virtio_net_link_flap_fail:
-                                    print(
-                                        "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled",
-                                        file=sys.stderr,
-                                    )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
-                                if not saw_virtio_net_link_flap_pass:
-                                    if saw_virtio_net_link_flap_skip:
-                                        print(_virtio_net_link_flap_skip_failure_message(tail), file=sys.stderr)
-                                    else:
-                                        print(
-                                            "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
-                                            "--with-net-link-flap was enabled",
-                                            file=sys.stderr,
-                                        )
+                                msg = _virtio_net_link_flap_required_failure_message(
+                                    tail,
+                                    saw_pass=saw_virtio_net_link_flap_pass,
+                                    saw_fail=saw_virtio_net_link_flap_fail,
+                                    saw_skip=saw_virtio_net_link_flap_skip,
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
