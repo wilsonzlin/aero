@@ -12,9 +12,8 @@ use crate::legacy::ir::{BinOp, CmpOp, IrBlock, IrOp, MemSize, Operand, Place, Te
 
 use super::abi::{
     IMPORT_JIT_EXIT, IMPORT_JIT_EXIT_MMIO, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32,
-    IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
-    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE,
-    IMPORT_PAGE_FAULT, WASM32_MAX_PAGES,
+    IMPORT_MEM_READ_U64, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MMU_TRANSLATE, IMPORT_MODULE, WASM32_MAX_PAGES,
 };
 
 /// A compiled basic block is exported as a function named `block`.
@@ -79,20 +78,17 @@ impl LegacyWasmOptions {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct ImportedFuncs {
-    mem_read_u8: u32,
-    mem_read_u16: u32,
-    mem_read_u32: u32,
-    mem_read_u64: u32,
-    mem_write_u8: u32,
-    mem_write_u16: u32,
-    mem_write_u32: u32,
-    mem_write_u64: u32,
-    mmu_translate: u32,
-    _page_fault: u32,
-    jit_exit_mmio: u32,
-    jit_exit: u32,
+    mem_read_u16: Option<u32>,
+    mem_read_u32: Option<u32>,
+    mem_read_u64: Option<u32>,
+    mem_write_u16: Option<u32>,
+    mem_write_u32: Option<u32>,
+    mem_write_u64: Option<u32>,
+    mmu_translate: Option<u32>,
+    jit_exit_mmio: Option<u32>,
+    jit_exit: Option<u32>,
     count: u32,
 }
 
@@ -120,41 +116,152 @@ impl WasmCodegen {
     ) -> Vec<u8> {
         let mut module = Module::new();
 
+        let mut uses_load_u16 = false;
+        let mut uses_load_u32 = false;
+        let mut uses_load_u64 = false;
+        let mut uses_store_u16 = false;
+        let mut uses_store_u32 = false;
+        let mut uses_store_u64 = false;
+        let mut needs_jit_exit = false;
+        let mut has_mem_ops = false;
+
+        let may_cross_page = |addr: Operand, size_bytes: u32| -> bool {
+            if size_bytes <= 1 {
+                return false;
+            }
+            let cross_limit =
+                PAGE_OFFSET_MASK.saturating_sub(u64::from(size_bytes).saturating_sub(1));
+            let addr = match addr {
+                Operand::Imm(v) => v as u64,
+                _ => u64::MAX,
+            };
+            (addr & PAGE_OFFSET_MASK) > cross_limit
+        };
+
+        let mut may_cross_page_load_u16 = false;
+        let mut may_cross_page_load_u32 = false;
+        let mut may_cross_page_load_u64 = false;
+        let mut may_cross_page_store_u16 = false;
+        let mut may_cross_page_store_u32 = false;
+        let mut may_cross_page_store_u64 = false;
+
+        for op in &block.ops {
+            match *op {
+                IrOp::Load { size, addr, .. } => {
+                    has_mem_ops = true;
+                    match size {
+                        MemSize::U8 => {}
+                        MemSize::U16 => {
+                            uses_load_u16 = true;
+                            may_cross_page_load_u16 |= may_cross_page(addr, 2);
+                        }
+                        MemSize::U32 => {
+                            uses_load_u32 = true;
+                            may_cross_page_load_u32 |= may_cross_page(addr, 4);
+                        }
+                        MemSize::U64 => {
+                            uses_load_u64 = true;
+                            may_cross_page_load_u64 |= may_cross_page(addr, 8);
+                        }
+                    }
+                }
+                IrOp::Store { size, addr, .. } => {
+                    has_mem_ops = true;
+                    match size {
+                        MemSize::U8 => {}
+                        MemSize::U16 => {
+                            uses_store_u16 = true;
+                            may_cross_page_store_u16 |= may_cross_page(addr, 2);
+                        }
+                        MemSize::U32 => {
+                            uses_store_u32 = true;
+                            may_cross_page_store_u32 |= may_cross_page(addr, 4);
+                        }
+                        MemSize::U64 => {
+                            uses_store_u64 = true;
+                            may_cross_page_store_u64 |= may_cross_page(addr, 8);
+                        }
+                    }
+                }
+                IrOp::Bailout { .. } => needs_jit_exit = true,
+                _ => {}
+            }
+        }
+
+        // In the legacy baseline, same-page non-RAM accesses always exit to runtime via
+        // `jit_exit_mmio`, so slow helpers are only required for boundary-crossing accesses.
+        //
+        // An 8-bit load/store can never cross a page boundary, so `mem_read_u8` / `mem_write_u8`
+        // are never needed.
+        let needs_mem_read_u16 = uses_load_u16 && may_cross_page_load_u16;
+        let needs_mem_read_u32 = uses_load_u32 && may_cross_page_load_u32;
+        let needs_mem_read_u64 = uses_load_u64 && may_cross_page_load_u64;
+        let needs_mem_write_u16 = uses_store_u16 && may_cross_page_store_u16;
+        let needs_mem_write_u32 = uses_store_u32 && may_cross_page_store_u32;
+        let needs_mem_write_u64 = uses_store_u64 && may_cross_page_store_u64;
+        let needs_mmu_translate = has_mem_ops;
+        let needs_jit_exit_mmio = has_mem_ops;
+
         let mut types = TypeSection::new();
-        // Note: some helpers share identical signatures (e.g. `mem_read_u8/u16/u32`). Reuse types
-        // to avoid emitting duplicates in the type section.
-        let ty_i32_i64_to_i32 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I32]);
-        let ty_i32_i64_to_i64 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I64]);
-        let ty_i32_i64_i32_to_empty = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I32], []);
-        let ty_i32_i64_i64_to_empty = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I64], []);
-        let ty_mmu_translate = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I32], [ValType::I64]);
-        let ty_jit_exit_mmio = types.len();
-        types.ty().function(
-            [
-                ValType::I32,
-                ValType::I64,
-                ValType::I32,
-                ValType::I32,
-                ValType::I64,
-                ValType::I64,
-            ],
-            [ValType::I64],
-        );
+        // Keep the type section minimal: only emit helper types that are actually required by this
+        // block.
+        //
+        // Note: some helpers share identical signatures (e.g. `mem_read_u16/u32`). Reuse types to
+        // avoid emitting duplicates.
+        let needs_mem_read_i32 = needs_mem_read_u16 || needs_mem_read_u32;
+        let needs_mem_write_i32 = needs_mem_write_u16 || needs_mem_write_u32;
+        let needs_i32_i64_to_i64 = needs_mem_read_u64 || needs_jit_exit;
+
+        let ty_i32_i64_to_i32 = needs_mem_read_i32.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I32]);
+            ty
+        });
+        let ty_i32_i64_to_i64 = needs_i32_i64_to_i64.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I64]);
+            ty
+        });
+        let ty_i32_i64_i32_to_empty = needs_mem_write_i32.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I32], []);
+            ty
+        });
+        let ty_i32_i64_i64_to_empty = needs_mem_write_u64.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I64], []);
+            ty
+        });
+        let ty_mmu_translate = needs_mmu_translate.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I32], [ValType::I64]);
+            ty
+        });
+        let ty_jit_exit_mmio = needs_jit_exit_mmio.then(|| {
+            let ty = types.len();
+            types.ty().function(
+                [
+                    ValType::I32,
+                    ValType::I64,
+                    ValType::I32,
+                    ValType::I32,
+                    ValType::I64,
+                    ValType::I64,
+                ],
+                [ValType::I64],
+            );
+            ty
+        });
         let ty_block = types.len();
         types.ty().function([ValType::I32], [ValType::I64]);
 
@@ -186,80 +293,81 @@ impl WasmCodegen {
         let func_base = 0u32;
         let mut next_func = func_base;
         let imported = ImportedFuncs {
-            mem_read_u8: next(&mut next_func),
-            mem_read_u16: next(&mut next_func),
-            mem_read_u32: next(&mut next_func),
-            mem_read_u64: next(&mut next_func),
-            mem_write_u8: next(&mut next_func),
-            mem_write_u16: next(&mut next_func),
-            mem_write_u32: next(&mut next_func),
-            mem_write_u64: next(&mut next_func),
-            mmu_translate: next(&mut next_func),
-            _page_fault: next(&mut next_func),
-            jit_exit_mmio: next(&mut next_func),
-            jit_exit: next(&mut next_func),
+            mem_read_u16: needs_mem_read_u16.then(|| next(&mut next_func)),
+            mem_read_u32: needs_mem_read_u32.then(|| next(&mut next_func)),
+            mem_read_u64: needs_mem_read_u64.then(|| next(&mut next_func)),
+            mem_write_u16: needs_mem_write_u16.then(|| next(&mut next_func)),
+            mem_write_u32: needs_mem_write_u32.then(|| next(&mut next_func)),
+            mem_write_u64: needs_mem_write_u64.then(|| next(&mut next_func)),
+            mmu_translate: needs_mmu_translate.then(|| next(&mut next_func)),
+            jit_exit_mmio: needs_jit_exit_mmio.then(|| next(&mut next_func)),
+            jit_exit: needs_jit_exit.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U8,
-            EntityType::Function(ty_i32_i64_to_i32),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U16,
-            EntityType::Function(ty_i32_i64_to_i32),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U32,
-            EntityType::Function(ty_i32_i64_to_i32),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U64,
-            EntityType::Function(ty_i32_i64_to_i64),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U8,
-            EntityType::Function(ty_i32_i64_i32_to_empty),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U16,
-            EntityType::Function(ty_i32_i64_i32_to_empty),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U32,
-            EntityType::Function(ty_i32_i64_i32_to_empty),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U64,
-            EntityType::Function(ty_i32_i64_i64_to_empty),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_MMU_TRANSLATE,
-            EntityType::Function(ty_mmu_translate),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_PAGE_FAULT,
-            EntityType::Function(ty_i32_i64_to_i64),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_JIT_EXIT_MMIO,
-            EntityType::Function(ty_jit_exit_mmio),
-        );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_JIT_EXIT,
-            EntityType::Function(ty_i32_i64_to_i64),
-        );
+
+        if needs_mem_read_u16 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U16,
+                EntityType::Function(ty_i32_i64_to_i32.expect("type for mem_read_u16")),
+            );
+        }
+        if needs_mem_read_u32 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U32,
+                EntityType::Function(ty_i32_i64_to_i32.expect("type for mem_read_u32")),
+            );
+        }
+        if needs_mem_read_u64 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U64,
+                EntityType::Function(ty_i32_i64_to_i64.expect("type for mem_read_u64")),
+            );
+        }
+        if needs_mem_write_u16 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U16,
+                EntityType::Function(ty_i32_i64_i32_to_empty.expect("type for mem_write_u16")),
+            );
+        }
+        if needs_mem_write_u32 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U32,
+                EntityType::Function(ty_i32_i64_i32_to_empty.expect("type for mem_write_u32")),
+            );
+        }
+        if needs_mem_write_u64 {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U64,
+                EntityType::Function(ty_i32_i64_i64_to_empty.expect("type for mem_write_u64")),
+            );
+        }
+        if needs_mmu_translate {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MMU_TRANSLATE,
+                EntityType::Function(ty_mmu_translate.expect("type for mmu_translate")),
+            );
+        }
+        if needs_jit_exit_mmio {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_JIT_EXIT_MMIO,
+                EntityType::Function(ty_jit_exit_mmio.expect("type for jit_exit_mmio")),
+            );
+        }
+        if needs_jit_exit {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_JIT_EXIT,
+                EntityType::Function(ty_i32_i64_to_i64.expect("type for jit_exit")),
+            );
+        }
         module.section(&imports);
 
         let mut funcs = FunctionSection::new();
@@ -547,14 +655,42 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
 
                 let (size_bytes, slow_read) = match size {
-                    MemSize::U8 => (1u32, self.imported.mem_read_u8),
+                    MemSize::U8 => (1u32, None),
                     MemSize::U16 => (2u32, self.imported.mem_read_u16),
                     MemSize::U32 => (4u32, self.imported.mem_read_u32),
                     MemSize::U64 => (8u32, self.imported.mem_read_u64),
                 };
 
+                let emit_fast_load = |this: &mut Self| {
+                    // Fast path: inline JIT TLB lookup + direct RAM load.
+                    this.emit_translate_and_cache(0, TLB_FLAG_READ);
+
+                    // If the translation resolves to MMIO/ROM/unmapped, exit to runtime.
+                    this.emit_mmio_exit(size_bytes, 0, None);
+
+                    // Perform the direct linear-memory load from guest RAM.
+                    this.emit_compute_ram_addr();
+                    match size {
+                        MemSize::U8 => this.f.instruction(&Instruction::I64Load8U(memarg(0, 0))),
+                        MemSize::U16 => this.f.instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                        MemSize::U32 => this.f.instruction(&Instruction::I64Load32U(memarg(0, 2))),
+                        MemSize::U64 => this.f.instruction(&Instruction::I64Load(memarg(0, 3))),
+                    };
+                    this.emit_set_place(dst);
+                };
+
+                if size_bytes == 1 || slow_read.is_none() {
+                    // An 8-bit load can never cross a page boundary. For wider loads, the import
+                    // selection logic may have proven cross-page accesses impossible (all constant
+                    // same-page addresses), allowing us to omit the slow helper and the cross-page
+                    // check entirely.
+                    emit_fast_load(self);
+                    return;
+                }
+
                 // Cross-page accesses are handled via the slow helper (rare but required for
                 // correctness).
+                let slow_read = slow_read.expect("memory read helper import missing");
                 let cross_limit =
                     PAGE_OFFSET_MASK.saturating_sub(u64::from(size_bytes).saturating_sub(1));
                 self.f
@@ -582,21 +718,7 @@ impl Emitter<'_> {
                 }
                 self.f.instruction(&Instruction::Else);
                 {
-                    // Fast path: inline JIT TLB lookup + direct RAM load.
-                    self.emit_translate_and_cache(0, TLB_FLAG_READ);
-
-                    // If the translation resolves to MMIO/ROM/unmapped, exit to runtime.
-                    self.emit_mmio_exit(size_bytes, 0, None);
-
-                    // Perform the direct linear-memory load from guest RAM.
-                    self.emit_compute_ram_addr();
-                    match size {
-                        MemSize::U8 => self.f.instruction(&Instruction::I64Load8U(memarg(0, 0))),
-                        MemSize::U16 => self.f.instruction(&Instruction::I64Load16U(memarg(0, 1))),
-                        MemSize::U32 => self.f.instruction(&Instruction::I64Load32U(memarg(0, 2))),
-                        MemSize::U64 => self.f.instruction(&Instruction::I64Load(memarg(0, 3))),
-                    };
-                    self.emit_set_place(dst);
+                    emit_fast_load(self);
                 }
                 self.f.instruction(&Instruction::End);
                 self.depth -= 1;
@@ -607,12 +729,39 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
 
                 let (size_bytes, slow_write) = match size {
-                    MemSize::U8 => (1u32, self.imported.mem_write_u8),
+                    MemSize::U8 => (1u32, None),
                     MemSize::U16 => (2u32, self.imported.mem_write_u16),
                     MemSize::U32 => (4u32, self.imported.mem_write_u32),
                     MemSize::U64 => (8u32, self.imported.mem_write_u64),
                 };
 
+                let emit_fast_store = |this: &mut Self| {
+                    // Fast path: inline JIT TLB lookup + direct RAM store.
+                    this.emit_translate_and_cache(1, TLB_FLAG_WRITE);
+
+                    // Exit on MMIO/ROM/unmapped.
+                    this.emit_mmio_exit(size_bytes, 1, Some(value));
+
+                    this.emit_compute_ram_addr();
+                    this.emit_operand(value);
+                    match size {
+                        MemSize::U8 => this.f.instruction(&Instruction::I64Store8(memarg(0, 0))),
+                        MemSize::U16 => this.f.instruction(&Instruction::I64Store16(memarg(0, 1))),
+                        MemSize::U32 => this.f.instruction(&Instruction::I64Store32(memarg(0, 2))),
+                        MemSize::U64 => this.f.instruction(&Instruction::I64Store(memarg(0, 3))),
+                    };
+                };
+
+                if size_bytes == 1 || slow_write.is_none() {
+                    // An 8-bit store can never cross a page boundary. For wider stores, the import
+                    // selection logic may have proven cross-page accesses impossible (all constant
+                    // same-page addresses), allowing us to omit the slow helper and the cross-page
+                    // check entirely.
+                    emit_fast_store(self);
+                    return;
+                }
+
+                let slow_write = slow_write.expect("memory write helper import missing");
                 let cross_limit =
                     PAGE_OFFSET_MASK.saturating_sub(u64::from(size_bytes).saturating_sub(1));
                 self.f
@@ -640,20 +789,7 @@ impl Emitter<'_> {
                 }
                 self.f.instruction(&Instruction::Else);
                 {
-                    // Fast path: inline JIT TLB lookup + direct RAM store.
-                    self.emit_translate_and_cache(1, TLB_FLAG_WRITE);
-
-                    // Exit on MMIO/ROM/unmapped.
-                    self.emit_mmio_exit(size_bytes, 1, Some(value));
-
-                    self.emit_compute_ram_addr();
-                    self.emit_operand(value);
-                    match size {
-                        MemSize::U8 => self.f.instruction(&Instruction::I64Store8(memarg(0, 0))),
-                        MemSize::U16 => self.f.instruction(&Instruction::I64Store16(memarg(0, 1))),
-                        MemSize::U32 => self.f.instruction(&Instruction::I64Store32(memarg(0, 2))),
-                        MemSize::U64 => self.f.instruction(&Instruction::I64Store(memarg(0, 3))),
-                    };
+                    emit_fast_store(self);
                 }
                 self.f.instruction(&Instruction::End);
                 self.depth -= 1;
@@ -681,8 +817,9 @@ impl Emitter<'_> {
             IrOp::Bailout { kind, rip } => {
                 self.f.instruction(&Instruction::I32Const(kind));
                 self.emit_operand(rip);
-                self.f
-                    .instruction(&Instruction::Call(self.imported.jit_exit));
+                self.f.instruction(&Instruction::Call(
+                    self.imported.jit_exit.expect("jit_exit import missing"),
+                ));
                 self.f
                     .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
                 self.f.instruction(&Instruction::Br(self.depth));
@@ -753,8 +890,11 @@ impl Emitter<'_> {
         self.f
             .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
         self.f.instruction(&Instruction::I32Const(access_code));
-        self.f
-            .instruction(&Instruction::Call(self.imported.mmu_translate));
+        self.f.instruction(&Instruction::Call(
+            self.imported
+                .mmu_translate
+                .expect("mmu_translate import missing"),
+        ));
         self.f
             .instruction(&Instruction::LocalSet(self.layout.scratch_tlb_data_local()));
     }
@@ -784,8 +924,11 @@ impl Emitter<'_> {
             }
             self.f
                 .instruction(&Instruction::LocalGet(self.layout.rip_local()));
-            self.f
-                .instruction(&Instruction::Call(self.imported.jit_exit_mmio));
+            self.f.instruction(&Instruction::Call(
+                self.imported
+                    .jit_exit_mmio
+                    .expect("jit_exit_mmio import missing"),
+            ));
             self.f
                 .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
             self.f.instruction(&Instruction::Br(self.depth));

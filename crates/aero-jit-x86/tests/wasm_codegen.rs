@@ -471,10 +471,69 @@ fn run_wasm(
 }
 
 #[test]
-fn wasm_codegen_reuses_helper_types() {
+fn wasm_codegen_exit_only_imports_only_memory() {
     let block = IrBlock::new(vec![IrOp::Exit {
         next_rip: Operand::Imm(0x1000),
     }]);
+
+    let wasm = WasmCodegen::new().compile_block(&block);
+    validate_wasm(&wasm);
+
+    assert_eq!(
+        type_count(&wasm),
+        1,
+        "expected exit-only baseline block to only define the block signature type"
+    );
+    assert!(
+        env_func_import_types(&wasm).is_empty(),
+        "expected exit-only baseline block to only import env.memory"
+    );
+}
+
+#[test]
+fn wasm_codegen_reuses_helper_types() {
+    // Force all helper types to be present so we can validate signature re-use.
+    let block = IrBlock::new(vec![
+        // Cross-page reads/writes so the slow helpers must be imported.
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rax),
+            addr: Operand::Imm(0xFFF), // U16 at 0xFFF crosses the page boundary.
+            size: MemSize::U16,
+        },
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rbx),
+            addr: Operand::Imm(0xFFD), // U32 at 0xFFD crosses the page boundary.
+            size: MemSize::U32,
+        },
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rcx),
+            addr: Operand::Imm(0xFF9), // U64 at 0xFF9 crosses the page boundary.
+            size: MemSize::U64,
+        },
+        IrOp::Store {
+            addr: Operand::Imm(0xFFF),
+            value: Operand::Imm(0x12),
+            size: MemSize::U16,
+        },
+        IrOp::Store {
+            addr: Operand::Imm(0xFFD),
+            value: Operand::Imm(0x1234_5678),
+            size: MemSize::U32,
+        },
+        IrOp::Store {
+            addr: Operand::Imm(0xFF9),
+            value: Operand::Imm(0x1122_3344_5566_7788),
+            size: MemSize::U64,
+        },
+        // Bailout to force the `jit_exit` import (shares signature with mem_read_u64).
+        IrOp::Bailout {
+            kind: 0,
+            rip: Operand::Imm(0x1000),
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x1000),
+        },
+    ]);
 
     let wasm = WasmCodegen::new().compile_block(&block);
     validate_wasm(&wasm);
@@ -486,9 +545,13 @@ fn wasm_codegen_reuses_helper_types() {
     );
 
     let import_types = env_func_import_types(&wasm);
-    let ty_read_u8 = *import_types
-        .get(IMPORT_MEM_READ_U8)
-        .expect("expected mem_read_u8 import");
+
+    // Sanity: 8-bit accesses never use slow helpers in the legacy baseline.
+    assert!(!import_types.contains_key(IMPORT_MEM_READ_U8));
+    assert!(!import_types.contains_key(IMPORT_MEM_WRITE_U8));
+    // The legacy baseline no longer imports `page_fault`.
+    assert!(!import_types.contains_key(IMPORT_PAGE_FAULT));
+
     let ty_read_u16 = *import_types
         .get(IMPORT_MEM_READ_U16)
         .expect("expected mem_read_u16 import");
@@ -496,17 +559,10 @@ fn wasm_codegen_reuses_helper_types() {
         .get(IMPORT_MEM_READ_U32)
         .expect("expected mem_read_u32 import");
     assert_eq!(
-        ty_read_u8, ty_read_u16,
-        "expected mem_read_u8 and mem_read_u16 to reuse a type index"
-    );
-    assert_eq!(
-        ty_read_u8, ty_read_u32,
-        "expected mem_read_u8 and mem_read_u32 to reuse a type index"
+        ty_read_u16, ty_read_u32,
+        "expected mem_read_u16 and mem_read_u32 to reuse a type index"
     );
 
-    let ty_write_u8 = *import_types
-        .get(IMPORT_MEM_WRITE_U8)
-        .expect("expected mem_write_u8 import");
     let ty_write_u16 = *import_types
         .get(IMPORT_MEM_WRITE_U16)
         .expect("expected mem_write_u16 import");
@@ -514,27 +570,16 @@ fn wasm_codegen_reuses_helper_types() {
         .get(IMPORT_MEM_WRITE_U32)
         .expect("expected mem_write_u32 import");
     assert_eq!(
-        ty_write_u8, ty_write_u16,
-        "expected mem_write_u8 and mem_write_u16 to reuse a type index"
-    );
-    assert_eq!(
-        ty_write_u8, ty_write_u32,
-        "expected mem_write_u8 and mem_write_u32 to reuse a type index"
+        ty_write_u16, ty_write_u32,
+        "expected mem_write_u16 and mem_write_u32 to reuse a type index"
     );
 
     let ty_read_u64 = *import_types
         .get(IMPORT_MEM_READ_U64)
         .expect("expected mem_read_u64 import");
-    let ty_page_fault = *import_types
-        .get(IMPORT_PAGE_FAULT)
-        .expect("expected page_fault import");
     let ty_jit_exit = *import_types
         .get(IMPORT_JIT_EXIT)
         .expect("expected jit_exit import");
-    assert_eq!(
-        ty_read_u64, ty_page_fault,
-        "expected mem_read_u64 and page_fault to reuse a type index"
-    );
     assert_eq!(
         ty_read_u64, ty_jit_exit,
         "expected mem_read_u64 and jit_exit to reuse a type index"
@@ -542,14 +587,14 @@ fn wasm_codegen_reuses_helper_types() {
 
     let tys = func_types(&wasm);
     assert_eq!(
-        tys[ty_read_u8 as usize],
+        tys[ty_read_u16 as usize],
         (vec![ValType::I32, ValType::I64], vec![ValType::I32]),
-        "expected shared mem_read_u8/u16/u32 type to have signature (i32, i64) -> i32"
+        "expected shared mem_read_u16/u32 type to have signature (i32, i64) -> i32"
     );
     assert_eq!(
-        tys[ty_write_u8 as usize],
+        tys[ty_write_u16 as usize],
         (vec![ValType::I32, ValType::I64, ValType::I32], Vec::new()),
-        "expected shared mem_write_u8/u16/u32 type to have signature (i32, i64, i32) -> ()"
+        "expected shared mem_write_u16/u32 type to have signature (i32, i64, i32) -> ()"
     );
     assert_eq!(
         tys[ty_read_u64 as usize],
