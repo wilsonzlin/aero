@@ -232,7 +232,7 @@ This trace is meant to be lightweight, so most values are logged as raw integers
 
 - Legacy fixed-function state (cached for Get*/StateBlock compatibility; subsets are consumed by fixed-function emulation):
   - `Device::SetTextureStageState`: the stage 0 `D3DTSS_*` subset can affect fixed-function pixel shader selection.
-  - `Device::SetTransform` / `Device::MultiplyTransform`: transforms can be consumed by fixed-function WVP paths (for some
+  - `Device::SetTransform` / `Device::MultiplyTransform`: transforms can be consumed by fixed-function WVP paths (for
     fixed-function `D3DFVF_XYZ*` draws and the fixed-function `ProcessVertices` subset).
   - `Device::SetTextureStageState` / `Device::GetTextureStageState`
     - `a0 = hDevice.pDrvPrivate`

@@ -358,8 +358,7 @@ Supported FVF combinations (bring-up subset):
   - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZRHW | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white)
 - **Untransformed** (`POSITION`):
-  - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
-    - Note: in the current bring-up implementation, `D3DFVF_XYZ | D3DFVF_DIFFUSE` is treated as **clip-space passthrough** (no WVP transform); see limitations below.
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform)
 
@@ -393,9 +392,8 @@ Implementation notes (bring-up):
   that supply a constant **opaque white** diffuse color.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
-- For `D3DFVF_XYZ | D3DFVF_TEX1` and `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the
-  combined world/view/projection matrix (uploaded into a reserved VS constant range by the UMD). When `DIFFUSE` is absent,
-  the VS uses opaque white.
+- For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (uploaded
+  into a reserved VS constant range by the UMD via `ensure_fixedfunc_wvp_constants_locked()`).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), `ensure_draw_pipeline_locked()`
   binds a fixed-function fallback shader for the missing stage at draw time.
   - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
@@ -411,14 +409,9 @@ Limitations (bring-up):
 
 - The fixed-function fallback supports only the FVFs listed above (see `ensure_fixedfunc_pipeline_locked()` in `src/aerogpu_d3d9_driver.cpp`). Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping, but fixed-function draws will fail with `D3DERR_INVALIDCALL` if the active FVF is unsupported.
 - For `D3DFVF_XYZRHW*` FVFs, the UMD converts `POSITIONT` (screen-space `XYZRHW`) vertices to clip-space on the CPU (`convert_xyzrhw_to_clipspace_locked()`).
-- For `D3DFVF_XYZ | D3DFVF_DIFFUSE`, the fixed-function shader path is currently **passthrough** (no world/view/projection
-  transforms are applied). In other words, `XYZ` positions are treated as already in clip-space; transform state is cached
-  for `Get*`/state blocks but is not consumed by this fixed-function path yet.
-  (Task doc: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
-- For `D3DFVF_XYZ | D3DFVF_TEX1` and `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the
-  combined world/view/projection matrix (built from cached `SetTransform` state and uploaded into a reserved VS constant
-  range by the UMD). When `DIFFUSE` is absent, the VS uses opaque white. Fixed-function lighting/material is still not
-  implemented.
+- For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (built
+  from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD via
+  `ensure_fixedfunc_wvp_constants_locked()`). Fixed-function lighting/material is still not implemented.
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - Stage0 texture stage state is **partially interpreted** to select among a small set of pixel shader variants (validated by
   `d3d9ex_fixedfunc_texture_stage_state`):
