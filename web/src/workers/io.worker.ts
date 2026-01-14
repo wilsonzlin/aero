@@ -2645,11 +2645,21 @@ const hidHostSink: HidHostSink = {
       }
       return;
     }
+    const outputRingTail = (() => {
+      const ring = hidOutputRing;
+      if (!ring) return undefined;
+      try {
+        return ring.debugState().tail;
+      } catch {
+        return undefined;
+      }
+    })();
     const msg: HidGetFeatureReportMessage = {
       type: "hid.getFeatureReport",
       deviceId: payload.deviceId >>> 0,
       requestId: payload.requestId >>> 0,
       reportId: payload.reportId >>> 0,
+      ...(outputRingTail !== undefined ? { outputRingTail } : {}),
     };
     try {
       ctx.postMessage(msg);

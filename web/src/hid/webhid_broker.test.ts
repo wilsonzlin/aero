@@ -1500,6 +1500,112 @@ describe("hid/WebHidBroker", () => {
     broker.destroy();
   });
 
+  it("uses hid.sendReport.outputRingTail to preserve message->ring ordering when the ring write races ahead of message delivery", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // Simulate the worker posting a fallback message and then producing a ring record before the main thread
+      // delivers the message event. `outputRingTail` snapshots the tail at post time so the main thread drains
+      // only earlier ring records before enqueuing the message.
+      const tailAtPost = outputRing.debugState().tail;
+      setTimeout(() => {
+        port.emit({
+          type: "hid.sendReport",
+          deviceId: id,
+          reportType: "output",
+          reportId: 1,
+          data: Uint8Array.of(1),
+          outputRingTail: tailAtPost,
+        });
+      }, 0);
+
+      expect(outputRing.push(id, HidReportType.Output, 2, Uint8Array.of(2))).toBe(true);
+
+      vi.advanceTimersByTime(1);
+      await flushMicrotasks();
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport).toHaveBeenCalledWith(1, Uint8Array.of(1));
+
+      // Let the periodic ring drain enqueue the later record; it must run after the message send.
+      vi.advanceTimersByTime(20);
+      await flushMicrotasks();
+
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(1));
+      expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(2));
+
+      broker.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses hid.getFeatureReport.outputRingTail to preserve feature report ordering when output ring records race ahead of message delivery", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      device.receiveFeatureReport.mockResolvedValueOnce(new DataView(Uint8Array.of(9).buffer));
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      const tailAtPost = outputRing.debugState().tail;
+      setTimeout(() => {
+        port.emit({
+          type: "hid.getFeatureReport",
+          requestId: 1,
+          deviceId: id,
+          reportId: 7,
+          outputRingTail: tailAtPost,
+        });
+      }, 0);
+
+      expect(outputRing.push(id, HidReportType.Output, 2, Uint8Array.of(2))).toBe(true);
+
+      vi.advanceTimersByTime(1);
+      await flushMicrotasks();
+
+      expect(device.receiveFeatureReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport).toHaveBeenCalledTimes(0);
+      expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult")).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      await flushMicrotasks();
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport).toHaveBeenCalledWith(2, Uint8Array.of(2));
+
+      broker.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves send order when mixing output ring records with hid.sendReport fallback", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
     vi.useFakeTimers();

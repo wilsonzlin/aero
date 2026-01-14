@@ -1107,7 +1107,8 @@ export class WebHidBroker {
     // this message so the per-device send FIFO preserves guest ordering.
     const ring = this.#outputRing;
     if (ring) {
-      this.#drainOutputRing({ stopAtTail: ring.debugState().tail });
+      const stopAtTail = msg.outputRingTail !== undefined ? (msg.outputRingTail >>> 0) : ring.debugState().tail;
+      this.#drainOutputRing({ stopAtTail });
     }
 
     const deviceId = msg.deviceId >>> 0;
@@ -1161,7 +1162,8 @@ export class WebHidBroker {
     // overtake them (even if the periodic ring drain timer hasn't run yet).
     const ring = this.#outputRing;
     if (ring) {
-      this.#drainOutputRing({ stopAtTail: ring.debugState().tail });
+      const stopAtTail = msg.outputRingTail !== undefined ? (msg.outputRingTail >>> 0) : ring.debugState().tail;
+      this.#drainOutputRing({ stopAtTail });
     }
     const attachPromise = this.#pendingAttachResults.get(deviceId)?.promise;
     const base = {

@@ -31,8 +31,20 @@ export function forwardHidSendReportToMainThread(
   }
 
   const data = ensureArrayBufferBacked(payload.data);
-  const msg: HidSendReportMessage = { type: "hid.sendReport", ...payload, data };
+  const outputRingTail = (() => {
+    if (!ring) return undefined;
+    try {
+      return ring.debugState().tail;
+    } catch {
+      return undefined;
+    }
+  })();
+  const msg: HidSendReportMessage = {
+    type: "hid.sendReport",
+    ...payload,
+    data,
+    ...(outputRingTail !== undefined ? { outputRingTail } : {}),
+  };
   opts.postMessage(msg, [data.buffer]);
   return { path: "postMessage", ringFailed: !!ring };
 }
-

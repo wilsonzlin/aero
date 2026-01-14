@@ -90,6 +90,17 @@ export type HidSendReportMessage = {
   deviceId: number;
   reportType: HidReportType;
   reportId: number;
+  /**
+   * Optional snapshot of the SAB output ring `tail` (u32 byte counter) at the moment the worker
+   * posted this message.
+   *
+   * This is used to preserve strict guest ordering when mixing the SAB output ring fast path with
+   * `postMessage` fallbacks: the main thread can drain the ring up to this tail *before* enqueuing
+   * this message, ensuring any ring records produced earlier are executed first, while any later
+   * ring records (even if already visible in memory) will be drained on a later tick and thus
+   * cannot overtake this message.
+   */
+  outputRingTail?: number;
   // This buffer is transferred between threads; it should always be backed by an ArrayBuffer
   // (not a SharedArrayBuffer).
   data: Uint8Array<ArrayBuffer>;
@@ -103,6 +114,11 @@ export type HidGetFeatureReportMessage = {
   requestId: number;
   deviceId: number;
   reportId: number;
+  /**
+   * Optional snapshot of the SAB output ring `tail` (u32 byte counter) at the moment the worker
+   * posted this message. See {@link HidSendReportMessage.outputRingTail}.
+   */
+  outputRingTail?: number;
 };
 
 export type HidFeatureReportResultMessage = {
@@ -308,6 +324,7 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
   if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
   if (value.reportType !== "output" && value.reportType !== "feature") return false;
   if (!isArrayBufferBackedUint8Array(value.data)) return false;
+  if (value.outputRingTail !== undefined && !isUint32(value.outputRingTail)) return false;
   return true;
 }
 
@@ -315,6 +332,7 @@ export function isHidGetFeatureReportMessage(value: unknown): value is HidGetFea
   if (!isRecord(value) || value.type !== "hid.getFeatureReport") return false;
   if (!isUint32(value.requestId)) return false;
   if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
+  if (value.outputRingTail !== undefined && !isUint32(value.outputRingTail)) return false;
   return true;
 }
 
