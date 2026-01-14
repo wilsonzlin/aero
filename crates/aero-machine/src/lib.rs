@@ -12766,9 +12766,9 @@ impl snapshot::SnapshotTarget for Machine {
             // When VGA is disabled, ignore any VGA snapshot payloads.
             //
             // The machine's physical memory bus persists across `reset()` and does not support
-            // unmapping MMIO regions. When VGA is disabled we map the canonical PCI MMIO window at
-            // 0xE0000000, which overlaps the VGA MMIO LFB base. Attempting to restore a VGA snapshot would
-            // therefore panic due to MMIO overlap.
+            // unmapping MMIO regions. When VGA is disabled we map the canonical PCI MMIO window
+            // (`PCI_MMIO_BASE..PCI_MMIO_END_EXCLUSIVE`), which overlaps the VGA MMIO LFB base.
+            // Attempting to restore a VGA snapshot would therefore panic due to MMIO overlap.
             if !use_legacy_vga {
                 // Treat this as a config mismatch (snapshot taken with VGA enabled, restored into a
                 // headless machine).
