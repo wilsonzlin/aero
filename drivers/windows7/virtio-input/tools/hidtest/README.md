@@ -342,9 +342,9 @@ hidtest.exe --counters
 This prints a snapshot including:
 
 - Translation-layer buffering (`virtio_input_device.report_ring`):
-  - `ReportRingDepth`, `ReportRingDrops`, `ReportRingOverruns`
+  - `ReportRingDepth`, `ReportRingMaxDepth`, `ReportRingDrops`, `ReportRingOverruns`
 - Pending backlog while HIDCLASS isn't issuing enough `IOCTL_HID_READ_REPORT`s (`DEVICE_CONTEXT.PendingReportRing[]`):
-  - `PendingRingDepth`, `PendingRingDrops`
+  - `PendingRingDepth`, `PendingRingMaxDepth`, `PendingRingDrops`
 - Pending READ_REPORT IRPs:
   - `ReadReportQueueDepth`, `ReadReportQueueMaxDepth`
 
