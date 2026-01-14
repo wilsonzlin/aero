@@ -2389,8 +2389,11 @@ impl XhciController {
         if self.host_controller_error {
             return;
         }
-        // Mirror the command-ring gating: endpoint transfers only make progress while the
-        // controller is running.
+        // Endpoint transfers only make progress while the controller is running.
+        //
+        // Guests can ring endpoint doorbells while RUN=0; we keep the coalesced
+        // `active_endpoints` queue intact so those doorbells can be serviced once the guest
+        // sets USBCMD.RUN again.
         if (self.usbcmd & regs::USBCMD_RUN) == 0 {
             return;
         }
