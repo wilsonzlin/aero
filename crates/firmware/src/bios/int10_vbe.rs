@@ -172,7 +172,10 @@ impl Bios {
             }
             0x4F07 => {
                 // Set/Get Display Start
-                let sub = cpu.bl();
+                // Bit 7 of BL requests the operation happen during vertical retrace.
+                //
+                // We do not model retrace timing here, but accept the bit for compatibility.
+                let sub = cpu.bl() & 0x7F;
                 match sub {
                     0x00 => {
                         self.video.vbe.display_start_x = cpu.cx();

@@ -495,6 +495,21 @@ fn int10_vbe_misc_services() {
     assert_eq!(cpu.cx(), 10);
     assert_eq!(cpu.dx(), 20);
 
+    // 4F07 set with the "during retrace" flag (BL bit7) should be accepted.
+    cpu.set_ax(0x4F07);
+    cpu.set_bx(0x0080); // BL=0x80 set (ignore retrace flag)
+    cpu.set_cx(3);
+    cpu.set_dx(4);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+
+    cpu.set_ax(0x4F07);
+    cpu.set_bx(0x0001);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert_eq!(cpu.cx(), 3);
+    assert_eq!(cpu.dx(), 4);
+
     // 4F08 set and get DAC width.
     cpu.set_ax(0x4F08);
     cpu.set_bx(0x0800); // BL=0 set, BH=8 bits
