@@ -164,6 +164,27 @@ static void PrintModeInfo(const char* label, const DEVMODEW& dm) {
       (unsigned long)dm.dmFields);
 }
 
+static void PrintScanoutInfo(const char* label, const aerogpu_escape_query_scanout_out& q) {
+  const char* name = label ? label : "scanout";
+  aerogpu_test::PrintfStdout(
+      "INFO: %s: cached: enable=%lu width=%lu height=%lu format=%lu pitch=%lu",
+      name,
+      (unsigned long)q.cached_enable,
+      (unsigned long)q.cached_width,
+      (unsigned long)q.cached_height,
+      (unsigned long)q.cached_format,
+      (unsigned long)q.cached_pitch_bytes);
+  aerogpu_test::PrintfStdout(
+      "INFO: %s: mmio:   enable=%lu width=%lu height=%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
+      name,
+      (unsigned long)q.mmio_enable,
+      (unsigned long)q.mmio_width,
+      (unsigned long)q.mmio_height,
+      (unsigned long)q.mmio_format,
+      (unsigned long)q.mmio_pitch_bytes,
+      (unsigned long long)q.mmio_fb_gpa);
+}
+
 static bool GetCurrentDesktopMode(DEVMODEW* out, std::string* err) {
   if (err) {
     err->clear();
@@ -732,6 +753,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
                          (unsigned long)q_init.mmio_width,
                          (unsigned long)q_init.mmio_height);
   }
+  PrintScanoutInfo("baseline_scanout", q_init);
 
   // Ensure we always attempt to restore the original mode on any early-return failure.
   ScopedModeRestore restore(original);
@@ -806,6 +828,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
                          (unsigned long)q1.mmio_width,
                          (unsigned long)q1.mmio_height);
   }
+  PrintScanoutInfo("switched_scanout", q1);
 
   // Switch back to the original mode and validate scanout again.
   bool restore_timed_out = false;
@@ -864,6 +887,7 @@ static int RunModesetRoundtripSanity(int argc, char** argv) {
                          (unsigned long)q2.mmio_width,
                          (unsigned long)q2.mmio_height);
   }
+  PrintScanoutInfo("restored_scanout", q2);
 
   aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
   aerogpu_test::kmt::UnloadD3DKMT(&kmt);
