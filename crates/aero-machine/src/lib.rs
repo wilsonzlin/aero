@@ -1645,28 +1645,6 @@ impl PciDevice for E1000PciConfigDevice {
     }
 }
 
-struct AeroGpuPciConfigDevice {
-    cfg: aero_devices::pci::PciConfigSpace,
-}
-
-impl AeroGpuPciConfigDevice {
-    fn new() -> Self {
-        Self {
-            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
-        }
-    }
-}
-
-impl PciDevice for AeroGpuPciConfigDevice {
-    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
-        &self.cfg
-    }
-
-    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
-        &mut self.cfg
-    }
-}
-
 struct VirtioNetPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
