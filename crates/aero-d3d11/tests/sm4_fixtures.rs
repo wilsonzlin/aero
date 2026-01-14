@@ -10,6 +10,7 @@ use aero_d3d11::{
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 const FOURCC_SHDR: FourCC = FourCC(*b"SHDR");
+const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 
 fn load_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -465,4 +466,55 @@ fn parses_and_decodes_sm4_gs_point_to_triangle_fixture() {
         .count();
     assert_eq!(emit_count, 3, "expected three emitted vertices");
     assert!(matches!(module.instructions.last(), Some(Sm4Inst::Ret)));
+}
+
+#[test]
+fn parses_and_translates_sm5_hs_ret_fixture() {
+    let bytes = load_fixture("hs_ret.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+    assert!(dxbc.get_chunk(FOURCC_SHEX).is_some(), "missing SHEX chunk");
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+
+    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+    assert!(signatures.isgn.is_some(), "missing parsed ISGN");
+    assert!(signatures.osgn.is_some(), "missing parsed OSGN");
+    assert!(
+        signatures.pcsg.is_some() || signatures.psgn.is_some(),
+        "expected patch-constant signature (PCSG or PSGN)"
+    );
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse failed");
+    assert_eq!(program.stage, ShaderStage::Hull);
+
+    let module = decode_program(&program).expect("SM5 decode failed");
+    let translated = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
+        .expect("hull shader translation should succeed");
+    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@compute"));
+}
+
+#[test]
+fn parses_and_translates_sm5_ds_ret_fixture() {
+    let bytes = load_fixture("ds_ret.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+    assert!(dxbc.get_chunk(FOURCC_SHEX).is_some(), "missing SHEX chunk");
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+
+    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+    assert!(signatures.isgn.is_some(), "missing parsed ISGN");
+    assert!(signatures.osgn.is_some(), "missing parsed OSGN");
+    assert!(signatures.psgn.is_some(), "missing parsed PSGN");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse failed");
+    assert_eq!(program.stage, ShaderStage::Domain);
+
+    let module = decode_program(&program).expect("SM5 decode failed");
+    let translated = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
+        .expect("domain shader translation should succeed");
+    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@compute"));
 }
