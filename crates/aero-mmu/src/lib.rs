@@ -846,10 +846,11 @@ impl Mmu {
                 Ok(()) => {
                     let paddr = entry.translate(vaddr);
                     let needs_dirty = access.is_write() && !entry.dirty;
-                    let leaf_addr = entry.leaf_addr;
-                    let leaf_is_64 = entry.leaf_is_64;
 
                     if needs_dirty {
+                        let leaf_addr = entry.leaf_addr;
+                        let leaf_is_64 = entry.leaf_is_64;
+
                         if leaf_is_64 {
                             let val = bus.read_u64(leaf_addr);
                             bus.write_u64(leaf_addr, val | PTE_D64);
