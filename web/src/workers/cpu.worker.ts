@@ -1218,9 +1218,10 @@ function maybeInitMicBridge(): void {
       return;
     }
 
-    const fromSharedBuffer = (apiAny.MicBridge as { fromSharedBuffer?: unknown } | undefined)?.fromSharedBuffer;
+    const MicBridgeCompat = apiAny.MicBridge as { fromSharedBuffer?: unknown; from_shared_buffer?: unknown } | undefined;
+    const fromSharedBuffer = MicBridgeCompat?.fromSharedBuffer ?? MicBridgeCompat?.from_shared_buffer;
     if (typeof fromSharedBuffer === "function") {
-      wasmMicBridge = (fromSharedBuffer as (sab: SharedArrayBuffer) => WasmMicBridgeHandle)(mic.sab);
+      wasmMicBridge = (fromSharedBuffer as (sab: SharedArrayBuffer) => WasmMicBridgeHandle).call(MicBridgeCompat, mic.sab);
     }
   } catch (err) {
     console.warn("Failed to attach WASM mic bridge:", err);
