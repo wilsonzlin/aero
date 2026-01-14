@@ -3906,6 +3906,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--with-snd-buffer-limits",
         "--with-virtio-snd-buffer-limits",
+        "--require-virtio-snd-buffer-limits",
         "--enable-snd-buffer-limits",
         "--enable-virtio-snd-buffer-limits",
         dest="with_snd_buffer_limits",

@@ -16,8 +16,8 @@ class PowerShellSndBufferLimitsAliasTests(unittest.TestCase):
         self.assertIn('Alias("WithVirtioSndBufferLimits"', text)
         self.assertIn('"EnableSndBufferLimits"', text)
         self.assertIn('"EnableVirtioSndBufferLimits"', text)
+        self.assertIn('"RequireVirtioSndBufferLimits"', text)
 
 
 if __name__ == "__main__":
     unittest.main()
-

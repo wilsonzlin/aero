@@ -391,7 +391,7 @@ param(
   #   (for example via New-AeroWin7TestImage.ps1 -TestSndBufferLimits), and
   # - -WithVirtioSnd (so a virtio-snd device is attached).
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioSndBufferLimits", "EnableSndBufferLimits", "EnableVirtioSndBufferLimits")]
+  [Alias("WithVirtioSndBufferLimits", "EnableSndBufferLimits", "EnableVirtioSndBufferLimits", "RequireVirtioSndBufferLimits")]
   [switch]$WithSndBufferLimits,
 
   # NOTE: `-WithVirtioInputEvents` / `-EnableVirtioInputEvents` are accepted as aliases for `-WithInputEvents`
