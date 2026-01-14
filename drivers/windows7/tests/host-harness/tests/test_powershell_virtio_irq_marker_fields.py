@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+from __future__ import annotations
+
+import re
+import unittest
+from pathlib import Path
+
+
+class PowerShellVirtioIrqMarkerFieldsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        ps_path = Path(__file__).resolve().parents[1] / "Invoke-AeroVirtioWin7Tests.ps1"
+        self.text = ps_path.read_text(encoding="utf-8", errors="replace")
+
+    def _extract_function_text(self, name: str) -> str:
+        m = re.search(rf"(?m)^function\s+{re.escape(name)}\b", self.text)
+        self.assertIsNotNone(m, f"missing PowerShell function {name}")
+        assert m is not None
+        start = m.start()
+
+        m2 = re.search(r"(?m)^function\s+", self.text[m.end() :])
+        end = len(self.text) if m2 is None else (m.end() + m2.start())
+        return self.text[start:end]
+
+    def test_host_marker_sorts_extra_irq_fields(self) -> None:
+        # IRQ markers mirror irq_* fields from per-device TEST markers and should keep ordering stable.
+        fn = self._extract_function_text("Try-EmitAeroVirtioIrqMarkerFromTestMarker")
+
+        # Base ordering: irq_mode + irq_message_count first.
+        self.assertRegex(
+            fn,
+            r'foreach\s*\(\s*\$k\s+in\s*@\(\s*"irq_mode"\s*,\s*"irq_message_count"\s*\)\s*\)',
+        )
+
+        # Other irq_* fields sorted.
+        self.assertRegex(
+            fn,
+            r'foreach\s*\(\s*\$k\s+in\s*\(\s*\$irqKeys\s*\|\s*Where-Object\s*\{[^}]*irq_mode[^}]*irq_message_count[^}]*\}\s*\|\s*Sort-Object\s*\)\s*\)\s*\{',
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+
