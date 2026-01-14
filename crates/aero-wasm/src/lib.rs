@@ -4203,6 +4203,47 @@ impl Machine {
         Uint8Array::from(bytes).into()
     }
 
+    // -------------------------------------------------------------------------
+    // AeroGPU submission bridge (WASM external GPU worker integration)
+    // -------------------------------------------------------------------------
+    //
+    // This is an integration hook for browser builds where the guest-visible AeroGPU PCI device
+    // model runs in-process (inside `aero-wasm`), but command execution/present happens externally
+    // (e.g. a dedicated GPU worker running `aero-gpu-wasm`).
+    //
+    // Calling protocol (high level):
+    // 1. The guest rings the AeroGPU doorbell (MMIO), causing the device model to decode new
+    //    submissions and mark their fences as in-flight.
+    // 2. JS calls `aerogpu_drain_submissions()` to retrieve newly-decoded submissions.
+    // 3. JS executes each submission out-of-process and, once complete, calls
+    //    `aerogpu_complete_fence(signalFence)` for each signaled fence.
+    // 4. The device model updates the fence page and IRQ state in response to completions.
+    //
+    // NOTE: As of this writing the canonical `aero_machine::Machine` does not yet expose an
+    // in-process AeroGPU device; these exports are wired up by the browser runtime once the device
+    // model is integrated.
+
+    /// Drain newly-decoded AeroGPU submissions.
+    ///
+    /// Returns an array of objects:
+    /// `{ cmdStream: Uint8Array, signalFence: BigInt, contextId: number, flags: number, allocTable: Uint8Array | null }`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn aerogpu_drain_submissions(&mut self) -> JsValue {
+        // TODO(AEROGPU-WASM-BRIDGE-01): Wire up to the in-process AeroGPU PCI device model once it
+        // is integrated into `aero_machine::Machine`.
+        js_sys::Array::new().into()
+    }
+
+    /// Mark a previously-drained submission's fence as complete.
+    ///
+    /// The underlying AeroGPU device model is responsible for raising IRQ status bits and updating
+    /// the guest fence page so the Windows driver observes forward progress.
+    #[cfg(target_arch = "wasm32")]
+    pub fn aerogpu_complete_fence(&mut self, _fence: BigInt) {
+        // TODO(AEROGPU-WASM-BRIDGE-01): Wire up to the in-process AeroGPU PCI device model once it
+        // is integrated into `aero_machine::Machine`.
+    }
+
     /// Inject a browser-style keyboard event into the guest PS/2 i8042 controller.
     ///
     /// `code` must be a DOM `KeyboardEvent.code` string (e.g. `"KeyA"`, `"Enter"`, `"ArrowUp"`).

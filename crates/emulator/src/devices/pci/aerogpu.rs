@@ -16,7 +16,7 @@ use crate::devices::aerogpu_regs::{
 };
 use crate::devices::aerogpu_ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
 use crate::devices::aerogpu_scanout::{composite_cursor_rgba_over_scanout, AeroGpuFormat};
-use crate::gpu_worker::aerogpu_backend::AeroGpuCommandBackend;
+use crate::gpu_worker::aerogpu_backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
 use crate::gpu_worker::aerogpu_executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 
@@ -254,6 +254,16 @@ impl AeroGpuPciDevice {
         // If scanout is already enabled, publish the current scanout descriptor immediately so
         // consumers don't have to wait for the next register write / tick.
         self.maybe_publish_wddm_scanout0_state();
+    }
+
+    /// Drain newly-decoded AeroGPU submissions queued since the last call.
+    ///
+    /// This is intended for WASM/browser integrations where command execution happens out-of-process
+    /// (e.g. via `aero-gpu-wasm`). The device model (ring processing, fence page updates, IRQ state)
+    /// runs in-process, but the host is responsible for executing each returned submission and then
+    /// calling [`AeroGpuPciDevice::complete_fence`].
+    pub fn drain_pending_submissions(&mut self) -> Vec<AeroGpuBackendSubmission> {
+        self.executor.drain_pending_submissions()
     }
 
     pub fn read_presented_scanout_rgba8(
