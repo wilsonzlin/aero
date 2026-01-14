@@ -1,9 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{DiskImage, MemBackend};
+use aero_storage::{DiskImage, MemBackend, VirtualDisk};
 use proptest::prelude::*;
 
 const MAX_IMAGE_BYTES: usize = 64 * 1024;
+const MAX_READ_LEN: usize = 4096;
+const READS_PER_CASE: usize = 4;
 
 fn qcow2_truncated_header_strategy() -> impl Strategy<Value = Vec<u8>> {
     // The QCOW2 header is at least 72 bytes, but `detect_format` intentionally treats any file
@@ -120,6 +122,9 @@ proptest! {
     #![proptest_config(ProptestConfig {
         cases: 128,
         max_shrink_iters: 4096,
+        // This is a no-panic regression test; failure persistence is unnecessary and can emit
+        // noisy warnings for integration tests about missing `lib.rs` / `main.rs`.
+        failure_persistence: None,
         .. ProptestConfig::default()
     })]
 
@@ -130,10 +135,46 @@ proptest! {
 
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let backend = MemBackend::from_vec(bytes);
-            let _ = DiskImage::open_auto(backend);
+            if let Ok(mut disk) = DiskImage::open_auto(backend) {
+                let capacity = disk.capacity_bytes();
+                if capacity == 0 {
+                    let _ = disk.read_at(0, &mut []);
+                    let _ = disk.flush();
+                    return;
+                }
+
+                // Use a deterministic seed derived from the file head so failures are easier to
+                // reproduce when shrinking.
+                let mut seed = 0u64;
+                for (i, b) in head.iter().enumerate().take(8) {
+                    seed |= (*b as u64) << (i * 8);
+                }
+
+                for i in 0..READS_PER_CASE {
+                    let mut cur = seed.wrapping_add((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                    let mut len_u64 = (cur & 0xFFF) + 1; // 1..=4096
+                    len_u64 = len_u64.min(MAX_READ_LEN as u64);
+                    len_u64 = len_u64.min(capacity);
+
+                    let read_len: usize = len_u64 as usize;
+                    if read_len == 0 {
+                        continue;
+                    }
+                    let max_offset = capacity - len_u64;
+                    cur = cur.rotate_left(17) ^ (cur >> 23);
+                    let offset = cur % (max_offset + 1);
+
+                    let mut buf = vec![0u8; read_len];
+                    let _ = disk.read_at(offset, &mut buf);
+                }
+
+                let _ = disk.flush();
+            }
         }));
 
-        prop_assert!(res.is_ok(), "DiskImage::open_auto panicked (len={len}, head={head:02x?})");
+        prop_assert!(
+            res.is_ok(),
+            "DiskImage::open_auto (or subsequent read/flush) panicked (len={len}, head={head:02x?})"
+        );
     }
 }
-
