@@ -40,15 +40,24 @@ run cargo test -p aero-devices-gpu --locked
 
 run cargo test -p aero-machine --locked \
   --test aerogpu_pci_enumeration \
+  --test aerogpu_pci_bar_allocation \
+  --test aerogpu_pci_bme_toggle \
   --test aerogpu_bar0_mmio_vblank \
   --test aerogpu_intx_asserts_on_irq_enable \
   --test aerogpu_intx_is_gated_on_pci_command_intx_disable \
   --test aerogpu_immediate_backend_completes_fence \
   --test aerogpu_features \
   --test aerogpu_submission_bridge \
+  --test aerogpu_submission_capture_caps \
+  --test aerogpu_submission_queue_overflow_completes_dropped_fence \
   --test aerogpu_deferred_fence_completion \
   --test aerogpu_complete_fence_gating \
   --test aerogpu_vsync_fence_pacing \
+  --test aerogpu_vsync_present_paces_fence \
   --test aerogpu_ring_noop_fence \
+  --test aerogpu_ring_reset_dma_deferred \
+  --test aerogpu_ring_reset_deferred_until_bme \
   --test aerogpu_backend_scanout_display_present \
+  --test aerogpu_mmio_smoke \
+  --test aerogpu_mmio_scanout_publishes_scanout_state \
   --test aerogpu_mmio_gpa_overflow
