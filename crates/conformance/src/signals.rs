@@ -12,16 +12,16 @@
 //! Keep this module as the only place that refers to `libc::SIG*` so the rest of the crate can be
 //! target-agnostic.
 #[cfg(unix)]
-pub(crate) const SIGILL: i32 = libc::SIGILL as i32;
+pub(crate) const SIGILL: i32 = libc::SIGILL;
 #[cfg(not(unix))]
 pub(crate) const SIGILL: i32 = 0;
 
 #[cfg(unix)]
-pub(crate) const SIGFPE: i32 = libc::SIGFPE as i32;
+pub(crate) const SIGFPE: i32 = libc::SIGFPE;
 #[cfg(not(unix))]
 pub(crate) const SIGFPE: i32 = 0;
 
 #[cfg(unix)]
-pub(crate) const SIGSEGV: i32 = libc::SIGSEGV as i32;
+pub(crate) const SIGSEGV: i32 = libc::SIGSEGV;
 #[cfg(not(unix))]
 pub(crate) const SIGSEGV: i32 = 0;
