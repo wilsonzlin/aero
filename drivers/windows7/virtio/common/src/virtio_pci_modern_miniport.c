@@ -376,10 +376,14 @@ VirtioPciReadDeviceFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev)
 
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature_select, 0);
     KeMemoryBarrier();
+    (VOID)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature_select);
+    KeMemoryBarrier();
     lo = READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature);
     KeMemoryBarrier();
 
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature_select, 1);
+    KeMemoryBarrier();
+    (VOID)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature_select);
     KeMemoryBarrier();
     hi = READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->device_feature);
     KeMemoryBarrier();
@@ -407,10 +411,14 @@ VirtioPciWriteDriverFeatures(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ UINT64 Feature
 
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature_select, 0);
     KeMemoryBarrier();
+    (VOID)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature_select);
+    KeMemoryBarrier();
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature, lo);
     KeMemoryBarrier();
 
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature_select, 1);
+    KeMemoryBarrier();
+    (VOID)READ_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature_select);
     KeMemoryBarrier();
     WRITE_REGISTER_ULONG((volatile ULONG *)&Dev->CommonCfg->driver_feature, hi);
     KeMemoryBarrier();
