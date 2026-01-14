@@ -16,10 +16,10 @@ This design targets the simplest useful audio path for Aero:
 - Windows 7 SP1 (x86/x64).
 - One **render** endpoint (speaker/headphones style) backed by `virtio-snd` stream id `0` (TX).
 - One **capture** endpoint (microphone style) backed by `virtio-snd` stream id `1` (RX).
-- Fixed formats only (see [Assumptions and limits](#assumptions-and-limits)).
+- Contract-v1 baseline formats are required (see [Assumptions and limits](#assumptions-and-limits)).
 
-Format negotiation beyond the fixed contract formats, plus advanced DSP/offload,
-are out of scope for this driver.
+Advanced DSP/offload are out of scope for this driver. Multi-format negotiation beyond the contract-v1 baseline is
+optional and may be exposed to Windows when a virtio-snd device advertises additional capabilities via `PCM_INFO`.
 
 ## Why PortCls + WaveRT (Windows 7+)
 
@@ -293,9 +293,12 @@ consumption cadence.
 
 The initial virtio-snd WaveRT implementation intentionally starts narrow:
 
-- **Fixed formats only**:
+- **Contract-v1 baseline formats required**:
   - Stream `0` (render): 48 kHz, **stereo**, 16-bit PCM (S16_LE)
   - Stream `1` (capture): 48 kHz, **mono**, 16-bit PCM (S16_LE)
+- **Optional multi-format** (non-contract): if the device advertises extra formats/rates/channel counts in `PCM_INFO`,
+  the driver may expose additional Windows formats via dynamic WaveRT pin data ranges (while keeping the contract-v1
+  baseline format preferred/first).
 - **Single render + single capture endpoint**:
   - One render pin and one capture pin.
   - No loopback.

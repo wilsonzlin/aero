@@ -11,7 +11,10 @@ This `docs/README.md` is the **source of truth** for the in-tree Windows 7 `virt
 - What (if any) QEMU configuration is supported
 - What render/capture endpoints exist today
 
-The shipped driver package produces `aero_virtio_snd.sys` and exposes two fixed-format endpoints:
+The shipped driver package produces `aero_virtio_snd.sys`.
+
+For **contract v1** devices (which advertise only the minimal PCM capability in `PCM_INFO`), the driver exposes two
+fixed-format endpoints:
 
 Render (output, stream 0):
 
@@ -24,6 +27,10 @@ Capture (input, stream 1):
 * 48,000 Hz
 * Mono (1 channel)
 * 16-bit PCM little-endian (S16_LE)
+
+When a virtio-snd implementation advertises a **superset** of capabilities in `PCM_INFO`, the driver can optionally
+expose additional formats/rates/channel counts to PortCls/WaveRT via dynamically generated pin data ranges (while still
+requiring and preferring the contract-v1 baseline).
 
 ## What ships / compatibility contract
 
