@@ -97,12 +97,41 @@ static void test_coalescing_capacity_2_pending_submitted_on_completion(void)
     assert(!sim.PendingValid);
 }
 
+static void test_coalescing_capacity_2_drop_on_full(void)
+{
+    VIOINPUT_STATUSQ_COALESCE_SIM sim;
+    VirtioStatusQCoalesceSimInit(&sim, 2, true);
+
+    assert(VirtioStatusQCoalesceSimWrite(&sim, 0x01u));
+    assert(sim.FreeCount == 1);
+    assert(!sim.PendingValid);
+
+    assert(VirtioStatusQCoalesceSimWrite(&sim, 0x02u));
+    assert(sim.FreeCount == 0);
+    assert(!sim.PendingValid);
+
+    /* Full queue -> drop pending immediately. */
+    assert(!VirtioStatusQCoalesceSimWrite(&sim, 0x04u));
+    assert(sim.FreeCount == 0);
+    assert(!sim.PendingValid);
+
+    /* Completion frees a slot but does not submit anything because nothing is pending. */
+    assert(!VirtioStatusQCoalesceSimComplete(&sim));
+    assert(sim.FreeCount == 1);
+    assert(!sim.PendingValid);
+
+    /* Final completion returns us to the fully-free state. */
+    assert(!VirtioStatusQCoalesceSimComplete(&sim));
+    assert(sim.FreeCount == 2);
+}
+
 int main(void)
 {
     test_cookie_to_index_validation();
     test_coalescing_capacity_1_no_drop();
     test_coalescing_capacity_1_drop_on_full();
     test_coalescing_capacity_2_pending_submitted_on_completion();
+    test_coalescing_capacity_2_drop_on_full();
     printf("virtio_statusq_test: ok\n");
     return 0;
 }
