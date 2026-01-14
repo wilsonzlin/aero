@@ -662,13 +662,25 @@ pub struct MachineConfig {
     /// This is the foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
     /// firmware/bootloader compatibility and for the guest WDDM driver to claim scanout.
     ///
-    /// Note: The full AeroGPU command execution model is not implemented yet. Today this flag
-    /// provides:
-    /// - BAR1-backed VRAM plus minimal legacy VGA decode,
-    /// - minimal BAR0 ring/fence transport (no-op command execution) so the in-tree Win7 KMD can
-    ///   initialize without stalling, and
-    /// - deterministic vblank timing registers and IRQ plumbing so guest timing and
-    ///   snapshot/restore are stable and reproducible.
+    /// Note: `aero-machine` does not execute `AEROGPU_CMD` in-process by default. Instead, this
+    /// flag provides the guest-visible transport and a backend boundary for host-driven execution:
+    ///
+    /// - BAR1-backed VRAM plus minimal legacy VGA decode.
+    /// - BAR0 ring/fence transport + scanout/cursor/vblank registers.
+    ///   - Ring processing decodes submissions and can capture `AEROGPU_CMD` payloads into a bounded
+    ///     queue for host-driven execution (`Machine::aerogpu_drain_submissions`).
+    ///   - Fence forward-progress policy is selectable:
+    ///     - default (no backend, submission bridge disabled): fences complete automatically
+    ///       (bring-up / no-op execution), with optional vblank pacing when the submission contains
+    ///       a vsync present.
+    ///     - submission bridge enabled (`Machine::aerogpu_enable_submission_bridge`): fences are
+    ///       deferred until the host reports completion (`Machine::aerogpu_complete_fence`).
+    ///     - in-process backend installed (`Machine::aerogpu_set_backend_*`): fence completion is
+    ///       driven by backend completions.
+    ///
+    /// Host-side scanout presentation (`Machine::display_present`) prefers the WDDM scanout
+    /// framebuffer once claimed by a valid scanout0 configuration. Disabling scanout
+    /// (`SCANOUT0_ENABLE=0`) blanks output but does not release WDDM ownership until reset.
     ///
     /// Machine snapshots preserve the BAR0 register file and the BAR1 VRAM backing store
     /// deterministically.
