@@ -45,9 +45,9 @@ AddReg    = AeroVirtioSndIoPort.AddReg
 
 ; Per-device bring-up toggle defaults (hardware key).
 ;
-; These are stored under the device instance’s "Device Parameters" key:
+; These are stored under the device instance's "Device Parameters" key:
 ;   HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\...
-; Find <DeviceInstancePath> via Device Manager → Details → “Device instance path”.
+; Find <DeviceInstancePath> via Device Manager -> Details -> "Device instance path".
 [AeroVirtioSndIoPort_Install.NT.HW]
 AddReg = AeroVirtioSndIoPort_Parameters_AddReg
 

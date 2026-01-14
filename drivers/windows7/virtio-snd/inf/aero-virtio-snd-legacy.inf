@@ -118,9 +118,9 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
 
 ; Per-device bring-up toggles (defaults).
 ;
-; These are stored under the device instance’s "Device Parameters" key:
+; These are stored under the device instance's "Device Parameters" key:
 ;   HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\...
-; Find <DeviceInstancePath> via Device Manager → Details → “Device instance path”.
+; Find <DeviceInstancePath> via Device Manager -> Details -> "Device instance path".
 [AeroVirtioSndLegacy_Parameters_AddReg]
 HKR,Parameters,,0x00000010
 HKR,Parameters,ForceNullBackend,0x00010001,0
