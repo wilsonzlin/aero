@@ -42,6 +42,17 @@ class VirtioIrqMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS|irq_mode=msix|irq_message_count=3",
         )
 
+    def test_virtio_net_irq_marker_sorts_extra_fields(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|irq_mode=msix|irq_message_count=3|"
+            b"irq_intr1=2|irq_intr0=1\n"
+        )
+        out = self._emit(self.harness._emit_virtio_net_irq_host_marker, tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS|irq_mode=msix|irq_message_count=3|irq_intr0=1|irq_intr1=2",
+        )
+
     def test_virtio_snd_irq_marker_fail(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|irq_mode=msi|irq_message_count=1\n"
         out = self._emit(self.harness._emit_virtio_snd_irq_host_marker, tail)
@@ -74,4 +85,3 @@ class VirtioIrqMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
