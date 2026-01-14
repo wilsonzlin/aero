@@ -157,6 +157,10 @@ Browser                              Gateway
    │ ◀─────────────────────────────────▶│
 ```
 
+Inbound filtering note: `proxy/webrtc-udp-relay` defaults to `UDP_INBOUND_FILTER_MODE=address_and_port`
+(only accept inbound UDP from remote address+port tuples the guest previously sent to). You can switch
+to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
+
 ---
 
 ## Aero Gateway
