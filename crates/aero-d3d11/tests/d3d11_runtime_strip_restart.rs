@@ -103,6 +103,8 @@ async fn run_triangle_strip_restart_test<TIndex: bytemuck::Pod>(
     vertices: &[VertexPos2],
     indices: &[TIndex],
     draw_index_count: u32,
+    index_buffer_offset_bytes: u64,
+    first_index: u32,
 ) {
     let mut rt = match D3D11Runtime::new_for_tests().await {
         Ok(rt) => rt,
@@ -173,8 +175,8 @@ async fn run_triangle_strip_restart_test<TIndex: bytemuck::Pod>(
     w.begin_render_pass(RT_VIEW, [0.0, 0.0, 0.0, 1.0], None, 1.0, 0);
     w.set_pipeline(PipelineKind::Render, PIPE);
     w.set_vertex_buffer(0, VB, 0);
-    w.set_index_buffer(IB, index_format, 0);
-    w.draw_indexed(draw_index_count, 1, 0, 0, 0);
+    w.set_index_buffer(IB, index_format, index_buffer_offset_bytes);
+    w.draw_indexed(draw_index_count, 1, first_index, 0, 0);
     w.end_render_pass();
 
     rt.execute(&w.finish()).unwrap();
@@ -339,6 +341,8 @@ fn d3d11_runtime_triangle_strip_draw_indexed_supports_primitive_restart_u16() {
             &vertices,
             &indices,
             7,
+            0,
+            0,
         )
         .await;
     });
@@ -373,6 +377,49 @@ fn d3d11_runtime_triangle_strip_draw_indexed_supports_primitive_restart_u32() {
             &vertices,
             &indices,
             7,
+            0,
+            0,
+        )
+        .await;
+    });
+}
+
+#[test]
+fn d3d11_runtime_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_and_first_index_u16(
+) {
+    pollster::block_on(async {
+        // Same setup as the baseline u16 restart test, but bind the index buffer with a non-zero
+        // byte offset and draw with a non-zero `first_index`.
+        //
+        // This exercises the runtime's restart emulation slice math:
+        // `index_buffer_offset_bytes + first_index * index_stride`.
+        let mut vertices = vec![VertexPos2 { pos: [0.0; 2] }; 65_536];
+        vertices[0] = VertexPos2 { pos: [-0.9, -0.5] };
+        vertices[1] = VertexPos2 { pos: [-0.1, -0.5] };
+        vertices[2] = VertexPos2 { pos: [-0.5, 0.5] };
+        vertices[3] = VertexPos2 { pos: [0.1, -0.5] };
+        vertices[4] = VertexPos2 { pos: [0.9, -0.5] };
+        vertices[5] = VertexPos2 { pos: [0.5, 0.5] };
+        vertices[65_535] = VertexPos2 { pos: [0.0, 0.0] };
+
+        // Two u16 padding values at the start (4 bytes) so we can bind the IB with a non-zero
+        // offset while keeping `UpdateBuffer` 4-byte aligned.
+        //
+        // After applying `index_buffer_offset_bytes=4` and `first_index=1`, the draw sees:
+        // [0, 1, 2, 0xFFFF, 3, 4, 5].
+        let indices: [u16; 10] = [10, 11, 123, 0, 1, 2, 0xFFFF, 3, 4, 5];
+
+        run_triangle_strip_restart_test(
+            concat!(
+                module_path!(),
+                "::d3d11_runtime_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_and_first_index_u16"
+            ),
+            IndexFormat::Uint16,
+            &vertices,
+            &indices,
+            7,
+            4,
+            1,
         )
         .await;
     });
