@@ -181,7 +181,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 
 			// Defensive cap on inbound DataChannel message size. The UDP relay frames
 			// themselves are bounded by the application-level payload limit plus the
-			// framing overhead (v2 IPv6 is the worst case at 24 bytes).
+			// framing overhead (v2 IPv6 is the worst case at udpproto.MaxFrameOverheadBytes bytes).
 			//
 			// Note: This runs after pion has already allocated msg.Data, so it is not
 			// a replacement for SCTP-level receive caps. It is still valuable to

@@ -90,7 +90,7 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 
 	// The payload is intentionally:
 	// - larger than cfg.WebRTCDataChannelMaxMessageBytes (should trigger session close)
-	// - smaller than the UDP relay framing max (default MAX_DATAGRAM_PAYLOAD_BYTES+24)
+	// - smaller than the UDP relay framing max (default MAX_DATAGRAM_PAYLOAD_BYTES+webrtcDataChannelUDPFrameOverheadBytes)
 	// so we exercise the session-level cap specifically.
 	payload := make([]byte, cfg.WebRTCDataChannelMaxMessageBytes*2)
 	if err := clientDC.Send(payload); err != nil {
