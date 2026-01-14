@@ -32,6 +32,12 @@ typedef struct _TEST_EVENTQ_CB_REC {
     ULONG LastData;
 } TEST_EVENTQ_CB_REC;
 
+typedef struct _TEST_EVENTQ_CB_INFLIGHT_REC {
+    TEST_EVENTQ_CB_REC Base;
+    volatile LONG* InFlight;
+    LONG InFlightExpectedAtCall;
+} TEST_EVENTQ_CB_INFLIGHT_REC;
+
 typedef struct _TEST_EVENTQ_SIGNAL_REC {
     ULONG Calls;
     ULONG LastStreamId;
@@ -47,6 +53,22 @@ static VOID TestEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULO
     rec->Calls++;
     rec->LastType = Type;
     rec->LastData = Data;
+}
+
+static VOID TestEventqCallbackCheckInFlight(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULONG Data)
+{
+    TEST_EVENTQ_CB_INFLIGHT_REC* rec;
+
+    rec = (TEST_EVENTQ_CB_INFLIGHT_REC*)Context;
+    TEST_ASSERT(rec != NULL);
+
+    if (rec->InFlight != NULL) {
+        TEST_ASSERT(InterlockedCompareExchange(rec->InFlight, 0, 0) == rec->InFlightExpectedAtCall);
+    }
+
+    rec->Base.Calls++;
+    rec->Base.LastType = Type;
+    rec->Base.LastData = Data;
 }
 
 static BOOLEAN TestSignalStreamNotification(_In_opt_ void* Context, _In_ ULONG StreamId)
@@ -778,6 +800,154 @@ static void test_eventq_repost_mask_sets_bit_without_submitting(void)
     TestFreePool(&pool);
 }
 
+static void test_eventq_callback_inflight_counter_is_balanced(void)
+{
+    VIRTIOSND_HOST_QUEUE q;
+    VIRTIOSND_DMA_BUFFER pool;
+    VIRTIOSND_EVENTQ_STATS stats;
+    KSPIN_LOCK lock;
+    EVT_VIRTIOSND_EVENTQ_EVENT* cbFn;
+    void* cbCtx;
+    volatile LONG cbInFlight;
+    VIRTIOSND_EVENTQ_CALLBACK_STATE cbState;
+    TEST_EVENTQ_CB_INFLIGHT_REC cbRec;
+    uint8_t* buf0;
+    BOOLEAN reposted;
+
+    VirtioSndHostQueueInit(&q, 8);
+    TestInitPool(&pool, 1);
+    RtlZeroMemory(&stats, sizeof(stats));
+    KeInitializeSpinLock(&lock);
+
+    RtlZeroMemory(&cbRec, sizeof(cbRec));
+    cbInFlight = 0;
+
+    cbRec.InFlight = &cbInFlight;
+    cbRec.InFlightExpectedAtCall = 1;
+
+    cbFn = TestEventqCallbackCheckInFlight;
+    cbCtx = &cbRec;
+
+    cbState.Lock = &lock;
+    cbState.Callback = &cbFn;
+    cbState.CallbackContext = &cbCtx;
+    cbState.CallbackInFlight = &cbInFlight;
+
+    buf0 = (uint8_t*)pool.Va;
+
+    /* PCM_XRUN (stream_id=0) */
+    {
+        const uint8_t evt[] = {
+            0x01, 0x11, 0x00, 0x00, /* type = PCM_XRUN */
+            0x00, 0x00, 0x00, 0x00, /* data = stream_id (0) */
+        };
+        RtlCopyMemory(buf0, evt, sizeof(evt));
+    }
+
+    reposted = VirtIoSndEventqHandleUsed(
+        &q.Queue,
+        &pool,
+        &stats,
+        /*JackState=*/NULL,
+        &cbState,
+        /*PeriodState=*/NULL,
+        /*Started=*/TRUE,
+        /*Removed=*/FALSE,
+        /*Cookie=*/buf0,
+        /*UsedLen=*/(UINT32)sizeof(VIRTIO_SND_EVENT),
+        /*EnableDebugLogs=*/TRUE,
+        /*RepostMask=*/NULL);
+
+    TEST_ASSERT(reposted == TRUE);
+    TEST_ASSERT(cbRec.Base.Calls == 1);
+    TEST_ASSERT(cbRec.Base.LastType == VIRTIO_SND_EVT_PCM_XRUN);
+    TEST_ASSERT(cbRec.Base.LastData == 0u);
+    TEST_ASSERT(cbInFlight == 0);
+
+    TestFreePool(&pool);
+}
+
+static void test_eventq_not_started_skips_callback_and_signal(void)
+{
+    VIRTIOSND_HOST_QUEUE q;
+    VIRTIOSND_DMA_BUFFER pool;
+    VIRTIOSND_EVENTQ_STATS stats;
+    KSPIN_LOCK lock;
+    EVT_VIRTIOSND_EVENTQ_EVENT* cbFn;
+    void* cbCtx;
+    volatile LONG cbInFlight;
+    VIRTIOSND_EVENTQ_CALLBACK_STATE cbState;
+    TEST_EVENTQ_CB_REC cbRec;
+    VIRTIOSND_EVENTQ_PERIOD_STATE period;
+    TEST_EVENTQ_SIGNAL_REC signalRec;
+    LONG seq[2];
+    LONGLONG lastTime[2];
+    uint8_t* buf0;
+    BOOLEAN reposted;
+
+    VirtioSndHostQueueInit(&q, 8);
+    TestInitPool(&pool, 1);
+    RtlZeroMemory(&stats, sizeof(stats));
+    KeInitializeSpinLock(&lock);
+
+    RtlZeroMemory(&cbRec, sizeof(cbRec));
+    cbFn = TestEventqCallback;
+    cbCtx = &cbRec;
+    cbInFlight = 0;
+
+    cbState.Lock = &lock;
+    cbState.Callback = &cbFn;
+    cbState.CallbackContext = &cbCtx;
+    cbState.CallbackInFlight = &cbInFlight;
+
+    RtlZeroMemory(&signalRec, sizeof(signalRec));
+    RtlZeroMemory(seq, sizeof(seq));
+    RtlZeroMemory(lastTime, sizeof(lastTime));
+
+    RtlZeroMemory(&period, sizeof(period));
+    period.SignalStreamNotification = TestSignalStreamNotification;
+    period.SignalStreamNotificationContext = &signalRec;
+    period.PcmPeriodSeq = seq;
+    period.PcmLastPeriodEventTime100ns = lastTime;
+    period.StreamCount = 2u;
+
+    buf0 = (uint8_t*)pool.Va;
+
+    /* PCM_PERIOD_ELAPSED (stream_id=0) */
+    {
+        const uint8_t evt[] = {
+            0x00, 0x11, 0x00, 0x00, /* type = PCM_PERIOD_ELAPSED */
+            0x00, 0x00, 0x00, 0x00, /* data = stream_id (0) */
+        };
+        RtlCopyMemory(buf0, evt, sizeof(evt));
+    }
+
+    reposted = VirtIoSndEventqHandleUsed(
+        &q.Queue,
+        &pool,
+        &stats,
+        /*JackState=*/NULL,
+        &cbState,
+        &period,
+        /*Started=*/FALSE,
+        /*Removed=*/FALSE,
+        /*Cookie=*/buf0,
+        /*UsedLen=*/(UINT32)sizeof(VIRTIO_SND_EVENT),
+        /*EnableDebugLogs=*/TRUE,
+        /*RepostMask=*/NULL);
+
+    TEST_ASSERT(reposted == TRUE);
+    TEST_ASSERT(stats.Completions == 1);
+    TEST_ASSERT(stats.Parsed == 1);
+    TEST_ASSERT(stats.PcmPeriodElapsed == 1);
+
+    TEST_ASSERT(cbRec.Calls == 0);
+    TEST_ASSERT(cbInFlight == 0);
+    TEST_ASSERT(signalRec.Calls == 0);
+
+    TestFreePool(&pool);
+}
+
 int main(void)
 {
     test_eventq_null_cookie_does_not_repost();
@@ -790,6 +960,8 @@ int main(void)
     test_eventq_period_elapsed_signals_without_callback_state();
     test_eventq_period_elapsed_out_of_range_stream_is_ignored();
     test_eventq_repost_mask_sets_bit_without_submitting();
+    test_eventq_callback_inflight_counter_is_balanced();
+    test_eventq_not_started_skips_callback_and_signal();
 
     printf("virtiosnd_eventq_drain_tests: PASS\n");
     return 0;
