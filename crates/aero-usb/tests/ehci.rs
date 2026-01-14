@@ -1015,3 +1015,44 @@ fn ehci_periodic_itd_self_loop_sets_hse_and_halts() {
     assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
     assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
 }
+
+#[test]
+fn ehci_periodic_qtd_self_loop_sets_hse_and_halts() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    c.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(in_queue.clone(), out_received.clone())),
+    );
+    reset_port(&mut c, &mut mem, 0);
+
+    let fl_base: u32 = 0x7000;
+    let qh: u32 = 0x1800;
+    let qtd: u32 = 0x2000;
+
+    // Frame list entry 0 points at a QH. The QH's qTD next pointer points at a qTD whose next
+    // pointer loops back to itself.
+    mem.write_u32(fl_base, qh_link_ptr_qh(qh));
+    write_qtd(
+        &mut mem,
+        qtd,
+        qtd,
+        qtd_token(QTD_TOKEN_PID_OUT, 0, true, false),
+        0,
+    );
+    let ep_char = qh_epchar(0, 1, 64);
+    write_qh(&mut mem, qh, LINK_TERMINATE, ep_char, qtd);
+
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
