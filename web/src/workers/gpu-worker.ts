@@ -3490,8 +3490,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              // Only format supported by the shared scanout descriptor today.
-              if (format !== SCANOUT_FORMAT_B8G8R8X8) {
+              // Supported WDDM scanout formats (AeroGPU formats).
+              if (format !== SCANOUT_FORMAT_B8G8R8X8 && format !== SCANOUT_FORMAT_B8G8R8A8) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
