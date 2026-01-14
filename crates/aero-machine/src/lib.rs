@@ -7560,10 +7560,11 @@ impl Machine {
                 &mut empty_ap_cpus,
                 &mut self.mem,
             );
-            let inner = aero_cpu_core::PagingBus::new_with_io(
+            let mut inner = aero_cpu_core::PagingBus::new_with_io(
                 phys,
                 StrictIoPortBus { io: &mut self.io },
             );
+            std::mem::swap(&mut self.mmu, inner.mmu_mut());
             let mut bus = MachineCpuBus {
                 a20: self.chipset.a20(),
                 reset: self.reset_latch.clone(),
@@ -7571,6 +7572,7 @@ impl Machine {
             };
 
             let _ = run_batch_cpu_core_with_assists(cfg, &mut self.assist, cpu, &mut bus, max_insts);
+            std::mem::swap(&mut self.mmu, bus.inner.mmu_mut());
         }
     }
 
@@ -9033,7 +9035,7 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn restore_cpu_state(&mut self, state: snapshot::CpuState) {
-        snapshot::apply_cpu_state_to_cpu_core(&state, &mut self.cpu);
+        snapshot::apply_cpu_state_to_cpu_core(&state, &mut self.cpu.state);
     }
 
     fn restore_cpu_states(&mut self, states: Vec<snapshot::VcpuSnapshot>) -> snapshot::Result<()> {
@@ -9043,8 +9045,6 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         let mut seen = vec![false; expected];
-        let bsp = &mut self.cpu;
-        let ap_cpus = &mut self.ap_cpus;
 
         for state in states {
             let apic_id = usize::try_from(state.apic_id)
@@ -9058,13 +9058,13 @@ impl snapshot::SnapshotTarget for Machine {
             seen[apic_id] = true;
 
             if apic_id == 0 {
-                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, bsp);
+                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, &mut self.cpu.state);
             } else {
                 let idx = apic_id - 1;
-                let Some(cpu) = ap_cpus.get_mut(idx) else {
+                let Some(cpu) = self.ap_cpus.get_mut(idx) else {
                     return Err(snapshot::SnapshotError::Corrupt("unknown APIC ID"));
                 };
-                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, cpu);
+                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, &mut cpu.state);
             }
         }
 
@@ -9072,7 +9072,7 @@ impl snapshot::SnapshotTarget for Machine {
     }
 
     fn restore_mmu_state(&mut self, state: snapshot::MmuState) {
-        snapshot::apply_mmu_state_to_cpu_core(&state, &mut self.cpu);
+        snapshot::apply_mmu_state_to_cpu_core(&state, &mut self.cpu.state);
         self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
     }
 
@@ -9086,8 +9086,6 @@ impl snapshot::SnapshotTarget for Machine {
         }
 
         let mut seen = vec![false; expected];
-        let bsp = &mut self.cpu;
-        let ap_cpus = &mut self.ap_cpus;
 
         for state in states {
             let apic_id = usize::try_from(state.apic_id)
@@ -9101,14 +9099,14 @@ impl snapshot::SnapshotTarget for Machine {
             seen[apic_id] = true;
 
             if apic_id == 0 {
-                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, bsp);
-                bsp.time.set_tsc(bsp.state.msr.tsc);
+                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, &mut self.cpu.state);
+                self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
             } else {
                 let idx = apic_id - 1;
-                let Some(cpu) = ap_cpus.get_mut(idx) else {
+                let Some(cpu) = self.ap_cpus.get_mut(idx) else {
                     return Err(snapshot::SnapshotError::Corrupt("unknown APIC ID"));
                 };
-                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, cpu);
+                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, &mut cpu.state);
                 cpu.time.set_tsc(cpu.state.msr.tsc);
             }
         }
