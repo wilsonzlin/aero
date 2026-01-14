@@ -668,7 +668,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
         manifest.total_size
     );
 
-    verify_optional_meta_http_or_file(&source, &manifest).await?;
+    verify_optional_meta_http_or_file(&source, &manifest, args.retries).await?;
 
     let manifest = Arc::new(manifest);
     let chunk_count = manifest.chunk_count;
@@ -812,6 +812,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
 async fn verify_optional_meta_http_or_file(
     source: &VerifyHttpSource,
     manifest: &ManifestV1,
+    retries: usize,
 ) -> Result<()> {
     match source {
         VerifyHttpSource::File { base_dir } => {
@@ -843,7 +844,7 @@ async fn verify_optional_meta_http_or_file(
             // Preserve querystring auth material from the manifest URL (e.g. signed URLs).
             meta_url.set_query(manifest_url.query());
             meta_url.set_fragment(None);
-            match download_http_bytes_optional(client, meta_url.clone()).await? {
+            match download_http_bytes_optional_with_retry(client, meta_url.clone(), retries).await? {
                 None => {
                     eprintln!("Note: {meta_url} not found; skipping meta.json validation.");
                 }
@@ -1001,43 +1002,71 @@ async fn download_http_bytes_with_retry(
     }
 }
 
-async fn download_http_bytes_optional(
+async fn download_http_bytes_optional_with_retry(
     client: &reqwest::Client,
     url: reqwest::Url,
+    retries: usize,
 ) -> Result<Option<Vec<u8>>> {
-    let resp = client
-        .get(url.clone())
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?;
-    let status = resp.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
-    if !status.is_success() {
-        return Err(anyhow!(HttpStatusFailure {
-            url: url.clone(),
-            status
-        }))
-        .with_context(|| format!("GET {url}"));
-    }
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
 
-    if let Some(encoding) = resp
-        .headers()
-        .get(CONTENT_ENCODING)
-        .and_then(|v| v.to_str().ok())
-    {
-        let encoding = encoding.trim();
-        if !encoding.eq_ignore_ascii_case("identity") {
-            bail!("unexpected Content-Encoding for {url}: {encoding}");
+        let resp_result = client.get(url.clone()).send().await;
+        match resp_result {
+            Ok(resp) => {
+                let status = resp.status();
+                if status == reqwest::StatusCode::NOT_FOUND {
+                    return Ok(None);
+                }
+                if status.is_success() {
+                    if let Some(encoding) = resp
+                        .headers()
+                        .get(CONTENT_ENCODING)
+                        .and_then(|v| v.to_str().ok())
+                    {
+                        let encoding = encoding.trim();
+                        if !encoding.eq_ignore_ascii_case("identity") {
+                            bail!("unexpected Content-Encoding for {url}: {encoding}");
+                        }
+                    }
+                    return Ok(Some(
+                        resp.bytes()
+                            .await
+                            .with_context(|| format!("read body for GET {url}"))?
+                            .to_vec(),
+                    ));
+                }
+
+                let err = Err(anyhow!(HttpStatusFailure {
+                    url: url.clone(),
+                    status
+                }))
+                .with_context(|| format!("GET {url}"));
+
+                if attempt < retries && is_retryable_http_status(status) {
+                    let sleep_for = retry_backoff(attempt);
+                    eprintln!(
+                        "download failed (attempt {attempt}/{retries}) for {url}: HTTP {status}; retrying in {:?}",
+                        sleep_for
+                    );
+                    tokio::time::sleep(sleep_for).await;
+                    continue;
+                }
+                return err;
+            }
+            Err(err) if attempt < retries => {
+                let sleep_for = retry_backoff(attempt);
+                eprintln!(
+                    "download failed (attempt {attempt}/{retries}) for {url}: {err}; retrying in {:?}",
+                    sleep_for
+                );
+                tokio::time::sleep(sleep_for).await;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("GET {url}"));
+            }
         }
     }
-    Ok(Some(
-        resp.bytes()
-            .await
-            .with_context(|| format!("read body for GET {url}"))?
-            .to_vec(),
-    ))
 }
 
 async fn verify_http_chunk(
