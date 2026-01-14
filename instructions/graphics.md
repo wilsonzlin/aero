@@ -134,7 +134,7 @@ The AeroGPU Windows driver communicates with the emulator via a shared protocol.
 
 Reference: `docs/abi/aerogpu-pci-identity.md` (canonical AeroGPU VID/DID contract; note that the canonical
 `aero_machine::Machine` can expose the AeroGPU PCI identity and BAR1-backed VRAM via
-`MachineConfig::enable_aerogpu` (mutually exclusive with `enable_vga`), and uses the standalone
+`MachineConfig::enable_aerogpu` (requires `enable_pc_platform=true`; mutually exclusive with `enable_vga`), and uses the standalone
 `aero_gpu_vga` + `00:0c.0` PCI stub when `enable_vga=true`).
 
 ---
@@ -189,7 +189,7 @@ Legend:
 |----|--------|------|-------|-------------|
 | D9-001 | Implemented | DXBC container parsing helpers | `crates/aero-d3d9/src/dxbc/`, `crates/aero-dxbc/src/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked` |
 | D9-002 | Implemented | SM2/SM3 decode → IR → WGSL generation | `crates/aero-d3d9/src/sm3/`, `crates/aero-d3d9/src/shader.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked` |
-| D9-003 | Implemented | Fixed-function pipeline translation (FVF/TSS → generated WGSL) | `crates/aero-d3d9/src/fixed_function/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_fixed_function --locked` |
+| D9-003 | Implemented | Fixed-function pipeline translation (FVF/TSS → generated WGSL) | `crates/aero-d3d9/src/fixed_function/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test fixed_function_wgsl_snapshots --locked` |
 | D9-004 | Implemented | Resource model + runtime/state tracking (textures, samplers, RT/DS, eviction) | `crates/aero-d3d9/src/resources/`, `crates/aero-d3d9/src/runtime/`, `crates/aero-d3d9/src/state/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked` |
 | D9-005 | Partial | D3D9Ex/DWM-facing semantics live in the **AeroGPU command processor** layer, not the translator | `crates/aero-gpu/src/command_processor.rs`, `docs/16-d3d9ex-dwm-compatibility.md` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_ex_protocol --locked` |
 
@@ -299,6 +299,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_bar0_mmio_v
 # Run D3D9 translator-focused tests (no GPU required)
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test vertex_decl_translate --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test fixed_function_wgsl_snapshots --locked
 
 # Run D3D9 WebGPU integration tests (wgpu/WebGPU; may skip unless AERO_REQUIRE_WEBGPU=1)
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_fixed_function --locked
