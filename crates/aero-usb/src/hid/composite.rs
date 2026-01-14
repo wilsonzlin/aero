@@ -75,7 +75,11 @@ impl KeyboardInterface {
         }
 
         let mut changed = false;
-        if let Some(bit) = modifier_bit(usage) {
+        let modifier = modifier_bit(usage);
+        if modifier.is_none() && usage > super::keyboard::KEY_USAGE_MAX {
+            return;
+        }
+        if let Some(bit) = modifier {
             let before = self.modifiers;
             if pressed {
                 self.modifiers |= bit;
@@ -795,6 +799,9 @@ impl IoSnapshot for UsbCompositeHidInput {
                 return Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys"));
             }
             self.keyboard.pressed_keys = d.bytes_vec(count)?;
+            self.keyboard
+                .pressed_keys
+                .retain(|&k| k != 0 && k <= super::keyboard::KEY_USAGE_MAX);
             d.finish()?;
         }
         if let Some(buf) = r.bytes(TAG_KBD_LAST_REPORT) {
@@ -802,6 +809,8 @@ impl IoSnapshot for UsbCompositeHidInput {
                 return Err(SnapshotError::InvalidFieldEncoding("keyboard last report"));
             }
             self.keyboard.last_report.copy_from_slice(buf);
+            self.keyboard.last_report =
+                super::keyboard::sanitize_keyboard_report_bytes(self.keyboard.last_report);
         }
         if let Some(buf) = r.bytes(TAG_KBD_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
@@ -822,7 +831,9 @@ impl IoSnapshot for UsbCompositeHidInput {
                 let report = d.bytes_vec(len)?;
                 self.keyboard
                     .pending_reports
-                    .push_back(report.try_into().expect("len checked"));
+                    .push_back(super::keyboard::sanitize_keyboard_report_bytes(
+                        report.try_into().expect("len checked"),
+                    ));
             }
             d.finish()?;
         }

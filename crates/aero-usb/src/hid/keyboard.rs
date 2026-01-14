@@ -48,6 +48,18 @@ pub const KEYBOARD_LED_MASK: u8 = KEYBOARD_LED_NUM_LOCK
     | KEYBOARD_LED_COMPOSE
     | KEYBOARD_LED_KANA;
 
+pub(super) const KEY_USAGE_MAX: u8 = 0x89;
+
+pub(super) fn sanitize_keyboard_report_bytes(mut report: [u8; 8]) -> [u8; 8] {
+    report[1] = 0; // reserved byte
+    for key in &mut report[2..] {
+        if *key > KEY_USAGE_MAX {
+            *key = 0;
+        }
+    }
+    report
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyboardReport {
     pub modifiers: u8,
@@ -273,6 +285,7 @@ impl IoSnapshot for UsbHidKeyboard {
                 return Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys"));
             }
             self.pressed_keys = d.bytes_vec(count)?;
+            self.pressed_keys.retain(|&k| k != 0 && k <= KEY_USAGE_MAX);
             d.finish()?;
         }
 
@@ -281,6 +294,7 @@ impl IoSnapshot for UsbHidKeyboard {
                 return Err(SnapshotError::InvalidFieldEncoding("keyboard last report"));
             }
             self.last_report.copy_from_slice(buf);
+            self.last_report = sanitize_keyboard_report_bytes(self.last_report);
         }
 
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
@@ -300,8 +314,9 @@ impl IoSnapshot for UsbHidKeyboard {
                     ));
                 }
                 let report = d.bytes_vec(len)?;
+                let report = report.try_into().expect("len checked");
                 self.pending_reports
-                    .push_back(report.try_into().expect("len checked"));
+                    .push_back(sanitize_keyboard_report_bytes(report));
             }
             d.finish()?;
         }
@@ -355,7 +370,11 @@ impl UsbHidKeyboard {
         }
 
         let mut changed = false;
-        if let Some(bit) = modifier_bit(usage) {
+        let modifier = modifier_bit(usage);
+        if modifier.is_none() && usage > KEY_USAGE_MAX {
+            return;
+        }
+        if let Some(bit) = modifier {
             let before = self.modifiers;
             if pressed {
                 self.modifiers |= bit;
