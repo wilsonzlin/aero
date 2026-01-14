@@ -181,6 +181,18 @@ function isUsbSnapshotTagPrintable(tag: string): boolean {
   return true;
 }
 
+function usbSnapshotTagForLegacyBlob(bytes: Uint8Array): string {
+  // Legacy snapshots stored a single raw controller blob. Most commonly this was UHCI, but
+  // some historical builds also stored xHCI/EHCI snapshots directly under the outer
+  // `DeviceId::USB` entry before the AUSB container was introduced.
+  //
+  // Classify the raw blob so restore→save merge semantics preserve the correct controller tag.
+  const kind = classifyUsbSnapshot(bytes);
+  if (kind === "xhci") return USB_SNAPSHOT_TAG_XHCI;
+  if (kind === "ehci") return USB_SNAPSHOT_TAG_EHCI;
+  return USB_SNAPSHOT_TAG_UHCI;
+}
+
 function mergeUsbSnapshotBytes(cached: Uint8Array, fresh: Uint8Array): Uint8Array {
   const cachedDecoded = decodeUsbSnapshotContainer(cached);
   const freshDecoded = decodeUsbSnapshotContainer(fresh);
@@ -197,8 +209,8 @@ function mergeUsbSnapshotBytes(cached: Uint8Array, fresh: Uint8Array): Uint8Arra
     ? cachedDecoded.entries
     : isUsbSnapshotContainer(cached)
       ? []
-      : [{ tag: USB_SNAPSHOT_TAG_UHCI, bytes: cached }];
-  const freshEntries = freshDecoded ? freshDecoded.entries : [{ tag: USB_SNAPSHOT_TAG_UHCI, bytes: fresh }];
+      : [{ tag: usbSnapshotTagForLegacyBlob(cached), bytes: cached }];
+  const freshEntries = freshDecoded ? freshDecoded.entries : [{ tag: usbSnapshotTagForLegacyBlob(fresh), bytes: fresh }];
 
   // Start with cached entries so unknown tags are preserved, then override with fresh entries so
   // newly snapshotted controllers take precedence.
