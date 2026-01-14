@@ -61,3 +61,18 @@ fn create_shader_dxbc_with_stage_ex_panics_for_non_compute_stages() {
     );
     let _ = w.finish();
 }
+
+#[test]
+fn create_shader_dxbc_with_stage_ex_panics_without_mutating_stream() {
+    let mut w = AerogpuCmdWriter::new();
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        w.create_shader_dxbc_with_stage_ex(
+            1,
+            AerogpuShaderStage::Pixel,
+            &[0x00],
+            Some(AerogpuShaderStageEx::Geometry),
+        );
+    }));
+    assert!(res.is_err());
+    assert!(w.is_empty());
+}

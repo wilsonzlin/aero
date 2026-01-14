@@ -458,6 +458,9 @@ impl AerogpuCmdWriter {
         stage_ex: Option<AerogpuShaderStageEx>,
     ) {
         assert!(dxbc_bytes.len() <= u32::MAX as usize);
+        // Validate `stage_ex` invariants before mutating the stream buffer so callers can catch a
+        // panic (e.g. via `catch_unwind`) without leaving a partially written packet behind.
+        let reserved0 = encode_stage_ex_reserved0(stage, stage_ex);
         let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>()
             .checked_add(dxbc_bytes.len())
             .expect("CREATE_SHADER_DXBC packet too large (usize overflow)");
@@ -476,7 +479,7 @@ impl AerogpuCmdWriter {
         );
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, reserved0),
-            encode_stage_ex_reserved0(stage, stage_ex),
+            reserved0,
         );
         self.buf[base + size_of::<AerogpuCmdCreateShaderDxbc>()
             ..base + size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len()]
