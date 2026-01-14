@@ -23,7 +23,7 @@ namespace aerogpu::d3d10_11 {
 class WddmSubmit {
  public:
   WddmSubmit() = default;
-  ~WddmSubmit();
+  ~WddmSubmit() noexcept;
 
   WddmSubmit(const WddmSubmit&) = delete;
   WddmSubmit& operator=(const WddmSubmit&) = delete;

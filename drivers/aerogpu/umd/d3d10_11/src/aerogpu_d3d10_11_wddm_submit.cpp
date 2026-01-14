@@ -879,8 +879,13 @@ void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& 
 
 } // namespace
 
-WddmSubmit::~WddmSubmit() {
-  Shutdown();
+WddmSubmit::~WddmSubmit() noexcept {
+  // Destructors are implicitly `noexcept`; be defensive so a misbehaving runtime
+  // callback cannot trigger `std::terminate` during device teardown.
+  try {
+    Shutdown();
+  } catch (...) {
+  }
 }
 
 HRESULT WddmSubmit::Init(const D3DDDI_DEVICECALLBACKS* callbacks,
