@@ -6,6 +6,15 @@ const DIFFUSE_LOCATION: u32 = 3;
 const SPECULAR_LOCATION: u32 = 4;
 const TEXCOORD_BASE_LOCATION: u32 = 5;
 
+/// WebGPU guarantees at least 16 vertex attributes.
+///
+/// D3D9 fixed-function FVFs can express more data than this, so we must reject combinations that
+/// would exceed the limit.
+const WEBGPU_MAX_VERTEX_ATTRIBUTES: usize = 16;
+
+/// D3D9 FVFs can specify up to 8 TEXCOORD sets.
+const MAX_TEXCOORDS: usize = 8;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Fvf(pub u32);
 
@@ -91,8 +100,20 @@ impl FvfLayout {
         let has_specular = fvf.has_flag(Fvf::SPECULAR);
 
         let tex_count = fvf.texcoord_count();
-        if tex_count > 4 {
+        if tex_count > MAX_TEXCOORDS {
             return Err(FvfError::UnsupportedTexcoordCount { count: tex_count });
+        }
+
+        let vertex_attribute_count = 1 // position
+            + (has_normal as usize)
+            + (has_diffuse as usize)
+            + (has_specular as usize)
+            + tex_count;
+        if vertex_attribute_count > WEBGPU_MAX_VERTEX_ATTRIBUTES {
+            return Err(FvfError::TooManyVertexAttributes {
+                count: vertex_attribute_count,
+                limit: WEBGPU_MAX_VERTEX_ATTRIBUTES,
+            });
         }
 
         let mut texcoords = Vec::with_capacity(tex_count);
@@ -158,6 +179,18 @@ impl FvfLayout {
             offset += byte_len;
         }
 
+        // Keep vertex attribute locations within WebGPU's guaranteed minimum.
+        if vertex_attributes.len() > WEBGPU_MAX_VERTEX_ATTRIBUTES
+            || vertex_attributes
+                .iter()
+                .any(|a| a.shader_location as usize >= WEBGPU_MAX_VERTEX_ATTRIBUTES)
+        {
+            return Err(FvfError::TooManyVertexAttributes {
+                count: vertex_attributes.len(),
+                limit: WEBGPU_MAX_VERTEX_ATTRIBUTES,
+            });
+        }
+
         Ok(Self {
             fvf,
             position,
@@ -176,4 +209,5 @@ pub enum FvfError {
     MissingPosition,
     ConflictingPositionFlags,
     UnsupportedTexcoordCount { count: usize },
+    TooManyVertexAttributes { count: usize, limit: usize },
 }

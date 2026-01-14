@@ -131,6 +131,7 @@ name = "aero-d3d9"
 version = "0.1.0"
 dependencies = [
  "aero-dxbc",
+ "aero-gpu-utils",
  "anyhow",
  "bitflags 2.10.0",
  "blake3",

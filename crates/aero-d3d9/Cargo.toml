@@ -14,8 +14,8 @@ anyhow = "1"
 bitflags = "2"
 blake3 = "1.5.0"
 bytemuck = { version = "1.14", features = ["derive"] }
- # Shared DXBC container parsing.
- aero-dxbc = { path = "../aero-dxbc" }
+# Shared DXBC container parsing.
+aero-dxbc = { path = "../aero-dxbc" }
 futures-intrusive = "0.5"
 half = "2.7.1"
 hashbrown = "0.14"
@@ -28,6 +28,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
 aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
+aero-gpu-utils = { path = "../aero-gpu-utils" }
 futures = "0.3"
 insta = "1.39.0"
 naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }

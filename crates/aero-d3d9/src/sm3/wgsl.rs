@@ -1162,7 +1162,7 @@ fn emit_stmt(
             // D3D9 texkill: discard the pixel if any component of the source is < 0.
             //
             // The source operand swizzle and modifier are already applied by `src_expr`.
-            let (src_e, src_ty) = src_expr(src)?;
+            let (src_e, src_ty) = src_expr(src, f32_defs)?;
             if src_ty != ScalarTy::F32 {
                 return Err(err("texkill requires a float source"));
             }
