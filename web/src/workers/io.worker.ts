@@ -3859,22 +3859,41 @@ function runHdaMicCaptureTest(requestId: number): void {
 
     // Guest memory layout.
     //
-    // IMPORTANT: Keep this region disjoint from the CPU worker's always-on guest-memory
-    // framebuffer demos:
-    // - Shared framebuffer embed offset starts at `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES` (0x20_0000).
-    // - Demo framebuffer scratch uses `DEMO_FB_OFFSET` (0x50_0000) for up to ~3MiB.
-    //
-    // The CPU worker writes those regions continuously, so overlapping addresses will corrupt
-    // CORB/RIRB/BDL/PCM state and make this test flaky.
-    const corbBase = 0x0140_0000;
-    const rirbBase = 0x0140_1000;
-    const bdlBase = 0x0141_0000;
-    const pcmBase = 0x0142_0000;
+    // These buffers are DMA targets for the HDA model. Allocate from the end of guest RAM so
+    // tiny test configs (e.g. 1MiB guest RAM) can run this harness without requiring fixed
+    // high guest addresses.
     const pcmBytes = 4096;
+    const alignDown = (value: number, alignment: number): number => {
+      if (alignment <= 0) return value >>> 0;
+      return Math.floor((value >>> 0) / alignment) * alignment;
+    };
+    const guestBytes = guestU8.byteLength >>> 0;
+    const guardBytes = 0x1000;
+    const slotBytes = 0x1000;
+    // We align down twice (guest end + PCM base), so budget worst-case slop for both.
+    const maxAlignSlopBytes = (slotBytes - 1) * 2;
+    const requiredBytes = guardBytes + pcmBytes + slotBytes * 3 + maxAlignSlopBytes;
+    if (guestBytes < requiredBytes) {
+      throw new Error(
+        `Guest RAM too small for HDA mic capture test buffers (guestBytes=0x${guestBytes.toString(16)} required=0x${requiredBytes.toString(16)}).`,
+      );
+    }
+
+    let cursor = alignDown(guestBytes - guardBytes, slotBytes);
+    const pcmBase = alignDown(cursor - pcmBytes, slotBytes);
+    cursor = pcmBase;
+    const bdlBase = cursor - slotBytes; // also 128-byte aligned
+    cursor = bdlBase;
+    const rirbBase = cursor - slotBytes;
+    cursor = rirbBase;
+    const corbBase = cursor - slotBytes;
 
     const view = new DataView(guestU8.buffer, guestU8.byteOffset, guestU8.byteLength);
 
     const ensureRange = (guestOffset: number, len: number) => {
+      if (guestOffset < 0) {
+        throw new Error(`HDA test guest range out of bounds: negative offset=0x${guestOffset.toString(16)}`);
+      }
       const off = guestOffset >>> 0;
       const end = off + (len >>> 0);
       if (end > guestU8.byteLength) {
@@ -3889,8 +3908,8 @@ function runHdaMicCaptureTest(requestId: number): void {
     const CORB_BYTES = CORB_ENTRIES * 4;
     const RIRB_BYTES = RIRB_ENTRIES * 8;
 
-    // Ensure these fixed-offset harness buffers do not overlap the always-on shared framebuffer demo
-    // region embedded in guest RAM.
+    // Ensure these harness buffers do not overlap the always-on shared framebuffer demo region
+    // embedded in guest RAM.
     assertNoGuestOverlapWithSharedFramebuffer(corbBase, CORB_BYTES, "HDA test CORB");
     assertNoGuestOverlapWithSharedFramebuffer(rirbBase, RIRB_BYTES, "HDA test RIRB");
     assertNoGuestOverlapWithSharedFramebuffer(bdlBase, 16, "HDA test BDL");

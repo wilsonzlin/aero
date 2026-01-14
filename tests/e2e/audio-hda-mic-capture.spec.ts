@@ -46,7 +46,9 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
     const coord = (globalThis as any).__aeroWorkerCoordinator as any;
 
     const workerConfig = {
-      guestMemoryMiB: 24,
+      // The HDA mic-capture harness allocates its CORB/RIRB/BDL/PCM scratch buffers from the end
+      // of guest RAM, so 1MiB is sufficient and reduces shared WebAssembly.Memory pressure in CI.
+      guestMemoryMiB: 1,
       vramMiB: 0,
       enableWorkers: true,
       enableWebGPU: false,

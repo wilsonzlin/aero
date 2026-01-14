@@ -1551,9 +1551,10 @@ function renderAudioPanel(): HTMLElement {
       }
 
       const workerConfig: AeroConfig = {
-        // HDA PCI playback uses fixed guest RAM buffers around ~0x0111_0000 (see `cpu.worker.ts`),
-        // so we still need >16MiB of guest RAM. Keep it modest to reduce shared-memory pressure.
-        guestMemoryMiB: 24,
+        // The CPU-worker HDA PCI playback harness allocates its CORB/RIRB/BDL/PCM scratch buffers
+        // from the end of guest RAM (see `web/src/workers/cpu.worker.ts`), so 1MiB is sufficient
+        // and reduces shared WebAssembly.Memory pressure (especially in CI / parallel tabs).
+        guestMemoryMiB: 1,
         vramMiB: 0,
         enableWorkers: true,
         enableWebGPU: false,

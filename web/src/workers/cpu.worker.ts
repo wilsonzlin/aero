@@ -1024,20 +1024,44 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
 
   // Guest memory layout for CORB/RIRB + BDL + PCM.
   //
-  // Avoid low-memory offsets that are used by other CPU-worker demos (e.g. the
-  // diskRead demo uses 0x1000 as a scratch buffer) and keep this region distinct
-  // from the CPU worker's ongoing framebuffer demo region:
-  // - Shared framebuffer: starts at `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES` (0x20_0000).
-  //
-  // Those demos continuously write guest RAM in the background, so overlapping
-  // addresses will corrupt CORB/RIRB/BDL/PCM state and cause flaky CI failures.
-  //
-  // Finally, keep this disjoint from the synthetic HDA capture harness (which
-  // also reserves a chunk of guest RAM for its own CORB/RIRB/BDL/PCM buffers).
-  const corbBase = 0x0100_0000;
-  const rirbBase = 0x0100_1000;
-  const bdlBase = 0x0110_0000;
-  const pcmBase = 0x0111_0000;
+  // These buffers are DMA targets for the HDA model. Allocate them from the end
+  // of guest RAM so:
+  // - tiny test configs (e.g. 1MiB guest RAM) can still run the harness, and
+  // - we avoid overlapping any "always-on" demo regions (like an embedded legacy
+  //   shared framebuffer) which the CPU worker can write continuously in the
+  //   background.
+  const freqHz = typeof msg.freqHz === "number" ? msg.freqHz : 440;
+  const gain = typeof msg.gain === "number" ? msg.gain : 0.1;
+  const sampleRate = 48_000;
+  const frames = Math.floor(sampleRate / 5); // ~200ms
+  const bytesPerFrame = 4; // 16-bit stereo
+  const pcmLenBytes = frames * bytesPerFrame;
+
+  const alignDown = (value: number, alignment: number): number => {
+    if (alignment <= 0) return value >>> 0;
+    return Math.floor((value >>> 0) / alignment) * alignment;
+  };
+
+  const guestBytes = guestU8.byteLength >>> 0;
+  const guardBytes = 0x1000;
+  const slotBytes = 0x1000;
+  // We align down twice (guest end + PCM base), so budget worst-case slop for both.
+  const maxAlignSlopBytes = (slotBytes - 1) * 2;
+  const requiredBytes = guardBytes + pcmLenBytes + slotBytes * 3 + maxAlignSlopBytes;
+  if (guestBytes < requiredBytes) {
+    throw new Error(
+      `Guest RAM too small for HDA PCI playback buffers (guestBytes=0x${guestBytes.toString(16)} required=0x${requiredBytes.toString(16)}).`,
+    );
+  }
+
+  let cursor = alignDown(guestBytes - guardBytes, slotBytes);
+  const pcmBase = alignDown(cursor - pcmLenBytes, slotBytes);
+  cursor = pcmBase;
+  const bdlBase = cursor - slotBytes; // also 128-byte aligned
+  cursor = bdlBase;
+  const rirbBase = cursor - slotBytes;
+  cursor = rirbBase;
+  const corbBase = cursor - slotBytes;
 
   const CORB_ENTRIES = 256;
   const RIRB_ENTRIES = 256;
@@ -1095,12 +1119,6 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   }
 
   // Populate a looping PCM buffer (sine wave) and a single-entry BDL pointing at it.
-  const freqHz = typeof msg.freqHz === "number" ? msg.freqHz : 440;
-  const gain = typeof msg.gain === "number" ? msg.gain : 0.1;
-  const sampleRate = 48_000;
-  const frames = Math.floor(sampleRate / 5); // ~200ms
-  const bytesPerFrame = 4; // 16-bit stereo
-  const pcmLenBytes = frames * bytesPerFrame;
 
   guestBoundsCheck(pcmBase, pcmLenBytes);
   guestAssertNoOverlapWithDemoRegions(pcmBase, pcmLenBytes, "HDA PCI PCM");
@@ -1908,9 +1926,13 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
     const guestBytes = guestU8.byteLength >>> 0;
     const guardBytes = 0x1000;
     const slotBytes = 0x1000;
-    const requiredBytes = guardBytes + pcmBytes + slotBytes * 3;
+    // We align down twice (guest end + PCM base), so budget worst-case slop for both.
+    const maxAlignSlopBytes = (slotBytes - 1) * 2;
+    const requiredBytes = guardBytes + pcmBytes + slotBytes * 3 + maxAlignSlopBytes;
     if (guestBytes < requiredBytes) {
-      throw new Error(`Guest RAM too small for HDA capture buffers (guestBytes=0x${guestBytes.toString(16)}).`);
+      throw new Error(
+        `Guest RAM too small for HDA capture buffers (guestBytes=0x${guestBytes.toString(16)} required=0x${requiredBytes.toString(16)}).`,
+      );
     }
 
     let cursor = alignDown(guestBytes - guardBytes, slotBytes);
