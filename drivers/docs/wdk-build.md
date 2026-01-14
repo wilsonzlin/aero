@@ -58,6 +58,7 @@ See the template manifests under `drivers/_template/`:
 - `ci-package.README.md` (field reference)
 - `ci-package.json` (starter template; replace `infFiles` placeholder `REPLACE_ME.inf`, or remove `infFiles` to enable CI auto-discovery)
 - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
+- `ci-package.tools-example.json` (INF selection + helper tool(s) via `toolFiles`)
 - `ci-package.wdf-example.json` (WDF coinstaller example)
 
 ## virtio-win source builds

@@ -295,6 +295,7 @@ fi
 need_file "drivers/_template/ci-package.README.md"
 need_file "drivers/_template/ci-package.json"
 need_file "drivers/_template/ci-package.inf-wow64-example.json"
+need_file "drivers/_template/ci-package.tools-example.json"
 need_file "drivers/_template/ci-package.wdf-example.json"
 
 if command -v python3 >/dev/null 2>&1; then
@@ -306,7 +307,7 @@ path = "drivers/_template/ci-package.json"
 with open(path, "r", encoding="utf-8") as f:
     manifest = json.load(f)
 
-required = ["infFiles", "wow64Files", "additionalFiles"]
+required = ["infFiles", "wow64Files", "requiredBuildOutputFiles", "additionalFiles", "toolFiles"]
 missing = [k for k in required if k not in manifest]
 if missing:
     raise SystemExit(f"{path}: missing required key(s): {', '.join(missing)}")
@@ -320,7 +321,7 @@ if not isinstance(inf_files, list) or not inf_files:
 if not isinstance(inf_files[0], str) or not inf_files[0].lower().endswith(".inf"):
     raise SystemExit(f"{path}: infFiles placeholder must be a string ending in .inf; got: {inf_files[0]!r}")
 
-for key in ("wow64Files", "additionalFiles"):
+for key in ("wow64Files", "requiredBuildOutputFiles", "additionalFiles", "toolFiles"):
     value = manifest.get(key)
     if not isinstance(value, list):
         raise SystemExit(f"{path}: {key} must be an array; got: {type(value).__name__}")
