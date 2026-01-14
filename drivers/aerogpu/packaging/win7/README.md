@@ -423,10 +423,18 @@ build_vs2010.cmd
  bin\aerogpu_dbgctl.exe --query-umd-private
  bin\aerogpu_dbgctl.exe --query-fence
  bin\aerogpu_dbgctl.exe --dump-ring --ring-id 0
- bin\aerogpu_dbgctl.exe --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
- bin\aerogpu_dbgctl.exe --wait-vblank --vblank-samples 120 --timeout-ms 2000
-bin\aerogpu_dbgctl.exe --query-scanline --vblank-samples 50 --vblank-interval-ms 10
-bin\aerogpu_dbgctl.exe --selftest
+ bin\aerogpu_dbgctl.exe --query-scanout
+ bin\aerogpu_dbgctl.exe --query-cursor
+  bin\aerogpu_dbgctl.exe --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+  bin\aerogpu_dbgctl.exe --wait-vblank --vblank-samples 120 --timeout-ms 2000
+ bin\aerogpu_dbgctl.exe --query-scanline --vblank-samples 50 --vblank-interval-ms 10
+ bin\aerogpu_dbgctl.exe --selftest
+
+ :: Scanout/cursor image dumps (requires KMD support for AEROGPU_ESCAPE_OP_READ_GPA)
+ bin\aerogpu_dbgctl.exe --dump-scanout-bmp C:\scanout.bmp
+ bin\aerogpu_dbgctl.exe --dump-scanout-png C:\scanout.png
+ bin\aerogpu_dbgctl.exe --dump-cursor-bmp C:\cursor.bmp
+ bin\aerogpu_dbgctl.exe --dump-cursor-png C:\cursor.png
 ```
 
 ## 7) Run the guest-side Direct3D validation suite (recommended)
