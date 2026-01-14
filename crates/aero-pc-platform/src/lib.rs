@@ -510,14 +510,13 @@ impl PcIdePort {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar4_base = cfg
                 .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar4_base)
         };
 
         let mut ide = self.ide.borrow_mut();
         ide.config_mut().set_command(command);
-        if bar4_base != 0 {
+        if let Some(bar4_base) = bar4_base {
             ide.config_mut().set_bar_base(4, bar4_base);
         }
     }
@@ -564,14 +563,13 @@ impl PcIdeBusMasterBar {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar4_base = cfg
                 .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar4_base)
         };
 
         let mut ide = self.ide.borrow_mut();
         ide.config_mut().set_command(command);
-        if bar4_base != 0 {
+        if let Some(bar4_base) = bar4_base {
             ide.config_mut().set_bar_base(4, bar4_base);
         }
     }
@@ -2704,15 +2702,14 @@ impl PcPlatform {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar4 = cfg
                 .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             (command, bar4)
         };
 
         {
             let mut ide = ide.borrow_mut();
             ide.config_mut().set_command(command);
-            if bar4_base != 0 {
+            if let Some(bar4_base) = bar4_base {
                 ide.config_mut().set_bar_base(4, bar4_base);
             }
         }
@@ -2904,8 +2901,7 @@ impl PcPlatform {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar4_base = cfg
                         .and_then(|cfg| cfg.bar_range(UhciPciDevice::IO_BAR_INDEX))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar4_base)
                 };
 
@@ -2913,7 +2909,7 @@ impl PcPlatform {
                 // mastering gating when used via `tick_1ms`.
                 let mut uhci = uhci.borrow_mut();
                 uhci.config_mut().set_command(command);
-                if bar4_base != 0 {
+                if let Some(bar4_base) = bar4_base {
                     uhci.config_mut()
                         .set_bar_base(UhciPciDevice::IO_BAR_INDEX, bar4_base);
                 }
@@ -2927,8 +2923,7 @@ impl PcPlatform {
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
                     let bar0_base = cfg
                         .and_then(|cfg| cfg.bar_range(EhciPciDevice::MMIO_BAR_INDEX))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
+                        .map(|range| range.base);
                     (command, bar0_base)
                 };
 
@@ -2936,7 +2931,7 @@ impl PcPlatform {
                 // gating when used via `tick_1ms`.
                 let mut ehci = ehci.borrow_mut();
                 ehci.config_mut().set_command(command);
-                if bar0_base != 0 {
+                if let Some(bar0_base) = bar0_base {
                     ehci.config_mut()
                         .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
                 }
