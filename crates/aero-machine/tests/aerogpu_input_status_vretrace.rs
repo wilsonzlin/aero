@@ -5,21 +5,7 @@ fn aerogpu_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
     // Legacy real-mode code frequently polls VGA Input Status 1 (0x3DA) bit 3 ("vertical retrace")
     // as a crude 60Hz timing source. Ensure we present a deterministic vblank pulse that toggles
     // with a stable cadence as guest time advances.
-    for enable_pc_platform in [false, true] {
-        let cfg = MachineConfig {
-            ram_size_bytes: 2 * 1024 * 1024,
-            enable_pc_platform,
-            enable_vga: true,
-            // Keep the machine minimal/deterministic for this timing test.
-            enable_serial: false,
-            enable_i8042: false,
-            enable_a20_gate: false,
-            enable_reset_ctrl: false,
-            enable_e1000: false,
-            enable_virtio_net: false,
-            ..Default::default()
-        };
-
+    fn run_case(label: &str, cfg: MachineConfig) {
         let mut m = Machine::new(cfg).unwrap();
 
         // Sample at 0.1ms resolution for 50ms (~3 frames at 60Hz).
@@ -35,7 +21,7 @@ fn aerogpu_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
             let b3_mono = (mono & 0x08) != 0;
             assert_eq!(
                 b3_color, b3_mono,
-                "mono alias (0x3BA) should report the same vblank state as 0x3DA"
+                "{label}: mono alias (0x3BA) should report the same vblank state as 0x3DA"
             );
 
             vretrace.push(b3_color);
@@ -44,11 +30,11 @@ fn aerogpu_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
 
         assert!(
             vretrace.iter().any(|&b| b),
-            "expected to observe retrace bit set at least once"
+            "{label}: expected to observe retrace bit set at least once"
         );
         assert!(
             vretrace.iter().any(|&b| !b),
-            "expected to observe retrace bit clear at least once"
+            "{label}: expected to observe retrace bit clear at least once"
         );
 
         // Detect rising edges (0 -> 1) and ensure they're roughly periodic.
@@ -62,7 +48,7 @@ fn aerogpu_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
         }
         assert!(
             rising_edges_ns.len() >= 2,
-            "expected multiple vblank pulses (rising edges), got {}",
+            "{label}: expected multiple vblank pulses (rising edges), got {}",
             rising_edges_ns.len()
         );
 
@@ -72,7 +58,7 @@ fn aerogpu_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
             let dt = win[1] - win[0];
             assert!(
                 (10_000_000..=25_000_000).contains(&dt),
-                "unexpected vblank cadence: dt={dt}ns"
+                "{label}: unexpected vblank cadence: dt={dt}ns"
             );
         }
 
@@ -90,8 +76,50 @@ fn aerogpu_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
         let max_run_ns = max_run as u64 * STEP_NS;
         assert!(
             max_run_ns < 5_000_000,
-            "expected a short vblank pulse, but saw {max_run_ns}ns asserted window"
+            "{label}: expected a short vblank pulse, but saw {max_run_ns}ns asserted window"
         );
     }
-}
 
+    let base_cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        // Keep the machine minimal/deterministic for this timing test.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    };
+
+    // VGA device model (no PC platform).
+    run_case(
+        "vga/no-pc-platform",
+        MachineConfig {
+            enable_pc_platform: false,
+            enable_vga: true,
+            ..base_cfg
+        },
+    );
+
+    // VGA device model (PC platform enabled; VGA presented via PCI MMIO router).
+    run_case(
+        "vga/pc-platform",
+        MachineConfig {
+            enable_pc_platform: true,
+            enable_vga: true,
+            ..base_cfg
+        },
+    );
+
+    // AeroGPU legacy VGA port window (0x3B0..0x3DF), including Input Status 1 at 0x3DA/0x3BA.
+    run_case(
+        "aerogpu/pc-platform",
+        MachineConfig {
+            enable_pc_platform: true,
+            enable_aerogpu: true,
+            enable_vga: false,
+            ..base_cfg
+        },
+    );
+}
