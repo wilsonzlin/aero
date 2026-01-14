@@ -1,7 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
+use aero_acpi::{
+    AcpiConfig, AcpiPlacement, AcpiTables, FADT_FLAG_PWR_BUTTON, FADT_FLAG_RESET_REG_SUP,
+};
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, DEFAULT_ACPI_DISABLE,
     DEFAULT_ACPI_ENABLE, DEFAULT_GPE0_BLK, DEFAULT_GPE0_BLK_LEN, DEFAULT_PM1A_CNT_BLK,
@@ -31,6 +33,7 @@ struct FadtInfo {
     pm_tmr_blk: u16,
     gpe0_blk: u16,
     gpe0_blk_len: u8,
+    flags: u32,
 }
 
 fn parse_fadt(fadt: &[u8]) -> FadtInfo {
@@ -45,6 +48,7 @@ fn parse_fadt(fadt: &[u8]) -> FadtInfo {
     let pm_tmr_blk = read_u32_le(fadt, 76) as u16;
     let gpe0_blk = read_u32_le(fadt, 80) as u16;
     let gpe0_blk_len = fadt[92];
+    let flags = read_u32_le(fadt, 112);
 
     FadtInfo {
         sci_int,
@@ -56,6 +60,7 @@ fn parse_fadt(fadt: &[u8]) -> FadtInfo {
         pm_tmr_blk,
         gpe0_blk,
         gpe0_blk_len,
+        flags,
     }
 }
 
@@ -158,6 +163,16 @@ fn acpi_pm_sci_apic_mode_delivers_ioapic_vector_and_respects_remote_irr() {
     // Windows 7 is extremely sensitive to SCI correctness; these values are a
     // deliberate ABI between firmware tables and device models.
     assert_eq!(fadt.sci_int, 9, "FADT SCI_INT must remain IRQ9/GSI9");
+    assert_ne!(
+        fadt.flags & FADT_FLAG_RESET_REG_SUP,
+        0,
+        "FADT Flags must advertise RESET_REG_SUP"
+    );
+    assert_ne!(
+        fadt.flags & FADT_FLAG_PWR_BUTTON,
+        0,
+        "FADT Flags must advertise fixed-feature PWR_BUTTON"
+    );
     assert_eq!(
         fadt.smi_cmd_port, DEFAULT_SMI_CMD_PORT,
         "FADT SMI_CMD port changed"
