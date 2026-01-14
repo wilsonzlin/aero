@@ -163,14 +163,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
             .expect("Tier-2 ValueId space exhausted");
 
         let (instrs, unsupported) = {
-            let mut lower = BlockLowerer {
-                entry_rip: bb.entry_rip,
-                base,
-                next_value: &mut self.next_value,
-                instrs: Vec::new(),
-                unsupported: false,
-                const_values: HashMap::new(),
-            };
+            let mut lower = BlockLowerer::new(bb.entry_rip, base, &mut self.next_value);
             lower.lower_block(&ir);
             (lower.instrs, lower.unsupported)
         };
@@ -284,7 +277,18 @@ struct BlockLowerer<'a> {
     const_values: HashMap<T1ValueId, u64>,
 }
 
-impl BlockLowerer<'_> {
+impl<'a> BlockLowerer<'a> {
+    fn new(entry_rip: u64, base: u32, next_value: &'a mut u32) -> Self {
+        Self {
+            entry_rip,
+            base,
+            next_value,
+            instrs: Vec::new(),
+            unsupported: false,
+            const_values: HashMap::new(),
+        }
+    }
+
     fn map_value(&self, v: T1ValueId) -> ValueId {
         ValueId(
             self.base
@@ -1356,14 +1360,7 @@ pub fn lower_tier1_ir_block_for_test(ir: &IrBlock) -> Block {
         .expect("Tier-1 IR value count overflows u32");
     let base = 0u32;
 
-    let mut lower = BlockLowerer {
-        entry_rip: ir.entry_rip,
-        base,
-        next_value: &mut next_value,
-        instrs: Vec::new(),
-        unsupported: false,
-        const_values: HashMap::new(),
-    };
+    let mut lower = BlockLowerer::new(ir.entry_rip, base, &mut next_value);
     lower.lower_block(ir);
 
     if lower.unsupported {
