@@ -20,6 +20,8 @@ import {
   decodeCmdSetSamplersPayloadFromPacket,
   decodeCmdSetConstantBuffersPayload,
   decodeCmdSetConstantBuffersPayloadFromPacket,
+  decodeCmdSetShaderResourceBuffersPayload,
+  decodeCmdSetUnorderedAccessBuffersPayload,
   decodeCmdSetVertexBuffersBindings,
   decodeCmdSetVertexBuffersBindingsFromPacket,
   decodeCmdUploadResourcePayload,
@@ -248,6 +250,28 @@ test("variable-payload decoders reject size/count fields that would overrun pack
     // buffer_count @ +16
     view.setUint32(packetOffset + 16, 2, true);
     assert.throws(() => decodeCmdSetConstantBuffersPayload(bytes, packetOffset), /too small/);
+  }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.setShaderResourceBuffers(AerogpuShaderStage.Pixel, 0, [{ buffer: 1, offsetBytes: 0, sizeBytes: 16 }]);
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // buffer_count @ +16
+    view.setUint32(packetOffset + 16, 2, true);
+    assert.throws(() => decodeCmdSetShaderResourceBuffersPayload(bytes, packetOffset), /too small/);
+  }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.setUnorderedAccessBuffers(AerogpuShaderStage.Compute, 0, [
+      { buffer: 1, offsetBytes: 0, sizeBytes: 16, initialCount: 0 },
+    ]);
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // uav_count @ +16
+    view.setUint32(packetOffset + 16, 2, true);
+    assert.throws(() => decodeCmdSetUnorderedAccessBuffersPayload(bytes, packetOffset), /too small/);
   }
 });
 

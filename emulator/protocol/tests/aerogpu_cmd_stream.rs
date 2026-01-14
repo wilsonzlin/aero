@@ -1,6 +1,8 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_dispatch_le, decode_cmd_set_vertex_buffers_bindings_le,
+    decode_cmd_set_shader_resource_buffers_bindings_le,
+    decode_cmd_set_unordered_access_buffers_bindings_le,
     decode_cmd_upload_resource_payload_le,
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
     AEROGPU_CMD_STREAM_MAGIC,
@@ -560,6 +562,50 @@ fn free_function_payload_decoders_allow_trailing_bytes() {
     assert_eq!(bindings.len(), 1);
     let buffer = bindings[0].buffer;
     assert_eq!(buffer, 11);
+
+    let mut set_srvs_payload = Vec::new();
+    push_u32(&mut set_srvs_payload, 1); // shader_stage
+    push_u32(&mut set_srvs_payload, 0); // start_slot
+    push_u32(&mut set_srvs_payload, 1); // buffer_count
+    push_u32(&mut set_srvs_payload, 0); // reserved0
+    // binding[0]
+    push_u32(&mut set_srvs_payload, 10); // buffer
+    push_u32(&mut set_srvs_payload, 0); // offset_bytes
+    push_u32(&mut set_srvs_payload, 64); // size_bytes
+    push_u32(&mut set_srvs_payload, 0); // reserved0
+    push_u32(&mut set_srvs_payload, 0xDEAD_BEEF); // trailing extension
+    let set_srvs_packet = build_packet(
+        AerogpuCmdOpcode::SetShaderResourceBuffers as u32,
+        set_srvs_payload,
+    );
+
+    let (_cmd, bindings) =
+        decode_cmd_set_shader_resource_buffers_bindings_le(&set_srvs_packet).unwrap();
+    assert_eq!(bindings.len(), 1);
+    let buffer = bindings[0].buffer;
+    assert_eq!(buffer, 10);
+
+    let mut set_uavs_payload = Vec::new();
+    push_u32(&mut set_uavs_payload, 2); // shader_stage (compute)
+    push_u32(&mut set_uavs_payload, 0); // start_slot
+    push_u32(&mut set_uavs_payload, 1); // uav_count
+    push_u32(&mut set_uavs_payload, 0); // reserved0
+    // binding[0]
+    push_u32(&mut set_uavs_payload, 20); // buffer
+    push_u32(&mut set_uavs_payload, 4); // offset_bytes
+    push_u32(&mut set_uavs_payload, 128); // size_bytes
+    push_u32(&mut set_uavs_payload, 0); // initial_count
+    push_u32(&mut set_uavs_payload, 0xDEAD_BEEF); // trailing extension
+    let set_uavs_packet = build_packet(
+        AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32,
+        set_uavs_payload,
+    );
+
+    let (_cmd, bindings) =
+        decode_cmd_set_unordered_access_buffers_bindings_le(&set_uavs_packet).unwrap();
+    assert_eq!(bindings.len(), 1);
+    let buffer = bindings[0].buffer;
+    assert_eq!(buffer, 20);
 
     let mut dispatch_payload = Vec::new();
     push_u32(&mut dispatch_payload, 1); // group_count_x
