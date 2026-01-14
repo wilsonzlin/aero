@@ -566,6 +566,7 @@ let cursorPresenterLastImageHeight = 0;
 let hwCursorActive = false;
 let hwCursorLastGeneration: number | null = null;
 let hwCursorLastImageKey: string | null = null;
+let hwCursorLastVramMissingEventKey: string | null = null;
 
 const getCursorPresenter = (): CursorPresenter | null => presenter as unknown as CursorPresenter | null;
 
@@ -922,6 +923,45 @@ const syncHardwareCursorFromState = (): void => {
       cursorWidth = w;
       cursorHeight = h;
     } else {
+      // Diagnostics: when the cursor surface points into the VRAM aperture but the GPU worker was
+      // started without a shared VRAM buffer, we cannot read the cursor image. Surface this once
+      // per (base/size/format) key to avoid spamming events on cursor movement updates (which also
+      // bump the seqlock generation).
+      const vramSize = vramSizeBytes >>> 0;
+      if (vramSize > 0 && !vramU8 && basePaddr !== 0n) {
+        const vramBase = BigInt(vramBasePaddr >>> 0);
+        const vramEnd = vramBase + BigInt(vramSize);
+        if (basePaddr >= vramBase && basePaddr < vramEnd) {
+          if (hwCursorLastVramMissingEventKey !== imageKey) {
+            hwCursorLastVramMissingEventKey = imageKey;
+            emitGpuEvent({
+              time_ms: performance.now(),
+              backend_kind: backendKindForEvent(),
+              severity: "warn",
+              category: "CursorReadback",
+              message: "Cursor: base_paddr points into VRAM but VRAM is unavailable",
+              details: {
+                cursor: {
+                  generation: snap.generation >>> 0,
+                  enable: snap.enable >>> 0,
+                  x: snap.x | 0,
+                  y: snap.y | 0,
+                  hotX: snap.hotX >>> 0,
+                  hotY: snap.hotY >>> 0,
+                  width: snap.width >>> 0,
+                  height: snap.height >>> 0,
+                  pitchBytes: snap.pitchBytes >>> 0,
+                  format: snap.format >>> 0,
+                  base_paddr: formatU64Hex(snap.basePaddrHi, snap.basePaddrLo),
+                },
+                vram_base_paddr: `0x${(vramBasePaddr >>> 0).toString(16)}`,
+                vram_size_bytes: vramSize,
+              },
+            });
+          }
+        }
+      }
+
       cursorImage = null;
       cursorWidth = 0;
       cursorHeight = 0;
@@ -3508,6 +3548,7 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   hwCursorActive = false;
   hwCursorLastGeneration = null;
   hwCursorLastImageKey = null;
+  hwCursorLastVramMissingEventKey = null;
   const segments = {
     control: init.controlSab,
     guestMemory: init.guestMemory,
@@ -3773,9 +3814,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         cursorHotX = 0;
         cursorHotY = 0;
         cursorRenderEnabled = true;
-        hwCursorActive = false;
-        hwCursorLastGeneration = null;
-        hwCursorLastImageKey = null;
+      hwCursorActive = false;
+      hwCursorLastGeneration = null;
+      hwCursorLastImageKey = null;
+      hwCursorLastVramMissingEventKey = null;
 
         presenterUserOnError = runtimeOptions?.presenter?.onError;
         presenterInitOptions = { ...(runtimeOptions?.presenter ?? {}) };
