@@ -9,12 +9,13 @@
 ;
 ; Policy:
 ;   - This file exists for legacy filename compatibility (`virtio-input.inf`).
-;   - It is a filename-only alias of the canonical INF (`aero_virtio_input.inf`).
-;   - From the first section header (`[Version]`) onward, it must remain
-;     byte-for-byte identical to `aero_virtio_input.inf` (including the models
-;     / HWID match lines).
+;   - It is a *filename alias only* of the canonical INF (`aero_virtio_input.inf`).
+;   - From the first section header (`[Version]`) onward, it must remain byte-for-byte identical to
+;     `aero_virtio_input.inf` (including the models / HWID match lines).
 ;   - Banner/comments may differ.
-;   - Do not ship/install both INFs at the same time.
+;   - Because it is identical, enabling it does **not** change HWID matching behavior.
+;   - Do not ship/install both INFs at the same time (they overlap on HWID matches and can cause
+;     confusing driver selection).
 ;
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
