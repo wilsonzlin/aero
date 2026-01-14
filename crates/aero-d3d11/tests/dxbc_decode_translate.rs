@@ -3396,6 +3396,108 @@ fn decodes_and_translates_le_float_compare_shader_from_dxbc() {
 }
 
 #[test]
+fn decodes_and_translates_eq_float_compare_shader_from_dxbc() {
+    // Float compare opcodes (`lt/le/gt/ge/eq/ne`) consume numeric f32 values but still write
+    // predicate mask bits (0xffffffff / 0) into the untyped register file.
+    let mut body = Vec::<u32>::new();
+
+    // eq o0, l(1.0), l(2.0)
+    body.push(opcode_token(OPCODE_EQ, 1 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_scalar(1.0f32.to_bits()));
+    body.extend_from_slice(&imm32_scalar(2.0f32.to_bits()));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(matches!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            op: CmpOp::Eq,
+            ty: CmpType::F32,
+            ..
+        }
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains(" == "),
+        "expected eq compare operator in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(translated
+        .wgsl
+        .contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"));
+}
+
+#[test]
+fn decodes_and_translates_ge_float_compare_shader_from_dxbc() {
+    // Float compare opcodes (`lt/le/gt/ge/eq/ne`) consume numeric f32 values but still write
+    // predicate mask bits (0xffffffff / 0) into the untyped register file.
+    let mut body = Vec::<u32>::new();
+
+    // ge o0, l(1.0), l(2.0)
+    body.push(opcode_token(OPCODE_GE, 1 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_scalar(1.0f32.to_bits()));
+    body.extend_from_slice(&imm32_scalar(2.0f32.to_bits()));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(matches!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            op: CmpOp::Ge,
+            ty: CmpType::F32,
+            ..
+        }
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains(" >= "),
+        "expected ge compare operator in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(translated
+        .wgsl
+        .contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"));
+}
+
+#[test]
 fn decodes_and_translates_ne_float_compare_emits_nan_guard() {
     // D3D's float `ne` opcode is an ordered not-equal: it is false when either operand is NaN.
     // Ensure translation emits NaN guards (`x == x`) so WGSL doesn't treat NaNs as not-equal.
