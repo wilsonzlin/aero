@@ -531,6 +531,9 @@ static VOID AerovblkHandleConfigInterrupt(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   if (devExt->ResetInProgress != 0) {
     return;
   }
+  if (devExt->ResetPending != 0) {
+    return;
+  }
 
   if (devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) {
     return;
@@ -674,6 +677,10 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   if (InterlockedCompareExchange(&devExt->ResetInProgress, 1, 0) != 0) {
     return TRUE;
   }
+  /*
+   * Clear any pending-reset latch: we are now actively resetting/reinitializing.
+   */
+  InterlockedExchange(&devExt->ResetPending, 0);
   /* Refresh whether StorPort assigned message-signaled interrupts (MSI/MSI-X). */
   AerovblkCaptureInterruptMode(devExt);
 
@@ -829,7 +836,7 @@ FailDevice:
 }
 
 static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ ULONG reqType,
-                                   _In_ ULONGLONG startSector, _In_opt_ PSTOR_SCATTER_GATHER_LIST sg, _In_ BOOLEAN isWrite) {
+                                    _In_ ULONGLONG startSector, _In_opt_ PSTOR_SCATTER_GATHER_LIST sg, _In_ BOOLEAN isWrite) {
   STOR_LOCK_HANDLE lock;
   LIST_ENTRY* entry;
   PAEROVBLK_REQUEST_CONTEXT ctx;
@@ -852,6 +859,10 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   }
 
   if (devExt->ResetInProgress != 0) {
+    StorPortReleaseSpinLock(devExt, &lock);
+    return FALSE;
+  }
+  if (devExt->ResetPending != 0) {
     StorPortReleaseSpinLock(devExt, &lock);
     return FALSE;
   }
@@ -1828,7 +1839,7 @@ static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_E
 
   needReset = FALSE;
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
-  if (devExt->ResetInProgress != 0 || devExt->Removed) {
+  if (devExt->ResetInProgress != 0 || devExt->ResetPending != 0 || devExt->Removed) {
     /*
      * Avoid draining the virtqueue or triggering new request dispatch while the
      * device/queue is being reset or the device is being stopped/removed.
@@ -1853,7 +1864,9 @@ static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_E
 #if DBG
       AEROVBLK_LOG("virtqueue error_flags=0x%x; requesting ResetDetected", (unsigned)vqErr);
 #endif
-      needReset = TRUE;
+      if (InterlockedCompareExchange(&devExt->ResetPending, 1, 0) == 0) {
+        needReset = TRUE;
+      }
     }
   }
   StorPortReleaseSpinLock(devExt, &lock);

@@ -159,6 +159,15 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
      */
     volatile LONG ResetInProgress;
 
+    /*
+     * Set to 1 when the miniport has detected an error and requested StorPort
+     * recovery (ResetDetected) but the reset has not started yet.
+     *
+     * Used to requeue new I/O submissions during the window between requesting
+     * a reset and StorPort invoking HwResetBus.
+     */
+    volatile LONG ResetPending;
+
     volatile LONG AbortSrbCount;
     volatile LONG ResetDeviceSrbCount;
     volatile LONG ResetBusSrbCount;
