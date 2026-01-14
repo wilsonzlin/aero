@@ -16,13 +16,13 @@
 //! IDs. Other draw parameters (index/vertex counts, first_instance, etc) are expected to be handled
 //! by the caller/dispatcher.
 
-use crate::input_layout::MAX_WGPU_VERTEX_BUFFERS;
-use super::vertex_pulling::VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE;
-
 /// `IndexPullingParams.index_format` value for 16-bit indices.
 pub const INDEX_FORMAT_U16: u32 = 0;
 /// `IndexPullingParams.index_format` value for 32-bit indices.
 pub const INDEX_FORMAT_U32: u32 = 1;
+
+use crate::input_layout::MAX_WGPU_VERTEX_BUFFERS;
+use super::vertex_pulling::VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE;
 
 /// Base `@binding` number reserved for index pulling resources (params + index buffer).
 ///

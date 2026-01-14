@@ -2921,18 +2921,6 @@ impl AerogpuD3d11Executor {
                     .get(d3d_slot as usize)
                     .and_then(|v| *v)
                     .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
-                if (vb.offset_bytes % 4) != 0 {
-                    bail!(
-                        "vertex buffer slot {d3d_slot} has unaligned offset {} (expected multiple of 4 for u32-based vertex pulling)",
-                        vb.offset_bytes
-                    );
-                }
-                if (vb.stride_bytes % 4) != 0 {
-                    bail!(
-                        "vertex buffer slot {d3d_slot} has stride {} not multiple of 4 (unsupported for u32-based vertex pulling)",
-                        vb.stride_bytes
-                    );
-                }
                 let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
                     anyhow!("vertex buffer slot {d3d_slot} offset {} out of range", vb.offset_bytes)
                 })?;
@@ -3225,18 +3213,25 @@ impl AerogpuD3d11Executor {
             .get_or_create(&self.device, &[]);
         let (compute_layout_key, compute_pipeline_layout) = if let Some(vp_bgl) = &vertex_pulling_bgl
         {
+            // Vertex pulling WGSL is written to `@group(VERTEX_PULLING_GROUP)`. This compute prepass
+            // uses `@group(0)` for its output buffers, so we must insert empty bind-group layouts for
+            // any intermediate groups so the pipeline layout has a compatible layout at
+            // `VERTEX_PULLING_GROUP`.
+            let mut hashes: Vec<u64> = Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+            let mut layouts: Vec<&wgpu::BindGroupLayout> =
+                Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+            hashes.push(compute_bgl.hash);
+            layouts.push(compute_bgl.layout.as_ref());
+            for _ in 1..VERTEX_PULLING_GROUP {
+                hashes.push(empty_bgl.hash);
+                layouts.push(empty_bgl.layout.as_ref());
+            }
+            hashes.push(vp_bgl.hash);
+            layouts.push(vp_bgl.layout.as_ref());
+
             let key = PipelineLayoutKey {
-                // The compute prepass uses `@group(0)` for its output buffers, and the vertex
-                // pulling WGSL uses `@group(VERTEX_PULLING_GROUP)`. Keep intermediate groups as
-                // empty layouts so the bind group indices line up.
-                bind_group_layout_hashes: vec![compute_bgl.hash, empty_bgl.hash, empty_bgl.hash, vp_bgl.hash],
+                bind_group_layout_hashes: hashes,
             };
-            let layouts = [
-                compute_bgl.layout.as_ref(),
-                empty_bgl.layout.as_ref(),
-                empty_bgl.layout.as_ref(),
-                vp_bgl.layout.as_ref(),
-            ];
             let layout = self.pipeline_layout_cache.get_or_create(
                 &self.device,
                 &key,
