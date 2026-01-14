@@ -4769,8 +4769,9 @@ VertexDecl* ensure_fixedfunc_fvf_vertex_decl_locked(Device* dev, bool tex1) {
   }
 
   // Legacy internal declaration used by an earlier bring-up path that
-  // CPU-transformed `D3DFVF_XYZ*` vertices to clip-space and uploaded them as
-  // `POSITIONT=float4`. Retained for reference/potential future use.
+  // CPU-transformed `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` vertices to clip-space
+  // and uploaded them as `POSITIONT=float4`. Retained for reference/potential
+  // future use.
   //
   // This matches the bring-up fixed-function shader expectations:
   //   v0 = float4 position
@@ -23682,8 +23683,8 @@ struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(*)(Args...)> {
 // Our host-side portable ABI historically omitted them (tests didn't need them),
 // but fixed-function XYZ pipelines require transform updates:
 // - Untransformed `D3DFVF_XYZ*` fixed-function draws use internal WVP vertex shader
-//   variants that read `WORLD0 * VIEW * PROJECTION` from reserved VS constants
-//   (`c240..c243`).
+//   variants that read `WORLD0 * VIEW * PROJECTION` from a reserved high VS constant
+//   range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
 //
 // Keep these outside the WDK-only DDI block so they are available in portable
 // builds (Linux/CI) and in Windows portable builds that do not use WDK headers.
