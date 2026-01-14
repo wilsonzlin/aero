@@ -43,13 +43,16 @@ This is the **coordination hub**. You wire together the work from all other work
   (see `crates/devices/src/*`, `crates/aero-pc-platform/src/lib.rs`,
   `crates/aero-machine/src/lib.rs`).
 - **PCI MSI/MSI-X message delivery (for devices that opt in)**:
-  `aero_platform::interrupts::msi` + `PlatformInterrupts::trigger_msi`; used today by:
+  `aero_platform::interrupts::msi` + `PlatformInterrupts::trigger_msi`; used today by
+  (non-exhaustive):
   - AHCI (MSI) and NVMe (MSI + single-vector MSI-X) in both `aero-machine` and `aero-pc-platform`
     (see `crates/aero-machine/src/lib.rs::{process_ahci,process_nvme}` and
     `crates/aero-pc-platform/src/lib.rs::{process_ahci,process_nvme}`), and
-  - virtio-pci MSI-X delivery for virtio-blk/virtio-input (and virtio-net in `aero-machine`) via
-    real virtio interrupt sinks plus MSI-X enable/function-mask mirroring in `VirtioPciBar0Mmio`
-    (see VTP-009).
+  - xHCI (MSI) in `aero-pc-platform` when enabled (see `crates/devices/src/usb/xhci.rs` and
+    `crates/devices/tests/xhci_msi_integration.rs`), and
+  - virtio-pci MSI-X delivery in canonical integrations (virtio-blk in both stacks;
+    virtio-net/virtio-input in `aero-machine`) via real virtio interrupt sinks plus MSI-X
+    enable/function-mask mirroring in `VirtioPciBar0Mmio` (see VTP-009).
 - **Snapshots + restore plumbing**:
   format + tooling in `crates/aero-snapshot/`, IO device state in `crates/aero-io-snapshot/`,
   canonical machine integration/tests in `crates/aero-machine/tests/*`.
@@ -90,7 +93,7 @@ This is the **coordination hub**. You wire together the work from all other work
   the selected LAPIC(s) (destination ID `0xFF` broadcasts to all LAPICs; see
   `crates/platform/src/interrupts/msi.rs`,
   `crates/platform/src/interrupts/router.rs::{inject_fixed_for_apic,inject_fixed_broadcast}`, and
-  `crates/platform-compat/tests/smp_msi_routing.rs`, and
+  `crates/platform/tests/smp_msi_routing.rs`, and
   `crates/devices/tests/msix_cpu_core_integration.rs`).
   Note: MSI injection intentionally bypasses `PlatformInterruptMode`, but while the platform is in
   **Legacy PIC mode** the vCPU interrupt polling path (`InterruptController::get_pending` /
