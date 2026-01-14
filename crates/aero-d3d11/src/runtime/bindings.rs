@@ -395,6 +395,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stage_ex_compute_is_accepted_as_alias_for_legacy_compute() {
+        assert_eq!(
+            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 5),
+            Some(ShaderStage::Compute)
+        );
+    }
+
+    #[test]
     fn stage_ex_vertex_is_rejected_for_clarity() {
         // `stage_ex == 1` is the DXBC program type for Vertex, but the stage_ex mechanism reserves
         // non-zero tags for stages that cannot be represented by the legacy enum (HS/DS; optionally
