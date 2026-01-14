@@ -1963,6 +1963,22 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
   }
 
+#ifdef SRB_FUNCTION_RESET_ADAPTER
+  /*
+   * Some StorPort stacks issue RESET_ADAPTER rather than RESET_BUS. Treat it
+   * as a bus reset for this miniport (single bus/device).
+   */
+  case SRB_FUNCTION_RESET_ADAPTER: {
+    InterlockedIncrement(&devExt->ResetBusSrbCount);
+    if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+      return TRUE;
+    }
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+#endif
+
   case SRB_FUNCTION_PNP: {
     /*
      * Basic PnP handling for real-world StorPort stacks.
