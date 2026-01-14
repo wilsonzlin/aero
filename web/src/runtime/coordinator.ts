@@ -1308,20 +1308,6 @@ export class WorkerCoordinator {
       const netWorker = net?.worker;
       await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
 
-      if (this.activeConfig?.vmRuntime === "machine") {
-        // Machine runtime: the CPU worker owns full-system snapshots via `api.Machine`.
-        // The snapshot file contains CPU/MMU/devices/RAM + DISKS overlay refs, so we do
-        // not need to request CPU state separately or involve the legacy IO snapshot builder.
-        const saved = await this.snapshotRpc<VmSnapshotSavedMessage>(
-          cpu.worker,
-          { kind: "vm.snapshot.saveToOpfs", path },
-          "vm.snapshot.saved",
-          { timeoutMs: 120_000 },
-        );
-        this.assertSnapshotOk("saveToOpfs", saved);
-        return;
-      }
-
       const cpuState = await this.snapshotRpc<VmSnapshotCpuStateMessage>(
         cpu.worker,
         { kind: "vm.snapshot.getCpuState" },
@@ -1416,20 +1402,6 @@ export class WorkerCoordinator {
       // it (when present) before resetting the shared rings.
       const netWorker = net?.worker;
       await this.pauseWorkersForSnapshot({ cpu: cpu.worker, io: io.worker, net: netWorker });
-
-      if (this.activeConfig?.vmRuntime === "machine") {
-        // Machine runtime: restore the snapshot directly inside the CPU worker (which owns the
-        // canonical `api.Machine` instance). The CPU worker is responsible for reopening OPFS
-        // disks referenced by the snapshot's `DISKS` section (via overlay refs).
-        const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
-          cpu.worker,
-          { kind: "vm.snapshot.restoreFromOpfs", path },
-          "vm.snapshot.restored",
-          { timeoutMs: 120_000 },
-        );
-        this.assertSnapshotOk("restoreFromOpfs", restored);
-        return;
-      }
 
       const restored = await this.snapshotRpc<VmSnapshotRestoredMessage>(
         io.worker,

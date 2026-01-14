@@ -94,24 +94,22 @@ type VmSnapshotResumeMessage = {
   requestId: number;
 };
 
-type VmSnapshotSaveToOpfsMessage = {
-  kind: "vm.snapshot.saveToOpfs";
+type VmSnapshotMachineSaveToOpfsMessage = {
+  kind: "vm.snapshot.machine.saveToOpfs";
   requestId: number;
   path: string;
 };
 
-type VmSnapshotRestoreFromOpfsMessage = {
-  kind: "vm.snapshot.restoreFromOpfs";
+type VmSnapshotMachineRestoreFromOpfsMessage = {
+  kind: "vm.snapshot.machine.restoreFromOpfs";
   requestId: number;
   path: string;
 };
 
 type VmSnapshotPausedMessage = { kind: "vm.snapshot.paused"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
 type VmSnapshotResumedMessage = { kind: "vm.snapshot.resumed"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
-type VmSnapshotSavedMessage = { kind: "vm.snapshot.saved"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
-type VmSnapshotRestoredMessage =
-  | ({ kind: "vm.snapshot.restored"; requestId: number } & MachineSnapshotResultErr)
-  | { kind: "vm.snapshot.restored"; requestId: number; ok: true; cpu: ArrayBuffer; mmu: ArrayBuffer; devices?: unknown[] };
+type VmSnapshotMachineSavedMessage = { kind: "vm.snapshot.machine.saved"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
+type VmSnapshotMachineRestoredMessage = { kind: "vm.snapshot.machine.restored"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
 
 let wasmApi: WasmApi | null = null;
 let wasmMachine: InstanceType<WasmApi["Machine"]> | null = null;
@@ -126,7 +124,13 @@ function postSnapshot(msg: MachineSnapshotRestoredMessage): void {
   ctx.postMessage(msg);
 }
 
-function postVmSnapshot(msg: VmSnapshotPausedMessage | VmSnapshotResumedMessage | VmSnapshotSavedMessage | VmSnapshotRestoredMessage): void {
+function postVmSnapshot(
+  msg:
+    | VmSnapshotPausedMessage
+    | VmSnapshotResumedMessage
+    | VmSnapshotMachineSavedMessage
+    | VmSnapshotMachineRestoredMessage,
+): void {
   ctx.postMessage(msg);
 }
 
@@ -283,7 +287,7 @@ ctx.onmessage = (ev) => {
   }
 
   const vmSnapshot = msg as Partial<
-    VmSnapshotPauseMessage | VmSnapshotResumeMessage | VmSnapshotSaveToOpfsMessage | VmSnapshotRestoreFromOpfsMessage
+    VmSnapshotPauseMessage | VmSnapshotResumeMessage | VmSnapshotMachineSaveToOpfsMessage | VmSnapshotMachineRestoreFromOpfsMessage
   >;
   if (typeof vmSnapshot.kind === "string" && vmSnapshot.kind.startsWith("vm.snapshot.")) {
     const requestId = typeof vmSnapshot.requestId === "number" ? vmSnapshot.requestId : -1;
@@ -300,15 +304,16 @@ ctx.onmessage = (ev) => {
         postVmSnapshot({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
         return;
       }
-      case "vm.snapshot.saveToOpfs": {
-        const path = typeof (vmSnapshot as Partial<VmSnapshotSaveToOpfsMessage>).path === "string" ? vmSnapshot.path : "";
+      case "vm.snapshot.machine.saveToOpfs": {
+        const path =
+          typeof (vmSnapshot as Partial<VmSnapshotMachineSaveToOpfsMessage>).path === "string" ? vmSnapshot.path : "";
         if (!path) {
           postVmSnapshot({
-            kind: "vm.snapshot.saved",
+            kind: "vm.snapshot.machine.saved",
             requestId,
             ok: false,
-            error: serializeError(new Error("vm.snapshot.saveToOpfs requires a non-empty path.")),
-          } satisfies VmSnapshotSavedMessage);
+            error: serializeError(new Error("vm.snapshot.machine.saveToOpfs requires a non-empty path.")),
+          } satisfies VmSnapshotMachineSavedMessage);
           return;
         }
 
@@ -320,23 +325,28 @@ ctx.onmessage = (ev) => {
               throw new Error("Machine.snapshot_full_to_opfs(path) is unavailable in this WASM build.");
             }
             await Promise.resolve((fn as (path: string) => unknown).call(machine, path));
-            postVmSnapshot({ kind: "vm.snapshot.saved", requestId, ok: true } satisfies VmSnapshotSavedMessage);
+            postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId, ok: true } satisfies VmSnapshotMachineSavedMessage);
           } catch (err) {
-            postVmSnapshot({ kind: "vm.snapshot.saved", requestId, ok: false, error: serializeError(err) } satisfies VmSnapshotSavedMessage);
+            postVmSnapshot({
+              kind: "vm.snapshot.machine.saved",
+              requestId,
+              ok: false,
+              error: serializeError(err),
+            } satisfies VmSnapshotMachineSavedMessage);
           }
         });
         return;
       }
-      case "vm.snapshot.restoreFromOpfs": {
+      case "vm.snapshot.machine.restoreFromOpfs": {
         const path =
-          typeof (vmSnapshot as Partial<VmSnapshotRestoreFromOpfsMessage>).path === "string" ? vmSnapshot.path : "";
+          typeof (vmSnapshot as Partial<VmSnapshotMachineRestoreFromOpfsMessage>).path === "string" ? vmSnapshot.path : "";
         if (!path) {
           postVmSnapshot({
-            kind: "vm.snapshot.restored",
+            kind: "vm.snapshot.machine.restored",
             requestId,
             ok: false,
-            error: serializeError(new Error("vm.snapshot.restoreFromOpfs requires a non-empty path.")),
-          } satisfies VmSnapshotRestoredMessage);
+            error: serializeError(new Error("vm.snapshot.machine.restoreFromOpfs requires a non-empty path.")),
+          } satisfies VmSnapshotMachineRestoredMessage);
           return;
         }
 
@@ -348,21 +358,14 @@ ctx.onmessage = (ev) => {
             //
             // After restoring, re-open those OPFS images and reattach them to the canonical machine.
             await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
-            postVmSnapshot({
-              kind: "vm.snapshot.restored",
-              requestId,
-              ok: true,
-              // Machine runtime owns full snapshot restore; coordinator should ignore cpu/mmu fields.
-              cpu: new ArrayBuffer(0),
-              mmu: new ArrayBuffer(0),
-            } satisfies VmSnapshotRestoredMessage);
+            postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
           } catch (err) {
             postVmSnapshot({
-              kind: "vm.snapshot.restored",
+              kind: "vm.snapshot.machine.restored",
               requestId,
               ok: false,
               error: serializeError(err),
-            } satisfies VmSnapshotRestoredMessage);
+            } satisfies VmSnapshotMachineRestoredMessage);
           }
         });
         return;
