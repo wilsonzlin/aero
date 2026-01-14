@@ -2244,6 +2244,9 @@ static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
   NormalizeRenderTargetsLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!cmd) {
+    D3D10DDI_HDEVICE hDevice{};
+    hDevice.pDrvPrivate = dev;
+    SetError(hDevice, E_OUTOFMEMORY);
     return;
   }
 
