@@ -584,6 +584,9 @@ typedef struct aerogpu_escape_query_error_out {
    * - Bit 0: error state is supported.
    *   - If the device exposes optional MMIO error registers, fields are sourced from them.
    *   - Otherwise fields are best-effort from the KMD's IRQ_ERROR latch/counters.
+   *   - Even when MMIO error registers are present, the KMD may avoid reading them during
+   *     power-transition / resume windows; in that case it returns the most recent cached
+   *     telemetry (best-effort).
    * - Bit 1: IRQ_ERROR is currently latched (device is in a device-lost state).
    */
   aerogpu_escape_u32 flags;
