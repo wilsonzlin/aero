@@ -8600,7 +8600,7 @@ impl AerogpuD3d11Executor {
 
             let prim_vertices = assemble_adjacency_primitives(ia_topology, &events);
             let expected_stride: usize = verts_per_prim as usize;
-            if (prim_vertices.len() % expected_stride) != 0 {
+            if !prim_vertices.len().is_multiple_of(expected_stride) {
                 bail!("GS prepass: internal adjacency primitive list length mismatch");
             }
             let prim_count_usize = prim_vertices.len() / expected_stride;
