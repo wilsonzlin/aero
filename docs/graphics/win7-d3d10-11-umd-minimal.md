@@ -7,7 +7,7 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 * Windows 7 SP1, **WDDM 1.1**, **DXGI 1.1**
 * D3D10 runtime + D3D10 UMD DDI (`d3d10umddi.h`)
 * D3D11 runtime + D3D11 UMD DDI (`d3d11umddi.h`) with initial feature level **FL10_0**
-* Shader models **SM4.x** first (`vs_4_0`, `ps_4_0`, optional `gs_4_0`), roadmap to **SM5.0** (`*_5_0`)
+* Shader models **SM4.x** first (`vs_4_0`, `ps_4_0`, `gs_4_0`), roadmap to **SM5.0** (`*_5_0`)
 * **Windowed swapchain only** initially (DWM composition)
 
 **Non-goals (initial bring-up):**
