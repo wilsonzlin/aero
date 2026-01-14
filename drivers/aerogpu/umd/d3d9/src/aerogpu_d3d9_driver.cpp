@@ -5651,6 +5651,13 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  // D3DPV_* flags passed through from IDirect3DDevice9::ProcessVertices.
+  //
+  // D3DPV_DONOTCOPYDATA tells the driver to avoid copying non-position output
+  // elements (e.g. DIFFUSE/TEX). Preserve destination bytes for those fields.
+  constexpr uint32_t kD3dPvDoNotCopyData = 0x1u;
+  const bool do_not_copy_data = (pProcessVertices->Flags & kD3dPvDoNotCopyData) != 0;
+
   const uint32_t vertex_count = pProcessVertices->VertexCount;
   if (vertex_count == 0) {
     return S_OK;
@@ -6004,7 +6011,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     for (uint32_t i = 0; i < vertex_count; ++i) {
       const uint8_t* src = src_vertices + static_cast<size_t>(i) * src_stride;
       uint8_t* dst = dst_vertices + static_cast<size_t>(i) * dst_stride;
-      if (!src_is_xyzrhw) {
+      if (!do_not_copy_data) {
         std::memset(dst, 0, dst_stride);
       }
 
@@ -6058,18 +6065,20 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
         write_f32_unaligned(dst + dst_layout.pos_offset + 12, out_rhw);
       }
 
-      if (dst_layout.has_diffuse) {
-        if (src_has_diffuse) {
-          std::memcpy(dst + dst_layout.diffuse_offset, src + src_diffuse_offset, 4);
-        } else {
-          // Match fixed-function FVF behavior: when the input vertex format does
-          // not include a diffuse color, treat it as white.
-          const uint32_t white = 0xFFFFFFFFu;
-          std::memcpy(dst + dst_layout.diffuse_offset, &white, sizeof(white));
+      if (!do_not_copy_data) {
+        if (dst_layout.has_diffuse) {
+          if (src_has_diffuse) {
+            std::memcpy(dst + dst_layout.diffuse_offset, src + src_diffuse_offset, 4);
+          } else {
+            // Match fixed-function FVF behavior: when the input vertex format does
+            // not include a diffuse color, treat it as white.
+            const uint32_t white = 0xFFFFFFFFu;
+            std::memcpy(dst + dst_layout.diffuse_offset, &white, sizeof(white));
+          }
         }
-      }
-      if (src_has_tex0 && dst_layout.has_tex0) {
-        std::memcpy(dst + dst_layout.tex0_offset, src + src_tex0_offset, 8);
+        if (src_has_tex0 && dst_layout.has_tex0) {
+          std::memcpy(dst + dst_layout.tex0_offset, src + src_tex0_offset, 8);
+        }
       }
     }
   } else {
@@ -11099,6 +11108,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     return trace.ret(kD3DErrInvalidCall);
   }
 
+  // D3DPV_* flags passed through from IDirect3DDevice9::ProcessVertices.
+  constexpr uint32_t kD3dPvDoNotCopyData = 0x1u;
+  const bool do_not_copy_data = (pProcessVertices->Flags & kD3dPvDoNotCopyData) != 0;
+
   uint32_t dst_stride = 0;
   if constexpr (aerogpu_d3d9_has_member_DestStride<D3DDDIARG_PROCESSVERTICES>::value) {
     dst_stride = pProcessVertices->DestStride;
@@ -11119,7 +11132,13 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     return trace.ret(kD3DErrInvalidCall);
   }
 
-  const uint32_t copy_stride = std::min(src_stride, dst_stride);
+  uint32_t copy_stride = std::min(src_stride, dst_stride);
+  // For pre-transformed XYZRHW inputs, position is the first float4 (16 bytes).
+  // Honor D3DPV_DONOTCOPYDATA by copying only POSITIONT and leaving the rest of
+  // the destination vertex untouched.
+  if (do_not_copy_data && (dev->fvf & kD3dFvfXyzRhw) != 0 && copy_stride > 16u) {
+    copy_stride = 16u;
+  }
   if (copy_stride == 0) {
     return trace.ret(kD3DErrInvalidCall);
   }

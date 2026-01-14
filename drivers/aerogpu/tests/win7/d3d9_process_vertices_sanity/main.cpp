@@ -793,6 +793,72 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
       }
     }
 
+    // Validate Flags=D3DPV_DONOTCOPYDATA: output should update only POSITIONT and
+    // leave non-position bytes (DIFFUSE/TEX0) untouched.
+    {
+      ComPtr<IDirect3DVertexBuffer9> dst_flags_vb;
+      hr = dev->CreateVertexBuffer(sizeof(VertexXyzrhwDiffuseTex1),
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                                   D3DPOOL_SYSTEMMEM,
+                                   dst_flags_vb.put(),
+                                   NULL);
+      if (FAILED(hr) || !dst_flags_vb) {
+        return reporter.FailHresult("CreateVertexBuffer(dst_flags)", hr);
+      }
+
+      void* dst_flags_init_ptr = NULL;
+      hr = dst_flags_vb->Lock(0, sizeof(VertexXyzrhwDiffuseTex1), &dst_flags_init_ptr, 0);
+      if (FAILED(hr) || !dst_flags_init_ptr) {
+        return reporter.FailHresult("dst_flags_vb->Lock (init)", hr);
+      }
+      memset(dst_flags_init_ptr, 0xCD, sizeof(VertexXyzrhwDiffuseTex1));
+      hr = dst_flags_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_flags_vb->Unlock (init)", hr);
+      }
+
+      hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetFVF(XYZ|DIFFUSE|TEX1) (flags)", hr);
+      }
+      hr = dev->SetStreamSource(0, src_vb_tex.get(), 0, sizeof(VertexXyzDiffuseTex1));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetStreamSource(src_tex) (flags)", hr);
+      }
+
+      hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                                /*DestIndex=*/0,
+                                /*VertexCount=*/1,
+                                dst_flags_vb.get(),
+                                decl_tex.get(),
+                                /*Flags=*/D3DPV_DONOTCOPYDATA);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(flags)", hr);
+      }
+
+      void* dst_flags_ptr = NULL;
+      hr = dst_flags_vb->Lock(0, sizeof(VertexXyzrhwDiffuseTex1), &dst_flags_ptr, D3DLOCK_READONLY);
+      if (FAILED(hr) || !dst_flags_ptr) {
+        return reporter.FailHresult("dst_flags_vb->Lock (read)", hr);
+      }
+
+      const VertexXyzrhwDiffuseTex1 expected_pos = {0.5f, 0.5f, 0.0f, 1.0f, 0, 0, 0};
+      const bool pos_ok = (memcmp(dst_flags_ptr, &expected_pos, 16) == 0);
+      unsigned char tail_expected[sizeof(VertexXyzrhwDiffuseTex1) - 16];
+      memset(tail_expected, 0xCD, sizeof(tail_expected));
+      const bool tail_ok = (memcmp((const unsigned char*)dst_flags_ptr + 16, tail_expected, sizeof(tail_expected)) == 0);
+
+      hr = dst_flags_vb->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_flags_vb->Unlock (read)", hr);
+      }
+
+      if (!pos_ok || !tail_ok) {
+        return reporter.Fail("ProcessVertices Flags=D3DPV_DONOTCOPYDATA mismatch (non-position bytes were modified)");
+      }
+    }
+
     // Also validate SrcStartIndex/DestIndex offsets for the TEX1 path.
     {
       const VertexXyzDiffuseTex1 srcs[2] = {

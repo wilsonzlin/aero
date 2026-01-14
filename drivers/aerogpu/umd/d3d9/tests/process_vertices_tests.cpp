@@ -47,6 +47,9 @@ constexpr uint32_t kFvfXyzrhw = 0x00000004u;
 constexpr uint32_t kFvfDiffuse = 0x00000040u;
 constexpr uint32_t kFvfTex1 = 0x00000100u;
 
+// D3DPV_* flags for IDirect3DDevice9::ProcessVertices.
+constexpr uint32_t kPvDoNotCopyData = 0x00000001u;
+
 float read_f32(const std::vector<uint8_t>& bytes, size_t offset) {
   assert(offset + 4 <= bytes.size());
   float v = 0.0f;
@@ -630,6 +633,75 @@ void test_xyz_diffuse_tex1() {
   assert(std::fabs(v - 0.75f) < 1e-4f);
 }
 
+void test_xyz_diffuse_tex1_do_not_copy_data_preserves_dest() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyz | kFvfDiffuse | kFvfTex1;
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  dev.transform_matrices[256][12] = 1.0f;
+
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 24;
+  src.storage.resize(24);
+  write_f32(src.storage, 0, 0.0f);
+  write_f32(src.storage, 4, 0.0f);
+  write_f32(src.storage, 8, 0.0f);
+  write_u32(src.storage, 12, 0x11223344u);
+  write_f32(src.storage, 16, 0.25f);
+  write_f32(src.storage, 20, 0.75f);
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 28;
+  dst.storage.resize(28);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0, 20, kDeclTypeFloat2, kDeclMethodDefault, kDeclUsageTexCoord, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 24;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = kPvDoNotCopyData;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  const float x = read_f32(dst.storage, 0);
+  const float y = read_f32(dst.storage, 4);
+  const float z = read_f32(dst.storage, 8);
+  const float rhw = read_f32(dst.storage, 12);
+  assert(std::fabs(x - 99.5f) < 1e-4f);
+  assert(std::fabs(y - 49.5f) < 1e-4f);
+  assert(std::fabs(z - 0.0f) < 1e-4f);
+  assert(std::fabs(rhw - 1.0f) < 1e-4f);
+
+  // Non-position fields should be untouched.
+  for (size_t i = 16; i < dst.storage.size(); ++i) {
+    assert(dst.storage[i] == 0xCD);
+  }
+}
+
 void test_xyz_tex1() {
   Adapter adapter;
   Device dev(&adapter);
@@ -848,6 +920,73 @@ void test_xyzrhw_tex1_defaults_white_diffuse() {
   const float v = read_f32(dst.storage, 24);
   assert(std::fabs(u - 0.25f) < 1e-4f);
   assert(std::fabs(v - 0.75f) < 1e-4f);
+}
+
+void test_xyzrhw_tex1_do_not_copy_data_preserves_dest() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyzrhw | kFvfTex1;
+
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 24;
+  src.storage.resize(24);
+  write_f32(src.storage, 0, 10.0f);
+  write_f32(src.storage, 4, 20.0f);
+  write_f32(src.storage, 8, 0.5f);
+  write_f32(src.storage, 12, 2.0f);
+  write_f32(src.storage, 16, 0.25f);
+  write_f32(src.storage, 20, 0.75f);
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 28;
+  dst.storage.resize(28);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0, 20, kDeclTypeFloat2, kDeclMethodDefault, kDeclUsageTexCoord, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 24;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = kPvDoNotCopyData;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  const float x = read_f32(dst.storage, 0);
+  const float y = read_f32(dst.storage, 4);
+  const float z = read_f32(dst.storage, 8);
+  const float rhw = read_f32(dst.storage, 12);
+  assert(std::fabs(x - 10.0f) < 1e-4f);
+  assert(std::fabs(y - 20.0f) < 1e-4f);
+  assert(std::fabs(z - 0.5f) < 1e-4f);
+  assert(std::fabs(rhw - 2.0f) < 1e-4f);
+
+  // Non-position fields should be untouched.
+  for (size_t i = 16; i < dst.storage.size(); ++i) {
+    assert(dst.storage[i] == 0xCD);
+  }
 }
 
 void test_xyz_diffuse_tex1_padded_dest_stride() {
@@ -1456,6 +1595,69 @@ void test_process_vertices_fallback_infer_dest_stride_from_decl() {
   assert(dst.storage == expected);
 }
 
+void test_process_vertices_fallback_do_not_copy_data_xyzrhw() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  // Force the memcpy-style fallback path.
+  dev.user_vs = reinterpret_cast<Shader*>(0x1);
+
+  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+
+  // Source VB: 1 vertex of XYZRHW|DIFFUSE.
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 20;
+  src.storage.resize(20);
+  write_f32(src.storage, 0, 10.0f);
+  write_f32(src.storage, 4, 20.0f);
+  write_f32(src.storage, 8, 0.5f);
+  write_f32(src.storage, 12, 2.0f);
+  write_u32(src.storage, 16, 0xAABBCCDDu);
+
+  // Destination decl includes TEX0 so stride is inferred as 28 bytes.
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0, 20, kDeclTypeFloat2, kDeclMethodDefault, kDeclUsageTexCoord, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 28;
+  dst.storage.resize(28);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 20;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = kPvDoNotCopyData;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  // Position should be copied; non-position bytes should remain untouched.
+  assert(std::memcmp(dst.storage.data(), src.storage.data(), 16) == 0);
+  for (size_t i = 16; i < dst.storage.size(); ++i) {
+    assert(dst.storage[i] == 0xCD);
+  }
+}
+
 void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
   Adapter adapter;
   Device dev(&adapter);
@@ -1582,9 +1784,11 @@ int main() {
   aerogpu::test_xyz_diffuse_tex1_inplace_overlap_safe();
   aerogpu::test_xyz_diffuse_z_stays_ndc();
   aerogpu::test_xyz_diffuse_tex1();
+  aerogpu::test_xyz_diffuse_tex1_do_not_copy_data_preserves_dest();
   aerogpu::test_xyz_tex1();
   aerogpu::test_xyz_tex1_defaults_white_diffuse();
   aerogpu::test_xyzrhw_tex1_defaults_white_diffuse();
+  aerogpu::test_xyzrhw_tex1_do_not_copy_data_preserves_dest();
   aerogpu::test_xyz_diffuse_tex1_padded_dest_stride();
   aerogpu::test_xyz_diffuse_tex1_dest_decl_extra_elements();
   aerogpu::test_xyz_diffuse_offsets();
@@ -1592,6 +1796,7 @@ int main() {
   aerogpu::test_copy_xyzrhw_diffuse_offsets();
   aerogpu::test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl();
   aerogpu::test_process_vertices_fallback_infer_dest_stride_from_decl();
+  aerogpu::test_process_vertices_fallback_do_not_copy_data_xyzrhw();
   aerogpu::test_process_vertices_fallback_inplace_overlap_dst_inside_src();
   aerogpu::test_process_vertices_fallback_inplace_overlap_src_inside_dst();
   return 0;
