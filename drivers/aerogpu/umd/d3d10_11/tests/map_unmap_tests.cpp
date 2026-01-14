@@ -278,6 +278,107 @@ bool TestViewportScissorHelpersDontReportNotImplWhenCmdAppendFails() {
   return true;
 }
 
+bool TestRenderTargetHelpersClearStaleDsvHandles() {
+  using aerogpu::d3d10_11::EmitSetRenderTargetsLocked;
+  using aerogpu::d3d10_11::UnbindResourceFromOutputsLocked;
+  using aerogpu::d3d10_11::Resource;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+    uint32_t current_rtv_count = 0;
+    aerogpu_handle_t current_rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
+    Resource* current_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
+    aerogpu_handle_t current_dsv = 0;
+    Resource* current_dsv_res = nullptr;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  // EmitSetRenderTargetsLocked should normalize a stale DSV handle to 0 when the
+  // cached resource pointer is null.
+  {
+    DummyDevice dev{};
+    dev.current_dsv = 1234;
+    dev.current_dsv_res = nullptr;
+
+    const bool ok = EmitSetRenderTargetsLocked(&dev, [&](HRESULT hr) { errors.push_back(hr); });
+    if (!Check(ok, "EmitSetRenderTargetsLocked should succeed")) {
+      return false;
+    }
+    dev.cmd.finalize();
+
+    if (!Check(errors.empty(), "EmitSetRenderTargetsLocked should not report errors")) {
+      return false;
+    }
+    if (!Check(dev.current_dsv == 0, "NormalizeRenderTargetsLocked clears stale current_dsv when current_dsv_res is null")) {
+      return false;
+    }
+
+    if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_render_targets),
+               "SET_RENDER_TARGETS packet emitted")) {
+      return false;
+    }
+    const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(
+        dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+    if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_RENDER_TARGETS, "SET_RENDER_TARGETS opcode")) {
+      return false;
+    }
+    if (!Check(pkt->depth_stencil == 0, "SET_RENDER_TARGETS depth_stencil normalized to 0")) {
+      return false;
+    }
+  }
+
+  errors.clear();
+  // UnbindResourceFromOutputsLocked should also clear stale DSV handles when it
+  // has to re-emit the OM binding due to an RTV change.
+  {
+    DummyDevice dev{};
+    Resource rtv_res{};
+    dev.current_rtv_count = 1;
+    dev.current_rtvs[0] = 111;
+    dev.current_rtv_resources[0] = &rtv_res;
+    dev.current_dsv = 222;
+    dev.current_dsv_res = nullptr; // stale
+
+    const bool ok = UnbindResourceFromOutputsLocked(&dev,
+                                                    /*handle=*/111,
+                                                    static_cast<const Resource*>(nullptr),
+                                                    [&](HRESULT hr) { errors.push_back(hr); });
+    if (!Check(ok, "UnbindResourceFromOutputsLocked should succeed")) {
+      return false;
+    }
+    dev.cmd.finalize();
+
+    if (!Check(errors.empty(), "UnbindResourceFromOutputsLocked should not report errors")) {
+      return false;
+    }
+    if (!Check(dev.current_dsv == 0, "UnbindResourceFromOutputsLocked clears stale current_dsv when current_dsv_res is null")) {
+      return false;
+    }
+
+    const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(
+        dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+    if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_RENDER_TARGETS, "SET_RENDER_TARGETS opcode (unbind)")) {
+      return false;
+    }
+    if (!Check(pkt->color_count == 1, "color_count preserved when unbinding RTV slot 0")) {
+      return false;
+    }
+    if (!Check(pkt->colors[0] == 0, "RTV slot 0 unbound")) {
+      return false;
+    }
+    if (!Check(pkt->depth_stencil == 0, "depth_stencil normalized to 0 on unbind emit")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -9527,6 +9628,7 @@ int main() {
   ok &= TestInternalDxgiFormatCompatHelpers();
   ok &= TestViewportHelperCachesDimsOnlyWhenEnabledForD3D10StyleDevice();
   ok &= TestViewportScissorHelpersDontReportNotImplWhenCmdAppendFails();
+  ok &= TestRenderTargetHelpersClearStaleDsvHandles();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
