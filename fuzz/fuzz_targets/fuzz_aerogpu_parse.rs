@@ -116,6 +116,8 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                 let _ = cmd::decode_stage_ex(a1, reserved0);
                 let _ = cmd::decode_stage_ex_gated(abi_minor, a0, reserved0);
                 let _ = cmd::decode_stage_ex_gated(abi_minor, a1, reserved0);
+                let _ = cmd::resolve_shader_stage_with_ex_gated(abi_minor, a0, reserved0);
+                let _ = cmd::resolve_shader_stage_with_ex_gated(abi_minor, a1, reserved0);
                 let _ = cmd::resolve_stage(a0, reserved0);
                 let _ = cmd::resolve_stage(a1, reserved0);
                 let _ = cmd::resolve_shader_stage_with_ex(a0, reserved0);
