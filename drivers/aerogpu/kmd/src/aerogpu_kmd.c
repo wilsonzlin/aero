@@ -3647,12 +3647,12 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
         return STATUS_SUCCESS;
     }
 
-    const BOOLEAN poweredOn =
+    const BOOLEAN poweredOnNow =
         ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) ==
          DxgkDevicePowerStateD0)
             ? TRUE
             : FALSE;
-    if (!poweredOn) {
+    if (!poweredOnNow) {
         /* Avoid touching MMIO while powered down. */
         return STATUS_SUCCESS;
     }
@@ -3667,7 +3667,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
          * dxgkrnl typically re-enables via DxgkDdiControlInterrupt, but some
          * transition paths assume the miniport restores its prior state.
          */
-        if (poweredOn && adapter->PostDisplayVblankWasEnabled && adapter->SupportsVblank &&
+        if (poweredOnNow && adapter->PostDisplayVblankWasEnabled && adapter->SupportsVblank &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             /*
              * Dxgkrnl normally tells us which interrupt type to use via
