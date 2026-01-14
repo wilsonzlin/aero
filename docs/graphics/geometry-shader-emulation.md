@@ -174,11 +174,16 @@ Not yet supported end-to-end:
 
 ### Output topology / streams
 
-Supported by the GS→WGSL compute translator (`gs_translate.rs`):
+Supported end-to-end today:
+
+- `trianglestrip` output, lowered to an indexed **triangle list** for rendering.
+  - Note: the executor currently renders expanded output using **TriangleList** unconditionally, so
+    non-triangle GS output topologies are not yet meaningful end-to-end.
+
+Translator support (not yet rendered end-to-end):
 
 - `pointlist` output (indexed **point list**)
-- `linestrip` output, lowered to an indexed **line list** for the final draw
-- `trianglestrip` output, lowered to an indexed **triangle list** for the final draw
+- `linestrip` output, lowered to an indexed **line list**
 - only **stream 0**
 
 Not yet supported:
@@ -195,6 +200,11 @@ Supported instructions/opcodes:
   - `EmitVertex` + `CutVertex` (`emitthen_cut`)
 - **Arithmetic subset**
   - `mov`, `movc`, `add`, `mul`, `mad`, `dp3`, `dp4`, `min`, `max`
+- **Structured control flow**
+  - `if` / `else` / `endif`
+  - `ifc` (compare-based conditional)
+  - `loop` / `endloop`
+  - `breakc` / `continuec`
 - **Control**
   - `ret`
 
@@ -207,8 +217,8 @@ Supported operand surface (initial):
   - `SV_PrimitiveID`
   - `SV_GSInstanceID` (currently fixed to 0; GS instancing is not supported yet)
 
-Everything else (control flow, other arithmetic ops, texture sampling, SO, etc) is currently rejected
-by translation.
+Everything else (other arithmetic ops, texture sampling, SO, etc) is currently rejected by
+translation.
 
 ---
 

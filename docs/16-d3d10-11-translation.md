@@ -951,11 +951,19 @@ In the baseline internal binding scheme, this buffer is bound at:
 
 - `@group(3) @binding(276)` (optional; only required when using this packed-input GS path).
 
-Implementation note: the current in-tree GS→WGSL translator (`runtime/gs_translate.rs`) declares
-`gs_inputs` at `@group(0) @binding(4)` as part of its fixed prepass layout. When wiring that
-translator into the executor, either adapt its declarations to the baseline internal scheme, or
-bind a separate internal group(0) for the GS pass (see the “Bind group layout strategies” note
-below in section 2.2.1).
+Implementation note: the current in-tree GS→WGSL translator (`runtime/gs_translate.rs`) uses a fixed
+internal bind group at `@group(0)` (separate from the stage-scoped `@group(3)` GS binding model):
+
+- `@binding(0)`: expanded vertices (read_write)
+- `@binding(1)`: expanded indices (read_write)
+- `@binding(2)`: indirect args (`DrawIndexedIndirectArgs`, read_write)
+- `@binding(3)`: atomic counters (read_write)
+- `@binding(4)`: uniform params (uniform)
+- `@binding(5)`: `gs_inputs` (read)
+
+When wiring that translator into the executor, either adapt its declarations to the baseline
+internal scheme, or bind a separate internal group(0) for the GS pass (the current point-list GS
+prepass uses the separate group(0) approach; see section 2.2.1).
 
 Example declaration:
 
