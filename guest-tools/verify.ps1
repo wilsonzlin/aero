@@ -1227,7 +1227,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.18"
+         version = "2.5.19"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -3594,6 +3594,8 @@ try {
         tools_dir = $toolsDir
         tools_dir_present = $false
         tools_dir_readable = $null
+        file_inventory_limit = 5000
+        file_inventory_truncated = $false
         files = @()
         exe_files = @()
         total_size_bytes = 0
@@ -3663,8 +3665,21 @@ try {
         } else {
             $gciErrors = @()
             $items = @()
+            $inventoryTruncationMsg = $null
             try {
-                $items = Get-ChildItem -Path $toolsDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErrors
+                $scanLimit = [int]$toolsData.file_inventory_limit
+                $scanLimitPlus = $scanLimit + 1
+                $items = @(
+                    Get-ChildItem -Path $toolsDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErrors |
+                        Where-Object { -not $_.PSIsContainer } |
+                        Select-Object -First $scanLimitPlus
+                )
+                if ($items.Count -gt $scanLimit) {
+                    $toolsData.file_inventory_truncated = $true
+                    $items = @($items | Select-Object -First $scanLimit)
+                    $toolsStatus = Merge-Status $toolsStatus "WARN"
+                    $inventoryTruncationMsg = ("File inventory truncated at " + $scanLimit + " files; tools\\ may contain more files than listed.")
+                }
             } catch {
                 # Get-ChildItem can still throw in some cases; treat as unreadable.
                 $gciErrors += $_
@@ -3682,6 +3697,9 @@ try {
                         }
                     } catch { }
                 }
+            }
+            if ($inventoryTruncationMsg) {
+                $invErrors += $inventoryTruncationMsg
             }
 
             $rootFull = $null
@@ -3722,12 +3740,8 @@ try {
             } catch { }
             if (($manifestParseOk -eq $true) -and ($manifestFileResults.Count -gt 0)) { $manifestCorrelationAvailable = $true }
 
-            $fileItems = @()
-            foreach ($it in @($items)) {
-                try {
-                    if ($it -and (-not $it.PSIsContainer)) { $fileItems += $it }
-                } catch { }
-            }
+            # $items already includes only files (no directories).
+            $fileItems = @($items)
 
             $files = @()
             $exeFiles = @()
