@@ -2508,6 +2508,7 @@ impl PciDevice for AeroGpuMmioDevice {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn restore_snapshot_clears_wddm_scanout_active_when_scanout_is_disabled() {
@@ -2718,6 +2719,87 @@ mod tests {
             }
             self.bytes[start..end].copy_from_slice(buf);
         }
+    }
+
+    #[derive(Default)]
+    struct SparseMem {
+        bytes: BTreeMap<u64, u8>,
+    }
+
+    impl MemoryBus for SparseMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            for (i, b) in buf.iter_mut().enumerate() {
+                let Some(addr) = paddr.checked_add(i as u64) else {
+                    *b = 0;
+                    continue;
+                };
+                *b = self.bytes.get(&addr).copied().unwrap_or(0);
+            }
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            for (i, &b) in buf.iter().enumerate() {
+                let Some(addr) = paddr.checked_add(i as u64) else {
+                    break;
+                };
+                self.bytes.insert(addr, b);
+            }
+        }
+    }
+
+    #[test]
+    fn doorbell_desc_gpa_overflow_records_oob_and_advances_head_to_tail() {
+        let mut dev = AeroGpuMmioDevice::default();
+        // Enable PCI bus mastering (COMMAND.BME) so the device tick is allowed to touch the ring.
+        let command = dev.config().command() | (1 << 2);
+        dev.config_mut().set_command(command);
+
+        let ring_gpa = u64::MAX - 100;
+        let entry_count = 2u32;
+        let stride = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
+        let size_bytes = ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * stride;
+
+        // Set up a ring where `head=1` so the device will attempt to address slot 1, whose GPA
+        // (`ring_gpa + header_size + 1*stride`) overflows `u64`.
+        let mut hdr = [0u8; ring::AerogpuRingHeader::SIZE_BYTES];
+        hdr[0..4].copy_from_slice(&ring::AEROGPU_RING_MAGIC.to_le_bytes());
+        hdr[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        hdr[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+        hdr[12..16].copy_from_slice(&entry_count.to_le_bytes());
+        hdr[16..20].copy_from_slice(&stride.to_le_bytes());
+        hdr[20..24].copy_from_slice(&0u32.to_le_bytes()); // flags
+        hdr[24..28].copy_from_slice(&1u32.to_le_bytes()); // head
+        hdr[28..32].copy_from_slice(&2u32.to_le_bytes()); // tail
+
+        let mut mem = SparseMem::default();
+        mem.write_physical(ring_gpa, &hdr);
+
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_RING_GPA_LO as u64, ring_gpa as u32);
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_RING_GPA_HI as u64,
+            (ring_gpa >> 32) as u32,
+        );
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES as u64, size_bytes);
+        dev.mmio_write_dword(
+            pci::AEROGPU_MMIO_REG_RING_CONTROL as u64,
+            pci::AEROGPU_RING_CONTROL_ENABLE,
+        );
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_DOORBELL as u64, 1);
+
+        dev.process(&mut mem);
+
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_CODE as u64),
+            pci::AerogpuErrorCode::Oob as u32
+        );
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64),
+            1
+        );
+
+        // The device should drop pending work by advancing head to tail.
+        let head_addr = ring_gpa + RING_HEAD_OFFSET;
+        assert_eq!(mem.read_u32(head_addr), 2);
     }
 
     #[test]
