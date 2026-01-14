@@ -75,7 +75,7 @@ Notes:
     corresponding to vsync `PRESENT` packets complete on the **next vblank** (and block later
     immediate fences until then).
   - hosts should generally report completion as soon as execution finishes, rather than trying to
-    “fake vsync” by delaying `submit_complete` based on host tick cadence.
+    “fake vsync” by delaying `aerogpu_complete_fence` based on host tick cadence.
 - Browser runtime robustness: the canonical web coordinator may **force-complete fences** (by calling
   `Machine::aerogpu_complete_fence`) when it cannot forward a submission to the GPU worker (for
   example: bounded queue overflow while the GPU worker is not READY, postMessage/transfer-list
@@ -107,6 +107,9 @@ installed).
 These tests exercise the executor-mode contracts:
 
 ```bash
+# Default bring-up mode: fences complete without executing ACMD (ring decode + IRQ plumbing)
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked
+
 # Submission bridge behavior (drain submissions + host fence completion)
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked
 
@@ -116,4 +119,10 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_deferred_fe
 
 # Default-mode vblank pacing for VSYNC presents
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_vsync_fence_pacing --locked
+
+# In-process backends
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_immediate_backend_completes_fence --locked
+
+# Feature-gated native wgpu backend smoke test
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_wgpu_backend_smoke --locked --features aerogpu-wgpu-backend
 ```
