@@ -375,6 +375,45 @@ fn usb2_companion_routing_uhci_lsda_is_clear_when_port_is_ehci_owned() {
 }
 
 #[test]
+fn usb2_port_mux_owner_change_without_device_does_not_fabricate_connection_state() {
+    // UHCI root hub PORTSC bits.
+    const UHCI_PORTSC_CCS: u16 = 1 << 0;
+    const UHCI_PORTSC_CSC: u16 = 1 << 1;
+    // EHCI PORTSC bits.
+    const EHCI_PORTSC_CCS: u32 = 1 << 0;
+    const EHCI_PORTSC_CSC: u32 = 1 << 1;
+
+    let mut mux = Usb2PortMux::new(1);
+
+    // No device attached: both views should show disconnected.
+    assert_eq!(mux.uhci_read_portsc(0) & (UHCI_PORTSC_CCS | UHCI_PORTSC_CSC), 0);
+    assert_eq!(mux.ehci_read_portsc(0) & (EHCI_PORTSC_CCS | EHCI_PORTSC_CSC), 0);
+
+    // Claim port for EHCI (CONFIGFLAG=1 + PORT_OWNER=0) while no device is attached.
+    mux.set_configflag(true);
+    mux.ehci_write_portsc_masked(0, 0, PORTSC_PO);
+
+    assert_eq!(
+        mux.uhci_read_portsc(0) & (UHCI_PORTSC_CCS | UHCI_PORTSC_CSC),
+        0,
+        "UHCI must not report CCS/CSC when no device is attached"
+    );
+    assert_eq!(
+        mux.ehci_read_portsc(0) & (EHCI_PORTSC_CCS | EHCI_PORTSC_CSC),
+        0,
+        "EHCI must not report CCS/CSC when no device is attached"
+    );
+
+    // Release CONFIGFLAG back to companion ownership.
+    mux.set_configflag(false);
+    assert_eq!(
+        mux.uhci_read_portsc(0) & (UHCI_PORTSC_CCS | UHCI_PORTSC_CSC),
+        0,
+        "companion ownership transition must not fabricate CCS/CSC when empty"
+    );
+}
+
+#[test]
 fn usb2_companion_routing_snapshot_restore_preserves_device_suspend_state() {
     #[derive(Clone)]
     struct SuspendedSpy(Rc<RefCell<bool>>);

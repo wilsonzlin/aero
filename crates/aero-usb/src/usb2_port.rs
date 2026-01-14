@@ -701,7 +701,11 @@ impl PortLogic {
     fn on_owner_change(&mut self, visible: bool, dev: &mut Option<AttachedUsbDevice>) {
         // Model ownership transfer as a logical disconnect/reconnect.
         self.on_detach(dev);
-        if visible {
+        // When no physical device is attached, an ownership transition should not fabricate a
+        // connection (CCS) or connect-change (CSC) event. The mux keeps the device object separate
+        // from the per-controller view state, so only mark the port as connected if the port is
+        // visible *and* a device is actually present.
+        if visible && dev.is_some() {
             self.connected = true;
             self.connect_change = true;
         }
