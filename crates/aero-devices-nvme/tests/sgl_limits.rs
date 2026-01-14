@@ -197,7 +197,7 @@ fn sgl_rejects_non_address_subtype() {
     set_nsid(&mut cmd, 1);
     set_prp1(&mut cmd, buf);
     // Data Block descriptor with subtype=1 (keyed) is not supported.
-    set_prp2(&mut cmd, 512u64 | ((0x10u64) << 56));
+    set_prp2(&mut cmd, (SECTOR_SIZE as u64) | ((0x10u64) << 56));
     set_cdw10(&mut cmd, 0);
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
@@ -243,7 +243,7 @@ fn sgl_allows_segment_descriptor_not_last_in_segment_list() {
     let buf1 = 0x60000u64;
     let buf2 = 0x61000u64;
 
-    let sector_size = 512usize;
+    let sector_size = SECTOR_SIZE;
     let split = 200usize;
     let payload: Vec<u8> = (0..sector_size as u32).map(|v| (v & 0xff) as u8).collect();
     mem.write_physical(buf1, &payload[..split]);
@@ -338,7 +338,7 @@ fn sgl_datablock_rejects_null_address() {
     set_nsid(&mut cmd, 1);
     // Data Block descriptor with addr=0 is invalid.
     set_prp1(&mut cmd, 0);
-    set_prp2(&mut cmd, 512);
+    set_prp2(&mut cmd, SECTOR_SIZE as u64);
     set_cdw10(&mut cmd, 0);
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
@@ -419,7 +419,7 @@ fn sgl_rejects_inline_descriptor_with_nonzero_reserved_bytes() {
     set_prp1(&mut cmd, buf);
     // Inline Data Block descriptor with reserved bits (DW12..DW13 bits 23:0) set.
     // Layout: dptr2[31:0]=len, dptr2[55:32]=reserved, dptr2[63:56]=type.
-    set_prp2(&mut cmd, 512u64 | (0x12u64 << 32));
+    set_prp2(&mut cmd, (SECTOR_SIZE as u64) | (0x12u64 << 32));
     set_cdw10(&mut cmd, 0);
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
@@ -442,7 +442,7 @@ fn sgl_rejects_datablock_descriptor_with_nonzero_reserved_bytes_in_segment_list(
     // Data Block descriptor with reserved bytes set.
     let mut desc = [0u8; 16];
     desc[0..8].copy_from_slice(&buf.to_le_bytes());
-    desc[8..12].copy_from_slice(&512u32.to_le_bytes());
+    desc[8..12].copy_from_slice(&(SECTOR_SIZE as u32).to_le_bytes());
     desc[12] = 0xAA; // reserved
     desc[15] = 0x00; // Data Block, subtype=0
     mem.write_physical(list, &desc);
@@ -555,7 +555,7 @@ fn sgl_rejects_nested_datablock_null_address() {
 
     let list = 0x70000u64;
     // Data Block descriptor with addr=0 is invalid.
-    write_sgl_desc(&mut mem, list, 0, 512, 0x00);
+    write_sgl_desc(&mut mem, list, 0, SECTOR_SIZE as u32, 0x00);
 
     let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
     set_cid(&mut cmd, 0x40);
@@ -585,7 +585,7 @@ fn sgl_rejects_inline_descriptor_with_unknown_type() {
     set_nsid(&mut cmd, 1);
     set_prp1(&mut cmd, buf);
     // Unknown descriptor type (low nibble=0x4). Should be rejected.
-    set_prp2(&mut cmd, 512u64 | ((0x04u64) << 56));
+    set_prp2(&mut cmd, (SECTOR_SIZE as u64) | ((0x04u64) << 56));
     set_cdw10(&mut cmd, 0);
     set_cdw11(&mut cmd, 0);
     set_cdw12(&mut cmd, 0);
@@ -804,7 +804,7 @@ fn sgl_rejects_unknown_descriptor_type_in_segment_list() {
     let buf = 0x60000u64;
 
     // Segment list containing an unknown descriptor type should be rejected.
-    write_sgl_desc(&mut mem, list, buf, 512, 0x04);
+    write_sgl_desc(&mut mem, list, buf, SECTOR_SIZE as u32, 0x04);
 
     let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
     set_cid(&mut cmd, 0x41);
@@ -832,7 +832,7 @@ fn sgl_rejects_non_address_subtype_in_segment_list() {
 
     // Segment list containing a Data Block descriptor with a non-address subtype (subtype=1) should
     // be rejected.
-    write_sgl_desc(&mut mem, list, buf, 512, 0x10);
+    write_sgl_desc(&mut mem, list, buf, SECTOR_SIZE as u32, 0x10);
 
     let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
     set_cid(&mut cmd, 0x42);

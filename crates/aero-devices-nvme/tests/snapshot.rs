@@ -175,7 +175,9 @@ fn snapshot_restore_preserves_pending_completion_and_disk_contents() {
     dev.controller.mmio_write(0x1004, 4, 2);
 
     // WRITE 1 sector at LBA 0 (completion left pending in the IO CQ).
-    let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
+    let payload: Vec<u8> = (0..SECTOR_SIZE as u32)
+        .map(|v| (v & 0xff) as u8)
+        .collect();
     mem.write_physical(write_buf, &payload);
 
     let mut cmd = build_command(0x01);
@@ -353,7 +355,9 @@ fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
     );
 
     // Post an IO WRITE into SQ1 entry 0.
-    let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
+    let payload: Vec<u8> = (0..SECTOR_SIZE as u32)
+        .map(|v| (v & 0xff) as u8)
+        .collect();
     mem.write_physical(write_buf, &payload);
 
     let mut cmd = build_command(0x01);
@@ -392,7 +396,7 @@ fn snapshot_restore_replays_unprocessed_io_sq_doorbell_and_persists_write() {
     assert_eq!(cqe.status & !0x1, 0);
 
     let mut disk_read = disk.clone();
-    let mut out = vec![0u8; 512];
+    let mut out = vec![0u8; SECTOR_SIZE];
     disk_read.read_at(0, &mut out).unwrap();
     assert_eq!(out, payload);
 }
@@ -589,7 +593,9 @@ fn snapshot_restore_preserves_pci_interrupt_disable_masking() {
     dev.controller.mmio_write(0x1004, 4, 2);
 
     // Post a write to generate a pending IO completion (asserts controller INTx).
-    let payload: Vec<u8> = (0..512u32).map(|v| (v & 0xff) as u8).collect();
+    let payload: Vec<u8> = (0..SECTOR_SIZE as u32)
+        .map(|v| (v & 0xff) as u8)
+        .collect();
     mem.write_physical(write_buf, &payload);
 
     let mut cmd = build_command(0x01);
