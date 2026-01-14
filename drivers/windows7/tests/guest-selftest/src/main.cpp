@@ -11555,10 +11555,14 @@ int wmain(int argc, wchar_t** argv) {
 
   if (opt.test_blk_reset) {
     if (!blk.ok) {
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=blk_test_failed|err=0");
+      // This failure indicates the reset test did not run because the virtio-blk prereq test failed.
+      // Emit a non-zero error code for diagnosability (callers treat err=0 as "unknown").
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=blk_test_failed|err=%lu",
+               static_cast<unsigned long>(ERROR_INVALID_DATA));
       all_ok = false;
     } else if (const auto target = SelectVirtioBlkSelection(log, opt); !target.has_value()) {
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=resolve_target_failed|err=0");
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=resolve_target_failed|err=%lu",
+               static_cast<unsigned long>(ERROR_NOT_FOUND));
       all_ok = false;
     } else {
       const auto reset = VirtioBlkResetTest(log, *target);
