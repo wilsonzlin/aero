@@ -100,12 +100,26 @@ export async function importFileToOpfs(
 ): Promise<FileSystemFileHandle> {
   const handle = await openFileHandle(destPath, { create: true });
   let writable: FileSystemWritableFileStream;
+  let truncateFallback = false;
   try {
     // Truncate by default so rewriting an existing destination does not append/corrupt.
     writable = await handle.createWritable({ keepExistingData: false });
   } catch {
     // Some implementations may not accept options; fall back to default.
     writable = await handle.createWritable();
+    truncateFallback = true;
+  }
+  if (truncateFallback) {
+    // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+    // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+    try {
+      const maybeTruncate = (writable as unknown as { truncate?: unknown }).truncate;
+      if (typeof maybeTruncate === 'function') {
+        await (maybeTruncate as (size: number) => Promise<void>).call(writable, 0);
+      }
+    } catch {
+      // ignore
+    }
   }
 
   const reader = file.stream().getReader();

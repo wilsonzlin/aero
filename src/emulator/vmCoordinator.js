@@ -29,11 +29,20 @@ async function trySaveSnapshotToOpfs(snapshot) {
     const dir = await getOpfsStateDir();
     const handle = await dir.getFileHandle(OPFS_CRASH_SNAPSHOT_FILE, { create: true });
     let writable = null;
+    let truncateFallback = false;
     try {
       writable = await handle.createWritable({ keepExistingData: false });
     } catch {
       // Some implementations may not accept options; fall back to default.
       writable = await handle.createWritable();
+      truncateFallback = true;
+    }
+    if (truncateFallback) {
+      try {
+        if (writable && typeof writable.truncate === "function") await writable.truncate(0);
+      } catch {
+        // ignore
+      }
     }
     try {
       await writable.write(safeJsonStringify(snapshot, 2));

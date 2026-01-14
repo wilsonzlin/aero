@@ -749,11 +749,23 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     }
     const handle = await dir.getFileHandle(filename, { create: true });
     let writable: FileSystemWritableFileStream;
+    let truncateFallback = false;
     try {
       writable = await handle.createWritable({ keepExistingData: false });
     } catch {
       // Some implementations may not accept options; fall back to default.
       writable = await handle.createWritable();
+      truncateFallback = true;
+    }
+    if (truncateFallback) {
+      try {
+        const maybeTruncate = (writable as unknown as { truncate?: unknown }).truncate;
+        if (typeof maybeTruncate === "function") {
+          await (maybeTruncate as (size: number) => Promise<void>).call(writable, 0);
+        }
+      } catch {
+        // ignore
+      }
     }
     try {
       await writable.write(bytes);
