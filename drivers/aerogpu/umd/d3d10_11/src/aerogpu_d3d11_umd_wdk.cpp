@@ -76,13 +76,8 @@ constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
   #define ERROR_TIMEOUT 1460L
 #endif
 
-constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
-  return (value + alignment - 1) & ~(alignment - 1);
-}
-
-constexpr uint32_t AlignUpU32(uint32_t value, uint32_t alignment) {
-  return static_cast<uint32_t>((value + alignment - 1) & ~(alignment - 1));
-}
+using aerogpu::d3d10_11::AlignUpU64;
+using aerogpu::d3d10_11::AlignUpU32;
 
 static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
   if (!out) {

@@ -131,6 +131,18 @@ inline uint32_t HashSemanticName(const char* s) {
   return hash;
 }
 
+// Aligns `value` up to the next multiple of `alignment`. `alignment` must be a
+// power of two.
+constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
+// Aligns `value` up to the next multiple of `alignment`. `alignment` must be a
+// power of two.
+constexpr uint32_t AlignUpU32(uint32_t value, uint32_t alignment) {
+  return static_cast<uint32_t>((value + alignment - 1) & ~(alignment - 1));
+}
+
 inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB5G6R5Unorm:
