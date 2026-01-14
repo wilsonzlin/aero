@@ -7,7 +7,7 @@ WebGPU render pipeline.
 This document describes:
 
 - what is **implemented today** (command-stream plumbing, binding model, compute-expansion/compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for point-list draws (`Draw` and `DrawIndexed`) and triangle-list draws), and
-- the **next steps** (expand GS DXBC execution beyond the current point/triangle-list subset, implement VS-as-compute to feed GS inputs, then grow opcode/topology/system-value coverage and bring up HS/DS emulation).
+- the **next steps** (expand GS DXBC execution beyond the current point/triangle-list subset, expand VS-as-compute feeding for GS inputs (currently minimal), then grow opcode/topology/system-value coverage and bring up HS/DS emulation).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 >
@@ -72,8 +72,12 @@ Current status:
 - There is an initial “real GS” path for **point-list draws (`Draw` and `DrawIndexed`) and triangle-list draws**:
   if the bound GS DXBC can be translated by `crates/aero-d3d11/src/runtime/gs_translate.rs`, the executor
   executes that translated WGSL compute prepass at draw time.
-  - Currently, the GS `v#[]` inputs are populated directly from IA vertex buffers via vertex pulling
-    (VS-as-compute is not implemented yet). This requires an input layout.
+  - Today, GS `v#[]` inputs are populated via vertex pulling:
+    - Point-list translated-GS prepass paths currently populate `v#[]` directly from IA vertex buffers
+      (so only passthrough-style VS/GS combinations are expected to work).
+    - Triangle-list translated-GS prepass paths prefer feeding `v#[]` from a minimal **VS-as-compute**
+      implementation, so the GS observes VS output registers (correct D3D11 semantics).
+  - This requires an input layout.
 
 ### Why we expand strips into lists
 
@@ -185,7 +189,8 @@ Supported:
 - `triangle` (`D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST`)
 
 Note: for the current translated-GS prepass paths, the GS `v#[]` inputs are populated directly from
-IA vertex buffers via vertex pulling (VS-as-compute feeding is not implemented yet).
+vertex pulling. Point-list draws currently fill `v#[]` directly from IA (passthrough-only), while
+triangle-list draws prefer feeding `v#[]` from a minimal VS-as-compute path.
 
 Not yet supported end-to-end:
 
@@ -461,6 +466,7 @@ Packets that carry a `stage_ex` selector in `reserved0` include: `SET_TEXTURE`, 
 GS emulation is significantly more expensive than native GS hardware support because it introduces:
 
 - **Extra passes**: one or more compute passes (GS itself, and potentially VS-as-compute once brought up)
+- **Extra passes**: one or more compute passes (GS itself, and (for some paths) VS-as-compute)
   before the render pass.
 - **Intermediate buffers**: VS output + expanded vertex/index buffers + indirect args.
 - **Strip→list expansion cost**:

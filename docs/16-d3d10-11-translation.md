@@ -1074,10 +1074,14 @@ To populate `gs_inputs`, the runtime must:
 2. for each vertex in the assembled primitive, populate the required `v#[]` input registers:
    - Target design: copy the required output registers from the previous stage’s output register
      buffer (`vs_out_regs` or DS output regs) into the packed `gs_inputs`.
-   - Current in-tree implementation note: the point-list and triangle-list translated-GS prepass paths in
-     `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` fill `gs_inputs` directly from the IA
-     vertex buffers via vertex pulling (VS-as-compute is not implemented yet), so only simple
-     passthrough-style VS/GS combinations are expected to work.
+   - Current in-tree implementation note:
+     - The point-list translated-GS prepass path in
+       `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` fills `gs_inputs` directly from the IA
+       vertex buffers via vertex pulling (so only passthrough-style VS/GS combinations are expected
+       to work).
+     - The triangle-list translated-GS prepass path prefers feeding `gs_inputs` from a minimal
+       VS-as-compute implementation so the GS observes VS output registers (correct D3D11
+       semantics).
 
 Note: an alternative design is to have the translated GS code read directly from the upstream stage
 register buffer, eliminating the extra packing step. This is a follow-up optimization.
