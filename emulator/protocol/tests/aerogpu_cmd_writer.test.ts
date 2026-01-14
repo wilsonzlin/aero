@@ -548,6 +548,17 @@ test("stage_ex encode/decode helpers follow the reserved0==0 legacy rule", () =>
   assert.equal(decodeStageEx(AerogpuShaderStage.Vertex, AerogpuShaderStageEx.Geometry), undefined);
 });
 
+test("AerogpuCmdWriter.createShaderDxbcEx rejects stageEx=Pixel (0) and does not emit a packet", () => {
+  const w = new AerogpuCmdWriter();
+  assert.throws(
+    () => w.createShaderDxbcEx(1, AerogpuShaderStageEx.Pixel, new Uint8Array([0xaa])),
+    /cannot encode DXBC Pixel program type/,
+  );
+
+  const bytes = w.finish();
+  assert.equal(bytes.byteLength, AEROGPU_CMD_STREAM_HEADER_SIZE);
+});
+
 test("AerogpuCmdWriter legacy binding packets keep reserved0=0", () => {
   const w = new AerogpuCmdWriter();
   w.setTexture(AerogpuShaderStage.Pixel, 0, 99);

@@ -50,3 +50,10 @@ fn create_shader_dxbc_legacy_reserved0_remains_zero() {
         cursor += hdr.size_bytes as usize;
     }
 }
+
+#[test]
+#[should_panic(expected = "CREATE_SHADER_DXBC stage_ex cannot encode DXBC Pixel program type (0)")]
+fn create_shader_dxbc_ex_rejects_pixel_stage_ex() {
+    let mut w = AerogpuCmdWriter::new();
+    w.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Pixel, &[0x00]);
+}
