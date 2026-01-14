@@ -3011,7 +3011,12 @@ impl AerogpuD3d11Executor {
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
         // wired up yet, so keep this as an explicit marker.
         if self.state.hs.is_some() || self.state.ds.is_some() {
-            todo!("tessellation (HS/DS) compute expansion is not implemented yet");
+            bail!(
+                "aerogpu_cmd: tessellation (HS/DS) compute expansion is not wired up yet (hs={:?} ds={:?} topology={:?})",
+                self.state.hs,
+                self.state.ds,
+                self.state.primitive_topology
+            );
         }
 
         // Tessellation draws require both HS and DS to be bound. Until we support a fallback path
