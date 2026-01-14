@@ -3295,8 +3295,25 @@ try {
     try {
         $toolsDirItem = Get-Item -LiteralPath $toolsDir -ErrorAction Stop
     } catch {
-        $fid = "" + $_.FullyQualifiedErrorId
-        if ($fid -match '(?i)PathNotFound') {
+        $isNotFound = $false
+        try {
+            if ($_.CategoryInfo -and ($_.CategoryInfo.Category -eq "ObjectNotFound")) { $isNotFound = $true }
+        } catch { }
+        try {
+            if ($_.Exception -is [System.Management.Automation.ItemNotFoundException]) { $isNotFound = $true }
+        } catch { }
+        try {
+            if ($_.Exception -is [System.IO.DirectoryNotFoundException]) { $isNotFound = $true }
+        } catch { }
+        try {
+            if ($_.Exception -is [System.IO.FileNotFoundException]) { $isNotFound = $true }
+        } catch { }
+        try {
+            $fid = "" + $_.FullyQualifiedErrorId
+            if ($fid -match '(?i)PathNotFound') { $isNotFound = $true }
+        } catch { }
+
+        if ($isNotFound) {
             $toolsDirItem = $null
         } else {
             # Treat any other error as: directory may exist but is unreadable.
@@ -3475,6 +3492,14 @@ try {
                 } catch { }
             }
 
+            $listedCount = 0
+            foreach ($e in $files) {
+                try {
+                    if ($e -and $e.listed_in_manifest) { $listedCount++ }
+                } catch { }
+            }
+            $unlistedCount = ($files.Count - $listedCount)
+
             $toolsData.files = $files
             $toolsData.exe_files = $exeFiles
             $toolsData.total_size_bytes = $totalBytes
@@ -3482,6 +3507,8 @@ try {
             $toolsData.manifest_present = $manifestPresent
             $toolsData.manifest_includes_tools = $manifestIncludesTools
             $toolsData.manifest_tools_files_listed = $manifestToolsFilesListed
+            $toolsData.manifest_listed_files_present = $listedCount
+            $toolsData.manifest_unlisted_files_present = $unlistedCount
             $toolsData.inventory_errors = $invErrors
             $toolsData.tools_dir_readable = ($toolsStatus -eq "PASS")
 
@@ -3490,6 +3517,9 @@ try {
                 $toolsSummary += " (inventory incomplete)."
             }
             $toolsSummary += "; total_bytes=" + $totalBytes
+            if ($manifestPresent -eq $true) {
+                $toolsSummary += "; manifest_listed=" + $listedCount + ", unlisted=" + $unlistedCount
+            }
 
             foreach ($e in $exeFiles) {
                 $line = "" + $e.relative_path
@@ -3500,6 +3530,9 @@ try {
             $otherCount = $files.Count - $exeFiles.Count
             if ($otherCount -gt 0) {
                 $toolsDetails += ("Other (non-EXE) file(s): " + $otherCount + " (see report.json)")
+            }
+            if ($manifestPresent -eq $true) {
+                $toolsDetails += ("Manifest correlation: listed_present=" + $listedCount + ", unlisted_present=" + $unlistedCount + ", manifest_includes_tools=" + $manifestIncludesTools + ", manifest_tools_files_listed=" + $manifestToolsFilesListed)
             }
             foreach ($m in $invErrors) {
                 if ($m) { $toolsDetails += ("Inventory error: " + $m) }
