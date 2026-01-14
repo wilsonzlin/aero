@@ -7,7 +7,8 @@ use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_shared::scanout_state::{
     ScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB, SCANOUT_FORMAT_B8G8R8X8,
-    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
+    SCANOUT_FORMAT_B8G8R8X8_SRGB, SCANOUT_FORMAT_R8G8B8A8, SCANOUT_FORMAT_R8G8B8X8,
+    SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
 };
 use pretty_assertions::assert_eq;
 
@@ -119,7 +120,7 @@ fn wddm_scanout_state_format_mapping_rejects_unsupported_formats_deterministical
     );
     m.process_aerogpu();
     let snap = scanout_state.snapshot();
-    assert_eq!(snap.format, pci::AerogpuFormat::R8G8B8A8Unorm as u32);
+    assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8A8);
 
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
@@ -127,7 +128,7 @@ fn wddm_scanout_state_format_mapping_rejects_unsupported_formats_deterministical
     );
     m.process_aerogpu();
     let snap = scanout_state.snapshot();
-    assert_eq!(snap.format, pci::AerogpuFormat::R8G8B8X8Unorm as u32);
+    assert_eq!(snap.format, SCANOUT_FORMAT_R8G8B8X8);
 
     // Program an unsupported scanout format; this must not panic and must publish a deterministic
     // disabled descriptor rather than leaking an unsupported format value to the shared state.
