@@ -34,12 +34,16 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION 9u
 #define AEROGPU_ESCAPE_OP_QUERY_SCANOUT 10u
 #define AEROGPU_ESCAPE_OP_QUERY_CURSOR 11u
+/* Query performance/health counters snapshot. */
 #define AEROGPU_ESCAPE_OP_QUERY_PERF 12u
+/* Debug-only: read guest physical memory. */
 #define AEROGPU_ESCAPE_OP_READ_GPA 13u
+/* Query most recent device error state (MMIO error registers when available). */
 #define AEROGPU_ESCAPE_OP_QUERY_ERROR 14u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
+/* Maximum payload size for AEROGPU_ESCAPE_OP_READ_GPA (bounded guest physical reads). */
 #define AEROGPU_DBGCTL_READ_GPA_MAX_BYTES 4096u
 
 #define AEROGPU_DBGCTL_CONCAT2_(a, b) a##b
@@ -118,7 +122,7 @@ typedef struct aerogpu_escape_query_fence_out {
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
   /*
-   * Error IRQ telemetry (best-effort; 0 if not supported by this KMD build).
+   * Sticky error IRQ diagnostics (best-effort; 0 if not supported by this KMD build).
    *
    * These fields are appended to the original struct (hdr + last_submitted + last_completed)
    * to keep the layout backwards compatible with older bring-up tooling.
@@ -135,49 +139,52 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, error_irq_
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_fence_out, last_error_fence) == 40);
 
 /*
- * Query perf counters (snapshot).
+ * Query performance/health counters snapshot.
  *
- * This is intended to be a low-overhead "health check" packet, not a full trace.
- * All counters are monotonically increasing since boot/driver init unless
- * otherwise noted.
+ * This is intended to be a low-friction, stable "first glance" dump that helps
+ * diagnose forward progress and interrupt delivery.
+ *
+ * All counters are best-effort snapshots and may change concurrently while the
+ * escape is being processed.
  */
 typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_header hdr;
+
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
 
-  /* Ring 0 geometry (always filled; 0 if unknown). */
+  /* Ring 0 snapshot (AGPU ring when supported; 0 if unknown). */
+  aerogpu_escape_u32 ring0_head;
+  aerogpu_escape_u32 ring0_tail;
   aerogpu_escape_u32 ring0_size_bytes;
   aerogpu_escape_u32 ring0_entry_count;
 
-  /* Ring 0 head/tail indices (best-effort for legacy devices). */
-  aerogpu_escape_u32 ring0_head;
-  aerogpu_escape_u32 ring0_tail;
-
+  /* Submission counters. */
   aerogpu_escape_u64 total_submissions;
   aerogpu_escape_u64 total_presents;
   aerogpu_escape_u64 total_render_submits;
   aerogpu_escape_u64 total_internal_submits;
 
+  /* Interrupt counters. */
   aerogpu_escape_u64 irq_fence_delivered;
   aerogpu_escape_u64 irq_vblank_delivered;
   aerogpu_escape_u64 irq_spurious;
 
+  /* Reset/TDR counters. */
   aerogpu_escape_u64 reset_from_timeout_count;
   aerogpu_escape_u64 last_reset_time_100ns;
 
-  /* Vblank counters (0 if not supported). */
+  /* VBlank snapshot. */
   aerogpu_escape_u64 vblank_seq;
   aerogpu_escape_u64 last_vblank_time_ns;
   aerogpu_escape_u32 vblank_period_ns;
-
   aerogpu_escape_u32 reserved0;
 
   /*
    * Sticky error IRQ diagnostics (mirrors QUERY_FENCE).
    *
-   * `error_irq_count` is incremented when the device signals `AEROGPU_IRQ_ERROR`.
-   * `last_error_fence` records the most recent fence value associated with an error.
+   * These fields are appended to keep the layout backwards compatible with
+   * older bring-up tooling.
    */
   aerogpu_escape_u64 error_irq_count;
   aerogpu_escape_u64 last_error_fence;
@@ -187,10 +194,10 @@ typedef struct aerogpu_escape_query_perf_out {
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 160);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 36);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 40);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 44);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 44);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, total_submissions) == 48);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, irq_fence_delivered) == 80);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reset_from_timeout_count) == 104);
