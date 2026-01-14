@@ -328,6 +328,11 @@ Producers (the driver) must:
   headers, e.g. `aerogpu_shader_stage_ex` via `reserved0` when `shader_stage==COMPUTE`).
 - Only use features/opcodes indicated by the ABI version and feature bits.
 
+Some packets are extended over time by **appending** new fields after a stable prefix. Readers must
+use `aerogpu_cmd_hdr.size_bytes` for skipping and ignore any trailing bytes they do not understand.
+One example is `BIND_SHADERS`, which has a stable 24-byte prefix and may append `{gs, hs, ds}` shader
+handles in newer streams (see `aerogpu_cmd_bind_shaders` in `aerogpu_cmd.h`).
+
 ### Minimal opcode set
 
 The initial protocol defines an IR sufficient for D3D9-style rendering and can be extended for D3D10/11:
