@@ -130,6 +130,12 @@ bool VirtioStatusQCoalesceSimComplete(VIOINPUT_STATUSQ_COALESCE_SIM* Sim)
 #include "virtio_input.h"
 #include "led_translate.h"
 
+/*
+ * StatusQ buffers are sized in units of VIOINPUT_STATUSQ_EVENTS_PER_BUFFER.
+ * Ensure the LED translation helper never produces more events than will fit.
+ */
+C_ASSERT(VIOINPUT_STATUSQ_EVENTS_PER_BUFFER == LED_TRANSLATE_EVENT_COUNT);
+
 #if defined(_MSC_VER)
 #define VIOINPUT_STATUSQ_POOL_TAG 'qSoV'
 #else
@@ -241,6 +247,19 @@ static __forceinline UINT16 VirtioStatusQPopFreeTxBuffer(_Inout_ PVIRTIO_STATUSQ
 
 static __forceinline VOID VirtioStatusQPushFreeTxBuffer(_Inout_ PVIRTIO_STATUSQ Q, _In_ UINT16 Index)
 {
+    if (Index >= Q->TxBufferCount) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq free list push invalid index=%u\n", (ULONG)Index);
+        return;
+    }
+    if (Q->FreeCount >= Q->TxBufferCount) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "statusq free list overflow: freeCount=%u txCount=%u\n",
+            (ULONG)Q->FreeCount,
+            (ULONG)Q->TxBufferCount);
+        return;
+    }
+
     Q->NextFree[Index] = Q->FreeHead;
     Q->FreeHead = Index;
     Q->FreeCount++;
@@ -294,6 +313,16 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
         (uint8_t)Q->PendingLedBitfield,
         (uint8_t)Q->KeyboardLedSupportedMask,
         (struct virtio_input_event_le*)bufVa);
+    if (eventCount > VIOINPUT_STATUSQ_EVENTS_PER_BUFFER) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "statusq led_translate returned too many events: count=%Iu cap=%u\n",
+            eventCount,
+            (ULONG)VIOINPUT_STATUSQ_EVENTS_PER_BUFFER);
+        VirtioStatusQPushFreeTxBuffer(Q, idx);
+        Q->PendingValid = FALSE;
+        return STATUS_SUCCESS;
+    }
     bytes = (UINT32)(eventCount * sizeof(struct virtio_input_event_le));
 
     sg.addr = bufPa;
