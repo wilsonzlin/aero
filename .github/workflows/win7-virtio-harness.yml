@@ -770,6 +770,7 @@ jobs:
           log_dir="out/win7-virtio-harness-logs"
           harness_log="${log_dir}/harness.log"
           serial_log="${log_dir}/win7-virtio-serial.log"
+          qemu_stderr_log="${serial_log%.*}.qemu.stderr.log"
 
           config_marker=""
           result_marker=""
@@ -815,6 +816,7 @@ jobs:
           blk_recovery_host_marker=""
           blk_counters_host_marker=""
           blk_reset_host_marker=""
+          qemu_stderr_line=""
           if [[ -f "${serial_log}" ]]; then
             config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -876,8 +878,11 @@ jobs:
               failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
              # Fallback: the full last failure line (useful when no structured token is present).
             failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
-            # Fallback: last explicit "ERROR:" line.
-            error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 || true)"
+             # Fallback: last explicit "ERROR:" line.
+             error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 || true)"
+           fi
+          if [[ -f "${qemu_stderr_log}" ]]; then
+            qemu_stderr_line="$(tail -n 1 "${qemu_stderr_log}" | tr -d '\r' || true)"
           fi
 
           {
@@ -933,6 +938,9 @@ jobs:
             fi
             if [[ -z "${failure_token}" && -z "${failure_line}" && -n "${error_line}" ]]; then
               echo "- Harness error: ${error_line}"
+            fi
+            if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_stderr_line}" ]]; then
+              echo "- QEMU stderr (last line): \`${qemu_stderr_line}\`"
             fi
             if [[ -n "${result_marker}" ]]; then
               echo "- Guest result marker: ${result_marker}"
