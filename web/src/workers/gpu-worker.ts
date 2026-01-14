@@ -615,6 +615,23 @@ let snapshotPaused = false;
 let snapshotResumePromise: Promise<void> | null = null;
 let snapshotResumeResolve: (() => void) | null = null;
 
+let snapshotPausePromise: Promise<void> | null = null;
+
+let tickInFlightCount = 0;
+let tickInFlightPromise: Promise<void> | null = null;
+let tickInFlightResolve: (() => void) | null = null;
+
+const waitForNoTickInFlight = async (): Promise<void> => {
+  while (tickInFlightCount > 0) {
+    if (!tickInFlightPromise) {
+      tickInFlightPromise = new Promise<void>((resolve) => {
+        tickInFlightResolve = resolve;
+      });
+    }
+    await tickInFlightPromise;
+  }
+};
+
 type SnapshotGuestMemoryBackup = {
   guestU8: Uint8Array | null;
   guestU32: Uint32Array | null;
@@ -713,6 +730,33 @@ const handleSnapshotResume = (): void => {
   snapshotResumeResolve?.();
   snapshotResumePromise = null;
   snapshotResumeResolve = null;
+};
+
+const ensureSnapshotPaused = async (): Promise<void> => {
+  // Once guest-memory access is disabled, the snapshot pause barrier is fully established.
+  // Any subsequent pause requests can acknowledge immediately without waiting on work that is
+  // blocked by snapshot pause (e.g. submit_aerogpu tasks gated on `waitUntilSnapshotResumed()`).
+  if (snapshotGuestMemoryBackup) return;
+  if (snapshotPausePromise) return snapshotPausePromise;
+
+  snapshotPaused = true;
+  const inFlightSubmit = aerogpuSubmitInFlight;
+  snapshotPausePromise = (async () => {
+    if (inFlightSubmit) {
+      // Best-effort: wait for any in-progress ACMD submission to complete so we don't race
+      // snapshot save/restore with guest-memory reads/writes.
+      await inFlightSubmit.catch(() => {});
+    }
+    // Also wait for any in-flight tick/present work to finish; ticks are spawned as "fire and
+    // forget" tasks, so we must explicitly track/drain them before acknowledging snapshot pause.
+    await waitForNoTickInFlight();
+    // Once paused, prevent *any* guest RAM/VRAM access (including scanout/cursor readback)
+    // until the coordinator resumes the worker.
+    disableGuestMemoryAccessForSnapshot();
+  })().finally(() => {
+    snapshotPausePromise = null;
+  });
+  return snapshotPausePromise;
 };
 
 const syncCursorToPresenter = (): void => {
@@ -3407,141 +3451,153 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
 };
 
 const handleTick = async () => {
-  syncPerfFrame();
-  const perfEnabled = !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
-  if (snapshotPaused) {
-    // Snapshot pause is a guest-memory access barrier: avoid touching the shared framebuffer,
-    // scanout descriptors, or cursor state until resumed.
-    return;
-  }
-  refreshFramebufferViews();
-  maybeUpdateFramesReceivedFromSeq();
-  await maybeSendReady();
-
-  if (presenting) {
-    maybePostMetrics();
-    return;
-  }
-
-  if (snapshotPaused) {
-    // Snapshot pause must act as a guest-memory access barrier (no scanout/cursor readback).
-    // We keep the worker responsive (metrics/heartbeats), but avoid any guest RAM/VRAM touches.
-    maybePostMetrics();
-    return;
-  }
-
-  syncHardwareCursorFromState();
-
-  // When scanout is owned by a ScanoutState-programmed framebuffer (e.g. WDDM scanout or legacy
-  // VBE LFB), the frame scheduler may continue ticking even if the legacy shared framebuffer is
-  // idle (FRAME_STATUS=PRESENTED). Read the scanout source to decide whether we should run a
-  // present pass even when `frameState` isn't DIRTY.
-  const scanoutWantsPresentWhenIdle = (() => {
-    const words = scanoutState;
-    if (!words) return wddmOwnsScanoutFallback;
-    try {
-      const src = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
-      return src === SCANOUT_SOURCE_WDDM || src === SCANOUT_SOURCE_LEGACY_VBE_LFB;
-    } catch {
-      return wddmOwnsScanoutFallback;
+  tickInFlightCount += 1;
+  try {
+    syncPerfFrame();
+    const perfEnabled =
+      !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+    if (snapshotPaused) {
+      // Snapshot pause is a guest-memory access barrier: avoid touching the shared framebuffer,
+      // scanout descriptors, or cursor state until resumed.
+      return;
     }
-  })();
+    refreshFramebufferViews();
+    maybeUpdateFramesReceivedFromSeq();
+    await maybeSendReady();
 
-  if (frameState) {
-    const shouldPresentShared = shouldPresentWithSharedState();
-    if (!shouldPresentShared && !scanoutWantsPresentWhenIdle) {
+    if (presenting) {
       maybePostMetrics();
       return;
     }
 
-    if (shouldPresentShared) {
-      if (!claimPresentWithSharedState()) {
+    if (snapshotPaused) {
+      // Snapshot pause must act as a guest-memory access barrier (no scanout/cursor readback).
+      // We keep the worker responsive (metrics/heartbeats), but avoid any guest RAM/VRAM touches.
+      maybePostMetrics();
+      return;
+    }
+
+    syncHardwareCursorFromState();
+
+    // When scanout is owned by a ScanoutState-programmed framebuffer (e.g. WDDM scanout or legacy
+    // VBE LFB), the frame scheduler may continue ticking even if the legacy shared framebuffer is
+    // idle (FRAME_STATUS=PRESENTED). Read the scanout source to decide whether we should run a
+    // present pass even when `frameState` isn't DIRTY.
+    const scanoutWantsPresentWhenIdle = (() => {
+      const words = scanoutState;
+      if (!words) return wddmOwnsScanoutFallback;
+      try {
+        const src = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+        return src === SCANOUT_SOURCE_WDDM || src === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+      } catch {
+        return wddmOwnsScanoutFallback;
+      }
+    })();
+
+    if (frameState) {
+      const shouldPresentShared = shouldPresentWithSharedState();
+      if (!shouldPresentShared && !scanoutWantsPresentWhenIdle) {
         maybePostMetrics();
         return;
       }
-      computeDroppedFromSeqForPresent();
-    } else if (scanoutWantsPresentWhenIdle) {
-      // No shared framebuffer work is pending, but scanout is ScanoutState-owned. Execute a present
-      // pass anyway so the active scanout can be polled/presented and any legacy dirty flags
-      // can be cleared. Use a best-effort PRESENTED->PRESENTING transition to avoid overlapping
-      // presents / tick spam, but do not disturb DIRTY pacing if a shared frame arrives.
-      claimPresentWhileIdleForScanout();
-    }
-  }
 
-  presenting = true;
-  try {
-    presentsAttempted += 1;
-    const presentStartMs = perfEnabled ? performance.now() : 0;
-    const didPresent = await presentOnce();
-    const presentWallMs = perfEnabled ? performance.now() - presentStartMs : 0;
-
-    let presentGpuMs = presentWallMs;
-    if (presenter?.backend === "webgl2_wgpu" && didPresent) {
-      const timings = await tryGetAeroGpuWasmFrameTimings();
-      const gpuUs = timings?.gpu_us;
-      if (typeof gpuUs === "number" && Number.isFinite(gpuUs)) {
-        presentGpuMs = gpuUs / 1000;
+      if (shouldPresentShared) {
+        if (!claimPresentWithSharedState()) {
+          maybePostMetrics();
+          return;
+        }
+        computeDroppedFromSeqForPresent();
+      } else if (scanoutWantsPresentWhenIdle) {
+        // No shared framebuffer work is pending, but scanout is ScanoutState-owned. Execute a present
+        // pass anyway so the active scanout can be polled/presented and any legacy dirty flags
+        // can be cleared. Use a best-effort PRESENTED->PRESENTING transition to avoid overlapping
+        // presents / tick spam, but do not disturb DIRTY pacing if a shared frame arrives.
+        claimPresentWhileIdleForScanout();
       }
     }
 
-    if (perfEnabled) perfGpuMs += presentGpuMs;
-    const outcome = presentOutcomeDeltas(didPresent);
-    presentsSucceeded += outcome.presentsSucceeded;
-    // `framesPresented/framesDropped` count successful/failed *present passes* in this worker,
-    // regardless of whether the pixels came from the legacy shared framebuffer or WDDM scanout.
-    // When scanout is WDDM-owned, the frame scheduler keeps ticking even if `framesReceived`
-    // (shared framebuffer seq) is not advancing, so these counters may diverge.
-    framesPresented += outcome.framesPresented;
-    framesDropped += outcome.framesDropped;
-    if (didPresent) {
-      const now = performance.now();
-      if (lastFrameStartMs !== null) {
-        telemetry.beginFrame(lastFrameStartMs);
+    presenting = true;
+    try {
+      presentsAttempted += 1;
+      const presentStartMs = perfEnabled ? performance.now() : 0;
+      const didPresent = await presentOnce();
+      const presentWallMs = perfEnabled ? performance.now() - presentStartMs : 0;
 
-        const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter?.backend ?? null);
-        let textureUploadBytes = 0;
-        if (lastPresentUploadKind !== "none") {
-          switch (aerogpuLastOutputSource) {
-            case "aerogpu": {
-              const last = aerogpuLastPresentedFrame;
-              textureUploadBytes = last
-                ? estimateFullFrameUploadBytes(last.width, last.height, bytesPerRowAlignment)
-                : 0;
-              break;
-            }
-            case "wddm_scanout": {
-              const scanout = snapshotScanoutForTelemetry();
-              textureUploadBytes = scanout
-                ? estimateFullFrameUploadBytes(scanout.width, scanout.height, bytesPerRowAlignment)
-                : 0;
-              break;
-            }
-            case "framebuffer":
-            default: {
-              const frame = getCurrentFrameInfo();
-              textureUploadBytes = frame?.sharedLayout
-                ? estimateTextureUploadBytes(frame.sharedLayout, lastUploadDirtyRects, bytesPerRowAlignment)
-                : frame
-                  ? estimateFullFrameUploadBytes(frame.width, frame.height, bytesPerRowAlignment)
+      let presentGpuMs = presentWallMs;
+      if (presenter?.backend === "webgl2_wgpu" && didPresent) {
+        const timings = await tryGetAeroGpuWasmFrameTimings();
+        const gpuUs = timings?.gpu_us;
+        if (typeof gpuUs === "number" && Number.isFinite(gpuUs)) {
+          presentGpuMs = gpuUs / 1000;
+        }
+      }
+
+      if (perfEnabled) perfGpuMs += presentGpuMs;
+      const outcome = presentOutcomeDeltas(didPresent);
+      presentsSucceeded += outcome.presentsSucceeded;
+      // `framesPresented/framesDropped` count successful/failed *present passes* in this worker,
+      // regardless of whether the pixels came from the legacy shared framebuffer or WDDM scanout.
+      // When scanout is WDDM-owned, the frame scheduler keeps ticking even if `framesReceived`
+      // (shared framebuffer seq) is not advancing, so these counters may diverge.
+      framesPresented += outcome.framesPresented;
+      framesDropped += outcome.framesDropped;
+      if (didPresent) {
+        const now = performance.now();
+        if (lastFrameStartMs !== null) {
+          telemetry.beginFrame(lastFrameStartMs);
+
+          const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter?.backend ?? null);
+          let textureUploadBytes = 0;
+          if (lastPresentUploadKind !== "none") {
+            switch (aerogpuLastOutputSource) {
+              case "aerogpu": {
+                const last = aerogpuLastPresentedFrame;
+                textureUploadBytes = last
+                  ? estimateFullFrameUploadBytes(last.width, last.height, bytesPerRowAlignment)
                   : 0;
-              break;
+                break;
+              }
+              case "wddm_scanout": {
+                const scanout = snapshotScanoutForTelemetry();
+                textureUploadBytes = scanout
+                  ? estimateFullFrameUploadBytes(scanout.width, scanout.height, bytesPerRowAlignment)
+                  : 0;
+                break;
+              }
+              case "framebuffer":
+              default: {
+                const frame = getCurrentFrameInfo();
+                textureUploadBytes = frame?.sharedLayout
+                  ? estimateTextureUploadBytes(frame.sharedLayout, lastUploadDirtyRects, bytesPerRowAlignment)
+                  : frame
+                    ? estimateFullFrameUploadBytes(frame.width, frame.height, bytesPerRowAlignment)
+                    : 0;
+                break;
+              }
             }
           }
+          telemetry.recordTextureUploadBytes(textureUploadBytes);
+          perf.counter("textureUploadBytes", textureUploadBytes);
+          if (perfEnabled) perfUploadBytes += textureUploadBytes;
+          telemetry.endFrame(now);
         }
-        telemetry.recordTextureUploadBytes(textureUploadBytes);
-        perf.counter("textureUploadBytes", textureUploadBytes);
-        if (perfEnabled) perfUploadBytes += textureUploadBytes;
-        telemetry.endFrame(now);
+        lastFrameStartMs = now;
       }
-      lastFrameStartMs = now;
+    } catch (err) {
+      sendError(err);
+    } finally {
+      presenting = false;
+      finishPresentWithSharedState();
+      maybePostMetrics();
     }
-  } catch (err) {
-    sendError(err);
   } finally {
-    presenting = false;
-    finishPresentWithSharedState();
-    maybePostMetrics();
+    tickInFlightCount -= 1;
+    if (tickInFlightCount <= 0) {
+      tickInFlightCount = 0;
+      tickInFlightResolve?.();
+      tickInFlightPromise = null;
+      tickInFlightResolve = null;
+    }
   }
 };
 
@@ -4024,19 +4080,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       case "vm.snapshot.pause": {
         void (async () => {
           try {
-            // Idempotent: if we are already snapshot-paused, acknowledge immediately.
-            if (!snapshotPaused) {
-              snapshotPaused = true;
-              const inFlight = aerogpuSubmitInFlight;
-              if (inFlight) {
-                // Best-effort: wait for any in-progress ACMD submission to complete so we don't
-                // race snapshot save/restore with guest-memory reads/writes.
-                await inFlight.catch(() => {});
-              }
-            }
-            // Once paused, prevent *any* guest RAM/VRAM access (including scanout/cursor readback)
-            // until the coordinator resumes the worker.
-            disableGuestMemoryAccessForSnapshot();
+            await ensureSnapshotPaused();
             ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
           } catch (err) {
             ctx.postMessage({
