@@ -10,6 +10,8 @@ This document describes:
 - the **next steps** (wire up GS DXBC translation + bytecode execution, then expand opcode/topology coverage, system values, etc).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
+>
+> Related: [`docs/graphics/tessellation-emulation.md`](./tessellation-emulation.md) (HS/DS emulation pipeline).
 
 ---
 
