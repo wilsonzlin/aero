@@ -635,6 +635,22 @@ export type MachineHandle = {
     /** Whether the guest has configured the synthetic USB HID consumer-control device (`SET_CONFIGURATION != 0`). */
     usb_hid_consumer_control_configured?(): boolean;
 
+    /**
+     * Guest keyboard LED state helpers.
+     *
+     * All return the same HID-style LED bitmask layout:
+     * - bit0: Num Lock
+     * - bit1: Caps Lock
+     * - bit2: Scroll Lock
+     * - bit3: Compose
+     * - bit4: Kana
+     *
+     * Optional for older WASM builds.
+     */
+    usb_hid_keyboard_leds?(): number;
+    virtio_input_keyboard_leds?(): number;
+    ps2_keyboard_leds?(): number;
+
     inject_usb_hid_keyboard_usage?(usage: number, pressed: boolean): void;
     /**
      * Inject a Consumer Control (HID Usage Page 0x0C) usage transition (media keys).
