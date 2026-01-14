@@ -2182,6 +2182,7 @@ def _build_qemu_args_dry_run(
     virtio_input_vectors: Optional[int],
     virtio_snd_vectors: Optional[int],
     attach_virtio_tablet: bool,
+    virtio_disable_msix: bool,
 ) -> list[str]:
     """
     Construct the QEMU argv array without probing QEMU (no subprocesses).
@@ -2215,9 +2216,10 @@ def _build_qemu_args_dry_run(
 
     if args.virtio_transitional:
         # Transitional mode: use a close-to-default QEMU layout. If explicit vectors are requested
-        # for virtio-blk, switch to an explicit virtio-blk-pci device so vectors can be applied.
+        # for virtio-blk (or INTx-only mode is requested), switch to an explicit virtio-blk-pci device so
+        # `vectors=<N>` / `vectors=0` can be applied.
         virtio_blk_args: list[str] = []
-        if virtio_blk_vectors is None:
+        if virtio_blk_vectors is None and not virtio_disable_msix:
             drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=virtio,cache=writeback"
             if args.snapshot:
                 drive += ",snapshot=on"
@@ -2228,29 +2230,37 @@ def _build_qemu_args_dry_run(
             if args.snapshot:
                 drive += ",snapshot=on"
             virtio_blk = _qemu_device_arg_add_vectors(f"virtio-blk-pci,drive={drive_id}", virtio_blk_vectors)
+            virtio_blk = _qemu_device_arg_disable_msix(virtio_blk, virtio_disable_msix)
             virtio_blk_args = ["-drive", drive, "-device", virtio_blk]
 
         virtio_net = _qemu_device_arg_add_vectors("virtio-net-pci,netdev=net0", virtio_net_vectors)
+        virtio_net = _qemu_device_arg_disable_msix(virtio_net, virtio_disable_msix)
 
+        kbd = _qemu_device_arg_add_vectors(
+            f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID}",
+            virtio_input_vectors,
+        )
+        kbd = _qemu_device_arg_disable_msix(kbd, virtio_disable_msix)
+        mouse = _qemu_device_arg_add_vectors(
+            f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID}",
+            virtio_input_vectors,
+        )
+        mouse = _qemu_device_arg_disable_msix(mouse, virtio_disable_msix)
         virtio_input_args: list[str] = [
             "-device",
-            _qemu_device_arg_add_vectors(
-                f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID}",
-                virtio_input_vectors,
-            ),
+            kbd,
             "-device",
-            _qemu_device_arg_add_vectors(
-                f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID}",
-                virtio_input_vectors,
-            ),
+            mouse,
         ]
         if attach_virtio_tablet:
+            tablet = _qemu_device_arg_add_vectors(
+                _qemu_virtio_tablet_pci_device_arg(disable_legacy=False, pci_revision=None),
+                virtio_input_vectors,
+            )
+            tablet = _qemu_device_arg_disable_msix(tablet, virtio_disable_msix)
             virtio_input_args += [
                 "-device",
-                _qemu_device_arg_add_vectors(
-                    _qemu_virtio_tablet_pci_device_arg(disable_legacy=False, pci_revision=None),
-                    virtio_input_vectors,
-                ),
+                tablet,
             ]
 
         qemu_args += ["-device", virtio_net] + virtio_input_args + virtio_blk_args + qemu_extra
@@ -2267,18 +2277,22 @@ def _build_qemu_args_dry_run(
         f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
         virtio_net_vectors,
     )
+    virtio_net = _qemu_device_arg_disable_msix(virtio_net, virtio_disable_msix)
     virtio_blk = _qemu_device_arg_add_vectors(
         f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}",
         virtio_blk_vectors,
     )
+    virtio_blk = _qemu_device_arg_disable_msix(virtio_blk, virtio_disable_msix)
     virtio_kbd = _qemu_device_arg_add_vectors(
         f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
         virtio_input_vectors,
     )
+    virtio_kbd = _qemu_device_arg_disable_msix(virtio_kbd, virtio_disable_msix)
     virtio_mouse = _qemu_device_arg_add_vectors(
         f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
         virtio_input_vectors,
     )
+    virtio_mouse = _qemu_device_arg_disable_msix(virtio_mouse, virtio_disable_msix)
 
     qemu_args += [
         "-device",
@@ -2293,6 +2307,7 @@ def _build_qemu_args_dry_run(
             _qemu_virtio_tablet_pci_device_arg(disable_legacy=True, pci_revision=aero_pci_rev),
             virtio_input_vectors,
         )
+        virtio_tablet = _qemu_device_arg_disable_msix(virtio_tablet, virtio_disable_msix)
         qemu_args += ["-device", virtio_tablet]
 
     qemu_args += [
@@ -2312,6 +2327,7 @@ def _build_qemu_args_dry_run(
             ]
         )
         device_arg = _qemu_device_arg_add_vectors(device_arg, virtio_snd_vectors)
+        device_arg = _qemu_device_arg_disable_msix(device_arg, virtio_disable_msix)
 
         backend = args.virtio_snd_audio_backend
         if backend == "none":
@@ -2866,7 +2882,7 @@ def main() -> int:
         except FileNotFoundError:
             pass
 
-    if virtio_disable_msix:
+    if virtio_disable_msix and not args.dry_run:
         # INTx-only mode: verify the running QEMU build accepts `vectors=0` for the virtio-pci devices
         # the harness will create. Some QEMU builds expose the `vectors` property but reject `0`.
         devices_to_check = ["virtio-net-pci", "virtio-blk-pci"]
@@ -3037,6 +3053,7 @@ def main() -> int:
             virtio_input_vectors=virtio_input_vectors,
             virtio_snd_vectors=virtio_snd_vectors,
             attach_virtio_tablet=attach_virtio_tablet,
+            virtio_disable_msix=virtio_disable_msix,
         )
         # First line: machine-readable JSON argv array.
         print(json.dumps(qemu_args, separators=(",", ":")))

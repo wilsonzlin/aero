@@ -79,7 +79,46 @@ class DryRunQemuCmdTests(unittest.TestCase):
             mock_run.assert_not_called()
             mock_popen.assert_not_called()
 
+    def test_dry_run_with_virtio_disable_msix_does_not_spawn_subprocess(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            disk = tmp / "win7.qcow2"
+            disk.write_bytes(b"")
+            serial = tmp / "serial.log"
+
+            argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                str(disk),
+                "--serial-log",
+                str(serial),
+                "--virtio-disable-msix",
+                "--dry-run",
+            ]
+
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(self.harness.subprocess, "run") as mock_run,
+                mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                contextlib.redirect_stdout(out),
+            ):
+                rc = self.harness.main()
+
+            self.assertEqual(rc, 0)
+            stdout = out.getvalue()
+            self.assertIn("vectors=0", stdout)
+
+            # First line should be JSON argv array and should include vectors=0 on at least one device.
+            first_line = stdout.splitlines()[0]
+            parsed = json.loads(first_line)
+            self.assertTrue(any(isinstance(x, str) and "vectors=0" in x for x in parsed))
+
+            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
-
