@@ -17,6 +17,7 @@
 #   test binaries matching:
 #     - `crates/aero-machine/tests/boot_int10_*.rs`
 #     - `crates/aero-machine/tests/vga_*.rs`
+#     - `crates/aero-machine/tests/bios_vga_sync.rs` (BIOS↔VGA/VBE sync regression tests)
 
 set -euo pipefail
 
@@ -61,3 +62,11 @@ for f in "${vga_files[@]}"; do
 done
 run cargo test -p aero-machine --locked "${vga_args[@]}"
 
+# Additional BIOS↔VGA/VBE sync regression coverage (palette mirroring, failed mode-set semantics,
+# etc).
+#
+# This test binary is not named `boot_int10_*` or `vga_*`, but it is part of the same boot-display
+# stack end-to-end contract.
+if [[ -f crates/aero-machine/tests/bios_vga_sync.rs ]]; then
+  run cargo test -p aero-machine --locked --test bios_vga_sync
+fi
