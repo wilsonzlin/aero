@@ -39,12 +39,12 @@ impl Default for AeroGpuDeviceConfig {
     }
 }
 
-// Keep the VBE framebuffer region aligned with the canonical VGA/VBE VRAM layout:
-// - first 256KiB reserved for legacy VGA planes (4×64KiB)
-// - VBE packed-pixel framebuffer starts after that region.
-const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32;
-const LEGACY_VGA_WINDOW_BASE: u32 = aero_gpu_vga::VGA_LEGACY_MEM_START;
-const LEGACY_VGA_WINDOW_SIZE: u32 = aero_gpu_vga::VGA_LEGACY_MEM_LEN;
+// Canonical AeroGPU BAR1 VRAM layout (see `docs/16-aerogpu-vga-vesa-compat.md`):
+// - `0x00000..0x1FFFF`: legacy VGA window backing (`0xA0000..0xBFFFF`, 128KiB)
+// - `0x20000..`: VBE linear framebuffer (LFB)
+const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = aero_devices_gpu::VBE_LFB_OFFSET as u32;
+const LEGACY_VGA_WINDOW_BASE: u32 = aero_devices_gpu::LEGACY_VGA_PADDR_BASE as u32;
+const LEGACY_VGA_WINDOW_SIZE: u32 = aero_devices_gpu::LEGACY_VGA_VRAM_BYTES as u32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Scanout0Descriptor {
@@ -150,9 +150,8 @@ impl AeroGpuPciDevice {
             vram_size: cfg.vram_size_bytes as usize,
             vram_bar_base: bar1,
             lfb_offset: AEROGPU_PCI_BAR1_LFB_OFFSET,
-            // Reserve the full 4-plane VGA backing region so VBE mode switches do not clobber
-            // legacy plane contents.
-            legacy_plane_count: 4,
+            // Back only planes 0/1 (text mode) in the reserved legacy VGA window (128KiB).
+            legacy_plane_count: 2,
         });
 
         Self {
