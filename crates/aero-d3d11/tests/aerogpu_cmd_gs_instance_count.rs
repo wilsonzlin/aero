@@ -96,7 +96,7 @@ fn aerogpu_cmd_rejects_gs_instance_count_gt1() {
             AerogpuShaderStageEx::Geometry,
             &build_gs_with_instance_count(2),
         );
-        writer.bind_shaders_with_gs(VS, GS, PS, 0);
+        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
         writer.draw(3, 1, 0, 0);
 
         let stream = writer.finish();

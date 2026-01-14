@@ -313,7 +313,7 @@ fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
         );
         writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
 
-        writer.bind_shaders_with_gs(VS, GS, PS, 0);
+        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
         // Disable face culling so the test does not depend on backend-specific winding conventions.
         writer.set_rasterizer_state_ext(
             AerogpuFillMode::Solid,

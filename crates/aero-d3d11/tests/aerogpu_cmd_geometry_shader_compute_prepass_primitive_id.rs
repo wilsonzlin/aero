@@ -51,9 +51,8 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_primitive_id() {
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        // Bind a dummy GS handle in the legacy `BIND_SHADERS.reserved0` field to force the
-        // compute-prepass path (the executor interprets this field as `gs`).
-        writer.bind_shaders_with_gs(VS, 0xCAFE_BABE, PS, 0);
+        // Bind a dummy GS handle to force the compute-prepass path.
+        writer.bind_shaders_ex(VS, PS, 0, 0xCAFE_BABE, 0, 0);
         // Draw two triangles; the compute-prepass uses `global_invocation_id.x` as a synthetic
         // `SV_PrimitiveID`.
         writer.draw(6, 1, 0, 0);

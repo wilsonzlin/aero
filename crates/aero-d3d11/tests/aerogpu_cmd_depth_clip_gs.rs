@@ -74,7 +74,7 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled_with_gs_emulation() {
             // renders when depth clip is disabled (z is clamped in the passthrough VS).
             writer.set_shader_constants_f(AerogpuShaderStage::Compute, 0, &[2.0, 0.0, 0.0, 0.0]);
 
-            writer.bind_shaders_with_gs(VS, GS, PS, 0);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
             writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);

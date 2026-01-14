@@ -73,7 +73,7 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_no_ilay_smoke() {
 
         // Bind a dummy GS handle to force the compute-prepass path; no actual GS shader is needed
         // for this smoke test.
-        writer.bind_shaders_with_gs(VS, 0xCAFE_BABE, PS, 0);
+        writer.bind_shaders_ex(VS, PS, 0, 0xCAFE_BABE, 0, 0);
         writer.draw_indexed(3, 1, 0, 0, 0);
 
         let stream = writer.finish();

@@ -57,7 +57,7 @@ fn aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives() {
         writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
 
         // Bind a non-zero GS handle to force the GS/HS/DS compute-prepass path.
-        writer.bind_shaders_with_gs(VS, 0xCAFE_BABE, PS, 0);
+        writer.bind_shaders_ex(VS, PS, 0, 0xCAFE_BABE, 0, 0);
         // Request 2 primitives (triangle list with 6 vertices). The compute prepass expands each
         // primitive into a triangle, and the pixel shader uses SV_PrimitiveID to output:
         // - primitive 0: black

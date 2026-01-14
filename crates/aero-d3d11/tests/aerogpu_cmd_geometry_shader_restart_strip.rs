@@ -544,7 +544,7 @@ fn aerogpu_cmd_geometry_shader_restart_strip_point_list_to_quads_has_no_bridge_t
         );
         writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
 
-        writer.bind_shaders_with_gs(VS, GS, PS, 0);
+        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
 
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.draw(2, 1, 0, 0);

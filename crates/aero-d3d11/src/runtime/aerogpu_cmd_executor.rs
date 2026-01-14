@@ -16620,7 +16620,7 @@ fn cs_main() {
             writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
-            writer.bind_shaders_with_gs(VS, GS, PS, 0);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
 
             // TriangleList: 3 vertices = 1 primitive, 6 vertices = 2 primitives.
             writer.draw(3, 1, 0, 0);
