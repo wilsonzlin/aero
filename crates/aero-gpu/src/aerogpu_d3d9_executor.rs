@@ -3347,9 +3347,10 @@ impl AerogpuD3d9Executor {
                     }
                     Resource::Texture2d {
                         format_raw,
-                        format: _format,
                         width,
                         height,
+                        mip_level_count,
+                        array_layers,
                         row_pitch_bytes,
                         backing,
                         ..
@@ -3360,18 +3361,21 @@ impl AerogpuD3d9Executor {
                             )));
                         }
                         let block = aerogpu_format_texel_block_info(*format_raw)?;
-                        let expected_row_pitch = block.row_pitch_bytes(*width)?;
-                        let src_pitch = if *row_pitch_bytes != 0 {
-                            (*row_pitch_bytes).max(expected_row_pitch)
+                        let min_row_pitch = block.row_pitch_bytes(*width)?;
+                        let mip0_row_pitch = if *row_pitch_bytes != 0 {
+                            (*row_pitch_bytes).max(min_row_pitch)
                         } else {
-                            expected_row_pitch
-                        } as u64;
-                        let rows = u64::from(block.rows_per_image(*height));
-                        let total_size = src_pitch.checked_mul(rows).ok_or_else(|| {
-                            AerogpuD3d9Error::Validation(
-                                "UPLOAD_RESOURCE: texture size overflow".into(),
-                            )
-                        })?;
+                            min_row_pitch
+                        };
+                        let layout = guest_texture_linear_layout(
+                            *format_raw,
+                            *width,
+                            *height,
+                            *mip_level_count,
+                            *array_layers,
+                            mip0_row_pitch,
+                        )?;
+                        let total_size = layout.total_size_bytes;
                         let end = offset_bytes
                             .checked_add(size_bytes)
                             .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
@@ -3463,9 +3467,17 @@ impl AerogpuD3d9Executor {
                             format,
                             width,
                             height,
+                            mip_level_count,
+                            array_layers,
                             row_pitch_bytes,
                             ..
                         } => {
+                            let base_width = *width;
+                            let base_height = *height;
+                            let mip_level_count = *mip_level_count;
+                            let array_layers = *array_layers;
+                            let mip0_row_pitch_bytes = *row_pitch_bytes;
+
                             let src_block = aerogpu_format_texel_block_info(*format_raw)?;
                             let bc_format = aerogpu_format_bc(*format_raw);
                             let dst_is_bc = matches!(
@@ -3475,6 +3487,121 @@ impl AerogpuD3d9Executor {
                                     | wgpu::TextureFormat::Bc3RgbaUnorm
                                     | wgpu::TextureFormat::Bc7RgbaUnorm
                             );
+
+                            // `UPLOAD_RESOURCE` offsets are expressed in terms of the guest linear
+                            // texture layout used for both guest-backed and host-backed textures.
+                            // This includes all mip levels (packed sequentially).
+                            //
+                            // Map the incoming byte offset into a specific mip level so host-backed
+                            // mipmapped textures can be updated via `UPLOAD_RESOURCE`.
+                            let min_row_pitch_mip0 = src_block.row_pitch_bytes(base_width)?;
+                            let mip0_layout_row_pitch = if mip0_row_pitch_bytes != 0 {
+                                mip0_row_pitch_bytes.max(min_row_pitch_mip0)
+                            } else {
+                                min_row_pitch_mip0
+                            };
+                            let layout = guest_texture_linear_layout(
+                                *format_raw,
+                                base_width,
+                                base_height,
+                                mip_level_count,
+                                array_layers,
+                                mip0_layout_row_pitch,
+                            )?;
+                            let end_global = offset_bytes
+                                .checked_add(size_bytes)
+                                .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
+                            if end_global > layout.total_size_bytes {
+                                return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
+                            }
+
+                            let layer_stride = layout.layer_stride_bytes;
+                            let layer = if layer_stride != 0 {
+                                offset_bytes / layer_stride
+                            } else {
+                                return Err(AerogpuD3d9Error::Validation(
+                                    "UPLOAD_RESOURCE: texture layer stride is 0".into(),
+                                ));
+                            };
+                            if layer >= u64::from(array_layers) {
+                                return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
+                            }
+                            let layer_base = layer.checked_mul(layer_stride).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "UPLOAD_RESOURCE: texture layer offset overflow".into(),
+                                )
+                            })?;
+                            let in_layer_offset = offset_bytes
+                                .checked_sub(layer_base)
+                                .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
+                            let in_layer_end = end_global
+                                .checked_sub(layer_base)
+                                .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
+
+                            // Find the mip level containing `in_layer_offset` and ensure the
+                            // upload doesn't cross mip boundaries (we don't support multi-mip
+                            // uploads in a single command).
+                            let mut upload_mip_level: Option<u32> = None;
+                            let mut mip_base: u64 = 0;
+                            let mut _mip_end: u64 = 0;
+                            for mip in 0..mip_level_count {
+                                let start = *layout
+                                    .mip_offsets
+                                    .get(mip as usize)
+                                    .ok_or_else(|| {
+                                        AerogpuD3d9Error::Validation(
+                                            "UPLOAD_RESOURCE: mip layout out of bounds".into(),
+                                        )
+                                    })?;
+                                let end = if mip + 1 < mip_level_count {
+                                    *layout
+                                        .mip_offsets
+                                        .get((mip + 1) as usize)
+                                        .ok_or_else(|| {
+                                            AerogpuD3d9Error::Validation(
+                                                "UPLOAD_RESOURCE: mip layout out of bounds".into(),
+                                            )
+                                        })?
+                                } else {
+                                    layout.layer_stride_bytes
+                                };
+                                if in_layer_offset >= start && in_layer_offset < end {
+                                    if in_layer_end > end {
+                                        return Err(AerogpuD3d9Error::UploadNotSupported(
+                                            resource_handle,
+                                        ));
+                                    }
+                                    upload_mip_level = Some(mip);
+                                    mip_base = start;
+                                    _mip_end = end;
+                                    break;
+                                }
+                            }
+                            let upload_mip_level = upload_mip_level
+                                .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
+                            debug_assert!(
+                                in_layer_offset >= mip_base && in_layer_offset < _mip_end
+                            );
+
+                            let mip_w = mip_extent(base_width, upload_mip_level);
+                            let mip_h = mip_extent(base_height, upload_mip_level);
+                            let mip_row_pitch_bytes = if upload_mip_level == 0 {
+                                mip0_row_pitch_bytes
+                            } else {
+                                0u32
+                            };
+                            let width = &mip_w;
+                            let height = &mip_h;
+                            let row_pitch_bytes = &mip_row_pitch_bytes;
+                            let offset_bytes = in_layer_offset
+                                .checked_sub(mip_base)
+                                .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
+
+                            let upload_origin_z: u32 = layer.try_into().map_err(|_| {
+                                AerogpuD3d9Error::Validation(
+                                    "UPLOAD_RESOURCE: array layer out of range".into(),
+                                )
+                            })?;
 
                             let expected_row_pitch = src_block.row_pitch_bytes(*width)?;
                             let src_pitch = if *row_pitch_bytes != 0 {
@@ -3771,11 +3898,11 @@ impl AerogpuD3d9Executor {
                                     },
                                     wgpu::ImageCopyTexture {
                                         texture,
-                                        mip_level: 0,
+                                        mip_level: upload_mip_level,
                                         origin: wgpu::Origin3d {
                                             x: origin_x_texels,
                                             y: origin_y_texels,
-                                            z: 0,
+                                            z: upload_origin_z,
                                         },
                                         aspect: wgpu::TextureAspect::All,
                                     },
@@ -3880,11 +4007,11 @@ impl AerogpuD3d9Executor {
                                     },
                                     wgpu::ImageCopyTexture {
                                         texture,
-                                        mip_level: 0,
+                                        mip_level: upload_mip_level,
                                         origin: wgpu::Origin3d {
                                             x: origin_x_texels,
                                             y: origin_y_texels,
-                                            z: 0,
+                                            z: upload_origin_z,
                                         },
                                         aspect: wgpu::TextureAspect::All,
                                     },
@@ -3964,11 +4091,11 @@ impl AerogpuD3d9Executor {
                                     },
                                     wgpu::ImageCopyTexture {
                                         texture,
-                                        mip_level: 0,
+                                        mip_level: upload_mip_level,
                                         origin: wgpu::Origin3d {
                                             x: origin_x_texels,
                                             y: origin_y_texels,
-                                            z: 0,
+                                            z: upload_origin_z,
                                         },
                                         aspect: wgpu::TextureAspect::All,
                                     },
