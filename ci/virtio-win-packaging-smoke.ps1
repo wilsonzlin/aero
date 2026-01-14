@@ -1243,6 +1243,7 @@ if ($resolvedGuestToolsProfile -eq "full") {
   if (-not $partialDriverPackManifest.optional_drivers_missing_any) {
     throw "Expected driver-pack manifest to report missing optional drivers for the partial-optional scenario (optional_drivers_missing_any=false)."
   }
+  $partialWarnings = @($partialDriverPackManifest.warnings | ForEach-Object { $_.ToString().ToLowerInvariant() })
   $partialMissing = @($partialDriverPackManifest.optional_drivers_missing)
   foreach ($want in @("viosnd", "vioinput")) {
     $entry = $partialMissing | Where-Object { $_.name -and (($_.name).ToLowerInvariant() -eq $want) } | Select-Object -First 1
@@ -1254,6 +1255,14 @@ if ($resolvedGuestToolsProfile -eq "full") {
       if (-not ($targets -contains $t)) {
         throw "Expected driver-pack manifest optional_drivers_missing entry for '$want' to include missing target '$t'. Got: $($targets -join ', ')"
       }
+    }
+
+    # Ensure the driver pack emitted a clear warning that the optional driver was dropped because it was partial.
+    $warnHit = $partialWarnings |
+      Where-Object { $_.Contains("optional driver '$want'") -and $_.Contains("present only") -and $_.Contains("omitting it from all targets") } |
+      Select-Object -First 1
+    if (-not $warnHit) {
+      throw "Expected driver-pack manifest warnings to include a partial-driver omission warning for '$want'."
     }
   }
   $partialIncludedDrivers = @($partialDriverPackManifest.drivers | ForEach-Object { $_.ToString().ToLowerInvariant() })
