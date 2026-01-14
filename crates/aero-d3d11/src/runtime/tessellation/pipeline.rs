@@ -69,6 +69,7 @@ pub(crate) struct LayoutPassPipeline {
     pipeline: wgpu::ComputePipeline,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct DsPassthroughPipeline {
