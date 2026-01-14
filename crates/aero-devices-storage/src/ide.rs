@@ -245,6 +245,9 @@ impl IdeChannel {
         //   bit 5: nDS1 (active low drive-select 1)
         //   bit 4: nDS0 (active low drive-select 0)
         //   bits 3..0: nHS3..nHS0 (active low head-select)
+        //
+        // The legacy drive/head select lines are active-low versions of the Device/Head register
+        // fields. We derive them from the current selection.
         let head = self.drive_head & 0x0F;
         let (n_ds0, n_ds1) = match self.selected {
             0 => (0u8, 1u8), // master (device 0) selected

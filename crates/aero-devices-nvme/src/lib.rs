@@ -1285,6 +1285,8 @@ impl NvmeController {
         // Clear any pending doorbell update so recreating the queue can't accidentally pick up an
         // old tail value.
         self.pending_sq_tail.remove(&qid);
+        // Keep derived interrupt level coherent after any queue topology changes.
+        self.refresh_intx_level();
         (NvmeStatus::SUCCESS, 0)
     }
 
@@ -1314,22 +1316,26 @@ impl NvmeController {
         }
         let fid = (cmd.cdw10 & 0xff) as u8;
         let sel = ((cmd.cdw10 >> 8) & 0x7) as u8;
-        // Support querying current and default values (SEL=0/1). For this minimal controller we
-        // treat them as identical.
-        if sel > 1 {
-            return (NvmeStatus::INVALID_FIELD, 0);
-        }
 
         match fid {
+            // Number of Queues:
+            // - SEL=0/1: current/default, 0-based values (NSQR in [31:16], NCQR in [15:0]).
+            // - SEL=3: supported capabilities (max supported queues, also 0-based).
+            //
+            // Other SEL values are not implemented.
+            0x07 if sel == 3 => {
+                let max = (NVME_MAX_IO_QUEUES as u16).saturating_sub(1);
+                (NvmeStatus::SUCCESS, (u32::from(max) << 16) | u32::from(max))
+            }
             // Number of Queues: 0-based values (NSQR in [31:16], NCQR in [15:0]).
-            0x07 => (
+            0x07 if sel <= 1 => (
                 NvmeStatus::SUCCESS,
                 (u32::from(self.feature_num_io_sqs) << 16) | u32::from(self.feature_num_io_cqs),
             ),
             // Interrupt Coalescing: return the raw 16-bit value in DW0.
-            0x08 => (NvmeStatus::SUCCESS, u32::from(self.feature_interrupt_coalescing)),
+            0x08 if sel <= 1 => (NvmeStatus::SUCCESS, u32::from(self.feature_interrupt_coalescing)),
             // Volatile Write Cache: bit 0.
-            0x06 => (
+            0x06 if sel <= 1 => (
                 NvmeStatus::SUCCESS,
                 u32::from(self.feature_volatile_write_cache as u8),
             ),
@@ -4517,6 +4523,25 @@ mod tests {
         let (status, result) = ctrl.cmd_get_features(get_nq);
         assert_eq!(status, NvmeStatus::SUCCESS);
         let max = (NVME_MAX_IO_QUEUES as u32) - 1;
+        assert_eq!(result, (max << 16) | max);
+
+        // Supported capabilities for Number of Queues (SEL=3) should also report the maximum.
+        let get_nq_supported = NvmeCommand {
+            opc: 0x0a,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x07 | (3u32 << 8),
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, result) = ctrl.cmd_get_features(get_nq_supported);
+        assert_eq!(status, NvmeStatus::SUCCESS);
         assert_eq!(result, (max << 16) | max);
 
         // Set Number of Queues: request 2 SQs (1) + 4 CQs (3) (both 0-based).
