@@ -6451,7 +6451,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let attachedIoWorker: Worker | null = null;
   let inputCapture: InputCapture | null = null;
   let inputCaptureCanvas: HTMLCanvasElement | null = null;
-  let inputCaptureIoWorker: Worker | null = null;
+  let inputCaptureWorker: Worker | null = null;
 
   function stopWorkersInputCapture(): void {
     const current = inputCapture;
@@ -6463,7 +6463,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     }
     inputCapture = null;
     inputCaptureCanvas = null;
-    inputCaptureIoWorker = null;
+    inputCaptureWorker = null;
   }
 
   workerCoordinator.addEventListener("fatal", (ev) => {
@@ -6791,29 +6791,34 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       teardownVgaPresenter();
     }
 
-    // Workers panel input capture (wired directly to the I/O worker).
-    const shouldCapture = anyActive && ioWorker !== null;
+    // Workers panel input capture. In machine runtime, input must be routed to the CPU worker
+    // (the I/O worker may be host-only and cannot inject into guest devices).
+    const inputWorker = vmRuntime === "machine" ? cpuWorker : ioWorker;
+    const shouldCapture = anyActive && inputWorker !== null;
     if (!shouldCapture) {
       stopWorkersInputCapture();
-    } else if (ioWorker !== inputCaptureIoWorker || vgaCanvas !== inputCaptureCanvas) {
-      // Recreate capture when the I/O worker is restarted or when the canvas is replaced.
+    } else if (inputWorker !== inputCaptureWorker || vgaCanvas !== inputCaptureCanvas) {
+      // Recreate capture when the target worker is restarted or when the canvas is replaced.
       stopWorkersInputCapture();
     }
-    if (shouldCapture && !inputCapture && ioWorker) {
-      const capture = new InputCapture(vgaCanvas, ioWorker);
+    if (shouldCapture && !inputCapture && inputWorker) {
+      const capture = new InputCapture(vgaCanvas, inputWorker);
       try {
         capture.start();
         inputCapture = capture;
         inputCaptureCanvas = vgaCanvas;
-        inputCaptureIoWorker = ioWorker;
+        inputCaptureWorker = inputWorker;
       } catch {
         // ignore
       }
     }
 
+    const inputTargetRole = vmRuntime === "machine" ? "cpu" : "io";
+    const inputTargetState = inputTargetRole === "cpu" ? statuses.cpu.state : statuses.io.state;
     inputStatusLine.textContent =
       `input: click canvas to focus + request pointer lock. ` +
       `pointerLock=${inputCapture?.pointerLocked ? "yes" : "no"}  ` +
+      `targetWorker=${inputTargetRole}:${inputTargetState}  ` +
       `ioWorker=${statuses.io.state}  ` +
       `ioBatches=${workerCoordinator.getIoInputBatchCounter()}  ` +
       `ioEvents=${workerCoordinator.getIoInputEventCounter()}`;
