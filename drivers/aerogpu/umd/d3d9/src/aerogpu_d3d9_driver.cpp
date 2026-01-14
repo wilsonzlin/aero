@@ -22694,6 +22694,64 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
   return kDeviceDestroyShaderImpl(hDevice, hShader);
 }
 
+HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t state,
+    uint32_t value) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  return device_set_texture_stage_state_dispatch(hDevice, stage, state, value);
+#else
+  // Portable host-side tests compile a minimal D3D9DDI_DEVICEFUNCS table which
+  // does not include SetTextureStageState. Provide a small direct-call helper so
+  // tests can still exercise fixed-function stage0 PS selection behavior.
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  if (stage >= 16 || state >= 256) {
+    return kD3DErrInvalidCall;
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->texture_stage_states[stage][state] = value;
+  stateblock_record_texture_stage_state_locked(dev, stage, state, value);
+
+  // Mirror the stage0 fixed-function PS update hook from the WDK DDI path.
+  if (stage == 0 &&
+      (state == kD3dTssColorOp || state == kD3dTssColorArg1 || state == kD3dTssColorArg2 ||
+       state == kD3dTssAlphaOp || state == kD3dTssAlphaArg1 || state == kD3dTssAlphaArg2) &&
+      fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    Shader** ps_slot = nullptr;
+    switch (dev->fvf) {
+      case kSupportedFvfXyzrhwDiffuse:
+      case kSupportedFvfXyzDiffuse:
+        ps_slot = &dev->fixedfunc_ps;
+        break;
+      case kSupportedFvfXyzrhwDiffuseTex1:
+      case kSupportedFvfXyzrhwTex1:
+        ps_slot = &dev->fixedfunc_ps_tex1;
+        break;
+      case kSupportedFvfXyzDiffuseTex1:
+      case kSupportedFvfXyzTex1:
+        ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+        break;
+      default:
+        ps_slot = nullptr;
+        break;
+    }
+    if (!ps_slot) {
+      return kD3DErrInvalidCall;
+    }
+    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+    if (FAILED(ps_hr)) {
+      return ps_hr;
+    }
+  }
+  return S_OK;
+#endif
+}
+
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,

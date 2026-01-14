@@ -11,6 +11,16 @@
 #include "aerogpu_d3d9_objects.h"
 
 namespace aerogpu {
+
+// Host-test wrapper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side
+// test entrypoints"). This is not part of the portable D3D9DDI_DEVICEFUNCS ABI,
+// but unit tests call it directly to validate fixed-function behavior.
+HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t state,
+    uint32_t value);
+
 namespace {
 
 // Portable D3D9 FVF bits (from d3d9types.h).
@@ -1369,6 +1379,173 @@ bool TestVertexDeclXyzTex1InfersFvfAndUploadsWvp() {
   return true;
 }
 
+bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
+  // ---------------------------------------------------------------------------
+  // XYZRHW | TEX1
+  // ---------------------------------------------------------------------------
+  {
+    CleanupDevice cleanup;
+    if (!CreateDevice(&cleanup)) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+
+    HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwTex1);
+    if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+      return false;
+    }
+
+    D3DDDI_HRESOURCE hTex{};
+    if (!CreateDummyTexture(&cleanup, &hTex)) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+      return false;
+    }
+
+    // Ensure a known starting point for stage0 state (matches D3D9 defaults).
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
+      dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+      dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+      dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    }
+
+    const VertexXyzrhwTex1 tri[3] = {
+        {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+    };
+
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyzrhw tex1)")) {
+      return false;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS bound after draw")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+                 "XYZRHW|TEX1: PS bytecode modulate/texture")) {
+        return false;
+      }
+    }
+
+    // Validate SetTextureStageState does not fail for supported TEX1-without-diffuse paths.
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+    if (!Check(hr == S_OK, "XYZRHW|TEX1: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS still bound after SetTextureStageState")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+                 "XYZRHW|TEX1: PS bytecode disable->passthrough")) {
+        return false;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // XYZ | TEX1
+  // ---------------------------------------------------------------------------
+  {
+    CleanupDevice cleanup;
+    if (!CreateDevice(&cleanup)) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+
+    HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+    if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+      return false;
+    }
+
+    D3DDDI_HRESOURCE hTex{};
+    if (!CreateDummyTexture(&cleanup, &hTex)) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+      return false;
+    }
+
+    // Ensure a known starting point for stage0 state (matches D3D9 defaults).
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
+      dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+      dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+      dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    }
+
+    const VertexXyzTex1 tri[3] = {
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+    };
+
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz tex1)")) {
+      return false;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS bound after draw")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+                 "XYZ|TEX1: PS bytecode modulate/texture")) {
+        return false;
+      }
+    }
+
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+    if (!Check(hr == S_OK, "XYZ|TEX1: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS still bound after SetTextureStageState")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+                 "XYZ|TEX1: PS bytecode disable->passthrough")) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 bool TestStageStateChangeRebindsShadersIfImplemented() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -1656,6 +1833,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzTex1InfersFvfAndUploadsWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs()) {
     return 1;
   }
   if (!aerogpu::TestStageStateChangeRebindsShadersIfImplemented()) {
