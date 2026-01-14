@@ -111,8 +111,23 @@ impl VecMemory {
     }
 
     fn clear(&mut self) {
-        // Safety: `base`/`len` describe an allocated region in wasm linear memory.
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // wasm linear memory is backed by a `SharedArrayBuffer`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = self.base as *const AtomicU8;
+            for i in 0..(self.len as usize) {
+                // Safety: `base..base+len` is an allocated region in wasm linear memory and
+                // `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(0, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memset is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: `base`/`len` describe an allocated region in wasm linear memory.
             core::ptr::write_bytes(self.base as *mut u8, 0, self.len as usize);
         }
     }
@@ -137,14 +152,55 @@ impl VecMemory {
 
     fn read_u32(&self, addr: u32) -> u32 {
         let linear = self.linear_addr(addr, 4);
-        // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
-        unsafe { core::ptr::read_unaligned(linear as *const u32) }
+        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
+        // wasm linear memory is backed by a `SharedArrayBuffer`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = linear as *const AtomicU8;
+            // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
+            let bytes = unsafe {
+                [
+                    (&*src.add(0)).load(Ordering::Relaxed),
+                    (&*src.add(1)).load(Ordering::Relaxed),
+                    (&*src.add(2)).load(Ordering::Relaxed),
+                    (&*src.add(3)).load(Ordering::Relaxed),
+                ]
+            };
+            u32::from_le_bytes(bytes)
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so plain loads are
+        // fine.
+        #[cfg(not(target_feature = "atomics"))]
+        unsafe {
+            // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
+            core::ptr::read_unaligned(linear as *const u32)
+        }
     }
 
     fn write_u32(&mut self, addr: u32, value: u32) {
         let linear = self.linear_addr(addr, 4);
-        // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
-        unsafe { core::ptr::write_unaligned(linear as *mut u32, value) }
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // wasm linear memory is backed by a `SharedArrayBuffer`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = linear as *const AtomicU8;
+            let bytes = value.to_le_bytes();
+            for (i, byte) in bytes.into_iter().enumerate() {
+                // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so plain stores are
+        // fine.
+        #[cfg(not(target_feature = "atomics"))]
+        unsafe {
+            // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
+            core::ptr::write_unaligned(linear as *mut u32, value)
+        }
     }
 }
 
@@ -152,8 +208,22 @@ impl MemoryBus for VecMemory {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         let addr = u32::try_from(paddr).expect("VecMemory address must fit in u32");
         let linear = self.linear_addr(addr, buf.len());
-        // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
+        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
+        // wasm linear memory is backed by a `SharedArrayBuffer`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = linear as *const AtomicU8;
+            for (i, slot) in buf.iter_mut().enumerate() {
+                // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
+                *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
             core::ptr::copy_nonoverlapping(linear as *const u8, buf.as_mut_ptr(), buf.len());
         }
     }
@@ -161,8 +231,22 @@ impl MemoryBus for VecMemory {
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         let addr = u32::try_from(paddr).expect("VecMemory address must fit in u32");
         let linear = self.linear_addr(addr, buf.len());
-        // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // wasm linear memory is backed by a `SharedArrayBuffer`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = linear as *const AtomicU8;
+            for (i, byte) in buf.iter().copied().enumerate() {
+                // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
+            // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
             core::ptr::copy_nonoverlapping(buf.as_ptr(), linear as *mut u8, buf.len());
         }
     }
