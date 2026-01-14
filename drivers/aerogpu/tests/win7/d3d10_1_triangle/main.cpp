@@ -438,9 +438,11 @@ static int RunD3D101Triangle(int argc, char** argv) {
   D3D10_BUFFER_DESC cb_desc;
   ZeroMemory(&cb_desc, sizeof(cb_desc));
   cb_desc.ByteWidth = sizeof(constants);
-  cb_desc.Usage = D3D10_USAGE_DYNAMIC;
+  // Use DEFAULT so the resource is guest-backed (exercises alloc-table tracking +
+  // dirty-range uploads), instead of a host-owned dynamic buffer.
+  cb_desc.Usage = D3D10_USAGE_DEFAULT;
   cb_desc.BindFlags = D3D10_BIND_CONSTANT_BUFFER;
-  cb_desc.CPUAccessFlags = D3D10_CPU_ACCESS_WRITE;
+  cb_desc.CPUAccessFlags = 0;
   cb_desc.MiscFlags = 0;
 
   ComPtr<ID3D10Buffer> cb0;
@@ -449,17 +451,7 @@ static int RunD3D101Triangle(int argc, char** argv) {
     return reporter.FailHresult("CreateBuffer(constant)", hr);
   }
 
-  void* cb_data = NULL;
-  hr = cb0->Map(D3D10_MAP_WRITE_DISCARD, 0, &cb_data);
-  if (FAILED(hr)) {
-    return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(constant)", hr, device.get());
-  }
-  if (!cb_data) {
-    cb0->Unmap();
-    return reporter.Fail("Map(constant) returned NULL pData");
-  }
-  memcpy(cb_data, &constants, sizeof(constants));
-  cb0->Unmap();
+  device->UpdateSubresource(cb0.get(), 0, NULL, &constants, 0, 0);
 
   ID3D10Buffer* cb_ptr = cb0.get();
   device->VSSetConstantBuffers(0, 1, &cb_ptr);
