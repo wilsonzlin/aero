@@ -80,6 +80,54 @@ fn wgsl_ps3_texldp_is_valid() {
 }
 
 #[test]
+fn wgsl_ps3_texld_cube_is_valid() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   dcl_cube s0
+    //   texld r0, v0, s0
+    //   mov oC0, r0
+    //   end
+    let dcl_texcoord0_v0 = 31u32 | (2u32 << 24) | (5u32 << 16);
+    let dcl_cube_s0 = 31u32 | (2u32 << 24) | (3u32 << 16);
+    let texld = opcode_token(0x0042, 3);
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        dcl_texcoord0_v0,
+        dst_token(1, 0, 0xF),
+        dcl_cube_s0,
+        dst_token(10, 0, 0xF),
+        texld,
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(wgsl.contains("texture_cube<f32>"), "{wgsl}");
+    assert!(wgsl.contains("@group(2) @binding(0) var tex0"), "{wgsl}");
+    assert!(wgsl.contains("@group(2) @binding(1) var samp0"), "{wgsl}");
+    // Cube sampling uses vec3 coordinates.
+    assert!(wgsl.contains(".xyz"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_ps3_texkill_discard_is_valid() {
     // ps_3_0:
     //   dcl_texcoord0 v0

@@ -1748,14 +1748,20 @@ fn emit_stmt(
                             return Err(err("texsample destination must be float"));
                         }
 
+                        let tex_ty = sampler_types
+                            .get(sampler)
+                            .copied()
+                            .unwrap_or(TextureType::Texture2D);
+                        let swz = tex_coord_swizzle(tex_ty)?;
+
                         let tex = format!("tex{sampler}");
                         let samp = format!("samp{sampler}");
-                        let uv = if *project {
-                            format!("(({coord_e}).xy / ({coord_e}).w)")
+                        let coord = if *project {
+                            format!("(({coord_e}).{swz} / ({coord_e}).w)")
                         } else {
-                            format!("({coord_e}).xy")
+                            format!("({coord_e}).{swz}")
                         };
-                        let sample = format!("textureSample({tex}, {samp}, {uv})");
+                        let sample = format!("textureSample({tex}, {samp}, {coord})");
                         let sample = apply_float_result_modifiers(sample, modifiers)?;
 
                         let dst_name = reg_var_name(&dst.reg)?;
