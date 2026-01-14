@@ -60,6 +60,22 @@ export interface ScanoutStateSnapshot extends ScanoutStateUpdate {
   generation: number;
 }
 
+export interface TrySnapshotScanoutStateOptions {
+  /**
+   * Maximum number of seqlock read attempts before giving up.
+   *
+   * This is a hard bound; the function will never spin forever.
+   */
+  maxIterations?: number;
+  /**
+   * Optional wall-clock time budget (in milliseconds) before giving up.
+   *
+   * This bound is checked periodically (not every iteration) to avoid adding
+   * significant overhead to successful snapshots.
+   */
+  maxMs?: number;
+}
+
 export function wrapScanoutState(sab: SharedArrayBuffer, byteOffset = 0): Int32Array {
   if (!(sab instanceof SharedArrayBuffer)) {
     throw new TypeError("wrapScanoutState requires a SharedArrayBuffer");
@@ -143,6 +159,88 @@ export function snapshotScanoutState(words: Int32Array): ScanoutStateSnapshot {
   }
 
   throw new Error("snapshotScanoutState: timed out (writer busy bit stuck or update rate too high)");
+}
+
+function nowMs(): number {
+  // `performance.now()` exists in browsers and modern Node. Fall back to `Date.now()`
+  // so this helper is safe in minimal test environments.
+  const perf = (globalThis as unknown as { performance?: { now?: () => number } }).performance;
+  return typeof perf?.now === "function" ? perf.now() : Date.now();
+}
+
+/**
+ * Attempt to snapshot scanout state without risking an infinite spin if the writer
+ * wedge/crashes while holding the busy bit.
+ *
+ * Returns `null` when the snapshot could not be obtained within the configured bounds.
+ */
+export function trySnapshotScanoutState(words: Int32Array, options?: TrySnapshotScanoutStateOptions): ScanoutStateSnapshot | null {
+  if (words.length < SCANOUT_STATE_U32_LEN) {
+    throw new RangeError(`ScanoutState Int32Array too small: len=${words.length}, need >=${SCANOUT_STATE_U32_LEN}`);
+  }
+
+  const maxIterationsRaw = options?.maxIterations;
+  const maxIterations =
+    maxIterationsRaw === undefined
+      ? 1000
+      : (() => {
+          if (!Number.isFinite(maxIterationsRaw)) {
+            throw new RangeError(`trySnapshotScanoutState maxIterations must be a finite number, got ${String(maxIterationsRaw)}`);
+          }
+          return Math.max(0, Math.trunc(maxIterationsRaw));
+        })();
+
+  const maxMsRaw = options?.maxMs;
+  const deadlineMs =
+    maxMsRaw === undefined
+      ? Number.POSITIVE_INFINITY
+      : (() => {
+          if (!Number.isFinite(maxMsRaw)) {
+            throw new RangeError(`trySnapshotScanoutState maxMs must be a finite number, got ${String(maxMsRaw)}`);
+          }
+          if (maxMsRaw <= 0) return nowMs();
+          return nowMs() + maxMsRaw;
+        })();
+
+  const CHECK_DEADLINE_EVERY = 64;
+
+  // Seqlock-style snapshot using a busy bit, but with bounded retries.
+  for (let it = 0; it < maxIterations; it += 1) {
+    if (deadlineMs !== Number.POSITIVE_INFINITY && it % CHECK_DEADLINE_EVERY === 0) {
+      if (nowMs() >= deadlineMs) return null;
+    }
+
+    const gen0 = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
+    if ((gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT) !== 0) {
+      continue;
+    }
+
+    const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+    const basePaddrLo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
+    const basePaddrHi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
+    const width = Atomics.load(words, ScanoutStateIndex.WIDTH) >>> 0;
+    const height = Atomics.load(words, ScanoutStateIndex.HEIGHT) >>> 0;
+    const pitchBytes = Atomics.load(words, ScanoutStateIndex.PITCH_BYTES) >>> 0;
+    const format = Atomics.load(words, ScanoutStateIndex.FORMAT) >>> 0;
+
+    const gen1 = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
+    if (gen0 !== gen1) {
+      continue;
+    }
+
+    return {
+      generation: gen0,
+      source,
+      basePaddrLo,
+      basePaddrHi,
+      width,
+      height,
+      pitchBytes,
+      format,
+    };
+  }
+
+  return null;
 }
 
 export function publishScanoutState(words: Int32Array, update: ScanoutStateUpdate): number {

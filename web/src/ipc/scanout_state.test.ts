@@ -11,6 +11,7 @@ import {
   ScanoutStateIndex,
   publishScanoutState,
   snapshotScanoutState,
+  trySnapshotScanoutState,
   wrapScanoutState,
 } from "./scanout_state";
 
@@ -187,6 +188,18 @@ describe("ipc/scanout_state", () => {
     } finally {
       (Atomics as unknown as { load: typeof Atomics.load }).load = originalLoad;
     }
+  });
+
+  it("trySnapshotScanoutState returns null quickly when the busy bit is stuck", () => {
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+    const words = wrapScanoutState(scanoutSab, 0);
+
+    // Simulate a wedged writer holding the lock forever.
+    Atomics.store(words, ScanoutStateIndex.GENERATION, (123 | SCANOUT_STATE_GENERATION_BUSY_BIT) | 0);
+    Atomics.store(words, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_WDDM | 0);
+
+    const snap = trySnapshotScanoutState(words, { maxIterations: 16 });
+    expect(snap).toBeNull();
   });
 
   it("snapshot observes coherent state while another worker publishes updates", async () => {

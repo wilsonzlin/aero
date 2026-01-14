@@ -68,6 +68,22 @@ export interface CursorStateSnapshot extends CursorStateUpdate {
   generation: number;
 }
 
+export interface TrySnapshotCursorStateOptions {
+  /**
+   * Maximum number of seqlock read attempts before giving up.
+   *
+   * This is a hard bound; the function will never spin forever.
+   */
+  maxIterations?: number;
+  /**
+   * Optional wall-clock time budget (in milliseconds) before giving up.
+   *
+   * This bound is checked periodically (not every iteration) to avoid adding
+   * significant overhead to successful snapshots.
+   */
+  maxMs?: number;
+}
+
 export function wrapCursorState(sab: SharedArrayBuffer, byteOffset = 0): Int32Array {
   if (!(sab instanceof SharedArrayBuffer)) {
     throw new TypeError("wrapCursorState requires a SharedArrayBuffer");
@@ -139,6 +155,96 @@ export function snapshotCursorState(words: Int32Array): CursorStateSnapshot {
       basePaddrHi,
     };
   }
+}
+
+function nowMs(): number {
+  // `performance.now()` exists in browsers and modern Node. Fall back to `Date.now()`
+  // so this helper is safe in minimal test environments.
+  const perf = (globalThis as unknown as { performance?: { now?: () => number } }).performance;
+  return typeof perf?.now === "function" ? perf.now() : Date.now();
+}
+
+/**
+ * Attempt to snapshot cursor state without risking an infinite spin if the writer
+ * wedge/crashes while holding the busy bit.
+ *
+ * Returns `null` when the snapshot could not be obtained within the configured bounds.
+ */
+export function trySnapshotCursorState(words: Int32Array, options?: TrySnapshotCursorStateOptions): CursorStateSnapshot | null {
+  if (words.length < CURSOR_STATE_U32_LEN) {
+    throw new RangeError(`CursorState Int32Array too small: len=${words.length}, need >=${CURSOR_STATE_U32_LEN}`);
+  }
+
+  const maxIterationsRaw = options?.maxIterations;
+  const maxIterations =
+    maxIterationsRaw === undefined
+      ? 1000
+      : (() => {
+          if (!Number.isFinite(maxIterationsRaw)) {
+            throw new RangeError(`trySnapshotCursorState maxIterations must be a finite number, got ${String(maxIterationsRaw)}`);
+          }
+          return Math.max(0, Math.trunc(maxIterationsRaw));
+        })();
+
+  const maxMsRaw = options?.maxMs;
+  const deadlineMs =
+    maxMsRaw === undefined
+      ? Number.POSITIVE_INFINITY
+      : (() => {
+          if (!Number.isFinite(maxMsRaw)) {
+            throw new RangeError(`trySnapshotCursorState maxMs must be a finite number, got ${String(maxMsRaw)}`);
+          }
+          if (maxMsRaw <= 0) return nowMs();
+          return nowMs() + maxMsRaw;
+        })();
+
+  const CHECK_DEADLINE_EVERY = 64;
+
+  // Seqlock-style snapshot using a busy bit, but with bounded retries.
+  for (let it = 0; it < maxIterations; it += 1) {
+    if (deadlineMs !== Number.POSITIVE_INFINITY && it % CHECK_DEADLINE_EVERY === 0) {
+      if (nowMs() >= deadlineMs) return null;
+    }
+
+    const gen0 = Atomics.load(words, CursorStateIndex.GENERATION) >>> 0;
+    if ((gen0 & CURSOR_STATE_GENERATION_BUSY_BIT) !== 0) {
+      continue;
+    }
+
+    const enable = Atomics.load(words, CursorStateIndex.ENABLE) >>> 0;
+    const x = Atomics.load(words, CursorStateIndex.X) | 0;
+    const y = Atomics.load(words, CursorStateIndex.Y) | 0;
+    const hotX = Atomics.load(words, CursorStateIndex.HOT_X) >>> 0;
+    const hotY = Atomics.load(words, CursorStateIndex.HOT_Y) >>> 0;
+    const width = Atomics.load(words, CursorStateIndex.WIDTH) >>> 0;
+    const height = Atomics.load(words, CursorStateIndex.HEIGHT) >>> 0;
+    const pitchBytes = Atomics.load(words, CursorStateIndex.PITCH_BYTES) >>> 0;
+    const format = Atomics.load(words, CursorStateIndex.FORMAT) >>> 0;
+    const basePaddrLo = Atomics.load(words, CursorStateIndex.BASE_PADDR_LO) >>> 0;
+    const basePaddrHi = Atomics.load(words, CursorStateIndex.BASE_PADDR_HI) >>> 0;
+
+    const gen1 = Atomics.load(words, CursorStateIndex.GENERATION) >>> 0;
+    if (gen0 !== gen1) {
+      continue;
+    }
+
+    return {
+      generation: gen0,
+      enable,
+      x,
+      y,
+      hotX,
+      hotY,
+      width,
+      height,
+      pitchBytes,
+      format,
+      basePaddrLo,
+      basePaddrHi,
+    };
+  }
+
+  return null;
 }
 
 export function publishCursorState(words: Int32Array, update: CursorStateUpdate): number {

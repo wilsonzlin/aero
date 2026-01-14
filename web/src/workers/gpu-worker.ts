@@ -66,11 +66,13 @@ import {
   SCANOUT_SOURCE_LEGACY_VBE_LFB,
   SCANOUT_SOURCE_WDDM,
   ScanoutStateIndex,
-  snapshotScanoutState,
+  trySnapshotScanoutState as trySnapshotScanoutStateBounded,
   type ScanoutStateSnapshot,
 } from "../ipc/scanout_state";
 import {
-  snapshotCursorState,
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_FORMAT_B8G8R8X8,
+  trySnapshotCursorState as trySnapshotCursorStateBounded,
   type CursorStateSnapshot,
 } from "../ipc/cursor_state";
 
@@ -878,12 +880,13 @@ const syncHardwareCursorFromState = (): void => {
   const words = hwCursorState;
   if (!words) return;
 
-  let snap: CursorStateSnapshot;
+  let snap: CursorStateSnapshot | null;
   try {
-    snap = snapshotCursorState(words);
+    snap = trySnapshotCursorStateBounded(words);
   } catch {
-    return;
+    snap = null;
   }
+  if (!snap) return;
 
   if (!hwCursorActive) {
     const anyNonZero =
@@ -1641,7 +1644,7 @@ function trySnapshotScanoutState(): ScanoutStateSnapshot | null {
   const words = scanoutState;
   if (!words) return null;
   try {
-    return snapshotScanoutState(words);
+    return trySnapshotScanoutStateBounded(words);
   } catch {
     return null;
   }
@@ -1932,20 +1935,22 @@ function formatU64Hex(hi: number, lo: number): string {
 
 function snapshotScanoutForTelemetry(): GpuRuntimeScanoutSnapshotV1 | undefined {
   if (!scanoutState) return undefined;
+  let snap: ScanoutStateSnapshot | null;
   try {
-    const snap = snapshotScanoutState(scanoutState);
-    return {
-      source: snap.source,
-      base_paddr: formatU64Hex(snap.basePaddrHi, snap.basePaddrLo),
-      width: snap.width,
-      height: snap.height,
-      pitchBytes: snap.pitchBytes,
-      format: snap.format,
-      generation: snap.generation,
-    };
+    snap = trySnapshotScanoutStateBounded(scanoutState);
   } catch {
     return undefined;
   }
+  if (!snap) return undefined;
+  return {
+    source: snap.source,
+    base_paddr: formatU64Hex(snap.basePaddrHi, snap.basePaddrLo),
+    width: snap.width,
+    height: snap.height,
+    pitchBytes: snap.pitchBytes,
+    format: snap.format,
+    generation: snap.generation,
+  };
 }
 
 function presentUploadForTelemetry(): GpuRuntimePresentUploadV1 {
@@ -2234,7 +2239,18 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
 
   const backend = backendKindForEvent();
   const scanoutSnap = trySnapshotScanoutState();
-  const scanoutIsWddm = scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
+  const scanoutIsWddm =
+    scanoutSnap?.source === SCANOUT_SOURCE_WDDM ||
+    (!scanoutSnap &&
+      (() => {
+        const words = scanoutState;
+        if (!words) return wddmOwnsScanoutFallback;
+        try {
+          return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+        } catch {
+          return wddmOwnsScanoutFallback;
+        }
+      })());
   const enrichedDetails: Record<string, unknown> = {
     ...(details === undefined ? {} : { cause: details }),
     ...(scanoutSnap ? { scanout: scanoutSnap } : {}),
@@ -2280,7 +2296,17 @@ async function attemptRecovery(reason: string): Promise<void> {
   recoveriesAttempted += 1;
   const scanoutAtStart = trySnapshotScanoutState();
   const scanoutWasWddm =
-    scanoutAtStart?.source === SCANOUT_SOURCE_WDDM || (!scanoutAtStart && wddmOwnsScanoutFallback);
+    scanoutAtStart?.source === SCANOUT_SOURCE_WDDM ||
+    (!scanoutAtStart &&
+      (() => {
+        const words = scanoutState;
+        if (!words) return wddmOwnsScanoutFallback;
+        try {
+          return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+        } catch {
+          return wddmOwnsScanoutFallback;
+        }
+      })());
   if (scanoutWasWddm) recoveriesAttemptedWddm += 1;
   emitGpuEvent({
     time_ms: performance.now(),
@@ -2339,7 +2365,18 @@ async function attemptRecovery(reason: string): Promise<void> {
     await maybeSendReady();
 
     const scanoutAtEnd = trySnapshotScanoutState();
-    const scanoutIsWddm = scanoutAtEnd?.source === SCANOUT_SOURCE_WDDM || (!scanoutAtEnd && wddmOwnsScanoutFallback);
+    const scanoutIsWddm =
+      scanoutAtEnd?.source === SCANOUT_SOURCE_WDDM ||
+      (!scanoutAtEnd &&
+        (() => {
+          const words = scanoutState;
+          if (!words) return wddmOwnsScanoutFallback;
+          try {
+            return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+          } catch {
+            return wddmOwnsScanoutFallback;
+          }
+        })());
     if (scanoutIsWddm) recoveriesSucceededWddm += 1;
 
     emitGpuEvent({
@@ -2524,8 +2561,14 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
 
   if (scanoutState) {
     const words = scanoutState;
+    let snap: ScanoutStateSnapshot | null;
     try {
-      const snap = snapshotScanoutState(words);
+      snap = trySnapshotScanoutStateBounded(words);
+    } catch {
+      snap = null;
+    }
+
+    if (snap) {
       const source = snap.source >>> 0;
       const wantsScanout = source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
       if (wantsScanout) {
@@ -2547,9 +2590,9 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
           return null;
         }
       }
-    } catch {
-      // If the scanout descriptor is unreadable but appears to be scanout-owned, avoid falling
-      // back to the legacy framebuffer.
+    } else {
+      // If the scanout descriptor is unreadable (busy-bit wedge / time budget exceeded) but appears
+      // to be scanout-owned, avoid falling back to the legacy framebuffer.
       try {
         const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
         if (source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB) {
@@ -2637,7 +2680,7 @@ const presentOnce = async (): Promise<boolean> => {
     let scanoutSnap: ScanoutStateSnapshot | null = null;
     if (scanoutState) {
       try {
-        scanoutSnap = snapshotScanoutState(scanoutState);
+        scanoutSnap = trySnapshotScanoutStateBounded(scanoutState);
       } catch {
         scanoutSnap = null;
       }
@@ -2678,9 +2721,31 @@ const presentOnce = async (): Promise<boolean> => {
     if (isDeviceLost) return false;
 
     const wddmOwnsScanout =
-      scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
+      scanoutSnap?.source === SCANOUT_SOURCE_WDDM ||
+      (!scanoutSnap &&
+        (() => {
+          const words = scanoutState;
+          if (!words) return wddmOwnsScanoutFallback;
+          try {
+            return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+          } catch {
+            return wddmOwnsScanoutFallback;
+          }
+        })());
     const scanoutOwnsOutput =
-      wddmOwnsScanout || scanoutSnap?.source === SCANOUT_SOURCE_LEGACY_VBE_LFB || frame?.outputSource === "wddm_scanout";
+      wddmOwnsScanout ||
+      scanoutSnap?.source === SCANOUT_SOURCE_LEGACY_VBE_LFB ||
+      (!scanoutSnap &&
+        (() => {
+          const words = scanoutState;
+          if (!words) return false;
+          try {
+            return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+          } catch {
+            return false;
+          }
+        })()) ||
+      frame?.outputSource === "wddm_scanout";
 
     const clearSharedFramebufferDirty = () => {
       if (!sharedFramebufferViews) return;
@@ -4015,49 +4080,58 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
-          const tryPostWddmScanoutScreenshot = (): boolean => {
-            const words = scanoutState;
-            if (!words) return false;
+            const tryPostWddmScanoutScreenshot = (): boolean => {
+              const words = scanoutState;
+              if (!words) return false;
 
-            let snap: ScanoutStateSnapshot;
-            try {
-              snap = snapshotScanoutState(words);
-            } catch {
-              // If scanout is WDDM-owned / VBE-owned and base_paddr is non-zero, but the scanout
-              // descriptor cannot be snapshotted, treat it as unreadable and return the
-              // stub rather than falling back to legacy framebuffer paths.
+              let snap: ScanoutStateSnapshot | null;
               try {
-                const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
-                if (source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB) {
-                  const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
-                  const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
-                  if (((lo | hi) >>> 0) !== 0) {
-                    postStub(typeof seq === "number" ? seq : undefined);
-                    return true;
-                  }
-                }
+                snap = trySnapshotScanoutStateBounded(words);
               } catch {
-                // Ignore and fall through to the legacy screenshot paths.
+                snap = null;
               }
-              return false;
-            }
 
-            const source = snap.source >>> 0;
-            const scanoutIsWddm = source === SCANOUT_SOURCE_WDDM;
-            const scanoutIsVbe = source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
-            if (!scanoutIsWddm && !scanoutIsVbe) return false;
-            const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
-            // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
-            if (scanoutIsWddm && !hasBasePaddr) return false;
-            if (scanoutIsVbe && !hasBasePaddr) {
-              postStub(typeof seq === "number" ? seq : undefined);
-              return true;
-            }
+              if (!snap) {
+                // If scanout is WDDM-owned / VBE-owned and base_paddr is non-zero, but the scanout
+                // descriptor cannot be snapshotted, treat it as unreadable and return the
+                // stub rather than falling back to legacy framebuffer paths.
+                try {
+                  const source = Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0;
+                  if (source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB) {
+                    const lo = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
+                    const hi = Atomics.load(words, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
+                    if (((lo | hi) >>> 0) !== 0) {
+                      postStub(typeof seq === "number" ? seq : undefined);
+                      return true;
+                    }
+                  }
+                } catch {
+                  // Ignore and fall through to the legacy screenshot paths.
+                }
+                return false;
+              }
 
-            const guest = guestU8;
-            const vram = vramU8;
+              const source = snap.source >>> 0;
+              const scanoutIsWddm = source === SCANOUT_SOURCE_WDDM;
+              const scanoutIsVbe = source === SCANOUT_SOURCE_LEGACY_VBE_LFB;
+              if (!scanoutIsWddm && !scanoutIsVbe) return false;
 
-            try {
+              const hasBasePaddr = ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
+              // WDDM uses base_paddr=0 as a placeholder descriptor for the host-side AeroGPU path.
+              if (scanoutIsWddm && !hasBasePaddr) return false;
+              if (scanoutIsVbe && !hasBasePaddr) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+
+              const guest = guestU8;
+              if (!guest) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              const vram = vramU8;
+
+              try {
               const width = snap.width >>> 0;
               const height = snap.height >>> 0;
               const pitchBytes = snap.pitchBytes >>> 0;
@@ -4384,7 +4458,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 let snap: ScanoutStateSnapshot | null = null;
                 if (scanoutState) {
                   try {
-                    snap = snapshotScanoutState(scanoutState);
+                    snap = trySnapshotScanoutStateBounded(scanoutState);
                   } catch {
                     snap = null;
                   }
@@ -4564,7 +4638,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             if (scanoutState) {
               let snap: ScanoutStateSnapshot | null = null;
               try {
-                snap = snapshotScanoutState(scanoutState);
+                snap = trySnapshotScanoutStateBounded(scanoutState);
               } catch {
                 snap = null;
               }
