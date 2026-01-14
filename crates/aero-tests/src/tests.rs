@@ -180,7 +180,7 @@ impl Machine {
         };
 
         let ip = self.cpu.rip();
-        let next_ip = ip.wrapping_add(decoded.len as u64) & self.cpu.mode.ip_mask();
+        let next_ip = ip.wrapping_add(decoded.len as u64) & mask_bits(self.cpu.bitness());
         let instr = &decoded.instr;
 
         match instr.mnemonic() {
@@ -335,7 +335,7 @@ impl Machine {
                 push(&mut self.cpu, &mut bus, cs, 2)?;
                 push(&mut self.cpu, &mut bus, next_ip, 2)?;
                 self.cpu.write_reg(Register::CS, selector as u64);
-                self.cpu.set_rip(target & self.cpu.mode.ip_mask());
+                self.cpu.set_rip(target & mask_bits(self.cpu.bitness()));
                 Ok(())
             }
             Mnemonic::Retf => {
