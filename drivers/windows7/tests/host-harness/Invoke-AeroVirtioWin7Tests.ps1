@@ -7012,14 +7012,6 @@ try {
       }
       $scriptExitCode = 1
     }
-    "VIRTIO_NET_MSIX_REQUIRED" {
-      Write-Host "FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net did not report MSI-X mode while -RequireVirtioNetMsix was enabled"
-      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
-        Write-Host "`n--- Serial tail ---"
-        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
-      }
-      $scriptExitCode = 1
-    }
     "MISSING_VIRTIO_NET_LINK_FLAP" {
       Write-Host "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while -WithNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
