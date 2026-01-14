@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use aero_cpu_core::state::{gpr, RFLAGS_CF};
 use aero_machine::{Machine, MachineConfig};
-use aero_storage::{DiskError, MemBackend, RawDisk, Result as DiskResult, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{DiskError, Result as DiskResult, VirtualDisk, SECTOR_SIZE};
 
 const DEFAULT_WIN7_ISO_PATH: &str = "/state/win7.iso";
 const ISO_SECTOR_SIZE: u64 = 2048;
@@ -284,35 +284,22 @@ fn win7_iso_el_torito_boot_smoke() {
     // Canonical Windows 7 storage topology machine (AHCI HDD + IDE CD-ROM).
     let mut m = Machine::new(MachineConfig::win7_storage(64 * 1024 * 1024)).unwrap();
 
-    // Attach a placeholder HDD backend to the canonical AHCI slot (disk_id=0) so the machine still
-    // has an HDD present even when we boot from CD.
-    //
-    // Note: the BIOS El Torito implementation currently models only the boot drive via its
-    // `BlockDevice` interface, but the presence of an HDD here exercises the machine's canonical
-    // Win7 storage topology wiring.
-    {
-        let capacity = 64 * SECTOR_SIZE as u64;
-        let mut hdd = RawDisk::create(MemBackend::new(), capacity).unwrap();
-        let mut sector0 = [0u8; SECTOR_SIZE];
-        sector0[0..8].copy_from_slice(b"FAKEHDD!");
-        sector0[510] = 0x55;
-        sector0[511] = 0xAA;
-        hdd.write_sectors(0, &sector0).unwrap();
-        m.attach_ahci_disk_port0(Box::new(hdd)).unwrap();
-    }
+    // Attach a recognizable placeholder HDD to the machine's canonical shared disk so the BIOS has
+    // an HDD fallback and we can detect if we accidentally booted from it instead of the CD.
+    let mut hdd = vec![0u8; 64 * SECTOR_SIZE];
+    hdd[0..8].copy_from_slice(b"FAKEHDD!");
+    hdd[510] = 0x55;
+    hdd[511] = 0xAA;
+    m.set_disk_image(hdd).unwrap();
 
     // Attach the Windows 7 ISO to the canonical IDE secondary master CD-ROM slot.
     let iso_disk = ReadOnlyFileDisk::open(&iso_path).expect("failed to open ISO as a virtual disk");
     m.attach_ide_secondary_master_iso(Box::new(iso_disk))
         .expect("failed to attach ISO to IDE secondary master");
 
-    // Configure the BIOS to boot from CD (El Torito) and expose the ISO bytes to firmware INT 13h
-    // via the machine's canonical shared-disk `BlockDevice` path.
-    m.set_boot_drive(EL_TORITO_CD_BOOT_DRIVE);
-    let iso_boot_disk =
-        ReadOnlyFileDisk::open(&iso_path).expect("failed to open ISO as BIOS boot disk");
-    m.set_disk_backend(Box::new(iso_boot_disk))
-        .expect("failed to attach ISO as BIOS boot disk backend");
+    // Explicitly request CD boot. With the newer multi-drive BIOS wiring, POST follows the
+    // configured boot drive (0xE0) rather than auto-preferring the install media.
+    m.set_boot_drive(0xE0);
 
     // Re-run firmware POST now that the install media is attached.
     //
@@ -355,6 +342,10 @@ fn win7_iso_el_torito_boot_smoke() {
     );
 
     let loaded = m.read_physical_bytes(entry_paddr, expected_boot_bytes.len());
+    assert!(
+        !loaded.as_slice().starts_with(b"FAKEHDD!"),
+        "boot entrypoint matches the fake HDD marker; BIOS did not boot from the attached ISO (boot_drive=0xE0)"
+    );
     assert_eq!(
         loaded.as_slice(),
         expected_boot_bytes.as_slice(),
