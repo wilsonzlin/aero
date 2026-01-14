@@ -34,6 +34,8 @@ uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format);
 HRESULT AEROGPU_D3D9_CALL device_set_material(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMaterial);
 HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t index, const D3DLIGHT9* pLight);
 HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t index, BOOL enabled);
+HRESULT AEROGPU_D3D9_CALL device_test_enable_wddm_context(D3DDDI_HDEVICE hDevice);
+HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features);
 
 // Best-effort context string used by `Check()` to include the current test name
 // in failure output (helps when the binary continues after failures).
@@ -8801,7 +8803,10 @@ bool TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange() {
 
   // Simulate a WDDM-enabled device so allocation-list tracking and alloc-backed
   // dirty-range updates are enabled in portable builds.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST list[4] = {};
   dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
 
@@ -9128,7 +9133,10 @@ bool TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked() {
   // Simulate WDDM-enabled mode but do NOT supply a WDDM allocation handle. The
   // driver should fall back to host-allocated resources and must not require a
   // runtime private-driver-data buffer in this case.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST list[4] = {};
   dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
 
@@ -9458,7 +9466,10 @@ bool TestAllocBackedUnlockEmitsDirtyRange() {
 
   // Simulate a WDDM-enabled device so allocation-list tracking and alloc-backed
   // dirty-range updates are enabled in portable builds.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST list[4] = {};
   dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
 
@@ -10163,9 +10174,12 @@ bool TestCopyRects16BitToGuestBackedResourceEmitsDirtyRange() {
   }
 
   // Enable allocation-list tracking (portable tests toggle hContext manually).
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
     dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
     dev->alloc_list_tracker.reset();
   }
@@ -10333,12 +10347,10 @@ bool TestCopyRects16BitTransferEmitsCopyTexture2D() {
 
   // Force the transfer-supported path in portable tests by stubbing the
   // UMDRIVERPRIVATE discovery blob.
-  std::memset(&dev->adapter->umd_private, 0, sizeof(dev->adapter->umd_private));
-  dev->adapter->umd_private.size_bytes = sizeof(dev->adapter->umd_private);
-  dev->adapter->umd_private.struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
-  dev->adapter->umd_private.device_abi_version_u32 = AEROGPU_ABI_VERSION_U32;
-  dev->adapter->umd_private.device_features = AEROGPU_UMDPRIV_FEATURE_TRANSFER;
-  dev->adapter->umd_private_valid = true;
+  hr = device_test_force_umd_private_features(create_dev.hDevice, AEROGPU_UMDPRIV_FEATURE_TRANSFER);
+  if (!Check(hr == S_OK, "device_test_force_umd_private_features(TRANSFER)")) {
+    return false;
+  }
 
   // Use a span-backed command buffer so submit()'s rewind preserves the finalized
   // bytes for inspection.
@@ -12011,8 +12023,12 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
   // empty DMA submission.
   Adapter adapter;
   Device dev(&adapter);
-
-  dev.wddm_context.hContext = 1; // enable tracking in portable builds
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+  HRESULT hr = device_test_enable_wddm_context(hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
 
   D3DDDI_ALLOCATIONLIST list[1] = {};
   dev.alloc_list_tracker.rebind(list, 1, 0xFFFFu);
@@ -12132,7 +12148,10 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
 
   // Enable allocation-list tracking in a portable build and constrain capacity so
   // draw-state tracking must pre-split if there is an outstanding tracked alloc.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
   dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
   dev->alloc_list_tracker.reset();
@@ -12275,7 +12294,12 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
   Adapter adapter{};
   Device dev(&adapter);
 
-  dev.wddm_context.hContext = 1; // enable tracking in portable builds
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+  HRESULT enable_hr = device_test_enable_wddm_context(hDevice);
+  if (!Check(enable_hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
   dev.alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
   dev.alloc_list_tracker.reset();
@@ -12407,7 +12431,10 @@ bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
     return false;
   }
 
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
   dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
   dev->alloc_list_tracker.reset();
@@ -12573,7 +12600,10 @@ bool TestDrawStateTrackingDedupsSharedAllocIds() {
   // The allocation list (and host-side alloc table) is keyed by alloc_id, so a
   // draw referencing both handles should still only consume a single allocation
   // list entry.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST alloc_list[1] = {};
   dev->alloc_list_tracker.rebind(alloc_list, 1, 0xFFFFu);
 
@@ -12721,7 +12751,10 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
     return false;
   }
 
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
   dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
   dev->alloc_list_tracker.reset();
@@ -12887,7 +12920,10 @@ bool TestOpenResourceCapturesWddmAllocationForTracking() {
   }
 
   // Enable allocation-list tracking in a portable build.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST alloc_list[4] = {};
   dev->alloc_list_tracker.rebind(alloc_list, 4, 0xFFFFu);
   dev->alloc_list_tracker.reset();
@@ -30863,7 +30899,10 @@ bool TestPresentBackbufferRotationUndoOnSmallAllocList() {
   const aerogpu_handle_t h0 = sc->backbuffers[0]->handle;
   const aerogpu_handle_t h1 = sc->backbuffers[1]->handle;
 
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST alloc_list[1] = {};
   dev->alloc_list_tracker.rebind(alloc_list, 1, 0xFFFFu);
   dev->alloc_list_tracker.reset();
@@ -31555,7 +31594,10 @@ bool TestOpenResourceTracksWddmAllocationHandle() {
 
   // Simulate a WDDM-enabled device so allocation-list tracking is active in
   // portable builds.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST list[4] = {};
   dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
 
@@ -31691,7 +31733,10 @@ bool TestOpenResourceAcceptsAllocPrivV2() {
 
   // Simulate a WDDM-enabled device so allocation-list tracking is active in
   // portable builds.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST list[4] = {};
   dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
 
@@ -31831,7 +31876,10 @@ bool TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2() {
 
   // Simulate a WDDM-enabled device so allocation-list tracking is active in
   // portable builds.
-  dev->wddm_context.hContext = 1;
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   D3DDDI_ALLOCATIONLIST list[4] = {};
   dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
 
@@ -33618,9 +33666,12 @@ bool TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload() {
   // portable build does not emulate WDDM allocation mapping for systemmem
   // surfaces, but we still want to validate allocation tracking for the
   // guest-backed destination below.
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
     dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
     dev->alloc_list_tracker.reset();
   }
@@ -33867,9 +33918,12 @@ bool TestGuestBackedUpdateSurface16BitEmitsDirtyRangeNotUpload() {
   // portable build does not emulate WDDM allocation mapping for systemmem
   // surfaces, but we still want to validate allocation tracking for the
   // guest-backed destination below.
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
     dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
     dev->alloc_list_tracker.reset();
   }
@@ -34377,9 +34431,12 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
   // portable build does not emulate WDDM allocation mapping for systemmem
   // surfaces, but we still want to validate allocation tracking for the
   // guest-backed destination below.
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
     dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
     dev->alloc_list_tracker.reset();
   }
@@ -34602,9 +34659,12 @@ bool TestGuestBackedUpdateTexture16BitEmitsDirtyRangeNotUpload() {
   // portable build does not emulate WDDM allocation mapping for systemmem
   // surfaces, but we still want to validate allocation tracking for the
   // guest-backed destination below.
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
     dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
     dev->alloc_list_tracker.reset();
   }
@@ -35025,12 +35085,10 @@ bool TestGetRenderTargetData16BitTransferEmitsCopyTexture2D() {
 
   // Force the transfer-supported path in portable tests by stubbing the
   // UMDRIVERPRIVATE discovery blob.
-  std::memset(&dev->adapter->umd_private, 0, sizeof(dev->adapter->umd_private));
-  dev->adapter->umd_private.size_bytes = sizeof(dev->adapter->umd_private);
-  dev->adapter->umd_private.struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
-  dev->adapter->umd_private.device_abi_version_u32 = AEROGPU_ABI_VERSION_U32;
-  dev->adapter->umd_private.device_features = AEROGPU_UMDPRIV_FEATURE_TRANSFER;
-  dev->adapter->umd_private_valid = true;
+  hr = device_test_force_umd_private_features(create_dev.hDevice, AEROGPU_UMDPRIV_FEATURE_TRANSFER);
+  if (!Check(hr == S_OK, "device_test_force_umd_private_features(TRANSFER)")) {
+    return false;
+  }
 
   // Use a span-backed command buffer so submit()'s rewind preserves the finalized
   // bytes for inspection.
@@ -35203,20 +35261,20 @@ bool TestGetRenderTargetDataTransferRetracksAllocationsAfterFlush() {
     return false;
   }
 
-  // Enable transfer support.
-  std::memset(&dev->adapter->umd_private, 0, sizeof(dev->adapter->umd_private));
-  dev->adapter->umd_private.size_bytes = sizeof(dev->adapter->umd_private);
-  dev->adapter->umd_private.struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
-  dev->adapter->umd_private.device_abi_version_u32 = AEROGPU_ABI_VERSION_U32;
-  dev->adapter->umd_private.device_features = AEROGPU_UMDPRIV_FEATURE_TRANSFER;
-  dev->adapter->umd_private_valid = true;
+  hr = device_test_force_umd_private_features(create_dev.hDevice, AEROGPU_UMDPRIV_FEATURE_TRANSFER);
+  if (!Check(hr == S_OK, "device_test_force_umd_private_features(TRANSFER)")) {
+    return false;
+  }
 
   // Enable allocation list tracking with a tiny capacity so tracking `src`
   // forces a submission split, requiring `dst` to be re-tracked.
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
+  hr = device_test_enable_wddm_context(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
     dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
     dev->alloc_list_tracker.reset();
 
@@ -35383,13 +35441,10 @@ bool TestGetRenderTargetData16BitTransferRejectsHostAllocatedDst() {
     return false;
   }
 
-  // Enable transfer support.
-  std::memset(&dev->adapter->umd_private, 0, sizeof(dev->adapter->umd_private));
-  dev->adapter->umd_private.size_bytes = sizeof(dev->adapter->umd_private);
-  dev->adapter->umd_private.struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
-  dev->adapter->umd_private.device_abi_version_u32 = AEROGPU_ABI_VERSION_U32;
-  dev->adapter->umd_private.device_features = AEROGPU_UMDPRIV_FEATURE_TRANSFER;
-  dev->adapter->umd_private_valid = true;
+  hr = device_test_force_umd_private_features(create_dev.hDevice, AEROGPU_UMDPRIV_FEATURE_TRANSFER);
+  if (!Check(hr == S_OK, "device_test_force_umd_private_features(TRANSFER)")) {
+    return false;
+  }
 
   uint8_t stream_buf[256] = {};
   dev->cmd.set_span(stream_buf, sizeof(stream_buf));

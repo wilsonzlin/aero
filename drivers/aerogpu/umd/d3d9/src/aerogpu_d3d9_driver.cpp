@@ -27050,6 +27050,39 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_test_enable_wddm_context(D3DDDI_HDEVICE hDevice) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  // Allocation tracking is guarded on `hContext != 0`. Portable host tests don't
+  // run against a real WDDM runtime, so CreateDevice leaves `hContext` as 0 and
+  // tests opt-in by setting a dummy non-zero value.
+  if (dev->wddm_context.hContext == 0) {
+    dev->wddm_context.hContext = 1;
+  }
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memset(&dev->adapter->umd_private, 0, sizeof(dev->adapter->umd_private));
+  dev->adapter->umd_private.size_bytes = sizeof(dev->adapter->umd_private);
+  dev->adapter->umd_private.struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
+  dev->adapter->umd_private.device_abi_version_u32 = AEROGPU_ABI_VERSION_U32;
+  dev->adapter->umd_private.device_features = device_features;
+  dev->adapter->umd_private_valid = true;
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,
