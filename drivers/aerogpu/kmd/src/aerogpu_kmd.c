@@ -7526,8 +7526,10 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
-            const BOOLEAN haveRing = (adapter->RingVa && adapter->RingSizeBytes != 0 && adapter->RingEntryCount != 0) ? TRUE : FALSE;
-            if (!adapter->RingVa) {
+            const BOOLEAN haveRing =
+                (adapter->RingVa && adapter->RingEntryCount != 0 && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header)) ? TRUE
+                                                                                                                                    : FALSE;
+            if (!haveRing) {
                 adapter->RingHeader = NULL;
             }
 
@@ -7562,6 +7564,15 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
 
                     if (haveFenceRegs) {
                         if (adapter->FencePageVa && ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) != 0)) {
+                            /*
+                             * Reinitialise the fence page header + completed fence to a sensible
+                             * value before reprogramming the device-visible GPA.
+                             */
+                            adapter->FencePageVa->magic = AEROGPU_FENCE_PAGE_MAGIC;
+                            adapter->FencePageVa->abi_version = AEROGPU_ABI_VERSION_U32;
+                            adapter->FencePageVa->completed_fence = adapter->LastCompletedFence;
+                            KeMemoryBarrier();
+
                             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
                             AeroGpuWriteRegU32(adapter,
                                                AEROGPU_MMIO_REG_FENCE_GPA_HI,
