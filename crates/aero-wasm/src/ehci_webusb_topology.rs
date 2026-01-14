@@ -70,10 +70,8 @@ pub(crate) fn set_ehci_webusb_connected(
     if !connected {
         // Best-effort: if the bridge lost its handle but the topology still contains a WebUSB
         // device, recover a clone so we can reset host-side state after detaching.
-        if webusb_handle.is_none() {
-            if let Some((_, handle)) = found.first() {
-                *webusb_handle = Some(handle.clone());
-            }
+        if webusb_handle.is_none() && let Some((_, handle)) = found.first() {
+            *webusb_handle = Some(handle.clone());
         }
 
         for (path, _) in found {
@@ -204,4 +202,3 @@ mod tests {
         assert_eq!(found[0].0, vec![crate::webusb_ports::WEBUSB_ROOT_PORT]);
     }
 }
-

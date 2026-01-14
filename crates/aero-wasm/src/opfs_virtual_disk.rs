@@ -21,26 +21,28 @@ pub(crate) fn open_virtual_disk_from_backend<B: StorageBackend + VirtualDiskSend
 ) -> aero_storage::Result<Box<dyn VirtualDisk>> {
     if format.eq_ignore_ascii_case("aerospar") || format.eq_ignore_ascii_case("aerosparse") {
         let disk = aero_storage::AeroSparseDisk::open(backend)?;
-        if let Some(expected) = expected_size_bytes {
-            if expected != 0 && disk.header().disk_size_bytes != expected {
-                return Err(DiskError::Io(format!(
-                    "aerosparse disk_size_bytes mismatch: header={} expected={expected}",
-                    disk.header().disk_size_bytes
-                )));
-            }
+        if let Some(expected) = expected_size_bytes
+            && expected != 0
+            && disk.header().disk_size_bytes != expected
+        {
+            return Err(DiskError::Io(format!(
+                "aerosparse disk_size_bytes mismatch: header={} expected={expected}",
+                disk.header().disk_size_bytes
+            )));
         }
         return Ok(Box::new(disk));
     }
 
     // Default: treat as a raw disk image.
     let disk = aero_storage::RawDisk::open(backend)?;
-    if let Some(expected) = expected_size_bytes {
-        if expected != 0 && disk.capacity_bytes() != expected {
-            return Err(DiskError::Io(format!(
-                "raw disk size mismatch: file={} expected={expected}",
-                disk.capacity_bytes()
-            )));
-        }
+    if let Some(expected) = expected_size_bytes
+        && expected != 0
+        && disk.capacity_bytes() != expected
+    {
+        return Err(DiskError::Io(format!(
+            "raw disk size mismatch: file={} expected={expected}",
+            disk.capacity_bytes()
+        )));
     }
     Ok(Box::new(disk))
 }
