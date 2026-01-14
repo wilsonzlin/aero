@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod dxbc_builders;
+
 pub fn require_webgpu() -> bool {
     let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
         return false;
