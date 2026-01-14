@@ -14554,29 +14554,29 @@ impl AerogpuD3d11Executor {
                 // back to an empty compute shader so the handle can still be created/bound; draws
                 // with that GS bound will later return a clear "geometry shader not supported"
                 // error.
-                let translation: Option<super::gs_translate::GsPrepassTranslation> =
-                    match crate::sm4::decode_program(&program).context("decode SM4/5 token stream")
-                    {
-                        Ok(module) => {
-                            bindings = crate::shader_translate::reflect_resource_bindings(&module)
-                                .ok()
-                                .unwrap_or_default();
-                            match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
-                                &module,
-                                entry_point,
-                            ) {
-                                Ok(t) => Some(t),
-                                Err(e) => {
-                                    gs_prepass_error = Some(e.to_string());
-                                    None
-                                }
+                let translation: Option<super::gs_translate::GsPrepassTranslation> = match crate::sm4::decode_program(&program)
+                    .context("decode SM4/5 token stream")
+                {
+                    Ok(module) => {
+                        bindings = crate::shader_translate::reflect_resource_bindings(&module)
+                            .ok()
+                            .unwrap_or_default();
+                        match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
+                            &module,
+                            entry_point,
+                        ) {
+                            Ok(t) => Some(t),
+                            Err(e) => {
+                                gs_prepass_error = Some(e.to_string());
+                                None
                             }
                         }
-                        Err(e) => {
-                            gs_prepass_error = Some(e.to_string());
-                            None
-                        }
-                    };
+                    }
+                    Err(e) => {
+                        gs_prepass_error = Some(e.to_string());
+                        None
+                    }
+                };
                 if let Some(t) = translation {
                     gs_prepass = Some(GsPrepassMetadata {
                         verts_per_primitive: t.info.input_verts_per_primitive,

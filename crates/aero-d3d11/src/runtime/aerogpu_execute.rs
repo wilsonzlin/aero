@@ -652,8 +652,9 @@ impl AerogpuCmdRuntime {
             let module =
                 crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
             let prepass =
-                super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
-                    &module, "cs_main",
+                super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
+                    &module,
+                    "cs_main",
                 )
                 .map_err(|e| anyhow!(e))?;
 

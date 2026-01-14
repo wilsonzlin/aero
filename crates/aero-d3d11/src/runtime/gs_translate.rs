@@ -83,6 +83,12 @@ pub enum GsTranslateError {
         /// Valid varying locations are `1..EXPANDED_VERTEX_MAX_VARYINGS`.
         loc: u32,
     },
+    OutputRegisterOutOfRange {
+        /// Highest output register location (`o#`) referenced by the shader.
+        loc: u32,
+        /// Maximum supported location for the current expanded-vertex layout.
+        max_supported: u32,
+    },
     UnsupportedInputPrimitive {
         primitive: u32,
     },
@@ -131,6 +137,10 @@ impl fmt::Display for GsTranslateError {
                 f,
                 "GS translate: invalid output varying location {loc} (valid range is 1..{}; location 0 is reserved for position in the expanded-vertex scheme)",
                 EXPANDED_VERTEX_MAX_VARYINGS.saturating_sub(1),
+            ),
+            GsTranslateError::OutputRegisterOutOfRange { loc, max_supported } => write!(
+                f,
+                "GS translate: output register o{loc} is out of range for the fixed expanded-vertex layout (max o{max_supported})"
             ),
             GsTranslateError::UnsupportedInputPrimitive { primitive } => write!(
                 f,
@@ -540,11 +550,24 @@ fn default_varyings_from_decls(module: &Sm4Module) -> Vec<u32> {
     out.into_iter().collect()
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ExpandedVertexOutputLayout<'a> {
+    /// Pack only the requested output register locations into consecutive `vN` fields on
+    /// `ExpandedVertex`.
+    Packed { varyings: &'a [u32] },
+    /// Use the legacy expanded-vertex layout expected by the current cmd-stream executor
+    /// passthrough VS (`pos + varyings: array<vec4<f32>, 32>`), writing output registers into the
+    /// corresponding `varyings[loc]` slot.
+    FixedArray { max_varyings: u32 },
+}
+
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
 /// geometry prepass, selecting which output varyings are written into the expanded vertex buffer.
 ///
 /// `varyings` is a sorted, de-duplicated list of D3D output register locations (`o#`) that should be
-/// written into the expanded vertex buffer's varying table (`ExpandedVertex.varyings[loc]`).
+/// packed into the expanded vertex buffer, in slice order.
+///
+/// `o0` / position is always written separately as the first field (`ExpandedVertex.pos`).
 ///
 /// - Location 0 is reserved for position (`o0`) and must not be included in `varyings`.
 /// - Locations must be in `1..EXPANDED_VERTEX_MAX_VARYINGS`.
@@ -565,10 +588,10 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
     varyings: &[u32],
 ) -> Result<String, GsTranslateError> {
     Ok(
-        translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
+        translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
             module,
             "cs_main",
-            Some(varyings),
+            ExpandedVertexOutputLayout::Packed { varyings },
         )?
         .wgsl,
     )
@@ -600,31 +623,46 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     entry_point: &str,
 ) -> Result<GsPrepassTranslation, GsTranslateError> {
     let varyings = default_varyings_from_decls(module);
-    let varyings = (!varyings.is_empty()).then_some(varyings.as_slice());
-    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
+    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
         module,
         entry_point,
-        varyings,
+        ExpandedVertexOutputLayout::Packed {
+            varyings: varyings.as_slice(),
+        },
     )
 }
 
-fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
+/// Internal executor helper: translate using the fixed expanded-vertex layout
+/// (`ExpandedVertex { pos, varyings: array<vec4<f32>, 32> }`).
+pub(crate) fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
     module: &Sm4Module,
     entry_point: &str,
-    varyings: Option<&[u32]>,
+) -> Result<GsPrepassTranslation, GsTranslateError> {
+    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
+        module,
+        entry_point,
+        ExpandedVertexOutputLayout::FixedArray {
+            max_varyings: EXPANDED_VERTEX_MAX_VARYINGS,
+        },
+    )
+}
+
+fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
+    module: &Sm4Module,
+    entry_point: &str,
+    expanded_vertex_layout: ExpandedVertexOutputLayout<'_>,
 ) -> Result<GsPrepassTranslation, GsTranslateError> {
     if module.stage != ShaderStage::Geometry {
         return Err(GsTranslateError::NotGeometryStage(module.stage));
     }
 
-    let auto_varyings = varyings.is_none();
-    let explicit_varyings: &[u32] = varyings.unwrap_or(&[]);
-
-    if let Some(&loc) = explicit_varyings
-        .iter()
-        .find(|&&loc| loc == 0 || loc >= EXPANDED_VERTEX_MAX_VARYINGS)
-    {
-        return Err(GsTranslateError::InvalidVaryingLocation { loc });
+    if let ExpandedVertexOutputLayout::Packed { varyings } = expanded_vertex_layout {
+        if let Some(&loc) = varyings
+            .iter()
+            .find(|&&loc| loc == 0 || loc >= EXPANDED_VERTEX_MAX_VARYINGS)
+        {
+            return Err(GsTranslateError::InvalidVaryingLocation { loc });
+        }
     }
 
     let mut input_primitive: Option<GsInputPrimitive> = None;
@@ -1606,12 +1644,31 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
         }
     }
 
-    // Ensure we always declare at least o0, plus any output registers referenced by the requested
-    // varying locations. This allows missing GS outputs to default to `vec4<f32>(0.0)` via the
+    // Ensure we always declare at least o0. Some expanded-vertex layouts also need us to declare
+    // additional output registers so missing GS outputs can default to `vec4<f32>(0.0)` via the
     // zero-initialized output register file.
     max_output_reg = max_output_reg.max(0);
-    if let Some(max_varying) = explicit_varyings.iter().copied().max() {
-        max_output_reg = max_output_reg.max(max_varying as i32);
+    let mut emit_output_regs: Vec<u32> = Vec::new();
+    match expanded_vertex_layout {
+        ExpandedVertexOutputLayout::Packed { varyings } => {
+            if let Some(max_varying) = varyings.iter().copied().max() {
+                max_output_reg = max_output_reg.max(max_varying as i32);
+            }
+            emit_output_regs.extend_from_slice(varyings);
+        }
+        ExpandedVertexOutputLayout::FixedArray { max_varyings } => {
+            let max_supported = max_varyings.saturating_sub(1);
+            let max_loc = max_output_reg as u32;
+            if max_loc > max_supported {
+                return Err(GsTranslateError::OutputRegisterOutOfRange {
+                    loc: max_loc,
+                    max_supported,
+                });
+            }
+            for loc in 1..=max_loc {
+                emit_output_regs.push(loc);
+            }
+        }
     }
 
     let temp_reg_count = (max_temp_reg + 1).max(0) as u32;
@@ -1624,36 +1681,27 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
         });
     }
 
-    let mut auto_varyings_storage: Vec<u32> = Vec::new();
-    let varyings: &[u32] = if auto_varyings {
-        // Some real-world DXBC blobs omit explicit `dcl_output` declarations for GS outputs, which
-        // means `Sm4Decl::Output` is absent. When that happens, `default_varyings_from_decls`
-        // returns an empty list; fall back to exporting all non-position output registers present
-        // in the local output register file (`o1..o{N}`).
-        let max_varying = output_reg_count.saturating_sub(1);
-        for loc in 1..=max_varying {
-            auto_varyings_storage.push(loc);
-        }
-        &auto_varyings_storage
-    } else {
-        explicit_varyings
-    };
-
     let mut w = WgslWriter::new();
 
     w.line("// ---- Aero SM4 geometry shader prepass (generated) ----");
     w.line("");
 
-    // Match the expanded-vertex layout consumed by `runtime/wgsl_link.rs`'s passthrough VS
-    // generator, and by the placeholder geometry compute prepass.
+    // Expanded vertex record written by the compute prepass.
     w.line("struct ExpandedVertex {");
     w.indent();
     w.line("pos: vec4<f32>,");
-    // Match the emulation passthrough VS (`runtime/wgsl_link.rs`), which expects a fixed-size
-    // varying table indexed by `@location(N)`.
-    w.line(&format!(
-        "varyings: array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>,"
-    ));
+    match expanded_vertex_layout {
+        ExpandedVertexOutputLayout::Packed { varyings } => {
+            for (i, _) in varyings.iter().enumerate() {
+                w.line(&format!("v{i}: vec4<f32>,"));
+            }
+        }
+        ExpandedVertexOutputLayout::FixedArray { max_varyings } => {
+            // Match the emulation passthrough VS (`runtime/wgsl_link.rs`), which expects a fixed-size
+            // varying table indexed by `@location(N)`.
+            w.line(&format!("varyings: array<vec4<f32>, {max_varyings}>,"));
+        }
+    }
     w.dedent();
     w.line("};");
     w.line("");
@@ -1813,12 +1861,12 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("}");
     w.line("");
 
-    // Emit semantics: append a vertex (built from o0 + requested varyings) and produce list indices
-    // based on the GS output topology (point list, line strip, triangle strip).
+    // Emit semantics: append a vertex and produce list indices based on the GS output topology
+    // (point list, line strip, triangle strip).
     w.line("fn gs_emit(");
     w.indent();
     w.line("o0: vec4<f32>,");
-    for &loc in varyings {
+    for &loc in &emit_output_regs {
         w.line(&format!("o{loc}: vec4<f32>,"));
     }
     w.line("emitted_count: ptr<function, u32>,");
@@ -1844,13 +1892,22 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("}");
     w.line("");
     w.line("out_vertices.data[vtx_idx].pos = o0;");
-    w.line(&format!(
-        "out_vertices.data[vtx_idx].varyings = array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>();"
-    ));
-    for &loc in varyings {
-        w.line(&format!(
-            "out_vertices.data[vtx_idx].varyings[{loc}u] = o{loc};"
-        ));
+    match expanded_vertex_layout {
+        ExpandedVertexOutputLayout::Packed { .. } => {
+            for (i, &loc) in emit_output_regs.iter().enumerate() {
+                w.line(&format!("out_vertices.data[vtx_idx].v{i} = o{loc};"));
+            }
+        }
+        ExpandedVertexOutputLayout::FixedArray { max_varyings } => {
+            w.line(&format!(
+                "out_vertices.data[vtx_idx].varyings = array<vec4<f32>, {max_varyings}>();"
+            ));
+            for &loc in &emit_output_regs {
+                w.line(&format!(
+                    "out_vertices.data[vtx_idx].varyings[{loc}u] = o{loc};"
+                ));
+            }
+        }
     }
     w.line("");
     match output_topology_kind {
@@ -2127,7 +2184,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     };
 
     let mut gs_emit_args = String::from("o0");
-    for &loc in varyings {
+    for &loc in &emit_output_regs {
         gs_emit_args.push_str(&format!(", o{loc}"));
     }
     gs_emit_args.push_str(", &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow");
@@ -4499,13 +4556,7 @@ mod tests {
     }
 
     #[test]
-    fn gs_translate_emits_fixed_expanded_vertex_varying_table() {
-        // Regression test: the compute GS prepass must write into the fixed expanded-vertex layout
-        // consumed by the autogenerated passthrough VS (`runtime::wgsl_link`).
-        //
-        // In particular, varyings must be stored in `ExpandedVertex.varyings[loc]` rather than a
-        // packed struct-of-fields, otherwise the render pass will read the wrong data (often
-        // resulting in fully-black output).
+    fn gs_translate_emits_packed_expanded_vertex_fields() {
         let module = Sm4Module {
             stage: ShaderStage::Geometry,
             model: ShaderModel { major: 4, minor: 0 },
@@ -4524,14 +4575,83 @@ mod tests {
         let wgsl = translate_gs_module_to_wgsl_compute_prepass_packed(&module, &[1, 7])
             .expect("translation should succeed");
         assert!(
+            wgsl.contains("v0: vec4<f32>,") && wgsl.contains("v1: vec4<f32>,"),
+            "expected packed ExpandedVertex fields v0/v1 in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].v0 = o1;"),
+            "expected varying location 1 to map to ExpandedVertex.v0:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].v1 = o7;"),
+            "expected varying location 7 to map to ExpandedVertex.v1:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn gs_translate_fixed_emits_expanded_vertex_varying_table() {
+        // Regression test: the fixed-layout GS prepass translator must write into the expanded
+        // vertex varying table consumed by the autogenerated passthrough VS (`runtime::wgsl_link`).
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![
+                // Initialize a couple of output registers so they are referenced by the shader.
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([0; 4]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 7,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([0; 4]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Emit { stream: 0 },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
+            &module,
+            "cs_main",
+        )
+        .expect("translation should succeed")
+        .wgsl;
+        assert!(
             wgsl.contains(&format!(
                 "varyings: array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>,"
             )),
             "expected fixed expanded-vertex varying table in WGSL:\n{wgsl}"
-        );
-        assert!(
-            wgsl.contains("out_vertices.data[vtx_idx].varyings[1u] = o1;"),
-            "expected varying location 1 store:\n{wgsl}"
         );
         assert!(
             wgsl.contains("out_vertices.data[vtx_idx].varyings[7u] = o7;"),
@@ -4542,7 +4662,7 @@ mod tests {
     #[test]
     fn gs_translate_defaults_to_declared_output_varyings() {
         // The convenience `translate_gs_module_to_wgsl_compute_prepass` helper should export all
-        // declared GS outputs (excluding `o0` position) into the expanded-vertex varying table.
+        // declared GS outputs (excluding `o0` position) into the expanded-vertex record.
         let module = Sm4Module {
             stage: ShaderStage::Geometry,
             model: ShaderModel { major: 4, minor: 0 },
@@ -4572,15 +4692,15 @@ mod tests {
         let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
             .expect("translation should succeed");
         assert!(
-            wgsl.contains("out_vertices.data[vtx_idx].varyings[1u] = o1;"),
+            wgsl.contains("out_vertices.data[vtx_idx].v0 = o1;"),
             "expected declared output o1 to be exported by default:\n{wgsl}"
         );
         assert!(
-            wgsl.contains("out_vertices.data[vtx_idx].varyings[7u] = o7;"),
+            wgsl.contains("out_vertices.data[vtx_idx].v1 = o7;"),
             "expected declared output o7 to be exported by default:\n{wgsl}"
         );
         assert!(
-            !wgsl.contains("varyings[0u]"),
+            !wgsl.contains("out_vertices.data[vtx_idx].v0 = o0;"),
             "expected location 0 to remain reserved for position:\n{wgsl}"
         );
     }
