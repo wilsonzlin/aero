@@ -224,7 +224,12 @@ fn xhci_service_event_ring_does_not_dma_after_host_controller_error() {
     // Latch Host Controller Error and ensure `service_event_ring` does not touch guest memory or
     // consume pending events.
     force_hce(&mut xhci, &mut mem);
-    assert_eq!(xhci.pending_event_count(), 1);
+    while xhci.pop_pending_event().is_some() {}
+
+    let mut evt = Trb::default();
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+    assert_eq!(xhci.pending_event_count(), 1, "expected one queued event");
 
     mem.reset_counts();
     xhci.service_event_ring(&mut mem);
