@@ -47,7 +47,6 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
     // reappears.
     let vga_bdf = PciBdf::new(0, 0x0c, 0);
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
-
     // Guardrail: ensure no canonical paravirtual device profile uses this BDF (even though it is
     // currently expected to be empty).
     for profile in CANONICAL_IO_DEVICES {
@@ -99,11 +98,8 @@ fn aerogpu_is_exposed_at_canonical_bdf_without_transitional_vga_stub_when_enable
     // Transitional VGA stub must be absent when AeroGPU is enabled.
     let vga_bdf = PciBdf::new(0, 0x0c, 0);
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
-    if vga_vendor != 0xFFFF {
-        let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
-        assert!(
-            !(vga_vendor == 0x1234 && vga_device == 0x1111),
-            "transitional VGA stub (1234:1111) must not be present at {vga_bdf:?} when enable_aerogpu=true"
-        );
-    }
+    assert_eq!(
+        vga_vendor, 0xFFFF,
+        "expected transitional VGA PCI stub at {vga_bdf:?} to be absent when enable_aerogpu=true"
+    );
 }
