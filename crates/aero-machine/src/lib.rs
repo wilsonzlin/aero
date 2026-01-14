@@ -952,10 +952,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
         if delivery_mode != 0b000 {
             return;
         }
-        let level_assert = ((icr_low >> 14) & 1) != 0;
-        if !level_assert {
-            return;
-        }
+        // Fixed IPIs are edge-triggered; treat the ICR "Level" bit as don't-care.
         let vector = (icr_low & 0xFF) as u8;
         let shorthand = (icr_low >> 18) & 0b11;
         match shorthand {
@@ -13011,7 +13008,12 @@ mod tests {
         m.chipset.a20().set_enabled(false);
 
         let interrupts = m.interrupts.clone();
-        let phys = PerCpuSystemMemoryBus::new(0, interrupts, m.ap_cpus.as_mut_slice(), &mut m.mem);
+        let phys = PerCpuSystemMemoryBus::new(
+            0,
+            interrupts,
+            m.ap_cpus.as_mut_slice(),
+            &mut m.mem,
+        );
         let inner = aero_cpu_core::PagingBus::new_with_io(phys, StrictIoPortBus { io: &mut m.io });
         let mut bus = MachineCpuBus {
             a20: m.chipset.a20(),
