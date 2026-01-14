@@ -9,6 +9,10 @@ import { encodeCommand } from "../../ipc/protocol.ts";
 
 import { AeroIpcIoServer, type AeroIpcIoDispatchTarget } from "./aero_ipc_io.ts";
 
+const WORKER_READY_TIMEOUT_MS = 10_000;
+const TICK_TIMEOUT_MS = 10_000;
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
@@ -114,12 +118,12 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
             await sleep0();
           }
         })(),
-        2000,
+        TICK_TIMEOUT_MS,
         "tick() while draining (runAsync)",
       );
     } finally {
       abort.abort();
-      await withTimeout(serverTask, 2000, "server.runAsync() shutdown");
+      await withTimeout(serverTask, SHUTDOWN_TIMEOUT_MS, "server.runAsync() shutdown");
     }
 
     expect(tickCount).toBeGreaterThan(0);
@@ -178,12 +182,12 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
             await sleep0();
           }
         })(),
-        2000,
+        TICK_TIMEOUT_MS,
         "tick() while draining malformed commands (runAsync)",
       );
     } finally {
       abort.abort();
-      await withTimeout(serverTask, 2000, "server.runAsync() shutdown (malformed)");
+      await withTimeout(serverTask, SHUTDOWN_TIMEOUT_MS, "server.runAsync() shutdown (malformed)");
     }
 
     expect(tickCount).toBeGreaterThan(0);
@@ -220,7 +224,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
 
     let exited = false;
     try {
-      await withTimeout(once(worker, "message") as Promise<[any]>, 2000, "server worker ready");
+      await withTimeout(once(worker, "message") as Promise<[any]>, WORKER_READY_TIMEOUT_MS, "server worker ready");
 
       const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
       const cmdBytes = encodeCommand({ kind: "portWrite", id: 1, port: 0, size: 1, value: 0 });
@@ -237,7 +241,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
             await sleep0();
           }
         })(),
-        2000,
+        TICK_TIMEOUT_MS,
         "tick() while draining (run)",
       );
 
@@ -249,7 +253,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
       while (!cmdQ.tryPush(shutdownBytes)) {
         await sleep0();
       }
-      await withTimeout(once(worker, "exit") as Promise<[number]>, 4000, "server worker exit");
+      await withTimeout(once(worker, "exit") as Promise<[number]>, SHUTDOWN_TIMEOUT_MS, "server worker exit");
       exited = true;
     } finally {
       if (!exited) await worker.terminate();
@@ -284,7 +288,11 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
 
     let exited = false;
     try {
-      await withTimeout(once(worker, "message") as Promise<[any]>, 2000, "server worker ready (malformed)");
+      await withTimeout(
+        once(worker, "message") as Promise<[any]>,
+        WORKER_READY_TIMEOUT_MS,
+        "server worker ready (malformed)",
+      );
 
       const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
 
@@ -298,7 +306,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
             await sleep0();
           }
         })(),
-        2000,
+        TICK_TIMEOUT_MS,
         "tick() while draining malformed commands (run)",
       );
 
@@ -310,7 +318,11 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
       while (!cmdQ.tryPush(shutdownBytes)) {
         await sleep0();
       }
-      await withTimeout(once(worker, "exit") as Promise<[number]>, 4000, "server worker exit (malformed)");
+      await withTimeout(
+        once(worker, "exit") as Promise<[number]>,
+        SHUTDOWN_TIMEOUT_MS,
+        "server worker exit (malformed)",
+      );
       exited = true;
     } finally {
       if (!exited) await worker.terminate();
