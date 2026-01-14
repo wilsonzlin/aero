@@ -237,25 +237,6 @@ using aerogpu::d3d10_11::kD3D11MapWriteNoOverwrite;
 // D3D11_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d11.h).
 using aerogpu::d3d10_11::kD3D11MapFlagDoNotWait;
 
-// D3D10/11 pipeline-state enums (numeric values from d3d10.h/d3d11.h).
-constexpr uint32_t kD3D10FillWireframe = 2;
-constexpr uint32_t kD3D10FillSolid = 3;
-constexpr uint32_t kD3D10CullNone = 1;
-constexpr uint32_t kD3D10CullFront = 2;
-constexpr uint32_t kD3D10CullBack = 3;
-
-constexpr uint32_t kD3D10CompareNever = 1;
-constexpr uint32_t kD3D10CompareLess = 2;
-constexpr uint32_t kD3D10CompareEqual = 3;
-constexpr uint32_t kD3D10CompareLessEqual = 4;
-constexpr uint32_t kD3D10CompareGreater = 5;
-constexpr uint32_t kD3D10CompareNotEqual = 6;
-constexpr uint32_t kD3D10CompareGreaterEqual = 7;
-constexpr uint32_t kD3D10CompareAlways = 8;
-
-constexpr uint32_t kD3D10DepthWriteMaskZero = 0;
-constexpr uint32_t kD3D10DepthWriteMaskAll = 1;
-
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 using aerogpu::d3d10_11::kDxgiFormatR32G32B32A32Float;
 using aerogpu::d3d10_11::kDxgiFormatR32G32B32Float;
