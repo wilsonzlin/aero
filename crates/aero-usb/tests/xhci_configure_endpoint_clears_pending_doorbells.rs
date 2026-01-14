@@ -150,6 +150,7 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick(&mut mem);
 
     let mut buf = [0u8; 8];
@@ -222,6 +223,7 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);
 
     ctrl.ring_doorbell(slot_id, EP_ID);
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick(&mut mem);
 
     let mut buf = [0u8; 8];
