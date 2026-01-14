@@ -138,9 +138,13 @@ typedef struct _AEROGPU_ALLOC_TABLE_SCRATCH {
 
     struct aerogpu_alloc_entry* TmpEntries;
     uint32_t* Seen;
-    uint16_t* SeenIndex;
-    uint32_t* SeenEpoch;
-    uint32_t Epoch;
+    /*
+     * [epoch|index] packed metadata for the Seen hash table:
+     * - high 16 bits: epoch tag
+     * - low  16 bits: tmpEntries index
+     */
+    uint32_t* SeenMeta;
+    uint16_t Epoch;
 
 #if DBG
     volatile LONG HitCount;

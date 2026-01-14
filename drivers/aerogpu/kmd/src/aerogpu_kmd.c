@@ -1725,10 +1725,9 @@ static NTSTATUS AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
                                                    _Out_ SIZE_T* BlockBytesOut,
                                                    _Out_ struct aerogpu_alloc_entry** TmpEntriesOut,
                                                    _Out_ uint32_t** SeenOut,
-                                                   _Out_ uint16_t** SeenIndexOut,
-                                                   _Out_ uint32_t** SeenEpochOut)
+                                                   _Out_ uint32_t** SeenMetaOut)
 {
-    if (!BlockOut || !BlockBytesOut || !TmpEntriesOut || !SeenOut || !SeenIndexOut || !SeenEpochOut) {
+    if (!BlockOut || !BlockBytesOut || !TmpEntriesOut || !SeenOut || !SeenMetaOut) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -1736,8 +1735,7 @@ static NTSTATUS AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
     *BlockBytesOut = 0;
     *TmpEntriesOut = NULL;
     *SeenOut = NULL;
-    *SeenIndexOut = NULL;
-    *SeenEpochOut = NULL;
+    *SeenMetaOut = NULL;
 
     if (TmpEntriesCap == 0 || HashCap == 0) {
         return STATUS_INVALID_PARAMETER;
@@ -1759,13 +1757,11 @@ static NTSTATUS AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
     SIZE_T off = 0;
     SIZE_T tmpOff = 0;
     SIZE_T seenOff = 0;
-    SIZE_T seenIndexOff = 0;
-    SIZE_T seenEpochOff = 0;
+    SIZE_T seenMetaOff = 0;
 
     SIZE_T tmpBytes = 0;
     SIZE_T seenBytes = 0;
-    SIZE_T seenIndexBytes = 0;
-    SIZE_T seenEpochBytes = 0;
+    SIZE_T seenMetaBytes = 0;
 
     NTSTATUS st = AeroGpuAlignUpSizeTChecked(off, 8, &off);
     if (!NT_SUCCESS(st)) {
@@ -1799,26 +1795,12 @@ static NTSTATUS AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
     if (!NT_SUCCESS(st)) {
         return st;
     }
-    seenIndexOff = off;
-    st = RtlSizeTMult((SIZE_T)HashCap, sizeof(uint16_t), &seenIndexBytes);
+    seenMetaOff = off;
+    st = RtlSizeTMult((SIZE_T)HashCap, sizeof(uint32_t), &seenMetaBytes);
     if (!NT_SUCCESS(st)) {
         return STATUS_INTEGER_OVERFLOW;
     }
-    st = RtlSizeTAdd(off, seenIndexBytes, &off);
-    if (!NT_SUCCESS(st)) {
-        return STATUS_INTEGER_OVERFLOW;
-    }
-
-    st = AeroGpuAlignUpSizeTChecked(off, 4, &off);
-    if (!NT_SUCCESS(st)) {
-        return st;
-    }
-    seenEpochOff = off;
-    st = RtlSizeTMult((SIZE_T)HashCap, sizeof(uint32_t), &seenEpochBytes);
-    if (!NT_SUCCESS(st)) {
-        return STATUS_INTEGER_OVERFLOW;
-    }
-    st = RtlSizeTAdd(off, seenEpochBytes, &off);
+    st = RtlSizeTAdd(off, seenMetaBytes, &off);
     if (!NT_SUCCESS(st)) {
         return STATUS_INTEGER_OVERFLOW;
     }
@@ -1837,12 +1819,11 @@ static NTSTATUS AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
 
     *TmpEntriesOut = (struct aerogpu_alloc_entry*)((PUCHAR)block + tmpOff);
     *SeenOut = (uint32_t*)((PUCHAR)block + seenOff);
-    *SeenIndexOut = (uint16_t*)((PUCHAR)block + seenIndexOff);
-    *SeenEpochOut = (uint32_t*)((PUCHAR)block + seenEpochOff);
+    *SeenMetaOut = (uint32_t*)((PUCHAR)block + seenMetaOff);
 
-    /* Initialize epoch array (used for O(1) clear). */
-    if (seenEpochBytes != 0) {
-        RtlZeroMemory(*SeenEpochOut, seenEpochBytes);
+    /* Initialize meta array (epoch==0 means empty). */
+    if (seenMetaBytes != 0) {
+        RtlZeroMemory(*SeenMetaOut, seenMetaBytes);
     }
     return STATUS_SUCCESS;
 }
@@ -1875,16 +1856,14 @@ static NTSTATUS AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALL
     SIZE_T newBlockBytes = 0;
     struct aerogpu_alloc_entry* newTmpEntries = NULL;
     uint32_t* newSeen = NULL;
-    uint16_t* newSeenIndex = NULL;
-    uint32_t* newSeenEpoch = NULL;
+    uint32_t* newSeenMeta = NULL;
     NTSTATUS st = AeroGpuAllocTableScratchAllocBlock(newTmpCap,
                                                      newHashCap,
                                                      &newBlock,
                                                      &newBlockBytes,
                                                      &newTmpEntries,
                                                      &newSeen,
-                                                     &newSeenIndex,
-                                                     &newSeenEpoch);
+                                                     &newSeenMeta);
     if (!NT_SUCCESS(st)) {
         return st;
     }
@@ -1897,8 +1876,7 @@ static NTSTATUS AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALL
     Scratch->HashCapacity = newHashCap;
     Scratch->TmpEntries = newTmpEntries;
     Scratch->Seen = newSeen;
-    Scratch->SeenIndex = newSeenIndex;
-    Scratch->SeenEpoch = newSeenEpoch;
+    Scratch->SeenMeta = newSeenMeta;
     Scratch->Epoch = 0;
 
 #if DBG
@@ -1957,9 +1935,8 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
                                                   _Inout_updates_(TmpEntriesCap) struct aerogpu_alloc_entry* TmpEntries,
                                                   _In_ UINT TmpEntriesCap,
                                                   _Inout_updates_(HashCap) uint32_t* Seen,
-                                                  _Inout_updates_(HashCap) uint16_t* SeenIndex,
-                                                  _Inout_updates_(HashCap) uint32_t* SeenEpoch,
-                                                  _In_ uint32_t Epoch,
+                                                  _Inout_updates_(HashCap) uint32_t* SeenMeta,
+                                                  _In_ uint16_t Epoch,
                                                   _In_ UINT HashCap,
                                                   _Out_ UINT* EntryCountOut)
 {
@@ -1970,7 +1947,7 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
     if (!List || Count == 0) {
         return STATUS_SUCCESS;
     }
-    if (!TmpEntries || TmpEntriesCap == 0 || !Seen || !SeenIndex || !SeenEpoch || Epoch == 0 || !EntryCountOut) {
+    if (!TmpEntries || TmpEntriesCap == 0 || !Seen || !SeenMeta || Epoch == 0 || !EntryCountOut) {
         return STATUS_INVALID_PARAMETER;
     }
     if (HashCap < 2 || (HashCap & (HashCap - 1)) != 0) {
@@ -2001,17 +1978,17 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
 
         UINT slot = (allocId * 2654435761u) & mask;
         for (;;) {
-            const uint32_t slotEpoch = SeenEpoch[slot];
-            if (slotEpoch != Epoch) {
+            const uint32_t meta = SeenMeta[slot];
+            const uint16_t metaEpoch = (uint16_t)(meta >> 16);
+            if (metaEpoch != Epoch) {
                 if (entryCount >= TmpEntriesCap) {
                     return STATUS_INTEGER_OVERFLOW;
                 }
-                SeenEpoch[slot] = Epoch;
-                Seen[slot] = allocId;
                 if (entryCount > UINT16_MAX) {
                     return STATUS_INTEGER_OVERFLOW;
                 }
-                SeenIndex[slot] = (uint16_t)entryCount;
+                SeenMeta[slot] = ((uint32_t)Epoch << 16) | (uint32_t)entryCount;
+                Seen[slot] = allocId;
 
                 TmpEntries[entryCount].alloc_id = allocId;
                 TmpEntries[entryCount].flags = entryFlags;
@@ -2025,7 +2002,7 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
 
             const uint32_t existing = Seen[slot];
             if (existing == allocId) {
-                const UINT entryIndex = (UINT)SeenIndex[slot];
+                const UINT entryIndex = (UINT)(meta & 0xFFFFu);
                 const uint64_t gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
                 const uint64_t sizeBytes = (uint64_t)alloc->SizeBytes;
                 if (entryIndex >= entryCount) {
@@ -2115,8 +2092,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     struct aerogpu_alloc_entry* tmpEntries = NULL;
     uint32_t* seen = NULL;
-    uint16_t* seenIndex = NULL;
-    uint32_t* seenEpoch = NULL;
+    uint32_t* seenMeta = NULL;
 
     PVOID slowBlock = NULL;
     SIZE_T slowBlockBytes = 0;
@@ -2193,8 +2169,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
     if (NT_SUCCESS(scratchSt)) {
         tmpEntries = Adapter->AllocTableScratch.TmpEntries;
         seen = Adapter->AllocTableScratch.Seen;
-        seenIndex = Adapter->AllocTableScratch.SeenIndex;
-        seenEpoch = Adapter->AllocTableScratch.SeenEpoch;
+        seenMeta = Adapter->AllocTableScratch.SeenMeta;
         usingCache = TRUE;
         scratchLockHeld = TRUE;
     } else {
@@ -2221,31 +2196,31 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
                                                                     &slowBlockBytes,
                                                                     &tmpEntries,
                                                                     &seen,
-                                                                    &seenIndex,
-                                                                    &seenEpoch);
+                                                                    &seenMeta);
         if (!NT_SUCCESS(allocSt)) {
             return allocSt;
         }
     }
 
-    uint32_t epoch = 1;
+    uint16_t epoch = 1;
     if (usingCache) {
-        epoch = ++Adapter->AllocTableScratch.Epoch;
+        epoch = (uint16_t)(Adapter->AllocTableScratch.Epoch + 1);
+        Adapter->AllocTableScratch.Epoch = epoch;
         if (epoch == 0) {
             /* Epoch wrapped; clear and restart at 1. */
-            SIZE_T epochBytes = 0;
-            if (!NT_SUCCESS(RtlSizeTMult((SIZE_T)Adapter->AllocTableScratch.HashCapacity, sizeof(uint32_t), &epochBytes))) {
+            SIZE_T metaBytes = 0;
+            if (!NT_SUCCESS(RtlSizeTMult((SIZE_T)Adapter->AllocTableScratch.HashCapacity, sizeof(uint32_t), &metaBytes))) {
                 st = STATUS_INTEGER_OVERFLOW;
                 goto cleanup;
             }
-            RtlZeroMemory(Adapter->AllocTableScratch.SeenEpoch, epochBytes);
-            Adapter->AllocTableScratch.Epoch = 1;
+            RtlZeroMemory(Adapter->AllocTableScratch.SeenMeta, metaBytes);
             epoch = 1;
+            Adapter->AllocTableScratch.Epoch = epoch;
         }
     }
 
     st = AeroGpuBuildAllocTableFillScratch(
-        List, Count, tmpEntries, tmpEntriesCap, seen, seenIndex, seenEpoch, epoch, cap, &entryCount);
+        List, Count, tmpEntries, tmpEntriesCap, seen, seenMeta, epoch, cap, &entryCount);
     if (!NT_SUCCESS(st)) {
         goto cleanup;
     }
@@ -5399,8 +5374,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
         adapter->AllocTableScratch.HashCapacity = 0;
         adapter->AllocTableScratch.TmpEntries = NULL;
         adapter->AllocTableScratch.Seen = NULL;
-        adapter->AllocTableScratch.SeenIndex = NULL;
-        adapter->AllocTableScratch.SeenEpoch = NULL;
+        adapter->AllocTableScratch.SeenMeta = NULL;
         adapter->AllocTableScratch.Epoch = 0;
         ExReleaseFastMutex(&adapter->AllocTableScratch.Mutex);
 #if DBG
