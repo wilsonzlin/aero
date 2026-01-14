@@ -724,6 +724,109 @@ fn virtio_input_statusq_led_events_ignore_trailing_partial_event() {
 }
 
 #[test]
+fn virtio_input_statusq_invalid_descriptor_memory_is_ignored() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
+    let caps = parse_caps(&mut dev);
+    assert_ne!(caps.notify, 0);
+    assert_ne!(caps.notify_mult, 0);
+
+    let mut mem = GuestRam::new(0x10000);
+
+    // Feature negotiation (mirrors the other statusq tests).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure status queue 1 with two buffers. The first is valid and sets NumLock; the second
+    // points outside guest memory and should be ignored without crashing or resetting state.
+    let desc = 0x5000;
+    let avail = 0x6000;
+    let used = 0x7000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 2);
+
+    let buf0 = 0x8000;
+    let payload = [
+        input_event_bytes(EV_LED, LED_NUML, 1),
+        input_event_bytes(EV_SYN, SYN_REPORT, 0),
+    ]
+    .concat();
+    mem.write(buf0, &payload).unwrap();
+
+    write_desc(&mut mem, desc, 0, buf0, payload.len() as u32, 0, 0);
+    write_desc(
+        &mut mem,
+        desc,
+        1,
+        0x20000, // outside guest memory
+        48,
+        0,
+        0,
+    );
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 2).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, avail + 6, 1).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+
+    // Both buffers should be consumed and completed.
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 2);
+    let len0 = read_u32_le(&mem, used + 4 + 4).unwrap();
+    assert_eq!(len0, 0);
+    let len1 = read_u32_le(&mem, used + 4 + 8 + 4).unwrap();
+    assert_eq!(len1, 0);
+
+    // And the LED state should reflect only the valid payload.
+    let leds = dev.device_mut::<VirtioInput>().unwrap().leds_mask();
+    assert_eq!(leds, 0b00001);
+}
+
+#[test]
 fn virtio_input_statusq_mouse_ignores_led_events_but_consumes_buffers() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Mouse);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
