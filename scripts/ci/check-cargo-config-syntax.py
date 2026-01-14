@@ -45,8 +45,26 @@ def check_config(path: pathlib.Path) -> None:
         raise RuntimeError(f"failed to read {path}") from exc
 
     for marker in CONFLICT_MARKERS:
-        if marker in text:
-            raise ValueError(f"{path}: contains merge conflict marker '{marker}'")
+        idx = text.find(marker)
+        if idx != -1:
+            # Make merge-conflict marker failures actionable by printing the exact location.
+            lineno = text.count("\n", 0, idx) + 1
+            line_start = text.rfind("\n", 0, idx)
+            if line_start == -1:
+                line_start = 0
+            else:
+                line_start += 1
+            line_end = text.find("\n", idx)
+            if line_end == -1:
+                line_end = len(text)
+            colno = idx - line_start + 1
+            line = text[line_start:line_end]
+
+            prefix = "  "
+            caret = prefix + (" " * (max(colno, 1) - 1)) + "^"
+            raise ValueError(
+                f"{path}:{lineno}:{colno}: contains merge conflict marker '{marker}'\n{prefix}{line}\n{caret}"
+            )
 
     if tomllib is None:
         raise RuntimeError(
