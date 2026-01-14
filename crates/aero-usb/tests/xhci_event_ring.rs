@@ -1,10 +1,26 @@
 use aero_usb::xhci::interrupter::{IMAN_IE, IMAN_IP};
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, XhciController, EVENT_ENQUEUE_BUDGET_PER_TICK};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use aero_usb::MemoryBus;
 
 mod util;
 use util::TestMemory;
+
+#[derive(Default)]
+struct DummyDevice;
+
+impl UsbDeviceModel for DummyDevice {
+    fn reset(&mut self) {}
+
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+}
 
 fn write_erst_entry(mem: &mut TestMemory, erstba: u64, seg_base: u64, seg_size_trbs: u32) {
     MemoryBus::write_u64(mem, erstba, seg_base);
@@ -89,4 +105,34 @@ fn event_ring_wrap_and_budget_are_bounded() {
         !last.cycle(),
         "TRB just beyond the enqueue budget should still be empty/zeroed"
     );
+}
+
+#[test]
+fn port_status_change_event_is_delivered_into_guest_event_ring() {
+    let mut mem = TestMemory::new(0x20_000);
+
+    let erstba = 0x1000;
+    let ring_base = 0x2000;
+    write_erst_entry(&mut mem, erstba, ring_base, 4);
+
+    let mut xhci = XhciController::new();
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    // Root hub port 0 connect should enqueue a Port Status Change Event TRB.
+    xhci.attach_device(0, Box::new(DummyDevice::default()));
+
+    xhci.service_event_ring(&mut mem);
+
+    let got = Trb::read_from(&mut mem, ring_base);
+    assert_eq!(got.trb_type(), TrbType::PortStatusChangeEvent);
+    let port_id = ((got.dword0() >> 24) & 0xff) as u8;
+    assert_eq!(port_id, 1);
+
+    assert!(xhci.interrupter0().interrupt_pending());
+    assert!(xhci.irq_level());
 }
