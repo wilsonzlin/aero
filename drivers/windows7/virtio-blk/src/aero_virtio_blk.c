@@ -1147,7 +1147,11 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     ctrl->ReturnCode = (ULONG)STATUS_NOT_SUPPORTED;
     ctrl->Length = 0;
     srb->DataTransferLength = sizeof(SRB_IO_CONTROL);
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST);
+    /*
+     * Complete successfully so IOCTL_SCSI_MINIPORT callers can reliably inspect
+     * SRB_IO_CONTROL.ReturnCode to detect that this debug hook is unavailable.
+     */
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return;
 #else
     InterlockedIncrement(&devExt->IoctlResetCount);
