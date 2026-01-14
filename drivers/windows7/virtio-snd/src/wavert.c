@@ -1120,7 +1120,7 @@ VirtIoSndWaveRtDpcRoutine(
      * DPC body so PacketCount and position updates advance at most once per
      * period, even if we observe back-to-back queued DPCs.
      */
-    {
+    if (!stream->Capture) {
         const ULONGLONG nowTick100ns = KeQueryInterruptTime();
         ULONGLONG threshold100ns = stream->Period100ns;
 
