@@ -860,7 +860,10 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
                         binding: 1,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            // `layout_pass::wgsl_tessellation_layout_pass` binds `hs_tess_factors`
+                            // as `read_write` even though it only reads the data (see WGSL doc
+                            // comment), so mirror that here.
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },

@@ -3372,7 +3372,6 @@ fn wgsl_load_attr_expanded_fn(attr: &super::vertex_pulling::VertexPullingAttribu
     // Returns a `vec4<f32>` where missing components are filled with D3D IA defaults.
     //
     // For scalar/vector float formats, D3D fills missing lanes with (0,0,0,1).
-    // For UNORM formats, we already return vec4<f32>.
     let load_expr = match attr.format.component_type {
         DxgiFormatComponentType::F32 => match attr.format.component_count {
             1 => "load_attr_f32".to_owned(),
@@ -3381,10 +3380,68 @@ fn wgsl_load_attr_expanded_fn(attr: &super::vertex_pulling::VertexPullingAttribu
             4 => "load_attr_f32x4".to_owned(),
             _ => "load_attr_f32x4".to_owned(),
         },
-        DxgiFormatComponentType::Unorm8 => "load_attr_unorm8x4".to_owned(),
+        DxgiFormatComponentType::F16 => match attr.format.component_count {
+            1 | 2 => "load_attr_f16x2".to_owned(),
+            4 => "load_attr_f16x4".to_owned(),
+            _ => "load_attr_f16x4".to_owned(),
+        },
+        DxgiFormatComponentType::U32 => match attr.format.component_count {
+            1 => "load_attr_u32".to_owned(),
+            2 => "load_attr_u32x2".to_owned(),
+            3 => "load_attr_u32x3".to_owned(),
+            4 => "load_attr_u32x4".to_owned(),
+            _ => "load_attr_u32x4".to_owned(),
+        },
+        DxgiFormatComponentType::I32 => match attr.format.component_count {
+            1 => "load_attr_i32".to_owned(),
+            2 => "load_attr_i32x2".to_owned(),
+            3 => "load_attr_i32x3".to_owned(),
+            4 => "load_attr_i32x4".to_owned(),
+            _ => "load_attr_i32x4".to_owned(),
+        },
+        DxgiFormatComponentType::U16 => match attr.format.component_count {
+            1 => "load_attr_u16".to_owned(),
+            2 => "load_attr_u16x2".to_owned(),
+            4 => "load_attr_u16x4".to_owned(),
+            _ => "load_attr_u16x4".to_owned(),
+        },
+        DxgiFormatComponentType::I16 => match attr.format.component_count {
+            1 => "load_attr_i16".to_owned(),
+            2 => "load_attr_i16x2".to_owned(),
+            4 => "load_attr_i16x4".to_owned(),
+            _ => "load_attr_i16x4".to_owned(),
+        },
+        DxgiFormatComponentType::U8 => match attr.format.component_count {
+            2 => "load_attr_u8x2".to_owned(),
+            4 => "load_attr_u8x4".to_owned(),
+            _ => "load_attr_u8x4".to_owned(),
+        },
+        DxgiFormatComponentType::I8 => match attr.format.component_count {
+            2 => "load_attr_i8x2".to_owned(),
+            4 => "load_attr_i8x4".to_owned(),
+            _ => "load_attr_i8x4".to_owned(),
+        },
+        DxgiFormatComponentType::Unorm8 => match attr.format.component_count {
+            2 => "load_attr_unorm8x2".to_owned(),
+            4 => "load_attr_unorm8x4".to_owned(),
+            _ => "load_attr_unorm8x4".to_owned(),
+        },
+        DxgiFormatComponentType::Snorm8 => match attr.format.component_count {
+            2 => "load_attr_snorm8x2".to_owned(),
+            4 => "load_attr_snorm8x4".to_owned(),
+            _ => "load_attr_snorm8x4".to_owned(),
+        },
+        DxgiFormatComponentType::Unorm16 => match attr.format.component_count {
+            1 | 2 => "load_attr_unorm16x2".to_owned(),
+            4 => "load_attr_unorm16x4".to_owned(),
+            _ => "load_attr_unorm16x4".to_owned(),
+        },
+        DxgiFormatComponentType::Snorm16 => match attr.format.component_count {
+            1 | 2 => "load_attr_snorm16x2".to_owned(),
+            4 => "load_attr_snorm16x4".to_owned(),
+            _ => "load_attr_snorm16x4".to_owned(),
+        },
         DxgiFormatComponentType::Unorm10_10_10_2 => "load_attr_unorm10_10_10_2".to_owned(),
-        // TODO: extend vertex pulling prelude for additional DXGI types (F16, U32, U16).
-        _ => "load_attr_f32x4".to_owned(),
     };
 
     let elem_index_expr = match attr.step_mode {
@@ -3396,6 +3453,7 @@ fn wgsl_load_attr_expanded_fn(attr: &super::vertex_pulling::VertexPullingAttribu
     };
 
     let (load_stmt, expand_stmt) = match (attr.format.component_type, attr.format.component_count) {
+        // Float formats.
         (DxgiFormatComponentType::F32, 1) => (
             format!(
                 "let v: f32 = {load_expr}({slot}u, addr);",
@@ -3424,12 +3482,188 @@ fn wgsl_load_attr_expanded_fn(attr: &super::vertex_pulling::VertexPullingAttribu
             ),
             "return v;".to_owned(),
         ),
-        (DxgiFormatComponentType::Unorm8, 4) | (DxgiFormatComponentType::Unorm10_10_10_2, 4) => (
+        (DxgiFormatComponentType::F16, 2) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, v.y, 0.0, 1.0);".to_owned(),
+        ),
+        // Scalar float16 is represented as `float16x2` in memory; use the `.x` lane.
+        (DxgiFormatComponentType::F16, 1) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, 0.0, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::F16, 4) => (
             format!(
                 "let v: vec4<f32> = {load_expr}({slot}u, addr);",
                 slot = attr.pulling_slot
             ),
             "return v;".to_owned(),
+        ),
+
+        // Normalized formats.
+        // Scalar 16-bit normalized formats are represented as `*16x2` in memory; use the `.x` lane.
+        (DxgiFormatComponentType::Unorm16, 1) | (DxgiFormatComponentType::Snorm16, 1) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, 0.0, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::Unorm8, 2)
+        | (DxgiFormatComponentType::Snorm8, 2)
+        | (DxgiFormatComponentType::Unorm16, 2)
+        | (DxgiFormatComponentType::Snorm16, 2) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, v.y, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::Unorm8, 4)
+        | (DxgiFormatComponentType::Snorm8, 4)
+        | (DxgiFormatComponentType::Unorm16, 4)
+        | (DxgiFormatComponentType::Snorm16, 4)
+        | (DxgiFormatComponentType::Unorm10_10_10_2, 4) => (
+            format!(
+                "let v: vec4<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return v;".to_owned(),
+        ),
+
+        // Integer formats (convert to float).
+        (DxgiFormatComponentType::U32, 1) => (
+            format!(
+                "let v: u32 = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::U32, 2) => (
+            format!(
+                "let v: vec2<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::U32, 3) => (
+            format!(
+                "let v: vec3<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::U32, 4) => (
+            format!(
+                "let v: vec4<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+        ),
+        (DxgiFormatComponentType::I32, 1) => (
+            format!(
+                "let v: i32 = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::I32, 2) => (
+            format!(
+                "let v: vec2<i32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::I32, 3) => (
+            format!(
+                "let v: vec3<i32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::I32, 4) => (
+            format!(
+                "let v: vec4<i32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+        ),
+
+        (DxgiFormatComponentType::U16, 1) => (
+            format!(
+                "let v: u32 = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::U16, 2) => (
+            format!(
+                "let v: vec2<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::U16, 4) => (
+            format!(
+                "let v: vec4<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+        ),
+        (DxgiFormatComponentType::I16, 1) => (
+            format!(
+                "let v: i32 = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v), 0.0, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::I16, 2) => (
+            format!(
+                "let v: vec2<i32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::I16, 4) => (
+            format!(
+                "let v: vec4<i32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+        ),
+
+        (DxgiFormatComponentType::U8, 2) => (
+            format!(
+                "let v: vec2<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::U8, 4) => (
+            format!(
+                "let v: vec4<u32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
+        ),
+        (DxgiFormatComponentType::I8, 2) => (
+            format!(
+                "let v: vec2<i32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::I8, 4) => (
+            format!(
+                "let v: vec4<i32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));".to_owned(),
         ),
         _ => (
             "let v: vec4<f32> = vec4<f32>(0.0);".to_owned(),
@@ -3571,6 +3805,52 @@ mod tests {
             panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
         }
         eprintln!("skipping {test_name}: {reason}");
+    }
+
+    #[test]
+    fn gs_prepass_vertex_pulling_wgsl_supports_extended_formats() {
+        fn attr(
+            dxgi_format: u32,
+            step_mode: wgpu::VertexStepMode,
+            instance_step_rate: u32,
+        ) -> crate::runtime::vertex_pulling::VertexPullingAttribute {
+            crate::runtime::vertex_pulling::VertexPullingAttribute {
+                shader_location: 0,
+                pulling_slot: 0,
+                offset_bytes: 0,
+                format: crate::input_layout::dxgi_format_info(dxgi_format).unwrap(),
+                step_mode,
+                instance_step_rate,
+            }
+        }
+
+        // Scalar f16 (R16_FLOAT).
+        let wgsl = super::wgsl_load_attr_expanded_fn(&attr(54, wgpu::VertexStepMode::Vertex, 0));
+        assert!(
+            wgsl.contains("load_attr_f16x2"),
+            "expected f16 scalar load to use load_attr_f16x2, got:\n{wgsl}"
+        );
+
+        // Scalar unorm16 (R16_UNORM).
+        let wgsl = super::wgsl_load_attr_expanded_fn(&attr(56, wgpu::VertexStepMode::Vertex, 0));
+        assert!(
+            wgsl.contains("load_attr_unorm16x2"),
+            "expected unorm16 scalar load to use load_attr_unorm16x2, got:\n{wgsl}"
+        );
+
+        // Packed unorm8x2 (R8G8_UNORM).
+        let wgsl = super::wgsl_load_attr_expanded_fn(&attr(49, wgpu::VertexStepMode::Vertex, 0));
+        assert!(
+            wgsl.contains("load_attr_unorm8x2"),
+            "expected unorm8x2 load to use load_attr_unorm8x2, got:\n{wgsl}"
+        );
+
+        // Instance step-rate division should appear in the generated address calculation.
+        let wgsl = super::wgsl_load_attr_expanded_fn(&attr(41, wgpu::VertexStepMode::Instance, 4));
+        assert!(
+            wgsl.contains("instance_id / 4u"),
+            "expected instance_id / step_rate in WGSL, got:\n{wgsl}"
+        );
     }
 
     #[test]

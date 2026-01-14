@@ -3729,8 +3729,11 @@ impl AerogpuD3d11Executor {
                 let slot = attr.pulling_slot;
                 let offset = attr.offset_bytes;
                 let element_index_expr = match attr.step_mode {
-                    wgpu::VertexStepMode::Vertex => "vertex_index",
-                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                    wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
+                    wgpu::VertexStepMode::Instance => {
+                        let step = attr.instance_step_rate.max(1);
+                        format!("aero_vp_ia.first_instance / {step}u")
+                    }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
                 out.push_str(&format!(
@@ -3751,11 +3754,125 @@ impl AerogpuD3d11Executor {
                             .to_owned()
                     }
                     (DxgiFormatComponentType::F32, 4) => "return load_attr_f32x4(slot, addr);".to_owned(),
+                    (DxgiFormatComponentType::F16, 1) => {
+                        "let v: vec2<f32> = load_attr_f16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F16, 2) => {
+                        "let v: vec2<f32> = load_attr_f16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F16, 4) => "return load_attr_f16x4(slot, addr);".to_owned(),
+                    (DxgiFormatComponentType::Unorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
                     (DxgiFormatComponentType::Unorm8, 4) => {
                         "return load_attr_unorm8x4(slot, addr);".to_owned()
                     }
+                    (DxgiFormatComponentType::Snorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm8, 4) => {
+                        "return load_attr_snorm8x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 4) => {
+                        "return load_attr_unorm16x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 4) => {
+                        "return load_attr_snorm16x4(slot, addr);".to_owned()
+                    }
                     (DxgiFormatComponentType::Unorm10_10_10_2, 4) => {
                         "return load_attr_unorm10_10_10_2(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 1) => {
+                        "let v: u32 = load_attr_u32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 2) => {
+                        "let v: vec2<u32> = load_attr_u32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 3) => {
+                        "let v: vec3<u32> = load_attr_u32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 4) => {
+                        "let v: vec4<u32> = load_attr_u32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 1) => {
+                        "let v: i32 = load_attr_i32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 2) => {
+                        "let v: vec2<i32> = load_attr_i32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 3) => {
+                        "let v: vec3<i32> = load_attr_i32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 4) => {
+                        "let v: vec4<i32> = load_attr_i32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 1) => {
+                        "let v: u32 = load_attr_u16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 2) => {
+                        "let v: vec2<u32> = load_attr_u16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 4) => {
+                        "let v: vec4<u32> = load_attr_u16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 1) => {
+                        "let v: i32 = load_attr_i16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 2) => {
+                        "let v: vec2<i32> = load_attr_i16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 4) => {
+                        "let v: vec4<i32> = load_attr_i16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U8, 2) => {
+                        "let v: vec2<u32> = load_attr_u8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U8, 4) => {
+                        "let v: vec4<u32> = load_attr_u8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I8, 2) => {
+                        "let v: vec2<i32> = load_attr_i8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I8, 4) => {
+                        "let v: vec4<i32> = load_attr_i8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
                     }
                     _ => "return aero_gs_default();".to_owned(),
                 };
@@ -4350,7 +4467,6 @@ impl AerogpuD3d11Executor {
         if let CmdPrimitiveTopology::PatchList { control_points } = self.state.primitive_topology {
             if self.state.hs.is_some() || self.state.ds.is_some() {
                 let actual = u32::from(control_points);
-
                 let hs_handle = self.state.hs.ok_or_else(|| {
                     anyhow!(
                         "PATCHLIST draw requires HS+DS, but no hull shader (HS) is bound (topology=PatchList{actual})"
