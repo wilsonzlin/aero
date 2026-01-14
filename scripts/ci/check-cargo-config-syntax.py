@@ -60,6 +60,24 @@ def check_config(path: pathlib.Path) -> None:
         colno = getattr(exc, "colno", None)
         msg = getattr(exc, "msg", None)
         if lineno is not None and colno is not None and msg is not None:
+            # `tomllib` errors are often terse (e.g. duplicate keys just say
+            # "Cannot overwrite a value"). Include the offending line to make
+            # CI failures actionable without opening the file locally.
+            line = ""
+            try:
+                lines = text.splitlines()
+                if 1 <= lineno <= len(lines):
+                    line = lines[lineno - 1]
+            except Exception:
+                # Best-effort: keep the original error formatting if anything
+                # about the snippet extraction goes wrong.
+                line = ""
+
+            if line:
+                prefix = "  "
+                caret = prefix + (" " * (max(colno, 1) - 1)) + "^"
+                raise ValueError(f"{path}:{lineno}:{colno}: {msg}\n{prefix}{line}\n{caret}") from None
+
             raise ValueError(f"{path}:{lineno}:{colno}: {msg}") from None
         raise ValueError(f"{path}: invalid TOML: {exc}") from None
 
@@ -81,4 +99,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
