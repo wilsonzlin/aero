@@ -48,6 +48,39 @@
 #define AEROGPU_KMD_MAX_DMA_BUFFER_BYTES_MAX (256u * 1024u * 1024u) /* 256 MiB */
 
 /*
+ * Contiguous non-cached buffer pool.
+ *
+ * The submission hot path allocates/frees physically-contiguous buffers at a
+ * high frequency (DMA copy buffers, per-submit allocation tables, legacy
+ * descriptors). Repeated calls into MmAllocateContiguousMemorySpecifyCache can
+ * cause contention and contiguous-memory fragmentation.
+ *
+ * We pool freed buffers in size classes of whole pages (1..256 pages == 4KiB..1MiB)
+ * and cap the total number of bytes retained so we never pin too much contiguous
+ * memory long-term.
+ */
+#define AEROGPU_CONTIG_POOL_MAX_PAGES 256u /* 1 MiB / 4 KiB pages */
+
+typedef struct _AEROGPU_CONTIG_POOL {
+    KSPIN_LOCK Lock;
+    LIST_ENTRY FreeLists[AEROGPU_CONTIG_POOL_MAX_PAGES]; /* index 0 == 1 page */
+    SIZE_T BytesRetained;
+
+#if DBG
+    /* DBG-only observability counters. */
+    DECLSPEC_ALIGN(8) volatile LONGLONG Hits;
+    DECLSPEC_ALIGN(8) volatile LONGLONG Misses;
+    DECLSPEC_ALIGN(8) volatile LONGLONG FreesToPool;
+    DECLSPEC_ALIGN(8) volatile LONGLONG FreesToOs;
+    DECLSPEC_ALIGN(8) volatile LONGLONG OsAllocs;
+    DECLSPEC_ALIGN(8) volatile LONGLONG OsAllocBytes;
+    DECLSPEC_ALIGN(8) volatile LONGLONG OsFrees;
+    DECLSPEC_ALIGN(8) volatile LONGLONG OsFreeBytes;
+    DECLSPEC_ALIGN(8) volatile LONGLONG HighWatermarkBytes;
+#endif
+} AEROGPU_CONTIG_POOL;
+
+/*
  * Driver-private submission types.
  *
  * Legacy ABI: encoded into `aerogpu_legacy_submission_desc_header::type`.
@@ -321,6 +354,10 @@ typedef struct _AEROGPU_ADAPTER {
     KSPIN_LOCK PendingLock;
     LIST_ENTRY PendingInternalSubmissions;
     NPAGED_LOOKASIDE_LIST PendingInternalSubmissionLookaside;
+
+    /* Pooled contiguous buffers used by the submission hot path. */
+    AEROGPU_CONTIG_POOL ContigPool;
+
     /*
      * Recently retired submissions kept around for dbgctl READ_GPA / post-mortem
      * dump tooling. These are driver-owned contiguous buffers (cmd stream + optional
