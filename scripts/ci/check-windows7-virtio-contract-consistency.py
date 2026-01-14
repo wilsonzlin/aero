@@ -320,9 +320,37 @@ def scan_text_tree_for_substrings(root: Path, needles: Iterable[str]) -> list[st
         if not path.is_file():
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            data = path.read_bytes()
         except OSError:
             continue
+        # Best-effort decoding: many Windows-authored scripts are UTF-16LE (sometimes
+        # without a BOM). We want this doc/test scanning guardrail to still catch
+        # deprecated INF basenames in those files.
+        if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+            try:
+                text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = data.decode("utf-8", errors="replace")
+            if "\x00" in text:
+                sample = data[:4096]
+                sample_len = len(sample)
+                even_zeros = sum(1 for i, b in enumerate(sample) if b == 0 and (i % 2) == 0)
+                odd_zeros = sum(1 for i, b in enumerate(sample) if b == 0 and (i % 2) == 1)
+                enc: str | None = None
+                if sample_len >= 2:
+                    even_ratio = even_zeros / sample_len
+                    odd_ratio = odd_zeros / sample_len
+                    if (odd_zeros > (even_zeros * 4 + 10)) or (odd_ratio > 0.2 and even_ratio < 0.05):
+                        enc = "utf-16-le"
+                    elif (even_zeros > (odd_zeros * 4 + 10)) or (even_ratio > 0.2 and odd_ratio < 0.05):
+                        enc = "utf-16-be"
+                if enc is not None:
+                    try:
+                        text = data.decode(enc, errors="replace").lstrip("\ufeff")
+                    except UnicodeDecodeError:
+                        pass
         if not any(needle in text for needle in needles):
             continue
         for line_no, line in enumerate(text.splitlines(), start=1):
@@ -982,6 +1010,19 @@ def _self_test_read_text_utf16() -> None:
                     [f"got:      {got_no_bom!r}", f"expected: {sample!r}"],
                 )
             )
+
+
+def _self_test_scan_text_tree_for_substrings_utf16() -> None:
+    needle = "aerovblk.inf"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        # UTF-16LE without BOM (common in Windows-authored scripts).
+        path = root / "sample.ps1"
+        path.write_bytes(f"Write-Host '{needle}'\n".encode("utf-16-le"))
+
+        hits = scan_text_tree_for_substrings(root, (needle,))
+        if not hits:
+            fail("internal unit-test failed: scan_text_tree_for_substrings did not find needle in UTF-16LE file")
 
 
 @dataclass(frozen=True)
@@ -2920,6 +2961,7 @@ def main() -> None:
     _self_test_inf_parsers_ignore_comments()
     _self_test_inf_int_parsing()
     _self_test_read_text_utf16()
+    _self_test_scan_text_tree_for_substrings_utf16()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
     _self_test_parse_guest_selftest_expected_service_names()
