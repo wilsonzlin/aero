@@ -4755,6 +4755,41 @@ struct FixedfuncStage0Key {
   bool supported = true;
 };
 
+uint64_t fixedfunc_arg_signature(const FixedfuncStageArg& arg) {
+  // 4-bit signature:
+  // - bits 0..1: FixedfuncStageArgSrc
+  // - bit 2: complement
+  // - bit 3: alpha_replicate
+  return static_cast<uint64_t>(arg.src) |
+         (static_cast<uint64_t>(arg.complement ? 1u : 0u) << 2) |
+         (static_cast<uint64_t>(arg.alpha_replicate ? 1u : 0u) << 3);
+}
+
+uint64_t fixedfunc_state_signature(const FixedfuncStageState& st) {
+  // 12-bit signature:
+  // - bits 0..3: FixedfuncStageOp
+  // - bits 4..7: arg1 signature
+  // - bits 8..11: arg2 signature
+  return static_cast<uint64_t>(st.op) |
+         (fixedfunc_arg_signature(st.arg1) << 4) |
+         (fixedfunc_arg_signature(st.arg2) << 8);
+}
+
+uint64_t fixedfunc_stage0_signature(const FixedfuncStage0Key& key) {
+  // Pack stage0 fixed-function state into a stable signature so we can reuse a
+  // cached PS without rebuilding the ps_2_0 token stream each time.
+  //
+  // Values are canonicalized by `fixedfunc_stage0_key_locked()` (unused args are
+  // ignored, CURRENT is treated as DIFFUSE, and texture-using states are forced
+  // to DISABLE when texture0 is unbound), so different raw stage-state inputs
+  // that map to identical effective behavior share a signature.
+  uint64_t sig = fixedfunc_state_signature(key.color);
+  sig |= fixedfunc_state_signature(key.alpha) << 12;
+  sig |= static_cast<uint64_t>(key.uses_texture ? 1u : 0u) << 24;
+  sig |= static_cast<uint64_t>(key.uses_tfactor ? 1u : 0u) << 25;
+  return sig;
+}
+
 bool shader_bytecode_equals(const Shader* sh, const void* bytes, uint32_t size) {
   if (!sh || !bytes || size == 0) {
     return false;
@@ -5275,12 +5310,7 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
     return kD3DErrInvalidCall;
   }
 
-  std::vector<uint32_t> ps_words;
-  if (!fixedfunc_build_stage0_ps_bytes(key, &ps_words) || ps_words.empty()) {
-    return E_FAIL;
-  }
-  const void* ps_bytes = ps_words.data();
-  const uint32_t ps_size = static_cast<uint32_t>(ps_words.size() * sizeof(uint32_t));
+  const uint64_t sig = fixedfunc_stage0_signature(key);
 
   if (key.uses_tfactor) {
     const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
@@ -5289,70 +5319,101 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
     }
   }
 
-  // If the current slot already matches, no work is needed.
-  if (*ps_slot && shader_bytecode_equals(*ps_slot, ps_bytes, ps_size)) {
-    return S_OK;
-  }
-
   // Stage0 fixed-function PS variants are cached per-device in
   // `fixedfunc_stage0_ps_variants` so toggling texture-stage-state does not spam
   // CREATE_SHADER_DXBC/DESTROY_SHADER.
   Shader* desired_ps = nullptr;
-  for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
-    if (!ps) {
-      continue;
-    }
-    if (shader_bytecode_equals(ps, ps_bytes, ps_size)) {
-      desired_ps = ps;
-      break;
-    }
+
+  // Fast path: reuse a cached mapping from the stage0 signature to a previously
+  // created shader variant. This avoids rebuilding the ps_2_0 token stream on
+  // every draw when stage0 state is stable.
+  if (const auto it = dev->fixedfunc_stage0_ps_variant_cache.find(sig);
+      it != dev->fixedfunc_stage0_ps_variant_cache.end()) {
+    desired_ps = it->second;
   }
 
   if (!desired_ps) {
-    desired_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
+    std::vector<uint32_t> ps_words;
+    if (!fixedfunc_build_stage0_ps_bytes(key, &ps_words) || ps_words.empty()) {
+      return E_FAIL;
+    }
+    const void* ps_bytes = ps_words.data();
+    const uint32_t ps_size = static_cast<uint32_t>(ps_words.size() * sizeof(uint32_t));
+
+    // Look for an existing cached PS with identical bytecode so different
+    // signature keys that lower to the same shader can alias a single Shader*.
+    for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
+      if (!ps) {
+        continue;
+      }
+      if (shader_bytecode_equals(ps, ps_bytes, ps_size)) {
+        desired_ps = ps;
+        break;
+      }
+    }
+
     if (!desired_ps) {
-      return E_OUTOFMEMORY;
-    }
-
-    bool inserted = false;
-    for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
-      if (!slot) {
-        slot = desired_ps;
-        inserted = true;
-        break;
+      desired_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
+      if (!desired_ps) {
+        return E_OUTOFMEMORY;
       }
-    }
 
-    // In the extremely unlikely event that a device uses more than the reserved
-    // number of stage0 variants, evict an unreferenced cached PS.
-    if (!inserted) {
+      bool inserted = false;
       for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
-        Shader* cand = slot;
-        if (!cand) {
-          continue;
+        if (!slot) {
+          slot = desired_ps;
+          inserted = true;
+          break;
         }
-        if (cand == dev->ps ||
-            cand == dev->fixedfunc_ps ||
-            cand == dev->fixedfunc_ps_tex1 ||
-            cand == dev->fixedfunc_ps_xyz_diffuse_tex1 ||
-            cand == dev->fixedfunc_ps_interop) {
-          continue;
-        }
-        (void)emit_destroy_shader_locked(dev, cand->handle);
-        delete cand;
-        slot = desired_ps;
-        inserted = true;
-        break;
       }
-    }
 
-    if (!inserted) {
-      // Unable to safely evict a cached variant; drop the new shader and fail.
-      (void)emit_destroy_shader_locked(dev, desired_ps->handle);
-      delete desired_ps;
-      return E_OUTOFMEMORY;
+      // In the extremely unlikely event that a device uses more than the reserved
+      // number of stage0 variants, evict an unreferenced cached PS.
+      if (!inserted) {
+        for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
+          Shader* cand = slot;
+          if (!cand) {
+            continue;
+          }
+          if (cand == dev->ps ||
+              cand == dev->fixedfunc_ps ||
+              cand == dev->fixedfunc_ps_tex1 ||
+              cand == dev->fixedfunc_ps_xyz_diffuse_tex1 ||
+              cand == dev->fixedfunc_ps_interop) {
+            continue;
+          }
+          (void)emit_destroy_shader_locked(dev, cand->handle);
+          delete cand;
+
+          // Drop any cached signature mappings that referenced the evicted shader
+          // so lookups can't return a freed pointer.
+          for (auto it = dev->fixedfunc_stage0_ps_variant_cache.begin();
+               it != dev->fixedfunc_stage0_ps_variant_cache.end();) {
+            if (it->second == cand) {
+              it = dev->fixedfunc_stage0_ps_variant_cache.erase(it);
+            } else {
+              ++it;
+            }
+          }
+
+          slot = desired_ps;
+          inserted = true;
+          break;
+        }
+      }
+
+      if (!inserted) {
+        // Unable to safely evict a cached variant; drop the new shader and fail.
+        (void)emit_destroy_shader_locked(dev, desired_ps->handle);
+        delete desired_ps;
+        return E_OUTOFMEMORY;
+      }
     }
   }
+
+  // Cache the signature → shader mapping even if `desired_ps` came from the
+  // bytecode-dedup search above (multiple signatures can alias the same Shader*).
+  dev->fixedfunc_stage0_ps_variant_cache[sig] = desired_ps;
 
   if (*ps_slot == desired_ps) {
     return S_OK;

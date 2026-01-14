@@ -732,6 +732,9 @@ struct PatchCacheEntry {
 #if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
     cmd.reset();
 #endif
+    // Fixed-function stage0 PS variants are cached per-device. Pre-size the map
+    // to keep steady-state lookup insertion-free.
+    fixedfunc_stage0_ps_variant_cache.reserve(128);
 
     // Initialize D3D9 state caches to API defaults so helper paths can save and
     // restore state even if the runtime never explicitly sets it.
@@ -968,10 +971,12 @@ struct PatchCacheEntry {
   // Cached fixed-function stage0 pixel shader variants.
   //
   // Keyed by the driver-side FixedfuncStage0Key (stage0 COLOROP/COLORARG/ALPHAOP/ALPHAARG decode).
-  // The mapping is encoded in `fixedfunc_stage0_variant_index()` in
-  // `aerogpu_d3d9_driver.cpp`. The current FixedfuncStage0Src enum spans 10 values
-  // (0..9), so we reserve 10*10 entries (color_src * 10 + alpha_src).
+  // Variants are stored as a bounded per-device cache so toggling stage0 state
+  // doesn't spam CREATE_SHADER_DXBC/DESTROY_SHADER.
   Shader* fixedfunc_stage0_ps_variants[100] = {};
+  // Fast lookup from a packed FixedfuncStage0Key signature to a cached shader
+  // pointer. Values may alias `fixedfunc_stage0_ps_variants` entries.
+  std::unordered_map<uint64_t, Shader*> fixedfunc_stage0_ps_variant_cache;
   // True when fixed-function WVP constant registers need to be refreshed.
   //
   // This is set both when cached WORLD/VIEW/PROJECTION transforms change and
