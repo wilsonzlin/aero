@@ -4397,6 +4397,58 @@ mod tests {
     }
 
     #[test]
+    fn gs_translate_group0_storage_buffers_stay_within_downlevel_limit() {
+        // Regression test: some downlevel backends report
+        // `max_storage_buffers_per_shader_stage = 4`. Keep translated GS prepasses within that
+        // limit by ensuring we do not accidentally re-introduce a 5th group(0) storage buffer
+        // binding (e.g. by splitting counters back out of the indirect args buffer).
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![Sm4Inst::Ret],
+        };
+
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
+
+        // Ensure the expected bindings exist.
+        for expected in [
+            "@group(0) @binding(0) var<storage, read_write> out_vertices:",
+            "@group(0) @binding(1) var<storage, read_write> out_indices:",
+            "@group(0) @binding(2) var<storage, read_write> out_state:",
+            "@group(0) @binding(5) var<storage,",
+            "gs_inputs:",
+        ] {
+            assert!(
+                wgsl.contains(expected),
+                "expected group(0) storage binding:\n  {expected}\nwgsl:\n{wgsl}"
+            );
+        }
+        assert!(
+            !wgsl.contains("var<storage, read_write> counters:"),
+            "counters must not be a separate storage buffer binding in group(0):\n{wgsl}"
+        );
+
+        let group0_storage_bindings = wgsl
+            .lines()
+            .filter(|line| line.contains("@group(0)") && line.contains("var<storage"))
+            .count();
+        assert!(
+            group0_storage_bindings <= 4,
+            "expected <= 4 group(0) storage buffers for downlevel compatibility, got {group0_storage_bindings}:\n{wgsl}"
+        );
+    }
+
+    #[test]
     fn gs_translate_rejects_invalid_varying_locations() {
         let module = Sm4Module {
             stage: ShaderStage::Geometry,
