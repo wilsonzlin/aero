@@ -740,6 +740,12 @@ impl XhciController {
     pub fn tick_1ms_with_dma(&mut self, mem: &mut dyn MemoryBus) {
         self.tick_ports_1ms();
 
+        // HCE is a fatal controller error; once latched, the guest must issue a controller reset.
+        // Avoid performing any further DMA while the controller is in an error state.
+        if self.host_controller_error {
+            return;
+        }
+
         if self.pending_dma_on_run {
             self.dma_on_run(mem);
         }
@@ -2171,6 +2177,9 @@ impl XhciController {
         if !mem.dma_enabled() {
             return;
         }
+        if self.host_controller_error {
+            return;
+        }
 
         let mut work = TickWork::default();
         let mut ring_poll_budget = budget::MAX_RING_POLL_STEPS_PER_FRAME;
@@ -2191,6 +2200,10 @@ impl XhciController {
         ring_poll_budget: &mut usize,
         work: &mut TickWork,
     ) {
+        if self.host_controller_error {
+            return;
+        }
+
         let mut trb_budget = max_trbs;
         // Process each currently-active endpoint at most once per tick. This ensures deterministic
         // work bounds and prevents a single always-ready endpoint from consuming the entire budget
@@ -2265,6 +2278,9 @@ impl XhciController {
 
     fn service_event_ring_budgeted(&mut self, mem: &mut dyn MemoryBus, budget: usize) -> usize {
         if !mem.dma_enabled() {
+            return 0;
+        }
+        if self.host_controller_error {
             return 0;
         }
         let mut written = 0usize;
@@ -2978,34 +2994,6 @@ impl XhciController {
                 .endpoint_state(ep_addr)
                 .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
 
-            // If the endpoint stalled or faulted, the transfer executor marks it as halted, but the
-            // architectural Endpoint Context state field is controller-owned. Mirror the halted
-            // state into the guest-visible endpoint context so:
-            // - guests can observe the Halted state (and know they must Reset Endpoint), and
-            // - snapshot/restore does not lose the halted flag (transfer executors are rebuilt on
-            //   demand).
-            let exec_halted = exec.endpoint_state(ep_addr).is_some_and(|st| st.halted);
-            if exec_halted {
-                // Avoid clobbering Stopped/other states; only transition Running->Halted when the
-                // guest Endpoint Context is readable. If the guest context is unavailable (e.g.
-                // harnesses that only configure controller-local ring cursors), still mark the
-                // controller-local shadow context as halted so doorbell gating is effective and
-                // snapshot/restore preserves the halt.
-                let should_halt =
-                    match self.read_endpoint_state_from_context(mem, slot_id, endpoint_id) {
-                        Some(state) => matches!(state, context::EndpointState::Running),
-                        None => true,
-                    };
-                if should_halt {
-                    self.write_endpoint_state_to_context(
-                        mem,
-                        slot_id,
-                        endpoint_id,
-                        context::EndpointState::Halted,
-                    );
-                }
-            }
-
             // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
             // Pointer field so guests that inspect the Device Context observe progress.
             let trbs_consumed = if before != after { 1 } else { 0 };
@@ -3026,6 +3014,17 @@ impl XhciController {
                 }
             }
 
+            // When a transfer results in an endpoint halt (STALL/TRB error), reflect that into the
+            // guest Endpoint Context so software can observe the halted state and issue Reset
+            // Endpoint.
+            if exec.endpoint_state(ep_addr).is_some_and(|st| st.halted) {
+                self.write_endpoint_state_to_context(
+                    mem,
+                    slot_id,
+                    endpoint_id,
+                    context::EndpointState::Halted,
+                );
+            }
             // Drain and emit transfer events.
             let events = exec.take_events();
             for ev in events {
