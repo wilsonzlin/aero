@@ -60,8 +60,17 @@ export class OpfsRawDisk implements AsyncSectorDisk {
         const current = (await file.getFile()).size;
         if (current === 0 && opts.sizeBytes > 0) {
           const writable = await file.createWritable({ keepExistingData: false });
-          await writable.truncate(opts.sizeBytes);
-          await writable.close();
+          try {
+            await writable.truncate(opts.sizeBytes);
+            await writable.close();
+          } catch (err) {
+            try {
+              await writable.abort(err);
+            } catch {
+              // ignore abort failures
+            }
+            throw err;
+          }
         } else if (current !== opts.sizeBytes) {
           throw new Error(`disk size mismatch: expected=${opts.sizeBytes} actual=${current}`);
         }
@@ -115,10 +124,19 @@ export class OpfsRawDisk implements AsyncSectorDisk {
     }
 
     const writable = await this.access.file.createWritable({ keepExistingData: true });
-    // `FileSystemWritableFileStream` does not currently accept views backed by
-    // SharedArrayBuffer, so ensure the payload is ArrayBuffer-backed.
-    await writable.write({ type: "write", position: offset, data: new Uint8Array(data) });
-    await writable.close();
+    try {
+      // `FileSystemWritableFileStream` does not currently accept views backed by
+      // SharedArrayBuffer, so ensure the payload is ArrayBuffer-backed.
+      await writable.write({ type: "write", position: offset, data: new Uint8Array(data) });
+      await writable.close();
+    } catch (err) {
+      try {
+        await writable.abort(err);
+      } catch {
+        // ignore abort failures
+      }
+      throw err;
+    }
   }
 
   async flush(): Promise<void> {
