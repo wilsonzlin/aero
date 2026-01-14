@@ -334,3 +334,21 @@ fn replays_aerogpu_cmd_copy_texture2d_subrect_fixture_and_matches_hash() {
         );
     });
 }
+
+#[test]
+fn replays_aerogpu_cmd_cull_front_fixture_and_matches_hash() {
+    let bytes = fs::read(fixture_path("aerogpu_cmd_cull_front.aerogputrace"))
+        .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    pollster::block_on(async {
+        let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
+            return;
+        };
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        // Cull-front leaves the clear color (opaque black) intact.
+        assert_eq!(
+            hash,
+            "7e78557457b6249af5597fcc8ea8d27f7a4f7f9b4ce58dc9a6b6e6639c7a4207"
+        );
+    });
+}
