@@ -44,6 +44,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 LOG_H = REPO_ROOT / "drivers/windows7/virtio-input/src/log.h"
 HIDTEST_C = REPO_ROOT / "drivers/windows7/virtio-input/tools/hidtest/main.c"
 VIRTIO_INPUT_H = REPO_ROOT / "drivers/windows7/virtio-input/src/virtio_input.h"
+GUEST_SELFTEST_CPP = REPO_ROOT / "drivers/windows7/tests/guest-selftest/src/main.cpp"
 
 
 def fail(message: str) -> None:
@@ -85,6 +86,56 @@ def extract_define_int_literal(text: str, macro: str, *, file: Path) -> int:
     if len(lits) != 1:
         fail(f"{file.as_posix()}: could not extract a single integer literal from {macro}: {expr!r}")
     return int(lits[0], 0)
+
+
+def extract_const_int_literal(text: str, name: str, *, file: Path) -> int:
+    """
+    Extract an integer literal from a C++ constant definition like:
+        static constexpr USHORT VIOINPUT_INTERRUPT_VECTOR_NONE = 0xFFFFu;
+
+    This keeps the script compatible with user-mode helpers that intentionally avoid
+    WDK-only headers (and therefore may not use `#define` macros).
+    """
+
+    m = re.search(
+        rf"(?m)^\s*(?:static\s+)?(?:constexpr\s+)?[A-Za-z_][A-Za-z0-9_]*\s+{re.escape(name)}\s*=\s*(.+?);",
+        text,
+    )
+    if not m:
+        fail(f"{file.as_posix()}: missing {name} constant definition")
+
+    expr = m.group(1).strip()
+    lits = re.findall(r"0x[0-9A-Fa-f]+|\d+", expr)
+    if len(lits) != 1:
+        fail(f"{file.as_posix()}: could not extract a single integer literal from {name}: {expr!r}")
+    return int(lits[0], 0)
+
+
+def extract_constexpr_ctl_code_args(text: str, name: str, *, file: Path) -> tuple[str, str, str, str]:
+    """
+    Extract the 4 CTL_CODE() arguments from a C++ constant definition like:
+        static constexpr DWORD IOCTL_FOO = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS);
+    or (split across lines):
+        static constexpr DWORD IOCTL_FOO =
+            CTL_CODE(...);
+
+    Returns a tuple of the 4 arguments as normalized strings (whitespace stripped).
+    """
+
+    m = re.search(
+        rf"(?m)^\s*(?:static\s+)?(?:constexpr\s+)?(?:DWORD|ULONG|UINT32|uint32_t|unsigned\s+long)\s+"
+        rf"{re.escape(name)}\s*=\s*(?:\r?\n\s*)?CTL_CODE\s*\(\s*([^\)]*?)\s*\)\s*;",
+        text,
+        flags=re.S,
+    )
+    if not m:
+        fail(f"{file.as_posix()}: missing {name} CTL_CODE(...) constexpr definition")
+
+    args_str = m.group(1)
+    parts = [p.strip() for p in args_str.split(",")]
+    if len(parts) != 4:
+        fail(f"{file.as_posix()}: could not parse 4 CTL_CODE args for {name} (got {len(parts)}): {parts!r}")
+    return (parts[0], parts[1], parts[2], parts[3])
 
 
 def extract_ctl_code_args(text: str, macro: str, *, file: Path) -> tuple[str, str, str, str]:
@@ -263,10 +314,13 @@ def main() -> int:
         fail(f"missing expected file: {HIDTEST_C.as_posix()}")
     if not VIRTIO_INPUT_H.exists():
         fail(f"missing expected file: {VIRTIO_INPUT_H.as_posix()}")
+    if not GUEST_SELFTEST_CPP.exists():
+        fail(f"missing expected file: {GUEST_SELFTEST_CPP.as_posix()}")
 
     driver_text = strip_c_comments(LOG_H.read_text(encoding="utf-8", errors="replace"))
     tool_text = strip_c_comments(HIDTEST_C.read_text(encoding="utf-8", errors="replace"))
     virtio_input_text = strip_c_comments(VIRTIO_INPUT_H.read_text(encoding="utf-8", errors="replace"))
+    selftest_text = strip_c_comments(GUEST_SELFTEST_CPP.read_text(encoding="utf-8", errors="replace"))
 
     failures: list[str] = []
 
@@ -311,6 +365,23 @@ def main() -> int:
                 f"  hidtest: {tool_args}"
             )
 
+    # The Win7 guest selftest duplicates a subset of these IOCTLs as C++ constexpr values so it can be
+    # built without including WDK-only headers. Keep those in sync too.
+    selftest_ioctl_names = (
+        "IOCTL_VIOINPUT_QUERY_COUNTERS",
+        "IOCTL_VIOINPUT_RESET_COUNTERS",
+        "IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO",
+    )
+    for name in selftest_ioctl_names:
+        driver_args = extract_ctl_code_args(driver_text, name, file=LOG_H)
+        selftest_args = extract_constexpr_ctl_code_args(selftest_text, name, file=GUEST_SELFTEST_CPP)
+        if driver_args != selftest_args:
+            failures.append(
+                f"{name} CTL_CODE mismatch:\n"
+                f"  driver: {driver_args}\n"
+                f"  guest-selftest: {selftest_args}"
+            )
+
     # Interrupt-info enum values / constants (user-mode visible ABI).
     driver_int_mode_body = extract_struct_body(
         driver_text,
@@ -328,6 +399,18 @@ def main() -> int:
         driver_items=parse_enum_items(driver_int_mode_body, file=LOG_H, what="VIOINPUT_INTERRUPT_MODE"),
         tool_items=parse_enum_items(tool_int_mode_body, file=HIDTEST_C, what="VIOINPUT_INTERRUPT_MODE"),
         label="VIOINPUT_INTERRUPT_MODE",
+    )
+
+    selftest_int_mode_body = extract_struct_body(
+        selftest_text,
+        r"\benum\s+VIOINPUT_INTERRUPT_MODE\b[^{]*\{",
+        file=GUEST_SELFTEST_CPP,
+        what="enum VIOINPUT_INTERRUPT_MODE { ... } (guest-selftest)",
+    )
+    failures += compare_enum_item_lists(
+        driver_items=parse_enum_items(driver_int_mode_body, file=LOG_H, what="VIOINPUT_INTERRUPT_MODE"),
+        tool_items=parse_enum_items(selftest_int_mode_body, file=GUEST_SELFTEST_CPP, what="VIOINPUT_INTERRUPT_MODE"),
+        label="VIOINPUT_INTERRUPT_MODE (guest-selftest)",
     )
 
     driver_int_map_body = extract_struct_body(
@@ -348,12 +431,33 @@ def main() -> int:
         label="VIOINPUT_INTERRUPT_MAPPING",
     )
 
+    selftest_int_map_body = extract_struct_body(
+        selftest_text,
+        r"\benum\s+VIOINPUT_INTERRUPT_MAPPING\b[^{]*\{",
+        file=GUEST_SELFTEST_CPP,
+        what="enum VIOINPUT_INTERRUPT_MAPPING { ... } (guest-selftest)",
+    )
+    failures += compare_enum_item_lists(
+        driver_items=parse_enum_items(driver_int_map_body, file=LOG_H, what="VIOINPUT_INTERRUPT_MAPPING"),
+        tool_items=parse_enum_items(selftest_int_map_body, file=GUEST_SELFTEST_CPP, what="VIOINPUT_INTERRUPT_MAPPING"),
+        label="VIOINPUT_INTERRUPT_MAPPING (guest-selftest)",
+    )
+
     driver_vec_none = extract_define_int_literal(driver_text, "VIOINPUT_INTERRUPT_VECTOR_NONE", file=LOG_H)
     tool_vec_none = extract_define_int_literal(tool_text, "VIOINPUT_INTERRUPT_VECTOR_NONE", file=HIDTEST_C)
     if driver_vec_none != tool_vec_none:
         failures.append(
             "VIOINPUT_INTERRUPT_VECTOR_NONE mismatch: "
             f"driver=0x{driver_vec_none:X} hidtest=0x{tool_vec_none:X}"
+        )
+
+    selftest_vec_none = extract_const_int_literal(
+        selftest_text, "VIOINPUT_INTERRUPT_VECTOR_NONE", file=GUEST_SELFTEST_CPP
+    )
+    if driver_vec_none != selftest_vec_none:
+        failures.append(
+            "VIOINPUT_INTERRUPT_VECTOR_NONE mismatch: "
+            f"driver=0x{driver_vec_none:X} guest-selftest=0x{selftest_vec_none:X}"
         )
 
     # VIOINPUT_DEVICE_KIND is returned to user mode via VIOINPUT_STATE.DeviceKind.
@@ -422,6 +526,19 @@ def main() -> int:
         label="VIOINPUT_COUNTERS",
     )
 
+    selftest_counters_body = extract_struct_body(
+        selftest_text,
+        r"\bstruct\s+VIOINPUT_COUNTERS\s*\{",
+        file=GUEST_SELFTEST_CPP,
+        what="struct VIOINPUT_COUNTERS { ... } (guest-selftest)",
+    )
+    selftest_counters_fields = extract_field_names(selftest_counters_body)
+    failures += compare_field_lists(
+        driver_fields=driver_counters_fields,
+        tool_fields=selftest_counters_fields,
+        label="VIOINPUT_COUNTERS (guest-selftest)",
+    )
+
     driver_state_body = extract_struct_body(
         driver_text,
         r"\btypedef\s+struct\s+_VIOINPUT_STATE\s*\{",
@@ -464,6 +581,19 @@ def main() -> int:
         label="VIOINPUT_INTERRUPT_INFO",
     )
 
+    selftest_interrupt_body = extract_struct_body(
+        selftest_text,
+        r"\bstruct\s+VIOINPUT_INTERRUPT_INFO\s*\{",
+        file=GUEST_SELFTEST_CPP,
+        what="struct VIOINPUT_INTERRUPT_INFO { ... } (guest-selftest)",
+    )
+    selftest_interrupt_fields = extract_field_names(selftest_interrupt_body)
+    failures += compare_field_lists(
+        driver_fields=driver_interrupt_fields,
+        tool_fields=selftest_interrupt_fields,
+        label="VIOINPUT_INTERRUPT_INFO (guest-selftest)",
+    )
+
     if failures:
         print("error: Win7 virtio-input diagnostics ABI is out of sync:\n", file=sys.stderr)
         for line in failures:
@@ -472,7 +602,8 @@ def main() -> int:
             "\nFix: keep these in sync:\n"
             "  - drivers/windows7/virtio-input/src/log.h\n"
             "  - drivers/windows7/virtio-input/src/virtio_input.h\n"
-            "  - drivers/windows7/virtio-input/tools/hidtest/main.c\n",
+            "  - drivers/windows7/virtio-input/tools/hidtest/main.c\n"
+            "  - drivers/windows7/tests/guest-selftest/src/main.cpp\n",
             file=sys.stderr,
         )
         return 1
