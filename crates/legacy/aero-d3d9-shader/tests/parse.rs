@@ -135,6 +135,51 @@ fn malformed_dxbc_chunk_count_too_large_errors() {
     ));
 }
 
+#[test]
+fn malformed_dxbc_chunk_offset_into_header_errors() {
+    // DXBC container with a chunk offset that points into the header should be rejected as a
+    // malformed offset table.
+    //
+    // total_size: 36 bytes (header + 1 offset entry)
+    // chunk_count: 1
+    // chunk_offset: 0 (points into header)
+    let mut dxbc = Vec::new();
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&36u32.to_le_bytes()); // total_size
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    dxbc.extend_from_slice(&0u32.to_le_bytes()); // chunk_offset[0]
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderParseError::Dxbc(aero_dxbc::DxbcError::MalformedOffsets { .. })
+    ));
+}
+
+#[test]
+fn malformed_dxbc_chunk_header_truncated_errors() {
+    // DXBC container with a chunk offset pointing at the first byte after the offset table but
+    // without enough remaining bytes for a full chunk header (8 bytes).
+    let chunk_offset = 36u32;
+    let total_size = 40u32; // only 4 bytes after offset table
+    let mut dxbc = Vec::new();
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&total_size.to_le_bytes());
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    dxbc.extend_from_slice(&chunk_offset.to_le_bytes());
+    dxbc.resize(total_size as usize, 0);
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderParseError::Dxbc(aero_dxbc::DxbcError::OutOfBounds { .. })
+    ));
+}
+
 const VS_2_0_PASSTHROUGH: [u32; 14] = [
     0xFFFE_0200, // vs_2_0
     // dcl_position v0
