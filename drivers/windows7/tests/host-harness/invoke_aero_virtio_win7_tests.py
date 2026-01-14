@@ -75,6 +75,7 @@ do not affect PASS/FAIL):
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|PASS/FAIL|devices=...|wrong_service=...|missing_service=...|problem=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|PASS/FAIL|service=...|pnp_id=...|reason=...|expected=...|actual=...|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|PASS/FAIL/SKIP|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|PASS/FAIL/SKIP|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|PASS/FAIL/SKIP|...`
@@ -4812,6 +4813,30 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if not require_per_test_markers and getattr(
+                            args, "require_virtio_input_binding", False
+                        ):
+                            bind_fail = _check_required_virtio_input_bind_marker(
+                                require_per_test_markers=True,
+                                saw_pass=saw_virtio_input_bind_pass,
+                                saw_fail=saw_virtio_input_bind_fail,
+                            )
+                            if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
+                                print(
+                                    "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if bind_fail == "MISSING_VIRTIO_INPUT_BIND":
+                                print(
+                                    "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         if require_per_test_markers:
                             # Require per-test markers so older selftest binaries cannot
                             # accidentally pass the host harness.
@@ -6398,6 +6423,30 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                            if not require_per_test_markers and getattr(
+                                args, "require_virtio_input_binding", False
+                            ):
+                                bind_fail = _check_required_virtio_input_bind_marker(
+                                    require_per_test_markers=True,
+                                    saw_pass=saw_virtio_input_bind_pass,
+                                    saw_fail=saw_virtio_input_bind_fail,
+                                )
+                                if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if bind_fail == "MISSING_VIRTIO_INPUT_BIND":
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             if require_per_test_markers:
                                 if saw_virtio_blk_fail:
                                     print(
@@ -9373,11 +9422,11 @@ def _emit_virtio_input_bind_host_marker(tail: bytes) -> None:
     Best-effort: emit a host-side marker mirroring the guest `virtio-input-bind` TEST marker.
 
     The guest selftest emits:
-      AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>
-      AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|devices=<n>|wrong_service=<n>|missing_service=<n>|problem=<n>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|service=...|pnp_id=...|devices=...|...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|reason=...|expected=...|actual=...|pnp_id=...|devices=...|...
 
     Mirror it into:
-      AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|PASS/FAIL|devices=<n>|wrong_service=<n>|missing_service=<n>|problem=<n>
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|PASS/FAIL|service=...|pnp_id=...|devices=...|...
 
     This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
     """
@@ -9393,7 +9442,17 @@ def _emit_virtio_input_bind_host_marker(tail: bytes) -> None:
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|{status}"]
 
     # Keep ordering stable for log scraping.
-    ordered = ["devices", "wrong_service", "missing_service", "problem"]
+    ordered = (
+        "reason",
+        "service",
+        "expected",
+        "actual",
+        "pnp_id",
+        "devices",
+        "wrong_service",
+        "missing_service",
+        "problem",
+    )
     for k in ordered:
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")

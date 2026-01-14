@@ -236,6 +236,12 @@ param(
   # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
+ 
+  # If set, require the guest virtio-input-bind marker to report PASS (virtio-input PCI function bound to the expected
+  # Aero driver service name). In default (non-transitional) mode this is already enforced via per-test marker
+  # requirements; this flag is useful to enforce the same check in -VirtioTransitional mode.
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireVirtioInputBinding,
 
   # If set, require the guest virtio-input-binding marker to PASS (ensures at least one virtio-input PCI device is
   # present and bound to the expected Aero driver service).
@@ -3174,6 +3180,11 @@ function Try-EmitAeroVirtioInputBindMarker {
 
   # Keep ordering stable for log scraping.
   $ordered = @(
+    "reason",
+    "service",
+    "expected",
+    "actual",
+    "pnp_id",
     "devices",
     "wrong_service",
     "missing_service",

@@ -3873,7 +3873,6 @@ struct VirtioInputBindingCheckResult {
   int wrong_service = 0;
   int missing_service = 0;
   int problem = 0;
-
   VirtioInputBindingSample ok_sample;
   VirtioInputBindingSample wrong_service_sample;
   VirtioInputBindingSample missing_service_sample;
@@ -3883,7 +3882,6 @@ struct VirtioInputBindingCheckResult {
 static VirtioInputBindingCheckResult SummarizeVirtioInputPciBinding(const std::vector<VirtioInputPciDevice>& devices) {
   VirtioInputBindingCheckResult out;
   out.devices = static_cast<int>(devices.size());
-
   auto set_sample_if_empty = [&](VirtioInputBindingSample& sample, const VirtioInputPciDevice& dev) {
     if (!sample.pnp_id.empty()) return;
     sample.pnp_id = dev.instance_id;
@@ -3897,7 +3895,6 @@ static VirtioInputBindingCheckResult SummarizeVirtioInputPciBinding(const std::v
     const bool has_service = !dev.service.empty();
     const bool service_ok = has_service && EqualsInsensitive(dev.service, kVirtioInputExpectedService);
     const bool problem_ok = (dev.cm_problem == 0) && ((dev.cm_status & DN_HAS_PROBLEM) == 0);
-
     if (!has_service) {
       out.missing_service++;
       set_sample_if_empty(out.missing_service_sample, dev);
@@ -3910,11 +3907,11 @@ static VirtioInputBindingCheckResult SummarizeVirtioInputPciBinding(const std::v
       set_sample_if_empty(out.problem_sample, dev);
     }
     if (service_ok && problem_ok) {
+      out.ok = true;
       set_sample_if_empty(out.ok_sample, dev);
     }
   }
 
-  out.ok = (out.devices > 0) && (out.wrong_service == 0) && (out.missing_service == 0) && (out.problem == 0);
   return out;
 }
 
@@ -3939,7 +3936,7 @@ static VirtioInputBindingCheckResult CheckVirtioInputPciBinding(Logger& log,
 
     if (dev.is_modern && !has_rev01) {
       log.Logf(
-          "virtio-input-binding: pci device pnp_id=%s missing REV_01 (Aero contract v1 expects REV_01; QEMU needs x-pci-revision=0x01)",
+        "virtio-input-binding: pci device pnp_id=%s missing REV_01 (Aero contract v1 expects REV_01; QEMU needs x-pci-revision=0x01)",
           WideToUtf8(dev.instance_id).c_str());
     }
     if (!has_service) {
@@ -4403,6 +4400,12 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
   out.pci_missing_service = pci_binding.missing_service;
   out.pci_problem = pci_binding.problem;
   out.pci_binding_ok = pci_binding.ok;
+
+  if (out.pci_devices <= 0) {
+    out.reason = "pci_device_missing";
+    log.LogLine("virtio-input: no virtio-input PCI device detected (PCI\\VEN_1AF4&DEV_1052 or PCI\\VEN_1AF4&DEV_1011)");
+    return out;
+  }
 
   // Capture a single sample for machine markers.
   const VirtioInputBindingSample* sample = nullptr;
@@ -11183,17 +11186,28 @@ int wmain(int argc, wchar_t** argv) {
 
   const auto input = VirtioInputTest(log);
   const std::string input_irq_fields =
-       (input.devinst != 0)
-           ? IrqFieldsForTestMarkerFromDevInst(input.devinst)
-           : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
-                                    {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
+      (input.devinst != 0)
+          ? IrqFieldsForTestMarkerFromDevInst(input.devinst)
+          : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
+                                   {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
                                      L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
+  const std::string input_expected_service = WideToUtf8(kVirtioInputExpectedService);
+  const std::string input_bind_pnp_id = WideToUtf8(input.pci_sample_pnp_id);
+  const std::string input_bind_service = WideToUtf8(input.pci_sample_service);
   if (input.pci_binding_ok) {
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=%d", input.pci_devices);
-  } else {
     log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|devices=%d|wrong_service=%d|missing_service=%d|problem=%d",
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|service=%s|pnp_id=%s|devices=%d|wrong_service=%d|missing_service=%d|problem=%d",
+        input_expected_service.c_str(), input_bind_pnp_id.empty() ? "-" : input_bind_pnp_id.c_str(),
         input.pci_devices, input.pci_wrong_service, input.pci_missing_service, input.pci_problem);
+  } else {
+    const char* bind_reason = input.pci_binding_reason.empty() ? "driver_not_bound" : input.pci_binding_reason.c_str();
+    const char* actual_service =
+        input_bind_service.empty() ? "<missing>" : input_bind_service.c_str();
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|reason=%s|expected=%s|actual=%s|pnp_id=%s|devices=%d|wrong_service=%d|missing_service=%d|problem=%d",
+        bind_reason, input_expected_service.c_str(), actual_service,
+        input_bind_pnp_id.empty() ? "-" : input_bind_pnp_id.c_str(), input.pci_devices, input.pci_wrong_service,
+        input.pci_missing_service, input.pci_problem);
   }
 
   // Detailed virtio-input PCI binding marker (service name + PnP ID) so the host harness can fail fast with a clear

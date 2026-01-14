@@ -252,6 +252,18 @@ class HarnessArgAliasTests(unittest.TestCase):
         )
         self.assertTrue(args.require_expect_blk_msi)
 
+    def test_require_virtio_input_binding_sets_flag(self) -> None:
+        args = self._parse(
+            [
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--require-virtio-input-binding",
+            ]
+        )
+        self.assertTrue(args.require_virtio_input_binding)
+
     def test_vectors_override_flags_parse(self) -> None:
         args = self._parse(
             [
