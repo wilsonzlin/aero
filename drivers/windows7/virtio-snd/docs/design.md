@@ -225,6 +225,10 @@ PnP:
 
 - `START_DEVICE`: map resources, parse capabilities, reset + negotiate, create and
   enable virtqueues, enable interrupts, register miniports.
+  - Optional bring-up: set `ForceNullBackend=1` under:
+    - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
+    - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
+    - This forces the silent null backend and allows `START_DEVICE` to succeed even if virtio transport bring-up fails.
 - `STOP_DEVICE`: quiesce streams, disable interrupts, reset the device, free queue
   memory, unmap BARs.
 - `SURPRISE_REMOVAL`/`REMOVE_DEVICE`: stop everything, release resources, detach.
