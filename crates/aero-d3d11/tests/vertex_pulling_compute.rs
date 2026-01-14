@@ -578,7 +578,6 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             [42.0, 43.0, 44.0, 1.0],
             // v0 u32x4
             [42.0, 43.0, 44.0, 45.0],
-
             // v1 half2
             [2.0, -1.0, 0.0, 1.0],
             // v1 r16_float @ offset 0
