@@ -8,11 +8,13 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
   // canonical harness UI at `/`). In other deployments the legacy UI may be
   // mounted at the origin root. Start at `/` as the smoke-test entrypoint, then
   // fall back to `/web/index.html` when the Workers panel isn't present.
-  await page.goto("/", { waitUntil: "load" });
+  // Explicitly force legacy runtime so this test continues to validate the IO-worker input path
+  // even if the default runtime flips to `machine` in the future.
+  await page.goto("/?vmRuntime=legacy", { waitUntil: "load" });
   try {
     await page.locator("#workers-start").waitFor({ state: "attached", timeout: 2000 });
   } catch {
-    await page.goto("/web/index.html", { waitUntil: "load" });
+    await page.goto("/web/index.html?vmRuntime=legacy", { waitUntil: "load" });
   }
 
   const support = await page.evaluate(() => {
@@ -61,7 +63,7 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
   // Ensure the VM workers started and the workers panel input capture is active.
   await page.waitForFunction(() => {
     const text = document.querySelector("#workers-input-status")?.textContent ?? "";
-    return text.includes("ioWorker=ready") && /ioBatches=\d+/.test(text);
+    return text.includes("targetWorker=io:ready") && text.includes("ioWorker=ready") && /ioBatches=\d+/.test(text);
   });
 
   const initialBatches = await page.evaluate(() => {
