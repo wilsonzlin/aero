@@ -639,14 +639,13 @@ fn compute_can_vertex_pull_unorm8x2_and_unorm10_10_10_2_formats() {
         //
         // Base offset = 1 byte so both attributes exercise the unaligned byte-address stitching in
         // `ia_load_u32`.
-        let mut vb = Vec::<u8>::new();
-        vb.push(0u8); // base offset padding
-
-        // v0 R8G8 = (128, 64)
-        vb.push(128u8);
-        vb.push(64u8);
-        vb.push(0u8);
-        vb.push(0u8);
+        let mut vb = vec![
+            0u8,   // base offset padding
+            128u8, // v0 R8G8 = (128, 64)
+            64u8,
+            0u8,
+            0u8,
+        ];
         // v0 R10G10B10A2 = (r=1023, g=0, b=512, a=3)
         push_u32(&mut vb, 0xE000_03FF);
 
@@ -659,7 +658,7 @@ fn compute_can_vertex_pull_unorm8x2_and_unorm10_10_10_2_formats() {
         push_u32(&mut vb, 0x3FFF_FC00);
 
         // Pad to a 4-byte multiple; the WGSL views the storage buffer as `array<u32>`.
-        while vb.len() % 4 != 0 {
+        while !vb.len().is_multiple_of(4) {
             vb.push(0u8);
         }
 
