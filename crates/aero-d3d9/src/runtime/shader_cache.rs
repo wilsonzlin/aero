@@ -34,7 +34,9 @@ use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
 // executor-side vertex declaration binding stays collision-free).
 // v8: SM3 WGSL generator now supports the half-pixel-center option (emits the `half_pixel` uniform
 // and clip-space adjustment in vertex shaders).
-pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 8;
+// v9: lower `dcl_1d` samplers to `texture_2d` bindings (height=1) so the D3D9 executor can bind
+// them as ordinary 2D textures.
+pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 9;
 
 fn default_d3d9_translator_cache_version() -> u32 {
     D3D9_TRANSLATOR_CACHE_VERSION
