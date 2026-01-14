@@ -23,7 +23,7 @@ import {
   restoreMachineSnapshotAndReattachDisks,
   restoreMachineSnapshotFromOpfsAndReattachDisks,
 } from "../runtime/machine_snapshot_disks";
-import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import { normalizeSetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
 /**
  * Minimal "machine CPU" worker entrypoint.
@@ -185,14 +185,9 @@ ctx.onmessage = (ev) => {
     return;
   }
 
-  if ((msg as Partial<SetBootDisksMessage>)?.type === "setBootDisks") {
-    const update = msg as Partial<SetBootDisksMessage>;
-    pendingBootDisks = {
-      type: "setBootDisks",
-      mounts: (update.mounts || {}) as SetBootDisksMessage["mounts"],
-      hdd: (update.hdd as SetBootDisksMessage["hdd"]) ?? null,
-      cd: (update.cd as SetBootDisksMessage["cd"]) ?? null,
-    };
+  const bootDisks = normalizeSetBootDisksMessage(msg);
+  if (bootDisks) {
+    pendingBootDisks = bootDisks;
     return;
   }
 

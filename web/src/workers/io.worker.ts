@@ -31,7 +31,7 @@ import {
   type VmSnapshotRestoredMessage,
   type VmSnapshotSavedMessage,
 } from "../runtime/snapshot_protocol";
-import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import { normalizeSetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
@@ -4536,7 +4536,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
-    if ((data as Partial<SetBootDisksMessage>).type === "setBootDisks") {
+    const bootDisks = normalizeSetBootDisksMessage(data);
+    if (bootDisks) {
       if (machineHostOnlyMode) {
         // In machine runtime, disk attachment is owned by the CPU worker. Ignore boot disk
         // open requests here so we don't steal the exclusive OPFS sync access handle.
@@ -4548,13 +4549,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         maybeAnnounceMachineHostOnlyMode();
         return;
       }
-      const msg = data as Partial<SetBootDisksMessage>;
-      pendingBootDisks = {
-        type: "setBootDisks",
-        mounts: (msg.mounts || {}) as SetBootDisksMessage["mounts"],
-        hdd: (msg.hdd as SetBootDisksMessage["hdd"]) ?? null,
-        cd: (msg.cd as SetBootDisksMessage["cd"]) ?? null,
-      };
+      pendingBootDisks = bootDisks;
       if (bootDisksInitResolve) {
         bootDisksInitResolve();
         bootDisksInitResolve = null;
