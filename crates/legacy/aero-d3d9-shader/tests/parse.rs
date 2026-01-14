@@ -91,6 +91,24 @@ fn malformed_dxbc_total_size_out_of_bounds_errors() {
     ));
 }
 
+#[test]
+fn malformed_dxbc_chunk_count_too_large_errors() {
+    // A minimal DXBC header with an absurd chunk_count should be rejected by aero-dxbc's bounds
+    // checks (and surfaced through ShaderParseError).
+    let mut dxbc = Vec::new();
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&32u32.to_le_bytes()); // total_size
+    dxbc.extend_from_slice(&4097u32.to_le_bytes()); // chunk_count (exceeds MAX_DXBC_CHUNK_COUNT)
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderParseError::Dxbc(aero_dxbc::DxbcError::MalformedOffsets { .. })
+    ));
+}
+
 const VS_2_0_PASSTHROUGH: [u32; 14] = [
     0xFFFE_0200, // vs_2_0
     // dcl_position v0
