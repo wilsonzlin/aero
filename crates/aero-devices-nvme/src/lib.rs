@@ -29,9 +29,9 @@
 //!   - When MSI is enabled and the platform attaches an [`aero_platform::interrupts::msi::MsiTrigger`]
 //!     sink, NVMe completions trigger MSI deliveries instead of asserting INTx.
 //!   - MSI-X exposes a BAR0-backed MSI-X table/PBA region (currently a single vector). The device
-//!     model routes guest BAR0 MMIO accesses to the table/PBA so guests can configure vectors; when
-//!     MSI-X is enabled and the platform attaches an MSI sink, NVMe completions trigger MSI-X
-//!     deliveries instead of asserting INTx.
+//!     model routes guest BAR0 MMIO accesses to the table/PBA so guests can configure vectors.
+//!     When MSI-X is enabled and the platform attaches an [`aero_platform::interrupts::msi::MsiTrigger`]
+//!     sink, NVMe completions trigger MSI-X (vector 0) deliveries instead of asserting INTx.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -2470,7 +2470,6 @@ impl NvmePciDevice {
         }
         let prev_intx = self.controller.intx_level;
         self.controller.process(memory);
-
         // NVMe interrupt requests are edge-triggered when delivered via MSI/MSI-X. Use the legacy
         // INTx-derived level (`NvmeController::intx_level`) as an internal "interrupt requested"
         // signal and trigger MSI/MSI-X on a rising edge (empty -> non-empty completion queue).
@@ -2486,6 +2485,7 @@ impl NvmePciDevice {
             return;
         };
 
+        // Prefer MSI-X over MSI when MSI-X is enabled.
         if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
             if msix.enabled() {
                 // Single-vector MSI-X: table entry 0, pending bit 0.
