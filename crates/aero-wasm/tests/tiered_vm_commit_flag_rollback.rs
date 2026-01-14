@@ -1,8 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
-use aero_jit_x86::jit_ctx::{TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
-use aero_wasm::WasmTieredVm;
+use aero_wasm::{WasmTieredVm, jit_abi_constants};
 use js_sys::{Object, Reflect};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
@@ -14,26 +13,46 @@ struct GlobalThisValueGuard {
     global: Object,
     key: JsValue,
     prev: JsValue,
+    had_key: bool,
 }
 
 impl GlobalThisValueGuard {
     fn set(key: &str, value: &JsValue) -> Self {
         let global = js_sys::global();
         let key_js = JsValue::from_str(key);
-        let prev = Reflect::get(&global, &key_js).expect("get global value");
+        let had_key = Reflect::has(&global, &key_js).expect("check global value");
+        let prev = if had_key {
+            Reflect::get(&global, &key_js).expect("get global value")
+        } else {
+            JsValue::UNDEFINED
+        };
         Reflect::set(&global, &key_js, value).expect("set global value");
         Self {
             global,
             key: key_js,
             prev,
+            had_key,
         }
     }
 }
 
 impl Drop for GlobalThisValueGuard {
     fn drop(&mut self) {
-        let _ = Reflect::set(&self.global, &self.key, &self.prev);
+        if self.had_key {
+            let _ = Reflect::set(&self.global, &self.key, &self.prev);
+        } else {
+            let _ = Reflect::delete_property(&self.global, &self.key);
+        }
     }
+}
+
+fn jit_commit_flag_offset() -> u32 {
+    let obj = jit_abi_constants();
+    Reflect::get(&obj, &JsValue::from_str("commit_flag_offset"))
+        .expect("commit_flag_offset exists")
+        .as_f64()
+        .expect("commit_flag_offset must be a number")
+        .round() as u32
 }
 
 #[wasm_bindgen(inline_js = r#"
@@ -78,8 +97,7 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
     vm.reset_real_mode(0x1000);
     vm.install_tier1_block(0x1000, 0, 0x1000, 3);
 
-    // Commit flag lives immediately after the Tier-2 context region.
-    let commit_flag_offset = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
+    let commit_flag_offset = jit_commit_flag_offset();
 
     // ---------------------------------------------------------------------
     // Commit path: leave the commit flag set to 1.
