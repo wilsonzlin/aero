@@ -48,6 +48,9 @@ The **contract v1** and **transitional/QEMU** virtio-snd INFs create per-device 
   - `0` (default): interrupt-driven (fail `START_DEVICE` if no usable interrupt resource can be discovered/connected — neither MSI/MSI-X nor INTx)
   - `1`: allow polling-only mode when no usable interrupt can be discovered/connected
 
+Note: for backwards compatibility with older installs, the driver also checks the per-device driver registry key
+(`IoOpenDeviceRegistryKey(..., PLUGPLAY_REGKEY_DRIVER, ...)`) if the values are not present under `Device Parameters`.
+
 ## MSI/MSI-X (message-signaled interrupts)
 
 The contract v1 and transitional/QEMU packages both opt into message-signaled interrupts on Windows 7 via:

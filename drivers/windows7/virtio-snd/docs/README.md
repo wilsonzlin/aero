@@ -281,6 +281,10 @@ Backend layer (WaveRT ↔ virtio-snd):
   - Applies to the modern virtio-pci transport packages (`aero_virtio_snd.sys` and `virtiosnd_legacy.sys`); the legacy I/O-port bring-up package does not use this toggle.
 - After changing any bring-up toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
+Backwards compatibility note: older installs may have these values under the per-device driver key
+(`IoOpenDeviceRegistryKey(..., PLUGPLAY_REGKEY_DRIVER, ...)`) rather than under `Device Parameters`. The driver checks the device key first and
+falls back to the driver key.
+
 Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 
 * `include/backend.h` — WaveRT “backend” interface used by `wavert.c`
