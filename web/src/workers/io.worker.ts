@@ -1596,6 +1596,10 @@ function maybeInitVirtioInput(): void {
     return;
   }
 
+  // `keyboardDev`/`mouseDev` are only `null` if construction threw (handled above), but keep an
+  // explicit check so TypeScript can narrow for the rest of the function.
+  if (!keyboardDev || !mouseDev) return;
+
   if (mode !== "modern") {
     const probeLegacyIo = (dev: VirtioInputPciDeviceLike): boolean => {
       const devAny = dev as any;
@@ -1662,13 +1666,13 @@ function maybeInitVirtioInput(): void {
   try {
     keyboardFn = new VirtioInputPciFunction({
       kind: "keyboard",
-      device: keyboardDev as unknown as any,
+      device: keyboardDev,
       irqSink: mgr.irqSink,
       mode,
     });
     mouseFn = new VirtioInputPciFunction({
       kind: "mouse",
-      device: mouseDev as unknown as any,
+      device: mouseDev,
       irqSink: mgr.irqSink,
       mode,
     });
