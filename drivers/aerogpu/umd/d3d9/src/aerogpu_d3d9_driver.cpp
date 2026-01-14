@@ -5875,6 +5875,12 @@ static HRESULT ensure_fixedfunc_wvp_constants_locked(Device* dev) {
     cols[c * 4 + 2] = wvp[2 * 4 + c];
     cols[c * 4 + 3] = wvp[3 * 4 + c];
   }
+  // Keep constants finite even if the app provides NaN/Inf transforms.
+  for (float& f : cols) {
+    if (!std::isfinite(f)) {
+      f = 0.0f;
+    }
+  }
 
   // If the computed WVP constants already match the cached VS constant range,
   // skip re-uploading them. This handles benign "dirty" triggers (e.g. setting

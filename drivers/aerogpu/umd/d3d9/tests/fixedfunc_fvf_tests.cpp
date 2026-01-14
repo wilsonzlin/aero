@@ -1205,6 +1205,98 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
   return true;
 }
 
+bool TestFixedfuncWvpConstantsSanitizeNaNTransform() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // Clobber the reserved WVP constant range so SetTransform must re-upload the
+  // computed matrix even if it happens to sanitize to all zeros.
+  const float junk[16] = {
+      1.0f, 2.0f, 3.0f, 4.0f,
+      5.0f, 6.0f, 7.0f, 8.0f,
+      9.0f, 10.0f, 11.0f, 12.0f,
+      13.0f, 14.0f, 15.0f, 16.0f,
+  };
+  hr = cleanup.device_funcs.pfnSetShaderConstF(
+      cleanup.hDevice, kD3dShaderStageVs, kFixedfuncMatrixStartRegister, junk, kFixedfuncMatrixVec4Count);
+  if (!Check(hr == S_OK, "SetShaderConstF(VS, fixedfunc WVP start, 4)")) {
+    return false;
+  }
+
+  // Capture only the SetTransform-triggered WVP constant upload.
+  dev->cmd.reset();
+
+  // Feed a NaN WORLD matrix; the fixed-function WVP constant upload should
+  // sanitize the resulting matrix columns to keep them finite.
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  D3DMATRIX world{};
+  for (uint32_t r = 0; r < 4; ++r) {
+    for (uint32_t c = 0; c < 4; ++c) {
+      world.m[r][c] = nan;
+    }
+  }
+
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=NaN)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(WVP NaN transform)")) {
+    return false;
+  }
+
+  const float expected[16] = {};
+  size_t uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX ||
+        sc->start_register != kFixedfuncMatrixStartRegister ||
+        sc->vec4_count != kFixedfuncMatrixVec4Count) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(expected);
+    if (!Check(hdr->size_bytes >= need, "WVP NaN: SET_SHADER_CONSTANTS_F contains payload")) {
+      return false;
+    }
+    const float* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    for (size_t i = 0; i < 16; ++i) {
+      if (!Check(std::isfinite(payload[i]), "WVP NaN: payload floats are finite")) {
+        return false;
+      }
+    }
+    if (std::memcmp(payload, expected, sizeof(expected)) != 0) {
+      return Check(false, "WVP NaN: payload matches expected sanitized zero matrix");
+    }
+    ++uploads;
+  }
+  if (!Check(uploads == 1, "WVP NaN: constant upload emitted once")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzDiffuseWvpUploadNotDuplicatedByFirstDraw() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -25499,6 +25591,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseEmitsTransformConstantsAndDecl()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncWvpConstantsSanitizeNaNTransform()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseWvpUploadNotDuplicatedByFirstDraw()) {
