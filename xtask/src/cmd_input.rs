@@ -13,10 +13,11 @@ struct InputOpts {
 
 // Keep this list intentionally small to stay in-scope for input/USB changes and to keep CI/dev
 // runs fast.
+const INPUT_BATCH_MALFORMED_SPEC: &str = "tests/e2e/input_batch_malformed.spec.ts";
 const INPUT_E2E_SPECS: &[&str] = &[
     "tests/e2e/input_capture.spec.ts",
     "tests/e2e/input_capture_io_worker.spec.ts",
-    "tests/e2e/input_batch_malformed.spec.ts",
+    INPUT_BATCH_MALFORMED_SPEC,
     "tests/e2e/io_worker_i8042.spec.ts",
     "tests/e2e/io_worker_input_telemetry_drop_counter.spec.ts",
     "tests/e2e/scancodes.spec.ts",
@@ -148,7 +149,7 @@ mod tests {
     #[test]
     fn curated_e2e_specs_include_input_batch_malformed() {
         assert!(
-            INPUT_E2E_SPECS.contains(&"tests/e2e/input_batch_malformed.spec.ts"),
+            INPUT_E2E_SPECS.contains(&INPUT_BATCH_MALFORMED_SPEC),
             "expected input_batch_malformed spec to be part of the input e2e subset"
         );
     }
