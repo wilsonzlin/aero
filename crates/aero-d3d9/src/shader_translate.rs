@@ -285,12 +285,17 @@ fn validate_sampler_texture_types(
             .get(&sampler)
             .copied()
             .unwrap_or(TextureType::Texture2D);
-        if matches!(ty, TextureType::Texture2D | TextureType::TextureCube) {
-            continue;
+        match ty {
+            TextureType::Texture1D
+            | TextureType::Texture2D
+            | TextureType::Texture3D
+            | TextureType::TextureCube => {}
+            TextureType::Unknown(_) => {
+                return Err(ShaderTranslateError::Translation(format!(
+                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 1D/2D/3D/Cube)"
+                )));
+            }
         }
-        return Err(ShaderTranslateError::Translation(format!(
-            "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
-        )));
     }
     Ok(())
 }

@@ -407,7 +407,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_tex --locked
   `textureSampleGrad` with `dpdx`/`dpdy` scaled by `exp2(bias)`.
 - The SM3 software reference interpreter (`crates/aero-d3d9/src/sm3/software.rs`) supports `Texture2D` + `TextureCube`
   sampling, but does not yet emulate 1D/3D textures.
-- The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` still restricts sampler types (currently supports 2D + cube only); extending that path to 1D/3D would be a separate task from 401/402.
+- The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` supports sampler texture type declarations for
+  1D/2D/3D/cube and emits the corresponding WGSL bindings (e.g. `texture_1d` / `texture_3d`). The high-level
+  `shader_translate` wrapper should not reject `dcl_1d`/`dcl_volume` declarations during shader creation.
 - The WGSL generator does not attempt to model sampler *state* (filtering/address modes/LOD bias/etc.) directly;
   those are handled in runtime pipeline setup. Depth-compare sampling is also not modeled in the SM3 WGSL generator.
   (This is tracked in `docs/graphics/d3d9-sm2-sm3-shader-translation.md`.)
