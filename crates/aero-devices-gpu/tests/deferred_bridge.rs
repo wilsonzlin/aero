@@ -1,7 +1,8 @@
 use aero_devices::pci::PciDevice;
 use aero_devices_gpu::cmd::{
-    CMD_STREAM_ABI_VERSION_OFFSET, CMD_STREAM_FLAGS_OFFSET, CMD_STREAM_MAGIC_OFFSET,
-    CMD_STREAM_RESERVED0_OFFSET, CMD_STREAM_RESERVED1_OFFSET, CMD_STREAM_SIZE_BYTES_OFFSET,
+    CMD_STREAM_ABI_VERSION_OFFSET, CMD_STREAM_FLAGS_OFFSET, CMD_STREAM_HEADER_SIZE_BYTES,
+    CMD_STREAM_MAGIC_OFFSET, CMD_STREAM_RESERVED0_OFFSET, CMD_STREAM_RESERVED1_OFFSET,
+    CMD_STREAM_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::ring::{
     AeroGpuAllocEntry, AeroGpuSubmitDesc, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES,
@@ -95,7 +96,7 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
 
     // Command stream (header only).
     let cmd_gpa = 0x4000u64;
-    let cmd_size_bytes = aerogpu_cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
+    let cmd_size_bytes = CMD_STREAM_HEADER_SIZE_BYTES;
     mem.write_u32(
         cmd_gpa + CMD_STREAM_MAGIC_OFFSET,
         aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC,
@@ -176,8 +177,10 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     assert_eq!(sub.context_id, 0x1234);
     assert_eq!(sub.signal_fence, signal_fence);
     assert_eq!(sub.cmd_stream.len(), cmd_size_bytes as usize);
+    let u32_size = core::mem::size_of::<u32>();
     assert_eq!(
-        sub.cmd_stream[0..4],
+        sub.cmd_stream[CMD_STREAM_MAGIC_OFFSET as usize
+            ..(CMD_STREAM_MAGIC_OFFSET as usize + u32_size)],
         aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes()
     );
     assert_eq!(
