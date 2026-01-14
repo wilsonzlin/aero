@@ -15,6 +15,7 @@ fn vga_dac_ports_program_palette_entry_and_read_back() {
             ram_size_bytes: 2 * 1024 * 1024,
             enable_pc_platform,
             enable_vga: true,
+            enable_aerogpu: false,
             enable_serial: false,
             enable_i8042: false,
             enable_a20_gate: false,

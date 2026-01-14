@@ -89,6 +89,9 @@ fn vga_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
         enable_reset_ctrl: false,
         enable_e1000: false,
         enable_virtio_net: false,
+        // Make the VGA-focused cases robust to potential future changes in `MachineConfig` defaults
+        // (e.g. if AeroGPU becomes default-enabled).
+        enable_aerogpu: false,
         ..Default::default()
     };
 
