@@ -148,6 +148,11 @@
               "properties": {
                 "lookupHit": { "type": "integer", "minimum": 0 },
                 "lookupMiss": { "type": "integer", "minimum": 0 },
+                "install": { "type": "integer", "minimum": 0 },
+                "evict": { "type": "integer", "minimum": 0 },
+                "invalidate": { "type": "integer", "minimum": 0 },
+                "staleInstallReject": { "type": "integer", "minimum": 0 },
+                "compileRequest": { "type": "integer", "minimum": 0 },
                 "capacityBytes": { "type": "integer", "minimum": 0 },
                 "usedBytes": { "type": "integer", "minimum": 0 }
               }

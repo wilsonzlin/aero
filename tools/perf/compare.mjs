@@ -277,30 +277,35 @@ async function main() {
     const asNum = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
     const asBool = (v) => (typeof v === "boolean" ? v : null);
 
-    const summarize = (jit) => {
-      if (!jit || typeof jit !== "object") return null;
-      const tier1 = jit.totals?.tier1;
-      const tier2 = jit.totals?.tier2;
-      const cache = jit.totals?.cache;
-      const deopt = jit.totals?.deopt;
-      const passes = tier2?.passesMs;
-      return {
-        enabled: asBool(jit.enabled),
-        t1Blocks: asNum(tier1?.blocksCompiled),
-        t2Blocks: asNum(tier2?.blocksCompiled),
-        t1CompileMs: asNum(tier1?.compileMs),
-        t2CompileMs: asNum(tier2?.compileMs),
-        t2ConstFoldMs: asNum(passes?.constFold),
-        t2DceMs: asNum(passes?.dce),
-        t2RegallocMs: asNum(passes?.regalloc),
-        cacheHits: asNum(cache?.lookupHit),
-        cacheMisses: asNum(cache?.lookupMiss),
-        cacheUsedBytes: asNum(cache?.usedBytes),
-        cacheCapacityBytes: asNum(cache?.capacityBytes),
-        deopt: asNum(deopt?.count),
-        guardFail: asNum(deopt?.guardFail),
+      const summarize = (jit) => {
+        if (!jit || typeof jit !== "object") return null;
+        const tier1 = jit.totals?.tier1;
+        const tier2 = jit.totals?.tier2;
+        const cache = jit.totals?.cache;
+        const deopt = jit.totals?.deopt;
+        const passes = tier2?.passesMs;
+        return {
+          enabled: asBool(jit.enabled),
+          t1Blocks: asNum(tier1?.blocksCompiled),
+          t2Blocks: asNum(tier2?.blocksCompiled),
+          t1CompileMs: asNum(tier1?.compileMs),
+          t2CompileMs: asNum(tier2?.compileMs),
+          t2ConstFoldMs: asNum(passes?.constFold),
+          t2DceMs: asNum(passes?.dce),
+          t2RegallocMs: asNum(passes?.regalloc),
+          cacheHits: asNum(cache?.lookupHit),
+          cacheMisses: asNum(cache?.lookupMiss),
+          cacheInstalls: asNum(cache?.install),
+          cacheEvicts: asNum(cache?.evict),
+          cacheInvalidates: asNum(cache?.invalidate),
+          cacheStaleInstallRejects: asNum(cache?.staleInstallReject),
+          compileRequests: asNum(cache?.compileRequest),
+          cacheUsedBytes: asNum(cache?.usedBytes),
+          cacheCapacityBytes: asNum(cache?.capacityBytes),
+          deopt: asNum(deopt?.count),
+          guardFail: asNum(deopt?.guardFail),
+        };
       };
-    };
 
     const base = summarize(baseJit);
     const cand = summarize(candJit);
@@ -367,6 +372,26 @@ async function main() {
       fmtDelta: fmtSignedCount,
     });
     addRow("cache lookups (miss)", base?.cacheMisses, cand?.cacheMisses, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("cache installs", base?.cacheInstalls, cand?.cacheInstalls, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("cache evictions", base?.cacheEvicts, cand?.cacheEvicts, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("cache invalidations", base?.cacheInvalidates, cand?.cacheInvalidates, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("cache stale install rejects", base?.cacheStaleInstallRejects, cand?.cacheStaleInstallRejects, {
+      fmt: fmtCount,
+      fmtDelta: fmtSignedCount,
+    });
+    addRow("compile requests", base?.compileRequests, cand?.compileRequests, {
       fmt: fmtCount,
       fmtDelta: fmtSignedCount,
     });
