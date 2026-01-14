@@ -70,6 +70,7 @@ use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 use aero_devices::usb::ehci::EhciPciDevice;
 use aero_devices::usb::uhci::UhciPciDevice;
+use aero_usb::usb2_port::Usb2PortMux;
 pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
@@ -588,9 +589,6 @@ impl fmt::Display for MachineError {
             }
             MachineError::EhciRequiresPcPlatform => {
                 write!(f, "enable_ehci requires enable_pc_platform=true")
-            }
-            MachineError::AeroGpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::AeroGpuConflictsWithVga => {
                 write!(
@@ -5906,6 +5904,16 @@ Track progress: docs/21-smp.md\n\
                     .add_device(bdf, Box::new(Piix3IsaPciConfigDevice::new()));
             }
 
+            // When both UHCI and EHCI controllers are enabled, route the first two EHCI root ports
+            // through a shared USB2 mux so CONFIGFLAG/PORT_OWNER handoff moves attached device
+            // models between controllers.
+            //
+            // Important: create the mux only when both controllers are first created. On subsequent
+            // machine resets the `Rc` identities for the PCI devices are preserved, so re-creating
+            // and re-attaching a new mux would drop any attached USB device models.
+            let attach_usb2_mux =
+                self.cfg.enable_uhci && self.cfg.enable_ehci && self.uhci.is_none() && self.ehci.is_none();
+
             let uhci = if self.cfg.enable_uhci {
                 pci_cfg.borrow_mut().bus_mut().add_device(
                     aero_devices::pci::profile::USB_UHCI_PIIX3.bdf,
@@ -5937,6 +5945,26 @@ Track progress: docs/21-smp.md\n\
             } else {
                 None
             };
+
+            if attach_usb2_mux {
+                if let (Some(uhci), Some(ehci)) = (&uhci, &ehci) {
+                    // UHCI exposes two root hub ports. EHCI defaults to six; mux the first two so
+                    // the guest can route them via CONFIGFLAG/PORT_OWNER.
+                    let mux = Rc::new(RefCell::new(Usb2PortMux::new(2)));
+                    {
+                        let mut uhci_dev = uhci.borrow_mut();
+                        let hub = uhci_dev.controller_mut().hub_mut();
+                        hub.attach_usb2_port_mux(0, mux.clone(), 0);
+                        hub.attach_usb2_port_mux(1, mux.clone(), 1);
+                    }
+                    {
+                        let mut ehci_dev = ehci.borrow_mut();
+                        let hub = ehci_dev.controller_mut().hub_mut();
+                        hub.attach_usb2_port_mux(0, mux.clone(), 0);
+                        hub.attach_usb2_port_mux(1, mux.clone(), 1);
+                    }
+                }
+            }
 
             let ide = if self.cfg.enable_ide {
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -11874,7 +11902,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             headless.vbe_lfb_base(),
-            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
         );
 
         // When VGA is enabled, the BIOS should report the legacy MMIO-mapped SVGA base.
@@ -11889,7 +11917,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(vga.vbe_lfb_base(), aero_gpu_vga::SVGA_LFB_BASE);
+        assert_eq!(vga.vbe_lfb_base(), u64::from(aero_gpu_vga::SVGA_LFB_BASE));
     }
 
     #[test]
@@ -11915,7 +11943,7 @@ mod tests {
 
         let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
             .expect("LFB base should fit in u32");
-        assert_eq!(m.vbe_lfb_base(), expected);
+        assert_eq!(m.vbe_lfb_base(), u64::from(expected));
     }
 
     #[test]
