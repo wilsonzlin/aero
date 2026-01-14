@@ -955,12 +955,28 @@ fn translate_hs(
     //   where `HS_CONTROL_POINTS_PER_PATCH` is the expected control-point count per patch (<= 32).
     // - Patch constant outputs are indexed as:
     //     (primitive_id * STRIDE + reg_index)
+    // Bind stage interface buffers in the reserved internal/emulation bind group (group 3).
+    // Their `@binding`s are in the internal binding range to avoid colliding with D3D register-space
+    // bindings (`b#`/`t#`/`s#`/`u#`) which also occupy `@group(3)` for extended stages.
+    const INTERNAL_GROUP: u32 = crate::binding_model::BIND_GROUP_INTERNAL_EMULATION;
+    const BINDING_VS_OUT: u32 = crate::runtime::tessellation::BINDING_VS_OUT_REGS;
+    const BINDING_HS_OUT: u32 = crate::runtime::tessellation::BINDING_HS_OUT_REGS;
+    const BINDING_HS_PATCH_CONSTANTS: u32 = crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS;
+    const BINDING_HS_TESS_FACTORS: u32 = crate::runtime::tessellation::BINDING_HS_TESS_FACTORS;
+
     w.line("struct HsRegBuffer { data: array<vec4<f32>> };");
-    w.line("struct HsF32Buffer { data: array<f32> };");
-    w.line("@group(0) @binding(0) var<storage, read> hs_in: HsRegBuffer;");
-    w.line("@group(0) @binding(1) var<storage, read_write> hs_out_cp: HsRegBuffer;");
-    w.line("@group(0) @binding(2) var<storage, read_write> hs_patch_constants_buf: HsRegBuffer;");
-    w.line("@group(0) @binding(3) var<storage, read_write> hs_tess_factors: HsF32Buffer;");
+    w.line(&format!(
+        "@group({INTERNAL_GROUP}) @binding({BINDING_VS_OUT}) var<storage, read> hs_in: HsRegBuffer;"
+    ));
+    w.line(&format!(
+        "@group({INTERNAL_GROUP}) @binding({BINDING_HS_OUT}) var<storage, read_write> hs_out_cp: HsRegBuffer;"
+    ));
+    w.line(&format!(
+        "@group({INTERNAL_GROUP}) @binding({BINDING_HS_PATCH_CONSTANTS}) var<storage, read_write> hs_patch_constants_buf: HsRegBuffer;"
+    ));
+    w.line(&format!(
+        "@group({INTERNAL_GROUP}) @binding({BINDING_HS_TESS_FACTORS}) var<storage, read_write> hs_tess_factors: HsRegBuffer;"
+    ));
     w.line("");
     // Bounds-checked accessors for runtime-sized HS scratch buffers.
     //
@@ -999,7 +1015,7 @@ fn translate_hs(
     w.dedent();
     w.line("}");
     w.line("");
-    w.line("fn hs_store_tess_factor(idx: u32, value: f32) {");
+    w.line("fn hs_store_tess_factors(idx: u32, value: vec4<f32>) {");
     w.indent();
     w.line("let len = arrayLength(&hs_tess_factors.data);");
     w.line("if (idx >= len) { return; }");
@@ -1017,9 +1033,11 @@ fn translate_hs(
     w.line(&format!(
         "const HS_PC_OUT_STRIDE: u32 = {hs_pc_out_stride}u;"
     ));
+    // Compact tess factors are stored in a dedicated buffer as `HS_TESS_FACTOR_VEC4S_PER_PATCH`
+    // `vec4<f32>` values per patch.
     w.line(&format!(
         "const HS_TESS_FACTOR_STRIDE: u32 = {}u;",
-        hs_pc_layout.tess_factor_stride
+        crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH
     ));
     w.line("const HS_MAX_CONTROL_POINTS: u32 = 32u;");
     if let Some(count) = input_control_points {
@@ -2982,16 +3000,22 @@ impl IoMaps {
             w.line("");
         }
 
-        // Tess factors (compact scalar buffer).
+        // Tess factors (compact per-patch vec4 buffer; tri domain => {edge0, edge1, edge2, inside}).
         if self.hs_pc_tess_factor_stride != 0 {
             w.line("let tf_base: u32 = hs_primitive_id * HS_TESS_FACTOR_STRIDE;");
+            w.line("var tf0: vec4<f32> = vec4<f32>(0.0);");
             for wri in &self.hs_pc_tess_factor_writes {
+                let dst = match wri.dst_index {
+                    0 => "x",
+                    1 => "y",
+                    2 => "z",
+                    3 => "w",
+                    _ => continue,
+                };
                 let comp = component_char(wri.src_component);
-                w.line(&format!(
-                    "hs_store_tess_factor(tf_base + {}u, o{}.{});",
-                    wri.dst_index, wri.src_reg, comp
-                ));
+                w.line(&format!("tf0.{dst} = o{}.{};", wri.src_reg, comp));
             }
+            w.line("hs_store_tess_factors(tf_base + 0u, tf0);");
         }
     }
 

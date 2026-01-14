@@ -180,25 +180,29 @@ fn hs_patch_constants_route_tess_factors_to_compact_buffer() {
     assert_wgsl_validates(&translated.wgsl);
 
     // Ensure tess factors are written to the dedicated tess-factor buffer with the expected
-    // compact layout: outer[0..3) followed by inner[0..1).
-    assert!(translated
-        .wgsl
-        .contains("const HS_TESS_FACTOR_STRIDE: u32 = 4u;"));
+    // compact layout: {outer0, outer1, outer2, inner0} packed into one vec4 per patch.
+    let tess_vec4s_per_patch = aero_d3d11::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH;
+    assert!(translated.wgsl.contains(&format!(
+        "const HS_TESS_FACTOR_STRIDE: u32 = {tess_vec4s_per_patch}u;"
+    )));
     assert!(translated
         .wgsl
         .contains("let tf_base: u32 = hs_primitive_id * HS_TESS_FACTOR_STRIDE;"));
     assert!(translated
         .wgsl
-        .contains("hs_store_tess_factor(tf_base + 0u, o0.x);"));
+        .contains("tf0.x = o0.x;"));
     assert!(translated
         .wgsl
-        .contains("hs_store_tess_factor(tf_base + 1u, o0.y);"));
+        .contains("tf0.y = o0.y;"));
     assert!(translated
         .wgsl
-        .contains("hs_store_tess_factor(tf_base + 2u, o1.x);"));
+        .contains("tf0.z = o1.x;"));
     assert!(translated
         .wgsl
-        .contains("hs_store_tess_factor(tf_base + 3u, o1.y);"));
+        .contains("tf0.w = o1.y;"));
+    assert!(translated
+        .wgsl
+        .contains("hs_store_tess_factors(tf_base + 0u, tf0);"));
 
     // User patch constants should land in the patch-constant register file (and not include the
     // tess-factor-only registers).
