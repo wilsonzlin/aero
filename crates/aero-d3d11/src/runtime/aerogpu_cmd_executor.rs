@@ -7907,8 +7907,8 @@ impl AerogpuD3d11Executor {
                 // - @group(0) @binding(5) = gs_inputs storage buffer
                 //
                 // Keep these stable so translated GS WGSL can be reused across draw calls and so
-                // point-list, line-list, and triangle-list prepass paths share the same bind group
-                // layout.
+                // point-list, line-list, triangle-list, and list-adjacency prepass paths share the
+                // same bind group layout.
                 binding: GS_PREPASS_BINDING_PARAMS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {

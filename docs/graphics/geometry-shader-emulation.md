@@ -262,11 +262,11 @@ Test pointers:
 - End-to-end translated GS execution:
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`
@@ -502,9 +502,10 @@ Current uses:
 - **Patchlist scaffolding:** D3D11 patchlist topologies (`*_PATCHLIST_*`) are routed through the
   emulation path even before full tessellation is available.
 - **Tests that force emulation:** adjacency topologies (`*_ADJ`) are commonly used by tests to force the
-  compute-prepass path (because WebGPU cannot draw adjacency primitives directly). When a translated-GS
-  prepass is not selected (for example, when no GS is bound or when the IA topology is not supported by
-  the translated prepass), these route through the synthetic-expansion fallback prepass.
+  compute-prepass path (because WebGPU cannot draw adjacency primitives directly). List-adjacency
+  topologies can execute the translated-GS prepass when a compatible GS is bound; otherwise (including
+  when no GS is bound, when the IA topology is not supported by the translated prepass, or for
+  adjacency-strip topologies) these route through the synthetic-expansion fallback prepass.
 - **Tests that force compute-prepass without a real GS:** e.g.
   `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs` forces the
   compute-prepass path by selecting an adjacency topology (without binding any GS/HS/DS shader).
@@ -522,20 +523,20 @@ End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_instancing.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_instance_step_rate.rs`
-- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
-- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_texture_t0_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_samples_texture_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_translated_primitive_id.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_translated_prepass_sv_primitive_id.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`
-- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`
 
 These tests require compute shaders and indirect execution, so they may skip on downlevel backends
@@ -546,10 +547,11 @@ Example:
 ```bash
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_compute_prepass_instancing
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_pointlist_draw_indexed
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelistadj_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_linelist_instance_step_rate
-cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs
@@ -559,6 +561,7 @@ cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_samples_texture_tran
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_translated_primitive_id
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_translated_prepass_sv_primitive_id
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs
+cargo test -p aero-d3d11 --test aerogpu_cmd_gs_instance_count
 ```
 
 To make skips fail-fast in CI-like environments, set `AERO_REQUIRE_WEBGPU=1` (tests will panic rather

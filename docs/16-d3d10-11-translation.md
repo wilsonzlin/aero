@@ -513,9 +513,10 @@ bring up correctness incrementally:
       - The in-tree translated-GS execution path is currently wired for list topologies:
         - non-adj: `POINTLIST`, `LINELIST`, `TRIANGLELIST`
         - adj (list): `LINELIST_ADJ`, `TRIANGLELIST_ADJ`
-      - Adjacency strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported
-        end-to-end; the runtime MUST NOT silently reinterpret them as non-adjacency primitives.
-    - **IA primitive restart** (indexed strip topologies) is supported in the direct draw path:
+      - Adjacency strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported end-to-end.
+        The runtime MUST NOT silently reinterpret them as non-adjacency primitives; unsupported cases should
+        route through scaffolding emulation (if present) or reject with a clear error.
+    - **primitive restart** for indexed strip topologies:
       - D3D11 encodes strip restart in the index buffer as `0xFFFF` (u16) / `0xFFFFFFFF` (u32).
       - Indexed `LINESTRIP`/`TRIANGLESTRIP` draws are supported (native WebGPU primitive restart where
         available).
@@ -871,11 +872,11 @@ Rules:
     translator and uses `draw_instance_id` when indexing packed `gs_inputs` (see “GS pass sequence”
     and “GS input register payload layout”).
 - `*_ADJ` topologies require adjacency-aware primitive assembly (and typically a GS that declares
-  `lineadj`/`triadj`). The in-tree translated-GS prepass supports adjacency **list** topologies
-  (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`); strip-adjacency (`*_STRIP_ADJ`) remains future work.
-  The runtime MUST NOT reinterpret adjacency topologies as non-adjacency; acceptable behaviors are
-  to route through the emulation path (executing a supported GS when possible; otherwise using
-  scaffolding/synthetic expansion) or to reject the draw with a clear error.
+  `lineadj`/`triadj`).
+  - The translated-GS prepass supports adjacency **list** topologies (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`).
+  - Adjacency strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not supported yet.
+  - The runtime MUST NOT reinterpret adjacency topologies as non-adjacency topologies; unsupported cases should
+    either route through emulation-path scaffolding or reject the draw with a clear error.
 - **Primitive restart (indexed strip topologies):** for indexed `LINESTRIP`/`TRIANGLESTRIP` (and
   their adjacency variants `LINESTRIP_ADJ`/`TRIANGLESTRIP_ADJ`), D3D11 uses a special index value to
   restart the strip (`0xFFFF` for u16 indices, `0xFFFFFFFF` for u32 indices).
@@ -1029,13 +1030,14 @@ Let `base = 2p`.
 This yields triangle vertices at indices 0/2/4 in the correct strip-winding order for both even and
 odd primitives, while preserving the `triadj` adjacency-edge mapping described above.
 
-Implementation note: adjacency primitive assembly is specified here for implementability. The in-tree
-AeroGPU command-stream executor executes translated GS DXBC over adjacency **list** input topologies
-(`LINELIST_ADJ`, `TRIANGLELIST_ADJ`) end-to-end today (see
+Bring-up note: adjacency primitive assembly is specified here for implementability.
+The in-tree AeroGPU command-stream executor executes translated GS DXBC over adjacency **list** input
+topologies (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`) end-to-end today (see
 `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs` and
-`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`). Adjacency
-strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported for translated GS DXBC
-execution; these currently fall back to the generic placeholder/synthetic expansion path.
+`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`).
+Adjacency strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported for
+translated GS DXBC execution; these currently fall back to synthetic-expansion/scaffolding emulation.
+Supporting strip adjacency and its interaction with primitive restart can be staged later if needed.
 
 #### 2.1.1c) GS input register payload layout (optional; matches in-tree `gs_translate`)
 
@@ -1127,7 +1129,7 @@ To populate `gs_inputs`, the runtime must:
 2. for each vertex in the assembled primitive, populate the required `v#[]` input registers:
    - Target design: copy the required output registers from the previous stage’s output register
      buffer (`vs_out_regs` or DS output regs) into the packed `gs_inputs`.
-   - Current in-tree implementation note: the point-list, line-list, triangle-list, and adjacency-list
+   - Current in-tree implementation note: the point-list, line-list, triangle-list, and list-adjacency
      (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`) translated-GS prepass paths in
      `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS outputs**
      via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with a guarded
@@ -1948,7 +1950,7 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Optionally, implementations may pack upstream stage output registers into a dense `gs_inputs`
         buffer (see “GS input register payload layout”) and have the translated GS read from that.
       - Note (current in-tree translated-GS prepass):
-        - Point-list, line-list, triangle-list, and adjacency-list (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`)
+        - Point-list, line-list, triangle-list, and list-adjacency (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`)
           draws populate `gs_inputs` from **VS outputs** via a separate
           VS-as-compute input-fill pass (vertex pulling + a minimal SM4 VS subset). If VS-as-compute
           translation fails, the executor only falls back to IA-fill when the VS is a strict
@@ -2095,7 +2097,7 @@ resources** in `@group(3)`:
   - The in-tree translated-GS prepass builds `gs_inputs` via a separate **input fill** compute pass:
     - IA vertex pulling bindings live in `@group(3)` (internal range), and the input-fill kernel
       writes the packed register payload into a `@group(0)` storage buffer (`gs_inputs`).
-    - Point-list, line-list, triangle-list, and adjacency-list (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`)
+    - Point-list, line-list, triangle-list, and list-adjacency (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`)
       draws prefer VS-as-compute for this payload (minimal SM4 VS subset)
       so the GS observes VS output registers. If VS-as-compute translation fails, the executor only
       falls back to IA-fill when the VS is a strict passthrough (or
@@ -2545,9 +2547,9 @@ The translation layer needs a targeted, growing set of reference scenes with **p
    `RestartStrip()` boundaries; validates strip→list conversion.
 10. **GS instancing (`SV_GSInstanceID`)**: GS compiled with `[instance(2)]` uses `SV_GSInstanceID` to
     offset/colour output; validates the GS instance dispatch dimension and built-in mapping.
-11. **Adjacency input**: adjacency-list topology (`LINELIST_ADJ` / `TRIANGLELIST_ADJ`) + GS consumes
-    adjacency vertices; validates adjacency primitive assembly + translated GS execution (see
-    `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_{linelistadj,trianglelistadj}_emits_triangle.rs`).
+11. **Adjacency input (list)**: adjacency-list topology (`LINELIST_ADJ` / `TRIANGLELIST_ADJ`) + GS
+    consumes adjacency vertices; validates adjacency primitive assembly + translated GS execution
+    (see `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_{linelistadj,trianglelistadj}_emits_triangle.rs`).
 
 ### P2 scenes
 

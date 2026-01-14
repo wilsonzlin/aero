@@ -15,7 +15,7 @@
 //!
 //! Note: this module is only **partially wired** into the AeroGPU command executor today:
 //! - `CREATE_SHADER_DXBC` attempts to translate SM4/SM5 GS DXBC into a WGSL compute prepass.
-//! - Point-list, line-list, and triangle-list `DRAW`/`DRAW_INDEXED` can execute the translated compute prepass
+//! - Point-list, line-list, triangle-list, and list-adjacency `DRAW`/`DRAW_INDEXED` can execute the translated compute prepass
 //!   when translation succeeds. The post-expansion render pass honors the GS declared output
 //!   topology (including `pointlist`; strip outputs are expanded to list indices).
 //!
