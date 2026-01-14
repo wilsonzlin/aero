@@ -18,6 +18,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
+    CONTENT_RANGE, RANGE,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -688,6 +689,7 @@ enum VerifyHttpSource {
         manifest_url: reqwest::Url,
         client: reqwest::Client,
         head_supported: Arc<AtomicBool>,
+        range_supported: Arc<AtomicBool>,
     },
 }
 
@@ -725,6 +727,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
                 manifest_url,
                 client,
                 head_supported: Arc::new(AtomicBool::new(true)),
+                range_supported: Arc::new(AtomicBool::new(true)),
             },
         )
     } else if let Some(path) = &args.manifest_file {
@@ -1061,6 +1064,21 @@ fn parse_header(raw: &str) -> Result<(HeaderName, HeaderValue)> {
     Ok((name, value))
 }
 
+fn parse_content_range_total(value: &str) -> Option<u64> {
+    // Example: `bytes 0-0/1024` or `bytes 0-0/*`.
+    let value = value.trim();
+    let (unit, rest) = value.split_once(' ')?;
+    if unit != "bytes" {
+        return None;
+    }
+    let (_range, total) = rest.split_once('/')?;
+    let total = total.trim();
+    if total == "*" {
+        return None;
+    }
+    total.parse::<u64>().ok()
+}
+
 fn is_retryable_http_status(status: reqwest::StatusCode) -> bool {
     status.is_server_error()
         || status == reqwest::StatusCode::TOO_MANY_REQUESTS
@@ -1294,6 +1312,7 @@ async fn verify_http_chunk(
         VerifyHttpSource::Url {
             manifest_url,
             client,
+            range_supported,
             head_supported,
         } => {
             let mut url = manifest_url.join(&chunk_key).with_context(|| {
@@ -1310,6 +1329,7 @@ async fn verify_http_chunk(
                 expected_sha256,
                 retries,
                 Some(head_supported),
+                Some(range_supported),
             )
             .await
         }
@@ -1390,6 +1410,7 @@ async fn verify_chunk_http(
     expected_size: u64,
     expected_sha256: Option<&str>,
     head_supported: Option<&AtomicBool>,
+    range_supported: Option<&AtomicBool>,
 ) -> Result<u64> {
     if expected_sha256.is_none() {
         if let Some(head_supported) = head_supported {
@@ -1462,11 +1483,94 @@ async fn verify_chunk_http(
         }
     }
 
-    let mut resp = client
-        .get(url.clone())
-        .send()
-        .await
-        .with_context(|| format!("GET {url} (chunk {index})"))?;
+    let use_range = expected_sha256.is_none()
+        && head_supported
+            .map(|head_supported| !head_supported.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        && range_supported
+            .map(|range_supported| range_supported.load(Ordering::SeqCst))
+            .unwrap_or(false);
+
+    let mut resp = if use_range {
+        client
+            .get(url.clone())
+            .header(RANGE, "bytes=0-0")
+            .send()
+            .await
+            .with_context(|| format!("GET {url} (chunk {index})"))?
+    } else {
+        client
+            .get(url.clone())
+            .send()
+            .await
+            .with_context(|| format!("GET {url} (chunk {index})"))?
+    };
+    let status = resp.status();
+    if use_range {
+        if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            let Some(range_supported) = range_supported else {
+                bail!("internal error: use_range true but range_supported is None");
+            };
+
+            // Best-effort range optimization: validate the total size from Content-Range without
+            // downloading the full body. Disable range optimization if the response is not usable.
+            let mut range_is_reliable = true;
+            if let Some(encoding) = resp
+                .headers()
+                .get(CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+            {
+                let encoding = encoding.trim();
+                if !encoding.eq_ignore_ascii_case("identity") {
+                    range_supported.store(false, Ordering::SeqCst);
+                    range_is_reliable = false;
+                }
+            }
+
+            let total = resp
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_content_range_total);
+            if range_is_reliable {
+                if let Some(total) = total {
+                    if total == expected_size {
+                        return Ok(expected_size);
+                    }
+                    // Treat range as best-effort: fall back to normal GET if the reported size
+                    // does not match.
+                    range_supported.store(false, Ordering::SeqCst);
+                } else {
+                    range_supported.store(false, Ordering::SeqCst);
+                }
+            }
+
+            // Range response was not usable; fall back to a normal GET.
+            resp = client
+                .get(url.clone())
+                .send()
+                .await
+                .with_context(|| format!("GET {url} (chunk {index})"))?;
+        } else if status != reqwest::StatusCode::OK {
+            let Some(range_supported) = range_supported else {
+                bail!("internal error: use_range true but range_supported is None");
+            };
+            // Range request failed (or was ignored in a non-OK way). Disable and fall back.
+            range_supported.store(false, Ordering::SeqCst);
+            resp = client
+                .get(url.clone())
+                .send()
+                .await
+                .with_context(|| format!("GET {url} (chunk {index})"))?;
+        } else {
+            // Server ignored the Range header and returned 200 OK. Disable range optimization to
+            // avoid sending unnecessary Range headers for subsequent chunks.
+            if let Some(range_supported) = range_supported {
+                range_supported.store(false, Ordering::SeqCst);
+            }
+        }
+    }
+
     let status = resp.status();
     if !status.is_success() {
         return Err(anyhow!(HttpStatusFailure {
@@ -1531,6 +1635,7 @@ async fn verify_chunk_http(
     Ok(total)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn verify_chunk_http_with_retry(
     index: u64,
     client: &reqwest::Client,
@@ -1539,6 +1644,7 @@ async fn verify_chunk_http_with_retry(
     expected_sha256: Option<&str>,
     retries: usize,
     head_supported: Option<&AtomicBool>,
+    range_supported: Option<&AtomicBool>,
 ) -> Result<u64> {
     let mut attempt = 0usize;
     loop {
@@ -1550,6 +1656,7 @@ async fn verify_chunk_http_with_retry(
             expected_size,
             expected_sha256,
             head_supported,
+            range_supported,
         )
         .await
         {
@@ -8044,6 +8151,124 @@ mod tests {
             "expected chunk bodies to not be downloaded when sha256 is missing and HEAD supplies Content-Length"
         );
         assert_eq!(chunk_head_requests.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_uses_range_get_when_head_is_unsupported() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let chunk_head_requests = Arc::new(AtomicU64::new(0));
+        let chunk_range_get_requests = Arc::new(AtomicU64::new(0));
+        let chunk_non_range_get_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = {
+            let chunk_head_requests = Arc::clone(&chunk_head_requests);
+            let chunk_range_get_requests = Arc::clone(&chunk_range_get_requests);
+            let chunk_non_range_get_requests = Arc::clone(&chunk_non_range_get_requests);
+            Arc::new(move |req: TestHttpRequest| {
+                let range_header = req
+                    .headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("range"))
+                    .map(|(_, v)| v.as_str());
+                match req.path.as_str() {
+                    "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                    "/meta.json" => (404, Vec::new(), b"not found".to_vec()),
+                    "/chunks/00000000.bin" => {
+                        if req.method.eq_ignore_ascii_case("HEAD") {
+                            chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                            (405, Vec::new(), Vec::new())
+                        } else if range_header == Some("bytes=0-0") {
+                            chunk_range_get_requests.fetch_add(1, Ordering::SeqCst);
+                            (
+                                206,
+                                vec![(
+                                    "Content-Range".to_string(),
+                                    format!("bytes 0-0/{}", chunk0.len()),
+                                )],
+                                vec![chunk0[0]],
+                            )
+                        } else {
+                            chunk_non_range_get_requests.fetch_add(1, Ordering::SeqCst);
+                            (400, Vec::new(), b"missing range".to_vec())
+                        }
+                    }
+                    "/chunks/00000001.bin" => {
+                        if req.method.eq_ignore_ascii_case("HEAD") {
+                            chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                            (405, Vec::new(), Vec::new())
+                        } else if range_header == Some("bytes=0-0") {
+                            chunk_range_get_requests.fetch_add(1, Ordering::SeqCst);
+                            (
+                                206,
+                                vec![(
+                                    "Content-Range".to_string(),
+                                    format!("bytes 0-0/{}", chunk1.len()),
+                                )],
+                                vec![chunk1[0]],
+                            )
+                        } else {
+                            chunk_non_range_get_requests.fetch_add(1, Ordering::SeqCst);
+                            (400, Vec::new(), b"missing range".to_vec())
+                        }
+                    }
+                    _ => (404, Vec::new(), b"not found".to_vec()),
+                }
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            // Use concurrency=1 to ensure the first chunk disables HEAD before chunk 1 is processed.
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result?;
+        assert_eq!(chunk_head_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(chunk_range_get_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(chunk_non_range_get_requests.load(Ordering::SeqCst), 0);
         Ok(())
     }
 
