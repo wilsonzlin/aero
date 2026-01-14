@@ -762,6 +762,47 @@ mod tests {
     }
 
     #[test]
+    fn bc_format_selection_matches_bc_dimension_compatibility_helper() {
+        let features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+
+        for (format, expected_bc) in [
+            (D3DFormat::Dxt1, wgpu::TextureFormat::Bc1RgbaUnorm),
+            (D3DFormat::Dxt3, wgpu::TextureFormat::Bc2RgbaUnorm),
+            (D3DFormat::Dxt5, wgpu::TextureFormat::Bc3RgbaUnorm),
+        ] {
+            // Cover a range of small dimensions and mip counts, including edge cases like
+            // non-block-aligned sizes and mip counts beyond the possible chain length.
+            for width in 1..=16 {
+                for height in 1..=16 {
+                    for mip_levels in 1..=5 {
+                        let compatible =
+                            wgpu_bc_texture_dimensions_compatible(width, height, mip_levels);
+                        let info = format_info_for_texture(
+                            format,
+                            features,
+                            TextureUsageKind::Sampled,
+                            width,
+                            height,
+                            mip_levels,
+                        )
+                        .unwrap();
+
+                        if compatible {
+                            assert_eq!(info.wgpu, expected_bc);
+                            assert!(!info.cpu_convert_to_bgra8);
+                            assert!(info.upload_is_compressed);
+                        } else {
+                            assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+                            assert!(info.cpu_convert_to_bgra8);
+                            assert!(!info.upload_is_compressed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn mip_helpers_match_expected_memory_layouts() {
         // Uncompressed BGRA8.
         let bgra8 = format_info(
