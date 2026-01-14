@@ -91,10 +91,15 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
         $preferred += (Join-Path $scriptDir "tools\x64\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "tools\x86\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "tools\i386\aerogpu_dbgctl.exe")
- 
+  
         # Packaged path (AeroGPU driver payload).
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
+
+        # Legacy packaged paths (older Guest Tools media).
+        $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
+
         $preferred += (Join-Path $scriptDir "drivers\amd64\aerogpu\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
     } else {
@@ -102,10 +107,15 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
         $preferred += (Join-Path $scriptDir "tools\i386\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "tools\amd64\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "tools\x64\aerogpu_dbgctl.exe")
- 
+  
         # Packaged path (AeroGPU driver payload).
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe")
+
+        # Legacy packaged paths (older Guest Tools media).
+        $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe")
+        $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe")
+
         $preferred += (Join-Path $scriptDir "drivers\x86\aerogpu\aerogpu_dbgctl.exe")
         $fallback += (Join-Path $scriptDir "drivers\amd64\aerogpu\aerogpu_dbgctl.exe")
     }
