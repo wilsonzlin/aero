@@ -252,3 +252,89 @@ async fn opfs_attach_install_media_iso_can_opt_in_to_setting_snapshot_overlay_re
         Machine::disk_id_install_media()
     );
 }
+
+#[wasm_bindgen_test(async)]
+async fn opfs_attach_install_media_iso_existing_does_not_overwrite_overlay_refs_by_default() {
+    if !aero_opfs::platform::storage::opfs::is_opfs_supported() {
+        return;
+    }
+
+    let path = unique_opfs_path("aero-wasm-test-install-media-no-overwrite");
+
+    // Seed an OPFS file so the `_existing` ISO attach API can open it. ISO backends require a
+    // 2048-byte multiple.
+    match aero_opfs::OpfsBackend::open(&path, true, 2048).await {
+        Ok(mut backend) => {
+            let _ = backend.close();
+        }
+        Err(aero_opfs::DiskError::NotSupported(_))
+        | Err(aero_opfs::DiskError::BackendUnavailable)
+        | Err(aero_opfs::DiskError::QuotaExceeded) => return,
+        Err(e) => panic!("failed to seed OPFS ISO image: {e:?}"),
+    }
+
+    let mut machine = Machine::new(2 * 1024 * 1024).expect("Machine::new");
+
+    // Pre-set a sentinel overlay ref and ensure the base attach method does not overwrite it.
+    let sentinel_base = "sentinel-install.iso";
+    let sentinel_overlay = "sentinel-install.overlay";
+    machine.set_ide_secondary_master_atapi_overlay_ref(sentinel_base, sentinel_overlay);
+
+    let attach_res = machine.attach_install_media_iso_opfs_existing(path.clone()).await;
+    if let Err(err) = attach_res {
+        let msg = err
+            .as_string()
+            .or_else(|| err.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())))
+            .unwrap_or_else(|| format!("{err:?}"));
+        // Treat OPFS unavailability (e.g. missing sync access handle support) as a skip.
+        if msg.contains("OPFS")
+            || msg.contains("backend unavailable")
+            || msg.contains("not supported")
+        {
+            return;
+        }
+        panic!("attach_install_media_iso_opfs_existing failed unexpectedly: {msg}");
+    }
+
+    let snap = machine.snapshot_full().expect("snapshot_full");
+    machine.restore_snapshot(&snap).expect("restore_snapshot");
+
+    let overlays = machine.take_restored_disk_overlays();
+    assert!(
+        !overlays.is_null(),
+        "expected snapshot restore to surface disk overlay refs"
+    );
+
+    let arr = Array::from(&overlays);
+    let mut found = false;
+    for i in 0..arr.length() {
+        let entry = arr.get(i);
+        let disk_id = Reflect::get(&entry, &JsValue::from_str("disk_id"))
+            .expect("disk_id present")
+            .as_f64()
+            .expect("disk_id is number") as u32;
+        if disk_id != Machine::disk_id_install_media() {
+            continue;
+        }
+
+        let base_image = Reflect::get(&entry, &JsValue::from_str("base_image"))
+            .expect("base_image present")
+            .as_string()
+            .expect("base_image is string");
+        let overlay_image = Reflect::get(&entry, &JsValue::from_str("overlay_image"))
+            .expect("overlay_image present")
+            .as_string()
+            .expect("overlay_image is string");
+
+        assert_eq!(base_image, sentinel_base);
+        assert_eq!(overlay_image, sentinel_overlay);
+        found = true;
+        break;
+    }
+
+    assert!(
+        found,
+        "expected DISKS entry for install media (disk_id={})",
+        Machine::disk_id_install_media()
+    );
+}
