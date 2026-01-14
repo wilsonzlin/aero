@@ -1997,6 +1997,30 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
 #endif
 
+#if defined(SRB_FUNCTION_FLUSH) || defined(SRB_FUNCTION_SHUTDOWN)
+  /*
+   * StorPort may issue cache flushes via SRB function codes rather than SCSI
+   * CDBs (SCSIOP_SYNCHRONIZE_CACHE*). Handle them as management SRBs because
+   * some stacks may not populate Path/Target/LUN consistently.
+   */
+#ifdef SRB_FUNCTION_FLUSH
+  case SRB_FUNCTION_FLUSH:
+#endif
+#ifdef SRB_FUNCTION_SHUTDOWN
+  case SRB_FUNCTION_SHUTDOWN:
+#endif
+    if (devExt->Removed) {
+      AerovblkSetSense(devExt, srb, SCSI_SENSE_NOT_READY, 0x04, 0x00);
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
+      return TRUE;
+    }
+    if (!devExt->SupportsFlush) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+      return TRUE;
+    }
+    return AerovblkQueueRequest(devExt, srb, VIRTIO_BLK_T_FLUSH, 0, NULL, FALSE);
+#endif
+
 #ifdef SRB_FUNCTION_NOOP
   /*
    * No-op SRB. Some StorPort stacks use this as a probe.
