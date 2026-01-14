@@ -108,6 +108,30 @@ pub enum Sm4Decl {
     GsInstanceCount {
         count: u32,
     },
+    /// Hull shader tessellator domain (e.g. `tri`, `quad`, `isoline`).
+    ///
+    /// Encoded by `dcl_tessellator_domain` in SM5 token streams.
+    HsDomain {
+        domain: HsDomain,
+    },
+    /// Hull shader tessellator partitioning mode.
+    ///
+    /// Encoded by `dcl_tessellator_partitioning` in SM5 token streams.
+    HsPartitioning {
+        partitioning: HsPartitioning,
+    },
+    /// Hull shader tessellator output topology (e.g. `triangle_cw`).
+    ///
+    /// Encoded by `dcl_tessellator_output_primitive` / `dcl_outputtopology` in SM5 token streams.
+    HsOutputTopology {
+        topology: HsOutputTopology,
+    },
+    /// Hull shader output control point count (`outputcontrolpoints(N)`).
+    ///
+    /// Encoded by `dcl_output_control_point_count` / `dcl_outputcontrolpoints` in SM5 token streams.
+    HsOutputControlPointCount {
+        count: u32,
+    },
     /// Compute shader thread group size (`dcl_thread_group x, y, z`).
     ///
     /// WGSL requires this information to emit `@workgroup_size(x, y, z)` on the
@@ -137,6 +161,31 @@ pub enum Sm4Decl {
     Unknown {
         opcode: u32,
     },
+}
+
+/// Hull shader tessellation domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HsDomain {
+    Tri,
+    Quad,
+    Isoline,
+}
+
+/// Hull shader tessellation partitioning mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HsPartitioning {
+    Integer,
+    Pow2,
+    FractionalOdd,
+    FractionalEven,
+}
+
+/// Hull shader output topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HsOutputTopology {
+    TriangleCw,
+    TriangleCcw,
+    Line,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

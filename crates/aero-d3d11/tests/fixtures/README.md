@@ -68,6 +68,12 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: emits three `SV_Position` vertices (triangle strip) to form a large
     triangle covering the center of the render target.
+* `hs_minimal.dxbc`
+  * Shader model: `hs_5_0`
+  * Chunks: `ISGN`, `OSGN`, `PSGN`, `SHEX`
+  * Behavior:
+    * Control-point phase: writes `SV_OutputControlPointID` + `SV_PrimitiveID` into `o0.xy`, `ret`
+    * Patch-constant phase: writes `SV_TessFactor` + `SV_InsideTessFactor`, `ret`
 
 These fixtures are **hand-authored** DXBC containers with the standard D3D10+
 signature chunk layout. The SM4 token streams are intentionally tiny:

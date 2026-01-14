@@ -296,6 +296,21 @@ pub fn translate_sm4_module_to_wgsl(
                 .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
             translate_ps(module, isgn, osgn, rdef)
         }
+        (ShaderStage::Hull, rdef) => {
+            let isgn = signatures
+                .isgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("ISGN"))?;
+            let osgn = signatures
+                .osgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
+            let psgn = signatures
+                .psgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("PSGN"))?;
+            translate_hs(module, isgn, osgn, psgn, rdef)
+        }
         (ShaderStage::Compute, rdef) => translate_cs(module, rdef),
         (other, _rdef) => Err(ShaderTranslateError::UnsupportedStage(other)),
     }
@@ -435,6 +450,245 @@ fn translate_cs(
     Ok(ShaderTranslation {
         wgsl: w.finish(),
         stage: ShaderStage::Compute,
+        reflection,
+    })
+}
+
+fn translate_hs(
+    module: &Sm4Module,
+    isgn: &DxbcSignature,
+    osgn: &DxbcSignature,
+    psgn: &DxbcSignature,
+    rdef: Option<RdefChunk>,
+) -> Result<ShaderTranslation, ShaderTranslateError> {
+    // HS is executed via compute emulation. We currently support a minimal subset:
+    // - domain("tri")
+    // - partitioning("integer")
+    // - outputtopology("triangle_cw") (ccw is also accepted)
+    // - outputcontrolpoints <= 32
+
+    // Validate declared tessellation metadata when present in the IR. Older decoders may not
+    // populate these declarations yet, so absence is treated as "unknown" rather than an error.
+    let mut output_control_points: Option<u32> = None;
+    for decl in &module.decls {
+        match decl {
+            Sm4Decl::HsDomain { domain } => {
+                if *domain != crate::sm4_ir::HsDomain::Tri {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("hs_domain_{domain:?}"),
+                    });
+                }
+            }
+            Sm4Decl::HsPartitioning { partitioning } => {
+                if *partitioning != crate::sm4_ir::HsPartitioning::Integer {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("hs_partitioning_{partitioning:?}"),
+                    });
+                }
+            }
+            Sm4Decl::HsOutputTopology { topology } => {
+                if !matches!(
+                    topology,
+                    crate::sm4_ir::HsOutputTopology::TriangleCw
+                        | crate::sm4_ir::HsOutputTopology::TriangleCcw
+                ) {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("hs_output_topology_{topology:?}"),
+                    });
+                }
+            }
+            Sm4Decl::HsOutputControlPointCount { count } => {
+                output_control_points = Some(*count);
+                if *count > 32 {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("hs_output_control_points_{count}"),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let resources = scan_resources(module, rdef.as_ref())?;
+
+    // Build IO maps for:
+    // - Control point phase: ISGN -> OSGN
+    // - Patch constant phase: ISGN -> PSGN
+    let mut io_cp = build_io_maps(module, isgn, osgn)?;
+    let mut io_pc = build_io_maps(module, isgn, psgn)?;
+
+    // Map HS system values (`SV_PrimitiveID`, `SV_OutputControlPointID`) onto synthetic variables
+    // derived from the compute invocation IDs.
+    let mut hs_inputs = BTreeMap::<u32, HullSysValue>::new();
+    for decl in &module.decls {
+        if let Sm4Decl::InputSiv { reg, sys_value, .. } = decl {
+            if let Some(siv) = hull_sys_value_from_d3d_name(*sys_value) {
+                hs_inputs.insert(*reg, siv);
+            }
+        }
+    }
+    // Fall back to signature-driven system value detection when `dcl_input_siv` is missing.
+    for (reg, p) in &io_cp.inputs {
+        if let Some(sys_value) = p.sys_value {
+            if let Some(siv) = hull_sys_value_from_d3d_name(sys_value) {
+                hs_inputs.insert(*reg, siv);
+            }
+        }
+    }
+    io_cp.hs_inputs = hs_inputs.clone();
+    io_pc.hs_inputs = hs_inputs;
+
+    // Split the linear instruction stream into two phases using the first top-level `ret` as a
+    // boundary. FXC emits separate `ret`s per phase in common SM5 hull shaders.
+    let mut depth = 0u32;
+    let mut split_at: Option<usize> = None;
+    for (i, inst) in module.instructions.iter().enumerate() {
+        match inst {
+            Sm4Inst::If { .. } => depth += 1,
+            Sm4Inst::EndIf => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 && matches!(inst, Sm4Inst::Ret) {
+            split_at = Some(i);
+            break;
+        }
+    }
+
+    let (cp_insts, pc_insts) = if let Some(i) = split_at {
+        (
+            module.instructions[..=i].to_vec(),
+            module.instructions[i + 1..].to_vec(),
+        )
+    } else {
+        (module.instructions.clone(), Vec::new())
+    };
+
+    let mut module_cp = module.clone();
+    module_cp.instructions = cp_insts;
+    let mut module_pc = module.clone();
+    module_pc.instructions = pc_insts;
+
+    // Determine the number of non-system input registers we need to source from the patch buffer.
+    let used_inputs = scan_used_input_registers(module);
+    let max_non_siv_input = used_inputs
+        .iter()
+        .filter(|r| !io_cp.hs_inputs.contains_key(r))
+        .max()
+        .copied();
+    let hs_in_stride = max_non_siv_input.map(|m| m.saturating_add(1)).unwrap_or(1);
+
+    let max_cp_out = io_cp.outputs.keys().max().copied();
+    let hs_cp_out_stride = max_cp_out.map(|m| m.saturating_add(1)).unwrap_or(1);
+
+    let max_pc_out = io_pc.outputs.keys().max().copied();
+    let hs_pc_out_stride = max_pc_out.map(|m| m.saturating_add(1)).unwrap_or(1);
+
+    let mut outputs_reflection = io_cp.outputs_reflection_vertex();
+    outputs_reflection.extend(io_pc.outputs_reflection_vertex());
+
+    let reflection = ShaderReflection {
+        inputs: io_cp.inputs_reflection(),
+        outputs: outputs_reflection,
+        bindings: resources.bindings(ShaderStage::Hull),
+        rdef,
+    };
+
+    let mut w = WgslWriter::new();
+
+    // HS stage interface buffers (inputs + outputs) for compute emulation.
+    //
+    // Layout:
+    // - Control point inputs/outputs are indexed as:
+    //     ((primitive_id * 32 + output_control_point_id) * STRIDE + reg_index)
+    //   where `32` is the supported maximum `outputcontrolpoints`.
+    // - Patch constant outputs are indexed as:
+    //     (primitive_id * STRIDE + reg_index)
+    w.line("struct HsRegBuffer { data: array<vec4<f32>> };");
+    w.line("@group(0) @binding(0) var<storage, read> hs_in: HsRegBuffer;");
+    w.line("@group(0) @binding(1) var<storage, read_write> hs_out_cp: HsRegBuffer;");
+    w.line("@group(0) @binding(2) var<storage, read_write> hs_out_pc: HsRegBuffer;");
+    w.line("");
+
+    resources.emit_decls(&mut w, ShaderStage::Hull)?;
+
+    w.line(&format!("const HS_IN_STRIDE: u32 = {hs_in_stride}u;"));
+    w.line(&format!("const HS_CP_OUT_STRIDE: u32 = {hs_cp_out_stride}u;"));
+    w.line(&format!("const HS_PC_OUT_STRIDE: u32 = {hs_pc_out_stride}u;"));
+    w.line("const HS_MAX_CONTROL_POINTS: u32 = 32u;");
+    if let Some(count) = output_control_points {
+        w.line(&format!("const HS_OUTPUT_CONTROL_POINTS: u32 = {count}u;"));
+    }
+    w.line("");
+
+    // Control-point phase: one invocation per output control point.
+    w.line("@compute @workgroup_size(1)");
+    w.line("fn hs_main(@builtin(global_invocation_id) id: vec3<u32>) {");
+    w.indent();
+    w.line("let hs_output_control_point_id: u32 = id.x;");
+    w.line("let hs_primitive_id: u32 = id.y;");
+    w.line("if (hs_output_control_point_id >= HS_MAX_CONTROL_POINTS) { return; }");
+    w.line(
+        "let hs_in_base: u32 = (hs_primitive_id * HS_MAX_CONTROL_POINTS + hs_output_control_point_id) * HS_IN_STRIDE;",
+    );
+    w.line(
+        "let hs_out_base: u32 = (hs_primitive_id * HS_MAX_CONTROL_POINTS + hs_output_control_point_id) * HS_CP_OUT_STRIDE;",
+    );
+    w.line("");
+
+    emit_temp_and_output_decls(&mut w, &module_cp, &io_cp)?;
+    let ctx = EmitCtx {
+        stage: ShaderStage::Hull,
+        io: &io_cp,
+        resources: &resources,
+    };
+    emit_instructions(&mut w, &module_cp, &ctx)?;
+
+    w.line("");
+    for &reg in io_cp.outputs.keys() {
+        w.line(&format!(
+            "hs_out_cp.data[hs_out_base + {reg}u] = o{reg};"
+        ));
+    }
+    w.dedent();
+    w.line("}");
+    w.line("");
+
+    // Patch-constant phase: one invocation per patch.
+    w.line("@compute @workgroup_size(1)");
+    w.line("fn hs_patch_constants(@builtin(global_invocation_id) id: vec3<u32>) {");
+    w.indent();
+    w.line("let hs_primitive_id: u32 = id.x;");
+    w.line("let hs_output_control_point_id: u32 = 0u;");
+    w.line(
+        "let hs_in_base: u32 = (hs_primitive_id * HS_MAX_CONTROL_POINTS + hs_output_control_point_id) * HS_IN_STRIDE;",
+    );
+    w.line("let hs_out_base: u32 = hs_primitive_id * HS_PC_OUT_STRIDE;");
+    w.line("");
+
+    emit_temp_and_output_decls(&mut w, &module_pc, &io_pc)?;
+    let ctx = EmitCtx {
+        stage: ShaderStage::Hull,
+        io: &io_pc,
+        resources: &resources,
+    };
+    emit_instructions(&mut w, &module_pc, &ctx)?;
+
+    w.line("");
+    for &reg in io_pc.outputs.keys() {
+        w.line(&format!(
+            "hs_out_pc.data[hs_out_base + {reg}u] = o{reg};"
+        ));
+    }
+    w.dedent();
+    w.line("}");
+
+    Ok(ShaderTranslation {
+        wgsl: w.finish(),
+        stage: ShaderStage::Hull,
         reflection,
     })
 }
@@ -824,6 +1078,7 @@ fn build_io_maps(
         vs_instance_id_register: vs_instance_id_reg,
         ps_front_facing_register: ps_front_facing_reg,
         cs_inputs: BTreeMap::new(),
+        hs_inputs: BTreeMap::new(),
     })
 }
 
@@ -833,6 +1088,12 @@ enum ComputeSysValue {
     GroupThreadId,
     GroupId,
     GroupIndex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum HullSysValue {
+    PrimitiveId,
+    OutputControlPointId,
 }
 
 impl ComputeSysValue {
@@ -905,6 +1166,14 @@ fn compute_sys_value_from_d3d_name(name: u32) -> Option<ComputeSysValue> {
     }
 }
 
+fn hull_sys_value_from_d3d_name(name: u32) -> Option<HullSysValue> {
+    match name {
+        D3D_NAME_PRIMITIVE_ID => Some(HullSysValue::PrimitiveId),
+        D3D_NAME_OUTPUT_CONTROL_POINT_ID => Some(HullSysValue::OutputControlPointId),
+        _ => None,
+    }
+}
+
 fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
     let mut cs_inputs = BTreeMap::<u32, ComputeSysValue>::new();
     for decl in &module.decls {
@@ -928,6 +1197,7 @@ fn build_cs_io_maps(module: &Sm4Module) -> IoMaps {
         vs_instance_id_register: None,
         ps_front_facing_register: None,
         cs_inputs,
+        hs_inputs: BTreeMap::new(),
     }
 }
 
@@ -1250,6 +1520,7 @@ struct IoMaps {
     vs_instance_id_register: Option<u32>,
     ps_front_facing_register: Option<u32>,
     cs_inputs: BTreeMap<u32, ComputeSysValue>,
+    hs_inputs: BTreeMap<u32, HullSysValue>,
 }
 
 impl IoMaps {
@@ -1669,6 +1940,33 @@ impl IoMaps {
                 )?;
                 Ok(siv.expand_to_vec4())
             }
+            ShaderStage::Hull => {
+                if let Some(siv) = self.hs_inputs.get(&reg) {
+                    // Like `SV_VertexID`, HS system values are integer-typed in D3D. Preserve raw
+                    // bits by bitcasting into the untyped `vec4<f32>` register model.
+                    let expr = match siv {
+                        HullSysValue::PrimitiveId => "hs_primitive_id",
+                        HullSysValue::OutputControlPointId => "hs_output_control_point_id",
+                    };
+                    return Ok(format!(
+                        "vec4<f32>(bitcast<f32>({expr}), 0.0, 0.0, 1.0)"
+                    ));
+                }
+
+                let p = self.inputs.get(&reg).ok_or(
+                    ShaderTranslateError::SignatureMissingRegister {
+                        io: "input",
+                        register: reg,
+                    },
+                )?;
+                // HS inputs are provided via an emulated "patch buffer" (storage buffer) and are
+                // modeled as full `vec4<f32>` registers. Apply the signature mask so missing
+                // components follow D3D's default-fill rules.
+                Ok(apply_sig_mask_to_vec4(
+                    &format!("hs_in.data[hs_in_base + {reg}u]"),
+                    p.param.mask,
+                ))
+            }
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
         }
     }
@@ -1682,6 +1980,8 @@ const D3D_NAME_IS_FRONT_FACE: u32 = 9;
 // D3D10+ geometry-shader instancing builtin (`SV_GSInstanceID`). This value is shared between
 // signature `system_value_type` and `dcl_input_siv` declaration encodings.
 const D3D_NAME_GS_INSTANCE_ID: u32 = 11;
+// Hull shader built-in: `SV_OutputControlPointID`.
+const D3D_NAME_OUTPUT_CONTROL_POINT_ID: u32 = 17;
 const D3D_NAME_DISPATCH_THREAD_ID: u32 = 20;
 const D3D_NAME_GROUP_ID: u32 = 21;
 const D3D_NAME_GROUP_INDEX: u32 = 22;
@@ -1724,11 +2024,11 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     if is_sv_position(name) {
         return Some(D3D_NAME_POSITION);
     }
-    if is_sv_primitive_id(name) {
-        return Some(D3D_NAME_PRIMITIVE_ID);
-    }
     if is_sv_vertex_id(name) {
         return Some(D3D_NAME_VERTEX_ID);
+    }
+    if is_sv_primitive_id(name) {
+        return Some(D3D_NAME_PRIMITIVE_ID);
     }
     if is_sv_instance_id(name) {
         return Some(D3D_NAME_INSTANCE_ID);
@@ -1738,6 +2038,9 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     }
     if is_sv_is_front_face(name) {
         return Some(D3D_NAME_IS_FRONT_FACE);
+    }
+    if is_sv_output_control_point_id(name) {
+        return Some(D3D_NAME_OUTPUT_CONTROL_POINT_ID);
     }
     if is_sv_target(name) {
         return Some(D3D_NAME_TARGET);
@@ -1788,6 +2091,11 @@ fn is_sv_gs_instance_id(name: &str) -> bool {
 
 fn is_sv_is_front_face(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_IsFrontFace") || name.eq_ignore_ascii_case("SV_ISFRONTFACE")
+}
+
+fn is_sv_output_control_point_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_OutputControlPointID")
+        || name.eq_ignore_ascii_case("SV_OUTPUTCONTROLPOINTID")
 }
 
 fn is_sv_target(name: &str) -> bool {
@@ -1960,6 +2268,8 @@ impl ResourceUsage {
             ShaderStage::Vertex => 0,
             ShaderStage::Pixel => 1,
             ShaderStage::Compute => 2,
+            // Extended D3D11 stages (GS/HS/DS) are currently executed via compute emulation passes.
+            // Place their resources in a dedicated bind group so they don't collide with VS/PS/CS.
             ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => 3,
             _ => 0,
         }
@@ -3925,7 +4235,7 @@ fn emit_instructions(
                 match ctx.stage {
                     ShaderStage::Vertex => ctx.io.emit_vs_return(w)?,
                     ShaderStage::Pixel => ctx.io.emit_ps_return(w)?,
-                    ShaderStage::Compute => {
+                    ShaderStage::Compute | ShaderStage::Hull => {
                         // Compute entry points return `()`.
                         w.line("return;");
                     }
