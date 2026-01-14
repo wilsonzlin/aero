@@ -1078,13 +1078,13 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
 
             let meta0 = 0usize;
             let meta1 = patch_meta_size as usize;
-            let tess0 = read_u32_le(&meta_bytes[meta0 + 0..meta0 + 4]);
+            let tess0 = read_u32_le(&meta_bytes[meta0..meta0 + 4]);
             let vb0 = read_u32_le(&meta_bytes[meta0 + 4..meta0 + 8]);
             let ib0 = read_u32_le(&meta_bytes[meta0 + 8..meta0 + 12]);
             let vc0 = read_u32_le(&meta_bytes[meta0 + 12..meta0 + 16]);
             let ic0 = read_u32_le(&meta_bytes[meta0 + 16..meta0 + 20]);
 
-            let tess1 = read_u32_le(&meta_bytes[meta1 + 0..meta1 + 4]);
+            let tess1 = read_u32_le(&meta_bytes[meta1..meta1 + 4]);
             let vb1 = read_u32_le(&meta_bytes[meta1 + 4..meta1 + 8]);
             let ib1 = read_u32_le(&meta_bytes[meta1 + 8..meta1 + 12]);
             let vc1 = read_u32_le(&meta_bytes[meta1 + 12..meta1 + 16]);
