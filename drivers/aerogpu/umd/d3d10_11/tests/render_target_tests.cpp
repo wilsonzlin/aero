@@ -5,11 +5,12 @@
 
 #include "aerogpu_cmd.h"
 #include "aerogpu_d3d10_11_umd.h"
+#include "aerogpu_d3d10_11_internal.h"
 
 namespace {
 
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
-constexpr uint32_t kD3D11BindRenderTarget = 0x20;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm;
+using aerogpu::d3d10_11::kD3D11BindRenderTarget;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {

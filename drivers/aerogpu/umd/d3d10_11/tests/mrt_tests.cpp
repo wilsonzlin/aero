@@ -6,17 +6,16 @@
 #include <vector>
 
 #include "aerogpu_d3d10_11_umd.h"
+#include "aerogpu_d3d10_11_internal.h"
 #include "aerogpu_cmd.h"
 
 namespace {
 
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
-constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45; // DXGI_FORMAT_D24_UNORM_S8_UINT
-
-// D3D11_BIND_* subset (numeric values from d3d11.h).
-constexpr uint32_t kD3D11BindShaderResource = 0x8;
-constexpr uint32_t kD3D11BindRenderTarget = 0x20;
-constexpr uint32_t kD3D11BindDepthStencil = 0x40;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatD24UnormS8Uint;
+using aerogpu::d3d10_11::kD3D11BindShaderResource;
+using aerogpu::d3d10_11::kD3D11BindRenderTarget;
+using aerogpu::d3d10_11::kD3D11BindDepthStencil;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
