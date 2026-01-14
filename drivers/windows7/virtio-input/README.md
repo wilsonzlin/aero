@@ -500,6 +500,8 @@ Then reboot (or disable/enable the device). With the included `hidtest.exe`, you
 - `hidtest.exe --keyboard --led-spam 10000`
 - `hidtest.exe --keyboard --counters` (watch `LedWritesRequested` vs `LedWritesSubmitted`/`StatusQSubmits`, `StatusQCompletions`, and `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)
 
+Note: `LedWritesDropped` can also increase when LED output is disabled (`StatusQActive=0`, e.g. the device does not advertise `EV_LED` in `EV_BITS(types)`).
+
 By default, `--led-spam` alternates the LED output report between `0` and `0x1F` (all 5 defined HID boot keyboard LED bits).
 To spam a different “on” pattern, combine with `--led 0xMASK` (or `--led-hidd` / `--led-ioctl-set-output`).
 

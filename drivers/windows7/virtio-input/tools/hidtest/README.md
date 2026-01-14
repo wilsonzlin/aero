@@ -400,6 +400,7 @@ Watch:
 - `StatusQCompletions` to see how many submitted statusq buffers have completed. (`StatusQSubmits - StatusQCompletions` is the rough outstanding count.)
 - `StatusQFull` to see how often the statusq hit backpressure.
 - With `StatusQDropOnFull=1`, `VirtioStatusDrops` (and `LedWritesDropped`) should increase when the queue is full.
+- If `--state` reports `StatusQActive=0` (e.g. the device does not advertise `EV_LED`), then `LedWritesSubmitted` should remain 0 and `LedWritesDropped` will count the LED writes that were ignored.
 
 Dump the raw HID report descriptor bytes:
 

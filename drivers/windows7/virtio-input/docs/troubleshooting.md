@@ -233,6 +233,7 @@ Watch:
 - `StatusQCompletions` — how many submitted statusq buffers have completed. (`StatusQSubmits - StatusQCompletions` is the rough outstanding count.)
 - `StatusQFull` — how often the statusq hit backpressure.
 - With `StatusQDropOnFull=1`, `VirtioStatusDrops` / `LedWritesDropped` should increase when the queue is full.
+- Note: `LedWritesDropped` can also increase when LED output is disabled (`StatusQActive=0`, e.g. the device does not advertise `EV_LED` in `EV_BITS(types)`).
 
 ## No input events (likely still using PS/2)
 
