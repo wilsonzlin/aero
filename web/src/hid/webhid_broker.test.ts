@@ -2249,6 +2249,35 @@ describe("hid/WebHidBroker", () => {
     expect(device.sendReport).toHaveBeenCalledTimes(1);
   });
 
+  it("drops pending per-device sends when the manager reports a device detached", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(2) });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+    // Simulate a physical disconnect / manager-driven detach.
+    await manager.detachDevice(device as unknown as HIDDevice);
+    // The broker reacts to manager detaches asynchronously.
+    await new Promise((r) => setTimeout(r, 0));
+
+    first.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The queued report must be dropped and never executed after the device is detached.
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+  });
+
   it("handles hid.getFeatureReport requests from the worker with ordered request processing", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
