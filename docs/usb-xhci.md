@@ -63,8 +63,8 @@ The intended xHCI MVP covers:
    - Guest RAM owns rings/contexts/buffers; device snapshot captures guest-visible regs + controller
      bookkeeping required for forward progress.
 
-SuperSpeed, isochronous transfers, MSI-X, streams, and other advanced features remain out of scope
-for the initial xHCI MVP.
+SuperSpeed, isochronous transfers, streams, and other advanced features remain out of scope for the
+initial xHCI MVP.
 
 ## PCI identity and wiring
 
@@ -140,8 +140,9 @@ Notes:
   implements only a subset of the architectural register set.
 - Interrupt delivery is **platform-dependent**:
   - Web runtime: INTx only.
-  - Native integrations may choose INTx or MSI (the native PCI wrapper exposes an MSI capability),
-    but MSI-X is not implemented yet.
+  - Native integrations may choose INTx, MSI, or MSI-X. The canonical PCI profile exposes both MSI
+    and a minimal single-vector MSI-X capability (table/PBA in BAR0), and the native PCI wrapper can
+    deliver interrupts via MSI/MSI-X when enabled.
 - Web runtime wiring:
   - Guest-visible PCI wrapper: `web/src/io/devices/xhci.ts` (`XhciPciDevice`).
   - Worker wiring: `web/src/workers/io_xhci_init.ts` (`tryInitXhciDevice`). Prefers registering at
@@ -374,7 +375,8 @@ xHCI is a large spec. The MVP intentionally leaves out many features that guests
   executed).
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
-- **MSI-X** interrupt delivery. (MSI support is platform-dependent; the web runtime uses INTx only today.)
+- **MSI/MSI-X in the web runtime**: the TS PCI wrapper currently uses INTx only (no MSI/MSI-X
+  capabilities exposed to the guest). Native wrappers can deliver MSI/MSI-X when configured.
 - **Bandwidth scheduling** / periodic scheduling details beyond “enough to exercise basic interrupt polling”.
 - **Streams** (bulk streams), TRB chaining corner cases, and advanced endpoint state transitions.
 - **Multiple interrupters**, interrupt moderation, and more complex event-ring configurations.
