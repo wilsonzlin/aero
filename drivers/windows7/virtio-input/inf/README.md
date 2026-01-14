@@ -27,7 +27,9 @@ aero_virtio_tablet.cat
   - It is allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`)
     to add an opt-in strict revision-gated generic fallback HWID (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`.
   - From the first section header (`[Version]`) onward, it is expected to remain byte-for-byte identical to
-    `aero_virtio_input.inf` outside the models sections (only the leading banner/comments may differ; see `..\scripts\check-inf-alias.py`).
+    `aero_virtio_input.inf` outside the models sections (only the leading banner/comments may differ; see `..\scripts\check-inf-alias.py`;
+    CI: `scripts/ci/check-windows7-virtio-contract-consistency.py`).
+  - Enabling the alias **does** change HWID matching behavior (it enables generic fallback binding).
 - The canonical keyboard/mouse INF (`aero_virtio_input.inf`) is intentionally **SUBSYS-only** (`SUBSYS_0010` / `SUBSYS_0011`)
   to keep keyboard/mouse vs tablet binding deterministic. If you need the strict generic fallback binding
   (`PCI\VEN_1AF4&DEV_1052&REV_01`), enable the legacy alias INF.
