@@ -59,7 +59,13 @@ export class OpfsRawDisk implements AsyncSectorDisk {
       } else {
         const current = (await file.getFile()).size;
         if (current === 0 && opts.sizeBytes > 0) {
-          const writable = await file.createWritable({ keepExistingData: false });
+          let writable: FileSystemWritableFileStream;
+          try {
+            writable = await file.createWritable({ keepExistingData: false });
+          } catch {
+            // Some implementations may not accept options; fall back to default.
+            writable = await file.createWritable();
+          }
           try {
             await writable.truncate(opts.sizeBytes);
             await writable.close();

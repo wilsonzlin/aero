@@ -78,7 +78,24 @@ export async function opfsCreateBlankDisk(
   dirPath?: string,
 ): Promise<{ sizeBytes: number; checksumCrc32: string | undefined }> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: true, dirPath });
-  const writable = await handle.createWritable({ keepExistingData: false });
+  let writable: FileSystemWritableFileStream;
+  let truncateFallback = false;
+  try {
+    writable = await handle.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await handle.createWritable();
+    truncateFallback = true;
+  }
+  if (truncateFallback) {
+    // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+    // unsupported. Ensure we truncate before resizing so old bytes cannot linger.
+    try {
+      await writable.truncate(0);
+    } catch {
+      // ignore
+    }
+  }
   report(onProgress, { phase: "create", processedBytes: 0, totalBytes: sizeBytes });
   try {
     await writable.truncate(sizeBytes);
@@ -122,7 +139,24 @@ export async function opfsImportFile(
   dirPath?: string,
 ): Promise<{ sizeBytes: number; checksumCrc32: string | undefined }> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: true, dirPath });
-  const writable = await handle.createWritable({ keepExistingData: false });
+  let writable: FileSystemWritableFileStream;
+  let truncateFallback = false;
+  try {
+    writable = await handle.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await handle.createWritable();
+    truncateFallback = true;
+  }
+  if (truncateFallback) {
+    // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+    // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+    try {
+      await writable.truncate(0);
+    } catch {
+      // ignore
+    }
+  }
   const reader = file.stream().getReader();
 
   const shouldChecksum = file.size <= MAX_IMPORT_CHECKSUM_BYTES;

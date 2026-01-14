@@ -371,7 +371,24 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
     if (!this.dirty) return;
     const base = await this.getOrCreateBaseDir();
     const handle = await base.getFileHandle("index.json", { create: true });
-    const writable = await handle.createWritable({ keepExistingData: false });
+    let writable: FileSystemWritableFileStream;
+    let truncateFallback = false;
+    try {
+      writable = await handle.createWritable({ keepExistingData: false });
+    } catch {
+      // Some implementations may not accept options; fall back to default.
+      writable = await handle.createWritable();
+      truncateFallback = true;
+    }
+    if (truncateFallback) {
+      // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+      // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+      try {
+        await writable.truncate(0);
+      } catch {
+        // ignore
+      }
+    }
     try {
       await writable.write(JSON.stringify(this.index, null, 2));
       await writable.close();
@@ -693,7 +710,24 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           return;
         }
 
-        const writable = await handle.createWritable({ keepExistingData: false });
+        let writable: FileSystemWritableFileStream;
+        let truncateFallback = false;
+        try {
+          writable = await handle.createWritable({ keepExistingData: false });
+        } catch {
+          // Some implementations may not accept options; fall back to default.
+          writable = await handle.createWritable();
+          truncateFallback = true;
+        }
+        if (truncateFallback) {
+          // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+          // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+          try {
+            await writable.truncate(0);
+          } catch {
+            // ignore
+          }
+        }
         try {
           await writable.write(bytes);
           await writable.close();

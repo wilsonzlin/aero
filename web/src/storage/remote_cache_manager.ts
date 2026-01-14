@@ -358,13 +358,36 @@ export class RemoteCacheManager {
   async writeMeta(cacheKey: string, meta: RemoteCacheMetaV1): Promise<void> {
     const dir = await this.getCacheDir(cacheKey, true);
     const handle = await dir.getFileHandle(META_FILE_NAME, { create: true });
-    const writable = await handle.createWritable({ keepExistingData: false });
+    let writable: RemoteCacheWritableFileStream;
+    let truncateFallback = false;
+    try {
+      writable = await handle.createWritable({ keepExistingData: false });
+    } catch {
+      // Some implementations may not accept options; fall back to default.
+      writable = await handle.createWritable();
+      truncateFallback = true;
+    }
+    if (truncateFallback) {
+      // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+      // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+      try {
+        const maybeTruncate = (writable as unknown as { truncate?: unknown }).truncate;
+        if (typeof maybeTruncate === "function") {
+          await (maybeTruncate as (size: number) => Promise<void>).call(writable, 0);
+        }
+      } catch {
+        // ignore
+      }
+    }
     try {
       await writable.write(JSON.stringify(meta, null, 2));
       await writable.close();
     } catch (err) {
       try {
-        await writable.abort?.();
+        const abort = (writable as unknown as { abort?: unknown }).abort;
+        if (typeof abort === "function") {
+          await (abort as (reason?: unknown) => Promise<void>).call(writable, err);
+        }
       } catch {
         // ignore abort failures
       }

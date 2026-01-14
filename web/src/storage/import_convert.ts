@@ -114,7 +114,24 @@ export async function importConvertToOpfs(
   if (format === "iso") {
     const outName = `${baseName}.iso`;
     const fileHandle = await destDir.getFileHandle(outName, { create: true });
-    const writable = await fileHandle.createWritable({ keepExistingData: false });
+    let writable: FileSystemWritableFileStream;
+    let truncateFallback = false;
+    try {
+      writable = await fileHandle.createWritable({ keepExistingData: false });
+    } catch {
+      // Some implementations may not accept options; fall back to default.
+      writable = await fileHandle.createWritable();
+      truncateFallback = true;
+    }
+    if (truncateFallback) {
+      // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+      // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+      try {
+        await writable.truncate(0);
+      } catch {
+        // ignore
+      }
+    }
     let crc32: number;
     try {
       ({ crc32 } = await copySequentialCrc32(src, writable, options.signal, options.onProgress));
@@ -270,7 +287,24 @@ async function writeManifest(
   manifest: ImportManifest,
 ): Promise<void> {
   const fh = await dir.getFileHandle(`${baseName}.manifest.json`, { create: true });
-  const w = await fh.createWritable({ keepExistingData: false });
+  let w: FileSystemWritableFileStream;
+  let truncateFallback = false;
+  try {
+    w = await fh.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    w = await fh.createWritable();
+    truncateFallback = true;
+  }
+  if (truncateFallback) {
+    // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+    // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+    try {
+      await w.truncate(0);
+    } catch {
+      // ignore
+    }
+  }
   try {
     await w.write(JSON.stringify(manifest, null, 2));
     await w.close();

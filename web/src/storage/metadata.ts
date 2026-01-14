@@ -434,7 +434,24 @@ export async function opfsReadState(): Promise<DiskManagerState> {
 export async function opfsWriteState(state: DiskManagerState): Promise<void> {
   const disksDir = await opfsGetDisksDir();
   const fileHandle = await disksDir.getFileHandle(OPFS_METADATA_FILE, { create: true });
-  const writable = await fileHandle.createWritable({ keepExistingData: false });
+  let writable: FileSystemWritableFileStream;
+  let truncateFallback = false;
+  try {
+    writable = await fileHandle.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await fileHandle.createWritable();
+    truncateFallback = true;
+  }
+  if (truncateFallback) {
+    // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+    // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+    try {
+      await writable.truncate(0);
+    } catch {
+      // ignore
+    }
+  }
   try {
     await writable.write(JSON.stringify(state, null, 2));
     await writable.close();

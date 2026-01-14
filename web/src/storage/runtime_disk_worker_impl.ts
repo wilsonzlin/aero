@@ -262,7 +262,24 @@ function opfsRemoteRangeDiskMetadataStore(metaFileName: string): RemoteRangeDisk
     },
     async write(_cacheId: string, meta: any) {
       const handle = await opfsGetDiskFileHandle(metaFileName, { create: true });
-      const writable = await handle.createWritable({ keepExistingData: false });
+      let writable: FileSystemWritableFileStream;
+      let truncateFallback = false;
+      try {
+        writable = await handle.createWritable({ keepExistingData: false });
+      } catch {
+        // Some implementations may not accept options; fall back to default.
+        writable = await handle.createWritable();
+        truncateFallback = true;
+      }
+      if (truncateFallback) {
+        // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+        // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+        try {
+          await writable.truncate(0);
+        } catch {
+          // ignore
+        }
+      }
       try {
         await writable.write(JSON.stringify(meta, null, 2));
         await writable.close();
@@ -307,7 +324,24 @@ async function readCacheBinding(fileName: string): Promise<RemoteCacheBinding | 
 
 async function writeCacheBinding(fileName: string, binding: RemoteCacheBinding): Promise<void> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: true });
-  const writable = await handle.createWritable({ keepExistingData: false });
+  let writable: FileSystemWritableFileStream;
+  let truncateFallback = false;
+  try {
+    writable = await handle.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await handle.createWritable();
+    truncateFallback = true;
+  }
+  if (truncateFallback) {
+    // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+    // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+    try {
+      await writable.truncate(0);
+    } catch {
+      // ignore
+    }
+  }
   try {
     await writable.write(JSON.stringify(binding, null, 2));
     await writable.close();
