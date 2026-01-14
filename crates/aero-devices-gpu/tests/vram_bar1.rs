@@ -1,4 +1,5 @@
-use aero_devices_gpu::{AeroGpuPciDevice, LEGACY_VGA_PADDR_BASE};
+use aero_devices::pci::profile::AEROGPU_VRAM_SIZE;
+use aero_devices_gpu::{AeroGpuPciDevice, LEGACY_VGA_PADDR_BASE, VBE_LFB_OFFSET};
 use memory::MmioHandler as _;
 
 #[test]
@@ -21,4 +22,26 @@ fn legacy_vga_alias_maps_text_buffer_to_expected_offset() {
     let off = AeroGpuPciDevice::legacy_vga_paddr_to_vram_offset(0xB8000).unwrap();
     assert_eq!(off, 0xB8000 - LEGACY_VGA_PADDR_BASE);
     assert_eq!(off, 0x18_000);
+}
+
+#[test]
+fn vbe_lfb_alias_maps_lfb_base_to_expected_vram_offset() {
+    let bar1_base = 0x4000_0000u64;
+    let paddr = bar1_base + VBE_LFB_OFFSET;
+    let off = AeroGpuPciDevice::vbe_lfb_paddr_to_vram_offset(bar1_base, paddr).unwrap();
+    assert_eq!(off, VBE_LFB_OFFSET);
+}
+
+#[test]
+fn vbe_lfb_alias_rejects_paddrs_before_lfb_base() {
+    let bar1_base = 0x4000_0000u64;
+    let paddr = bar1_base + VBE_LFB_OFFSET - 1;
+    assert!(AeroGpuPciDevice::vbe_lfb_paddr_to_vram_offset(bar1_base, paddr).is_none());
+}
+
+#[test]
+fn vbe_lfb_alias_rejects_paddrs_past_bar1_end() {
+    let bar1_base = 0x4000_0000u64;
+    let paddr = bar1_base + AEROGPU_VRAM_SIZE;
+    assert!(AeroGpuPciDevice::vbe_lfb_paddr_to_vram_offset(bar1_base, paddr).is_none());
 }
