@@ -351,9 +351,11 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`
 - `crates/aero-d3d9/tests/sm3_wgsl_tex.rs`
+  - `wgsl_ps3_texldp_is_valid`
+  - `wgsl_ps3_texld_cube_is_valid`
+  - `wgsl_ps3_texkill_discard_is_valid`
   - `wgsl_ps3_texld_cube_sampler_emits_texture_cube`
   - `wgsl_ps3_texld_3d_sampler_emits_texture_3d`
-  - `wgsl_ps3_texld_1d_sampler_emits_texture_1d`
 
 **How to run (focused):**
 ```bash
