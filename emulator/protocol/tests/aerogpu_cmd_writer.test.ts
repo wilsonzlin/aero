@@ -40,6 +40,7 @@ import {
   AerogpuShaderStageEx,
   alignUp,
   decodeCmdBindShadersPayloadFromPacket,
+  decodeCmdCreateShaderDxbcPayloadFromPacket,
   decodeCmdDispatchPayload,
   decodeCmdSetConstantBuffersPayload,
   decodeCmdSetSamplersPayload,
@@ -52,6 +53,7 @@ import {
   decodeStageEx,
   decodeCmdStreamHeader,
   encodeStageEx,
+  iterCmdStream,
   resolveShaderStageWithEx,
 } from "../aerogpu/aerogpu_cmd.ts";
 
@@ -1100,4 +1102,25 @@ test("decodeStageEx treats reserved0==0 as legacy compute (and decodes nonzero s
   assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
   cursor += 16;
   assert.equal(cursor, bytes.byteLength);
+});
+
+test("AerogpuCmdWriter.createShaderDxbcEx encodes (stage=COMPUTE, reserved0=stageEx) for HS/DS", () => {
+  const w = new AerogpuCmdWriter();
+  w.createShaderDxbcEx(1, AerogpuShaderStageEx.Hull, new Uint8Array([0xaa]));
+  w.createShaderDxbcEx(2, AerogpuShaderStageEx.Domain, new Uint8Array([0xbb, 0xcc]));
+
+  const packets = Array.from(iterCmdStream(w.finish()));
+  assert.equal(packets.length, 2);
+
+  const hs = decodeCmdCreateShaderDxbcPayloadFromPacket(packets[0]!);
+  assert.equal(hs.shaderHandle, 1);
+  assert.equal(hs.stage, AerogpuShaderStage.Compute);
+  assert.equal(hs.reserved0, AerogpuShaderStageEx.Hull);
+  assert.deepEqual(hs.dxbcBytes, new Uint8Array([0xaa]));
+
+  const ds = decodeCmdCreateShaderDxbcPayloadFromPacket(packets[1]!);
+  assert.equal(ds.shaderHandle, 2);
+  assert.equal(ds.stage, AerogpuShaderStage.Compute);
+  assert.equal(ds.reserved0, AerogpuShaderStageEx.Domain);
+  assert.deepEqual(ds.dxbcBytes, new Uint8Array([0xbb, 0xcc]));
 });
