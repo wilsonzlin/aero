@@ -198,6 +198,7 @@ fn index_devices(devices: &[DeviceEntry]) -> Result<BTreeMap<String, DeviceEntry
 
 fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
     let rev_re = regex::Regex::new(r"(?i)&REV_([0-9A-F]{2})").expect("static regex must compile");
+    let mut hwid_owners: BTreeMap<String, String> = BTreeMap::new();
     for (name, dev) in devices {
         let vendor = parse_hex_u16(&dev.pci_vendor_id)
             .with_context(|| format!("{name}: invalid pci_vendor_id"))?;
@@ -209,10 +210,24 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
         }
         let expected_substr = format!("VEN_{vendor:04X}&DEV_{did:04X}");
         let mut has_canonical_vendor_device = false;
+        let mut seen_hwids = BTreeSet::<String>::new();
         for pat in &dev.hardware_id_patterns {
             validate_hwid_literal(pat)
                 .with_context(|| format!("{name}: invalid hardware_id_patterns entry"))?;
-            if pat.to_ascii_uppercase().contains(&expected_substr) {
+            let upper = pat.to_ascii_uppercase();
+            if !seen_hwids.insert(upper.clone()) {
+                bail!(
+                    "{name}: hardware_id_patterns contains a duplicate entry (case-insensitive): {pat:?}"
+                );
+            }
+            if let Some(other) = hwid_owners.get(&upper) {
+                bail!(
+                    "{name}: hardware_id_patterns entry {pat:?} is duplicated in contract device {other:?} (HWIDs must be globally unique)"
+                );
+            }
+            hwid_owners.insert(upper.clone(), name.clone());
+
+            if upper.contains(&expected_substr) {
                 has_canonical_vendor_device = true;
             }
         }
@@ -2891,6 +2906,38 @@ AddService = TestSvc, 0x00000002, Service_Inst
             r"PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
         ]);
         validate_contract_entries(&devices).unwrap();
+    }
+
+    #[test]
+    fn contract_entry_validation_rejects_duplicate_hardware_id_patterns_within_device_case_insensitive(
+    ) {
+        let mut devices = minimal_devices_for_contract_entry_tests(&[
+            r"PCI\VEN_A3A0&DEV_0001",
+            r"PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
+        ]);
+        let virtio_net = devices.get_mut("virtio-net").unwrap();
+        virtio_net
+            .hardware_id_patterns
+            .push("pci\\ven_1af4&dev_1041&rev_01".to_string());
+        let err = validate_contract_entries(&devices).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("hardware_id_patterns contains a duplicate entry"));
+    }
+
+    #[test]
+    fn contract_entry_validation_rejects_duplicate_hardware_id_patterns_across_devices() {
+        let mut devices = minimal_devices_for_contract_entry_tests(&[
+            r"PCI\VEN_A3A0&DEV_0001",
+            r"PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0",
+        ]);
+        let alias = virtio_entry("virtio-net-alias", 1);
+        devices.insert(alias.device.clone(), alias);
+        let err = validate_contract_entries(&devices).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("duplicated in contract device"));
+        assert!(msg.contains("virtio-net-alias"));
+        assert!(msg.contains("virtio-net"));
     }
 
     #[test]
