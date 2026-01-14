@@ -47,6 +47,18 @@ pub const VIRTIO_SND_PCM_RATE_MASK_48000: u64 = 1u64 << VIRTIO_SND_PCM_RATE_4800
 pub const PLAYBACK_STREAM_ID: u32 = 0;
 pub const CAPTURE_STREAM_ID: u32 = 1;
 
+// virtio-snd JACK IDs exposed by the Aero device model / Win7 topology mapping.
+pub const JACK_ID_SPEAKER: u32 = 0;
+pub const JACK_ID_MICROPHONE: u32 = 1;
+pub const JACK_ID_COUNT: u32 = 2;
+
+// virtio-snd eventq messages (virtio-snd specification).
+pub const VIRTIO_SND_EVT_JACK_CONNECTED: u32 = 0x1000;
+pub const VIRTIO_SND_EVT_JACK_DISCONNECTED: u32 = 0x1001;
+pub const VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED: u32 = 0x1100;
+pub const VIRTIO_SND_EVT_PCM_XRUN: u32 = 0x1101;
+pub const VIRTIO_SND_EVT_CTL_NOTIFY: u32 = 0x1200;
+
 /// Sample rate used by the (minimal) virtio-snd guest contract implemented by this device.
 ///
 /// The TX and RX PCM payloads are fixed at 48kHz S16_LE in the guest-facing ABI.
@@ -279,6 +291,27 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
 
     pub fn capture_telemetry(&self) -> CaptureTelemetry {
         self.capture_telemetry
+    }
+
+    /// Queue a raw virtio-snd `eventq` message (`struct virtio_snd_event`).
+    ///
+    /// The message is delivered best-effort: it will only be written once the guest posts a writable
+    /// event buffer chain on `eventq` and the transport polls queues.
+    pub fn queue_event(&mut self, event_type: u32, data: u32) {
+        let mut evt = [0u8; 8];
+        evt[0..4].copy_from_slice(&event_type.to_le_bytes());
+        evt[4..8].copy_from_slice(&data.to_le_bytes());
+        self.pending_events.push_back(evt.to_vec());
+    }
+
+    /// Convenience helper: queue a JACK connected/disconnected event.
+    pub fn queue_jack_event(&mut self, jack_id: u32, connected: bool) {
+        let event_type = if connected {
+            VIRTIO_SND_EVT_JACK_CONNECTED
+        } else {
+            VIRTIO_SND_EVT_JACK_DISCONNECTED
+        };
+        self.queue_event(event_type, jack_id);
     }
 
     /// Snapshot the virtio-snd internal stream state into an `aero-io-snapshot` schema.

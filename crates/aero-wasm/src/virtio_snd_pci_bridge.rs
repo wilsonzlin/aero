@@ -31,7 +31,7 @@ use aero_platform::audio::mic_bridge::MicBridge;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 use aero_platform::interrupts::msi::MsiMessage;
 
-use aero_virtio::devices::snd::{VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
+use aero_virtio::devices::snd::{JACK_ID_MICROPHONE, VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 
@@ -687,10 +687,16 @@ impl VirtioSndPciBridge {
         &mut self,
         ring_sab: Option<SharedArrayBuffer>,
     ) -> Result<(), JsValue> {
+        let snd = self.snd_mut();
         match ring_sab {
-            Some(sab) => self.snd_mut().capture_source_mut().attach(sab),
+            Some(sab) => {
+                snd.capture_source_mut().attach(sab)?;
+                snd.queue_jack_event(JACK_ID_MICROPHONE, true);
+                Ok(())
+            }
             None => {
-                self.snd_mut().capture_source_mut().detach();
+                snd.capture_source_mut().detach();
+                snd.queue_jack_event(JACK_ID_MICROPHONE, false);
                 Ok(())
             }
         }
