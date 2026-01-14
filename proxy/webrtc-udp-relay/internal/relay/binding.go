@@ -26,7 +26,7 @@ func makeRemoteKey(addr *net.UDPAddr) (remoteKey, bool) {
 	return remoteKey(ap), true
 }
 
-type UdpPortBinding struct {
+type udpPortBinding struct {
 	guestPort uint16
 	conn4     *net.UDPConn
 	conn6     *net.UDPConn
@@ -48,7 +48,7 @@ type UdpPortBinding struct {
 	once   sync.Once
 }
 
-func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue, clientSupportsV2 *atomic.Bool, session *Session, m *metrics.Metrics) (*UdpPortBinding, error) {
+func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue, clientSupportsV2 *atomic.Bool, session *Session, m *metrics.Metrics) (*udpPortBinding, error) {
 	conn4, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue
 		conn6 = nil
 	}
 
-	b := &UdpPortBinding{
+	b := &udpPortBinding{
 		guestPort:        guestPort,
 		conn4:            conn4,
 		conn6:            conn6,
@@ -77,15 +77,15 @@ func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue
 	return b, nil
 }
 
-func (b *UdpPortBinding) touch(now time.Time) {
+func (b *udpPortBinding) touch(now time.Time) {
 	b.lastUsed.Store(now.UnixNano())
 }
 
-func (b *UdpPortBinding) LastUsed() time.Time {
+func (b *udpPortBinding) LastUsed() time.Time {
 	return time.Unix(0, b.lastUsed.Load())
 }
 
-func (b *UdpPortBinding) Close() {
+func (b *udpPortBinding) Close() {
 	b.once.Do(func() {
 		b.closed.Store(true)
 		_ = b.conn4.Close()
@@ -95,7 +95,7 @@ func (b *UdpPortBinding) Close() {
 	})
 }
 
-func (b *UdpPortBinding) AllowRemote(remote *net.UDPAddr, now time.Time) {
+func (b *udpPortBinding) AllowRemote(remote *net.UDPAddr, now time.Time) {
 	if b.cfg.InboundFilterMode == InboundFilterAny {
 		return
 	}
@@ -146,7 +146,7 @@ func remoteKeyLess(a, b remoteKey) bool {
 	return apa.Port() < apb.Port()
 }
 
-func (b *UdpPortBinding) evictOldestAllowedLocked(n int) int {
+func (b *udpPortBinding) evictOldestAllowedLocked(n int) int {
 	if n <= 0 {
 		return 0
 	}
@@ -172,7 +172,7 @@ func (b *UdpPortBinding) evictOldestAllowedLocked(n int) int {
 	return evicted
 }
 
-func (b *UdpPortBinding) pruneAllowedLocked(now time.Time) {
+func (b *udpPortBinding) pruneAllowedLocked(now time.Time) {
 	if b.cfg.RemoteAllowlistIdleTimeout <= 0 {
 		return
 	}
@@ -191,7 +191,7 @@ func (b *UdpPortBinding) pruneAllowedLocked(now time.Time) {
 	b.lastPrune = now
 }
 
-func (b *UdpPortBinding) remoteAllowed(remote *net.UDPAddr, now time.Time) bool {
+func (b *udpPortBinding) remoteAllowed(remote *net.UDPAddr, now time.Time) bool {
 	if b.cfg.InboundFilterMode == InboundFilterAny {
 		return true
 	}
@@ -214,7 +214,7 @@ func (b *UdpPortBinding) remoteAllowed(remote *net.UDPAddr, now time.Time) bool 
 	return true
 }
 
-func (b *UdpPortBinding) readLoop() {
+func (b *udpPortBinding) readLoop() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -231,7 +231,7 @@ func (b *UdpPortBinding) readLoop() {
 	wg.Wait()
 }
 
-func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
+func (b *udpPortBinding) readLoopConn(conn *net.UDPConn) {
 	var metricsSink *metrics.Metrics
 	if b.session != nil {
 		metricsSink = b.session.metrics
@@ -331,7 +331,7 @@ func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
 	}
 }
 
-func (b *UdpPortBinding) WriteTo(remote *net.UDPAddr, payload []byte) error {
+func (b *udpPortBinding) WriteTo(remote *net.UDPAddr, payload []byte) error {
 	if remote == nil {
 		return errors.New("udp binding: remote is nil")
 	}

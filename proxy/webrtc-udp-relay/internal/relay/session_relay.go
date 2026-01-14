@@ -43,7 +43,7 @@ type SessionRelay struct {
 	queue *sendQueue
 
 	mu       sync.Mutex
-	bindings map[uint16]*UdpPortBinding
+	bindings map[uint16]*udpPortBinding
 
 	wg sync.WaitGroup
 
@@ -75,7 +75,7 @@ func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy,
 		ctx:      ctx,
 		cancel:   cancel,
 		queue:    newSendQueue(cfg.DataChannelSendQueueBytes),
-		bindings: make(map[uint16]*UdpPortBinding),
+		bindings: make(map[uint16]*udpPortBinding),
 	}
 
 	s.wg.Add(1)
@@ -115,12 +115,12 @@ func (s *SessionRelay) Close() {
 		s.cancel()
 		s.queue.Close()
 
-		var toClose []*UdpPortBinding
+		var toClose []*udpPortBinding
 		s.mu.Lock()
 		for _, b := range s.bindings {
 			toClose = append(toClose, b)
 		}
-		s.bindings = make(map[uint16]*UdpPortBinding)
+		s.bindings = make(map[uint16]*udpPortBinding)
 		s.mu.Unlock()
 		for _, b := range toClose {
 			b.Close()
@@ -159,7 +159,7 @@ func (s *SessionRelay) cleanupLoop() {
 
 func (s *SessionRelay) cleanupIdle() {
 	now := time.Now()
-	var toClose []*UdpPortBinding
+	var toClose []*udpPortBinding
 
 	s.mu.Lock()
 	for port, b := range s.bindings {
@@ -175,11 +175,11 @@ func (s *SessionRelay) cleanupIdle() {
 	}
 }
 
-func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, error) {
+func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*udpPortBinding, error) {
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
-		return nil, ErrSessionClosed
+		return nil, errSessionClosed
 	}
 	if b, ok := s.bindings[guestPort]; ok {
 		s.mu.Unlock()
@@ -187,7 +187,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 		return b, nil
 	}
 
-	var evicted *UdpPortBinding
+	var evicted *udpPortBinding
 	if len(s.bindings) >= s.cfg.MaxUDPBindingsPerSession {
 		evicted = s.evictOneLocked()
 	}
@@ -196,7 +196,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 		if evicted != nil {
 			evicted.Close()
 		}
-		return nil, ErrTooManyBindings
+		return nil, errTooManyBindings
 	}
 
 	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue, &s.clientSupportsV2, s.session, s.metrics)
@@ -221,9 +221,9 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 	return b, nil
 }
 
-func (s *SessionRelay) evictOneLocked() *UdpPortBinding {
+func (s *SessionRelay) evictOneLocked() *udpPortBinding {
 	var oldestPort uint16
-	var oldest *UdpPortBinding
+	var oldest *udpPortBinding
 	var oldestTime time.Time
 
 	for port, b := range s.bindings {
@@ -310,7 +310,7 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 	if err != nil {
 		if metricsSink != nil {
 			metricsSink.Inc(metrics.WebRTCUDPDropped)
-			if errors.Is(err, ErrTooManyBindings) {
+			if errors.Is(err, errTooManyBindings) {
 				metricsSink.Inc(metrics.WebRTCUDPDroppedTooManyBindings)
 			}
 		}

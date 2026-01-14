@@ -10,6 +10,6 @@ var (
 	// This is primarily used for AUTH_MODE=jwt, where the quota key is the JWT
 	// `sid` claim.
 	ErrSessionAlreadyActive = errors.New("session already active")
-	ErrSessionClosed        = errors.New("session closed")
-	ErrTooManyBindings      = errors.New("too many udp bindings")
+	errSessionClosed        = errors.New("session closed")
+	errTooManyBindings      = errors.New("too many udp bindings")
 )
