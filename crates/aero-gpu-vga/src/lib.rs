@@ -2854,6 +2854,10 @@ mod tests {
     #[test]
     fn vbe_banked_window_and_lfb_target_same_memory() {
         let mut dev = VgaDevice::new();
+        // Use a non-default LFB base to ensure the banked↔LFB aliasing logic does not rely on the
+        // historical hard-coded `SVGA_LFB_BASE`.
+        let lfb_base: u32 = 0xD000_0000;
+        dev.set_svga_lfb_base(lfb_base);
 
         // 64x64x32bpp, LFB enabled.
         dev.port_write(0x01CE, 2, 0x0001);
@@ -2867,13 +2871,13 @@ mod tests {
 
         // Write through the banked aperture (A0000) and observe it via the LFB.
         dev.mem_write_u8(0xA0000, 0x5A);
-        assert_eq!(dev.mem_read_u8(SVGA_LFB_BASE), 0x5A);
+        assert_eq!(dev.mem_read_u8(lfb_base), 0x5A);
 
         // Switch to bank 1 and ensure it aliases `LFB + 64KiB`.
         dev.port_write(0x01CE, 2, 0x0005);
         dev.port_write(0x01CF, 2, 1);
         dev.mem_write_u8(0xA0000, 0xA5);
-        assert_eq!(dev.mem_read_u8(SVGA_LFB_BASE + 64 * 1024), 0xA5);
+        assert_eq!(dev.mem_read_u8(lfb_base + 64 * 1024), 0xA5);
     }
 
     #[test]
