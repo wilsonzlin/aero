@@ -22,6 +22,39 @@ static void host_queue_complete_last_ok_on_kick(_Inout_ VIRTIOSND_HOST_QUEUE* Q)
     VirtioSndHostQueuePushUsed(Q, Q->LastCookie, Q->LastSg[1].len);
 }
 
+static VIRTIO_SND_PCM_INFO g_pcm_info_playback;
+static VIRTIO_SND_PCM_INFO g_pcm_info_capture;
+
+static void host_queue_complete_last_pcm_info_on_kick(_Inout_ VIRTIOSND_HOST_QUEUE* Q)
+{
+    UCHAR* resp;
+    UINT32 code;
+    ULONG needed;
+
+    if (Q == NULL || Q->LastCookie == NULL || Q->LastSgCount < 2) {
+        return;
+    }
+
+    TEST_ASSERT(Q->LastSg[0].addr != 0);
+    TEST_ASSERT(Q->LastSg[0].len >= sizeof(UINT32));
+
+    code = *(const UINT32*)(uintptr_t)Q->LastSg[0].addr;
+    TEST_ASSERT(code == VIRTIO_SND_R_PCM_INFO);
+
+    /* SG[1] is the device-writable response buffer and begins with virtio status. */
+    TEST_ASSERT(Q->LastSg[1].addr != 0);
+    needed = sizeof(UINT32) + (ULONG)sizeof(VIRTIO_SND_PCM_INFO) * 2u;
+    TEST_ASSERT(Q->LastSg[1].len >= needed);
+
+    resp = (UCHAR*)(uintptr_t)Q->LastSg[1].addr;
+    *(UINT32*)resp = VIRTIO_SND_S_OK;
+
+    RtlCopyMemory(resp + sizeof(UINT32), &g_pcm_info_playback, sizeof(g_pcm_info_playback));
+    RtlCopyMemory(resp + sizeof(UINT32) + sizeof(VIRTIO_SND_PCM_INFO), &g_pcm_info_capture, sizeof(g_pcm_info_capture));
+
+    VirtioSndHostQueuePushUsed(Q, Q->LastCookie, Q->LastSg[1].len);
+}
+
 static VIRTIOSND_CONTROL* g_reqidle_hook_ctrl = NULL;
 static KEVENT* g_reqidle_hook_event = NULL;
 
@@ -305,14 +338,158 @@ static void test_control_cancel_all_drains_used_entries_before_canceling_infligh
     VirtioSndCtrlUninit(&ctrl);
 }
 
+static void test_control_pcm_info_all_sets_caps_and_selected_format(void)
+{
+    VIRTIOSND_CONTROL ctrl;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    VIRTIO_SND_PCM_INFO playback;
+    VIRTIO_SND_PCM_INFO capture;
+    NTSTATUS status;
+
+    g_virtiosnd_test_current_irql = PASSIVE_LEVEL;
+    g_virtiosnd_test_ke_set_event_hook = NULL;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    VirtioSndCtrlInit(&ctrl, &dma, &q.Queue);
+
+    q.OnKick = host_queue_complete_last_pcm_info_on_kick;
+
+    RtlZeroMemory(&g_pcm_info_playback, sizeof(g_pcm_info_playback));
+    g_pcm_info_playback.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    g_pcm_info_playback.direction = VIRTIO_SND_D_OUTPUT;
+    g_pcm_info_playback.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    g_pcm_info_playback.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    g_pcm_info_playback.channels_min = 2;
+    g_pcm_info_playback.channels_max = 2;
+
+    RtlZeroMemory(&g_pcm_info_capture, sizeof(g_pcm_info_capture));
+    g_pcm_info_capture.stream_id = VIRTIO_SND_CAPTURE_STREAM_ID;
+    g_pcm_info_capture.direction = VIRTIO_SND_D_INPUT;
+    g_pcm_info_capture.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    g_pcm_info_capture.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    g_pcm_info_capture.channels_min = 1;
+    g_pcm_info_capture.channels_max = 1;
+
+    status = VirtioSndCtrlPcmInfoAll(&ctrl, &playback, &capture);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    TEST_ASSERT(InterlockedCompareExchange(&ctrl.CapsValid, 0, 0) != 0);
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Formats == g_pcm_info_playback.formats);
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Rates == g_pcm_info_playback.rates);
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMin == g_pcm_info_playback.channels_min);
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMax == g_pcm_info_playback.channels_max);
+
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Formats == g_pcm_info_capture.formats);
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Rates == g_pcm_info_capture.rates);
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMin == g_pcm_info_capture.channels_min);
+    TEST_ASSERT(ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMax == g_pcm_info_capture.channels_max);
+
+    TEST_ASSERT(ctrl.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Channels == 2);
+    TEST_ASSERT(ctrl.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Format == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(ctrl.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Rate == VIRTIO_SND_PCM_RATE_48000);
+
+    TEST_ASSERT(ctrl.SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Channels == 1);
+    TEST_ASSERT(ctrl.SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Format == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(ctrl.SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Rate == VIRTIO_SND_PCM_RATE_48000);
+
+    VirtioSndCtrlUninit(&ctrl);
+}
+
+static void test_control_pcm_info_all_rejects_missing_playback_baseline(void)
+{
+    VIRTIOSND_CONTROL ctrl;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    VIRTIO_SND_PCM_INFO playback;
+    VIRTIO_SND_PCM_INFO capture;
+    NTSTATUS status;
+
+    g_virtiosnd_test_current_irql = PASSIVE_LEVEL;
+    g_virtiosnd_test_ke_set_event_hook = NULL;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    VirtioSndCtrlInit(&ctrl, &dma, &q.Queue);
+
+    q.OnKick = host_queue_complete_last_pcm_info_on_kick;
+
+    RtlZeroMemory(&g_pcm_info_playback, sizeof(g_pcm_info_playback));
+    g_pcm_info_playback.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    g_pcm_info_playback.direction = VIRTIO_SND_D_OUTPUT;
+    g_pcm_info_playback.formats = VIRTIO_SND_PCM_FMT_MASK_S24;
+    g_pcm_info_playback.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    g_pcm_info_playback.channels_min = 2;
+    g_pcm_info_playback.channels_max = 2;
+
+    RtlZeroMemory(&g_pcm_info_capture, sizeof(g_pcm_info_capture));
+    g_pcm_info_capture.stream_id = VIRTIO_SND_CAPTURE_STREAM_ID;
+    g_pcm_info_capture.direction = VIRTIO_SND_D_INPUT;
+    g_pcm_info_capture.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    g_pcm_info_capture.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    g_pcm_info_capture.channels_min = 1;
+    g_pcm_info_capture.channels_max = 1;
+
+    status = VirtioSndCtrlPcmInfoAll(&ctrl, &playback, &capture);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+    TEST_ASSERT(InterlockedCompareExchange(&ctrl.CapsValid, 0, 0) == 0);
+
+    VirtioSndCtrlUninit(&ctrl);
+}
+
+static void test_control_pcm_info_all_rejects_missing_capture_baseline(void)
+{
+    VIRTIOSND_CONTROL ctrl;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_HOST_QUEUE q;
+    VIRTIO_SND_PCM_INFO playback;
+    VIRTIO_SND_PCM_INFO capture;
+    NTSTATUS status;
+
+    g_virtiosnd_test_current_irql = PASSIVE_LEVEL;
+    g_virtiosnd_test_ke_set_event_hook = NULL;
+
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndHostQueueInit(&q, 8);
+    VirtioSndCtrlInit(&ctrl, &dma, &q.Queue);
+
+    q.OnKick = host_queue_complete_last_pcm_info_on_kick;
+
+    RtlZeroMemory(&g_pcm_info_playback, sizeof(g_pcm_info_playback));
+    g_pcm_info_playback.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    g_pcm_info_playback.direction = VIRTIO_SND_D_OUTPUT;
+    g_pcm_info_playback.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    g_pcm_info_playback.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    g_pcm_info_playback.channels_min = 2;
+    g_pcm_info_playback.channels_max = 2;
+
+    RtlZeroMemory(&g_pcm_info_capture, sizeof(g_pcm_info_capture));
+    g_pcm_info_capture.stream_id = VIRTIO_SND_CAPTURE_STREAM_ID;
+    g_pcm_info_capture.direction = VIRTIO_SND_D_INPUT;
+    g_pcm_info_capture.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    g_pcm_info_capture.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    /* Device supports only stereo capture => contract-v1 baseline mono is missing. */
+    g_pcm_info_capture.channels_min = 2;
+    g_pcm_info_capture.channels_max = 2;
+
+    status = VirtioSndCtrlPcmInfoAll(&ctrl, &playback, &capture);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+    TEST_ASSERT(InterlockedCompareExchange(&ctrl.CapsValid, 0, 0) == 0);
+
+    VirtioSndCtrlUninit(&ctrl);
+}
+
 int main(void)
 {
     test_control_send_sync_success_path();
     test_control_send_sync_timeout_path();
     test_control_timeout_then_late_completion_runs_at_dpc_level();
     test_control_cancel_all_drains_used_entries_before_canceling_inflight();
+    test_control_pcm_info_all_sets_caps_and_selected_format();
+    test_control_pcm_info_all_rejects_missing_playback_baseline();
+    test_control_pcm_info_all_rejects_missing_capture_baseline();
 
     printf("virtiosnd_control_engine_tests: PASS\n");
     return 0;
 }
-

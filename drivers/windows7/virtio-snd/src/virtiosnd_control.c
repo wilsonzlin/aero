@@ -722,6 +722,8 @@ VirtioSndCtrlPcmInfoAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_IN
     NTSTATUS selStatus;
     VIRTIOSND_PCM_CONFIG playbackCfg;
     VIRTIOSND_PCM_CONFIG captureCfg;
+    ULONG chMin;
+    ULONG chMax;
 
     if (Ctrl == NULL || PlaybackInfo == NULL || CaptureInfo == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -736,6 +738,41 @@ VirtioSndCtrlPcmInfoAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_IN
     status = VirtioSndCtrlPcmInfoQuery(Ctrl, PlaybackInfo, CaptureInfo);
     if (!NT_SUCCESS(status)) {
         return status;
+    }
+
+    /*
+     * Contract v1 requires a baseline PCM capability for both streams:
+     * - playback: S16_LE @ 48kHz, stereo (2ch)
+     * - capture:  S16_LE @ 48kHz, mono (1ch)
+     *
+     * Even when optional multi-format negotiation is enabled, the device must
+     * advertise at least this baseline so the driver can preserve the expected
+     * default mix format and remain compatible with the Aero contract.
+     */
+    chMin = (PlaybackInfo->channels_min == 0) ? 1u : (ULONG)PlaybackInfo->channels_min;
+    chMax = (ULONG)PlaybackInfo->channels_max;
+    if ((PlaybackInfo->formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (PlaybackInfo->rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0 ||
+        chMax < chMin || 2u < chMin || 2u > chMax) {
+        VIRTIOSND_TRACE_ERROR(
+            "ctrl: PCM_INFO missing contract-v1 playback baseline (need S16+48kHz+2ch): formats=0x%I64x rates=0x%I64x ch=[%u,%u]\n",
+            PlaybackInfo->formats,
+            PlaybackInfo->rates,
+            PlaybackInfo->channels_min,
+            PlaybackInfo->channels_max);
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    chMin = (CaptureInfo->channels_min == 0) ? 1u : (ULONG)CaptureInfo->channels_min;
+    chMax = (ULONG)CaptureInfo->channels_max;
+    if ((CaptureInfo->formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (CaptureInfo->rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0 ||
+        chMax < chMin || 1u < chMin || 1u > chMax) {
+        VIRTIOSND_TRACE_ERROR(
+            "ctrl: PCM_INFO missing contract-v1 capture baseline (need S16+48kHz+1ch): formats=0x%I64x rates=0x%I64x ch=[%u,%u]\n",
+            CaptureInfo->formats,
+            CaptureInfo->rates,
+            CaptureInfo->channels_min,
+            CaptureInfo->channels_max);
+        return STATUS_NOT_SUPPORTED;
     }
 
     /*
