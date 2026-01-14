@@ -25,6 +25,9 @@ pub use snapshot::{SnapshotError, SnapshotOptions};
 
 const DIRTY_PAGE_SIZE: usize = 4096;
 
+#[cfg(test)]
+mod test_util;
+
 #[derive(Debug, Clone)]
 struct DirtyBitmap {
     bits: Vec<u64>,
@@ -103,13 +106,16 @@ impl DirtyRam {
         self.data.len()
     }
 
+    #[track_caller]
     fn read_raw(&self, addr: u64, buf: &mut [u8]) {
-        let start: usize = addr
-            .try_into()
-            .unwrap_or_else(|_| panic!("address out of range: 0x{addr:016x}"));
-        let end = start
-            .checked_add(buf.len())
-            .unwrap_or_else(|| panic!("address overflow: 0x{addr:016x}+0x{:x}", buf.len()));
+        let start: usize = match addr.try_into() {
+            Ok(start) => start,
+            Err(_) => panic!("address out of range: 0x{addr:016x}"),
+        };
+        let end = match start.checked_add(buf.len()) {
+            Some(end) => end,
+            None => panic!("address overflow: 0x{addr:016x}+0x{:x}", buf.len()),
+        };
         assert!(
             end <= self.data.len(),
             "raw read out of bounds: 0x{addr:016x}+0x{:x} (mem=0x{:x})",
@@ -119,13 +125,16 @@ impl DirtyRam {
         buf.copy_from_slice(&self.data[start..end]);
     }
 
+    #[track_caller]
     fn write_raw(&mut self, addr: u64, buf: &[u8]) {
-        let start: usize = addr
-            .try_into()
-            .unwrap_or_else(|_| panic!("address out of range: 0x{addr:016x}"));
-        let end = start
-            .checked_add(buf.len())
-            .unwrap_or_else(|| panic!("address overflow: 0x{addr:016x}+0x{:x}", buf.len()));
+        let start: usize = match addr.try_into() {
+            Ok(start) => start,
+            Err(_) => panic!("address out of range: 0x{addr:016x}"),
+        };
+        let end = match start.checked_add(buf.len()) {
+            Some(end) => end,
+            None => panic!("address overflow: 0x{addr:016x}+0x{:x}", buf.len()),
+        };
         assert!(
             end <= self.data.len(),
             "raw write out of bounds: 0x{addr:016x}+0x{:x} (mem=0x{:x})",
@@ -233,6 +242,26 @@ impl GuestMemory for SharedDirtyRam {
 
     fn write_from(&mut self, paddr: u64, src: &[u8]) -> GuestMemoryResult<()> {
         self.inner.borrow_mut().write_dirty(paddr, src)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DirtyRam;
+    use crate::test_util::capture_panic_location;
+
+    #[test]
+    fn dirty_ram_read_raw_panics_at_call_site_on_oob() {
+        let ram = DirtyRam::new(0);
+        let mut buf = [0u8; 1];
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            ram.read_raw(0, &mut buf);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
 
