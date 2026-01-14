@@ -1264,7 +1264,8 @@ By default the workflow runs QEMU with `memory_mb=2048` and `smp=2`. Override th
 runner has different resource constraints.
 
 If your guest image was provisioned with a non-default `--http-path`, override it via the workflow input `http_path`
-(the default matches the harness default `/aero-virtio-selftest`).
+(the default matches the harness default `/aero-virtio-selftest`). This must start with `/` and must not contain
+whitespace.
 
 For debugging, you can pass extra QEMU args through the workflow input `qemu_extra_args` (one argument per line).
 These are forwarded to QEMU **after `--`**, so they are not parsed as harness flags. The workflow trims leading/trailing
