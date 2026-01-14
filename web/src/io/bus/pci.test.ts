@@ -1136,6 +1136,38 @@ describe("io/bus/pci", () => {
     expect(Array.from(snap.slice(8, 12))).toEqual([0x50, 0x43, 0x49, 0x42]);
   });
 
+  it("clamps the restored MMIO BAR allocator base to the reserved MMIO window end when loading snapshots", () => {
+    // Snapshot from an older runtime (or pre-reservation state) where nextMmioBase is still the
+    // default PCI_MMIO_BASE and no functions are registered.
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+    const snapshot = pciBus.saveState();
+
+    // Restore into a runtime that reserves an MMIO aperture at the start of the PCI MMIO window
+    // (e.g. BAR1 VRAM). The allocator must not continue allocating inside the reserved region.
+    const portBus2 = new PortIoBus();
+    const mmioBus2 = new MmioBus();
+    const pciBus2 = new PciBus(portBus2, mmioBus2);
+    pciBus2.registerToPortBus();
+    pciBus2.reserveMmio(0x2000);
+    pciBus2.loadState(snapshot);
+
+    const dev: PciDevice = {
+      name: "snap_reserved_mmio_alloc",
+      vendorId: 0x1234,
+      deviceId: 0x5678,
+      classCode: 0,
+      bars: [{ kind: "mmio32", size: 0x1000 }, null, null, null, null, null],
+    };
+    const addr = pciBus2.registerDevice(dev, { device: 0, function: 0 });
+    const cfg = makeCfgIo(portBus2);
+    const bar0 = cfg.readU32(addr.device, addr.function, 0x10);
+    const base = BigInt(bar0) & 0xffff_fff0n;
+    expect(base).toBe(BigInt(PCI_MMIO_BASE) + 0x2000n);
+  });
+
   it("replays PCI command register side effects (onPciCommandWrite) when restoring snapshots", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
