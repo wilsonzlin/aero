@@ -3377,9 +3377,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 cached &&
                 wddmScanoutWidth === width &&
                 wddmScanoutHeight === height &&
-                cached.byteLength === outBytes
+                cached.byteLength >= outBytes
               ) {
-                out = cached.slice();
+                out = cached.subarray(0, outBytes).slice();
               } else {
                 const format = snap.format >>> 0;
                 out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
