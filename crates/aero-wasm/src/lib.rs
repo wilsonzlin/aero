@@ -2772,7 +2772,6 @@ pub enum MouseButtons {
 #[wasm_bindgen]
 pub struct Machine {
     inner: aero_machine::Machine,
-    cpu_count: u8,
     // Tracks the last injected mouse button state (low 5 bits = DOM `MouseEvent.buttons`).
     //
     // This exists solely to support the ergonomic JS-side `inject_mouse_buttons_mask` API without
@@ -2880,12 +2879,10 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
 #[wasm_bindgen]
 impl Machine {
     fn new_with_native_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
-        let cpu_count = cfg.cpu_count;
         let inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self {
             inner,
-            cpu_count,
             mouse_buttons: 0,
             mouse_buttons_known: true,
         })
@@ -2967,7 +2964,7 @@ impl Machine {
 
     /// Number of vCPUs configured for this machine.
     pub fn cpu_count(&self) -> u32 {
-        self.cpu_count as u32
+        self.inner.config().cpu_count as u32
     }
 
     /// Construct a machine with an options object that can override the default device set.

@@ -3055,6 +3055,14 @@ pub struct Machine {
 }
 
 impl Machine {
+    /// Return the machine's immutable configuration.
+    ///
+    /// This is primarily intended for host/coordinator code that needs to inspect the VM topology
+    /// (e.g. how many CPUs were requested) after construction.
+    pub fn config(&self) -> &MachineConfig {
+        &self.cfg
+    }
+
     // ---------------------------------------------------------------------
     // Stable snapshot disk ids (normative)
     // ---------------------------------------------------------------------
