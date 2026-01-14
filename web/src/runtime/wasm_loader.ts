@@ -79,6 +79,27 @@ export type MachineHandle = {
     serial_output_len?(): number;
 
     /**
+     * BIOS-reported VBE linear framebuffer (LFB) base address.
+     *
+     * Optional for older WASM builds.
+     */
+    vbe_lfb_base?(): number;
+    /**
+     * Returns whether the canonical AeroGPU PCI function (`00:07.0`, `A3A0:0001`) is present.
+     *
+     * Optional for older WASM builds.
+     */
+    aerogpu_present?(): boolean;
+    /**
+     * Return the base address assigned to an AeroGPU PCI BAR.
+     *
+     * Returns 0 when AeroGPU is not present or when the BAR is missing/unassigned.
+     *
+     * Optional for older WASM builds.
+     */
+    aerogpu_bar_base?(bar: number): number;
+
+    /**
      * Unified display scanout (boot display + WDDM / modern scanout).
      *
      * Prefer these APIs over the legacy {@link vga_present} exports when available.
