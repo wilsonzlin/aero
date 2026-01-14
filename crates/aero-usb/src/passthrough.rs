@@ -391,6 +391,9 @@ impl UsbPassthroughDevice {
         let mut d = Decoder::new(bytes);
 
         self.next_id = d.u32()?;
+        if self.next_id == 0 {
+            return Err(SnapshotError::InvalidFieldEncoding("next_id must be non-zero"));
+        }
         let mut total_bytes = 0usize;
 
         self.actions.clear();
@@ -403,6 +406,9 @@ impl UsbPassthroughDevice {
         for _ in 0..action_count {
             let kind = d.u8()?;
             let id = d.u32()?;
+            if id == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("action id must be non-zero"));
+            }
             let action = match kind {
                 1 => UsbHostAction::ControlIn {
                     id,
@@ -447,6 +453,11 @@ impl UsbPassthroughDevice {
         }
         for _ in 0..completion_count {
             let id = d.u32()?;
+            if id == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "completion id must be non-zero",
+                ));
+            }
             let kind = d.u8()?;
             let result = match kind {
                 1 => UsbHostResult::OkIn {
@@ -484,6 +495,11 @@ impl UsbPassthroughDevice {
         let has_control = d.bool()?;
         self.control_inflight = if has_control {
             let id = d.u32()?;
+            if id == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "control inflight id must be non-zero",
+                ));
+            }
             let setup = dec_setup(&mut d)?;
             let has_data = d.bool()?;
             let data = has_data
@@ -506,6 +522,11 @@ impl UsbPassthroughDevice {
         for _ in 0..ep_count {
             let endpoint = d.u8()?;
             let id = d.u32()?;
+            if id == 0 {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "endpoint inflight id must be non-zero",
+                ));
+            }
             let len = d.u32()? as usize;
             self.ep_inflight.insert(endpoint, EpInflight { id, len });
         }
@@ -1245,35 +1266,52 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_load_rejects_invalid_action_kind() {
-        let bytes = Encoder::new().u32(1).u32(1).u8(99).u32(1).finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+    fn snapshot_load_rejects_zero_next_id() {
+        // Minimal snapshot with next_id=0 is invalid; IDs are expected to be non-zero so they don't
+        // become falsy in JS host integrations.
+        let bytes = Encoder::new().u32(0).u32(0).u32(0).bool(false).u32(0).finish();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
     #[test]
-    fn snapshot_load_rejects_invalid_completion_kind() {
-        let bytes = Encoder::new().u32(1).u32(0).u32(1).u32(1).u8(99).finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+    fn snapshot_load_rejects_zero_action_id() {
+        // action_count=1, valid kind tag, but id=0.
+        // Intentionally truncate after the ID; the decoder should fail before reading setup bytes.
+        let bytes = Encoder::new().u32(1).u32(1).u8(1).u32(0).finish();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
     #[test]
-    fn snapshot_load_rejects_invalid_utf8_in_completion_error_message() {
-        // Encode an `UsbHostResult::Error` completion with invalid UTF-8 bytes.
+    fn snapshot_load_rejects_zero_completion_id() {
+        // completion_count=1, id=0.
+        let bytes = Encoder::new().u32(1).u32(0).u32(1).u32(0).finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_zero_control_inflight_id() {
+        // has_control=true but inflight id=0.
+        let bytes = Encoder::new().u32(1).u32(0).u32(0).bool(true).u32(0).finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_zero_endpoint_inflight_id() {
+        // ep_count=1, endpoint=1, inflight id=0.
         let bytes = Encoder::new()
             .u32(1)
             .u32(0)
-            .u32(1)
-            .u32(1) // completion id
-            .u8(4) // Error
-            .u32(1) // msg len
-            .bytes(&[0xFF])
+            .u32(0)
+            .bool(false)
+            .u32(1) // ep_count
+            .u8(1) // endpoint
+            .u32(0)
             .finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1281,8 +1319,7 @@ mod tests {
     fn snapshot_load_rejects_invalid_bool_encoding() {
         // `has_control` is decoded as a bool; only 0/1 are valid.
         let bytes = Encoder::new().u32(1).u32(0).u32(0).u8(2).finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1304,8 +1341,7 @@ mod tests {
             // has_data bool (invalid)
             .u8(2)
             .finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1332,8 +1368,7 @@ mod tests {
             // data length
             .u32(MAX_DATA_BYTES + 1)
             .finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1347,8 +1382,7 @@ mod tests {
             .u32(0)
             .u8(0xAA) // trailing byte
             .finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
     }
 
@@ -1356,8 +1390,7 @@ mod tests {
     fn snapshot_load_rejects_truncated_bytes() {
         // Truncated immediately after `next_id`; the decoder should report UnexpectedEof.
         let bytes = Encoder::new().u32(1).finish();
-        let mut dev = UsbPassthroughDevice::new();
-        let err = dev.snapshot_load(&bytes).unwrap_err();
+        let err = snapshot_load_err(bytes);
         assert_eq!(err, SnapshotError::UnexpectedEof);
     }
 
