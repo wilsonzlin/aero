@@ -622,6 +622,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_query_vblank_out"), 56);
   assert.equal(size("aerogpu_escape_dump_vblank_inout"), 56);
   assert.equal(size("aerogpu_escape_query_scanout_out"), 72);
+  assert.equal(size("aerogpu_escape_query_scanout_out_v2"), 80);
   assert.equal(size("aerogpu_escape_query_cursor_out"), 72);
   assert.equal(size("aerogpu_escape_query_error_out"), 40);
   assert.equal(size("aerogpu_escape_map_shared_handle_inout"), 32);
@@ -1041,6 +1042,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_scanout_out", "mmio_format"), 56);
   assert.equal(off("aerogpu_escape_query_scanout_out", "mmio_pitch_bytes"), 60);
   assert.equal(off("aerogpu_escape_query_scanout_out", "mmio_fb_gpa"), 64);
+  assert.equal(off("aerogpu_escape_query_scanout_out_v2", "cached_fb_gpa"), 72);
 
   assert.equal(off("aerogpu_escape_query_cursor_out", "flags"), 16);
   assert.equal(off("aerogpu_escape_query_cursor_out", "reserved0"), 20);
@@ -1392,6 +1394,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"), 2n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID"), 1n << 31n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"), 1n << 31n);

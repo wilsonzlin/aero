@@ -2575,6 +2575,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.size("aerogpu_escape_query_vblank_out"), 56);
     assert_eq!(abi.size("aerogpu_escape_dump_vblank_inout"), 56);
     assert_eq!(abi.size("aerogpu_escape_query_scanout_out"), 72);
+    assert_eq!(abi.size("aerogpu_escape_query_scanout_out_v2"), 80);
     assert_eq!(abi.size("aerogpu_escape_query_cursor_out"), 72);
     assert_eq!(abi.size("aerogpu_escape_query_error_out"), 40);
     assert_eq!(abi.size("aerogpu_escape_map_shared_handle_inout"), 32);
@@ -2900,6 +2901,10 @@ fn rust_layout_matches_c_headers() {
         60
     );
     assert_eq!(abi.offset("aerogpu_escape_query_scanout_out", "mmio_fb_gpa"), 64);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_scanout_out_v2", "cached_fb_gpa"),
+        72
+    );
 
     assert_eq!(
         abi.offset("aerogpu_escape_query_cursor_out", "flags"),
@@ -4475,6 +4480,14 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"),
         2
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID"),
+        1u64 << 31
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID"),
+        1
     );
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID"),
