@@ -4751,6 +4751,7 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
   }
 
   bool had_error = false;
+  DWORD last_err = ERROR_SUCCESS;
   std::wstring absolute_pointer_path;
   std::wstring unknown_pointer_path;
   int absolute_pointer_candidates = 0;
@@ -4761,7 +4762,10 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
     SP_DEVICE_INTERFACE_DATA iface{};
     iface.cbSize = sizeof(iface);
     if (!SetupDiEnumDeviceInterfaces(devinfo, nullptr, &kHidInterfaceGuid, idx, &iface)) {
-      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      const DWORD err = GetLastError();
+      if (err == ERROR_NO_MORE_ITEMS) break;
+      had_error = true;
+      if (err != ERROR_SUCCESS) last_err = err;
       continue;
     }
 
@@ -4791,14 +4795,17 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
     if (h == INVALID_HANDLE_VALUE) {
       had_error = true;
       const DWORD err = GetLastError();
+      if (err != ERROR_SUCCESS) last_err = err;
       log.Logf("virtio-input-events: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(), err);
       continue;
     }
 
     const auto report_desc = ReadHidReportDescriptor(log, h);
+    const DWORD report_desc_err = report_desc.has_value() ? ERROR_SUCCESS : GetLastError();
     CloseHandle(h);
     if (!report_desc.has_value()) {
       had_error = true;
+      if (report_desc_err != ERROR_SUCCESS) last_err = report_desc_err;
       continue;
     }
 
@@ -4861,10 +4868,13 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
   if (out.keyboard_path.empty()) {
     if (had_error) {
       out.reason = "ioctl_or_open_failed";
-      // Best-effort: `ReadHidReportDescriptor` already logs details, so this is informational only.
+      // Best-effort: `ReadHidReportDescriptor` already logs details, but preserve a non-zero error code
+      // so marker err=... fields remain actionable.
+      out.win32_error = (last_err != ERROR_SUCCESS) ? last_err : ERROR_INVALID_DATA;
       return out;
     }
     out.reason = "missing_keyboard_device";
+    out.win32_error = ERROR_NOT_FOUND;
     return out;
   }
   if (out.mouse_path.empty()) {
@@ -4884,9 +4894,10 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
           unknown_pointer_candidates, WideToUtf8(unknown_pointer_path).c_str());
     } else if (had_error) {
       out.reason = "ioctl_or_open_failed";
-      // Best-effort: `ReadHidReportDescriptor` already logs details, so this is informational only.
+      out.win32_error = (last_err != ERROR_SUCCESS) ? last_err : ERROR_INVALID_DATA;
     } else {
       out.reason = "missing_mouse_device";
+      out.win32_error = ERROR_NOT_FOUND;
     }
     return out;
   }
