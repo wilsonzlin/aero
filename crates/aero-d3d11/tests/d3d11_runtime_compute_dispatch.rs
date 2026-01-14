@@ -91,3 +91,72 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         assert_eq!(got, expected);
     });
 }
+
+#[test]
+fn d3d11_runtime_vertex_buffer_is_bindable_as_storage_for_vertex_pulling() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::d3d11_runtime_vertex_buffer_is_bindable_as_storage_for_vertex_pulling"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
+        const VB: u32 = 1;
+        const SHADER: u32 = 2;
+        const PIPELINE: u32 = 3;
+
+        // Any non-zero size works; keep it 16 bytes to satisfy any backend alignment rules.
+        let size = 16u64;
+
+        let wgsl = r#"
+@group(0) @binding(0)
+var<storage, read> buf: array<u32>;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let _x: u32 = buf[0];
+}
+"#;
+
+        let mut w = CmdWriter::new();
+        w.create_buffer(VB, size, BufferUsage::VERTEX | BufferUsage::COPY_DST);
+        w.update_buffer(VB, 0, bytemuck::cast_slice(&[0x1234_5678u32, 0, 0, 0]));
+        w.create_shader_module_wgsl(SHADER, wgsl);
+        w.create_compute_pipeline(
+            PIPELINE,
+            SHADER,
+            &[BindingDesc {
+                binding: 0,
+                ty: BindingType::StorageBufferReadOnly,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
+            }],
+        );
+        w.set_pipeline(PipelineKind::Compute, PIPELINE);
+        w.set_bind_buffer(0, VB, 0, size);
+        w.begin_compute_pass();
+        w.dispatch(1, 1, 1);
+        w.end_compute_pass();
+
+        // Validation check: binding a vertex buffer as `var<storage>` must not trigger a wgpu
+        // validation error (vertex pulling compute prepasses rely on this).
+        rt.device().push_error_scope(wgpu::ErrorFilter::Validation);
+        rt.execute(&w.finish()).unwrap();
+        rt.poll_wait();
+        let err = rt.device().pop_error_scope().await;
+        assert!(
+            err.is_none(),
+            "vertex buffers must be created with STORAGE for vertex pulling, got: {err:?}"
+        );
+    });
+}
