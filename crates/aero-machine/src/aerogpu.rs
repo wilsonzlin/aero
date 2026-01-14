@@ -705,11 +705,10 @@ impl AeroGpuMmioDevice {
         // WDDM scanout is currently limited to 32-bit pixel formats that the host scanout/present
         // paths can render deterministically.
         //
-        // Note: the shared scanout descriptor (`ScanoutStateUpdate`) currently only supports a
-        // subset of these formats (BGRA/BGRX), but `wddm_scanout_active` is a machine-internal
-        // handoff latch that also gates the synchronous `Machine::display_present()` path used by
-        // tests. Keep the validation aligned with what the machine can actually render via
-        // `AeroGpuScanout0State::read_rgba8888`.
+        // Note: the shared scanout descriptor (`ScanoutStateUpdate`) is still more restrictive
+        // than the full AeroGPU format set; it only supports the packed 32bpp formats that scanout
+        // consumers can render deterministically. Keep this validation aligned with what the
+        // machine can actually render via `AeroGpuScanout0State::read_rgba8888`.
         match self.scanout0_format {
             x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
                 || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
