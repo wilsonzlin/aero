@@ -453,6 +453,14 @@ The relay also enforces a hard receive-side SCTP buffer cap via:
 If a peer sends messages larger than these limits, the relay may close the
 DataChannel or the entire session.
 
+Observability (via `GET /metrics`, exposed as `aero_webrtc_udp_relay_events_total{event="<name>"}`):
+
+- `webrtc_datachannel_udp_message_too_large` / `webrtc_datachannel_l2_message_too_large`: a peer sent a WebRTC
+  DataChannel message larger than `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (likely ignoring SDP); the relay closes the
+  entire WebRTC session.
+- `webrtc_udp_dropped_oversized`: a peer sent an oversized `udp` DataChannel frame larger than the UDP relay framing
+  maximum (`MAX_DATAGRAM_PAYLOAD_BYTES` + protocol overhead); the relay drops it and closes the `udp` DataChannel.
+
 ---
 
 ## Error handling
