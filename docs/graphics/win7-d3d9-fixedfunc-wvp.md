@@ -19,6 +19,8 @@ For these fixed-function FVFs, the UMD binds one of a few built-in vertex shader
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE`: `fixedfunc::kVsWvpPosColor`
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`: `fixedfunc::kVsWvpPosColorTex0`
 - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse): `fixedfunc::kVsTransformPosWhiteTex1` (supplies constant opaque white diffuse)
+- `D3DFVF_XYZ | D3DFVF_NORMAL` (no diffuse): `fixedfunc::kVsWvpPosNormalWhite` (unlit; supplies constant opaque white diffuse) or `fixedfunc::kVsWvpLitPosNormal` (when `D3DRS_LIGHTING` is enabled)
+- `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (no diffuse): `fixedfunc::kVsWvpPosNormalWhiteTex0` (unlit; supplies constant opaque white diffuse) or `fixedfunc::kVsWvpLitPosNormalTex1` (when `D3DRS_LIGHTING` is enabled)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE`: `fixedfunc::kVsWvpPosNormalDiffuse` (unlit) or `fixedfunc::kVsWvpLitPosNormalDiffuse` (when `D3DRS_LIGHTING` is enabled)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1`: `fixedfunc::kVsWvpPosNormalDiffuseTex1` (unlit) or `fixedfunc::kVsWvpLitPosNormalDiffuseTex1` (when `D3DRS_LIGHTING` is enabled)
 
@@ -37,6 +39,8 @@ This covers the fixed-function FVFs:
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (VS WVP constants)
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants)
 - `D3DFVF_XYZ | D3DFVF_TEX1` (VS WVP constants; driver supplies default diffuse white)
+- `D3DFVF_XYZ | D3DFVF_NORMAL` (VS WVP constants; driver supplies default diffuse white; optional fixed-function lighting)
+- `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (VS WVP constants; driver supplies default diffuse white; optional fixed-function lighting)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (VS WVP constants; optional fixed-function lighting)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants; optional fixed-function lighting)
 
@@ -105,10 +109,11 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `ensure_fixedfunc_pipeline_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
 - Internal fixed-function shader token streams:
   - `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1`,
+    `fixedfunc::kVsWvpPosNormalWhite{,Tex0}`, `fixedfunc::kVsWvpLitPosNormal{,Tex1}`,
     `fixedfunc::kVsWvpPosNormalDiffuse{,Tex1}`, `fixedfunc::kVsWvpLitPosNormalDiffuse{,Tex1}` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`)
 - Draw-time fixed-function constant upload (untransformed `D3DFVF_XYZ*` fixed-function paths):
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` (`AEROGPU_CMD_SET_SHADER_CONSTANTS_F`)
-  - `ensure_fixedfunc_lighting_constants_locked()` (fixed-function lighting `c244..c253` constant block for `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}` when `D3DRS_LIGHTING` is enabled)
+  - `ensure_fixedfunc_lighting_constants_locked()` (fixed-function lighting `c244..c253` constant block for `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}` when `D3DRS_LIGHTING` is enabled)
 - CPU conversions for pre-transformed `XYZRHW*` draws:
   - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW`/`POSITIONT` → clip-space for pre-transformed fixed-function draws)
 - Existing CPU vertex processing:
@@ -127,4 +132,4 @@ The Win7 guest validation suite includes targeted coverage for these paths:
   `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (order-sensitive WVP, stage0 texture sampling + MODULATE, and both
   `SetVertexDeclaration`-inferred FVF and explicit `SetFVF` paths).
 - `drivers/aerogpu/tests/win7/d3d9_fixedfunc_lighting_directional` validates the minimal fixed-function lighting bring-up
-  subset for `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (directional light 0 + material + `D3DRS_LIGHTING`).
+  subset for `D3DFVF_XYZ | D3DFVF_NORMAL` (directional light 0 + material + `D3DRS_LIGHTING`).

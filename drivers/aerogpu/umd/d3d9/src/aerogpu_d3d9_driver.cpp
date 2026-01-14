@@ -2893,7 +2893,7 @@ constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffu
 constexpr uint32_t kSupportedFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
-// Minimal lighting bring-up: XYZ + NORMAL + DIFFUSE (+ optional TEX1).
+// Minimal lighting bring-up: XYZ + NORMAL (+ optional DIFFUSE, + optional TEX1).
 constexpr uint32_t kSupportedFvfXyzNormal = kD3dFvfXyz | kD3dFvfNormal;
 constexpr uint32_t kSupportedFvfXyzNormalTex1 = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfTex1;
 constexpr uint32_t kSupportedFvfXyzNormalDiffuse = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfDiffuse;
@@ -16105,10 +16105,10 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 //   columns uploaded into a reserved high VS constant range (`c240..c243`).
 //   - When `D3DFVF_DIFFUSE` is omitted, the internal VS supplies an opaque white
 //     diffuse color.
-//   - When `D3DRS_LIGHTING` is enabled for the `D3DFVF_XYZ | D3DFVF_NORMAL |
-//     D3DFVF_DIFFUSE{,TEX1}` bring-up subset, the fixed-function fallback binds a
-//     lit VS variant and consumes an additional reserved lighting constant block
-//     (`c244..c253`) uploaded by `ensure_fixedfunc_lighting_constants_locked()`.
+//   - When `D3DRS_LIGHTING` is enabled for the `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`
+//     bring-up subset, the fixed-function fallback binds a lit VS variant and
+//     consumes an additional reserved lighting constant block (`c244..c253`)
+//     uploaded by `ensure_fixedfunc_lighting_constants_locked()`.
 // - Pre-transformed `D3DFVF_XYZRHW*` vertices are converted from screen-space
 //   `XYZRHW` (`POSITIONT`) to clip-space on the CPU at draw time
 //   (`convert_xyzrhw_to_clipspace_locked()`).

@@ -245,7 +245,7 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `Device::SetTransform` / `Device::MultiplyTransform`: transforms can be consumed by fixed-function WVP paths (for
     fixed-function `D3DFVF_XYZ*` draws and the fixed-function `ProcessVertices` subset).
   - `Device::SetMaterial` / `Device::SetLight` / `Device::LightEnable`: consumed by the minimal fixed-function lighting
-    bring-up subset (`D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}` when `D3DRS_LIGHTING` is enabled).
+    bring-up subset (`D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}` when `D3DRS_LIGHTING` is enabled).
   - `Device::SetTextureStageState` / `Device::GetTextureStageState`
     - `a0 = hDevice.pDrvPrivate`
     - `a1 = pack_u32_u32(stage, state)`

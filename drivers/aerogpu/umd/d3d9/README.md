@@ -412,8 +412,8 @@ Supported FVF combinations (bring-up subset):
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform)
-  - `D3DFVF_XYZ | D3DFVF_NORMAL` (WVP transform; optional fixed-function lighting)
-  - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (WVP transform; optional fixed-function lighting)
+  - `D3DFVF_XYZ | D3DFVF_NORMAL` (no per-vertex diffuse; driver supplies default white; WVP transform; optional fixed-function lighting)
+  - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform; optional fixed-function lighting)
   - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (WVP transform; optional fixed-function lighting)
   - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform; optional fixed-function lighting)
 
@@ -467,8 +467,9 @@ Implementation notes (bring-up):
   `vs_2_0`/`ps_2_0` pair.
   - The conversion uses the current D3D9 viewport (`X/Y/Width/Height`) and inverts the D3D9 `-0.5` pixel center
     convention so typical pre-transformed vertices line up with pixel centers.
-- When `D3DFVF_DIFFUSE` is omitted (supported `*TEX1` subsets), the fixed-function fallback uses internal vertex shaders
-  that supply a constant **opaque white** diffuse color.
+- When `D3DFVF_DIFFUSE` is omitted (supported `*TEX1` subsets and `XYZ|NORMAL{,TEX1}`), the fixed-function fallback uses
+  internal vertex shader variants that supply a constant **opaque white** diffuse color (unlit). Lit `NORMAL` variants
+  compute a lit diffuse color without per-vertex diffuse.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
 - For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function fallback uses small internal vertex shader
@@ -479,7 +480,7 @@ Implementation notes (bring-up):
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` uses `fixedfunc::kVsWvpPosColor`.
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses `fixedfunc::kVsWvpPosColorTex0`.
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse) uses `fixedfunc::kVsTransformPosWhiteTex1`.
-  - For `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`, the fixed-function fallback selects a normal-aware WVP VS
+  - For `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`, the fixed-function fallback selects a normal-aware WVP VS
     variant. When `D3DRS_LIGHTING` is enabled, it uses the lit variant and uploads a reserved lighting constant block
     (`c244..c253`) via `ensure_fixedfunc_lighting_constants_locked()`.
   - The reserved constant ranges are intentionally high so they are unlikely to collide with app/user shader constants when
