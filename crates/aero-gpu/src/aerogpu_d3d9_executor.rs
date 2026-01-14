@@ -1013,13 +1013,18 @@ struct PipelineCacheKey {
     alpha_test_ref: u8,
     vertex_buffers: Vec<crate::pipeline_key::VertexBufferLayoutKey>,
     color_formats: Vec<Option<wgpu::TextureFormat>>,
-    /// Per color attachment: true if the bound render target is an X8 format (e.g. X8R8G8B8).
+    /// Per color attachment: true if the bound render target has no alpha channel (opaque alpha).
+    ///
+    /// Examples:
+    /// - `X8R8G8B8`/`X8B8G8R8` style formats (protocol `*X8*`)
+    /// - `R5G6B5` (protocol `B5G6R5Unorm`)
     ///
     /// These formats are mapped to wgpu formats that *do* have an alpha channel (RGBA/BGRA), but
     /// D3D9 semantics require that alpha writes are ignored and alpha reads behave as opaque.
+    ///
     /// This needs to be part of the cache key to avoid reusing a pipeline with a mismatched color
-    /// write mask between X8 and A8 render targets of the same wgpu format.
-    x8_mask: Vec<bool>,
+    /// write mask between alpha-less and alpha-bearing render targets of the same wgpu format.
+    opaque_alpha_mask: Vec<bool>,
     depth_format: Option<wgpu::TextureFormat>,
     topology: wgpu::PrimitiveTopology,
     blend: BlendState,
@@ -6371,7 +6376,7 @@ impl AerogpuD3d9Executor {
         }
 
         let (color_attachments, depth_stencil) = self.render_target_attachments()?;
-        let (_, color_is_x8, depth_format) = self.render_target_formats()?;
+        let (_, color_is_opaque_alpha, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
 
@@ -6394,7 +6399,7 @@ impl AerogpuD3d9Executor {
                 color_attachments_out.push(None);
                 continue;
             };
-            let clear_color_for_rt = if color_is_x8.get(idx).copied().unwrap_or(false) {
+            let clear_color_for_rt = if color_is_opaque_alpha.get(idx).copied().unwrap_or(false) {
                 clear_color_opaque
             } else {
                 clear_color
@@ -6509,8 +6514,8 @@ impl AerogpuD3d9Executor {
 
             // Collect render target formats/extents so we can build per-format pipelines without
             // holding borrows into `self.resources`.
-            let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32, bool, bool)> = Vec::new();
-            for slot in 0..rt.color_count.min(8) as usize {
+                let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32, bool, bool)> = Vec::new();
+                for slot in 0..rt.color_count.min(8) as usize {
                 let handle = rt.colors[slot];
                 if handle == 0 {
                     continue;
@@ -6529,7 +6534,7 @@ impl AerogpuD3d9Executor {
                         height,
                         ..
                     } => {
-                        let is_x8 = is_x8_format(*format_raw);
+                        let opaque_alpha = is_opaque_alpha_format(*format_raw);
                         let mut out_format = *format;
                         let mut use_srgb_view = false;
                         if srgb_write && view_srgb.is_some() {
@@ -6549,7 +6554,7 @@ impl AerogpuD3d9Executor {
                             out_format,
                             *width,
                             *height,
-                            is_x8,
+                            opaque_alpha,
                             use_srgb_view,
                         ))
                     }
@@ -6557,8 +6562,8 @@ impl AerogpuD3d9Executor {
                 }
             }
 
-            let mut current_is_x8 = false;
-            for (underlying, format, width, height, is_x8, use_srgb_view) in targets {
+            let mut current_opaque_alpha = false;
+            for (underlying, format, width, height, opaque_alpha, use_srgb_view) in targets {
                 let Some((x, y, w, h)) =
                     clamp_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3, width, height)
                 else {
@@ -6567,14 +6572,14 @@ impl AerogpuD3d9Executor {
 
                 self.ensure_clear_pipeline(format);
                 let pipeline = self.clear_pipeline(format);
-                if is_x8 != current_is_x8 {
-                    let src = if is_x8 {
+                if opaque_alpha != current_opaque_alpha {
+                    let src = if opaque_alpha {
                         &staging_opaque
                     } else {
                         &staging_normal
                     };
                     encoder.copy_buffer_to_buffer(src, 0, &self.clear_color_buffer, 0, 32);
-                    current_is_x8 = is_x8;
+                    current_opaque_alpha = opaque_alpha;
                 }
                 let view = match self
                     .resources
@@ -7198,7 +7203,7 @@ impl AerogpuD3d9Executor {
             }
         }
         self.ensure_sampler_bind_groups(vs_cube_mask, ps_cube_mask);
-        let (color_formats, color_is_x8, depth_format) = self.render_target_formats()?;
+        let (color_formats, color_is_opaque_alpha, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
         let vertex_buffers = {
@@ -7222,7 +7227,7 @@ impl AerogpuD3d9Executor {
             .iter()
             .enumerate()
             .map(|(idx, fmt)| {
-                let is_x8 = color_is_x8.get(idx).copied().unwrap_or(false);
+                let opaque_alpha = color_is_opaque_alpha.get(idx).copied().unwrap_or(false);
                 fmt.map(|format| {
                     let mut write_mask = map_color_write_mask(
                         self.state
@@ -7232,7 +7237,7 @@ impl AerogpuD3d9Executor {
                             .copied()
                             .unwrap_or(0xF),
                     );
-                    if is_x8 {
+                    if opaque_alpha {
                         write_mask &= !wgpu::ColorWrites::ALPHA;
                     }
                     wgpu::ColorTargetState {
@@ -7274,7 +7279,7 @@ impl AerogpuD3d9Executor {
             alpha_test_ref: pipeline_alpha_ref,
             vertex_buffers: vertex_buffer_keys,
             color_formats: color_formats.clone(),
-            x8_mask: color_is_x8.clone(),
+            opaque_alpha_mask: color_is_opaque_alpha.clone(),
             depth_format,
             topology: self.state.topology,
             blend: self.state.blend_state,
@@ -9040,12 +9045,12 @@ impl AerogpuD3d9Executor {
             return Err(AerogpuD3d9Error::MissingRenderTargets);
         }
         let mut colors = Vec::new();
-        let mut color_is_x8 = Vec::new();
+        let mut color_is_opaque_alpha = Vec::new();
         for slot in 0..rt.color_count.min(8) as usize {
             let handle = rt.colors[slot];
             if handle == 0 {
                 colors.push(None);
-                color_is_x8.push(false);
+                color_is_opaque_alpha.push(false);
                 continue;
             }
             let underlying = self.resolve_resource_handle(handle)?;
@@ -9069,7 +9074,7 @@ impl AerogpuD3d9Executor {
                         };
                     }
                     colors.push(Some(out));
-                    color_is_x8.push(is_x8_format(*format_raw));
+                    color_is_opaque_alpha.push(is_opaque_alpha_format(*format_raw));
                 }
                 _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
             }
@@ -9090,7 +9095,7 @@ impl AerogpuD3d9Executor {
             }
         };
 
-        Ok((colors, color_is_x8, depth))
+        Ok((colors, color_is_opaque_alpha, depth))
     }
 }
 
@@ -9516,6 +9521,17 @@ fn is_x8_format(format_raw: u32) -> bool {
         || format_raw == AerogpuFormat::R8G8B8X8Unorm as u32
         || format_raw == AerogpuFormat::B8G8R8X8UnormSrgb as u32
         || format_raw == AerogpuFormat::R8G8B8X8UnormSrgb as u32
+}
+
+fn is_opaque_alpha_format(format_raw: u32) -> bool {
+    // Formats with no alpha channel must behave as if alpha is always 1.0:
+    // - writes to alpha are ignored
+    // - reads observe opaque alpha
+    //
+    // Note: the executor stores some of these as RGBA8/BGRA8 because wgpu doesn't expose the
+    // underlying packed formats (e.g. RGB565). We therefore need to explicitly enforce the
+    // "opaque alpha" semantics in pipeline setup.
+    is_x8_format(format_raw) || format_raw == AerogpuFormat::B5G6R5Unorm as u32
 }
 
 fn force_opaque_alpha_rgba8(pixels: &mut [u8]) {
@@ -10108,6 +10124,24 @@ mod tests {
         ));
         assert!(!super::is_x8_format(
             AerogpuFormat::R8G8B8A8UnormSrgb as u32
+        ));
+    }
+
+    #[test]
+    fn opaque_alpha_formats_include_x8_and_b5g6r5() {
+        assert!(super::is_opaque_alpha_format(
+            AerogpuFormat::B8G8R8X8Unorm as u32
+        ));
+        assert!(super::is_opaque_alpha_format(
+            AerogpuFormat::R8G8B8X8UnormSrgb as u32
+        ));
+        assert!(super::is_opaque_alpha_format(AerogpuFormat::B5G6R5Unorm as u32));
+
+        assert!(!super::is_opaque_alpha_format(
+            AerogpuFormat::B8G8R8A8Unorm as u32
+        ));
+        assert!(!super::is_opaque_alpha_format(
+            AerogpuFormat::B5G5R5A1Unorm as u32
         ));
     }
 
