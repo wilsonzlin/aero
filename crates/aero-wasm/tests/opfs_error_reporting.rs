@@ -62,6 +62,10 @@ async fn aerospar_opfs_create_unavailable_error_includes_operation_and_hint() {
         msg.contains("DedicatedWorker"),
         "expected DedicatedWorker hint in message, got: {msg}"
     );
+    assert!(
+        msg.contains("storage_capabilities()"),
+        "expected storage_capabilities() tip in message, got: {msg}"
+    );
 }
 
 #[wasm_bindgen_test(async)]
@@ -95,6 +99,10 @@ async fn aerospar_opfs_open_unavailable_error_includes_operation_and_hint() {
     assert!(
         msg.contains("DedicatedWorker"),
         "expected DedicatedWorker hint in message, got: {msg}"
+    );
+    assert!(
+        msg.contains("storage_capabilities()"),
+        "expected storage_capabilities() tip in message, got: {msg}"
     );
 }
 
@@ -135,6 +143,10 @@ async fn cow_opfs_create_unavailable_error_includes_operation_and_both_paths_and
         msg.contains("DedicatedWorker"),
         "expected DedicatedWorker hint in message, got: {msg}"
     );
+    assert!(
+        msg.contains("storage_capabilities()"),
+        "expected storage_capabilities() tip in message, got: {msg}"
+    );
 }
 
 #[wasm_bindgen_test(async)]
@@ -173,6 +185,10 @@ async fn cow_opfs_open_unavailable_error_includes_operation_and_both_paths_and_h
     assert!(
         msg.contains("DedicatedWorker"),
         "expected DedicatedWorker hint in message, got: {msg}"
+    );
+    assert!(
+        msg.contains("storage_capabilities()"),
+        "expected storage_capabilities() tip in message, got: {msg}"
     );
 }
 
@@ -278,6 +294,10 @@ async fn snapshot_full_to_opfs_unavailable_error_includes_operation_and_hint() {
         msg.contains("DedicatedWorker"),
         "expected DedicatedWorker hint in message, got: {msg}"
     );
+    assert!(
+        msg.contains("storage_capabilities()"),
+        "expected storage_capabilities() tip in message, got: {msg}"
+    );
 }
 
 #[wasm_bindgen_test(async)]
@@ -316,5 +336,9 @@ async fn primary_hdd_opfs_cow_unavailable_error_includes_operation_and_both_path
     assert!(
         msg.contains("DedicatedWorker"),
         "expected DedicatedWorker hint in message, got: {msg}"
+    );
+    assert!(
+        msg.contains("storage_capabilities()"),
+        "expected storage_capabilities() tip in message, got: {msg}"
     );
 }

@@ -3346,7 +3346,7 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
     match kind {
         std::io::ErrorKind::Unsupported | std::io::ErrorKind::NotConnected => {
             let worker_hint = opfs_worker_hint();
-            let probe_tip = "Tip: Call storage_capabilities() to probe { opfsSupported, opfsSyncAccessSupported, isWorkerScope }.";
+            let probe_tip = "Tip: Call storage_capabilities() to probe { opfsSupported, opfsSyncAccessSupported, isWorkerScope, crossOriginIsolated, sharedArrayBufferSupported, isSecureContext }.";
             msg.push('\n');
             msg.push_str(&worker_hint);
             msg.push('\n');
@@ -3354,6 +3354,11 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
         }
         std::io::ErrorKind::ResourceBusy => {
             msg.push_str("\nThe OPFS file is already in use (another context may have an open sync access handle). Close it and retry.");
+        }
+        std::io::ErrorKind::StorageFull => {
+            msg.push_str(
+                "\nStorage quota exceeded. Free up space or adjust browser/site storage permissions, then retry.",
+            );
         }
         _ => {}
     }
