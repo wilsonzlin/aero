@@ -265,6 +265,10 @@ pub enum ShaderError {
     UnsupportedCompareOp(u8),
     #[error("relative addressing is not supported")]
     RelativeAddressingUnsupported,
+    #[error("predicated instruction has invalid predicate token")]
+    InvalidPredicateToken,
+    #[error("unsupported predicate modifier {0}")]
+    UnsupportedPredicateModifier(u8),
     #[error("tex has unsupported encoding (specific=0x{0:x})")]
     UnsupportedTexSpecificField(u8),
     #[error("unknown result shift modifier {0}")]
@@ -330,6 +334,23 @@ fn decode_reg_num(token: u32) -> u16 {
 // rejected to avoid mis-parsing malformed bytecode (especially when legacy fallback is triggered
 // by an earlier unsupported opcode).
 const RELATIVE_ADDR: u32 = 0x0000_2000;
+
+fn is_predicate_token(token: u32) -> Result<bool, ShaderError> {
+    if (token & RELATIVE_ADDR) != 0 {
+        return Err(ShaderError::RelativeAddressingUnsupported);
+    }
+    let reg_type = decode_reg_type(token);
+    if reg_type != 19 {
+        return Ok(false);
+    }
+
+    // Predicate tokens are a restricted form of source operand: only None/Negate are valid.
+    let modifier_raw = ((token >> 24) & 0xF) as u8;
+    if modifier_raw > 1 {
+        return Err(ShaderError::UnsupportedPredicateModifier(modifier_raw));
+    }
+    Ok(true)
+}
 
 fn decode_src_modifier(modifier: u8) -> Result<SrcModifier, ShaderError> {
     // Matches `D3DSHADER_PARAM_SRCMOD_TYPE` / `D3DSHADER_SRCMOD` encoding.
@@ -658,14 +679,26 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         for _ in 0..operand_count {
             params.push(read_u32(&words, &mut idx)?);
         }
-        // Predicated SM2/SM3 instructions append a predicate register token at the end of the
-        // operand stream. The legacy translator does not model predication; strip the predicate
-        // token so fixed-arity opcode decoding sees the expected operand count.
+        // Predicated SM2/SM3 instructions include an extra predicate register operand. Different
+        // toolchains encode the predicate token as either a prefix or suffix.
+        //
+        // The legacy translator does not model predication; strip the predicate token so fixed-arity
+        // opcode decoding sees the expected operand count. However, do not blindly drop a token:
+        // treating "predicated" as "drop last operand" could be abused to smuggle malformed
+        // multi-token operands through legacy fallback.
         if (token & 0x1000_0000) != 0 {
             if params.is_empty() {
                 return Err(ShaderError::UnexpectedEof);
             }
-            params.pop();
+
+            // Prefer suffix form.
+            if is_predicate_token(*params.last().unwrap())? {
+                params.pop();
+            } else if is_predicate_token(params[0])? {
+                params.remove(0);
+            } else {
+                return Err(ShaderError::InvalidPredicateToken);
+            }
         }
 
         // Declarations (DCL).

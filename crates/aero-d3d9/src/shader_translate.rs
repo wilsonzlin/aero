@@ -242,6 +242,8 @@ pub fn translate_d3d9_shader_to_wgsl(
                 | shader::ShaderError::UnsupportedSrcModifier(_)
                 | shader::ShaderError::UnsupportedCompareOp(_)
                 | shader::ShaderError::RelativeAddressingUnsupported
+                | shader::ShaderError::InvalidPredicateToken
+                | shader::ShaderError::UnsupportedPredicateModifier(_)
                 | shader::ShaderError::UnsupportedTexSpecificField(_)
                 | shader::ShaderError::UnknownResultShiftModifier(_)
                 | shader::ShaderError::UnsupportedVersion(_)

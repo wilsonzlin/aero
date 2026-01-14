@@ -3856,6 +3856,67 @@ fn translate_entrypoint_rejects_invalid_src_modifier_after_fallback() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_invalid_predicate_token_after_fallback() {
+    // Predicated instructions should contain a predicate register token. Legacy fallback used to
+    // blindly drop the final operand token whenever the predicated flag was set, which could be
+    // abused to hide malformed encodings behind SM3→legacy fallback.
+    let mut words = vec![0xFFFF_0300]; // ps_3_0
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // (p0.x) mov r0, c0 ... but provide a non-predicate token as the "predicate".
+    words.extend(enc_inst_with_extra(
+        0x0001,
+        0x1000_0000, // predicated flag
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(2, 0, 0xE4),
+            enc_src(2, 1, 0xE4), // c1 (not a predicate register)
+        ],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_invalid_predicate_modifier_after_fallback() {
+    // Predicate tokens only support None/Negate modifiers. Ensure invalid predicate modifier
+    // encodings are still rejected as malformed even when legacy fallback runs.
+    let mut words = vec![0xFFFF_0300]; // ps_3_0
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // (p0.x) mov r0, c0 with an invalid predicate modifier (bias).
+    words.extend(enc_inst_with_extra(
+        0x0001,
+        0x1000_0000, // predicated flag
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(2, 0, 0xE4),
+            enc_src_mod(19, 0, 0xE4, 2),
+        ],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_invalid_ifc_compare_op_after_fallback() {
     // Similar to the source-modifier test above: invalid `ifc` comparison op encodings are
     // malformed and should not be reported as a generic translation failure.
