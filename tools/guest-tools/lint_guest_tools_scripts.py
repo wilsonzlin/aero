@@ -86,6 +86,31 @@ def _label_block(text: str, label: str) -> str | None:
     return text[start:end]
 
 
+def _strip_batch_comment_lines(text: str) -> str:
+    """
+    Best-effort removal of batch comment lines.
+
+    This lets us search for potentially dangerous commands without false positives
+    from docs/comments like:
+      rem - no certutil -addstore
+    """
+
+    out_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        # Batch comments are line-based. We intentionally do not attempt to
+        # handle inline `rem` or `::` comments.
+        if lower == "rem" or lower.startswith("rem "):
+            continue
+        if lower.startswith("::"):
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
 def _has_install_certs_policy_gate(text: str) -> bool:
     """
     Guardrail for production/none certificate policy.
@@ -303,6 +328,14 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             expected_hint=":check_mode should not call :install_certs, :stage_all_drivers, :preseed_storage_boot, :maybe_enable_testsigning, or :skip_storage_preseed",
             predicate=lambda text: (
                 (block := _label_block(text, "check_mode")) is not None
+                and (
+                    re.search(
+                        r"(?i)\b(certutil|pnputil|reg|bcdedit|shutdown)(?:\.exe)?\b[^\r\n]*"
+                        r"(?:-addstore|\s+-a\b|\s+-i\b|\s+(?:add|delete)\b|\s+/set\b|\s+/(?:r|s)\b)",
+                        _strip_batch_comment_lines(block),
+                    )
+                    is None
+                )
                 and re.search(
                     r"(?i)\bcall\s+:?(install_certs|stage_all_drivers|preseed_storage_boot|maybe_enable_testsigning|skip_storage_preseed)\b",
                     block,
