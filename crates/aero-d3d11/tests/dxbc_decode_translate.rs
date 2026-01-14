@@ -1129,8 +1129,8 @@ fn decodes_and_translates_if_z_else_endif_vertex_shader() {
     assert!(translated.wgsl.contains("if ("));
     assert!(translated.wgsl.contains("} else {"));
     assert!(
-        translated.wgsl.contains("== 0.0"),
-        "expected if_z lowering to use == 0.0:\n{}",
+        translated.wgsl.contains("bitcast<u32>") && translated.wgsl.contains("== 0u"),
+        "expected if_z lowering to compare raw 32-bit bits against zero (bitcast<u32>(...) == 0u):\n{}",
         translated.wgsl
     );
 }
