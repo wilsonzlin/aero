@@ -5,6 +5,7 @@
 //! - `@group(0)` = vertex shader stage resources
 //! - `@group(1)` = pixel shader stage resources
 //! - `@group(2)` = compute shader stage resources
+//! - `@group(3)` = geometry/hull/domain shader stage resources
 //!
 //! WebGPU guarantees `maxBindGroups >= 4`, so AeroGPU uses [`BIND_GROUP_INTERNAL_EMULATION`]
 //! (currently `@group(3)`) as a reserved internal/emulation group for both:
@@ -15,7 +16,8 @@
 //! per-stage binding tables (textures/samplers/constant buffers). To keep the bind-group count
 //! within the WebGPU baseline limit (`maxBindGroups >= 4`), those extended-stage resources are
 //! mapped to `@group(3)` (see `runtime::bindings::ShaderStage::as_bind_group_index`). This group is
-//! used by the compute-emulated GS/HS/DS paths.
+//! used by the compute-emulated GS/HS/DS paths. These stages execute as compute shaders, so their
+//! bind group layout entries use `wgpu::ShaderStages::COMPUTE` visibility.
 //!
 //! Internal translation/emulation helpers bind resources in [`BIND_GROUP_INTERNAL_EMULATION`] and use
 //! `@binding` numbers at or above [`BINDING_BASE_INTERNAL`] so their bindings stay disjoint from the
