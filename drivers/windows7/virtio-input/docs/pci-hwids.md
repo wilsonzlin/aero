@@ -127,16 +127,8 @@ the generic device name).
 For compatibility with tooling that still expects `virtio-input.inf`, the repo also carries a legacy filename alias INF
 (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). It is a filename-only alias: from the first section header
 (`[Version]`) onward it is expected to remain byte-for-byte identical to the canonical INF (banner/comments may differ; see
-`../scripts/check-inf-alias.py`). Enabling it does **not** change HWID matching behavior.
-so it wins over the generic fallback when both driver packages are installed. If the tablet INF is not installed (or the device does not
-expose the tablet subsystem ID), the generic fallback entry in `inf/aero_virtio_input.inf` can also bind to tablet devices (but will use
-the generic device name).
-
-For compatibility with tooling that still expects `virtio-input.inf`, the repo also carries a legacy filename alias INF
-(`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). It is a filename-only alias: from the first section header
-(`[Version]`) onward it is expected to remain byte-for-byte identical to `inf/aero_virtio_input.inf` (banner/comments may differ; see
-`../scripts/check-inf-alias.py`). Enabling it does **not** change HWID matching behavior.
-Do not ship/install it alongside `aero_virtio_input.inf` (install only one of the two basenames at a time).
+`../scripts/check-inf-alias.py`). Enabling it does **not** change HWID matching behavior. Do not ship/install it alongside
+`aero_virtio_input.inf` (install only one of the two basenames at a time).
 
 Topology notes:
 
