@@ -333,46 +333,65 @@ static bool ReadAeroGpuNonLocalMemorySizeMbFromRegistry(uint32_t* out_mb, std::s
     }
 
     // Found the AeroGPU display adapter. Read HKR\Parameters\NonLocalMemorySizeMB.
-    HKEY drv_key = SetupDiOpenDevRegKey(devs, &devinfo, DICS_FLAG_GLOBAL, 0, DIREG_DRV, KEY_READ);
-    if (drv_key == INVALID_HANDLE_VALUE) {
-      last_err = "SetupDiOpenDevRegKey failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
-      continue;
+    //
+    // Mirror the KMD behavior and check both the "driver" and "device" registry roots.
+    // (See AeroGpuGetNonLocalMemorySizeBytes: it probes PLUGPLAY_REGKEY_DRIVER and
+    // PLUGPLAY_REGKEY_DEVICE.)
+    const DWORD kKeyTypes[] = {DIREG_DRV, DIREG_DEV};
+    for (size_t key_idx = 0; key_idx < ARRAYSIZE(kKeyTypes); ++key_idx) {
+      const DWORD key_type = kKeyTypes[key_idx];
+      const char* key_label = (key_type == DIREG_DRV) ? "DIREG_DRV" : "DIREG_DEV";
+
+      HKEY root_key = SetupDiOpenDevRegKey(devs, &devinfo, DICS_FLAG_GLOBAL, 0, key_type, KEY_READ);
+      if (root_key == INVALID_HANDLE_VALUE) {
+        last_err =
+            std::string("SetupDiOpenDevRegKey(") + key_label + ") failed: " +
+            aerogpu_test::Win32ErrorToString(GetLastError());
+        continue;
+      }
+
+      HKEY params_key = NULL;
+      LONG r = RegOpenKeyExW(root_key, L"Parameters", 0, KEY_READ, &params_key);
+      RegCloseKey(root_key);
+      root_key = NULL;
+      if (r != ERROR_SUCCESS) {
+        // Parameters subkey may not exist if the driver isn't installed via the INF yet.
+        last_err = std::string("RegOpenKeyExW(") + key_label + "\\Parameters) failed: " +
+                   aerogpu_test::Win32ErrorToString((DWORD)r);
+        continue;
+      }
+
+      DWORD value_type = 0;
+      DWORD value = 0;
+      DWORD value_size = sizeof(value);
+      r = RegQueryValueExW(params_key,
+                           L"NonLocalMemorySizeMB",
+                           NULL,
+                           &value_type,
+                           (LPBYTE)&value,
+                           &value_size);
+      RegCloseKey(params_key);
+      params_key = NULL;
+
+      if (r != ERROR_SUCCESS) {
+        last_err = std::string("RegQueryValueExW(") + key_label +
+                   "\\Parameters\\NonLocalMemorySizeMB) failed: " +
+                   aerogpu_test::Win32ErrorToString((DWORD)r);
+        continue;
+      }
+      if (value_type != REG_DWORD || value_size != sizeof(DWORD)) {
+        last_err = std::string("NonLocalMemorySizeMB has unexpected registry type/size (") + key_label + ")";
+        continue;
+      }
+
+      mb = (uint32_t)value;
+      found = true;
+      break;
     }
 
-    HKEY params_key = NULL;
-    LONG r = RegOpenKeyExW(drv_key, L"Parameters", 0, KEY_READ, &params_key);
-    RegCloseKey(drv_key);
-    drv_key = NULL;
-    if (r != ERROR_SUCCESS) {
-      // Parameters subkey may not exist if the driver isn't installed via the INF yet.
-      last_err = "RegOpenKeyExW(Parameters) failed: " + aerogpu_test::Win32ErrorToString((DWORD)r);
-      continue;
+    if (found) {
+      break;
     }
-
-    DWORD value_type = 0;
-    DWORD value = 0;
-    DWORD value_size = sizeof(value);
-    r = RegQueryValueExW(params_key,
-                         L"NonLocalMemorySizeMB",
-                         NULL,
-                         &value_type,
-                         (LPBYTE)&value,
-                         &value_size);
-    RegCloseKey(params_key);
-    params_key = NULL;
-
-    if (r != ERROR_SUCCESS) {
-      last_err = "RegQueryValueExW(NonLocalMemorySizeMB) failed: " + aerogpu_test::Win32ErrorToString((DWORD)r);
-      continue;
-    }
-    if (value_type != REG_DWORD || value_size != sizeof(DWORD)) {
-      last_err = "NonLocalMemorySizeMB has unexpected registry type/size";
-      continue;
-    }
-
-    mb = (uint32_t)value;
-    found = true;
-    break;
   }
 
   const DWORD enum_err = GetLastError();
