@@ -371,7 +371,7 @@ pub fn js_value_copy_to_bytes(val: &JsValue, dst: &mut [u8]) -> Result<()> {
         js_sys::Uint8Array::new(val)
     } else {
         return Err(StorageError::Corrupt(
-            "expected Uint8Array for stored block",
+            "expected Uint8Array for stored block".to_string(),
         ));
     };
 
@@ -379,7 +379,9 @@ pub fn js_value_copy_to_bytes(val: &JsValue, dst: &mut [u8]) -> Result<()> {
     // to allocate/copy an absurd amount of data. `st-idb` stores fixed-size blocks, so any size
     // mismatch is invalid.
     if arr.length() as usize != dst.len() {
-        return Err(StorageError::Corrupt("stored block size mismatch"));
+        return Err(StorageError::Corrupt(
+            "stored block size mismatch".to_string(),
+        ));
     }
 
     arr.copy_to(dst);

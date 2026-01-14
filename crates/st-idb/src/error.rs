@@ -17,7 +17,7 @@ pub enum StorageError {
     #[error("invalid configuration: {0}")]
     InvalidConfig(&'static str),
     #[error("stored data is corrupt or has an unexpected format: {0}")]
-    Corrupt(&'static str),
+    Corrupt(String),
     #[error("unsupported on-disk format version {0}")]
     UnsupportedFormat(u32),
     #[error("quota exceeded while writing to IndexedDB")]

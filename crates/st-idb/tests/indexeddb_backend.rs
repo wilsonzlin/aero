@@ -46,11 +46,13 @@ async fn non_default_block_size_persists_and_open_existing_works() {
     let capacity = 8 * 1024 * 1024;
     let block_size = 64 * 1024;
 
-    let mut backend = IndexedDbBackend::create(
+    let mut backend = IndexedDbBackend::open(
         &db_name,
         capacity,
-        block_size,
-        IndexedDbBackendOptions::default(),
+        IndexedDbBackendOptions {
+            block_size: Some(block_size),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -117,7 +119,10 @@ async fn open_existing_rejects_missing_meta_keys() {
         .await
         .err()
         .expect("expected open_existing to fail for missing meta keys");
-    assert!(matches!(err, StorageError::Corrupt("missing block_size")));
+    assert!(matches!(
+        err,
+        StorageError::Corrupt(msg) if msg == "missing block_size"
+    ));
 
     IndexedDbBackend::delete_database(&db_name).await.unwrap();
 }
@@ -153,6 +158,7 @@ async fn eviction_round_trip() {
         IndexedDbBackendOptions {
             max_resident_bytes: 2 * block_size,
             flush_chunk_blocks: 2,
+            ..Default::default()
         },
     )
     .await
@@ -196,6 +202,7 @@ async fn eviction_writeback_persists_without_explicit_flush() {
             // Cache holds one 1MiB block, so writing another block forces eviction.
             max_resident_bytes: block_size,
             flush_chunk_blocks: 1,
+            ..Default::default()
         },
     )
     .await
@@ -290,6 +297,85 @@ async fn clear_blocks_resets_persisted_data_and_cache() {
     let mut cleared2 = vec![0xAA; 11];
     backend2.read_at(0, &mut cleared2).await.unwrap();
     assert_eq!(cleared2, vec![0u8; 11]);
+    IndexedDbBackend::delete_database(&db_name).await.unwrap();
+}
+
+#[wasm_bindgen_test(async)]
+async fn mismatch_errors_include_expected_and_actual() {
+    let db_name = unique_db_name("st-idb-mismatch");
+    let _ = IndexedDbBackend::delete_database(&db_name).await;
+
+    let capacity = 8 * 1024 * 1024;
+    let block_size = 64 * 1024;
+
+    let mut backend = IndexedDbBackend::open(
+        &db_name,
+        capacity,
+        IndexedDbBackendOptions {
+            block_size: Some(block_size),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    backend.write_at(0, b"hello").await.unwrap();
+    backend.flush().await.unwrap();
+    drop(backend);
+
+    // open_existing should reject an explicit block size mismatch, and include expected vs actual.
+    let err = IndexedDbBackend::open_existing(
+        &db_name,
+        IndexedDbBackendOptions {
+            block_size: Some(block_size * 2),
+            ..Default::default()
+        },
+    )
+    .await
+    .err()
+    .unwrap();
+    match err {
+        StorageError::Corrupt(msg) => {
+            assert!(msg.contains("block size mismatch"), "msg={msg}");
+            assert!(msg.contains(&(block_size * 2).to_string()), "msg={msg}");
+            assert!(msg.contains(&block_size.to_string()), "msg={msg}");
+        }
+        other => panic!("expected StorageError::Corrupt, got {other:?}"),
+    }
+
+    // open should reject an explicit capacity mismatch, and include expected vs actual.
+    let err = IndexedDbBackend::open(&db_name, capacity + 1, IndexedDbBackendOptions::default())
+        .await
+        .err()
+        .unwrap();
+    match err {
+        StorageError::Corrupt(msg) => {
+            assert!(msg.contains("capacity mismatch"), "msg={msg}");
+            assert!(msg.contains(&(capacity + 1).to_string()), "msg={msg}");
+            assert!(msg.contains(&capacity.to_string()), "msg={msg}");
+        }
+        other => panic!("expected StorageError::Corrupt, got {other:?}"),
+    }
+
+    // open should also reject an explicit block size mismatch.
+    let err = IndexedDbBackend::open(
+        &db_name,
+        capacity,
+        IndexedDbBackendOptions {
+            block_size: Some(block_size * 2),
+            ..Default::default()
+        },
+    )
+    .await
+    .err()
+    .unwrap();
+    match err {
+        StorageError::Corrupt(msg) => {
+            assert!(msg.contains("block size mismatch"), "msg={msg}");
+            assert!(msg.contains(&(block_size * 2).to_string()), "msg={msg}");
+            assert!(msg.contains(&block_size.to_string()), "msg={msg}");
+        }
+        other => panic!("expected StorageError::Corrupt, got {other:?}"),
+    }
 
     IndexedDbBackend::delete_database(&db_name).await.unwrap();
 }

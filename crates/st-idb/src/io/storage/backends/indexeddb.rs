@@ -25,6 +25,12 @@ pub struct IndexedDbBackendOptions {
     pub max_resident_bytes: usize,
     /// Maximum blocks to persist per IndexedDB transaction.
     pub flush_chunk_blocks: usize,
+    /// Block size in bytes for on-disk blocks.
+    ///
+    /// - When creating a new database, `None` uses the default block size.
+    /// - When opening an existing database, `None` uses the stored block size.
+    /// - When set to `Some`, opening will validate the stored meta matches.
+    pub block_size: Option<usize>,
 }
 
 impl Default for IndexedDbBackendOptions {
@@ -32,6 +38,7 @@ impl Default for IndexedDbBackendOptions {
         Self {
             max_resident_bytes: 64 * 1024 * 1024,
             flush_chunk_blocks: 4,
+            block_size: None,
         }
     }
 }
@@ -49,8 +56,8 @@ pub struct IndexedDbBackend {
 impl IndexedDbBackend {
     /// Open an existing IndexedDB-backed disk using persisted metadata.
     ///
-    /// Unlike [`Self::open`], this does **not** require the caller to redundantly pass `capacity`
-    /// or `block_size`: both are loaded from IndexedDB metadata.
+    /// Unlike [`Self::open`], this does **not** require the caller to redundantly pass `capacity`:
+    /// it is loaded from IndexedDB metadata.
     ///
     /// If the database exists but is missing metadata (i.e. it was not initialized via `st-idb`),
     /// this returns [`StorageError::MissingMeta`].
@@ -59,21 +66,52 @@ impl IndexedDbBackend {
         opts: IndexedDbBackendOptions,
     ) -> Result<Self> {
         let db_name = db_name.into();
+
+        let expected_block_size = opts.block_size;
+        if let Some(expected_block_size) = expected_block_size {
+            Self::validate_block_size_arg(expected_block_size)?;
+        }
+
         let db = Self::open_database(&db_name).await?;
 
-        let meta = Self::read_meta(&db)
-            .await?
-            .ok_or(StorageError::MissingMeta)?;
-        Self::validate_meta(&meta)?;
+        let meta = match Self::read_meta(&db).await {
+            Ok(Some(meta)) => meta,
+            Ok(None) => {
+                db.close();
+                return Err(StorageError::MissingMeta);
+            }
+            Err(err) => {
+                db.close();
+                return Err(err);
+            }
+        };
 
-        let block_size = meta.block_size as usize;
-        Self::validate_block_size_meta(block_size)?;
+        if let Err(err) = Self::validate_meta(&meta) {
+            db.close();
+            return Err(err);
+        }
+
+        let stored_block_size = meta.block_size as usize;
+        if let Err(err) = Self::validate_block_size_meta(stored_block_size) {
+            db.close();
+            return Err(err);
+        }
+
+        if let Some(expected_block_size) = expected_block_size {
+            if meta.block_size != expected_block_size as u32 {
+                db.close();
+                return Err(StorageError::Corrupt(format!(
+                    "block size mismatch (expected {expected_block_size} bytes, found {} bytes)",
+                    meta.block_size
+                )));
+            }
+        }
 
         Ok(Self {
             db_name,
             db,
             capacity: meta.capacity,
-            cache: BlockCache::new(block_size, opts.max_resident_bytes),
+            cache: BlockCache::new(stored_block_size, opts.max_resident_bytes),
             dirty: HashSet::new(),
             flush_chunk_blocks: opts.flush_chunk_blocks.max(1),
             stats: DiskBackendStats::default(),
@@ -82,45 +120,15 @@ impl IndexedDbBackend {
 
     /// Create (or reopen) an IndexedDB-backed disk with an explicit `block_size`.
     ///
-    /// If the database already contains metadata, the stored `capacity` and `block_size` must
-    /// match the provided values.
+    /// This is a convenience wrapper around [`Self::open`] that sets `opts.block_size`.
     pub async fn create(
         db_name: impl Into<String>,
         capacity: u64,
         block_size: usize,
-        opts: IndexedDbBackendOptions,
+        mut opts: IndexedDbBackendOptions,
     ) -> Result<Self> {
-        Self::validate_block_size_arg(block_size)?;
-        let db_name = db_name.into();
-        let db = Self::open_database(&db_name).await?;
-
-        let existing_meta = Self::read_meta(&db).await?;
-        let (disk_capacity, disk_block_size) = match existing_meta {
-            None => {
-                Self::write_meta(&db, capacity, block_size).await?;
-                (capacity, block_size)
-            }
-            Some(meta) => {
-                Self::validate_meta(&meta)?;
-                if meta.capacity != capacity {
-                    return Err(StorageError::Corrupt("capacity mismatch"));
-                }
-                if meta.block_size != block_size as u32 {
-                    return Err(StorageError::Corrupt("block size mismatch"));
-                }
-                (meta.capacity, meta.block_size as usize)
-            }
-        };
-
-        Ok(Self {
-            db_name,
-            db,
-            capacity: disk_capacity,
-            cache: BlockCache::new(disk_block_size, opts.max_resident_bytes),
-            dirty: HashSet::new(),
-            flush_chunk_blocks: opts.flush_chunk_blocks.max(1),
-            stats: DiskBackendStats::default(),
-        })
+        opts.block_size = Some(block_size);
+        Self::open(db_name, capacity, opts).await
     }
 
     pub async fn open(
@@ -129,20 +137,55 @@ impl IndexedDbBackend {
         opts: IndexedDbBackendOptions,
     ) -> Result<Self> {
         let db_name = db_name.into();
+        let requested_block_size = opts.block_size.unwrap_or(DEFAULT_BLOCK_SIZE);
+        Self::validate_block_size_arg(requested_block_size)?;
+
         let db = Self::open_database(&db_name).await?;
 
-        let existing_meta = Self::read_meta(&db).await?;
+        let existing_meta = match Self::read_meta(&db).await {
+            Ok(meta) => meta,
+            Err(err) => {
+                db.close();
+                return Err(err);
+            }
+        };
+
         let (disk_capacity, block_size) = match existing_meta {
             None => {
-                Self::write_meta(&db, capacity, DEFAULT_BLOCK_SIZE).await?;
-                (capacity, DEFAULT_BLOCK_SIZE)
+                if let Err(err) = Self::write_meta(&db, capacity, requested_block_size).await {
+                    db.close();
+                    return Err(err);
+                }
+                (capacity, requested_block_size)
             }
             Some(meta) => {
-                Self::validate_meta(&meta)?;
-                if meta.capacity != capacity {
-                    return Err(StorageError::Corrupt("capacity mismatch"));
+                if let Err(err) = Self::validate_meta(&meta) {
+                    db.close();
+                    return Err(err);
                 }
-                Self::validate_block_size_meta(meta.block_size as usize)?;
+                if let Err(err) = Self::validate_block_size_meta(meta.block_size as usize) {
+                    db.close();
+                    return Err(err);
+                }
+
+                if meta.capacity != capacity {
+                    db.close();
+                    return Err(StorageError::Corrupt(format!(
+                        "capacity mismatch (expected {capacity} bytes, found {} bytes)",
+                        meta.capacity
+                    )));
+                }
+
+                if let Some(expected_block_size) = opts.block_size {
+                    if meta.block_size != expected_block_size as u32 {
+                        db.close();
+                        return Err(StorageError::Corrupt(format!(
+                            "block size mismatch (expected {expected_block_size} bytes, found {} bytes)",
+                            meta.block_size
+                        )));
+                    }
+                }
+
                 (meta.capacity, meta.block_size as usize)
             }
         };
@@ -247,7 +290,8 @@ impl IndexedDbBackend {
     }
 
     fn validate_block_size_meta(block_size: usize) -> Result<()> {
-        Self::validate_block_size_common(block_size).map_err(StorageError::Corrupt)
+        Self::validate_block_size_common(block_size)
+            .map_err(|msg| StorageError::Corrupt(msg.to_string()))
     }
 
     async fn read_meta(db: &web_sys::IdbDatabase) -> Result<Option<DiskMeta>> {
@@ -257,21 +301,21 @@ impl IndexedDbBackend {
         }
 
         let format_version: u32 = format_version
-            .ok_or(StorageError::Corrupt("missing format_version"))?
+            .ok_or(StorageError::Corrupt("missing format_version".to_string()))?
             .parse()
-            .map_err(|_| StorageError::Corrupt("invalid format_version"))?;
+            .map_err(|_| StorageError::Corrupt("invalid format_version".to_string()))?;
 
         let block_size: u32 = idb::get_string(db, META_STORE, META_KEY_BLOCK_SIZE)
             .await?
-            .ok_or(StorageError::Corrupt("missing block_size"))?
+            .ok_or(StorageError::Corrupt("missing block_size".to_string()))?
             .parse()
-            .map_err(|_| StorageError::Corrupt("invalid block_size"))?;
+            .map_err(|_| StorageError::Corrupt("invalid block_size".to_string()))?;
 
         let capacity: u64 = idb::get_string(db, META_STORE, META_KEY_CAPACITY)
             .await?
-            .ok_or(StorageError::Corrupt("missing capacity"))?
+            .ok_or(StorageError::Corrupt("missing capacity".to_string()))?
             .parse()
-            .map_err(|_| StorageError::Corrupt("invalid capacity"))?;
+            .map_err(|_| StorageError::Corrupt("invalid capacity".to_string()))?;
 
         Ok(Some(DiskMeta {
             format_version,
@@ -416,10 +460,9 @@ impl DiskBackend for IndexedDbBackend {
                     self.load_block(block_idx).await?;
                 }
                 let data_slice = {
-                    let block = self
-                        .cache
-                        .get(&block_idx)
-                        .ok_or(StorageError::Corrupt("missing cached block after load"))?;
+                    let block = self.cache.get(&block_idx).ok_or(StorageError::Corrupt(
+                        "missing cached block after load".to_string(),
+                    ))?;
                     &block.data[in_block..in_block + to_copy]
                 };
                 buf[buf_off..buf_off + to_copy].copy_from_slice(data_slice);
@@ -458,10 +501,9 @@ impl DiskBackend for IndexedDbBackend {
                     self.dirty.insert(block_idx);
                 } else {
                     self.load_block(block_idx).await?;
-                    let block = self
-                        .cache
-                        .get_mut(&block_idx)
-                        .ok_or(StorageError::Corrupt("missing cached block after load"))?;
+                    let block = self.cache.get_mut(&block_idx).ok_or(StorageError::Corrupt(
+                        "missing cached block after load".to_string(),
+                    ))?;
                     block.data[in_block..in_block + to_copy]
                         .copy_from_slice(&buf[buf_off..buf_off + to_copy]);
                     block.dirty = true;
@@ -493,7 +535,9 @@ impl DiskBackend for IndexedDbBackend {
                     let key = block_key(block_idx);
                     let (is_zero, value) = {
                         let Some(block) = self.cache.peek(&block_idx) else {
-                            return Err(StorageError::Corrupt("dirty block missing from cache"));
+                            return Err(StorageError::Corrupt(
+                                "dirty block missing from cache".to_string(),
+                            ));
                         };
                         if is_all_zero(&block.data) {
                             (true, None)
