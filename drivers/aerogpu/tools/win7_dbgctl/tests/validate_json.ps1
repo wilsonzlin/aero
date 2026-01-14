@@ -106,6 +106,10 @@ $artifacts = @(
   "last_cmd_test_multi_1.bin",
   "last_cmd_test_multi_1.bin.txt",
   "last_cmd_test_multi_1.bin.alloc_table.bin",
+  # If the ring only has one descriptor available, --count 2 may fall back to a single output at the base path.
+  "last_cmd_test_multi.bin",
+  "last_cmd_test_multi.bin.txt",
+  "last_cmd_test_multi.bin.alloc_table.bin",
   "last_cmd_submit_test.bin",
   "last_cmd_submit_test.bin.txt",
   "last_cmd_submit_test.bin.alloc_table.bin",
