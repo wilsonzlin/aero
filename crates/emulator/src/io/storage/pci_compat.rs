@@ -101,6 +101,25 @@ impl PciConfigSpaceCompat {
         Self(RefCell::new(config))
     }
 
+    /// Runs `f` with a temporary mutable borrow of the underlying canonical config space.
+    ///
+    /// Returns `None` if the config space is already borrowed (e.g. re-entrant access).
+    pub fn with_config_mut<R>(&self, f: impl FnOnce(&mut PciConfigSpace) -> R) -> Option<R> {
+        self.0.try_borrow_mut().ok().map(|mut cfg| f(&mut cfg))
+    }
+
+    /// Runs `f` with a temporary immutable borrow of the underlying canonical config space.
+    ///
+    /// Returns `None` if the config space is already mutably borrowed.
+    pub fn with_config<R>(&self, f: impl FnOnce(&PciConfigSpace) -> R) -> Option<R> {
+        self.0.try_borrow().ok().map(|cfg| f(&cfg))
+    }
+
+    /// Consumes this wrapper and returns the underlying canonical config space.
+    pub fn into_inner(self) -> PciConfigSpace {
+        self.0.into_inner()
+    }
+
     fn validate_access(offset: u16, size: usize) -> bool {
         matches!(size, 1 | 2 | 4)
             && usize::from(offset)
@@ -190,6 +209,12 @@ impl PciConfigSpaceCompat {
         }
 
         cfg.write(offset, size, value);
+    }
+}
+
+impl From<PciConfigSpace> for PciConfigSpaceCompat {
+    fn from(value: PciConfigSpace) -> Self {
+        Self::new(value)
     }
 }
 
