@@ -203,6 +203,43 @@ fn xhci_run_stop_toggles_usbsts_hchalted_bit() {
 }
 
 #[test]
+fn xhci_tick_platform_advances_mfindex_with_sub_ms_remainder() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+    let bar0_base = m.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Ensure MMIO decode is enabled so MFINDEX reads are valid.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    let mfindex_before = m.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
+
+    // Advance by just under 1ms: should not tick yet, but should accumulate remainder.
+    m.tick_platform(999_999);
+    let mfindex_mid = m.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(mfindex_mid, mfindex_before);
+
+    // Advance by 1ns: should cross the 1ms boundary and tick exactly once.
+    m.tick_platform(1);
+    let mfindex_after = m.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(mfindex_after, mfindex_before.wrapping_add(8) & 0x3fff);
+}
+
+#[test]
 fn xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
@@ -311,4 +348,3 @@ fn xhci_intx_level_is_routed_and_gated_by_command_intx_disable() {
     m.poll_pci_intx_lines();
     assert_eq!(interrupts.borrow().gsi_level(gsi), false);
 }
-
