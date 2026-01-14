@@ -160,7 +160,7 @@ def main() -> int:
     # We don't attempt to parse C here; this is a best-effort regex guardrail.
     assign_re = re.compile(
         r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)\s*)?(?:\(\s*)*InterlockedAnd\s*\(\s*"
-        r"[^,;]*(?:->|\.)IrqEnableMask\b[^,;]*,",
+        r"[^,;]*(?:->|\.)\s*IrqEnableMask\b[^,;]*,",
         re.S,
     )
     vars_old = set(assign_re.findall(body))
