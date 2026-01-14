@@ -8305,9 +8305,9 @@ impl AerogpuD3d11Executor {
         let verts_per_prim: u32 = match ia_topology {
             CmdPrimitiveTopology::LineStripAdj => 4,
             CmdPrimitiveTopology::TriangleStripAdj => 6,
-            other => bail!(
-                "GS adjacency-strip prepass called for unsupported IA topology {other:?}"
-            ),
+            other => {
+                bail!("GS adjacency-strip prepass called for unsupported IA topology {other:?}")
+            }
         };
         if gs_meta.verts_per_primitive != verts_per_prim {
             bail!(
@@ -8477,12 +8477,8 @@ impl AerogpuD3d11Executor {
                                         if odd {
                                             // Odd primitive: (base+2, base+1, base+0, base+5, base+4, base+3).
                                             out.extend_from_slice(&[
-                                                window[2],
-                                                window[1],
-                                                window[0],
-                                                window[5],
-                                                window[4],
-                                                window[3],
+                                                window[2], window[1], window[0], window[5],
+                                                window[4], window[3],
                                             ]);
                                         } else {
                                             out.extend(window.iter().copied());
@@ -9435,10 +9431,9 @@ impl AerogpuD3d11Executor {
                                     swizzle_to_wgsl(src.swizzle)
                                 )
                             }
-                            other => bail!(
-                                "VS-as-compute: unsupported src operand kind {:?}",
-                                other
-                            ),
+                            other => {
+                                bail!("VS-as-compute: unsupported src operand kind {:?}", other)
+                            }
                         };
 
                         out.push_str(&format!("  let {tmp_name}: vec4<f32> = {src_expr};\n"));
@@ -9480,10 +9475,9 @@ impl AerogpuD3d11Executor {
                                         swizzle_to_wgsl(src.swizzle)
                                     )
                                 }
-                                other => bail!(
-                                    "VS-as-compute: unsupported src operand kind {:?}",
-                                    other
-                                ),
+                                other => {
+                                    bail!("VS-as-compute: unsupported src operand kind {:?}", other)
+                                }
                             })
                         };
 
@@ -9690,9 +9684,11 @@ impl AerogpuD3d11Executor {
 
         let max_indices_per_prim: u64 = match gs_meta.output_topology_kind {
             GsOutputTopologyKind::PointList => u64::from(gs_meta.max_output_vertices),
-            GsOutputTopologyKind::LineStrip => u64::from(gs_meta.max_output_vertices.saturating_sub(1))
-                .checked_mul(2)
-                .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?,
+            GsOutputTopologyKind::LineStrip => {
+                u64::from(gs_meta.max_output_vertices.saturating_sub(1))
+                    .checked_mul(2)
+                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
+            }
             GsOutputTopologyKind::TriangleStrip => {
                 u64::from(gs_meta.max_output_vertices.saturating_sub(2))
                     .checked_mul(3)
@@ -9890,8 +9886,8 @@ impl AerogpuD3d11Executor {
             (
                 &gs_resource_bindings.group_layouts
                     [ShaderStage::Geometry.as_bind_group_index() as usize],
-                gs_resource_bindings.group_bindings[ShaderStage::Geometry.as_bind_group_index()
-                    as usize]
+                gs_resource_bindings.group_bindings
+                    [ShaderStage::Geometry.as_bind_group_index() as usize]
                     .as_slice(),
             )
         } else {
@@ -11187,64 +11183,66 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             // render via `draw_indirect` (some downlevel backends are unreliable with
             // `draw_indexed_indirect`).
             let indexed_draw = opcode == OPCODE_DRAW_INDEXED;
-            let (v_alloc, i_alloc, args_alloc) = match (gs_meta.verts_per_primitive, self.state.primitive_topology) {
-                (1, _) => self.exec_geometry_shader_prepass_pointlist(
-                    encoder,
-                    allocs,
-                    guest_mem,
-                    vs_handle,
-                    gs_handle,
-                    gs_meta,
-                    primitive_count,
-                    gs_instance_count,
-                    instance_count,
-                    vertex_pulling_draw,
-                    indexed_draw,
-                )?,
-                (2, _) => self.exec_geometry_shader_prepass_linelist(
-                    encoder,
-                    allocs,
-                    guest_mem,
-                    vs_handle,
-                    gs_handle,
-                    gs_meta,
-                    primitive_count,
-                    gs_instance_count,
-                    instance_count,
-                    vertex_pulling_draw,
-                    indexed_draw,
-                )?,
-                (4, CmdPrimitiveTopology::LineStripAdj)
-                | (6, CmdPrimitiveTopology::TriangleStripAdj) => self.exec_geometry_shader_prepass_adjacency_strip(
-                    encoder,
-                    allocs,
-                    guest_mem,
-                    vs_handle,
-                    gs_handle,
-                    gs_meta,
-                    self.state.primitive_topology,
-                    primitive_count,
-                    element_count,
-                    gs_instance_count,
-                    instance_count,
-                    vertex_pulling_draw,
-                    indexed_draw,
-                )?,
-                (3 | 4 | 6, _) => self.exec_geometry_shader_prepass_trianglelist(
-                    encoder,
-                    allocs,
-                    guest_mem,
-                    vs_handle,
-                    gs_handle,
-                    gs_meta,
-                    primitive_count,
-                    gs_instance_count,
-                    instance_count,
-                    vertex_pulling_draw,
-                    indexed_draw,
-                )?,
-                (other, _) => bail!("unsupported GS prepass input verts_per_primitive={other}"),
-            };
+            let (v_alloc, i_alloc, args_alloc) =
+                match (gs_meta.verts_per_primitive, self.state.primitive_topology) {
+                    (1, _) => self.exec_geometry_shader_prepass_pointlist(
+                        encoder,
+                        allocs,
+                        guest_mem,
+                        vs_handle,
+                        gs_handle,
+                        gs_meta,
+                        primitive_count,
+                        gs_instance_count,
+                        instance_count,
+                        vertex_pulling_draw,
+                        indexed_draw,
+                    )?,
+                    (2, _) => self.exec_geometry_shader_prepass_linelist(
+                        encoder,
+                        allocs,
+                        guest_mem,
+                        vs_handle,
+                        gs_handle,
+                        gs_meta,
+                        primitive_count,
+                        gs_instance_count,
+                        instance_count,
+                        vertex_pulling_draw,
+                        indexed_draw,
+                    )?,
+                    (4, CmdPrimitiveTopology::LineStripAdj)
+                    | (6, CmdPrimitiveTopology::TriangleStripAdj) => self
+                        .exec_geometry_shader_prepass_adjacency_strip(
+                            encoder,
+                            allocs,
+                            guest_mem,
+                            vs_handle,
+                            gs_handle,
+                            gs_meta,
+                            self.state.primitive_topology,
+                            primitive_count,
+                            element_count,
+                            gs_instance_count,
+                            instance_count,
+                            vertex_pulling_draw,
+                            indexed_draw,
+                        )?,
+                    (3 | 4 | 6, _) => self.exec_geometry_shader_prepass_trianglelist(
+                        encoder,
+                        allocs,
+                        guest_mem,
+                        vs_handle,
+                        gs_handle,
+                        gs_meta,
+                        primitive_count,
+                        gs_instance_count,
+                        instance_count,
+                        vertex_pulling_draw,
+                        indexed_draw,
+                    )?,
+                    (other, _) => bail!("unsupported GS prepass input verts_per_primitive={other}"),
+                };
             expanded_vertex_alloc = v_alloc;
             expanded_index_alloc = Some(i_alloc);
             indirect_args_alloc = args_alloc;

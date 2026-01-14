@@ -79,7 +79,8 @@ fn operand_token(
     token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
     token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
     token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
-    token |= (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
     token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
@@ -222,7 +223,11 @@ fn build_gs_triadj_passthrough_triangle_dxbc() -> Vec<u8> {
     tokens[1] = tokens.len() as u32;
 
     let shdr = tokens_to_bytes(&tokens);
-    build_dxbc(&[(FOURCC_ISGN, isgn), (FOURCC_OSGN, osgn), (FOURCC_SHDR, shdr)])
+    build_dxbc(&[
+        (FOURCC_ISGN, isgn),
+        (FOURCC_OSGN, osgn),
+        (FOURCC_SHDR, shdr),
+    ])
 }
 
 #[repr(C)]

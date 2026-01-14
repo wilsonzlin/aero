@@ -1,7 +1,7 @@
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::xhci::context::{EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{XhciController};
+use aero_usb::xhci::XhciController;
 use aero_usb::MemoryBus;
 
 mod util;

@@ -919,7 +919,8 @@ fn aerogpu_cmd_enables_primitive_restart_for_triangle_strip() {
 }
 
 #[test]
-fn aerogpu_cmd_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_and_first_index_u32() {
+fn aerogpu_cmd_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_and_first_index_u32(
+) {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -974,10 +975,10 @@ fn aerogpu_cmd_triangle_strip_draw_indexed_restart_respects_index_buffer_offset_
             vb_bytes,
             ib_bytes,
             AerogpuPrimitiveTopology::TriangleStrip,
-            1,  // u32
-            7,  // index_count
-            8,  // index_buffer_offset_bytes
-            1,  // first_index
+            1, // u32
+            7, // index_count
+            8, // index_buffer_offset_bytes
+            1, // first_index
         );
 
         let mut guest_mem = VecGuestMemory::new(0);
