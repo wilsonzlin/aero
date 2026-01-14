@@ -176,6 +176,9 @@ fn enable_aerogpu_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
         enable_aerogpu: true,
+        // Keep the failure mode stable (reject for missing PC platform, not VGA conflict) even if
+        // validation order evolves.
+        enable_vga: false,
         ..Default::default()
     };
 
