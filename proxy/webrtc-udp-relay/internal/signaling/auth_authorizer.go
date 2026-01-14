@@ -49,7 +49,7 @@ func (a authAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) (authR
 
 	// For AUTH_MODE=jwt we use the JWT session id (`sid`) as a stable quota key so
 	// clients cannot bypass per-session rate limits by opening many parallel
-	// connections with the same token.
+	// connections using different JWT strings that share the same `sid`.
 	if a.mode == config.AuthModeJWT {
 		cv, ok := a.verifier.(auth.ClaimsVerifier)
 		if !ok {
