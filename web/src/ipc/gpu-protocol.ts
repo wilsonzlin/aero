@@ -64,6 +64,12 @@ export type GpuRuntimeScanoutSnapshotV1 = {
   height: number;
   pitchBytes: number;
   format: number;
+  /**
+   * Best-effort debug-friendly string for `format` (e.g. `"B8G8R8X8Unorm (2)"`).
+   *
+   * This is optional for back-compat with older workers.
+   */
+  format_str?: string;
   generation: number;
 };
 

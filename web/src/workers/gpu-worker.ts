@@ -2155,6 +2155,7 @@ function snapshotScanoutForTelemetry(): GpuRuntimeScanoutSnapshotV1 | undefined 
     height: snap.height,
     pitchBytes: snap.pitchBytes,
     format: snap.format,
+    format_str: aerogpuFormatToString(snap.format >>> 0),
     generation: snap.generation,
   };
 }

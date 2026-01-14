@@ -1,0 +1,167 @@
+import { describe, expect, it } from "vitest";
+
+import { Worker, type WorkerOptions } from "node:worker_threads";
+
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+import {
+  FRAME_PRESENTED,
+  FRAME_SEQ_INDEX,
+  FRAME_STATUS_INDEX,
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+  isGpuWorkerMessageBase,
+  type GpuRuntimeMetricsMessage,
+} from "../ipc/gpu-protocol";
+import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM, wrapScanoutState } from "../ipc/scanout_state.ts";
+import { aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+
+async function waitForWorkerMessage(
+  worker: Worker,
+  predicate: (msg: unknown) => boolean,
+  timeoutMs: number,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
+    }, timeoutMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+
+    const onMessage = (msg: unknown) => {
+      // Surface runtime worker errors eagerly.
+      const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
+      if (maybeProtocol?.type === MessageType.ERROR) {
+        cleanup();
+        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
+        return;
+      }
+      try {
+        if (!predicate(msg)) return;
+      } catch (err) {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      cleanup();
+      resolve(msg);
+    };
+
+    const onError = (err: unknown) => {
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    const onExit = (code: number) => {
+      cleanup();
+      reject(new Error(`worker exited before emitting the expected message (code=${code})`));
+    };
+
+    function cleanup(): void {
+      clearTimeout(timer);
+      worker.off("message", onMessage);
+      worker.off("error", onError);
+      worker.off("exit", onExit);
+    }
+
+    worker.on("message", onMessage);
+    worker.on("error", onError);
+    worker.on("exit", onExit);
+  });
+}
+
+describe("workers/gpu-worker metrics scanout snapshot", () => {
+  it("includes scanout.format_str in metrics messages", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+      };
+
+      // Control-plane init (sets up rings + status).
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        10_000,
+      );
+
+      // Runtime init (headless).
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        options: {},
+      });
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => isGpuWorkerMessageBase(msg) && (msg as { type?: unknown }).type === "ready",
+        10_000,
+      );
+
+      // Publish a deterministic scanout descriptor so the metrics snapshot includes a known format.
+      const scanoutWords = wrapScanoutState(segments.scanoutState!, segments.scanoutStateOffsetBytes ?? 0);
+      publishScanoutState(scanoutWords, {
+        source: SCANOUT_SOURCE_WDDM,
+        basePaddrLo: 0x1000,
+        basePaddrHi: 0,
+        width: 64,
+        height: 64,
+        pitchBytes: 64 * 4,
+        format: SCANOUT_FORMAT_B8G8R8X8,
+      });
+
+      // Metrics are rate-limited (250ms). Tick once, wait long enough, then tick again to ensure a
+      // metrics post with the current scanout state.
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const metricsPromise = waitForWorkerMessage(
+        worker,
+        (msg) => isGpuWorkerMessageBase(msg) && (msg as { type?: unknown }).type === "metrics" && !!(msg as any).scanout,
+        10_000,
+      );
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
+
+      const metricsMsg = (await metricsPromise) as GpuRuntimeMetricsMessage;
+      expect(metricsMsg.scanout).toBeTruthy();
+      expect(metricsMsg.scanout?.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
+      expect(metricsMsg.scanout?.format_str).toBe(aerogpuFormatToString(SCANOUT_FORMAT_B8G8R8X8));
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+});
+
