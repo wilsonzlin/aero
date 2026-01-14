@@ -426,6 +426,9 @@ test-input-rust:
 test-input-machine:
   cargo xtask input --machine
 
+test-input-wasm:
+  cargo xtask input --wasm --rust-only
+
 test-input-e2e:
   cargo xtask input --e2e
 

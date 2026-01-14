@@ -228,6 +228,9 @@ cargo xtask input --rust-only
 # Also run the canonical machine integration tests (snapshot + USB container wiring).
 cargo xtask input --machine
 
+# Also run the targeted WASM USB bridge regression test (runs in Node; does not require `node_modules`).
+cargo xtask input --wasm --rust-only
+
 # Targeted WASM USB bridge regression test (runs in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
 

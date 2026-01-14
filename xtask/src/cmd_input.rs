@@ -10,6 +10,7 @@ use std::process::Command;
 struct InputOpts {
     e2e: bool,
     machine: bool,
+    wasm: bool,
     rust_only: bool,
     pw_extra_args: Vec<String>,
 }
@@ -38,19 +39,21 @@ pub fn print_help() {
 Run the USB/input-focused test suite (Rust + web) with one command.
 
 Usage:
-  cargo xtask input [--e2e] [--machine] [--rust-only] [-- <extra playwright args>]
+  cargo xtask input [--e2e] [--machine] [--wasm] [--rust-only] [-- <extra playwright args>]
 
 Steps:
   1. cargo test -p aero-devices-input --locked
   2. cargo test -p aero-usb --locked
   3. (optional: --machine) cargo test -p aero-machine --lib --locked
-  4. (unless --rust-only) npm -w web run test:unit -- src/input
-  5. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
+  4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
+  5. (unless --rust-only) npm -w web run test:unit -- src/input
+  6. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
      (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
   --machine             Also run `aero-machine` unit tests (covers snapshot + device integration).
+  --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
   --rust-only            Only run the Rust input/USB tests (skips Node + Playwright).
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
@@ -59,6 +62,7 @@ Examples:
   cargo xtask input
   cargo xtask input --rust-only
   cargo xtask input --machine
+  cargo xtask input --wasm --rust-only
   cargo xtask input --e2e
   cargo xtask input --e2e -- --project=chromium
   cargo xtask input --e2e -- --project=chromium --workers=4
@@ -92,14 +96,33 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         runner.run_step("Rust: cargo test -p aero-machine --lib --locked", &mut cmd)?;
     }
 
+    let needs_node = opts.wasm || !opts.rust_only;
+    if needs_node {
+        let mut cmd = tools::check_node_version(&repo_root);
+        runner.run_step("Node: check version", &mut cmd)?;
+    }
+
+    if opts.wasm {
+        let mut cmd = Command::new("wasm-pack");
+        cmd.current_dir(&repo_root).args([
+            "test",
+            "--node",
+            "crates/aero-wasm",
+            "--test",
+            "webusb_uhci_bridge",
+            "--locked",
+        ]);
+        runner.run_step(
+            "WASM: wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked",
+            &mut cmd,
+        )?;
+    }
+
     if opts.rust_only {
         println!();
         println!("==> Rust-only input test steps passed.");
         return Ok(());
     }
-
-    let mut cmd = tools::check_node_version(&repo_root);
-    runner.run_step("Node: check version", &mut cmd)?;
 
     // `npm ci` from the repo root installs workspace deps under `./node_modules/`, but some
     // setups may install within `web/` directly. Accept either so `cargo xtask input` can still
@@ -145,6 +168,7 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
             }
             "--e2e" => opts.e2e = true,
             "--machine" => opts.machine = true,
+            "--wasm" => opts.wasm = true,
             "--rust-only" => opts.rust_only = true,
             "--" => {
                 opts.pw_extra_args = iter.collect();
