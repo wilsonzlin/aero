@@ -270,8 +270,9 @@ machine-readable JSON object on stdout:
 - `KeyboardLedSupportedMask` — EV_BITS(EV_LED) support mask (0 means EV_LED not advertised / LED output disabled)
 - `StatusQActive` — whether the driver is currently sending LED events on statusq
 
-The JSON output also includes the selected HID interface metadata (`path`, `vid`/`pid`, `usagePage`/`usage`, and report
-byte lengths/descriptor lengths) to make it easier to correlate with other logs when multiple HID devices are present.
+The JSON output (for `--state-json`, `--interrupt-info-json`, and `--counters-json`) also includes the selected HID
+interface metadata (`path`, `vid`/`pid`, `usagePage`/`usage`, and report byte lengths/descriptor lengths) to make it easier
+to correlate with other logs when multiple HID devices are present.
 
 ### Counters interpretation
 
@@ -447,6 +448,8 @@ Query virtio-input driver diagnostic counters in JSON form:
 ```bat
 hidtest.exe --counters-json
 ```
+
+The JSON output includes the selected HID interface metadata (path, VID/PID, report sizes), plus the full counters snapshot.
 
 You should see non-zero counts after some HID activity (enumeration, input reports, etc). If you run a non-virtio-input HID
 device, the IOCTL will fail with an "invalid function" style error.
