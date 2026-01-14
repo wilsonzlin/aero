@@ -842,6 +842,7 @@ HKR,Parameters,AllowPollingOnly,0x00010003,0
 Notes:
 
 * `MessageNumberLimit` is a request; Windows may allocate fewer messages.
+* `0x00010003` = `REG_DWORD` + `FLG_ADDREG_NOCLOBBER` (do not overwrite an existing value; preserves per-device bring-up toggles across reinstalls/upgrades).
 * `HKR` in a `.NT.HW` section is relative to the device instance’s **Device Parameters** key:
   * `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters`
   * The bring-up toggles above therefore live under:

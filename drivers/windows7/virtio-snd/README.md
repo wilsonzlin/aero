@@ -39,6 +39,7 @@ HKR,Parameters,AllowPollingOnly,0x00010003,0
 
 Notes:
 - `MessageNumberLimit` is a request; Windows may allocate fewer messages than requested.
+- `0x00010003` = `REG_DWORD` + `FLG_ADDREG_NOCLOBBER` (do not overwrite an existing value; preserves per-device bring-up toggles across reinstalls/upgrades).
 - If MSI/MSI-X allocation fails (or the device has no MSI/MSI-X capability), Windows will provide an **INTx** interrupt resource.
 - If you modify the INF, regenerate the catalog and re-sign the package (required on Win7 x64 unless test-signing is enabled).
 
