@@ -104,6 +104,10 @@ struct Options {
   bool test_input_events_buttons = false;
   bool test_input_events_wheel = false;
 
+  // If set, run an end-to-end virtio-input media key test that reads Consumer Control HID reports.
+  // This is intended to be paired with host-side QMP `input-send-event` injection of multimedia keys.
+  bool test_input_media_keys = false;
+
   // If set, require the virtio-input driver to be using MSI-X (message-signaled interrupts).
   // Without this flag the selftest still emits an informational virtio-input-msix marker.
   bool require_input_msix = false;
@@ -2946,16 +2950,19 @@ struct VirtioInputTestResult {
   DEVINST devinst = 0;
   int matched_devices = 0;
   int keyboard_devices = 0;
+  int consumer_devices = 0;
   int mouse_devices = 0;
   int tablet_devices = 0;
   int ambiguous_devices = 0;
   int unknown_devices = 0;
   int keyboard_collections = 0;
+  int consumer_collections = 0;
   int mouse_collections = 0;
   int tablet_collections = 0;
   // Best-effort: capture at least one interface path for each virtio-input HID class device so optional
   // end-to-end input report tests can open them.
   std::wstring keyboard_device_path;
+  std::wstring consumer_device_path;
   std::wstring mouse_device_path;
   std::wstring tablet_device_path;
   std::string reason;
@@ -2987,6 +2994,18 @@ static bool LooksLikeVirtioInputInterfacePath(const std::wstring& device_path) {
          ContainsInsensitive(device_path, L"VID_1AF4&PID_0003") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_1052") ||
          ContainsInsensitive(device_path, L"VID_1AF4&PID_1011");
+}
+
+static bool HasHidCollectionToken(const std::wstring& device_path,
+                                  const std::vector<std::wstring>& hwids,
+                                  const wchar_t* token) {
+  if (token && *token) {
+    if (ContainsInsensitive(device_path, token)) return true;
+    for (const auto& id : hwids) {
+      if (ContainsInsensitive(id, token)) return true;
+    }
+  }
+  return false;
 }
 
 static HANDLE OpenHidDeviceForIoctl(const wchar_t* path) {
@@ -3089,6 +3108,7 @@ static std::optional<VIOINPUT_INTERRUPT_INFO> QueryVirtioInputInterruptInfo(Logg
 struct HidReportDescriptorSummary {
   int keyboard_app_collections = 0;
   int mouse_app_collections = 0;
+  int consumer_app_collections = 0;
   int tablet_app_collections = 0;
   // For mouse/pointer (Generic Desktop Page) application collections, count how many contain X/Y inputs
   // marked as Relative vs Absolute. This is used to distinguish relative mice from absolute pointer/tablet
@@ -3147,6 +3167,11 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
 
   auto finalize_collection = [&](const CollectionCtx& ctx) {
     if (!ctx.is_application) return;
+    // Consumer Page (0x0C): Consumer Control (0x01)
+    if (ctx.usage_page == 0x0C && ctx.usage == 0x01) {
+      out.consumer_app_collections++;
+      return;
+    }
     switch (ctx.kind) {
       case CollectionCtx::Kind::Keyboard:
         out.keyboard_app_collections++;
@@ -3403,6 +3428,7 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     const bool has_keyboard = summary.keyboard_app_collections > 0;
     const bool has_mouse = summary.mouse_xy_relative_collections > 0;
     const bool has_tablet = summary.tablet_app_collections > 0;
+    const bool is_consumer_collection = HasHidCollectionToken(device_path, hwids, L"col02");
     const bool has_unclassified_mouse_collections =
         summary.mouse_app_collections > summary.mouse_xy_relative_collections;
     const int kind_count = (has_keyboard ? 1 : 0) + (has_mouse ? 1 : 0) + (has_tablet ? 1 : 0);
@@ -3412,8 +3438,15 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     } else if (kind_count > 1) {
       out.ambiguous_devices++;
     } else if (has_keyboard) {
-      out.keyboard_devices++;
-      if (out.keyboard_device_path.empty()) out.keyboard_device_path = device_path;
+      // Some HID stacks enumerate separate device interfaces for each top-level collection (e.g. keyboard COL01,
+      // consumer control COL02). Prefer using the collection token when available so tests open the right interface.
+      if (is_consumer_collection) {
+        out.consumer_devices++;
+        if (out.consumer_device_path.empty()) out.consumer_device_path = device_path;
+      } else {
+        out.keyboard_devices++;
+        if (out.keyboard_device_path.empty()) out.keyboard_device_path = device_path;
+      }
     } else if (has_mouse) {
       out.mouse_devices++;
       if (out.mouse_device_path.empty()) out.mouse_device_path = device_path;
@@ -3425,13 +3458,14 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     }
 
     out.keyboard_collections += summary.keyboard_app_collections;
+    out.consumer_collections += summary.consumer_app_collections;
     out.mouse_collections += summary.mouse_app_collections;
     out.tablet_collections += summary.tablet_app_collections;
 
     log.Logf("virtio-input: report_descriptor bytes=%zu keyboard_app_collections=%d "
-             "mouse_app_collections=%d tablet_app_collections=%d",
+             "mouse_app_collections=%d consumer_app_collections=%d tablet_app_collections=%d",
              report_desc->size(), summary.keyboard_app_collections, summary.mouse_app_collections,
-             summary.tablet_app_collections);
+             summary.consumer_app_collections, summary.tablet_app_collections);
   }
 
   SetupDiDestroyDeviceInfoList(devinfo);
@@ -3529,6 +3563,7 @@ static constexpr int kExpectedMouseHWheelDelta = -2;
 
 struct VirtioInputHidPaths {
   std::wstring keyboard_path;
+  std::wstring consumer_path;
   std::wstring mouse_path;
   std::string reason;
   DWORD win32_error = 0;
@@ -3606,13 +3641,27 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
     const auto summary = SummarizeHidReportDescriptor(*report_desc);
     const bool has_keyboard = summary.keyboard_app_collections > 0;
     const bool has_mouse = summary.mouse_app_collections > 0;
+    const bool has_consumer = summary.consumer_app_collections > 0;
     const bool has_tablet = summary.tablet_app_collections > 0;
     const bool has_relative_xy = summary.mouse_xy_relative_collections > 0;
     const bool has_absolute_xy = summary.mouse_xy_absolute_collections > 0;
+    const bool is_consumer_collection = HasHidCollectionToken(device_path, hwids, L"col02");
 
-    if (has_keyboard && !has_mouse && !has_tablet && out.keyboard_path.empty()) {
-      out.keyboard_path = device_path;
-      log.Logf("virtio-input-events: selected keyboard HID interface: %s", WideToUtf8(device_path).c_str());
+    if (has_keyboard && !has_mouse && !has_tablet) {
+      if (is_consumer_collection) {
+        if (out.consumer_path.empty()) {
+          out.consumer_path = device_path;
+          log.Logf("virtio-input-events: selected consumer HID interface: %s", WideToUtf8(device_path).c_str());
+        }
+      } else if (out.keyboard_path.empty()) {
+        out.keyboard_path = device_path;
+        log.Logf("virtio-input-events: selected keyboard HID interface: %s", WideToUtf8(device_path).c_str());
+      }
+    } else if (has_consumer && !has_keyboard && !has_mouse && !has_tablet) {
+      if (out.consumer_path.empty()) {
+        out.consumer_path = device_path;
+        log.Logf("virtio-input-events: selected consumer HID interface: %s", WideToUtf8(device_path).c_str());
+      }
     } else if (!has_keyboard) {
       if (has_mouse) {
         if (has_relative_xy) {
@@ -4526,6 +4575,120 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
   }
 
   tablet.CancelAndClose();
+
+  if (out.ok) return out;
+  if (out.reason.empty()) out.reason = "timeout";
+  return out;
+}
+
+struct VirtioInputMediaKeysTestResult {
+  bool ok = false;
+  bool saw_volume_up_down = false;
+  bool saw_volume_up_up = false;
+  int reports = 0;
+  std::string reason;
+  DWORD win32_error = 0;
+};
+
+static void ProcessConsumerReport(VirtioInputMediaKeysTestResult& out, const uint8_t* buf, DWORD len) {
+  if (!buf || len == 0) return;
+
+  size_t off = 0;
+  // Consumer control report is typically 2 bytes with ReportID=3:
+  //   [3][bits]
+  // Some HID stacks may omit the report ID for collection-specific interfaces; handle both.
+  if (len >= 2 && buf[0] == 3) {
+    off = 1;
+  } else if (len != 1) {
+    return;
+  }
+  if (len < off + 1) return;
+
+  const uint8_t bits = buf[off];
+  const bool volume_up = (bits & 0x04) != 0; // bit2 in the driver Consumer Control report
+  if (volume_up) out.saw_volume_up_down = true;
+  if (out.saw_volume_up_down && !volume_up) out.saw_volume_up_up = true;
+}
+
+static VirtioInputMediaKeysTestResult VirtioInputMediaKeysTest(Logger& log, const VirtioInputTestResult& input) {
+  VirtioInputMediaKeysTestResult out{};
+
+  std::wstring consumer_path = input.consumer_device_path;
+  if (consumer_path.empty()) {
+    const auto paths = FindVirtioInputHidPaths(log);
+    if (!paths.reason.empty()) {
+      out.reason = paths.reason;
+      out.win32_error = paths.win32_error;
+      return out;
+    }
+    if (!paths.consumer_path.empty()) {
+      consumer_path = paths.consumer_path;
+    } else {
+      // Best-effort fallback: some stacks may not expose a distinct Consumer Control interface.
+      consumer_path = paths.keyboard_path;
+    }
+  }
+
+  if (consumer_path.empty()) {
+    out.reason = "missing_consumer_device";
+    return out;
+  }
+
+  HidOverlappedReader reader{};
+  reader.buf.resize(64);
+
+  reader.h = OpenHidDeviceForRead(consumer_path.c_str());
+  if (reader.h == INVALID_HANDLE_VALUE) {
+    out.reason = "open_consumer_failed";
+    out.win32_error = GetLastError();
+    return out;
+  }
+
+  if (!reader.StartRead()) {
+    out.reason = "read_consumer_failed";
+    out.win32_error = reader.last_error;
+    reader.CancelAndClose();
+    return out;
+  }
+
+  log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY");
+
+  const DWORD deadline_ms = GetTickCount() + 10000;
+  while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+    if (out.saw_volume_up_down && out.saw_volume_up_up) {
+      out.ok = true;
+      break;
+    }
+
+    const DWORD now = GetTickCount();
+    const int32_t diff = static_cast<int32_t>(deadline_ms - now);
+    const DWORD timeout = diff > 0 ? static_cast<DWORD>(diff) : 0;
+    const DWORD wait = WaitForSingleObject(reader.ev, timeout);
+    if (wait == WAIT_TIMEOUT) break;
+    if (wait == WAIT_FAILED) {
+      out.reason = "wait_failed";
+      out.win32_error = GetLastError();
+      break;
+    }
+
+    DWORD n = 0;
+    if (!reader.FinishRead(n)) {
+      out.reason = "read_consumer_failed";
+      out.win32_error = reader.last_error;
+      break;
+    }
+
+    out.reports++;
+    ProcessConsumerReport(out, reader.buf.data(), n);
+
+    if (!reader.StartRead()) {
+      out.reason = "read_consumer_failed";
+      out.win32_error = reader.last_error;
+      break;
+    }
+  }
+
+  reader.CancelAndClose();
 
   if (out.ok) return out;
   if (out.reason.empty()) out.reason = "timeout";
@@ -8381,6 +8544,8 @@ static void PrintUsage() {
       "  --test-input-tablet-events Run virtio-input tablet (absolute pointer) HID input report test (optional)\n"
       "                           (alias: --test-tablet-events)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
+      "  --test-input-media-keys   Run virtio-input Consumer Control (media keys) HID input report test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1)\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
       "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
@@ -8484,6 +8649,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.test_input_events_wheel = true;
     } else if (arg == L"--test-input-tablet-events" || arg == L"--test-tablet-events") {
       opt.test_input_tablet_events = true;
+    } else if (arg == L"--test-input-media-keys") {
+      opt.test_input_media_keys = true;
     } else if (arg == L"--require-input-msix") {
       opt.require_input_msix = true;
     } else if (arg == L"--require-snd-capture") {
@@ -8558,6 +8725,10 @@ int wmain(int argc, wchar_t** argv) {
       (EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS") ||
        EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS"))) {
     opt.test_input_tablet_events = true;
+  }
+
+  if (!opt.test_input_media_keys && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS")) {
+    opt.test_input_media_keys = true;
   }
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
@@ -8727,11 +8898,12 @@ int wmain(int argc, wchar_t** argv) {
                                    {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
                                     L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_devices=%d|"
-           "mouse_devices=%d|ambiguous_devices=%d|unknown_devices=%d|keyboard_collections=%d|"
-           "mouse_collections=%d|tablet_devices=%d|tablet_collections=%d|reason=%s%s",
-           input.ok ? "PASS" : "FAIL", input.matched_devices, input.keyboard_devices, input.mouse_devices,
-           input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
-           input.tablet_devices, input.tablet_collections,
+           "consumer_devices=%d|mouse_devices=%d|ambiguous_devices=%d|unknown_devices=%d|"
+           "keyboard_collections=%d|consumer_collections=%d|mouse_collections=%d|tablet_devices=%d|"
+           "tablet_collections=%d|reason=%s%s",
+           input.ok ? "PASS" : "FAIL", input.matched_devices, input.keyboard_devices, input.consumer_devices,
+           input.mouse_devices, input.ambiguous_devices, input.unknown_devices, input.keyboard_collections,
+           input.consumer_collections, input.mouse_collections, input.tablet_devices, input.tablet_collections,
            input.reason.empty() ? "-" : input.reason.c_str(), input_irq_fields.c_str());
   // Optional: tablet enumeration marker. Do not fail the overall selftest if absent; tablet devices
   // are not always attached by the host harness.
@@ -8976,6 +9148,22 @@ int wmain(int argc, wchar_t** argv) {
           input_events.saw_mouse_hwheel ? 1 : 0);
     }
     if (want_input_wheel) all_ok = all_ok && input_events.wheel_ok;
+  }
+
+  if (!opt.test_input_media_keys) {
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set");
+  } else {
+    const auto media = VirtioInputMediaKeysTest(log, input);
+    if (media.ok) {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|reports=%d|volume_up_down=%d|volume_up_up=%d",
+               media.reports, media.saw_volume_up_down ? 1 : 0, media.saw_volume_up_up ? 1 : 0);
+    } else {
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|FAIL|reason=%s|err=%lu|reports=%d|volume_up_down=%d|volume_up_up=%d",
+          media.reason.empty() ? "unknown" : media.reason.c_str(), static_cast<unsigned long>(media.win32_error),
+          media.reports, media.saw_volume_up_down ? 1 : 0, media.saw_volume_up_up ? 1 : 0);
+    }
+    all_ok = all_ok && media.ok;
   }
 
   if (!opt.test_input_tablet_events) {

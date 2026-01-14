@@ -86,6 +86,18 @@ param(
   [Alias("WithVirtioInputEvents", "EnableVirtioInputEvents")]
   [switch]$WithInputEvents,
 
+  # If set, inject deterministic Consumer Control (media key) events via QMP (`input-send-event`) and require the guest
+  # virtio-input-media-keys marker to PASS.
+  #
+  # Also emits a host marker for each injection attempt:
+  #   AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS/FAIL|attempt=<n>|kbd_mode=device/broadcast
+  #
+  # Note: The guest image must be provisioned with `--test-input-media-keys` (or env var equivalent) so the
+  # guest selftest runs the read-report loop.
+  [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioInputMediaKeys", "EnableVirtioInputMediaKeys")]
+  [switch]$WithInputMediaKeys,
+
   # If set, also inject vertical + horizontal scroll wheel events (QMP rel axes: wheel + hscroll) and
   # require the guest virtio-input-wheel marker to PASS.
   # This implies -WithInputEvents.
@@ -572,6 +584,11 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
     [bool]$RequireVirtioInputEventsPass = $false,
+    # If true, require the optional virtio-input-media-keys marker to PASS (host will inject Consumer Control
+    # (media key) events via QMP).
+    [Parameter(Mandatory = $false)]
+    [Alias("EnableVirtioInputMediaKeys")]
+    [bool]$RequireVirtioInputMediaKeysPass = $false,
     # If true, require the optional virtio-input-tablet-events marker to PASS (host will inject absolute-pointer events
     # via QMP).
     [Parameter(Mandatory = $false)]
@@ -621,6 +638,12 @@ function Wait-AeroSelftestResult {
   $inputEventsInjectAttempts = 0
   $maxInputEventsInjectAttempts = if ($RequireVirtioInputEventsExtendedPass) { 30 } else { 20 }
   $nextInputEventsInject = [DateTime]::UtcNow
+  $sawVirtioInputMediaKeysReady = $false
+  $sawVirtioInputMediaKeysPass = $false
+  $sawVirtioInputMediaKeysFail = $false
+  $sawVirtioInputMediaKeysSkip = $false
+  $inputMediaKeysInjectAttempts = 0
+  $nextInputMediaKeysInject = [DateTime]::UtcNow
   $sawVirtioInputTabletEventsReady = $false
   $sawVirtioInputTabletEventsPass = $false
   $sawVirtioInputTabletEventsFail = $false
@@ -705,6 +728,18 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioInputEventsSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|SKIP") {
         $sawVirtioInputEventsSkip = $true
       }
+      if (-not $sawVirtioInputMediaKeysReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-media-keys\|READY") {
+        $sawVirtioInputMediaKeysReady = $true
+      }
+      if (-not $sawVirtioInputMediaKeysPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-media-keys\|PASS") {
+        $sawVirtioInputMediaKeysPass = $true
+      }
+      if (-not $sawVirtioInputMediaKeysFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-media-keys\|FAIL") {
+        $sawVirtioInputMediaKeysFail = $true
+      }
+      if (-not $sawVirtioInputMediaKeysSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-media-keys\|SKIP") {
+        $sawVirtioInputMediaKeysSkip = $true
+      }
       if (-not $sawVirtioInputWheelPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-wheel\|PASS") {
         $sawVirtioInputWheelPass = $true
       }
@@ -756,6 +791,10 @@ function Wait-AeroSelftestResult {
             return @{ Result = "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED"; Tail = $tail }
           }
         }
+      }
+      if ($RequireVirtioInputMediaKeysPass) {
+        if ($sawVirtioInputMediaKeysSkip) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioInputMediaKeysFail) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_FAILED"; Tail = $tail } }
       }
       if ($RequireVirtioInputWheelPass) {
         if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
@@ -891,6 +930,13 @@ function Wait-AeroSelftestResult {
               }
             }
           }
+          if ($RequireVirtioInputMediaKeysPass) {
+            if ($sawVirtioInputMediaKeysFail) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_FAILED"; Tail = $tail } }
+            if (-not $sawVirtioInputMediaKeysPass) {
+              if ($sawVirtioInputMediaKeysSkip) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED"; Tail = $tail } }
+              return @{ Result = "MISSING_VIRTIO_INPUT_MEDIA_KEYS"; Tail = $tail }
+            }
+          }
           if ($RequireVirtioInputTabletEventsPass) {
             if ($sawVirtioInputTabletEventsFail) {
               return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_FAILED"; Tail = $tail }
@@ -940,6 +986,13 @@ function Wait-AeroSelftestResult {
                     if (-not ($sawVirtioInputEventsModifiersPass -and $sawVirtioInputEventsButtonsPass -and $sawVirtioInputEventsWheelPass)) {
                       return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS_EXTENDED"; Tail = $tail }
                     }
+                  }
+                }
+                if ($RequireVirtioInputMediaKeysPass) {
+                  if ($sawVirtioInputMediaKeysFail) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_FAILED"; Tail = $tail } }
+                  if (-not $sawVirtioInputMediaKeysPass) {
+                    if ($sawVirtioInputMediaKeysSkip) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED"; Tail = $tail } }
+                    return @{ Result = "MISSING_VIRTIO_INPUT_MEDIA_KEYS"; Tail = $tail }
                   }
                 }
                 if ($RequireVirtioInputTabletEventsPass) {
@@ -994,6 +1047,13 @@ function Wait-AeroSelftestResult {
             }
           }
         }
+        if ($RequireVirtioInputMediaKeysPass) {
+          if ($sawVirtioInputMediaKeysFail) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_FAILED"; Tail = $tail } }
+          if (-not $sawVirtioInputMediaKeysPass) {
+            if ($sawVirtioInputMediaKeysSkip) { return @{ Result = "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_INPUT_MEDIA_KEYS"; Tail = $tail }
+          }
+        }
         if ($RequireVirtioInputTabletEventsPass) {
           if ($sawVirtioInputTabletEventsFail) { return @{ Result = "VIRTIO_INPUT_TABLET_EVENTS_FAILED"; Tail = $tail } }
           if (-not $sawVirtioInputTabletEventsPass) {
@@ -1028,6 +1088,10 @@ function Wait-AeroSelftestResult {
       $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
       if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_EVENTS"; Tail = $tail } }
     }
+    if ($RequireVirtioInputMediaKeysPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputMediaKeysReady) -and (-not $sawVirtioInputMediaKeysPass) -and (-not $sawVirtioInputMediaKeysFail) -and (-not $sawVirtioInputMediaKeysSkip)) {
+      $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
+      if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_MEDIA_KEYS"; Tail = $tail } }
+    }
     if ($RequireVirtioInputTabletEventsPass -and ($null -ne $virtioInputMarkerTime) -and (-not $sawVirtioInputTabletEventsReady) -and (-not $sawVirtioInputTabletEventsPass) -and (-not $sawVirtioInputTabletEventsFail) -and (-not $sawVirtioInputTabletEventsSkip)) {
       $delta = ([DateTime]::UtcNow - $virtioInputMarkerTime).TotalSeconds
       if ($delta -ge 20) { return @{ Result = "MISSING_VIRTIO_INPUT_TABLET_EVENTS"; Tail = $tail } }
@@ -1042,6 +1106,20 @@ function Wait-AeroSelftestResult {
         $ok = Try-AeroQmpInjectVirtioInputEvents -Host $QmpHost -Port ([int]$QmpPort) -Attempt $inputEventsInjectAttempts -WithWheel:($RequireVirtioInputWheelPass -or $RequireVirtioInputEventsExtendedPass) -Extended:$RequireVirtioInputEventsExtendedPass
         if (-not $ok) {
           return @{ Result = "QMP_INPUT_INJECT_FAILED"; Tail = $tail }
+        }
+      }
+    }
+
+    if ($RequireVirtioInputMediaKeysPass -and $sawVirtioInputMediaKeysReady -and (-not $sawVirtioInputMediaKeysPass) -and (-not $sawVirtioInputMediaKeysFail) -and (-not $sawVirtioInputMediaKeysSkip)) {
+      if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
+        return @{ Result = "QMP_MEDIA_KEYS_UNSUPPORTED"; Tail = $tail }
+      }
+      if ($inputMediaKeysInjectAttempts -lt 20 -and [DateTime]::UtcNow -ge $nextInputMediaKeysInject) {
+        $inputMediaKeysInjectAttempts++
+        $nextInputMediaKeysInject = [DateTime]::UtcNow.AddMilliseconds(500)
+        $ok = Try-AeroQmpInjectVirtioInputMediaKeys -Host $QmpHost -Port ([int]$QmpPort) -Attempt $inputMediaKeysInjectAttempts
+        if (-not $ok) {
+          return @{ Result = "QMP_MEDIA_KEYS_UNSUPPORTED"; Tail = $tail }
         }
       }
     }
@@ -2298,6 +2376,70 @@ function Try-AeroQmpInjectVirtioInputEvents {
   return $false
 }
 
+function Try-AeroQmpInjectVirtioInputMediaKeys {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port,
+    # Outer retry attempt number (1-based). Included in the emitted host marker so log scraping can
+    # correlate guest READY/PASS timing with host injection attempts.
+    [Parameter(Mandatory = $true)] [int]$Attempt,
+    # QMP QKeyCode qcode to send (default: volumeup). The guest selftest currently validates VolumeUp.
+    [Parameter(Mandatory = $false)] [string]$Qcode = "volumeup"
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $lastErr = ""
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $client = $null
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.ReceiveTimeout = 2000
+      $client.SendTimeout = 2000
+      $client.Connect($Host, $Port)
+
+      $stream = $client.GetStream()
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+      $writer.NewLine = "`n"
+      $writer.AutoFlush = $true
+
+      # Greeting.
+      $null = $reader.ReadLine()
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
+
+      $kbdDevice = $script:VirtioInputKeyboardQmpId
+
+      # Media key: press + release.
+      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+        @{ type = "key"; data = @{ down = $true; key = @{ type = "qcode"; data = $Qcode } } }
+      )
+
+      Start-Sleep -Milliseconds 50
+
+      $kbdDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $kbdDevice -Events @(
+        @{ type = "key"; data = @{ down = $false; key = @{ type = "qcode"; data = $Qcode } } }
+      )
+
+      $kbdMode = if ([string]::IsNullOrEmpty($kbdDevice)) { "broadcast" } else { "device" }
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=$Attempt|kbd_mode=$kbdMode"
+      return $true
+    } catch {
+      try { $lastErr = [string]$_.Exception.Message } catch { }
+      Start-Sleep -Milliseconds 100
+      continue
+    } finally {
+      if ($client) { $client.Close() }
+    }
+  }
+
+  $reason = "timeout"
+  if (-not [string]::IsNullOrEmpty($lastErr)) {
+    $reason = Sanitize-AeroMarkerValue $lastErr
+  }
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=$Attempt|reason=$reason"
+  return $false
+}
+
 function Try-AeroQmpInjectVirtioInputTabletEvents {
   param(
     [Parameter(Mandatory = $true)] [string]$Host,
@@ -2667,6 +2809,7 @@ try {
   $needInputWheel = [bool]$WithInputWheel
   $needInputEventsExtended = [bool]$WithInputEventsExtended
   $needInputEvents = ([bool]$WithInputEvents) -or $needInputWheel -or $needInputEventsExtended
+  $needInputMediaKeys = [bool]$WithInputMediaKeys
   $needInputTabletEvents = [bool]$WithInputTabletEvents
   $needVirtioTablet = [bool]$WithVirtioTablet -or $needInputTabletEvents
   $requestedVirtioNetVectors = $(if ($VirtioNetVectors -gt 0) { $VirtioNetVectors } else { $VirtioMsixVectors })
@@ -2678,11 +2821,11 @@ try {
   $virtioSndVectorsFlag = $(if ($VirtioSndVectors -gt 0) { "-VirtioSndVectors" } else { "-VirtioMsixVectors" })
   $virtioInputVectorsFlag = $(if ($VirtioInputVectors -gt 0) { "-VirtioInputVectors" } else { "-VirtioMsixVectors" })
   $needMsixCheck = [bool]$RequireVirtioNetMsix -or [bool]$RequireVirtioBlkMsix -or [bool]$RequireVirtioSndMsix
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputTabletEvents -or $needMsixCheck
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needMsixCheck
   if ($needQmp) {
     # QMP channel:
     # - Used for graceful shutdown when using the `wav` audiodev backend (so the RIFF header is finalized).
-    # - Also used for virtio-input event injection (`input-send-event`) when -WithInputEvents is set.
+    # - Also used for virtio-input event injection (`input-send-event`) when -WithInputEvents/-WithInputMediaKeys is set.
     # - Also used for virtio PCI MSI-X enable verification (query-pci / info pci) when -RequireVirtio*Msix is set.
     try {
       $qmpPort = Get-AeroFreeTcpPort
@@ -2690,8 +2833,8 @@ try {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputTabletEvents) {
-        throw "Failed to allocate QMP port required for input injection flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputTabletEvents/-WithTabletEvents): $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents) {
+        throw "Failed to allocate QMP port required for input injection flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents): $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -2753,6 +2896,9 @@ try {
 
     if ($needInputEvents -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
       throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra). Upgrade QEMU or omit input event injection."
+    }
+    if ($needInputMediaKeys -and (-not $haveVirtioKbd)) {
+      throw "QEMU does not advertise virtio-keyboard-pci but -WithInputMediaKeys was enabled. Upgrade QEMU or omit media key injection."
     }
     if (-not ($haveVirtioKbd -and $haveVirtioMouse)) {
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
@@ -2940,6 +3086,7 @@ try {
       -RequirePerTestMarkers (-not $VirtioTransitional) `
       -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
       -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
+      -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
       -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
       -RequireVirtioInputEventsExtendedPass ([bool]$needInputEventsExtended) `
       -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
@@ -3131,6 +3278,38 @@ try {
     }
     "VIRTIO_INPUT_EVENTS_FAILED" {
       Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_INPUT_MEDIA_KEYS" {
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: did not observe virtio-input-media-keys marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputMediaKeys was enabled (guest selftest too old or missing --test-input-media-keys)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_MEDIA_KEYS_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but -WithInputMediaKeys was enabled (provision the guest with --test-input-media-keys)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_MEDIA_KEYS_FAILED" {
+      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while -WithInputMediaKeys was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "QMP_MEDIA_KEYS_UNSUPPORTED" {
+      Write-Host "FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: failed to inject virtio-input media keys via QMP (ensure QMP is reachable and QEMU supports input-send-event + multimedia qcodes)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
