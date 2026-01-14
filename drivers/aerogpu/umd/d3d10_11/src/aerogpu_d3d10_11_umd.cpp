@@ -4174,6 +4174,11 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
   base.blend_op_alpha = AEROGPU_BLEND_OP_ADD;
   base.color_write_mask = 0xFu;
 
+  // Always construct the state object so DestroyBlendState is safe even if we
+  // reject the descriptor (some runtimes may still call Destroy on failure).
+  auto* s = new (hState.pDrvPrivate) AeroGpuBlendState();
+  s->state = base;
+
   if (pDesc) {
     aerogpu::d3d10_11::D3dRtBlendDesc rts[8]{};
     for (uint32_t i = 0; i < 8; ++i) {
@@ -4192,10 +4197,8 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
     if (FAILED(hr)) {
       AEROGPU_D3D10_RET_HR(hr);
     }
+    s->state = base;
   }
-
-  auto* s = new (hState.pDrvPrivate) AeroGpuBlendState();
-  s->state = base;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
@@ -4240,7 +4243,9 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
   constexpr uint32_t kD3D11FillWireframe = 2;
   constexpr uint32_t kD3D11FillSolid = 3;
   if (s->fill_mode != 0 && s->fill_mode != kD3D11FillSolid && s->fill_mode != kD3D11FillWireframe) {
-    s->~AeroGpuRasterizerState();
+    // Leave the object in a valid default state so DestroyRasterizerState is safe
+    // even if the runtime calls it after a failed create.
+    s->fill_mode = kD3D11FillSolid;
     AEROGPU_D3D10_RET_HR(E_NOTIMPL);
   }
 
