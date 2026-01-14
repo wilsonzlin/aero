@@ -2351,6 +2351,69 @@ fn translates_udiv_and_idiv_to_integer_division_and_modulo() {
 }
 
 #[test]
+fn translates_udiv_uses_raw_integer_bits_not_float_heuristics() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Use float bit patterns that look like exact integers as floats (e.g. 1.0 = 0x3f800000).
+    // Integer ops must interpret these operands as *raw integer bits* in the untyped register
+    // file, not as numeric floats that "happen to be integers".
+    let a = src_imm_bits([1.0f32.to_bits(); 4]);
+    let b = src_imm_bits([2.0f32.to_bits(); 4]);
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::UDiv {
+                dst_quot: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                dst_rem: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                a,
+                b,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let a_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("let udiv_a"))
+        .expect("expected udiv_a temp");
+    let b_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("let udiv_b"))
+        .expect("expected udiv_b temp");
+    assert!(
+        !a_line.contains("select(") && !a_line.contains("floor("),
+        "udiv lowering should not use float-vs-bitcast heuristics:\n{}",
+        a_line
+    );
+    assert!(
+        !b_line.contains("select(") && !b_line.contains("floor("),
+        "udiv lowering should not use float-vs-bitcast heuristics:\n{}",
+        b_line
+    );
+    assert!(translated.wgsl.contains("0x3f800000u"));
+    assert!(translated.wgsl.contains("0x40000000u"));
+}
+
+#[test]
 fn translates_udiv_respects_independent_dest_write_masks() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[

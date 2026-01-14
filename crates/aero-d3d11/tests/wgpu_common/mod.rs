@@ -2,6 +2,10 @@
 
 use anyhow::Result;
 
+// Pull in the shared integration test helpers from `tests/common`.
+#[path = "../common/mod.rs"]
+mod common;
+
 /// Backwards-compatible shim for older integration tests.
 ///
 /// Most tests should use `common::wgpu::*` directly. This module exists so tests can `mod
@@ -9,7 +13,7 @@ use anyhow::Result;
 pub async fn create_device_queue(
     device_label: &str,
 ) -> Result<(wgpu::Device, wgpu::Queue, bool)> {
-    crate::common::wgpu::create_device_queue(device_label).await
+    common::wgpu::create_device_queue(device_label).await
 }
 
 pub async fn read_texture_rgba8(
@@ -19,5 +23,5 @@ pub async fn read_texture_rgba8(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>> {
-    crate::common::wgpu::read_texture_rgba8(device, queue, texture, width, height).await
+    common::wgpu::read_texture_rgba8(device, queue, texture, width, height).await
 }
