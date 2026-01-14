@@ -1638,7 +1638,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       }
       void cache
         .flush()
-        .catch(() => {
+        .catch((err) => {
+          if (isQuotaExceededError(err)) {
+            // A quota failure while flushing indicates we cannot reliably persist further cached data.
+            // Disable persistent writes and continue serving reads via network + in-memory chunks.
+            this.disablePersistentCacheWrites();
+          }
           // best-effort cache durability
         })
         .finally(() => {
