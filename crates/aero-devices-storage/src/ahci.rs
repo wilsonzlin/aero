@@ -78,6 +78,8 @@ const SATA_SIG_ATA: u32 = 0x0000_0101;
 const SCTL_DET_MASK: u32 = 0x0F;
 const SCTL_DET_COMRESET: u32 = 1;
 const SCTL_DET_DISABLE: u32 = 4;
+// Some guests use DET=2 for "disable" even though DET=4 is the commonly-implemented value.
+const SCTL_DET_DISABLE_ALT: u32 = 2;
 
 #[derive(Debug, Clone, Copy)]
 struct HbaRegs {
@@ -453,7 +455,7 @@ impl AhciController {
 
                 // DET=4 disables the port (PHY offline). Model it as an immediate link-down state
                 // while preserving the fact that a drive is still physically attached.
-                if new_det == SCTL_DET_DISABLE {
+                if matches!(new_det, SCTL_DET_DISABLE | SCTL_DET_DISABLE_ALT) {
                     port.regs.ci = 0;
                     port.regs.sact = 0;
                     port.regs.is = 0;
@@ -483,7 +485,7 @@ impl AhciController {
 
                 // If the guest re-enables a previously disabled port, complete link bring-up
                 // synchronously (similar to COMRESET completion).
-                if old_det == SCTL_DET_DISABLE && new_det == 0 {
+                if matches!(old_det, SCTL_DET_DISABLE | SCTL_DET_DISABLE_ALT) && new_det == 0 {
                     if port.present {
                         port.regs.ssts = (1 << 8) | (1 << 4) | 3;
                         port.regs.sig = SATA_SIG_ATA;
@@ -1415,6 +1417,30 @@ mod tests {
             (ATA_STATUS_DRDY | ATA_STATUS_DSC) as u32
         );
         assert_ne!(ctl.read_u32(PORT_BASE + PORT_REG_IS) & PORT_IS_DHRS, 0);
+        assert!(irq.level());
+
+        ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+        assert!(!irq.level());
+    }
+
+    #[test]
+    fn sctl_det_disable_alt_value2_is_accepted() {
+        let (mut ctl, irq, _mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+
+        // Some guests use DET=2 to disable the interface; accept it as an alias for DET=4.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 2);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 4);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_TFD), 0);
+        assert!(!irq.level());
+
+        // Re-enable (DET=0).
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 3);
         assert!(irq.level());
 
         ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
