@@ -162,6 +162,51 @@ describe("runtime/coordinator", () => {
     coordinator.stop();
   });
 
+  it("spawns the legacy CPU worker via start() when vmRuntime is omitted", () => {
+    const coordinator = new WorkerCoordinator();
+
+    // Avoid kicking off the full worker event loops / wasm precompile in this unit test;
+    // we only care about the worker entrypoint selection.
+    (coordinator as any).eventLoop = vi.fn(async () => {});
+    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+
+    coordinator.start(
+      {
+        guestMemoryMiB: 1,
+        vramMiB: 1,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      },
+      {
+        platformFeatures: {
+          crossOriginIsolated: true,
+          sharedArrayBuffer: true,
+          wasmSimd: true,
+          wasmThreads: true,
+          webgpu: true,
+          webusb: false,
+          webhid: false,
+          webgl2: true,
+          opfs: true,
+          opfsSyncAccessHandle: false,
+          audioWorklet: true,
+          offscreenCanvas: true,
+          jit_dynamic_wasm: true,
+        },
+      },
+    );
+
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const specifier = String(cpuWorker.specifier);
+    expect(specifier).toMatch(/cpu\.worker\.ts/);
+    expect(specifier).not.toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.stop();
+  });
+
   it("preserves the machine CPU worker entrypoint across full restarts", () => {
     vi.useFakeTimers();
     const coordinator = new WorkerCoordinator();
