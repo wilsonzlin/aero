@@ -3,6 +3,43 @@ use crate::{
     DiskImage, MemBackend, RawDisk, StorageBackend, VirtualDisk, SECTOR_SIZE,
 };
 
+struct ReadCountingDisk<D> {
+    inner: D,
+    read_at_calls: u64,
+}
+
+impl<D> ReadCountingDisk<D> {
+    fn new(inner: D) -> Self {
+        Self {
+            inner,
+            read_at_calls: 0,
+        }
+    }
+
+    fn read_at_calls(&self) -> u64 {
+        self.read_at_calls
+    }
+}
+
+impl<D: VirtualDisk> VirtualDisk for ReadCountingDisk<D> {
+    fn capacity_bytes(&self) -> u64 {
+        self.inner.capacity_bytes()
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> crate::Result<()> {
+        self.read_at_calls += 1;
+        self.inner.read_at(offset, buf)
+    }
+
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> crate::Result<()> {
+        self.inner.write_at(offset, buf)
+    }
+
+    fn flush(&mut self) -> crate::Result<()> {
+        self.inner.flush()
+    }
+}
+
 fn make_header(
     disk_size_bytes: u64,
     block_size_bytes: u32,
@@ -310,6 +347,19 @@ fn block_cache_reports_allocation_failure_as_quota_exceeded() {
     let mut buf = [0u8; 1];
     let err = cached.read_at(0, &mut buf).unwrap_err();
     assert!(matches!(err, DiskError::QuotaExceeded));
+}
+
+#[test]
+fn block_cache_full_block_write_skips_inner_read() {
+    let block_size = 16usize;
+    let raw = RawDisk::create(MemBackend::new(), 64).unwrap();
+    let inner = ReadCountingDisk::new(raw);
+    let mut cached = BlockCachedDisk::new(inner, block_size, 2).unwrap();
+
+    let before = cached.inner().read_at_calls();
+    let buf = [0xABu8; 16];
+    cached.write_at(16, &buf).unwrap();
+    assert_eq!(cached.inner().read_at_calls(), before);
 }
 
 #[test]

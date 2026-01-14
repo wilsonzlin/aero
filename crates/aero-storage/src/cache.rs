@@ -80,6 +80,10 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
                 .read_at(start, &mut entry.data[..max_len as usize])?;
         }
 
+        self.insert_cache_entry(block_idx, entry)
+    }
+
+    fn insert_cache_entry(&mut self, block_idx: u64, entry: CacheEntry) -> Result<()> {
         if let Some((evicted_idx, evicted)) = self.cache.push(block_idx, entry) {
             // `LruCache::push` evicts immediately. If the evicted entry is dirty and its write-back
             // fails, we must restore it back into the cache; otherwise the dirty data is lost.
@@ -163,12 +167,31 @@ impl<D: VirtualDisk> VirtualDisk for BlockCachedDisk<D> {
             let remaining = buf.len() - pos;
             let chunk_len = (self.block_size - within).min(remaining);
 
-            self.ensure_block_cached(block_idx)?;
-            let entry = self.cache.get_mut(&block_idx).ok_or(DiskError::Io(
-                "cache missing block after ensure_block_cached".into(),
-            ))?;
-            entry.data[within..within + chunk_len].copy_from_slice(&buf[pos..pos + chunk_len]);
-            entry.dirty = true;
+            // Fast-path: full-block overwrite. If the block isn't cached, we can allocate
+            // a fresh entry directly from the write buffer and skip the inner read.
+            if within == 0 && chunk_len == self.block_size {
+                if let Some(entry) = self.cache.get_mut(&block_idx) {
+                    self.stats.hits += 1;
+                    entry.data.copy_from_slice(&buf[pos..pos + chunk_len]);
+                    entry.dirty = true;
+                } else {
+                    self.stats.misses += 1;
+
+                    let mut data = Vec::new();
+                    data.try_reserve_exact(self.block_size)
+                        .map_err(|_| DiskError::QuotaExceeded)?;
+                    data.extend_from_slice(&buf[pos..pos + chunk_len]);
+                    let entry = CacheEntry { data, dirty: true };
+                    self.insert_cache_entry(block_idx, entry)?;
+                }
+            } else {
+                self.ensure_block_cached(block_idx)?;
+                let entry = self.cache.get_mut(&block_idx).ok_or(DiskError::Io(
+                    "cache missing block after ensure_block_cached".into(),
+                ))?;
+                entry.data[within..within + chunk_len].copy_from_slice(&buf[pos..pos + chunk_len]);
+                entry.dirty = true;
+            }
 
             pos += chunk_len;
         }
