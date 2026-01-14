@@ -451,6 +451,34 @@ fn parse_inf_addreg_dword(contents: &str, section_name: &str, value_name: &str) 
 }
 
 #[test]
+fn inf_functional_bytes_skips_leading_banner_comments_and_blank_lines() {
+    let data = b"; banner\r\n; more\r\n\r\n[Version]\r\nFoo=Bar\r\n";
+    let body = inf_functional_bytes(data);
+    assert_eq!(body, b"[Version]\r\nFoo=Bar\r\n");
+}
+
+#[test]
+fn inf_functional_bytes_skips_utf8_bom_on_leading_comment_line_for_detection() {
+    let data = b"\xEF\xBB\xBF; banner\n[Version]\nFoo=Bar\n";
+    let body = inf_functional_bytes(data);
+    assert_eq!(body, b"[Version]\nFoo=Bar\n");
+}
+
+#[test]
+fn inf_functional_bytes_does_not_strip_bom_from_returned_slice_when_section_header_is_first_line() {
+    let data = b"\xEF\xBB\xBF[Version]\nFoo=Bar\n";
+    let body = inf_functional_bytes(data);
+    assert_eq!(body, data);
+}
+
+#[test]
+fn inf_functional_bytes_treats_unexpected_preamble_as_functional() {
+    let data = b"NotAComment\n[Version]\nFoo=Bar\n";
+    let body = inf_functional_bytes(data);
+    assert_eq!(body, data);
+}
+
+#[test]
 fn windows_device_contract_virtio_input_matches_pci_profile() {
     let contract = parse_windows_device_contract_json();
 
