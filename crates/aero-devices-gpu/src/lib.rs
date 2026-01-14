@@ -18,6 +18,7 @@
 pub mod backend;
 pub mod executor;
 pub mod pci;
+pub mod pci_device;
 pub mod regs;
 pub mod ring;
 pub mod scanout;
