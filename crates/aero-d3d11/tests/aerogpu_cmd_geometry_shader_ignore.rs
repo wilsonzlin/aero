@@ -80,11 +80,7 @@ fn aerogpu_cmd_can_create_and_bind_geometry_shader() {
                 reserved0: 0,
             }],
         );
-        writer.set_shader_constants_f_ex(
-            AerogpuShaderStageEx::Geometry,
-            0,
-            &[1.0, 2.0, 3.0, 4.0],
-        );
+        writer.set_shader_constants_f_ex(AerogpuShaderStageEx::Geometry, 0, &[1.0, 2.0, 3.0, 4.0]);
         let stream = writer.finish();
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("create shader stream should execute");
@@ -163,7 +159,10 @@ fn aerogpu_cmd_can_create_and_bind_geometry_shader() {
             })
         );
         assert!(
-            exec.binding_state().stage(ShaderStage::Compute).srv_buffer(0).is_none(),
+            exec.binding_state()
+                .stage(ShaderStage::Compute)
+                .srv_buffer(0)
+                .is_none(),
             "GS stage_ex bindings must not clobber compute-stage bindings"
         );
 

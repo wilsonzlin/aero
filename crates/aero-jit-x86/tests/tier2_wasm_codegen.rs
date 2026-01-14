@@ -1087,7 +1087,10 @@ fn tier2_trace_wasm_matches_interpreter_on_parity_flag_guard() {
                 dst: v(0),
                 reg: Gpr::Rbx,
             },
-            Instr::Const { dst: v(1), value: 3 },
+            Instr::Const {
+                dst: v(1),
+                value: 3,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::And,
@@ -1227,7 +1230,11 @@ fn tier2_trace_wasm_matches_interpreter_on_set_flags_preserves_unmasked_bits() {
     assert_eq!(res.exit, RunExit::Returned);
     assert_eq!(interp_state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
     assert_eq!(interp_state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 0);
-    assert_ne!(interp_state.cpu.rflags & RFLAGS_DF, 0, "DF should be preserved");
+    assert_ne!(
+        interp_state.cpu.rflags & RFLAGS_DF,
+        0,
+        "DF should be preserved"
+    );
     assert_ne!(
         interp_state.cpu.rflags & abi::RFLAGS_RESERVED1,
         0,
@@ -1272,8 +1279,14 @@ fn tier2_trace_wasm_matches_interpreter_on_aux_carry_flag_guard() {
     let mut trace = TraceIr {
         prologue: vec![],
         body: vec![
-            Instr::Const { dst: v(0), value: 0x0f },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(0),
+                value: 0x0f,
+            },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,
@@ -1365,7 +1378,10 @@ fn tier2_trace_wasm_matches_interpreter_on_overflow_flag_guard() {
                 dst: v(0),
                 value: 0x7fff_ffff_ffff_ffff,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,

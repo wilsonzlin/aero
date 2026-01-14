@@ -51,7 +51,8 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
         .and_then(|pci_cfg| {
             let mut pci_cfg = pci_cfg.borrow_mut();
             let bus = pci_cfg.bus_mut();
-            let vendor = bus.read_config(aero_devices::pci::PciBdf::new(0, 0x0c, 0), 0x00, 2) as u16;
+            let vendor =
+                bus.read_config(aero_devices::pci::PciBdf::new(0, 0x0c, 0), 0x00, 2) as u16;
             (vendor != 0xFFFF).then_some(())
         })
         .is_some();

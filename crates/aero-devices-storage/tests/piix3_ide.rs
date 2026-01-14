@@ -2589,9 +2589,9 @@ fn atapi_identify_packet_device_returns_identify_data() {
     // Many OSes also issue IDENTIFY PACKET DEVICE (0xA1) to ATAPI drives to fetch identify words.
     // This should succeed even without media present.
     let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
-    ide.borrow_mut().controller.attach_secondary_master_atapi(
-        aero_devices_storage::atapi::AtapiCdrom::new(None),
-    );
+    ide.borrow_mut()
+        .controller
+        .attach_secondary_master_atapi(aero_devices_storage::atapi::AtapiCdrom::new(None));
     ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
 
     let mut io = IoPortBus::new();

@@ -44,4 +44,3 @@ fn virtio_input_snapshot_is_ignored_when_virtio_input_is_disabled() {
         "virtio-input should remain absent after restoring a snapshot taken with enable_virtio_input=true"
     );
 }
-

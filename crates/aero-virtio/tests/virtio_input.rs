@@ -2,10 +2,10 @@ use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_BACK, BTN_EXTRA, BTN_FORWARD,
     BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, BTN_TASK, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A,
-    KEY_F1, KEY_F12, KEY_MUTE, KEY_NEXTSONG, KEY_PLAYPAUSE, KEY_PREVIOUSSONG, KEY_SCROLLLOCK,
-    KEY_STOPCD, KEY_VOLUMEDOWN, KEY_VOLUMEUP, KEY_NUMLOCK, LED_CAPSL, LED_COMPOSE, LED_KANA,
-    LED_NUML, LED_SCROLLL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT, VIRTIO_INPUT_CFG_EV_BITS,
-    VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    KEY_F1, KEY_F12, KEY_MUTE, KEY_NEXTSONG, KEY_NUMLOCK, KEY_PLAYPAUSE, KEY_PREVIOUSSONG,
+    KEY_SCROLLLOCK, KEY_STOPCD, KEY_VOLUMEDOWN, KEY_VOLUMEUP, LED_CAPSL, LED_COMPOSE, LED_KANA,
+    LED_NUML, LED_SCROLLL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
+    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -877,7 +877,10 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
         0
     );
     // Consumer/media keys (used by the Win7 virtio-input driver Consumer Control collection).
-    assert_ne!(key_bits[(KEY_MUTE / 8) as usize] & (1u8 << (KEY_MUTE % 8)), 0);
+    assert_ne!(
+        key_bits[(KEY_MUTE / 8) as usize] & (1u8 << (KEY_MUTE % 8)),
+        0
+    );
     assert_ne!(
         key_bits[(KEY_VOLUMEDOWN / 8) as usize] & (1u8 << (KEY_VOLUMEDOWN % 8)),
         0

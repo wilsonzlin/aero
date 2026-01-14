@@ -1,6 +1,6 @@
 use aero_cpu_decoder::{decode_one, scan_prefixes, DecodeMode};
-use std::cell::Cell;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct CountingAlloc;

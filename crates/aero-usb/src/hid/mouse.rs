@@ -43,11 +43,7 @@ impl MouseReport {
         let clamp_axis = |v: i8| v.clamp(-127, 127) as u8;
         match protocol {
             // Boot mouse protocol is fixed-format and only defines 3 buttons.
-            HidProtocol::Boot => vec![
-                self.buttons & 0x07,
-                clamp_axis(self.x),
-                clamp_axis(self.y),
-            ],
+            HidProtocol::Boot => vec![self.buttons & 0x07, clamp_axis(self.x), clamp_axis(self.y)],
             // Report protocol uses our full report descriptor, which supports 5 buttons + wheel +
             // horizontal wheel (AC Pan).
             HidProtocol::Report => vec![

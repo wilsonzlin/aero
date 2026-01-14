@@ -150,7 +150,9 @@ impl VirtualDisk for TrackingDiscardDisk {
             }
             return Ok(());
         }
-        let end = offset.checked_add(len).ok_or(StorageDiskError::OffsetOverflow)?;
+        let end = offset
+            .checked_add(len)
+            .ok_or(StorageDiskError::OffsetOverflow)?;
         if end > capacity {
             return Err(StorageDiskError::OutOfBounds {
                 offset,

@@ -79,7 +79,9 @@ async fn run_layout_pass_with_hs_factors_buffer(
     let out_args_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("tess_layout out_args"),
         size: args_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
 
@@ -105,11 +107,8 @@ async fn run_layout_pass_with_hs_factors_buffer(
     queue.write_buffer(&params_buf, 0, &params.to_le_bytes());
 
     let layout_wgsl = wgsl_tessellation_layout_pass(
-        /*group=*/ 0,
-        /*params_binding=*/ 0,
-        /*hs_tess_factors_binding=*/ 1,
-        /*out_patch_meta_binding=*/ 2,
-        /*out_indirect_args_binding=*/ 3,
+        /*group=*/ 0, /*params_binding=*/ 0, /*hs_tess_factors_binding=*/ 1,
+        /*out_patch_meta_binding=*/ 2, /*out_indirect_args_binding=*/ 3,
         /*out_debug_binding=*/ 4,
     );
     let layout_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {

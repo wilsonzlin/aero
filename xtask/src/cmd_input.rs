@@ -115,10 +115,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "--test",
             "hid_usage_consumer_fixture",
         ]);
-        runner.run_step(
-            "Rust: cargo test -p aero-usb --locked (focused)",
-            &mut cmd,
-        )?;
+        runner.run_step("Rust: cargo test -p aero-usb --locked (focused)", &mut cmd)?;
     }
 
     if opts.machine {
@@ -213,18 +210,17 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     let mut cmd = tools::npm();
-    cmd.current_dir(&repo_root)
-        .args([
-            "-w",
-            "web",
-            "run",
-            "test:unit",
-            "--",
-            "src/input",
-            "src/usb/usb_guest_controller.test.ts",
-            "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
-            "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
-        ]);
+    cmd.current_dir(&repo_root).args([
+        "-w",
+        "web",
+        "run",
+        "test:unit",
+        "--",
+        "src/input",
+        "src/usb/usb_guest_controller.test.ts",
+        "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
+        "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
+    ]);
     runner.run_step(
         "Web: npm -w web run test:unit -- src/input (plus WebUSB topology guards)",
         &mut cmd,
@@ -390,7 +386,9 @@ mod tests {
 
     #[test]
     fn parse_args_accepts_with_wasm() {
-        let opts = parse_args(vec!["--with-wasm".into()]).expect("parse_args").expect("opts");
+        let opts = parse_args(vec!["--with-wasm".into()])
+            .expect("parse_args")
+            .expect("opts");
         assert!(opts.with_wasm);
         assert!(!opts.rust_only);
         assert!(!opts.e2e);

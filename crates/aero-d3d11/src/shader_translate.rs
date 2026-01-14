@@ -102,7 +102,9 @@ pub enum BindingKind {
     /// These bindings are not part of the D3D11 resource binding model, so they do not map to a
     /// register slot. Instead, they use a reserved binding-number range within `@group(3)` starting
     /// at [`crate::binding_model::BINDING_BASE_INTERNAL`].
-    ExpansionStorageBuffer { read_only: bool },
+    ExpansionStorageBuffer {
+        read_only: bool,
+    },
 }
 
 /// Supported typed UAV storage texture formats.
@@ -941,7 +943,9 @@ fn translate_ds(
     let cp_in_stride = isgn
         .parameters
         .iter()
-        .filter(|p| !is_sv_domain_location(&p.semantic_name) && !is_sv_primitive_id(&p.semantic_name))
+        .filter(|p| {
+            !is_sv_domain_location(&p.semantic_name) && !is_sv_primitive_id(&p.semantic_name)
+        })
         .map(|p| p.register)
         .max()
         .map(|m| m.saturating_add(1))
@@ -956,9 +960,11 @@ fn translate_ds(
         .unwrap_or(1)
         .max(1);
 
-    let pos_reg = io.vs_position_register.ok_or(ShaderTranslateError::MissingSignature(
-        "domain output SV_Position",
-    ))?;
+    let pos_reg = io
+        .vs_position_register
+        .ok_or(ShaderTranslateError::MissingSignature(
+            "domain output SV_Position",
+        ))?;
 
     let mut w = WgslWriter::new();
 
@@ -4717,7 +4723,8 @@ fn emit_instructions(
                     "movc",
                     ctx,
                 )?;
-                let expr = maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
+                let expr =
+                    maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "movc", ctx)?;
             }
             Sm4Inst::And { dst, a, b } => {
@@ -5814,12 +5821,10 @@ fn emit_instructions(
                 value,
                 mask,
             } => {
-                let format = ctx
-                    .resources
-                    .uav_textures
-                    .get(&uav.slot)
-                    .copied()
-                    .ok_or(ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot })?;
+                let format =
+                    ctx.resources.uav_textures.get(&uav.slot).copied().ok_or(
+                        ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot },
+                    )?;
 
                 // DXBC `store_uav_typed` carries a write mask on the `u#` operand. WebGPU/WGSL
                 // `textureStore()` always writes a whole texel, so partial component stores would
@@ -6707,7 +6712,10 @@ mod tests {
         let module = Sm4Module {
             stage: ShaderStage::Hull,
             model: crate::sm4::ShaderModel { major: 5, minor: 0 },
-            decls: vec![Sm4Decl::ConstantBuffer { slot: 0, reg_count: 1 }],
+            decls: vec![Sm4Decl::ConstantBuffer {
+                slot: 0,
+                reg_count: 1,
+            }],
             instructions: vec![
                 Sm4Inst::Mov {
                     dst: dummy_dst(),
@@ -6724,7 +6732,15 @@ mod tests {
         let bindings = reflect_resource_bindings(&module).unwrap();
         let cbuf = bindings
             .into_iter()
-            .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: 0, reg_count: 1 }))
+            .find(|b| {
+                matches!(
+                    b.kind,
+                    BindingKind::ConstantBuffer {
+                        slot: 0,
+                        reg_count: 1
+                    }
+                )
+            })
             .expect("expected cbuffer binding");
 
         assert_eq!(cbuf.group, 3);

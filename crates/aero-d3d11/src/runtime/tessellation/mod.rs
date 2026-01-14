@@ -67,7 +67,10 @@ fn scratch_storage_alignment(device: &wgpu::Device) -> u64 {
 }
 
 fn scratch_alloc_alignment(requested: u64, storage_alignment: u64) -> u64 {
-    lcm_u64(requested.max(1), lcm_u64(wgpu::COPY_BUFFER_ALIGNMENT, storage_alignment))
+    lcm_u64(
+        requested.max(1),
+        lcm_u64(wgpu::COPY_BUFFER_ALIGNMENT, storage_alignment),
+    )
 }
 
 fn scratch_add_alloc(
@@ -258,9 +261,7 @@ impl TessellationRuntime {
         scratch: &mut ExpansionScratchAllocator,
         params: buffers::TessellationSizingParams,
     ) -> Result<buffers::TessellationDrawScratch, TessellationRuntimeError> {
-        let tess_factor_clamped = params
-            .max_tess_factor
-            .clamp(1, MAX_TESS_FACTOR_SUPPORTED);
+        let tess_factor_clamped = params.max_tess_factor.clamp(1, MAX_TESS_FACTOR_SUPPORTED);
         let params = buffers::TessellationSizingParams {
             max_tess_factor: tess_factor_clamped,
             ..params
@@ -275,19 +276,22 @@ impl TessellationRuntime {
         scratch
             .init(device)
             .map_err(TessellationRuntimeError::Scratch)?;
-        let scratch_per_frame_capacity = scratch.per_frame_capacity().ok_or(
-            TessellationRuntimeError::Scratch(ExpansionScratchError::InvalidDescriptor(
-                "scratch allocator did not report per-frame capacity after init",
-            )),
-        )?;
+        let scratch_per_frame_capacity =
+            scratch
+                .per_frame_capacity()
+                .ok_or(TessellationRuntimeError::Scratch(
+                    ExpansionScratchError::InvalidDescriptor(
+                        "scratch allocator did not report per-frame capacity after init",
+                    ),
+                ))?;
 
         let device_max_buffer_size = device.limits().max_buffer_size;
-        let debug_counters_bytes: u64 =
-            if cfg!(any(test, feature = "tessellation_debug_counters")) {
-                16
-            } else {
-                0
-            };
+        let debug_counters_bytes: u64 = if cfg!(any(test, feature = "tessellation_debug_counters"))
+        {
+            16
+        } else {
+            0
+        };
         let total_scratch_bytes =
             compute_worst_case_scratch_usage_bytes(device, &sizes, debug_counters_bytes)
                 .map_err(TessellationRuntimeError::Sizing)?;
@@ -304,8 +308,8 @@ impl TessellationRuntime {
         let exceeds_scratch_capacity = total_scratch_bytes > scratch_per_frame_capacity;
 
         if exceeds_device_limit || exceeds_scratch_capacity {
-            return Err(TessellationRuntimeError::ScratchOom(
-                Box::new(TessellationScratchOomError {
+            return Err(TessellationRuntimeError::ScratchOom(Box::new(
+                TessellationScratchOomError {
                     patch_count_total: params.patch_count_total,
                     tess_factor_clamped,
                     scratch_per_frame_capacity,
@@ -313,8 +317,8 @@ impl TessellationRuntime {
                     sizes,
                     debug_counters_bytes,
                     total_scratch_bytes,
-                }),
-            ));
+                },
+            )));
         }
 
         // Intermediate stage outputs are modelled as storage buffers, but allocating them via the

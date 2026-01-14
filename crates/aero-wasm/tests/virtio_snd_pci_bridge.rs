@@ -518,8 +518,8 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_queued_before_eventq_buffer
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_speaker_jack_events_attach_then_detach_before_eventq_buffers_are_posted(
-) {
+fn virtio_snd_pci_bridge_delivers_speaker_jack_events_attach_then_detach_before_eventq_buffers_are_posted()
+ {
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -769,7 +769,8 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_into_cached_eventq_buffer_o
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_delivers_multiple_speaker_jack_events_into_cached_eventq_buffers_on_poll() {
+fn virtio_snd_pci_bridge_delivers_multiple_speaker_jack_events_into_cached_eventq_buffers_on_poll()
+{
     // Synthetic guest RAM region outside the wasm heap.
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
@@ -1267,8 +1268,7 @@ fn virtio_snd_pci_bridge_delivers_microphone_jack_event_into_cached_eventq_buffe
     let mut buf_before = [0u8; 8];
     guest.read_into(buf, &mut buf_before);
     assert_eq!(
-        &buf_before,
-        &[0xAAu8; 8],
+        &buf_before, &[0xAAu8; 8],
         "eventq buffer should not be modified until an event is queued"
     );
 
@@ -1398,8 +1398,7 @@ fn virtio_snd_pci_bridge_snapshot_roundtrip_rewinds_cached_eventq_buffers() {
     let mut buf_before = [0u8; 8];
     guest.read_into(buf, &mut buf_before);
     assert_eq!(
-        &buf_before,
-        &[0xAAu8; 8],
+        &buf_before, &[0xAAu8; 8],
         "eventq buffer should not be modified until an event is queued"
     );
 

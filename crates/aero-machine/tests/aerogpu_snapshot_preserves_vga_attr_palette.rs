@@ -76,4 +76,3 @@ fn aerogpu_snapshot_preserves_vga_attribute_controller_palette_mapping() {
     m2.io_write(0x3C0, 1, 0x21);
     assert_eq!(m2.io_read(0x3C1, 1) as u8, 0x02);
 }
-

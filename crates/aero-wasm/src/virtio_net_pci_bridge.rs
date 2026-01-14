@@ -301,7 +301,9 @@ impl VirtioNetPciBridge {
             )));
         }
         if guest_size_u64 == 0 {
-            return Err(js_error("VirtioNetPciBridge.new: guest_size must be non-zero"));
+            return Err(js_error(
+                "VirtioNetPciBridge.new: guest_size must be non-zero",
+            ));
         }
 
         let net_tx = open_ring_by_kind(io_ipc_sab.clone(), NET_TX, 0)?;

@@ -693,8 +693,10 @@ fn validate_wgsl_binding_contract(
         return Err("WGSL is missing the expected constants uniform binding".into());
     }
     if stage == shader::ShaderStage::Vertex && half_pixel_center && !has_half_pixel {
-        return Err("half_pixel_center is enabled but WGSL is missing the half_pixel uniform binding"
-            .into());
+        return Err(
+            "half_pixel_center is enabled but WGSL is missing the half_pixel uniform binding"
+                .into(),
+        );
     }
     if stage == shader::ShaderStage::Vertex && !half_pixel_center && has_half_pixel {
         return Err("WGSL declares half_pixel uniform but half_pixel_center is disabled".into());
@@ -1251,7 +1253,10 @@ fn build_alpha_test_wgsl_variant(
     out.push_str("\n@fragment\n");
     out.push_str(original_fn_line);
     out.push_str(&format!("  let out = {};\n", call_expr));
-    out.push_str(&format!("  let a: f32 = clamp({}, 0.0, 1.0);\n", alpha_expr));
+    out.push_str(&format!(
+        "  let a: f32 = clamp({}, 0.0, 1.0);\n",
+        alpha_expr
+    ));
     out.push_str(&format!(
         "  let alpha_ref: f32 = f32({}u) / 255.0;\n",
         alpha_test_ref
@@ -4909,7 +4914,7 @@ impl AerogpuD3d9Executor {
                                         upload_copy(&bytes, bytes_per_row, buffer_rows)?;
                                         Ok(())
                                     }
-                                 };
+                                };
 
                             let mut cursor: usize = 0;
                             let mut cur_offset = offset_bytes;
@@ -9556,7 +9561,11 @@ impl AerogpuD3d9Executor {
     }
 
     fn canonicalize_sampler_state(&self, state: D3d9SamplerState) -> D3d9SamplerState {
-        Self::canonicalize_sampler_state_for_caps(self.device.features(), self.downlevel_flags, state)
+        Self::canonicalize_sampler_state_for_caps(
+            self.device.features(),
+            self.downlevel_flags,
+            state,
+        )
     }
 
     fn canonicalize_sampler_state_for_caps(
@@ -11215,8 +11224,11 @@ mod tests {
             no_aniso,
             D3d9SamplerState::default(),
         );
-        let non_aniso_key =
-            AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(device_features, no_aniso, non_aniso);
+        let non_aniso_key = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
+            device_features,
+            no_aniso,
+            non_aniso,
+        );
         assert_eq!(
             default_key, non_aniso_key,
             "MAXANISOTROPY should not affect the canonical sampler state when anisotropic filtering is not requested"
@@ -11236,10 +11248,16 @@ mod tests {
         };
 
         // When anisotropy isn't supported, the canonical state should squash MAXANISOTROPY.
-        let key_2_no_aniso =
-            AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(device_features, no_aniso, aniso_2);
-        let key_16_no_aniso =
-            AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(device_features, no_aniso, aniso_16);
+        let key_2_no_aniso = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
+            device_features,
+            no_aniso,
+            aniso_2,
+        );
+        let key_16_no_aniso = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
+            device_features,
+            no_aniso,
+            aniso_16,
+        );
         assert_eq!(key_2_no_aniso, key_16_no_aniso);
         assert_eq!(key_2_no_aniso.max_anisotropy, 1);
 

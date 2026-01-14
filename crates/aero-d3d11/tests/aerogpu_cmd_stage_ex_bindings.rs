@@ -11,8 +11,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderStage, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
-use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);

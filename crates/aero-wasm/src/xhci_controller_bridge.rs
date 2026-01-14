@@ -199,7 +199,9 @@ impl XhciControllerBridge {
             )));
         }
         if guest_size_u64 == 0 {
-            return Err(js_error("XhciControllerBridge.new: guest_size must be non-zero"));
+            return Err(js_error(
+                "XhciControllerBridge.new: guest_size must be non-zero",
+            ));
         }
 
         Ok(Self {
@@ -369,7 +371,8 @@ impl XhciControllerBridge {
             return Ok(());
         }
 
-        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion).map_err(js_error)?;
+        let completion: UsbHostCompletion =
+            serde_wasm_bindgen::from_value(completion).map_err(js_error)?;
 
         if let Some(dev) = self.webusb.as_ref() {
             dev.push_completion(completion);
@@ -377,7 +380,9 @@ impl XhciControllerBridge {
         Ok(())
     }
     pub fn reset(&mut self) {
-        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+        if self.webusb_connected
+            && let Some(dev) = self.webusb.as_ref()
+        {
             dev.reset();
         }
     }
@@ -401,7 +406,9 @@ impl XhciControllerBridge {
         let mut w = SnapshotWriter::new(XHCI_BRIDGE_DEVICE_ID, XHCI_BRIDGE_DEVICE_VERSION);
         w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
         w.field_u64(TAG_TICK_COUNT, self.tick_count);
-        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+        if self.webusb_connected
+            && let Some(dev) = self.webusb.as_ref()
+        {
             w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
         }
         w.finish()

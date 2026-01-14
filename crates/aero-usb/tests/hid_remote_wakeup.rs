@@ -1,6 +1,6 @@
+use aero_usb::device::AttachedUsbDevice;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::device::AttachedUsbDevice;
 use aero_usb::uhci::regs::{
     REG_PORTSC1, REG_USBINTR, REG_USBSTS, USBINTR_RESUME, USBSTS_RESUMEDETECT,
 };
@@ -38,7 +38,12 @@ fn control_no_data(ctrl: &mut UhciController, addr: u8, setup: SetupPacket) {
     );
 }
 
-fn control_in(ctrl: &mut UhciController, addr: u8, setup: SetupPacket, max_packet: usize) -> Vec<u8> {
+fn control_in(
+    ctrl: &mut UhciController,
+    addr: u8,
+    setup: SetupPacket,
+    max_packet: usize,
+) -> Vec<u8> {
     let mut dev = ctrl
         .hub_mut()
         .device_mut_for_address(addr)
@@ -803,7 +808,11 @@ fn hid_keyboard_remote_wakeup_resumes_selectively_suspended_external_hub_port() 
         64,
     );
     let status = u16::from_le_bytes([st[0], st[1]]);
-    assert_ne!(status & HUB_PORT_STATUS_SUSPEND, 0, "expected port to be suspended");
+    assert_ne!(
+        status & HUB_PORT_STATUS_SUSPEND,
+        0,
+        "expected port to be suspended"
+    );
 
     // Clear suspend-change so we can observe a fresh edge from remote wake.
     control_no_data(
@@ -1008,7 +1017,11 @@ fn hid_keyboard_remote_wakeup_clears_external_hub_port_suspend_when_waking_upstr
     ctrl.tick_1ms(&mut mem);
 
     let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
-    assert_ne!(portsc & PORTSC_RD, 0, "expected Resume Detect after remote wake");
+    assert_ne!(
+        portsc & PORTSC_RD,
+        0,
+        "expected Resume Detect after remote wake"
+    );
 
     let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
     assert_ne!(

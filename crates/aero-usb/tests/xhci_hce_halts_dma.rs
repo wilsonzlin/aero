@@ -2,7 +2,9 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::{regs, XhciController};
-use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
+use aero_usb::{
+    ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult,
+};
 
 #[derive(Default)]
 struct CountingMem {

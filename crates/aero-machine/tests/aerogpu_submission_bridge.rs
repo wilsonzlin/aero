@@ -266,7 +266,10 @@ fn aerogpu_submission_bridge_vsync_present_fence_waits_for_vblank_tick() {
     m.write_physical_u64(desc_gpa + 56, 0);
 
     // Program BAR0 registers and enable scanout/vblank scheduling.
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO), ring_gpa as u32);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
         (ring_gpa >> 32) as u32,

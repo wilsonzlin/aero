@@ -1147,7 +1147,8 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_sampler_binding_mismatch()
         .and_then(|v| v.as_string())
         .unwrap_or_default();
     assert!(
-        wgsl_before.contains("@binding(0) var tex0") && wgsl_before.contains("@binding(1) var samp0"),
+        wgsl_before.contains("@binding(0) var tex0")
+            && wgsl_before.contains("@binding(1) var samp0"),
         "expected cached WGSL to contain sampler declarations for s0"
     );
 

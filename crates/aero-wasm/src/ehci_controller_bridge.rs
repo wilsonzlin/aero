@@ -157,7 +157,9 @@ impl EhciControllerBridge {
             )));
         }
         if guest_size_u64 == 0 {
-            return Err(js_error("EhciControllerBridge.new: guest_size must be non-zero"));
+            return Err(js_error(
+                "EhciControllerBridge.new: guest_size must be non-zero",
+            ));
         }
 
         Ok(Self {
@@ -298,7 +300,9 @@ impl EhciControllerBridge {
 
     /// Reset the WebUSB passthrough device without disturbing the rest of the USB topology.
     pub fn reset(&mut self) {
-        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+        if self.webusb_connected
+            && let Some(dev) = self.webusb.as_ref()
+        {
             dev.reset();
         }
     }

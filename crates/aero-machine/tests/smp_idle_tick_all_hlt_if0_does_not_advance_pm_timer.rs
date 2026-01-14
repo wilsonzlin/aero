@@ -104,7 +104,10 @@ fn smp_idle_tick_all_hlt_if0_does_not_advance_pm_timer() {
 
     // Repeated slices while the BSP is halted with IF=0 should not advance deterministic time.
     for _ in 0..50 {
-        assert!(matches!(m.run_slice(50_000), RunExit::Halted { executed: 0 }));
+        assert!(matches!(
+            m.run_slice(50_000),
+            RunExit::Halted { executed: 0 }
+        ));
         assert_eq!(
             m.io_read(DEFAULT_PM_TMR_BLK, 4),
             baseline,
@@ -112,4 +115,3 @@ fn smp_idle_tick_all_hlt_if0_does_not_advance_pm_timer() {
         );
     }
 }
-

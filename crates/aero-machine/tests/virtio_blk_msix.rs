@@ -422,14 +422,24 @@ fn snapshot_restore_preserves_virtio_blk_msix_pending_bit_and_delivers_after_unm
     // Mutate state after snapshot so restore is an observable rewind: clear Function Mask and allow
     // the pending MSI-X vector to be delivered/cleared.
     let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 14)));
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl & !(1 << 14)),
+    );
     m.process_virtio_blk();
     assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
     interrupts.borrow_mut().acknowledge(vector as u8);
     interrupts.borrow_mut().eoi(vector as u8);
     assert_eq!(interrupts.borrow().get_pending(), None);
     let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
-    assert_eq!(pba_bits & 1, 0, "expected pending bit to clear after delivery");
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit to clear after delivery"
+    );
 
     // Restore and ensure the pending bit and masked MSI-X state are restored.
     m.restore_snapshot_bytes(&snapshot).unwrap();
@@ -450,9 +460,19 @@ fn snapshot_restore_preserves_virtio_blk_msix_pending_bit_and_delivers_after_unm
     // Clear Function Mask post-restore and verify the pending vector is delivered and the pending
     // bit clears.
     let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 14)));
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl & !(1 << 14)),
+    );
     m.process_virtio_blk();
     assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
     let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
-    assert_eq!(pba_bits & 1, 0, "expected pending bit to clear after unmask");
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit to clear after unmask"
+    );
 }

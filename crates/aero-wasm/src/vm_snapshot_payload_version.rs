@@ -128,9 +128,6 @@ mod tests {
         // Would be interpreted as device_version by the io-snapshot parser; ensure we don't use it.
         bytes[12..16].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
 
-        assert_eq!(
-            parse_vm_snapshot_device_version_flags(&bytes),
-            Some((1, 7))
-        );
+        assert_eq!(parse_vm_snapshot_device_version_flags(&bytes), Some((1, 7)));
     }
 }

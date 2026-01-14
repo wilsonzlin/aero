@@ -353,7 +353,10 @@ fn int10_vbe_dac_width_switch_scales_palette_entries() {
 
     // Default BIOS palette is stored as 6-bit components. EGA red = (0xAA,0,0) in 8-bit which is
     // 0x2A in 6-bit.
-    assert_eq!(read_entry4(&mut cpu, &mut bios, &mut mem), [0x00, 0x00, 0x2A, 0x00]);
+    assert_eq!(
+        read_entry4(&mut cpu, &mut bios, &mut mem),
+        [0x00, 0x00, 0x2A, 0x00]
+    );
 
     // Switch to an 8-bit DAC and verify the BIOS scales the stored palette entry.
     cpu.set_ax(0x4F08);
@@ -362,7 +365,10 @@ fn int10_vbe_dac_width_switch_scales_palette_entries() {
     assert_eq!(cpu.ax(), 0x004F);
     assert!(!cpu.cf());
 
-    assert_eq!(read_entry4(&mut cpu, &mut bios, &mut mem), [0x00, 0x00, 0xAA, 0x00]);
+    assert_eq!(
+        read_entry4(&mut cpu, &mut bios, &mut mem),
+        [0x00, 0x00, 0xAA, 0x00]
+    );
 
     // Switching back to 6-bit should restore the original representation.
     cpu.set_ax(0x4F08);
@@ -371,7 +377,10 @@ fn int10_vbe_dac_width_switch_scales_palette_entries() {
     assert_eq!(cpu.ax(), 0x004F);
     assert!(!cpu.cf());
 
-    assert_eq!(read_entry4(&mut cpu, &mut bios, &mut mem), [0x00, 0x00, 0x2A, 0x00]);
+    assert_eq!(
+        read_entry4(&mut cpu, &mut bios, &mut mem),
+        [0x00, 0x00, 0x2A, 0x00]
+    );
 }
 
 #[test]

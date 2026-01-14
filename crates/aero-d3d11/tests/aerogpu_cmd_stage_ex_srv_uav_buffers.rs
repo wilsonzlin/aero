@@ -4,8 +4,8 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::runtime::bindings::{BoundBuffer, BoundTexture, ShaderStage};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AerogpuShaderStage, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuShaderStage,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -208,13 +208,7 @@ fn aerogpu_cmd_stage_ex_srv_uav_buffers_route_and_unbind_correctly() {
         push_import_shared_surface(&mut stream, BUF_UAV_ALIAS, TOKEN_UAV);
 
         // Mutual exclusion: setting an SRV buffer must unbind a texture at the same `t#` slot.
-        push_set_texture(
-            &mut stream,
-            AerogpuShaderStage::Vertex as u32,
-            0,
-            TEX_VS,
-            0,
-        );
+        push_set_texture(&mut stream, AerogpuShaderStage::Vertex as u32, 0, TEX_VS, 0);
         push_set_shader_resource_buffer(
             &mut stream,
             AerogpuShaderStage::Vertex as u32,
@@ -236,13 +230,7 @@ fn aerogpu_cmd_stage_ex_srv_uav_buffers_route_and_unbind_correctly() {
             (BUF_PS_SRV2, 4, 0),
         );
         // Mutual exclusion: setting a texture must unbind any SRV buffer at the same `t#` slot.
-        push_set_texture(
-            &mut stream,
-            AerogpuShaderStage::Pixel as u32,
-            1,
-            TEX_PS,
-            0,
-        );
+        push_set_texture(&mut stream, AerogpuShaderStage::Pixel as u32, 1, TEX_PS, 0);
 
         // Compute stage bindings (legacy CS).
         push_set_shader_resource_buffer(

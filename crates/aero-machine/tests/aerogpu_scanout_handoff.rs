@@ -181,7 +181,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         // device.
         bus.write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | 0x0006));
     }
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH),
+        width,
+    );
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT),
         height,
@@ -245,7 +248,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until reset. Disabling
     // scanout (SCANOUT0_ENABLE=0) acts as a visibility toggle: the machine presents a blank frame
     // while WDDM ownership remains sticky.
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        0,
+    );
     m.process_aerogpu();
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);

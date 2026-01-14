@@ -9,9 +9,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
-use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -627,12 +627,15 @@ fn aerogpu_cmd_sampler_and_texture_bindings_accept_trailing_bytes() {
                 //
                 // Set to 0 so the test doesn't require executing geometry/hull/domain shaders; we
                 // only want to validate that the executor accepts larger `size_bytes` packets.
-                w.bind_shaders_ex(VS, PS, /*cs=*/ 0, /*gs=*/ 0, /*hs=*/ 0, /*ds=*/ 0);
+                w.bind_shaders_ex(
+                    VS, PS, /*cs=*/ 0, /*gs=*/ 0, /*hs=*/ 0, /*ds=*/ 0,
+                );
             } else {
                 w.bind_shaders(VS, PS, /*cs=*/ 0);
             }
             let bind_shaders_pkt_stream = w.finish();
-            stream.extend_from_slice(&bind_shaders_pkt_stream[ProtocolCmdStreamHeader::SIZE_BYTES..]);
+            stream
+                .extend_from_slice(&bind_shaders_pkt_stream[ProtocolCmdStreamHeader::SIZE_BYTES..]);
 
             // CREATE_INPUT_LAYOUT
             let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateInputLayout as u32);

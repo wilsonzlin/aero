@@ -173,7 +173,9 @@ fn said_rust_only_skips_node_and_npm() -> Result<(), Box<dyn std::error::Error>>
         "expected wasm-pack not to be invoked without --wasm; invocations={invocations:?}"
     );
 
-    let cargo_usb = invocations.iter().find(|argv| argv.iter().any(|arg| arg == "aero-usb"));
+    let cargo_usb = invocations
+        .iter()
+        .find(|argv| argv.iter().any(|arg| arg == "aero-usb"));
     let Some(cargo_usb) = cargo_usb else {
         return Err("missing cargo invocation for aero-usb".into());
     };
@@ -210,7 +212,9 @@ fn said_usb_all_runs_full_aero_usb_suite() -> Result<(), Box<dyn std::error::Err
     let log = fs::read_to_string(&log_path)?;
     let invocations = parse_invocations(&log);
 
-    let cargo_usb = invocations.iter().find(|argv| argv.iter().any(|arg| arg == "aero-usb"));
+    let cargo_usb = invocations
+        .iter()
+        .find(|argv| argv.iter().any(|arg| arg == "aero-usb"));
     let Some(cargo_usb) = cargo_usb else {
         return Err("missing cargo invocation for aero-usb".into());
     };
@@ -336,11 +340,17 @@ fn said_with_wasm_rust_only_runs_aero_wasm_integration_tests(
         "expected wasm-pack not to be invoked without --wasm; invocations={invocations:?}"
     );
 
-    let cargo_wasm = invocations.iter().find(|argv| argv.iter().any(|arg| arg == "aero-wasm"));
+    let cargo_wasm = invocations
+        .iter()
+        .find(|argv| argv.iter().any(|arg| arg == "aero-wasm"));
     let Some(cargo_wasm) = cargo_wasm else {
         return Err("missing cargo invocation for aero-wasm".into());
     };
-    for expected in ["--locked", "machine_input_injection", "machine_input_backends"] {
+    for expected in [
+        "--locked",
+        "machine_input_injection",
+        "machine_input_backends",
+    ] {
         assert!(
             cargo_wasm.iter().any(|arg| arg == expected),
             "expected `{expected}` in aero-wasm argv; argv={cargo_wasm:?}"

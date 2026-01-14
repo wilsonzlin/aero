@@ -44,11 +44,7 @@ fn tessellation_scratch_oom_error_includes_computed_sizes() {
             ds_output_register_count,
         );
         let err = rt
-            .alloc_draw_scratch(
-                device,
-            &mut scratch,
-                params,
-            )
+            .alloc_draw_scratch(device, &mut scratch, params)
             .expect_err("expected scratch validation to fail with a tiny per-frame capacity");
 
         let msg = err.to_string();

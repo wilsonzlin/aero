@@ -39,7 +39,16 @@ fn hid_gamepad_snapshot_load_clamps_hat_and_axes() {
     };
     assert_eq!(
         data,
-        vec![0x00, 0x00, 0x08, (-127i8) as u8, 0x00, 0x00, (-127i8) as u8, 0x00]
+        vec![
+            0x00,
+            0x00,
+            0x08,
+            (-127i8) as u8,
+            0x00,
+            0x00,
+            (-127i8) as u8,
+            0x00
+        ]
     );
 }
 
@@ -79,7 +88,16 @@ fn hid_composite_gamepad_snapshot_load_clamps_hat_and_axes() {
     };
     assert_eq!(
         data,
-        vec![0x00, 0x00, 0x08, (-127i8) as u8, 0x00, 0x00, (-127i8) as u8, 0x00]
+        vec![
+            0x00,
+            0x00,
+            0x08,
+            (-127i8) as u8,
+            0x00,
+            0x00,
+            (-127i8) as u8,
+            0x00
+        ]
     );
 }
 
@@ -95,7 +113,10 @@ fn hid_gamepad_snapshot_load_sanitizes_pending_reports() {
         <UsbHidGamepadHandle as IoSnapshot>::DEVICE_VERSION,
     );
     w.field_u8(TAG_CONFIGURATION, 1);
-    w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+    w.field_bytes(
+        TAG_PENDING_REPORTS,
+        Encoder::new().vec_bytes(&pending).finish(),
+    );
     let snap = w.finish();
 
     let mut pad = UsbHidGamepadHandle::new();

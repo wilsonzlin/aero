@@ -224,9 +224,7 @@ fn parse_c_abi_dump_output(text: String) -> AbiDump {
                 dump.consts.insert(name.clone(), value);
                 dump.const_lines.insert(name, line_no);
             }
-            other => panic!(
-                "unknown ABI dump tag {other} in line @{line_no}: {line}",
-            ),
+            other => panic!("unknown ABI dump tag {other} in line @{line_no}: {line}",),
         }
     }
 
@@ -3116,14 +3114,8 @@ fn rust_layout_matches_c_headers() {
         68
     );
 
-    assert_eq!(
-        abi.offset("aerogpu_escape_set_cursor_position_in", "x"),
-        16
-    );
-    assert_eq!(
-        abi.offset("aerogpu_escape_set_cursor_position_in", "y"),
-        20
-    );
+    assert_eq!(abi.offset("aerogpu_escape_set_cursor_position_in", "x"), 16);
+    assert_eq!(abi.offset("aerogpu_escape_set_cursor_position_in", "y"), 20);
     assert_eq!(
         abi.offset("aerogpu_escape_set_cursor_visibility_in", "visible"),
         16

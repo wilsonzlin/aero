@@ -13,4 +13,3 @@ fn no_more_bytes_with_full_15_byte_window_is_invalid_instruction() {
         DecodeError::InvalidInstruction
     );
 }
-

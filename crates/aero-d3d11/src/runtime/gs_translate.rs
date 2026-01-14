@@ -1087,7 +1087,11 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
         // bits as `u32`.
         let unsigned = matches!(
             op,
-            Sm4CmpOp::EqU | Sm4CmpOp::NeU | Sm4CmpOp::LtU | Sm4CmpOp::GeU | Sm4CmpOp::LeU
+            Sm4CmpOp::EqU
+                | Sm4CmpOp::NeU
+                | Sm4CmpOp::LtU
+                | Sm4CmpOp::GeU
+                | Sm4CmpOp::LeU
                 | Sm4CmpOp::GtU
         );
         let (a, b) = if unsigned {
@@ -1412,9 +1416,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 let src_f = emit_src_vec4(inst_index, "f32tof16", src, &input_sivs)?;
                 let src_f = maybe_saturate(dst.saturate, src_f);
 
-                let pack_lane = |c: char| {
-                    format!("(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)")
-                };
+                let pack_lane =
+                    |c: char| format!("(pack2x16float(vec2<f32>(({src_f}).{c}, 0.0)) & 0xffffu)");
                 let ux = pack_lane('x');
                 let uy = pack_lane('y');
                 let uz = pack_lane('z');
@@ -1436,7 +1439,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 let z = unpack_lane('z');
                 let w_lane = unpack_lane('w');
 
-                let rhs = maybe_saturate(dst.saturate, format!("vec4<f32>({x}, {y}, {z}, {w_lane})"));
+                let rhs =
+                    maybe_saturate(dst.saturate, format!("vec4<f32>({x}, {y}, {z}, {w_lane})"));
                 emit_write_masked(&mut w, inst_index, "f16tof32", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Rcp { dst, src } => {

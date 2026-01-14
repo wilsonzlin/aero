@@ -21,28 +21,22 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
     assert_eq!(module.stage, ShaderStage::Geometry);
 
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Point(1)
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1)
+            }
+        )),
         "expected dcl_inputprimitive in decls: {:#?}",
         module.decls
     );
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip(5)
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(5)
+            }
+        )),
         "expected dcl_outputtopology in decls: {:#?}",
         module.decls
     );
@@ -63,7 +57,10 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
         .count();
     assert_eq!(emit_count, 4, "expected four emitted vertices");
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Cut { stream: 0 })),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Cut { stream: 0 })),
         "expected CUT/RestartStrip instruction"
     );
     assert!(
@@ -99,28 +96,22 @@ fn decodes_geometry_shader_emit_stream_and_cut_stream() {
     assert_eq!(module.stage, ShaderStage::Geometry);
 
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Triangle(_)
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle(_)
+            }
+        )),
         "expected dcl_inputprimitive in decls: {:#?}",
         module.decls
     );
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip(_)
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(_)
+            }
+        )),
         "expected dcl_outputtopology in decls: {:#?}",
         module.decls
     );

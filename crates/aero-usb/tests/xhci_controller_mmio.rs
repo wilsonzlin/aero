@@ -682,7 +682,10 @@ fn xhci_endpoint_doorbell_defers_transfers_until_run() {
 
     let mut slot_ctx = SlotContext::default();
     slot_ctx.set_root_hub_port_number(1);
-    assert_eq!(ctrl.address_device(completion.slot_id, slot_ctx), completion);
+    assert_eq!(
+        ctrl.address_device(completion.slot_id, slot_ctx),
+        completion
+    );
 
     // Configure a plausible endpoint ring cursor for EP1 IN (device context index 3). Leave DCBAAP
     // cleared so the endpoint-state gating logic falls back to controller-local cursor state.

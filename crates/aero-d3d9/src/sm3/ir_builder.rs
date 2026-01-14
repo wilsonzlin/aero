@@ -189,7 +189,9 @@ fn record_call_edge(
         });
 }
 
-fn validate_call_graph(call_edges: &HashMap<CallGraphNode, HashMap<u32, CallSite>>) -> Result<(), BuildError> {
+fn validate_call_graph(
+    call_edges: &HashMap<CallGraphNode, HashMap<u32, CallSite>>,
+) -> Result<(), BuildError> {
     fn dfs(
         node: CallGraphNode,
         depth: usize,
@@ -201,10 +203,7 @@ fn validate_call_graph(call_edges: &HashMap<CallGraphNode, HashMap<u32, CallSite
         };
         for (&child, site) in children {
             if stack.contains(&child) {
-                let mut chain = stack
-                    .iter()
-                    .map(|l| format!("l{l}"))
-                    .collect::<Vec<_>>();
+                let mut chain = stack.iter().map(|l| format!("l{l}")).collect::<Vec<_>>();
                 chain.push(format!("l{child}"));
                 return Err(BuildError {
                     location: site.location,
@@ -215,10 +214,7 @@ fn validate_call_graph(call_edges: &HashMap<CallGraphNode, HashMap<u32, CallSite
 
             let next_depth = depth + 1;
             if next_depth > MAX_D3D9_SHADER_SUBROUTINE_CALL_DEPTH {
-                let mut chain = stack
-                    .iter()
-                    .map(|l| format!("l{l}"))
-                    .collect::<Vec<_>>();
+                let mut chain = stack.iter().map(|l| format!("l{l}")).collect::<Vec<_>>();
                 chain.push(format!("l{child}"));
                 return Err(BuildError {
                     location: site.location,
@@ -343,7 +339,10 @@ fn build_block(
             Opcode::Call => {
                 let label = extract_label_operand(inst, 0)?;
                 if !label_map.contains_key(&label) {
-                    return Err(err(inst, format!("call target label l{label} is not defined")));
+                    return Err(err(
+                        inst,
+                        format!("call target label l{label} is not defined"),
+                    ));
                 }
                 record_call_edge(call_edges, node, label, inst);
                 worklist.push_back(label);
@@ -840,7 +839,9 @@ fn build_block(
     }
 
     if matches!(mode, BuildMode::Subroutine { .. }) && !terminated {
-        return Err(err_internal("subroutine parsing terminated without reaching ret"));
+        return Err(err_internal(
+            "subroutine parsing terminated without reaching ret",
+        ));
     }
 
     match stack.pop() {
@@ -858,7 +859,10 @@ fn extract_label_operand(inst: &DecodedInstruction, idx: usize) -> Result<u32, B
         return Err(err(inst, "label operand is not a label register"));
     }
     if src.reg.relative.is_some() {
-        return Err(err(inst, "relative addressing is not supported for label operands"));
+        return Err(err(
+            inst,
+            "relative addressing is not supported for label operands",
+        ));
     }
     Ok(src.reg.index)
 }

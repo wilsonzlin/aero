@@ -985,8 +985,17 @@ mod tests {
         dev.reset();
 
         assert!(!dev.cfg.capability::<MsiCapability>().unwrap().enabled());
-        assert_eq!(dev.cfg.capability::<MsiCapability>().unwrap().mask_bits(), 0);
-        assert_eq!(dev.cfg.capability::<MsiCapability>().unwrap().pending_bits(), 0);
+        assert_eq!(
+            dev.cfg.capability::<MsiCapability>().unwrap().mask_bits(),
+            0
+        );
+        assert_eq!(
+            dev.cfg
+                .capability::<MsiCapability>()
+                .unwrap()
+                .pending_bits(),
+            0
+        );
         assert!(!dev.cfg.capability::<MsixCapability>().unwrap().enabled());
         assert!(!dev
             .cfg
@@ -994,7 +1003,11 @@ mod tests {
             .unwrap()
             .function_masked());
         assert_eq!(
-            dev.cfg.capability::<MsixCapability>().unwrap().snapshot_pba()[0] & 1,
+            dev.cfg
+                .capability::<MsixCapability>()
+                .unwrap()
+                .snapshot_pba()[0]
+                & 1,
             0,
             "reset should clear MSI-X PBA pending bits"
         );

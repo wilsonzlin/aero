@@ -49,10 +49,7 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
 
     // Enable scanout0 so vblank ticks are generated, and enable vblank IRQ latching.
     m.write_physical_u32(reg(mmio::SCANOUT0_ENABLE), 1);
-    m.write_physical_u32(
-        reg(mmio::IRQ_ENABLE),
-        irq_bits::SCANOUT_VBLANK,
-    );
+    m.write_physical_u32(reg(mmio::IRQ_ENABLE), irq_bits::SCANOUT_VBLANK);
 
     let seq_before = {
         let lo = m.read_physical_u32(reg(mmio::SCANOUT0_VBLANK_SEQ_LO)) as u64;

@@ -51,7 +51,10 @@ fn aerogpu_cursor_fb_gpa_update_is_atomic_at_hi_commit() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES), 4);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
+        4,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO),
         scanout_fb as u32,
@@ -75,7 +78,10 @@ fn aerogpu_cursor_fb_gpa_update_is_atomic_at_hi_commit() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES), 4);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES),
+        4,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO),
         cursor_a as u32,
@@ -117,4 +123,3 @@ fn aerogpu_cursor_fb_gpa_update_is_atomic_at_hi_commit() {
     assert_eq!(m.display_resolution(), (1, 1));
     assert_eq!(m.display_framebuffer(), &[0xFF00_FF00]); // green
 }
-

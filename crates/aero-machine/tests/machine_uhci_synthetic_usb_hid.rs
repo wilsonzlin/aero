@@ -170,9 +170,7 @@ fn poll_consumer_interrupt_in(m: &mut Machine) -> UsbInResult {
         .as_hub_mut()
         .expect("root port 0 device should be a hub");
     let consumer = hub
-        .downstream_device_mut(
-            (Machine::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT - 1) as usize,
-        )
+        .downstream_device_mut((Machine::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT - 1) as usize)
         .expect("hub port 4 should contain a consumer-control device");
     consumer.model_mut().handle_interrupt_in(0x81)
 }
@@ -263,8 +261,7 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     let base = uhci_io_base(&m);
     let portsc1 = m.io_read(base + regs::REG_PORTSC1, 2) as u16;
     assert_ne!(
-        portsc1,
-        0xFFFF,
+        portsc1, 0xFFFF,
         "PORTSC1 should not read as open bus (ensure PCI I/O decode is enabled)"
     );
     assert_ne!(portsc1 & 0x0001, 0, "PORTSC1.CCS should be set");
@@ -283,7 +280,9 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
             "root port 0 should host aero_usb::hub::UsbHubDevice"
         );
 
-        let hub = dev0.as_hub_mut().expect("root port 0 device should be a hub");
+        let hub = dev0
+            .as_hub_mut()
+            .expect("root port 0 device should be a hub");
         assert_eq!(
             hub.num_ports(),
             usize::from(Machine::UHCI_EXTERNAL_HUB_PORT_COUNT),
@@ -478,7 +477,11 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     expect_keyboard_report_contains(poll_keyboard_interrupt_in(&mut m), 0x05, "after reset");
 
     m.inject_usb_hid_mouse_move(11, 6);
-    expect_mouse_report(poll_mouse_interrupt_in(&mut m), &[0, 11, 6, 0, 0], "after reset");
+    expect_mouse_report(
+        poll_mouse_interrupt_in(&mut m),
+        &[0, 11, 6, 0, 0],
+        "after reset",
+    );
 
     let gamepad_report = [0x04, 0x00, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00];
     inject_gamepad_report_bytes(&mut m, &gamepad_report);

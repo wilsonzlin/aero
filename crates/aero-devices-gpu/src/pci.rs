@@ -4,11 +4,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aero_devices::pci::{profile, PciConfigSpace, PciDevice};
-use aero_protocol::aerogpu::aerogpu_pci as proto;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use aero_protocol::aerogpu::aerogpu_pci as proto;
 use memory::{MemoryBus, MmioHandler};
 
 use crate::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
@@ -852,7 +852,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         if let Some(boot) = self.boot_time_ns {
             w.field_u64(TAG_BOOT_TIME_NS, boot);
         }
-        w.field_bool(TAG_VBLANK_IRQ_ENABLE_PENDING, self.vblank_irq_enable_pending);
+        w.field_bool(
+            TAG_VBLANK_IRQ_ENABLE_PENDING,
+            self.vblank_irq_enable_pending,
+        );
         w.field_bool(TAG_DOORBELL_PENDING, self.doorbell_pending);
         w.field_bool(TAG_RING_RESET_PENDING_DMA, self.ring_reset_pending_dma);
         w.finish()

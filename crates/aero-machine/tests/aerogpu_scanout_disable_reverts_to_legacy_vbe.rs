@@ -1,5 +1,4 @@
 #![cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
-
 #![cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 
 use std::sync::Arc;
@@ -186,7 +185,10 @@ fn aerogpu_scanout_disable_publishes_wddm_disabled_even_with_legacy_vbe_panning_
 
     // Explicitly disable WDDM scanout. Even though a legacy VBE scanout is configured (including
     // panning/stride), the shared scanout descriptor should publish a disabled WDDM descriptor.
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        0,
+    );
     m.process_aerogpu();
 
     let snap = scanout_state.snapshot();

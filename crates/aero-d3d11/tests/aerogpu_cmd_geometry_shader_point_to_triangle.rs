@@ -114,15 +114,12 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
     // output topology, and max output vertices. Validate them explicitly so fixture drift is caught
     // even on backends that skip the full runtime test.
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Point(_)
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(_)
+            }
+        )),
         "GS DXBC should declare point input primitive via dcl_inputprimitive, got decls={:?}",
         module.decls
     );

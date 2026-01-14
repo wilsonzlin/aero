@@ -1193,9 +1193,7 @@ fn xhci_tick_remainder_roundtrips_through_snapshot_restore() {
     let cmd = cfg_read(&mut src, bdf, 0x04, 2) as u16;
     cfg_write(&mut src, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
 
-    let bar0_base = src
-        .pci_bar_base(bdf, 0)
-        .expect("xHCI BAR0 should exist");
+    let bar0_base = src.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
     assert_ne!(
         bar0_base, 0,
         "xHCI BAR0 base should be assigned by BIOS POST"
@@ -1216,23 +1214,29 @@ fn xhci_tick_remainder_roundtrips_through_snapshot_restore() {
 
     // Ensure MMIO decode is enabled so MFINDEX reads are valid.
     let cmd = cfg_read(&mut restored, bdf, 0x04, 2) as u16;
-    cfg_write(&mut restored, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+    cfg_write(
+        &mut restored,
+        bdf,
+        0x04,
+        2,
+        u32::from(cmd | (1 << 1) | (1 << 2)),
+    );
 
-    let bar0_base_restored = restored.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    let bar0_base_restored = restored
+        .pci_bar_base(bdf, 0)
+        .expect("xHCI BAR0 should exist");
     assert_ne!(
         bar0_base_restored, 0,
         "xHCI BAR0 base should be assigned by BIOS POST"
     );
 
-    let after_restore =
-        restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
+    let after_restore = restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
     assert_eq!(after_restore, before);
 
     // Advance by the remaining half-millisecond; if the machine's xHCI tick remainder is included
     // in snapshots, this should now advance MFINDEX by 8 microframes.
     restored.tick_platform(500_000);
-    let after_tick =
-        restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
+    let after_tick = restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
     assert_eq!(after_tick, before.wrapping_add(8) & 0x3fff);
 }
 

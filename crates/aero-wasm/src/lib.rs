@@ -378,8 +378,14 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("tier2_ctx_offset", TIER2_CTX_OFFSET);
         set_u32("tier2_ctx_size", TIER2_CTX_SIZE);
         set_u32("trace_exit_reason_offset", TRACE_EXIT_REASON_OFFSET);
-        set_u32("code_version_table_ptr_offset", CODE_VERSION_TABLE_PTR_OFFSET);
-        set_u32("code_version_table_len_offset", CODE_VERSION_TABLE_LEN_OFFSET);
+        set_u32(
+            "code_version_table_ptr_offset",
+            CODE_VERSION_TABLE_PTR_OFFSET,
+        );
+        set_u32(
+            "code_version_table_len_offset",
+            CODE_VERSION_TABLE_LEN_OFFSET,
+        );
         let commit_flag_offset = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
         set_u32("commit_flag_offset", commit_flag_offset);
         set_u32("commit_flag_bytes", 4);
@@ -938,9 +944,8 @@ pub fn synthesize_webhid_report_descriptor(
         serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(collections_json))
             .map_err(|err| js_error(format!("Invalid WebHID collection schema: {err}")))?;
 
-    let bytes = synthesize_webhid_report_descriptor_bytes(&collections).map_err(|err| {
-        js_error(format!("Failed to synthesize HID report descriptor: {err}"))
-    })?;
+    let bytes = synthesize_webhid_report_descriptor_bytes(&collections)
+        .map_err(|err| js_error(format!("Failed to synthesize HID report descriptor: {err}")))?;
 
     Ok(Uint8Array::from(bytes.as_slice()))
 }
@@ -1031,7 +1036,14 @@ pub fn demo_render_rgba8888(
         let slice_len = stride * draw_height;
         unsafe {
             let dst_ptr = core::ptr::with_exposed_provenance_mut(dst_offset as usize);
-            demo_renderer::render_rgba8888_raw(dst_ptr, slice_len, width, height, stride_bytes, now_ms)
+            demo_renderer::render_rgba8888_raw(
+                dst_ptr,
+                slice_len,
+                width,
+                height,
+                stride_bytes,
+                now_ms,
+            )
         }
     }
 
@@ -3024,9 +3036,7 @@ impl CpuWorkerDemo {
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
-            if guest_counter_offset_bytes == 0
-                || !guest_counter_offset_bytes.is_multiple_of(4)
-            {
+            if guest_counter_offset_bytes == 0 || !guest_counter_offset_bytes.is_multiple_of(4) {
                 return Err(JsValue::from_str(
                     "guest_counter_offset_bytes must be a non-zero multiple of 4",
                 ));
@@ -3826,7 +3836,10 @@ impl Machine {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
         cfg.enable_synthetic_usb_hid = true;
 
-        if let Some(options) = options && !options.is_null() && !options.is_undefined() {
+        if let Some(options) = options
+            && !options.is_null()
+            && !options.is_undefined()
+        {
             if !options.is_object() {
                 return Err(JsValue::from_str("Machine options must be an object"));
             }
@@ -3843,78 +3856,78 @@ impl Machine {
                     .map(Some)
             };
 
-                if let Some(v) = get_bool("enable_pc_platform")? {
-                    cfg.enable_pc_platform = v;
-                }
-                if let Some(v) = get_bool("enable_acpi")? {
-                    cfg.enable_acpi = v;
-                }
-                if let Some(v) = get_bool("enable_e1000")? {
-                    cfg.enable_e1000 = v;
-                }
-                if let Some(v) = get_bool("enable_virtio_net")? {
-                    cfg.enable_virtio_net = v;
-                }
-                if let Some(v) = get_bool("enable_virtio_blk")? {
-                    cfg.enable_virtio_blk = v;
-                }
-                if let Some(v) = get_bool("enable_virtio_input")? {
-                    cfg.enable_virtio_input = v;
-                }
-                if let Some(v) = get_bool("enable_ahci")? {
-                    cfg.enable_ahci = v;
-                }
-                if let Some(v) = get_bool("enable_nvme")? {
-                    cfg.enable_nvme = v;
-                }
-                if let Some(v) = get_bool("enable_ide")? {
-                    cfg.enable_ide = v;
-                }
-                if let Some(v) = get_bool("enable_uhci")? {
-                    cfg.enable_uhci = v;
-                }
-                if let Some(v) = get_bool("enable_ehci")? {
-                    cfg.enable_ehci = v;
-                }
-                if let Some(v) = get_bool("enable_xhci")? {
-                    cfg.enable_xhci = v;
-                }
-                let mut enable_vga_set = false;
-                let mut enable_aerogpu_set = false;
-                if let Some(v) = get_bool("enable_synthetic_usb_hid")? {
-                    cfg.enable_synthetic_usb_hid = v;
-                }
-                if let Some(v) = get_bool("enable_vga")? {
-                    cfg.enable_vga = v;
-                    enable_vga_set = true;
-                }
-                if let Some(v) = get_bool("enable_aerogpu")? {
-                    cfg.enable_aerogpu = v;
-                    enable_aerogpu_set = true;
-                }
-                // Mirror `new_with_config` defaults for the mutually-exclusive VGA/AeroGPU device
-                // selection when callers only specify one side:
-                // - If callers explicitly set `enable_aerogpu` without specifying VGA, VGA defaults
-                //   to `!enable_aerogpu`.
-                // - If callers enable VGA without explicitly specifying `enable_aerogpu`, disable
-                //   AeroGPU to avoid a configuration error.
-                if enable_aerogpu_set && !enable_vga_set {
-                    cfg.enable_vga = !cfg.enable_aerogpu;
-                } else if enable_vga_set && cfg.enable_vga && !enable_aerogpu_set {
-                    cfg.enable_aerogpu = false;
-                }
-                if let Some(v) = get_bool("enable_serial")? {
-                    cfg.enable_serial = v;
-                }
-                if let Some(v) = get_bool("enable_i8042")? {
-                    cfg.enable_i8042 = v;
-                }
-                if let Some(v) = get_bool("enable_a20_gate")? {
-                    cfg.enable_a20_gate = v;
-                }
-                if let Some(v) = get_bool("enable_reset_ctrl")? {
-                    cfg.enable_reset_ctrl = v;
-                }
+            if let Some(v) = get_bool("enable_pc_platform")? {
+                cfg.enable_pc_platform = v;
+            }
+            if let Some(v) = get_bool("enable_acpi")? {
+                cfg.enable_acpi = v;
+            }
+            if let Some(v) = get_bool("enable_e1000")? {
+                cfg.enable_e1000 = v;
+            }
+            if let Some(v) = get_bool("enable_virtio_net")? {
+                cfg.enable_virtio_net = v;
+            }
+            if let Some(v) = get_bool("enable_virtio_blk")? {
+                cfg.enable_virtio_blk = v;
+            }
+            if let Some(v) = get_bool("enable_virtio_input")? {
+                cfg.enable_virtio_input = v;
+            }
+            if let Some(v) = get_bool("enable_ahci")? {
+                cfg.enable_ahci = v;
+            }
+            if let Some(v) = get_bool("enable_nvme")? {
+                cfg.enable_nvme = v;
+            }
+            if let Some(v) = get_bool("enable_ide")? {
+                cfg.enable_ide = v;
+            }
+            if let Some(v) = get_bool("enable_uhci")? {
+                cfg.enable_uhci = v;
+            }
+            if let Some(v) = get_bool("enable_ehci")? {
+                cfg.enable_ehci = v;
+            }
+            if let Some(v) = get_bool("enable_xhci")? {
+                cfg.enable_xhci = v;
+            }
+            let mut enable_vga_set = false;
+            let mut enable_aerogpu_set = false;
+            if let Some(v) = get_bool("enable_synthetic_usb_hid")? {
+                cfg.enable_synthetic_usb_hid = v;
+            }
+            if let Some(v) = get_bool("enable_vga")? {
+                cfg.enable_vga = v;
+                enable_vga_set = true;
+            }
+            if let Some(v) = get_bool("enable_aerogpu")? {
+                cfg.enable_aerogpu = v;
+                enable_aerogpu_set = true;
+            }
+            // Mirror `new_with_config` defaults for the mutually-exclusive VGA/AeroGPU device
+            // selection when callers only specify one side:
+            // - If callers explicitly set `enable_aerogpu` without specifying VGA, VGA defaults
+            //   to `!enable_aerogpu`.
+            // - If callers enable VGA without explicitly specifying `enable_aerogpu`, disable
+            //   AeroGPU to avoid a configuration error.
+            if enable_aerogpu_set && !enable_vga_set {
+                cfg.enable_vga = !cfg.enable_aerogpu;
+            } else if enable_vga_set && cfg.enable_vga && !enable_aerogpu_set {
+                cfg.enable_aerogpu = false;
+            }
+            if let Some(v) = get_bool("enable_serial")? {
+                cfg.enable_serial = v;
+            }
+            if let Some(v) = get_bool("enable_i8042")? {
+                cfg.enable_i8042 = v;
+            }
+            if let Some(v) = get_bool("enable_a20_gate")? {
+                cfg.enable_a20_gate = v;
+            }
+            if let Some(v) = get_bool("enable_reset_ctrl")? {
+                cfg.enable_reset_ctrl = v;
+            }
         }
 
         // Synthetic HID devices are always attached behind UHCI.
@@ -4023,12 +4036,11 @@ impl Machine {
 
         let cfg = aero_machine::MachineConfig::win7_storage_defaults(guest_size_u64);
 
-        let mem =
-            memory::WasmSharedGuestMemory::new(guest_base, guest_size_u64).map_err(|e| {
-                js_error(format!(
-                    "Machine.new_win7_storage_shared: failed to init shared guest RAM backend: {e}"
-                ))
-            })?;
+        let mem = memory::WasmSharedGuestMemory::new(guest_base, guest_size_u64).map_err(|e| {
+            js_error(format!(
+                "Machine.new_win7_storage_shared: failed to init shared guest RAM backend: {e}"
+            ))
+        })?;
         let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 

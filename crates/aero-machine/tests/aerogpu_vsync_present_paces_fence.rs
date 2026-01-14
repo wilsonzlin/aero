@@ -253,8 +253,8 @@ fn aerogpu_vsync_present_flushes_fence_when_scanout_disabled() {
     let scanout_fb_gpa = 0x40000u64;
 
     // Build a minimal command stream containing a vsynced PRESENT.
-    let stream_size_bytes = (cmd::AerogpuCmdStreamHeader::SIZE_BYTES
-        + cmd::AerogpuCmdPresent::SIZE_BYTES) as u32;
+    let stream_size_bytes =
+        (cmd::AerogpuCmdStreamHeader::SIZE_BYTES + cmd::AerogpuCmdPresent::SIZE_BYTES) as u32;
     let mut cmd_stream = vec![0u8; stream_size_bytes as usize];
     cmd_stream[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
     cmd_stream[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
@@ -341,7 +341,10 @@ fn aerogpu_vsync_present_flushes_fence_when_scanout_disabled() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES), 4);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
+        4,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO),
         scanout_fb_gpa as u32,
@@ -402,8 +405,8 @@ fn aerogpu_vsync_present_completes_one_fence_per_vblank_tick() {
     let scanout_fb_gpa = 0x40000u64;
 
     // Command stream containing a vsynced PRESENT.
-    let stream_size_bytes = (cmd::AerogpuCmdStreamHeader::SIZE_BYTES
-        + cmd::AerogpuCmdPresent::SIZE_BYTES) as u32;
+    let stream_size_bytes =
+        (cmd::AerogpuCmdStreamHeader::SIZE_BYTES + cmd::AerogpuCmdPresent::SIZE_BYTES) as u32;
     let mut cmd_stream = vec![0u8; stream_size_bytes as usize];
     cmd_stream[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
     cmd_stream[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
@@ -438,8 +441,9 @@ fn aerogpu_vsync_present_completes_one_fence_per_vblank_tick() {
     let signal_fence1 = 0xAAAA_BBBB_CCCC_DDDEu64;
 
     for (i, fence) in [signal_fence0, signal_fence1].into_iter().enumerate() {
-        let desc_gpa =
-            ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + (i as u64) * u64::from(entry_stride_bytes);
+        let desc_gpa = ring_gpa
+            + ring::AerogpuRingHeader::SIZE_BYTES as u64
+            + (i as u64) * u64::from(entry_stride_bytes);
         m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
         m.write_physical_u32(desc_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_PRESENT);
         m.write_physical_u32(desc_gpa + 8, 0);
@@ -487,7 +491,10 @@ fn aerogpu_vsync_present_completes_one_fence_per_vblank_tick() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES), 4);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
+        4,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO),
         scanout_fb_gpa as u32,

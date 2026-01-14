@@ -6,12 +6,12 @@ use std::collections::{HashSet, VecDeque};
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::ring::write_fence_page;
+use aero_io_snapshot::io::state::{
+    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-};
-use aero_io_snapshot::io::state::{
-    IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
@@ -2317,8 +2317,8 @@ mod tests {
             &mut mem,
             0,
             [
-                pack_565(31, 0, 0),  // red
-                pack_565(0, 63, 0),  // green
+                pack_565(31, 0, 0), // red
+                pack_565(0, 63, 0), // green
             ],
         );
         write_row(
@@ -2362,8 +2362,8 @@ mod tests {
             &mut mem,
             1,
             [
-                pack_5551(0, 0, 31, true),    // blue, alpha=1
-                pack_5551(31, 31, 31, true),  // white, alpha=1
+                pack_5551(0, 0, 31, true),   // blue, alpha=1
+                pack_5551(31, 31, 31, true), // white, alpha=1
             ],
         );
 
@@ -2378,7 +2378,10 @@ mod tests {
         };
 
         let out = state.read_rgba8888(&mut mem).unwrap();
-        assert_eq!(out, vec![0x0000_00FF, 0xFF00_FF00, 0xFFFF_0000, 0xFFFF_FFFF]);
+        assert_eq!(
+            out,
+            vec![0x0000_00FF, 0xFF00_FF00, 0xFFFF_0000, 0xFFFF_FFFF]
+        );
     }
 }
 
@@ -2448,7 +2451,10 @@ impl IoSnapshot for AeroGpuMmioDevice {
         w.field_u64(TAG_SCANOUT0_FB_GPA, self.scanout0_fb_gpa);
         w.field_u64(TAG_SCANOUT0_VBLANK_SEQ, self.scanout0_vblank_seq);
         w.field_u64(TAG_SCANOUT0_VBLANK_TIME_NS, self.scanout0_vblank_time_ns);
-        w.field_u32(TAG_SCANOUT0_VBLANK_PERIOD_NS, self.scanout0_vblank_period_ns);
+        w.field_u32(
+            TAG_SCANOUT0_VBLANK_PERIOD_NS,
+            self.scanout0_vblank_period_ns,
+        );
 
         if let Some(interval) = self.vblank_interval_ns {
             w.field_u64(TAG_VBLANK_INTERVAL_NS, interval);
@@ -2533,18 +2539,22 @@ impl IoSnapshot for AeroGpuMmioDevice {
         let ring_gpa = r
             .u64(TAG_RING_GPA)?
             .ok_or(SnapshotError::InvalidFieldEncoding("missing ring_gpa"))?;
-        let ring_size_bytes = r
-            .u32(TAG_RING_SIZE_BYTES)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing ring_size_bytes"))?;
+        let ring_size_bytes =
+            r.u32(TAG_RING_SIZE_BYTES)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing ring_size_bytes",
+                ))?;
         let ring_control = r
             .u32(TAG_RING_CONTROL)?
             .ok_or(SnapshotError::InvalidFieldEncoding("missing ring_control"))?;
         let fence_gpa = r
             .u64(TAG_FENCE_GPA)?
             .ok_or(SnapshotError::InvalidFieldEncoding("missing fence_gpa"))?;
-        let completed_fence = r
-            .u64(TAG_COMPLETED_FENCE)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing completed_fence"))?;
+        let completed_fence =
+            r.u64(TAG_COMPLETED_FENCE)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing completed_fence",
+                ))?;
         let irq_status = r
             .u32(TAG_IRQ_STATUS)?
             .ok_or(SnapshotError::InvalidFieldEncoding("missing irq_status"))?;
@@ -2552,33 +2562,51 @@ impl IoSnapshot for AeroGpuMmioDevice {
             .u32(TAG_IRQ_ENABLE)?
             .ok_or(SnapshotError::InvalidFieldEncoding("missing irq_enable"))?;
 
-        let scanout0_enable = r
-            .bool(TAG_SCANOUT0_ENABLE)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_enable"))?;
-        let scanout0_width = r
-            .u32(TAG_SCANOUT0_WIDTH)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_width"))?;
-        let scanout0_height = r
-            .u32(TAG_SCANOUT0_HEIGHT)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_height"))?;
-        let scanout0_format = r
-            .u32(TAG_SCANOUT0_FORMAT)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_format"))?;
-        let scanout0_pitch_bytes = r
-            .u32(TAG_SCANOUT0_PITCH_BYTES)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_pitch_bytes"))?;
-        let scanout0_fb_gpa = r
-            .u64(TAG_SCANOUT0_FB_GPA)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_fb_gpa"))?;
-        let scanout0_vblank_seq = r
-            .u64(TAG_SCANOUT0_VBLANK_SEQ)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_vblank_seq"))?;
-        let scanout0_vblank_time_ns = r
-            .u64(TAG_SCANOUT0_VBLANK_TIME_NS)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_vblank_time_ns"))?;
-        let scanout0_vblank_period_ns = r
-            .u32(TAG_SCANOUT0_VBLANK_PERIOD_NS)?
-            .ok_or(SnapshotError::InvalidFieldEncoding("missing scanout0_vblank_period_ns"))?;
+        let scanout0_enable =
+            r.bool(TAG_SCANOUT0_ENABLE)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_enable",
+                ))?;
+        let scanout0_width =
+            r.u32(TAG_SCANOUT0_WIDTH)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_width",
+                ))?;
+        let scanout0_height =
+            r.u32(TAG_SCANOUT0_HEIGHT)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_height",
+                ))?;
+        let scanout0_format =
+            r.u32(TAG_SCANOUT0_FORMAT)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_format",
+                ))?;
+        let scanout0_pitch_bytes =
+            r.u32(TAG_SCANOUT0_PITCH_BYTES)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_pitch_bytes",
+                ))?;
+        let scanout0_fb_gpa =
+            r.u64(TAG_SCANOUT0_FB_GPA)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_fb_gpa",
+                ))?;
+        let scanout0_vblank_seq =
+            r.u64(TAG_SCANOUT0_VBLANK_SEQ)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_vblank_seq",
+                ))?;
+        let scanout0_vblank_time_ns =
+            r.u64(TAG_SCANOUT0_VBLANK_TIME_NS)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_vblank_time_ns",
+                ))?;
+        let scanout0_vblank_period_ns =
+            r.u32(TAG_SCANOUT0_VBLANK_PERIOD_NS)?
+                .ok_or(SnapshotError::InvalidFieldEncoding(
+                    "missing scanout0_vblank_period_ns",
+                ))?;
 
         let vblank_interval_ns = r.u64(TAG_VBLANK_INTERVAL_NS)?;
         let next_vblank_ns = r.u64(TAG_NEXT_VBLANK_NS)?;

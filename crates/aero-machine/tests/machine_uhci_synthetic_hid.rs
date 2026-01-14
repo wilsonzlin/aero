@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_machine::{Machine, MachineConfig};
-use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 use aero_usb::hid::{UsbHidGamepadHandle, UsbHidKeyboardHandle, UsbHidMouseHandle};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 
 #[test]
 fn uhci_synthetic_hid_topology_and_snapshot_restore_handle_stability() {
@@ -88,7 +88,10 @@ fn uhci_synthetic_hid_topology_and_snapshot_restore_handle_stability() {
         );
         assert!(matches!(resp, ControlResponse::Ack));
     }
-    assert!(kbd.configured(), "keyboard should be configured after SET_CONFIGURATION");
+    assert!(
+        kbd.configured(),
+        "keyboard should be configured after SET_CONFIGURATION"
+    );
 
     // Inject a key press via the machine API.
     m.inject_usb_hid_keyboard_usage(0x04, true); // 'A'

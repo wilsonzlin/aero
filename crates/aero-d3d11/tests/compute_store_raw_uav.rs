@@ -183,9 +183,12 @@ fn compute_store_raw_writes_u32_word() {
 
         let slice = staging.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        slice.map_async(wgpu::MapMode::Read, move |v: Result<(), wgpu::BufferAsyncError>| {
-            sender.send(v).ok();
-        });
+        slice.map_async(
+            wgpu::MapMode::Read,
+            move |v: Result<(), wgpu::BufferAsyncError>| {
+                sender.send(v).ok();
+            },
+        );
         #[cfg(not(target_arch = "wasm32"))]
         device.poll(wgpu::Maintain::Wait);
 

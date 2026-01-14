@@ -281,10 +281,7 @@ impl FlatTestBus {
     pub fn load(&mut self, addr: u64, data: &[u8]) {
         let range = match self.range(addr, data.len()) {
             Ok(range) => range,
-            Err(_) => panic!(
-                "FlatTestBus load out of bounds: {addr:#x}+{}",
-                data.len()
-            ),
+            Err(_) => panic!("FlatTestBus load out of bounds: {addr:#x}+{}", data.len()),
         };
         self.mem[range].copy_from_slice(data);
     }

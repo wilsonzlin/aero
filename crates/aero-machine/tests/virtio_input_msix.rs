@@ -308,7 +308,9 @@ fn virtio_input_msix_enable_suppresses_legacy_intx_in_poll_pci_intx_lines() {
     virtio_mouse.borrow_mut().signal_config_interrupt();
     m.poll_pci_intx_lines();
 
-    let kb_gsi = pci_intx.borrow().gsi_for_intx(kb_bdf, PciInterruptPin::IntA);
+    let kb_gsi = pci_intx
+        .borrow()
+        .gsi_for_intx(kb_bdf, PciInterruptPin::IntA);
     let mouse_gsi = pci_intx
         .borrow()
         .gsi_for_intx(mouse_bdf, PciInterruptPin::IntA);

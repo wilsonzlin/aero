@@ -1293,7 +1293,8 @@ impl VgaDevice {
 
         for y in 0..height_usize {
             for x in 0..width_usize {
-                let byte_index = self.plane_offset(start.wrapping_add(y * bytes_per_line + (x / 8)));
+                let byte_index =
+                    self.plane_offset(start.wrapping_add(y * bytes_per_line + (x / 8)));
                 let bit = 7 - (x & 7);
                 let mut color = 0u8;
                 for plane in 0..4 {

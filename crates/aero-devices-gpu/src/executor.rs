@@ -1,12 +1,12 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{SnapshotError, SnapshotResult};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_bytes, cmd_stream_has_vsync_present_reader,
     decode_cmd_stream_header_le, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
-use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
-use aero_io_snapshot::io::state::{SnapshotError, SnapshotResult};
 use memory::MemoryBus;
 
 use crate::backend::{
@@ -988,13 +988,17 @@ impl AeroGpuExecutor {
                 )
                 .is_some()
             {
-                return Err(SnapshotError::InvalidFieldEncoding("in_flight.duplicate_fence"));
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "in_flight.duplicate_fence",
+                ));
             }
         }
 
         let completed_count = d.u32()? as usize;
         if completed_count > MAX_COMPLETED_BEFORE_SUBMIT {
-            return Err(SnapshotError::InvalidFieldEncoding("completed_before_submit"));
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "completed_before_submit",
+            ));
         }
         let mut completed_before_submit = HashSet::new();
         completed_before_submit

@@ -548,7 +548,8 @@ impl PciDevice for Ac97PciDevice {
                 let addr_mask = !(u32::from(NAM_SIZE) - 1) & 0xffff_fffc;
                 let base = raw & addr_mask;
                 self.bar_nam = u16::try_from(base).unwrap_or(u16::MAX);
-                self.config.set_u32(bar0_off as usize, u32::from(self.bar_nam) | 0x1);
+                self.config
+                    .set_u32(bar0_off as usize, u32::from(self.bar_nam) | 0x1);
             }
 
             if overlaps_bar1 {
@@ -556,7 +557,8 @@ impl PciDevice for Ac97PciDevice {
                 let addr_mask = !(u32::from(NABM_SIZE) - 1) & 0xffff_fffc;
                 let base = raw & addr_mask;
                 self.bar_nabm = u16::try_from(base).unwrap_or(u16::MAX);
-                self.config.set_u32(bar1_off as usize, u32::from(self.bar_nabm) | 0x1);
+                self.config
+                    .set_u32(bar1_off as usize, u32::from(self.bar_nabm) | 0x1);
             }
 
             return;

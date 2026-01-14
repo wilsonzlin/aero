@@ -396,7 +396,11 @@ fn ehci_remote_wakeup_does_not_propagate_through_external_hub_without_hub_remote
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(portsc & PORTSC_SUSP, 0, "expected root port to be suspended");
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "expected root port to be suspended"
+    );
 
     // Inject a keypress while suspended. Since the hub has not enabled DEVICE_REMOTE_WAKEUP, it
     // must not propagate the downstream remote wake request upstream.

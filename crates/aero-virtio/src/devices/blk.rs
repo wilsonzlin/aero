@@ -81,8 +81,8 @@ impl VirtioBlkConfig {
         cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
         cfg[48..52].copy_from_slice(&max_sectors.to_le_bytes()); // max_write_zeroes_sectors
         cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
-        // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
-        // as long as the guest-visible read-after-write semantics remain zero.
+                                                                  // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
+                                                                  // as long as the guest-visible read-after-write semantics remain zero.
         cfg[56] = 1;
 
         // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a
@@ -116,7 +116,9 @@ pub struct MemDisk {
 
 impl MemDisk {
     pub fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -453,7 +455,8 @@ impl VirtioDevice for VirtioBlk {
 
             match typ {
                 VIRTIO_BLK_T_IN => {
-                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    if data_segs.is_empty()
+                        || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
@@ -513,7 +516,8 @@ impl VirtioDevice for VirtioBlk {
                     }
                 }
                 VIRTIO_BLK_T_OUT => {
-                    if data_segs.is_empty() || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
+                    if data_segs.is_empty()
+                        || !total_data_len.is_multiple_of(VIRTIO_BLK_SECTOR_SIZE)
                     {
                         status = VIRTIO_BLK_S_IOERR;
                     } else if let Some(sector_off) = sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) {
@@ -626,7 +630,8 @@ impl VirtioDevice for VirtioBlk {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size =
+                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
                             let disk_len = self.disk.capacity_bytes();
 
@@ -654,11 +659,14 @@ impl VirtioDevice for VirtioBlk {
                                     break;
                                 }
 
-                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
+                                let Some(byte_off) = seg.sector.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
-                                let Some(byte_len) = num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE) else {
+                                let Some(byte_len) =
+                                    num_sectors.checked_mul(VIRTIO_BLK_SECTOR_SIZE)
+                                else {
                                     status = VIRTIO_BLK_S_IOERR;
                                     break;
                                 };
@@ -696,7 +704,8 @@ impl VirtioDevice for VirtioBlk {
                                         continue;
                                     }
 
-                                    let discard_result = self.disk.discard_range(byte_off, byte_len);
+                                    let discard_result =
+                                        self.disk.discard_range(byte_off, byte_len);
                                     let mut needs_zero_fallback = discard_result.is_err();
 
                                     if !needs_zero_fallback {
@@ -713,7 +722,8 @@ impl VirtioDevice for VirtioBlk {
                                         while scan_remaining != 0 {
                                             let take =
                                                 scan_remaining.min(read_buf.len() as u64) as usize;
-                                            match self.disk.read_at(scan_off, &mut read_buf[..take]) {
+                                            match self.disk.read_at(scan_off, &mut read_buf[..take])
+                                            {
                                                 Ok(()) => {
                                                     if read_buf[..take].iter().any(|b| *b != 0)
                                                         && self
@@ -748,7 +758,10 @@ impl VirtioDevice for VirtioBlk {
                                         while remaining != 0 {
                                             let take =
                                                 remaining.min(zero_buf.len() as u64) as usize;
-                                            if self.disk.write_at(cur_off, &zero_buf[..take]).is_err()
+                                            if self
+                                                .disk
+                                                .write_at(cur_off, &zero_buf[..take])
+                                                .is_err()
                                             {
                                                 status = VIRTIO_BLK_S_IOERR;
                                                 break;
@@ -789,13 +802,15 @@ impl VirtioDevice for VirtioBlk {
                         };
 
                         if status == VIRTIO_BLK_S_OK {
-                            let blk_size = u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
+                            let blk_size =
+                                u64::from(self.config.blk_size).max(VIRTIO_BLK_SECTOR_SIZE);
                             let align_sectors = (blk_size / VIRTIO_BLK_SECTOR_SIZE).max(1);
                             let disk_len = self.disk.capacity_bytes();
 
                             // Validate all segments up-front so a rejected request cannot partially
                             // modify disk state.
-                            let mut validated: Vec<(u64, u64, u32)> = Vec::with_capacity(segs.len());
+                            let mut validated: Vec<(u64, u64, u32)> =
+                                Vec::with_capacity(segs.len());
                             let mut total_sectors: u64 = 0;
                             for seg in &segs {
                                 let num_sectors = u64::from(seg.num_sectors);
@@ -868,10 +883,8 @@ impl VirtioDevice for VirtioBlk {
                                     // discard (hole punch) and fall back to explicit zero writes only
                                     // if needed to enforce read-after-write semantics.
                                     if (flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0 {
-                                        let mut needs_zero_fallback = self
-                                            .disk
-                                            .discard_range(byte_off, byte_len)
-                                            .is_err();
+                                        let mut needs_zero_fallback =
+                                            self.disk.discard_range(byte_off, byte_len).is_err();
 
                                         if !needs_zero_fallback {
                                             // If `discard_range` was a no-op, ensure guest-visible
@@ -885,20 +898,20 @@ impl VirtioDevice for VirtioBlk {
                                             let mut scan_off = byte_off;
                                             let mut scan_remaining = byte_len;
                                             while scan_remaining != 0 {
-                                                let take = scan_remaining
-                                                    .min(read_buf.len() as u64)
+                                                let take = scan_remaining.min(read_buf.len() as u64)
                                                     as usize;
                                                 match self
                                                     .disk
                                                     .read_at(scan_off, &mut read_buf[..take])
                                                 {
                                                     Ok(()) => {
-                                                        if read_buf[..take]
-                                                            .iter()
-                                                            .any(|b| *b != 0)
+                                                        if read_buf[..take].iter().any(|b| *b != 0)
                                                             && self
                                                                 .disk
-                                                                .write_at(scan_off, &zero_buf[..take])
+                                                                .write_at(
+                                                                    scan_off,
+                                                                    &zero_buf[..take],
+                                                                )
                                                                 .is_err()
                                                         {
                                                             status = VIRTIO_BLK_S_IOERR;
@@ -910,14 +923,13 @@ impl VirtioDevice for VirtioBlk {
                                                         break;
                                                     }
                                                 }
-                                                scan_off =
-                                                    match scan_off.checked_add(take as u64) {
-                                                        Some(v) => v,
-                                                        None => {
-                                                            needs_zero_fallback = true;
-                                                            break;
-                                                        }
-                                                    };
+                                                scan_off = match scan_off.checked_add(take as u64) {
+                                                    Some(v) => v,
+                                                    None => {
+                                                        needs_zero_fallback = true;
+                                                        break;
+                                                    }
+                                                };
                                                 scan_remaining =
                                                     scan_remaining.saturating_sub(take as u64);
                                             }
@@ -929,21 +941,22 @@ impl VirtioDevice for VirtioBlk {
                                             while remaining != 0 {
                                                 let take =
                                                     remaining.min(zero_buf.len() as u64) as usize;
-                                                if self.disk.write_at(cur_off, &zero_buf[..take]).is_err()
+                                                if self
+                                                    .disk
+                                                    .write_at(cur_off, &zero_buf[..take])
+                                                    .is_err()
                                                 {
                                                     status = VIRTIO_BLK_S_IOERR;
                                                     break 'seg_loop;
                                                 }
-                                                cur_off =
-                                                    match cur_off.checked_add(take as u64) {
-                                                        Some(v) => v,
-                                                        None => {
-                                                            status = VIRTIO_BLK_S_IOERR;
-                                                            break 'seg_loop;
-                                                        }
-                                                    };
-                                                remaining =
-                                                    remaining.saturating_sub(take as u64);
+                                                cur_off = match cur_off.checked_add(take as u64) {
+                                                    Some(v) => v,
+                                                    None => {
+                                                        status = VIRTIO_BLK_S_IOERR;
+                                                        break 'seg_loop;
+                                                    }
+                                                };
+                                                remaining = remaining.saturating_sub(take as u64);
                                             }
                                         }
                                     } else {
@@ -952,7 +965,10 @@ impl VirtioDevice for VirtioBlk {
                                         while remaining != 0 {
                                             let take =
                                                 remaining.min(zero_buf.len() as u64) as usize;
-                                            if self.disk.write_at(cur_off, &zero_buf[..take]).is_err()
+                                            if self
+                                                .disk
+                                                .write_at(cur_off, &zero_buf[..take])
+                                                .is_err()
                                             {
                                                 status = VIRTIO_BLK_S_IOERR;
                                                 break 'seg_loop;
@@ -964,8 +980,7 @@ impl VirtioDevice for VirtioBlk {
                                                     break 'seg_loop;
                                                 }
                                             };
-                                            remaining =
-                                                remaining.saturating_sub(take as u64);
+                                            remaining = remaining.saturating_sub(take as u64);
                                         }
                                     }
                                 }
@@ -1013,10 +1028,10 @@ impl VirtioDevice for VirtioBlk {
 #[cfg(test)]
 mod tests {
     use super::{MemDisk, VirtioBlk, VIRTIO_BLK_S_OK, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_OUT};
-    use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
     use crate::devices::VirtioDevice;
     use crate::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
     use crate::queue::{VirtQueue, VirtQueueConfig, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+    use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 
     fn write_desc(
         mem: &mut GuestRam,
@@ -1040,10 +1055,7 @@ mod tests {
         let mut blk = VirtioBlk::new(Box::new(disk));
 
         // Sanity-check that virtio-blk sees the underlying disk capacity.
-        assert_eq!(
-            blk.disk_mut().capacity_bytes(),
-            (1024 * SECTOR_SIZE) as u64
-        );
+        assert_eq!(blk.disk_mut().capacity_bytes(), (1024 * SECTOR_SIZE) as u64);
     }
 
     #[test]
@@ -1072,15 +1084,7 @@ mod tests {
         mem.write(status, &[0xaau8]).unwrap();
 
         // Descriptor chain: header (ro) -> data (wo) -> status (wo).
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            header,
-            16,
-            VIRTQ_DESC_F_NEXT,
-            1,
-        );
+        write_desc(&mut mem, desc_table, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
         write_desc(
             &mut mem,
             desc_table,
@@ -1153,15 +1157,7 @@ mod tests {
         // Status shares the same last descriptor semantics as other request types.
         mem.write(status, &[0xaau8]).unwrap();
 
-        write_desc(
-            &mut mem,
-            desc_table,
-            0,
-            header,
-            16,
-            VIRTQ_DESC_F_NEXT,
-            1,
-        );
+        write_desc(&mut mem, desc_table, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
         // Data descriptor is read-only (no VIRTQ_DESC_F_WRITE).
         write_desc(&mut mem, desc_table, 1, data, 20, VIRTQ_DESC_F_NEXT, 2);
         write_desc(&mut mem, desc_table, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);

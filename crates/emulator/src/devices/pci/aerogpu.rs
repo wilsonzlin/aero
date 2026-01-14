@@ -943,7 +943,11 @@ impl PciDevice for AeroGpuPciDevice {
 
         if overlaps_bar0 || overlaps_bar1 {
             let bar0_mask = (!(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1)) & 0xffff_fff0;
-            let bar0_val = if self.bar0_probe { bar0_mask } else { self.bar0 };
+            let bar0_val = if self.bar0_probe {
+                bar0_mask
+            } else {
+                self.bar0
+            };
 
             let bar1_mask = (!(self.bar1_size_bytes - 1)) & 0xffff_fff0;
             let bar1_val = if self.bar1_probe {

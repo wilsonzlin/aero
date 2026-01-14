@@ -686,7 +686,9 @@ impl UhciRuntime {
     pub fn webusb_attach(&mut self, preferred_port: Option<u8>) -> Result<u32, JsValue> {
         self.webusb_detach();
 
-        if let Some(preferred) = preferred_port && preferred as usize != WEBUSB_ROOT_PORT {
+        if let Some(preferred) = preferred_port
+            && preferred as usize != WEBUSB_ROOT_PORT
+        {
             return Err(js_error(&format!(
                 "Invalid preferredPort {preferred} for WebUSB (expected {WEBUSB_ROOT_PORT})"
             )));
@@ -782,10 +784,7 @@ impl UhciRuntime {
                         .get(i)
                         .as_f64()
                         .and_then(|v| {
-                            if v.is_finite()
-                                && v.fract() == 0.0
-                                && (0.0..=255.0).contains(&v)
-                            {
+                            if v.is_finite() && v.fract() == 0.0 && (0.0..=255.0).contains(&v) {
                                 Some(v as u8)
                             } else {
                                 None
@@ -1118,7 +1117,9 @@ impl UhciRuntime {
                 "UHCI runtime snapshot has inconsistent external hub fields (expected both portCount + state)",
             ));
         }
-        if let Some(count) = hub_port_count && count == 0 {
+        if let Some(count) = hub_port_count
+            && count == 0
+        {
             return Err(js_error(
                 "UHCI runtime snapshot has invalid external hub port count 0",
             ));
@@ -1164,7 +1165,9 @@ impl UhciRuntime {
                         "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port 0 is not valid",
                     )));
                 }
-                if let Some(max_port) = hub_port_count && hub_port > max_port {
+                if let Some(max_port) = hub_port_count
+                    && hub_port > max_port
+                {
                     return Err(js_error(&format!(
                         "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port {hub_port} exceeds hub port count {max_port}",
                     )));
@@ -1695,7 +1698,9 @@ impl UhciRuntime {
         if self.webhid_ports[port].is_some() {
             return false;
         }
-        if let Some(webusb) = self.webusb.as_ref() && webusb.port == port {
+        if let Some(webusb) = self.webusb.as_ref()
+            && webusb.port == port
+        {
             return false;
         }
         true

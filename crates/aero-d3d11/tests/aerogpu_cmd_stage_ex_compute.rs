@@ -34,4 +34,3 @@ fn aerogpu_cmd_stage_ex_compute_is_accepted_for_binding_packets() {
         );
     });
 }
-

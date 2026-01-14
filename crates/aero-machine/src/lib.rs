@@ -116,12 +116,12 @@ use aero_shared::scanout_state::{
 };
 use aero_snapshot as snapshot;
 use aero_storage::{MemBackend, RawDisk};
-use aero_usb::usb2_port::Usb2PortMux;
 use aero_usb::hid::{
     GamepadReport, UsbHidConsumerControlHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle,
     UsbHidMouseHandle,
 };
 use aero_usb::hub::UsbHubDevice;
+use aero_usb::usb2_port::Usb2PortMux;
 use aero_virtio::devices::blk::VirtioBlk;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::VirtioNet;
@@ -4420,7 +4420,9 @@ impl Machine {
     }
 
     fn ensure_uhci_synthetic_usb_hid_topology(&mut self) {
-        if !(self.cfg.enable_pc_platform && self.cfg.enable_uhci && self.cfg.enable_synthetic_usb_hid)
+        if !(self.cfg.enable_pc_platform
+            && self.cfg.enable_uhci
+            && self.cfg.enable_synthetic_usb_hid)
         {
             return;
         }
@@ -4491,9 +4493,7 @@ impl Machine {
             let _ = hub.hub_attach_device(GAMEPAD_HUB_PORT, Box::new(gamepad));
         }
         if port_count >= CONSUMER_CONTROL_HUB_PORT
-            && hub
-                .hub_port_device_mut(CONSUMER_CONTROL_HUB_PORT)
-                .is_err()
+            && hub.hub_port_device_mut(CONSUMER_CONTROL_HUB_PORT).is_err()
         {
             let consumer = self
                 .usb_hid_consumer_control
@@ -5245,8 +5245,7 @@ impl Machine {
                     for y in 0..height_usize {
                         let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
                         let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
-                        let dst_row =
-                            &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
                         for x in 0..width_usize {
                             let i = x * 4;
                             let b = src_row.get(i).copied().unwrap_or(0);
@@ -5262,8 +5261,7 @@ impl Machine {
                     for y in 0..height_usize {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
-                        let dst_row =
-                            &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
                         for x in 0..width_usize {
                             let i = x * 4;
                             let b = row.get(i).copied().unwrap_or(0);
@@ -5386,11 +5384,7 @@ impl Machine {
         if dev.vram.len() < FB_BYTES {
             return false;
         }
-        for (dst, src) in self
-            .display_fb
-            .iter_mut()
-            .zip(dev.vram[..FB_BYTES].iter())
-        {
+        for (dst, src) in self.display_fb.iter_mut().zip(dev.vram[..FB_BYTES].iter()) {
             *dst = lut[*src as usize];
         }
 
@@ -5451,9 +5445,8 @@ impl Machine {
         //
         // Detect BAR1-backed surfaces and read directly from `AeroGpuDevice.vram` instead.
         let bar1_base = self.aerogpu_bar1_base();
-        let bar1_end = bar1_base.and_then(|base| {
-            base.checked_add(aero_devices::pci::profile::AEROGPU_VRAM_SIZE)
-        });
+        let bar1_end = bar1_base
+            .and_then(|base| base.checked_add(aero_devices::pci::profile::AEROGPU_VRAM_SIZE));
 
         let scanout_row_bytes = || -> Option<u64> {
             use aero_protocol::aerogpu::aerogpu_pci as pci;
@@ -5465,9 +5458,15 @@ impl Machine {
                     || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
                     || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
                     || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
-                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 => 4u64,
+                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
+                {
+                    4u64
+                }
                 x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
-                    || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 => 2u64,
+                    || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
+                {
+                    2u64
+                }
                 _ => return None,
             };
             u64::from(state.width).checked_mul(bytes_per_pixel)
@@ -7061,7 +7060,11 @@ impl Machine {
                     // Keep the runtime virtio transport's MSI-X enable/mask bits coherent with the
                     // canonical PCI config space so INTx suppression reflects the guest-visible
                     // MSI-X state even when only polling INTx lines.
-                    sync_msix_capability_into_config(virtio_dev.config_mut(), msix_enabled, msix_masked);
+                    sync_msix_capability_into_config(
+                        virtio_dev.config_mut(),
+                        msix_enabled,
+                        msix_masked,
+                    );
                     virtio_dev.set_pci_command(command);
                     virtio_dev.irq_level()
                 };
@@ -9809,8 +9812,10 @@ impl Machine {
         dev.config_mut().set_command(command);
         dev.config_mut()
             .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
-        dev.config_mut()
-            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX, bar1_base);
+        dev.config_mut().set_bar_base(
+            aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+            bar1_base,
+        );
         dev.complete_fence_from_backend(&mut self.mem, fence);
     }
 
@@ -10522,11 +10527,7 @@ impl Machine {
                             // Mirror BIOS VBE state into Bochs VBE_DISPI regs via the port I/O path so
                             // the VGA device marks the output dirty when panning/stride changes.
                             vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0005);
-                            vga.port_write(
-                                aero_gpu_vga::VBE_DISPI_DATA_PORT,
-                                2,
-                                u32::from(bank),
-                            );
+                            vga.port_write(aero_gpu_vga::VBE_DISPI_DATA_PORT, 2, u32::from(bank));
                             vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0006);
                             vga.port_write(
                                 aero_gpu_vga::VBE_DISPI_DATA_PORT,
@@ -10534,17 +10535,9 @@ impl Machine {
                                 u32::from(virt_width),
                             );
                             vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0008);
-                            vga.port_write(
-                                aero_gpu_vga::VBE_DISPI_DATA_PORT,
-                                2,
-                                u32::from(x_off),
-                            );
+                            vga.port_write(aero_gpu_vga::VBE_DISPI_DATA_PORT, 2, u32::from(x_off));
                             vga.port_write(aero_gpu_vga::VBE_DISPI_INDEX_PORT, 2, 0x0009);
-                            vga.port_write(
-                                aero_gpu_vga::VBE_DISPI_DATA_PORT,
-                                2,
-                                u32::from(y_off),
-                            );
+                            vga.port_write(aero_gpu_vga::VBE_DISPI_DATA_PORT, 2, u32::from(y_off));
                             vga.set_vbe_bytes_per_scan_line_override(
                                 self.bios.video.vbe.bytes_per_scan_line,
                             );

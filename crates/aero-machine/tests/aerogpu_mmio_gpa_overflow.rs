@@ -102,4 +102,3 @@ fn aerogpu_fence_page_write_with_overflowing_gpa_is_nonpanicking() {
     assert_eq!(error_code, pci::AerogpuErrorCode::None as u32);
     assert_eq!(error_count, 0);
 }
-

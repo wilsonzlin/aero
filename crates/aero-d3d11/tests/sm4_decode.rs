@@ -992,10 +992,7 @@ fn decodes_resinfo_texture2d() {
 
     // resinfo r0.xyzw, l(0), t3
     let lod = imm32_scalar(0f32.to_bits());
-    let mut resinfo = vec![opcode_token(
-        OPCODE_RESINFO,
-        (1 + 2 + lod.len() + 2) as u32,
-    )];
+    let mut resinfo = vec![opcode_token(OPCODE_RESINFO, (1 + 2 + lod.len() + 2) as u32)];
     resinfo.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
     resinfo.extend_from_slice(&lod);
     resinfo.extend_from_slice(&reg_src(
@@ -2945,10 +2942,7 @@ fn refines_unknown_uav_store_to_raw_when_decl_is_buffer() {
         Swizzle::XYZW,
         OperandModifier::None,
     );
-    body.extend_from_slice(&[opcode_token(
-        OPCODE_DCL_UAV_RAW,
-        (1 + u0_decl.len()) as u32,
-    )]);
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_UAV_RAW, (1 + u0_decl.len()) as u32)]);
     body.extend_from_slice(&u0_decl);
 
     // Encode an unknown store opcode that matches the typed-store structural decoder
@@ -3051,10 +3045,13 @@ fn refines_unknown_uav_store_to_typed_when_decl_is_typed() {
     let module = decode_program(&program).expect("decode");
 
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(d, Sm4Decl::UavTyped2D { slot: 0, format: 28 })),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::UavTyped2D {
+                slot: 0,
+                format: 28
+            }
+        )),
         "expected typed UAV declaration to be decoded"
     );
     assert!(

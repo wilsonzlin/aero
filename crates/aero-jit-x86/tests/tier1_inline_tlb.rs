@@ -4898,7 +4898,10 @@ fn tier1_inline_tlb_mmio_store_on_prefilled_non_ram_tlb_entry_uses_slow_helper_w
 
     assert_eq!(next_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
-    assert_eq!(&got_ram[addr as usize..addr as usize + 4], &0xDEAD_BEEFu32.to_le_bytes());
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 4],
+        &0xDEAD_BEEFu32.to_le_bytes()
+    );
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.mmu_translate_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 0);
@@ -5109,7 +5112,7 @@ fn tier1_inline_tlb_mmio_exit_reports_precise_rip_mid_block() {
     let invalid = pick_invalid_opcode(64);
     let code = [
         0xb9, 0x78, 0x56, 0x34, 0x12, // mov ecx, 0x12345678
-        0x8b, 0x00, // mov eax, dword ptr [rax]
+        0x8b, 0x00,    // mov eax, dword ptr [rax]
         invalid, // <invalid>
     ];
 

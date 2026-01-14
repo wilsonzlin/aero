@@ -1,7 +1,7 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotWriter};
 use aero_usb::hid::{
-    UsbCompositeHidInputHandle, UsbHidConsumerControlHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle,
-    UsbHidMouseHandle, UsbHidPassthroughHandle,
+    UsbCompositeHidInputHandle, UsbHidConsumerControlHandle, UsbHidGamepadHandle,
+    UsbHidKeyboardHandle, UsbHidMouseHandle, UsbHidPassthroughHandle,
 };
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 

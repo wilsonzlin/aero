@@ -1965,13 +1965,15 @@ fn translates_store_uav_typed_r32_float_accepts_x_mask() {
         .reflection
         .bindings
         .iter()
-        .find(|b| matches!(
-            b.kind,
-            BindingKind::UavTexture2DWriteOnly {
-                slot: 0,
-                format: StorageTextureFormat::R32Float
-            }
-        ))
+        .find(|b| {
+            matches!(
+                b.kind,
+                BindingKind::UavTexture2DWriteOnly {
+                    slot: 0,
+                    format: StorageTextureFormat::R32Float
+                }
+            )
+        })
         .expect("missing uav binding");
     assert_eq!(uav_binding.group, 1);
     assert_eq!(uav_binding.binding, BINDING_BASE_UAV);
@@ -2029,13 +2031,15 @@ fn translates_store_uav_typed_rg32_float_accepts_xy_mask() {
         .reflection
         .bindings
         .iter()
-        .find(|b| matches!(
-            b.kind,
-            BindingKind::UavTexture2DWriteOnly {
-                slot: 0,
-                format: StorageTextureFormat::Rg32Float
-            }
-        ))
+        .find(|b| {
+            matches!(
+                b.kind,
+                BindingKind::UavTexture2DWriteOnly {
+                    slot: 0,
+                    format: StorageTextureFormat::Rg32Float
+                }
+            )
+        })
         .expect("missing uav binding");
     assert_eq!(uav_binding.group, 1);
     assert_eq!(uav_binding.binding, BINDING_BASE_UAV);

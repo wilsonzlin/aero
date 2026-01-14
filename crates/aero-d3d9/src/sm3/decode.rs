@@ -194,13 +194,13 @@ impl Opcode {
             66 => Self::Tex,     // 0x42 (texld/texldp)
             // Some tooling emits `setp` with opcode 0x4E, while the D3D9 SDK opcode
             // table lists it at 0x5E. Accept both.
-            78 => Self::Setp,    // 0x4E
-            93 => Self::TexLdd,  // 0x5D
-            94 => Self::Setp,    // 0x5E
-            95 => Self::TexLdl,  // 0x5F
-            81 => Self::Def,     // 0x51
-            82 => Self::DefI,    // 0x52
-            83 => Self::DefB,    // 0x53
+            78 => Self::Setp,   // 0x4E
+            93 => Self::TexLdd, // 0x5D
+            94 => Self::Setp,   // 0x5E
+            95 => Self::TexLdl, // 0x5F
+            81 => Self::Def,    // 0x51
+            82 => Self::DefI,   // 0x52
+            83 => Self::DefB,   // 0x53
             // Some opcode tables list `seq`/`sne` (set on equal / set on not equal)
             // in this neighborhood. We accept the commonly cited values; anything
             // else is treated as `Unknown`.
@@ -802,46 +802,44 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             length_candidates[1] = 0;
         }
 
-        let decode_predicate =
-            |pred_token: u32, abs_token_index: usize| -> Result<Predicate, DecodeError> {
-                let (pred_src, consumed) = decode_src_operand(&[pred_token], 0, stage, major)
-                    .map_err(|mut err| {
-                        err.token_index += abs_token_index;
-                        err
-                    })?;
-                if consumed != 1 {
+        let decode_predicate = |pred_token: u32,
+                                abs_token_index: usize|
+         -> Result<Predicate, DecodeError> {
+            let (pred_src, consumed) =
+                decode_src_operand(&[pred_token], 0, stage, major).map_err(|mut err| {
+                    err.token_index += abs_token_index;
+                    err
+                })?;
+            if consumed != 1 {
+                return Err(DecodeError {
+                    token_index: abs_token_index,
+                    message: "unexpected multi-token predicate operand".to_owned(),
+                });
+            }
+            if pred_src.reg.file != RegisterFile::Predicate {
+                return Err(DecodeError {
+                    token_index: abs_token_index,
+                    message: format!("expected predicate register, got {:?}", pred_src.reg.file),
+                });
+            }
+
+            let (component, negate) = match pred_src.modifier {
+                SrcModifier::None => (pred_src.swizzle.0[0], false),
+                SrcModifier::Negate => (pred_src.swizzle.0[0], true),
+                other => {
                     return Err(DecodeError {
                         token_index: abs_token_index,
-                        message: "unexpected multi-token predicate operand".to_owned(),
+                        message: format!("unsupported predicate modifier {other:?}"),
                     });
                 }
-                if pred_src.reg.file != RegisterFile::Predicate {
-                    return Err(DecodeError {
-                        token_index: abs_token_index,
-                        message: format!(
-                            "expected predicate register, got {:?}",
-                            pred_src.reg.file
-                        ),
-                    });
-                }
-
-                let (component, negate) = match pred_src.modifier {
-                    SrcModifier::None => (pred_src.swizzle.0[0], false),
-                    SrcModifier::Negate => (pred_src.swizzle.0[0], true),
-                    other => {
-                        return Err(DecodeError {
-                            token_index: abs_token_index,
-                            message: format!("unsupported predicate modifier {other:?}"),
-                        });
-                    }
-                };
-
-                Ok(Predicate {
-                    reg: pred_src.reg,
-                    component,
-                    negate,
-                })
             };
+
+            Ok(Predicate {
+                reg: pred_src.reg,
+                component,
+                negate,
+            })
+        };
 
         let mut last_err = None;
         let mut decoded = None;

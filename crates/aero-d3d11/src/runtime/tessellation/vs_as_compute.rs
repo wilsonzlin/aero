@@ -907,8 +907,7 @@ mod tests {
 
     #[test]
     fn vs_as_compute_uses_unorm10_loader_for_r10g10b10a2_unorm() {
-        let fmt =
-            crate::input_layout::dxgi_format_info(24).expect("DXGI_FORMAT_R10G10B10A2_UNORM");
+        let fmt = crate::input_layout::dxgi_format_info(24).expect("DXGI_FORMAT_R10G10B10A2_UNORM");
         assert_eq!(fmt.component_type, DxgiFormatComponentType::Unorm10_10_10_2);
         assert_eq!(fmt.component_count, 4);
 

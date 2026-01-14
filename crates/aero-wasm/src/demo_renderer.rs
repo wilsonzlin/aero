@@ -88,7 +88,16 @@ pub fn render_rgba8888(
     now_ms: f64,
 ) -> u32 {
     // Safety: `dst` is a valid mutable slice, so its pointer is valid for `dst.len()` bytes.
-    unsafe { render_rgba8888_raw(dst.as_mut_ptr(), dst.len(), width, height, stride_bytes, now_ms) }
+    unsafe {
+        render_rgba8888_raw(
+            dst.as_mut_ptr(),
+            dst.len(),
+            width,
+            height,
+            stride_bytes,
+            now_ms,
+        )
+    }
 }
 
 #[cfg(test)]

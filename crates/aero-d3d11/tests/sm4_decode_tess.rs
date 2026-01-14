@@ -42,13 +42,7 @@ fn decodes_hs_dcl_inputcontrolpoints() {
     let module = decode_program(&program).expect("decode");
 
     assert_eq!(module.stage, ShaderStage::Hull);
-    assert_eq!(
-        module.model,
-        ShaderModel {
-            major: 5,
-            minor: 0
-        }
-    );
+    assert_eq!(module.model, ShaderModel { major: 5, minor: 0 });
     assert_eq!(
         module.decls,
         vec![Sm4Decl::InputControlPointCount { count: 4 }]
@@ -101,4 +95,3 @@ fn rejects_truncated_dcl_inputcontrolpoints() {
         }
     ));
 }
-

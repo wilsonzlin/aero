@@ -54,7 +54,8 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
 
     let entry_count = 8u32;
     let entry_stride_bytes = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
-    let ring_size_bytes = ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
+    let ring_size_bytes =
+        ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Ring header (head=0, tail=1).
     vm.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
@@ -126,10 +127,7 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
     // ---------------------------------------------------------------------
     // 2) Advance vblank state so VBLANK_SEQ/VBLANK_TIME become non-zero.
     // ---------------------------------------------------------------------
-    vm.write_physical_u32(
-        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
-        1,
-    );
+    vm.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
     // Advance enough time to cross at least one 60Hz vblank interval (~16.6ms).
     vm.tick_platform(20_000_000);
 
@@ -162,7 +160,9 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
     restored.reset();
     restored.restore_snapshot_bytes(&snap).unwrap();
 
-    let bdf = restored.aerogpu().expect("AeroGPU device should be present");
+    let bdf = restored
+        .aerogpu()
+        .expect("AeroGPU device should be present");
     let bar0 = restored
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");
@@ -195,4 +195,3 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
         .read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS));
     assert_eq!(vblank_period_after, vblank_period_before);
 }
-

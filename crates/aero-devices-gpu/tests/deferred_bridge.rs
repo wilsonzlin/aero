@@ -1,9 +1,9 @@
+use aero_devices::pci::PciDevice;
 use aero_devices_gpu::{
     irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig,
     AeroGpuFenceCompletionMode, AeroGpuPciDevice,
 };
 use aero_protocol::aerogpu::{aerogpu_cmd, aerogpu_pci, aerogpu_ring};
-use aero_devices::pci::PciDevice;
 use memory::{MemoryBus, MmioHandler};
 use pretty_assertions::assert_eq;
 
@@ -14,7 +14,9 @@ struct VecMemory {
 
 impl VecMemory {
     fn new(size: usize) -> Self {
-        Self { data: vec![0; size] }
+        Self {
+            data: vec![0; size],
+        }
     }
 
     fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -95,10 +97,7 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
 
     // Submit desc at slot 0.
     let desc_gpa = ring_gpa + aerogpu_ring::AerogpuRingHeader::SIZE_BYTES as u64;
-    mem.write_u32(
-        desc_gpa,
-        aerogpu_ring::AerogpuSubmitDesc::SIZE_BYTES as u32,
-    );
+    mem.write_u32(desc_gpa, aerogpu_ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0x1234); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -132,8 +131,14 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     assert_eq!(sub.context_id, 0x1234);
     assert_eq!(sub.signal_fence, signal_fence);
     assert_eq!(sub.cmd_stream.len(), cmd_size_bytes as usize);
-    assert_eq!(sub.cmd_stream[0..4], aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-    assert_eq!(sub.alloc_table.as_ref().unwrap().len(), alloc_size_bytes as usize);
+    assert_eq!(
+        sub.cmd_stream[0..4],
+        aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes()
+    );
+    assert_eq!(
+        sub.alloc_table.as_ref().unwrap().len(),
+        alloc_size_bytes as usize
+    );
 
     // Completing the fence should advance completed_fence and raise IRQ.
     dev.complete_fence(&mut mem, signal_fence);

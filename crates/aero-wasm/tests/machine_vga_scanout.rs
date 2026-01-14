@@ -410,8 +410,7 @@ fn machine_aerogpu_display_scanout_exports_non_empty_rgba8888_framebuffer() {
         "display framebuffer byte length should fit in u32 for test mode"
     );
     assert_eq!(
-        len_bytes as u64,
-        expected_len_bytes,
+        len_bytes as u64, expected_len_bytes,
         "display len_bytes must equal width * height * 4"
     );
 

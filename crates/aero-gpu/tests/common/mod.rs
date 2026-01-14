@@ -64,7 +64,10 @@ pub fn d3d9_executor(
 ) -> Option<std::sync::MutexGuard<'static, aero_gpu::AerogpuD3d9Executor>> {
     // The headless D3D9 executor uses non-Send/Sync WebGPU handles on wasm32, so we cannot share a
     // `static` executor cache like we do on native targets.
-    skip_or_panic(test_name, "shared D3D9 executor cache is not available on wasm32");
+    skip_or_panic(
+        test_name,
+        "shared D3D9 executor cache is not available on wasm32",
+    );
     None
 }
 
@@ -81,7 +84,10 @@ pub async fn aerogpu_executor(
 {
     // `AeroGpuExecutor` uses JS-backed WebGPU handles on wasm32 which are not Send/Sync, so we
     // cannot share a `static` executor cache like we do on native targets.
-    skip_or_panic(test_name, "shared AeroGpuExecutor cache is not available on wasm32");
+    skip_or_panic(
+        test_name,
+        "shared AeroGpuExecutor cache is not available on wasm32",
+    );
     None
 }
 
@@ -153,17 +159,16 @@ pub async fn aerogpu_executor(
 #[allow(dead_code)]
 pub fn aerogpu_executor_or_skip(
     test_name: &str,
-) -> Option<
-    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
-> {
+) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
+{
     pollster::block_on(aerogpu_executor(test_name))
 }
 
 #[allow(dead_code)]
 #[cfg(target_arch = "wasm32")]
-pub async fn aerogpu_executor_bc() -> Option<
-    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
-> {
+pub async fn aerogpu_executor_bc(
+) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
+{
     // `AeroGpuExecutor` stores WebGPU handles that are not `Send`/`Sync` on wasm32, so we cannot
     // safely cache a shared executor behind a `static` mutex.
     None
@@ -172,15 +177,13 @@ pub async fn aerogpu_executor_bc() -> Option<
 #[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn aerogpu_executor_bc(
-) -> Option<
-    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
-> {
+) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
+{
     use futures_intrusive::sync::Mutex;
     use std::sync::OnceLock;
 
-    static EXECUTOR: OnceLock<
-        Option<&'static Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>,
-    > = OnceLock::new();
+    static EXECUTOR: OnceLock<Option<&'static Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>> =
+        OnceLock::new();
 
     let exec = EXECUTOR.get_or_init(|| {
         let exec = pollster::block_on(async {
@@ -273,9 +276,8 @@ pub async fn aerogpu_executor_bc(
 #[cfg(target_arch = "wasm32")]
 pub async fn aerogpu_executor_bc_or_skip(
     test_name: &str,
-) -> Option<
-    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
-> {
+) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
+{
     skip_or_panic(test_name, "BC-only executor is host-only");
     None
 }
@@ -284,9 +286,8 @@ pub async fn aerogpu_executor_bc_or_skip(
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn aerogpu_executor_bc_or_skip(
     test_name: &str,
-) -> Option<
-    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
-> {
+) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
+{
     match aerogpu_executor_bc().await {
         Some(exec) => Some(exec),
         None => {

@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_x86::tier1::decode_one_mode;
-use std::cell::Cell;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct CountingAlloc;

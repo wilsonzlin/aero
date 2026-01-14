@@ -1155,7 +1155,9 @@ pub fn decode_cmd_stream_listing(
                             v if v == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
                                 Some("R8G8B8X8UnormSrgb")
                             }
-                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => Some("D24UnormS8Uint"),
+                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => {
+                                Some("D24UnormS8Uint")
+                            }
                             v if v == AerogpuFormat::D32Float as u32 => Some("D32Float"),
                             v if v == AerogpuFormat::BC1RgbaUnorm as u32 => Some("BC1RgbaUnorm"),
                             v if v == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {

@@ -300,7 +300,10 @@ fn cpu_by_index_out_of_range_panics_with_message() {
         "<non-string panic payload>".to_string()
     };
 
-    assert!(msg.contains("out of range"), "message should mention out-of-range: {msg}");
+    assert!(
+        msg.contains("out of range"),
+        "message should mention out-of-range: {msg}"
+    );
     assert!(
         msg.contains("cpu_count=2"),
         "message should include cpu_count: {msg}"

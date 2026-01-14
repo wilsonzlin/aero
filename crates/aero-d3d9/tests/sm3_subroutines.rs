@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use aero_d3d9::sm3::types::ShaderStage;
 use aero_d3d9::sm3::{build_ir, decode_u32_tokens, generate_wgsl, verify_ir};
-use aero_d3d9::state::{BlendState, SamplerState, VertexDecl, VertexElement, VertexElementType, VertexUsage};
+use aero_d3d9::state::{
+    BlendState, SamplerState, VertexDecl, VertexElement, VertexElementType, VertexUsage,
+};
 use aero_d3d9::{sm3, software};
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
@@ -128,9 +130,12 @@ fn sm3_call_and_label_execute_in_software_and_wgsl_compiles() {
     // Ensure WGSL generation succeeds and produces a valid module.
     let wgsl = generate_wgsl(&ps).unwrap().wgsl;
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(&module)
-        .expect("wgsl validate");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
 
     let vs = build_vs_passthrough();
     let decl = build_pos_only_decl();

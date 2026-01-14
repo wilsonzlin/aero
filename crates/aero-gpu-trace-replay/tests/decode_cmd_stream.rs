@@ -215,14 +215,22 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     push_u32_le(&mut payload, 1); // array_layer_count
     push_u64_le(&mut payload, 0); // reserved0
     assert_eq!(payload.len(), 36);
-    push_packet(&mut out, AerogpuCmdOpcode::CreateTextureView as u32, &payload);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::CreateTextureView as u32,
+        &payload,
+    );
 
     // DESTROY_TEXTURE_VIEW(view_handle=0x1000).
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 0x1000);
     push_u32_le(&mut payload, 0); // reserved0
     assert_eq!(payload.len(), 8);
-    push_packet(&mut out, AerogpuCmdOpcode::DestroyTextureView as u32, &payload);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::DestroyTextureView as u32,
+        &payload,
+    );
 
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
@@ -451,7 +459,10 @@ fn json_listing_decodes_topology_names_for_adjacency_and_patchlists() {
     assert_eq!(topo_packets.len(), 2);
 
     assert_eq!(topo_packets[0]["decoded"]["topology"], 13);
-    assert_eq!(topo_packets[0]["decoded"]["topology_name"], "TriangleStripAdj");
+    assert_eq!(
+        topo_packets[0]["decoded"]["topology_name"],
+        "TriangleStripAdj"
+    );
 
     assert_eq!(topo_packets[1]["decoded"]["topology"], 64);
     assert_eq!(topo_packets[1]["decoded"]["topology_name"], "PatchList32");

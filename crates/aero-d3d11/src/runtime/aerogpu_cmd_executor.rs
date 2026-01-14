@@ -25,9 +25,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_shader_resource_buffers_bindings_le,
     decode_cmd_set_unordered_access_buffers_bindings_le, decode_cmd_set_vertex_buffers_bindings_le,
-    decode_cmd_upload_resource_payload_le,
-    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuShaderStage,
-    AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    decode_cmd_upload_resource_payload_le, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
+    AerogpuCmdStreamIter, AerogpuShaderStage, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH,
+    AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
@@ -3173,7 +3173,9 @@ impl AerogpuD3d11Executor {
             OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes),
             OPCODE_SET_CONSTANT_BUFFERS => self.exec_set_constant_buffers(cmd_bytes),
             OPCODE_SET_SHADER_RESOURCE_BUFFERS => self.exec_set_shader_resource_buffers(cmd_bytes),
-            OPCODE_SET_UNORDERED_ACCESS_BUFFERS => self.exec_set_unordered_access_buffers(cmd_bytes),
+            OPCODE_SET_UNORDERED_ACCESS_BUFFERS => {
+                self.exec_set_unordered_access_buffers(cmd_bytes)
+            }
             OPCODE_CLEAR => self.exec_clear(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_DISPATCH => self.exec_dispatch(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_PRESENT => self.exec_present(encoder, cmd_bytes, report),
@@ -6683,12 +6685,14 @@ impl AerogpuD3d11Executor {
                         let texture = self
                             .shared_surfaces
                             .resolve_cmd_handle(texture, "SET_TEXTURE")?;
-                        let stage =
-                            match self.decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_TEXTURE")
-                            {
-                                Ok(stage) => stage,
-                                Err(_) => break,
-                            };
+                        let stage = match self.decode_shader_stage_for_packet(
+                            stage_raw,
+                            stage_ex,
+                            "SET_TEXTURE",
+                        ) {
+                            Ok(stage) => stage,
+                            Err(_) => break,
+                        };
                         let used_slots = match stage {
                             ShaderStage::Vertex => &used_textures_vs,
                             ShaderStage::Pixel => &used_textures_ps,
@@ -7801,8 +7805,11 @@ impl AerogpuD3d11Executor {
                             let texture = self
                                 .shared_surfaces
                                 .resolve_cmd_handle(texture_raw, "SET_TEXTURE")?;
-                            let stage = self
-                                .decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_TEXTURE")?;
+                            let stage = self.decode_shader_stage_for_packet(
+                                stage_raw,
+                                stage_ex,
+                                "SET_TEXTURE",
+                            )?;
                             let used_slots = match stage {
                                 ShaderStage::Vertex => &used_textures_vs,
                                 ShaderStage::Pixel => &used_textures_ps,
@@ -7902,10 +7909,9 @@ impl AerogpuD3d11Executor {
                                     {
                                         continue;
                                     }
-                                    let buffer = self.shared_surfaces.resolve_cmd_handle(
-                                        buffer_raw,
-                                        "SET_CONSTANT_BUFFERS",
-                                    )?;
+                                    let buffer = self
+                                        .shared_surfaces
+                                        .resolve_cmd_handle(buffer_raw, "SET_CONSTANT_BUFFERS")?;
                                     let needs_upload =
                                         self.resources.buffers.get(&buffer).is_some_and(|buf| {
                                             buf.backing.is_some() && buf.dirty.is_some()
@@ -10258,7 +10264,8 @@ impl AerogpuD3d11Executor {
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
         };
 
-        let stage = self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
+        let stage =
+            self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
         if parsed_stage != stage {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
@@ -10445,7 +10452,8 @@ impl AerogpuD3d11Executor {
         // Keep the persistent cache focused on VS/PS/CS translation; GS/HS/DS are currently
         // accepted-but-not-translated and compile as placeholder compute shaders, but they must
         // still be retained in `resources.shaders` for state tracking.
-        let stage = self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
+        let stage =
+            self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
 
         // The persistent shader cache only caches DXBC -> WGSL translations for stages that the
         // WebGPU pipeline can execute directly (VS/PS/CS). Geometry/tessellation stages are
@@ -10777,11 +10785,8 @@ impl AerogpuD3d11Executor {
             .get(24..data_end)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: missing payload data"))?;
 
-        let stage = self.decode_shader_stage_for_packet(
-            stage_raw,
-            stage_ex,
-            "SET_SHADER_CONSTANTS_F",
-        )?;
+        let stage =
+            self.decode_shader_stage_for_packet(stage_raw, stage_ex, "SET_SHADER_CONSTANTS_F")?;
         let dst = self.legacy_constants.get(&stage).ok_or_else(|| {
             anyhow!("SET_SHADER_CONSTANTS_F: missing legacy constants buffer for stage {stage}")
         })?;
@@ -12489,8 +12494,8 @@ impl AerogpuD3d11Executor {
             }
             let mut size = cb.size.unwrap_or(src_size - offset);
             size = size.min(src_size - offset);
-            let required_min = (*reg_count as u64)
-                .saturating_mul(reflection_bindings::UNIFORM_BINDING_SIZE_ALIGN);
+            let required_min =
+                (*reg_count as u64).saturating_mul(reflection_bindings::UNIFORM_BINDING_SIZE_ALIGN);
             if size < required_min {
                 continue;
             }
@@ -12587,7 +12592,11 @@ impl AerogpuD3d11Executor {
         }
 
         let stage_bindings = self.bindings.stage(ShaderStage::Hull);
-        for binding in control_point.bindings.iter().chain(patch_constant.bindings.iter()) {
+        for binding in control_point
+            .bindings
+            .iter()
+            .chain(patch_constant.bindings.iter())
+        {
             match &binding.kind {
                 crate::BindingKind::Texture2D { slot } => {
                     if let Some(tex) = stage_bindings.texture(*slot) {
@@ -13918,7 +13927,10 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
     }
 
     fn internal_buffer(&self, binding: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
-        let internal = self.internal_buffers.iter().find(|b| b.binding == binding)?;
+        let internal = self
+            .internal_buffers
+            .iter()
+            .find(|b| b.binding == binding)?;
         Some(reflection_bindings::BufferBinding {
             id: internal.id,
             buffer: internal.buffer,
@@ -17298,7 +17310,10 @@ mod tests {
                 "ABI minor=2 must ignore stage_ex and bind to Compute"
             );
             assert!(
-                exec.bindings.stage(ShaderStage::Geometry).texture(0).is_none(),
+                exec.bindings
+                    .stage(ShaderStage::Geometry)
+                    .texture(0)
+                    .is_none(),
                 "ABI minor=2 must not interpret reserved0 as stage_ex"
             );
 
@@ -17711,14 +17726,16 @@ fn main() {{
             exec.queue
                 .write_buffer(cb0_buf, 0, bytemuck::cast_slice(&params));
 
-            exec.bindings.stage_mut(ShaderStage::Hull).set_constant_buffer(
-                0,
-                Some(BoundConstantBuffer {
-                    buffer: CB0,
-                    offset: 0,
-                    size: Some(16),
-                }),
-            );
+            exec.bindings
+                .stage_mut(ShaderStage::Hull)
+                .set_constant_buffer(
+                    0,
+                    Some(BoundConstantBuffer {
+                        buffer: CB0,
+                        offset: 0,
+                        size: Some(16),
+                    }),
+                );
 
             // Scratch allocations for internal buffers.
             let patch_count_total = 2u32;
@@ -17756,8 +17773,11 @@ fn main() {{
                 vs_out.offset,
                 bytemuck::cast_slice(&vs_out_data),
             );
-            exec.queue
-                .write_buffer(hs_out.buffer.as_ref(), hs_out.offset, &vec![0u8; vs_out_size as usize]);
+            exec.queue.write_buffer(
+                hs_out.buffer.as_ref(),
+                hs_out.offset,
+                &vec![0u8; vs_out_size as usize],
+            );
             exec.queue.write_buffer(
                 patch_consts.buffer.as_ref(),
                 patch_consts.offset,
@@ -17998,7 +18018,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             );
             // One vec4 per patch.
             for p in 0..patch_count_total as usize {
-                let base_vec4 = p * crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH as usize;
+                let base_vec4 =
+                    p * crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH as usize;
                 let base0 = base_vec4 * 4;
                 assert_eq!(tess_f32[base0], p as f32);
                 assert_eq!(tess_f32[base0 + 1], 1.0);

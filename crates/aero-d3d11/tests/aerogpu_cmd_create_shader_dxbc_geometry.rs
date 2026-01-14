@@ -79,4 +79,3 @@ fn create_shader_dxbc_accepts_legacy_geometry_stage_value() {
             .expect("CREATE_SHADER_DXBC (legacy geometry stage=3) should succeed");
     });
 }
-

@@ -8,10 +8,10 @@ use wasm_bindgen::prelude::*;
 
 use js_sys::{Array, BigInt, Object, Reflect, Uint8Array};
 
+use aero_devices::pci::PciDevice as _;
 use aero_devices_gpu::{
     AeroGpuDeviceConfig, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode, AeroGpuPciDevice,
 };
-use aero_devices::pci::PciDevice as _;
 use memory::{MemoryBus, MmioHandler};
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -67,8 +67,11 @@ impl MemoryBus for LinearGuestMemory {
 
         while off < buf.len() {
             let remaining = buf.len() - off;
-            let chunk =
-                crate::guest_phys::translate_guest_paddr_chunk(self.ram_bytes, cur_paddr, remaining);
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
                     let Some(ptr) = self.linear_ptr(ram_offset, len) else {
@@ -134,8 +137,11 @@ impl MemoryBus for LinearGuestMemory {
 
         while off < buf.len() {
             let remaining = buf.len() - off;
-            let chunk =
-                crate::guest_phys::translate_guest_paddr_chunk(self.ram_bytes, cur_paddr, remaining);
+            let chunk = crate::guest_phys::translate_guest_paddr_chunk(
+                self.ram_bytes,
+                cur_paddr,
+                remaining,
+            );
             let chunk_len = match chunk {
                 crate::guest_phys::GuestRamChunk::Ram { ram_offset, len } => {
                     let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
@@ -326,17 +332,12 @@ impl AerogpuBridge {
             let _ = Reflect::set(
                 &obj,
                 &JsValue::from_str("alloc_table"),
-                &sub
-                    .alloc_table
+                &sub.alloc_table
                     .as_ref()
                     .map(|bytes| Uint8Array::from(bytes.as_slice()).into())
                     .unwrap_or(JsValue::NULL),
             );
-            let _ = Reflect::set(
-                &obj,
-                &JsValue::from_str("flags"),
-                &JsValue::from(sub.flags),
-            );
+            let _ = Reflect::set(&obj, &JsValue::from_str("flags"), &JsValue::from(sub.flags));
 
             arr.push(&obj);
         }

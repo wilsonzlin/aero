@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
-use aero_shared::scanout_state::{
-    ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM,
-};
+use aero_shared::scanout_state::{ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM};
 use pretty_assertions::assert_eq;
 
 #[test]

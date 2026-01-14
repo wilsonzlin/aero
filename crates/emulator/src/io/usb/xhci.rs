@@ -166,7 +166,11 @@ impl PciDevice for XhciPciDevice {
 
         if overlaps_bar {
             let mask = !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
-            let bar_val = if self.mmio_base_probe { mask } else { self.mmio_base & 0xffff_fff0 };
+            let bar_val = if self.mmio_base_probe {
+                mask
+            } else {
+                self.mmio_base & 0xffff_fff0
+            };
 
             let mut out = 0u32;
             for i in 0..size {

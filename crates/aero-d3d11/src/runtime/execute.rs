@@ -456,9 +456,14 @@ impl D3D11Runtime {
 
         let shadow_len = usize::try_from(size).context("CreateBuffer size overflows usize")?;
         let shadow = vec![0u8; shadow_len];
-        self.resources
-            .buffers
-            .insert(id, BufferResource { buffer, size, shadow });
+        self.resources.buffers.insert(
+            id,
+            BufferResource {
+                buffer,
+                size,
+                shadow,
+            },
+        );
         Ok(())
     }
 
@@ -502,7 +507,8 @@ impl D3D11Runtime {
             .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
         self.queue.write_buffer(&buffer.buffer, offset, bytes);
 
-        let shadow_start = usize::try_from(offset).context("UpdateBuffer offset overflows usize")?;
+        let shadow_start =
+            usize::try_from(offset).context("UpdateBuffer offset overflows usize")?;
         let shadow_end = shadow_start
             .checked_add(bytes.len())
             .ok_or_else(|| anyhow!("UpdateBuffer shadow range overflows usize"))?;
@@ -1381,7 +1387,8 @@ impl D3D11Runtime {
             usize::try_from(src_offset).context("CopyBufferToBuffer src_offset overflows usize")?;
         let shadow_dst_start =
             usize::try_from(dst_offset).context("CopyBufferToBuffer dst_offset overflows usize")?;
-        let shadow_size = usize::try_from(size).context("CopyBufferToBuffer size overflows usize")?;
+        let shadow_size =
+            usize::try_from(size).context("CopyBufferToBuffer size overflows usize")?;
         let shadow_src_end = shadow_src_start
             .checked_add(shadow_size)
             .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow range overflows usize"))?;
@@ -1732,7 +1739,11 @@ impl D3D11Runtime {
                             instances,
                         )?;
                     } else {
-                        render_pass.draw_indexed(first_index..first_index + index_count, base_vertex, instances);
+                        render_pass.draw_indexed(
+                            first_index..first_index + index_count,
+                            base_vertex,
+                            instances,
+                        );
                     }
                 }
                 _ => bail!(
@@ -2222,8 +2233,7 @@ fn draw_indexed_strip_restart_emulated<'a>(
         .offset
         .checked_add(first_index as u64 * stride_bytes as u64)
         .ok_or_else(|| anyhow!("index buffer offset overflows u64"))?;
-    let start_byte =
-        usize::try_from(start_byte).context("index buffer offset overflows usize")?;
+    let start_byte = usize::try_from(start_byte).context("index buffer offset overflows usize")?;
 
     let shadow = buf.shadow.as_slice();
 
@@ -2257,11 +2267,7 @@ fn draw_indexed_strip_restart_emulated<'a>(
     Ok(())
 }
 
-fn read_index_from_shadow(
-    shadow: &[u8],
-    byte_offset: usize,
-    format: wgpu::IndexFormat,
-) -> u32 {
+fn read_index_from_shadow(shadow: &[u8], byte_offset: usize, format: wgpu::IndexFormat) -> u32 {
     match format {
         wgpu::IndexFormat::Uint16 => {
             if byte_offset + 2 <= shadow.len() {
@@ -2581,8 +2587,10 @@ mod tests {
             "#;
 
             let keep_output_locations = BTreeSet::from([0u32]);
-            let expected_trimmed_wgsl =
-                super::super::wgsl_link::trim_ps_outputs_to_locations(fs_wgsl, &keep_output_locations);
+            let expected_trimmed_wgsl = super::super::wgsl_link::trim_ps_outputs_to_locations(
+                fs_wgsl,
+                &keep_output_locations,
+            );
             assert!(
                 !expected_trimmed_wgsl.contains("@location(1)"),
                 "sanity check: trimmed WGSL should drop unbound outputs"
@@ -2684,8 +2692,10 @@ mod tests {
             "#;
 
             let keep_input_locations = BTreeSet::from([0u32]);
-            let expected_trimmed_wgsl =
-                super::super::wgsl_link::trim_ps_inputs_to_locations(fs_wgsl, &keep_input_locations);
+            let expected_trimmed_wgsl = super::super::wgsl_link::trim_ps_inputs_to_locations(
+                fs_wgsl,
+                &keep_input_locations,
+            );
             assert!(
                 !expected_trimmed_wgsl.contains("@location(1)"),
                 "sanity check: trimmed WGSL should drop missing inputs"

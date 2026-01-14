@@ -8,8 +8,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuShaderStage,
     AEROGPU_CMD_STREAM_MAGIC,
 };
-use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
@@ -73,7 +73,9 @@ fn push_bind_shaders_ex(stream: &mut Vec<u8>, hs: u32, ds: u32) {
     // Use `AerogpuCmdWriter` here so packet sizing/padding stays correct and consistent across
     // tests/fixtures.
     let mut w = AerogpuCmdWriter::new();
-    w.bind_shaders_ex(/* vs */ 0, /* ps */ 0, /* cs */ 0, /* gs */ 0, hs, ds);
+    w.bind_shaders_ex(
+        /* vs */ 0, /* ps */ 0, /* cs */ 0, /* gs */ 0, hs, ds,
+    );
     let packet_stream = w.finish();
     stream.extend_from_slice(&packet_stream[AerogpuCmdStreamHeader::SIZE_BYTES..]);
 }

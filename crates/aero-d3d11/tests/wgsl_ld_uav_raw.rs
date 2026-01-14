@@ -182,20 +182,17 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(
-            &output,
-            0,
-            &staging,
-            0,
-            (output_words_len * 4) as u64,
-        );
+        encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, (output_words_len * 4) as u64);
         queue.submit([encoder.finish()]);
 
         let slice = staging.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        slice.map_async(wgpu::MapMode::Read, move |v: Result<(), wgpu::BufferAsyncError>| {
-            sender.send(v).ok();
-        });
+        slice.map_async(
+            wgpu::MapMode::Read,
+            move |v: Result<(), wgpu::BufferAsyncError>| {
+                sender.send(v).ok();
+            },
+        );
         #[cfg(not(target_arch = "wasm32"))]
         device.poll(wgpu::Maintain::Wait);
         #[cfg(target_arch = "wasm32")]

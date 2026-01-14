@@ -417,7 +417,10 @@ fn aerogpu_mmio_scanout_and_cursor_present_from_bar1_vram() {
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_Y), 0);
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HOT_X), 0);
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y), 0);
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_ENABLE), 1);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_ENABLE),
+        1,
+    );
 
     m.display_present();
     assert_eq!(m.display_resolution(), (2, 2));

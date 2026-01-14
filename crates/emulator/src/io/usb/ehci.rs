@@ -143,7 +143,11 @@ impl PciDevice for EhciPciDevice {
 
         if overlaps_bar {
             let mask = !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
-            let bar_val = if self.mmio_base_probe { mask } else { self.mmio_base };
+            let bar_val = if self.mmio_base_probe {
+                mask
+            } else {
+                self.mmio_base
+            };
 
             let mut out = 0u32;
             for i in 0..size {
@@ -293,7 +297,10 @@ mod tests {
 
         // Subword reads should return bytes from the probe mask (not the raw config bytes, which
         // are cleared during probing).
-        assert_eq!(dev.config_read(EhciPciDevice::MMIO_BAR_OFFSET, 1), mask & 0xFF);
+        assert_eq!(
+            dev.config_read(EhciPciDevice::MMIO_BAR_OFFSET, 1),
+            mask & 0xFF
+        );
         assert_eq!(
             dev.config_read(EhciPciDevice::MMIO_BAR_OFFSET + 1, 1),
             (mask >> 8) & 0xFF

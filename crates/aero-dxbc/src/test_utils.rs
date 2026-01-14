@@ -287,10 +287,8 @@ mod tests {
     fn build_container_unaligned_roundtrips_through_parser() {
         let shdr = [1u8];
         let junk = [2u8, 3];
-        let bytes = build_container_unaligned(&[
-            (FourCC(*b"SHDR"), &shdr),
-            (FourCC(*b"JUNK"), &junk),
-        ]);
+        let bytes =
+            build_container_unaligned(&[(FourCC(*b"SHDR"), &shdr), (FourCC(*b"JUNK"), &junk)]);
 
         let file = DxbcFile::parse(&bytes).expect("built unaligned container should parse");
         assert_eq!(file.header().magic, FourCC(*b"DXBC"));

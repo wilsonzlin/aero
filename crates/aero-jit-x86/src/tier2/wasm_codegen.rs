@@ -171,16 +171,18 @@ impl Tier2WasmCodegen {
         let mut has_code_version_guards = false;
         let mut uses_rflags = false;
 
-        let always_cross_page = |addr: Operand, size_bytes: u32, const_values: &[Option<u64>]| -> bool {
-            if size_bytes <= 1 {
-                return false;
-            }
-            let Some(addr) = operand_const_value(addr, const_values) else {
-                return false;
+        let always_cross_page =
+            |addr: Operand, size_bytes: u32, const_values: &[Option<u64>]| -> bool {
+                if size_bytes <= 1 {
+                    return false;
+                }
+                let Some(addr) = operand_const_value(addr, const_values) else {
+                    return false;
+                };
+                let cross_limit =
+                    PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
+                (addr & PAGE_OFFSET_MASK) > cross_limit
             };
-            let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
-            (addr & PAGE_OFFSET_MASK) > cross_limit
-        };
 
         for inst in trace.iter_instrs() {
             match *inst {
@@ -216,9 +218,7 @@ impl Tier2WasmCodegen {
                         operand_const_value(index, &const_values),
                     ) {
                         let scaled = index.wrapping_mul(u64::from(scale));
-                        let res = base
-                            .wrapping_add(scaled)
-                            .wrapping_add(disp as u64);
+                        let res = base.wrapping_add(scaled).wrapping_add(disp as u64);
                         const_values[dst.index()] = Some(res);
                     }
                 }

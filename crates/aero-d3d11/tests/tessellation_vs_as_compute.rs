@@ -832,7 +832,7 @@ fn vs_as_compute_loads_extended_formats() {
             push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
             push_u32(&mut ilay, 1); // element_count
             push_u32(&mut ilay, 0); // reserved0
-                                     // Element: semantic hash + index are arbitrary as long as signature matches.
+                                    // Element: semantic hash + index are arbitrary as long as signature matches.
             push_u32(&mut ilay, 0xDEAD_BEEFu32);
             push_u32(&mut ilay, 0);
             push_u32(&mut ilay, dxgi_format);
@@ -884,8 +884,7 @@ fn vs_as_compute_loads_extended_formats() {
             };
             let pipeline = VsAsComputePipeline::new(device, &pulling, cfg).unwrap();
 
-            let mut scratch =
-                ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+            let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
             let vs_out_regs =
                 alloc_vs_out_regs(&mut scratch, device, 1, 1, cfg.out_reg_count).unwrap();
 
@@ -1047,7 +1046,7 @@ fn vs_as_compute_respects_instance_step_rate() {
         push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
         push_u32(&mut ilay, 1); // element_count
         push_u32(&mut ilay, 0); // reserved0
-                                 // Element: semantic hash + index are arbitrary as long as signature matches.
+                                // Element: semantic hash + index are arbitrary as long as signature matches.
         push_u32(&mut ilay, 0xDEAD_BEEFu32);
         push_u32(&mut ilay, 0);
         push_u32(&mut ilay, 41); // DXGI_FORMAT_R32_FLOAT

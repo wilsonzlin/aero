@@ -186,8 +186,12 @@ mod tests {
         {
             let devices = Array::new();
             let obj = Object::new();
-            Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("device.1"))
-                .expect("Reflect::set(kind)");
+            Reflect::set(
+                &obj,
+                &JsValue::from_str("kind"),
+                &JsValue::from_str("device.1"),
+            )
+            .expect("Reflect::set(kind)");
             let bytes = Uint8Array::new_with_length(max as u32);
             Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
                 .expect("Reflect::set(bytes)");
@@ -201,14 +205,19 @@ mod tests {
         // Too large should error before copying bytes into wasm memory.
         let devices = Array::new();
         let obj = Object::new();
-        Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("device.1"))
-            .expect("Reflect::set(kind)");
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("kind"),
+            &JsValue::from_str("device.1"),
+        )
+        .expect("Reflect::set(kind)");
         let bytes = Uint8Array::new_with_length((max + 1) as u32);
         Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
             .expect("Reflect::set(bytes)");
         devices.push(&obj);
 
-        let err = parse_devices_js(devices.into()).expect_err("expected oversize device blob error");
+        let err =
+            parse_devices_js(devices.into()).expect_err("expected oversize device blob error");
         let msg = js_error_message(err);
         assert!(
             msg.contains("Device blob too large"),

@@ -1,7 +1,7 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::{profile, PciBdf, PciInterruptPin};
 use aero_machine::{Machine, MachineConfig, VBE_LFB_OFFSET};
-use aero_protocol::aerogpu::aerogpu_pci as aerogpu_pci;
+use aero_protocol::aerogpu::aerogpu_pci;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -173,7 +173,10 @@ fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level(
     let bar0 = bar0_base as u64;
 
     // Enable scanout + vblank IRQ so vblank ticks both advance counters and latch an interrupt bit.
-    src.write_physical_u32(bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+    src.write_physical_u32(
+        bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        1,
+    );
     src.write_physical_u32(
         bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_IRQ_ENABLE),
         aerogpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK,
@@ -182,7 +185,10 @@ fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level(
     let period = u64::from(src.read_physical_u32(
         bar0 + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
     ));
-    assert!(period > 0, "vblank period must be non-zero when vblank feature is enabled");
+    assert!(
+        period > 0,
+        "vblank period must be non-zero when vblank feature is enabled"
+    );
 
     // Seed the first vblank deadline at t=0 so ticking by one full period produces the first edge.
     src.poll_pci_intx_lines();
@@ -221,9 +227,12 @@ fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level(
     {
         let interrupts = src.platform_interrupts().expect("pc platform enabled");
         let pci_intx = src.pci_intx_router().expect("pc platform enabled");
-        pci_intx
-            .borrow_mut()
-            .set_intx_level(bdf, PciInterruptPin::IntA, false, &mut *interrupts.borrow_mut());
+        pci_intx.borrow_mut().set_intx_level(
+            bdf,
+            PciInterruptPin::IntA,
+            false,
+            &mut *interrupts.borrow_mut(),
+        );
         assert_eq!(interrupts.borrow().gsi_level(gsi), false);
     }
 

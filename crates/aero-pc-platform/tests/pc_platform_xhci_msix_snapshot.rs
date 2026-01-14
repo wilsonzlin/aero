@@ -186,7 +186,11 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_pending_bit_and_delivers_aft
 
     let table = pci_cfg_read_u32(&mut pc, bdf, msix_base + 0x04);
     let pba = pci_cfg_read_u32(&mut pc, bdf, msix_base + 0x08);
-    assert_eq!(table & 0x7, 0, "xHCI MSI-X table should live in BAR0 (BIR=0)");
+    assert_eq!(
+        table & 0x7,
+        0,
+        "xHCI MSI-X table should live in BAR0 (BIR=0)"
+    );
     assert_eq!(pba & 0x7, 0, "xHCI MSI-X PBA should live in BAR0 (BIR=0)");
     let table_offset = u64::from(table & !0x7);
     let pba_offset = u64::from(pba & !0x7);
@@ -194,12 +198,7 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_pending_bit_and_delivers_aft
     // Enable MSI-X and set Function Mask (bit 14) so a raised interrupt is latched into the PBA
     // rather than immediately delivered.
     let ctrl = pci_cfg_read_u16(&mut pc, bdf, msix_base + 0x02);
-    pci_cfg_write_u16(
-        &mut pc,
-        bdf,
-        msix_base + 0x02,
-        ctrl | (1 << 15) | (1 << 14),
-    );
+    pci_cfg_write_u16(&mut pc, bdf, msix_base + 0x02, ctrl | (1 << 15) | (1 << 14));
 
     // Program table entry 0: destination = BSP (APIC ID 0), vector = 0x66.
     let vector: u8 = 0x66;
@@ -288,7 +287,12 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_pending_bit_and_delivers_aft
     // With the pending bit set and the interrupt condition still asserted, the next interrupt
     // service should deliver the MSI-X message and clear the pending bit.
     assert_eq!(restored.interrupts.borrow().get_pending(), None);
-    restored.xhci.as_ref().unwrap().borrow_mut().raise_event_interrupt();
+    restored
+        .xhci
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .raise_event_interrupt();
     assert_eq!(restored.interrupts.borrow().get_pending(), Some(vector));
 
     let pba_bits_after = restored.memory.read_u64(bar0_base2 + pba_offset2);

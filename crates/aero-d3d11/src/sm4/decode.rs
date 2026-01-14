@@ -298,7 +298,8 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
                     value,
                     mask,
                 } => {
-                    if !uav_typed_decls.contains(&uav.slot) && uav_buffer_decls.contains_key(&uav.slot)
+                    if !uav_typed_decls.contains(&uav.slot)
+                        && uav_buffer_decls.contains_key(&uav.slot)
                     {
                         *inst = Sm4Inst::StoreRaw {
                             uav: *uav,
@@ -705,9 +706,9 @@ pub fn decode_instruction(
             pos += 1;
             extended = (ext & OPCODE_EXTENDED_BIT) != 0;
         }
-        let leading_operand_is_predicate = inst_toks
-            .get(pos)
-            .is_some_and(|t| ((t >> OPERAND_TYPE_SHIFT) & OPERAND_TYPE_MASK) == OPERAND_TYPE_PREDICATE);
+        let leading_operand_is_predicate = inst_toks.get(pos).is_some_and(|t| {
+            ((t >> OPERAND_TYPE_SHIFT) & OPERAND_TYPE_MASK) == OPERAND_TYPE_PREDICATE
+        });
         !leading_operand_is_predicate
     };
 
@@ -1458,7 +1459,8 @@ pub fn decode_instruction(
                 Ok(ld_uav_raw)
             // Structural fallback for structured buffer loads (`ld_structured` / `ld_uav_structured`)
             // when opcode IDs differ.
-            } else if let Some(ld_struct) = try_decode_ld_structured_like(saturate, inst_toks, at)? {
+            } else if let Some(ld_struct) = try_decode_ld_structured_like(saturate, inst_toks, at)?
+            {
                 Ok(ld_struct)
             // Structural fallback for atomic add on UAV buffers (`InterlockedAdd`).
             } else if let Some(atomic) = try_decode_atomic_add_like(saturate, inst_toks, at)? {
@@ -2515,7 +2517,10 @@ fn try_decode_atomic_add_like(
     Ok(None)
 }
 
-fn try_decode_store_raw_like(inst_toks: &[u32], at: usize) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+fn try_decode_store_raw_like(
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
     let mut r = InstrReader::new(inst_toks, at);
     let opcode_token = r.read_u32()?;
     let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;

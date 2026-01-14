@@ -87,4 +87,3 @@ fn idle_tick_cli_hlt_does_not_advance_time() {
         "expected BDA tick count to remain constant while in cli+hlt (start={start_bda_ticks}, end={end_bda_ticks})"
     );
 }
-

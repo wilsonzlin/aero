@@ -2240,11 +2240,8 @@ fn pc_platform_virtio_blk_snapshot_restore_with_injected_disk_processes_pending_
             .downcast_mut::<VirtioBlk>()
             .expect("virtio device should be VirtioBlk");
         blk.disk_mut()
-            .read_at(
-            TEST_SECTOR * VIRTIO_BLK_SECTOR_SIZE,
-            &mut on_disk,
-        )
-        .expect("disk read should succeed");
+            .read_at(TEST_SECTOR * VIRTIO_BLK_SECTOR_SIZE, &mut on_disk)
+            .expect("disk read should succeed");
     }
     assert_eq!(on_disk, WRITTEN);
 

@@ -262,7 +262,8 @@ pub fn decode_stage_ex_gated(
     shader_stage: u32,
     reserved0: u32,
 ) -> Option<AerogpuShaderStageEx> {
-    if abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR && shader_stage == AerogpuShaderStage::Compute as u32
+    if abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR
+        && shader_stage == AerogpuShaderStage::Compute as u32
     {
         return decode_stage_ex(shader_stage, 0);
     }

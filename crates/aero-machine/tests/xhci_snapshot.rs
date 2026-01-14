@@ -466,9 +466,7 @@ fn snapshot_restore_preserves_xhci_msix_table_and_delivery() {
     assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
     let bdf = profile::USB_XHCI_QEMU.bdf;
-    let bar0_base = vm
-        .pci_bar_base(bdf, 0)
-        .expect("xHCI BAR0 should exist");
+    let bar0_base = vm.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
     assert_ne!(bar0_base, 0);
 
     // Enable MSI-X in the canonical PCI config space and program table entry 0 via BAR0 MMIO.
@@ -497,7 +495,11 @@ fn snapshot_restore_preserves_xhci_msix_table_and_delivery() {
         let msix_base = u16::from(msix_off);
 
         let table = cfg.read(msix_base + 0x04, 4);
-        assert_eq!(table & 0x7, 0, "xHCI MSI-X table should live in BAR0 (BIR=0)");
+        assert_eq!(
+            table & 0x7,
+            0,
+            "xHCI MSI-X table should live in BAR0 (BIR=0)"
+        );
 
         // Enable MSI-X (control bit 15).
         let ctrl = cfg.read(msix_base + 0x02, 2) as u16;
@@ -597,9 +599,7 @@ fn snapshot_restore_preserves_xhci_msix_pending_bit_and_delivers_after_unmask() 
     assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
 
     let bdf = profile::USB_XHCI_QEMU.bdf;
-    let bar0_base = vm
-        .pci_bar_base(bdf, 0)
-        .expect("xHCI BAR0 should exist");
+    let bar0_base = vm.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
     assert_ne!(bar0_base, 0);
 
     // Enable MSI-X (with Function Mask) in canonical PCI config space, and discover table/PBA
@@ -630,17 +630,17 @@ fn snapshot_restore_preserves_xhci_msix_pending_bit_and_delivers_after_unmask() 
 
         let table = cfg.read(msix_base + 0x04, 4);
         let pba = cfg.read(msix_base + 0x08, 4);
-        assert_eq!(table & 0x7, 0, "xHCI MSI-X table should live in BAR0 (BIR=0)");
+        assert_eq!(
+            table & 0x7,
+            0,
+            "xHCI MSI-X table should live in BAR0 (BIR=0)"
+        );
         assert_eq!(pba & 0x7, 0, "xHCI MSI-X PBA should live in BAR0 (BIR=0)");
 
         // Enable MSI-X (bit 15) and set Function Mask (bit 14) so the interrupt is latched as
         // pending rather than delivered.
         let ctrl = cfg.read(msix_base + 0x02, 2) as u16;
-        cfg.write(
-            msix_base + 0x02,
-            2,
-            u32::from(ctrl | (1 << 15) | (1 << 14)),
-        );
+        cfg.write(msix_base + 0x02, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
 
         (u64::from(table & !0x7), u64::from(pba & !0x7))
     };

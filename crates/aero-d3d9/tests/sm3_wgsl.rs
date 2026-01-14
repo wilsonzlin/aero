@@ -1252,8 +1252,7 @@ fn wgsl_texldl_emits_texture_sample_level_explicit_lod() {
     let wgsl = generate_wgsl(&ir).unwrap();
     assert!(wgsl.wgsl.contains("textureSampleLevel("), "{}", wgsl.wgsl);
     assert!(
-        wgsl.wgsl
-            .contains("(constants.c[CONST_BASE + 0u]).w"),
+        wgsl.wgsl.contains("(constants.c[CONST_BASE + 0u]).w"),
         "{}",
         wgsl.wgsl
     );

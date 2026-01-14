@@ -163,7 +163,9 @@ impl WebUsbUhciBridge {
         let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+        if self.webusb_connected
+            && let Some(dev) = self.webusb.as_ref()
+        {
             dev.push_completion(completion);
         }
 
@@ -177,7 +179,9 @@ impl WebUsbUhciBridge {
             u32::from(aero_usb::uhci::regs::USBCMD_HCRESET),
         );
 
-        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+        if self.webusb_connected
+            && let Some(dev) = self.webusb.as_ref()
+        {
             dev.reset();
         }
     }
@@ -202,12 +206,10 @@ impl WebUsbUhciBridge {
         let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
         if path.len() == 1 {
             if path[0] as usize == ROOT_PORT_EXTERNAL_HUB {
-                return Err(
-                    js_sys::Error::new(&format!(
-                        "Cannot detach the external USB hub from root port {ROOT_PORT_EXTERNAL_HUB}",
-                    ))
-                    .into(),
-                );
+                return Err(js_sys::Error::new(&format!(
+                    "Cannot detach the external USB hub from root port {ROOT_PORT_EXTERNAL_HUB}",
+                ))
+                .into());
             }
             if path[0] as usize == ROOT_PORT_WEBUSB {
                 return Err(
@@ -276,7 +278,9 @@ impl WebUsbUhciBridge {
         if let Some(hub_state) = self.with_external_hub(|hub| hub.save_state()) {
             w.field_bytes(TAG_EXTERNAL_HUB, hub_state);
         }
-        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+        if self.webusb_connected
+            && let Some(dev) = self.webusb.as_ref()
+        {
             // Persist the WebUSB passthrough device's USB-visible state (address, control-transfer
             // stage, etc) so that after restoring a VM snapshot the guest's TD retries can make
             // forward progress. Host-side action queues are cleared on restore (see `load_state`).

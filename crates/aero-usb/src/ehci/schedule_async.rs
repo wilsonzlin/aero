@@ -354,7 +354,9 @@ fn process_qh<M: MemoryBus + ?Sized>(
 
         let mut overlay_bufs = [0u32; 5];
         for (i, buf) in overlay_bufs.iter_mut().enumerate() {
-            *buf = ctx.mem.read_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64);
+            *buf = ctx
+                .mem
+                .read_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64);
         }
         let mut cursor = QtdCursor::from_token_and_bufs(token, overlay_bufs);
 

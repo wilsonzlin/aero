@@ -1970,7 +1970,16 @@ fn emit_block(
         )));
     }
     for stmt in &block.stmts {
-        emit_stmt(wgsl, stmt, indent, depth, stage, f32_defs, sampler_types, state)?;
+        emit_stmt(
+            wgsl,
+            stmt,
+            indent,
+            depth,
+            stage,
+            f32_defs,
+            sampler_types,
+            state,
+        )?;
     }
     Ok(())
 }
@@ -2231,10 +2240,7 @@ fn emit_stmt(
 
             let _ = writeln!(wgsl, "{pad}{{");
             let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
-            let _ = writeln!(
-                wgsl,
-                "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};"
-            );
+            let _ = writeln!(wgsl, "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};");
             let _ = writeln!(wgsl, "{pad1}let _aero_loop_end: i32 = ({ctrl}).y;");
             let _ = writeln!(wgsl, "{pad1}let _aero_loop_step: i32 = ({ctrl}).z;");
             let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = ({ctrl}).x;");
@@ -2302,10 +2308,7 @@ fn emit_stmt(
 
             let _ = writeln!(wgsl, "{pad}{{");
             let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
-            let _ = writeln!(
-                wgsl,
-                "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};"
-            );
+            let _ = writeln!(wgsl, "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};");
             let _ = writeln!(wgsl, "{pad1}let _aero_rep_count: i32 = ({count}).x;");
             let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = 0;");
             let _ = writeln!(wgsl, "{pad1}loop {{");
@@ -2645,10 +2648,7 @@ pub fn generate_wgsl_with_options(
     // program.
     if let Some(max_r) = usage.temps.iter().copied().max() {
         for r in 0..=max_r {
-            let _ = writeln!(
-                wgsl,
-                "var<private> r{r}: vec4<f32> = vec4<f32>(0.0);"
-            );
+            let _ = writeln!(wgsl, "var<private> r{r}: vec4<f32> = vec4<f32>(0.0);");
         }
     }
     if let Some(max_a) = usage.addrs.iter().copied().max() {
@@ -2667,10 +2667,7 @@ pub fn generate_wgsl_with_options(
     }
     if let Some(max_p) = usage.predicates.iter().copied().max() {
         for p in 0..=max_p {
-            let _ = writeln!(
-                wgsl,
-                "var<private> p{p}: vec4<bool> = vec4<bool>(false);"
-            );
+            let _ = writeln!(wgsl, "var<private> p{p}: vec4<bool> = vec4<bool>(false);");
         }
     }
     for (file, index) in &usage.inputs {
@@ -2683,16 +2680,10 @@ pub fn generate_wgsl_with_options(
             relative: None,
         };
         let name = reg_var_name(&reg)?;
-        let _ = writeln!(
-            wgsl,
-            "var<private> {name}: vec4<f32> = vec4<f32>(0.0);"
-        );
+        let _ = writeln!(wgsl, "var<private> {name}: vec4<f32> = vec4<f32>(0.0);");
     }
     for idx in &usage.misc_inputs {
-        let _ = writeln!(
-            wgsl,
-            "var<private> misc{idx}: vec4<f32> = vec4<f32>(0.0);"
-        );
+        let _ = writeln!(wgsl, "var<private> misc{idx}: vec4<f32> = vec4<f32>(0.0);");
     }
     if !usage.temps.is_empty()
         || !usage.addrs.is_empty()

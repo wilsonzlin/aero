@@ -69,7 +69,9 @@ fn aerogpu_scanout_reads_from_bar1_vram_without_mmio_reads_during_present() {
     m.reset();
 
     let bar1_base = {
-        let pci_cfg = m.pci_config_ports().expect("pc platform should expose pci_cfg");
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
@@ -77,7 +79,10 @@ fn aerogpu_scanout_reads_from_bar1_vram_without_mmio_reads_during_present() {
             .expect("AeroGPU PCI function should exist");
         cfg.bar_range(1).map(|range| range.base).unwrap_or(0)
     };
-    assert_ne!(bar1_base, 0, "AeroGPU BAR1 base should be assigned by BIOS POST");
+    assert_ne!(
+        bar1_base, 0,
+        "AeroGPU BAR1 base should be assigned by BIOS POST"
+    );
 
     run_until_halt(&mut m);
 

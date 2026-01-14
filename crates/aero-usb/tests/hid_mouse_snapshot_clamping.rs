@@ -18,7 +18,10 @@ fn hid_mouse_snapshot_load_clamps_pending_report_axes() {
     );
     w.field_u8(TAG_CONFIGURATION, 1);
     w.field_u8(TAG_PROTOCOL, 1); // report protocol (5-byte reports)
-    w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+    w.field_bytes(
+        TAG_PENDING_REPORTS,
+        Encoder::new().vec_bytes(&pending).finish(),
+    );
     let snap = w.finish();
 
     let mut mouse = UsbHidMouseHandle::new();
@@ -29,7 +32,10 @@ fn hid_mouse_snapshot_load_clamps_pending_report_axes() {
         other => panic!("expected restored mouse report data, got {other:?}"),
     };
     assert_eq!(report, vec![0x00, 0x81, 0x81, 0x81, 0x81]);
-    assert!(matches!(mouse.handle_in_transfer(0x81, 5), UsbInResult::Nak));
+    assert!(matches!(
+        mouse.handle_in_transfer(0x81, 5),
+        UsbInResult::Nak
+    ));
 }
 
 #[test]
@@ -63,4 +69,3 @@ fn hid_composite_mouse_snapshot_load_clamps_pending_report_axes() {
     assert_eq!(report, vec![0x00, 0x81, 0x81, 0x81, 0x81]);
     assert!(matches!(hid.handle_in_transfer(0x82, 5), UsbInResult::Nak));
 }
-

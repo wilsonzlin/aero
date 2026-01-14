@@ -121,15 +121,21 @@ pub(in crate::runtime) fn dispatch_hull_phases(
     )?;
 
     // Helper to build pipeline layout + bind groups for a single kernel.
-    let mut build_kernel = |kernel: HullKernel<'_>| -> Result<(Vec<Arc<wgpu::BindGroup>>, *const wgpu::ComputePipeline)> {
+    let mut build_kernel = |kernel: HullKernel<'_>| -> Result<(
+        Vec<Arc<wgpu::BindGroup>>,
+        *const wgpu::ComputePipeline,
+    )> {
         let mut bindings_info = reflection_bindings::build_pipeline_bindings_info(
             device,
             bind_group_layout_cache,
-            [reflection_bindings::ShaderBindingSet::Guest(kernel.bindings)],
+            [reflection_bindings::ShaderBindingSet::Guest(
+                kernel.bindings,
+            )],
             reflection_bindings::BindGroupIndexValidation::GuestShaders,
         )?;
 
-        let layout_key = std::mem::replace(&mut bindings_info.layout_key, PipelineLayoutKey::empty());
+        let layout_key =
+            std::mem::replace(&mut bindings_info.layout_key, PipelineLayoutKey::empty());
         let layout_refs: Vec<&wgpu::BindGroupLayout> = bindings_info
             .group_layouts
             .iter()

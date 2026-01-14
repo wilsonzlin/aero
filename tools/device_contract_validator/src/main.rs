@@ -2213,7 +2213,11 @@ fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
         while i < data.len() && data[i] != b'\n' {
             i += 1;
         }
-        let next_start = if i < data.len() && data[i] == b'\n' { i + 1 } else { i };
+        let next_start = if i < data.len() && data[i] == b'\n' {
+            i + 1
+        } else {
+            i
+        };
         let line = &data[line_start..next_start];
 
         let stripped = line
@@ -2265,7 +2269,11 @@ fn inf_functional_bytes_excluding_sections(
         while i < data.len() && data[i] != b'\n' {
             i += 1;
         }
-        let next_start = if i < data.len() && data[i] == b'\n' { i + 1 } else { i };
+        let next_start = if i < data.len() && data[i] == b'\n' {
+            i + 1
+        } else {
+            i
+        };
         let line = &data[line_start..next_start];
 
         let stripped = line
