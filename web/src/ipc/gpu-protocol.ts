@@ -45,7 +45,8 @@ export interface GpuAdapterInfo {
  *
  * - `framebuffer`: legacy SharedArrayBuffer-backed framebuffer (VGA/VBE path).
  * - `aerogpu`: AeroGPU host-side executor output (ACMD).
- * - `wddm_scanout`: a WDDM-programmed scanout buffer selected via `ScanoutState` (future/optional).
+ * - `wddm_scanout`: a scanout buffer selected via `ScanoutState.base_paddr` (e.g. WDDM scanout or
+ *   legacy VBE LFB). The `scanout.source` telemetry field indicates which scanout mode is active.
  */
 export type GpuRuntimeOutputSource = "framebuffer" | "aerogpu" | "wddm_scanout";
 
