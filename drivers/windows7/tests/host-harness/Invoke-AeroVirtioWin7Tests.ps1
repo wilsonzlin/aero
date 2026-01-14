@@ -925,7 +925,8 @@ function Wait-AeroSelftestResult {
     # (not be skipped via --disable-snd).
     [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass,
     # If true, require the optional virtio-snd-buffer-limits stress test marker to PASS.
-    # This is intended to be paired with provisioning the guest with `--test-snd-buffer-limits`.
+    # This is intended to be paired with provisioning the guest with `--test-snd-buffer-limits`
+    # (or env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1).
     [Parameter(Mandatory = $false)] [bool]$RequireVirtioSndBufferLimitsPass = $false,
     # If true, require the optional virtio-blk-resize marker to PASS and orchestrate a QMP resize.
     # The guest must be provisioned with `--test-blk-resize` (or env var equivalent).
@@ -8397,7 +8398,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_SND_BUFFER_LIMITS" {
-      Write-Host "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: selftest RESULT=PASS but did not emit virtio-snd-buffer-limits test marker (provision the guest with --test-snd-buffer-limits)"
+      Write-Host "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: selftest RESULT=PASS but did not emit virtio-snd-buffer-limits test marker (provision the guest with --test-snd-buffer-limits or set env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8724,7 +8725,11 @@ try {
         $reason = $Matches[1]
       }
 
-      Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but -WithVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
+      } else {
+        Write-Host "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8737,7 +8742,11 @@ try {
         $reason = $Matches[1]
       }
 
-      Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd was enabled"
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but -WithVirtioSnd was enabled (provision the guest with --test-snd-capture or set env var AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
+      } else {
+        Write-Host "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ($reason) but -WithVirtioSnd was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8751,7 +8760,7 @@ try {
       }
 
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but -WithSndBufferLimits was enabled (provision the guest with --test-snd-buffer-limits)"
+        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but -WithSndBufferLimits was enabled (provision the guest with --test-snd-buffer-limits or set env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
       } else {
         Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ($reason) but -WithSndBufferLimits was enabled"
       }

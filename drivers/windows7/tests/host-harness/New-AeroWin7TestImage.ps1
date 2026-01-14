@@ -158,7 +158,8 @@ param(
   [switch]$RequireNonSilence,
 
   # If set, run the guest selftest's virtio-snd buffer limits stress test
-  # (adds `--test-snd-buffer-limits` to the scheduled task).
+  # (adds `--test-snd-buffer-limits` to the scheduled task; env var alternative:
+  # `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`).
   #
   # This is required when running the host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`.
   [Parameter(Mandatory = $false)]

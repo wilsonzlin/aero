@@ -2237,7 +2237,7 @@ def _virtio_snd_capture_skip_failure_message(tail: bytes) -> str:
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set" in tail:
         return (
             "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but --with-virtio-snd was enabled "
-            "(ensure the guest is configured with --test-snd/--require-snd or capture flags)"
+            "(ensure the guest is configured with --test-snd-capture or AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
         )
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled" in tail:
         return (
@@ -2304,7 +2304,8 @@ def _virtio_snd_buffer_limits_skip_failure_message(tail: bytes) -> str:
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|flag_not_set" in tail:
         return (
             "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but "
-            "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits)"
+            "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
+            "AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
         )
 
     # Fallback: extract the skip reason token from the marker itself.
@@ -2349,7 +2350,8 @@ def _virtio_snd_buffer_limits_required_failure_message(
         return _virtio_snd_buffer_limits_skip_failure_message(tail)
     return (
         "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: did not observe virtio-snd-buffer-limits PASS marker while "
-        "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits)"
+        "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
+        "AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
     )
 
 
