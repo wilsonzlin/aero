@@ -1895,7 +1895,8 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_half_pixel_uniform_in_pixe
         .and_then(|v| v.as_string())
         .unwrap_or_default();
     assert!(
-        wgsl_before.contains("var<uniform> constants"),
+        // Be precise (avoid substring collision with `constants_i`).
+        wgsl_before.contains("@group(0) @binding(0) var<uniform> constants:"),
         "expected cached WGSL to contain constants uniform"
     );
 
