@@ -1393,6 +1393,9 @@ static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_
     NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
     if (!NT_SUCCESS(st)) {
       PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
+      if (st == STATUS_NOT_SUPPORTED) {
+        PrintReadGpaNotSupportedHint(NULL);
+      }
       goto cleanup;
     }
 
@@ -1402,7 +1405,14 @@ static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_
       copied = chunk;
     }
     if (!NT_SUCCESS(op)) {
-      PrintNtStatus(L"read-gpa operation failed", f, op);
+      if (op == STATUS_PARTIAL_COPY) {
+        PrintNtStatus(L"read-gpa partial copy", f, op);
+      } else {
+        PrintNtStatus(L"read-gpa operation failed", f, op);
+      }
+      if (op == STATUS_NOT_SUPPORTED) {
+        PrintReadGpaNotSupportedHint(NULL);
+      }
       goto cleanup;
     }
     if (copied != chunk) {
