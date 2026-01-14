@@ -1235,17 +1235,17 @@ fn validate_virtio_input_device_desc_split(
     // DeviceDesc strings so they appear with different names in Device Manager.
     //
     // Policy:
-    // - The virtio-input keyboard/mouse INF is expected to bind:
-    //   - keyboard and mouse via SUBSYS-qualified HWIDs (distinct Device Manager names), and
-    //   - a strict, revision-gated generic fallback HWID (no SUBSYS):
+    // - The canonical virtio-input keyboard/mouse INF (`aero_virtio_input.inf`) is
+    //   intentionally SUBSYS-only (keyboard + mouse; no strict generic fallback model line).
+    // - The legacy filename alias (`virtio-input.inf{,.disabled}`) is allowed to diverge from
+    //   the canonical INF only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add
+    //   an opt-in strict, revision-gated generic fallback HWID (no SUBSYS):
     //     `{base_hwid}&REV_{expected_rev:02X}`
-    //     for environments where subsystem IDs are not exposed/recognized.
     // - Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and win over
     //   the generic fallback when both are installed.
     //
     // `require_fallback` controls whether the strict generic fallback is required (`true`) or
-    // forbidden (`false`). Current in-repo policy requires it for both the canonical INF and its
-    // legacy filename alias.
+    // forbidden (`false`).
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1815,6 +1815,16 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     // Policy: the canonical virtio-input keyboard/mouse INF (`aero_virtio_input.inf`) is
                     // intentionally SUBSYS-only (distinct naming), and does *not* include the strict generic
                     // fallback HWID (no SUBSYS).
+                    let strict_fallback_hwid = format!("{base}&REV_{expected_rev:02X}");
+                    if inf_text
+                        .to_ascii_uppercase()
+                        .contains(&strict_fallback_hwid.to_ascii_uppercase())
+                    {
+                        bail!(
+                            "{name}: canonical virtio-input INF {} must not contain the strict generic fallback HWID {strict_fallback_hwid} anywhere (fallback is alias-only)",
+                            inf_path.display(),
+                        );
+                    }
                     validate_virtio_input_device_desc_split(
                         inf_path,
                         &inf_text,

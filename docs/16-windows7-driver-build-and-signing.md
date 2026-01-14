@@ -153,27 +153,28 @@ See also the examples under `drivers/_template/`:
 >
 > `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and is intentionally **not** CI-packaged (no `ci-package.json`), so it does not ship in CI-produced driver bundles / Guest Tools artifacts. Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if you install it manually alongside other drivers.
 > The virtio-input driver under `drivers/windows7/virtio-input/` is revision-gated to Aero contract v1 (`...&REV_01`).
->
 > INF matching policy for virtio-input keyboard/mouse:
->
 > - Canonical INF: `inf/aero_virtio_input.inf`
->   - Matches the subsystem-qualified keyboard/mouse contract v1 HWIDs (`SUBSYS_0010` / `SUBSYS_0011`, both `&REV_01`) for distinct
->     Device Manager names, and also includes a strict revision-gated generic fallback HWID (no `SUBSYS`):
->     `PCI\VEN_1AF4&DEV_1052&REV_01` (Device Manager name: **Aero VirtIO Input Device**).
+>   - Binds the subsystem-qualified keyboard/mouse contract v1 HWIDs (`SUBSYS_0010` / `SUBSYS_0011`, both `&REV_01`) for distinct
+>     Device Manager names.
+>   - Intentionally does **not** include the strict revision-gated generic fallback HWID (no `SUBSYS`).
 > - Optional legacy alias INF (disabled by default): `inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`
->   - Exists only for compatibility with workflows/tools that still reference `virtio-input.inf`.
->   - Policy: filename-only alias; from the first section header (`[Version]`) onward it must remain byte-for-byte identical to
->     `inf/aero_virtio_input.inf` (banner/comments above `[Version]` may differ). See
+>   - Exists for compatibility with workflows/tools that still reference `virtio-input.inf`.
+>   - Opt-in compatibility shim: its models sections add the strict revision-gated generic fallback HWID (no `SUBSYS`) for
+>     environments where subsystem IDs are not exposed/recognized:
+>     `PCI\VEN_1AF4&DEV_1052&REV_01` (Device Manager name: **Aero VirtIO Input Device**).
+>   - Outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`), from `[Version]` onward, it must remain byte-for-byte identical
+>     to the canonical INF (banner/comments above `[Version]` may differ). See
 >     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
->   - Because it is identical, enabling the alias does **not** change HWID matching behavior.
+>   - Enabling the alias does change HWID matching behavior (it enables the strict generic fallback binding above).
 >
-> Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific than the generic
-> fallback, so it wins when both packages are installed and the tablet subsystem ID matches. If the tablet INF is not installed (or the
-> device does not expose the tablet subsystem ID), the device may bind via the generic fallback and appear as **Aero VirtIO Input Device**.
+> Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
+> over the generic fallback match when both packages are present and the tablet subsystem ID matches. If the tablet INF is not
+> installed (or the device does not expose the tablet subsystem ID), the strict generic fallback entry (when enabled via the
+> alias INF) can also bind to tablet devices (but will use the generic device name).
 >
-> Avoid shipping/installing both basenames at once: the alias matches the **same** HWIDs as the canonical INF, so staging both can lead
-> to duplicate/overlapping packages and confusing driver selection. Prefer explicit `ci-package.json` `infFiles` allowlists so only one of
-> the two INF basenames is packaged.
+> Avoid shipping/installing both basenames at once (they overlap and can cause confusing driver selection). Prefer explicit
+> `ci-package.json` `infFiles` allowlists so only one of the two INF basenames is packaged.
 
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json
