@@ -5,6 +5,7 @@ import {
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
 } from "../ipc/scanout_state";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "../workers/scanout_swizzle.ts";
 
 export type ScanoutDescriptor = Readonly<{
@@ -34,6 +35,7 @@ export type ScanoutReadbackResult = Readonly<{
 export const MAX_SCANOUT_RGBA8_BYTES = 256 * 1024 * 1024;
 
 const MAX_SAFE_U64_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MAX_SCANOUT_READBACK_BYTES = 256 * 1024 * 1024;
 
 const toU32 = (value: number, label: string): number => {
   if (!Number.isFinite(value)) {
@@ -101,11 +103,7 @@ export function tryComputeScanoutRgba8ByteLength(
 }
 
 /**
- * Convert a guest scanout buffer into a packed RGBA8 buffer.
- *
- * Supported scanout formats:
- * - `B8G8R8X8` -> RGBA8 (alpha forced to 255)
- * - `B8G8R8A8` -> RGBA8 (alpha preserved)
+ * Convert a guest scanout buffer (BGRA/BGRX/RGBA/RGBX, incl. sRGB variants) into a packed RGBA8 buffer.
  *
  * Note: SRGB variants are swizzled identically; only sampling differs at render time.
  *
@@ -115,7 +113,11 @@ export function tryComputeScanoutRgba8ByteLength(
  * - Handles padded row pitch (pitchBytes >= width*4)
  * - Translates guest physical addresses (including the Q35 high-RAM remap)
  */
-export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: ScanoutDescriptor): ScanoutReadbackResult {
+export function readScanoutRgba8FromGuestRam(
+  guestRam: Uint8Array,
+  desc: ScanoutDescriptor,
+  dst?: Uint8Array | null,
+): ScanoutReadbackResult {
   if (!(guestRam instanceof Uint8Array)) {
     throw new TypeError("guestRam must be a Uint8Array");
   }
@@ -126,18 +128,25 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
   const format = toU32(desc.format, "format");
 
   let kind: ScanoutSwizzleKind;
-  if (format === SCANOUT_FORMAT_B8G8R8X8 || format === SCANOUT_FORMAT_B8G8R8X8_SRGB) {
-    kind = "bgrx";
-  } else if (format === SCANOUT_FORMAT_B8G8R8A8 || format === SCANOUT_FORMAT_B8G8R8A8_SRGB) {
-    kind = "bgra";
-  } else {
-    throw new Error(
-      `Unsupported scanout format ${format} (expected ` +
-        `B8G8R8X8=${SCANOUT_FORMAT_B8G8R8X8}, ` +
-        `B8G8R8A8=${SCANOUT_FORMAT_B8G8R8A8}, ` +
-        `B8G8R8X8_SRGB=${SCANOUT_FORMAT_B8G8R8X8_SRGB}, ` +
-        `or B8G8R8A8_SRGB=${SCANOUT_FORMAT_B8G8R8A8_SRGB})`,
-    );
+  switch (format) {
+    case SCANOUT_FORMAT_B8G8R8X8:
+    case SCANOUT_FORMAT_B8G8R8X8_SRGB:
+      kind = "bgrx";
+      break;
+    case SCANOUT_FORMAT_B8G8R8A8:
+    case SCANOUT_FORMAT_B8G8R8A8_SRGB:
+      kind = "bgra";
+      break;
+    case AerogpuFormat.R8G8B8A8Unorm:
+    case AerogpuFormat.R8G8B8A8UnormSrgb:
+      kind = "rgba";
+      break;
+    case AerogpuFormat.R8G8B8X8Unorm:
+    case AerogpuFormat.R8G8B8X8UnormSrgb:
+      kind = "rgbx";
+      break;
+    default:
+      throw new Error(`Unsupported scanout format ${format}`);
   }
 
   if (width === 0 || height === 0) {
@@ -164,7 +173,7 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
   if (totalBytes > MAX_SCANOUT_RGBA8_BYTES) {
     throw new RangeError(`scanout output size exceeds cap (${MAX_SCANOUT_RGBA8_BYTES} bytes): ${width}x${height}`);
   }
-  const rgba8 = new Uint8Array(totalBytes);
+  const rgba8 = dst && dst.byteLength >= totalBytes ? dst.subarray(0, totalBytes) : new Uint8Array(totalBytes);
 
   const basePaddr = toU64Bigint(desc.basePaddr, "basePaddr");
   const pitchBig = BigInt(pitchBytes);

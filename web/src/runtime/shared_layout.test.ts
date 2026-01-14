@@ -6,11 +6,11 @@ import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 import {
-  SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_LEGACY_TEXT,
   SCANOUT_STATE_U32_LEN,
   snapshotScanoutState,
 } from "../ipc/scanout_state";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
@@ -187,7 +187,7 @@ describe("runtime/shared_layout", () => {
     const snap = snapshotScanoutState(words);
     expect(snap.generation).toBe(0);
     expect(snap.source).toBe(SCANOUT_SOURCE_LEGACY_TEXT);
-    expect(snap.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
+    expect(snap.format).toBe(AerogpuFormat.B8G8R8X8Unorm);
   });
 
   it("clamps maximum guest RAM size below the PCI MMIO BAR window", () => {

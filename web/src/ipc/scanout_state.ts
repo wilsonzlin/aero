@@ -23,10 +23,10 @@ export const SCANOUT_SOURCE_WDDM = 2 as const;
 // - `*_SRGB` variants are layout-identical to their UNORM counterparts; only the color space
 //   interpretation differs. Presenters must avoid double-applying gamma when handling sRGB
 //   scanout formats.
-export const SCANOUT_FORMAT_B8G8R8X8 = AerogpuFormat.B8G8R8X8Unorm;
-export const SCANOUT_FORMAT_B8G8R8A8 = AerogpuFormat.B8G8R8A8Unorm;
-export const SCANOUT_FORMAT_B8G8R8X8_SRGB = AerogpuFormat.B8G8R8X8UnormSrgb;
-export const SCANOUT_FORMAT_B8G8R8A8_SRGB = AerogpuFormat.B8G8R8A8UnormSrgb;
+export const SCANOUT_FORMAT_B8G8R8X8: AerogpuFormat = AerogpuFormat.B8G8R8X8Unorm;
+export const SCANOUT_FORMAT_B8G8R8A8: AerogpuFormat = AerogpuFormat.B8G8R8A8Unorm;
+export const SCANOUT_FORMAT_B8G8R8X8_SRGB: AerogpuFormat = AerogpuFormat.B8G8R8X8UnormSrgb;
+export const SCANOUT_FORMAT_B8G8R8A8_SRGB: AerogpuFormat = AerogpuFormat.B8G8R8A8UnormSrgb;
 
 export const SCANOUT_STATE_U32_LEN = 8 as const;
 export const SCANOUT_STATE_BYTE_LEN = SCANOUT_STATE_U32_LEN * 4;
@@ -53,7 +53,7 @@ export interface ScanoutStateUpdate {
   width: number;
   height: number;
   pitchBytes: number;
-  format: number;
+  format: AerogpuFormat;
 }
 
 export interface ScanoutStateSnapshot extends ScanoutStateUpdate {
@@ -119,7 +119,7 @@ export function snapshotScanoutState(words: Int32Array): ScanoutStateSnapshot {
     const width = Atomics.load(words, ScanoutStateIndex.WIDTH) >>> 0;
     const height = Atomics.load(words, ScanoutStateIndex.HEIGHT) >>> 0;
     const pitchBytes = Atomics.load(words, ScanoutStateIndex.PITCH_BYTES) >>> 0;
-    const format = Atomics.load(words, ScanoutStateIndex.FORMAT) >>> 0;
+    const format = (Atomics.load(words, ScanoutStateIndex.FORMAT) >>> 0) as AerogpuFormat;
 
     const gen1 = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
     if (gen0 !== gen1) {

@@ -252,6 +252,11 @@ mod tests {
     use std::thread;
 
     #[test]
+    fn scanout_format_default_matches_aerogpu_protocol() {
+        assert_eq!(SCANOUT_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
+    }
+
+    #[test]
     fn scanout_state_struct_matches_declared_u32_len() {
         assert_eq!(core::mem::size_of::<ScanoutState>(), SCANOUT_STATE_BYTE_LEN);
     }

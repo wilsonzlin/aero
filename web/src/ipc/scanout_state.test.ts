@@ -211,12 +211,12 @@ describe("ipc/scanout_state", () => {
           source: mod.SCANOUT_SOURCE_WDDM,
           basePaddrLo: (token + 3) >>> 0,
           basePaddrHi: (token + 4) >>> 0,
-          width: token >>> 0,
-          height: (token + 1) >>> 0,
-          pitchBytes: (token + 2) >>> 0,
-          format: mod.SCANOUT_FORMAT_B8G8R8X8,
-        });
-      }
+           width: token >>> 0,
+           height: (token + 1) >>> 0,
+           pitchBytes: (token + 2) >>> 0,
+           format: mod.SCANOUT_FORMAT_B8G8R8X8,
+         });
+       }
       Atomics.store(ctrl, 0, 1);
       Atomics.notify(ctrl, 0);
       `,

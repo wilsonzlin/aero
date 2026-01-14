@@ -10,7 +10,7 @@
  * These helpers operate on the u32 representation to avoid per-byte shuffles in JS.
  */
 
-export type ScanoutSwizzleKind = "bgrx" | "bgra";
+export type ScanoutSwizzleKind = "bgrx" | "bgra" | "rgba" | "rgbx";
 
 /**
  * Swizzle a little-endian BGRX pixel (0xXXRRGGBB) to RGBA (0xFFBBGGRR).
@@ -39,7 +39,7 @@ export type ConvertScanoutOptions = {
 };
 
 /**
- * Convert a BGRX/BGRA scanout into RGBA8.
+ * Convert a BGRX/BGRA/RGBA/RGBX scanout into RGBA8.
  *
  * Returns `true` if the u32 fast path was used.
  */
@@ -70,43 +70,72 @@ export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
     const srcU32 = new Uint32Array(src.buffer, src.byteOffset, srcWordsPerRow * height);
     const dstU32 = new Uint32Array(dst.buffer, dst.byteOffset, dstWordsPerRow * height);
 
-    if (opts.kind === "bgra") {
-      for (let y = 0; y < height; y += 1) {
-        let srcIdx = y * srcWordsPerRow;
-        let dstIdx = y * dstWordsPerRow;
-        const rowEnd = dstIdx + width;
-        while (dstIdx < rowEnd) {
-          const v = srcU32[srcIdx++]!;
-          // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
-          dstU32[dstIdx++] =
-            (v & 0xff00_0000) | ((v & 0x00ff_0000) >>> 16) | (v & 0x0000_ff00) | ((v & 0x0000_00ff) << 16);
+    switch (opts.kind) {
+      case "rgba":
+        for (let y = 0; y < height; y += 1) {
+          let srcIdx = y * srcWordsPerRow;
+          let dstIdx = y * dstWordsPerRow;
+          const rowEnd = dstIdx + width;
+          while (dstIdx < rowEnd) {
+            // RGBA u32 is already in the destination format.
+            dstU32[dstIdx++] = srcU32[srcIdx++]!;
+          }
         }
-      }
-    } else {
-      for (let y = 0; y < height; y += 1) {
-        let srcIdx = y * srcWordsPerRow;
-        let dstIdx = y * dstWordsPerRow;
-        const rowEnd = dstIdx + width;
-        while (dstIdx < rowEnd) {
-          const v = srcU32[srcIdx++]!;
-          // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
-          dstU32[dstIdx++] =
-            0xff00_0000 | ((v & 0x00ff_0000) >>> 16) | (v & 0x0000_ff00) | ((v & 0x0000_00ff) << 16);
+        break;
+      case "rgbx":
+        for (let y = 0; y < height; y += 1) {
+          let srcIdx = y * srcWordsPerRow;
+          let dstIdx = y * dstWordsPerRow;
+          const rowEnd = dstIdx + width;
+          while (dstIdx < rowEnd) {
+            // RGBX u32 = 0xXXBBGGRR -> RGBA u32 = 0xFFBBGGRR.
+            dstU32[dstIdx++] = (srcU32[srcIdx++]! | 0xff00_0000) >>> 0;
+          }
         }
-      }
+        break;
+      case "bgra":
+        for (let y = 0; y < height; y += 1) {
+          let srcIdx = y * srcWordsPerRow;
+          let dstIdx = y * dstWordsPerRow;
+          const rowEnd = dstIdx + width;
+          while (dstIdx < rowEnd) {
+            const v = srcU32[srcIdx++]!;
+            // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
+            dstU32[dstIdx++] =
+              (v & 0xff00_0000) | ((v & 0x00ff_0000) >>> 16) | (v & 0x0000_ff00) | ((v & 0x0000_00ff) << 16);
+          }
+        }
+        break;
+      case "bgrx":
+        for (let y = 0; y < height; y += 1) {
+          let srcIdx = y * srcWordsPerRow;
+          let dstIdx = y * dstWordsPerRow;
+          const rowEnd = dstIdx + width;
+          while (dstIdx < rowEnd) {
+            const v = srcU32[srcIdx++]!;
+            // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
+            dstU32[dstIdx++] =
+              0xff00_0000 | ((v & 0x00ff_0000) >>> 16) | (v & 0x0000_ff00) | ((v & 0x0000_00ff) << 16);
+          }
+        }
+        break;
     }
     return true;
   }
 
   // Safe fallback: byte-wise shuffle. This works for unaligned bases/strides.
-  const preserveAlpha = opts.kind === "bgra";
+  const swapRb = opts.kind === "bgrx" || opts.kind === "bgra";
+  const preserveAlpha = opts.kind === "bgra" || opts.kind === "rgba";
   for (let y = 0; y < height; y += 1) {
     let srcOff = y * srcStrideBytes;
     let dstOff = y * dstStrideBytes;
     for (let x = 0; x < width; x += 1) {
-      const b = src[srcOff + 0]!;
-      const g = src[srcOff + 1]!;
-      const r = src[srcOff + 2]!;
+      const c0 = src[srcOff + 0]!;
+      const c1 = src[srcOff + 1]!;
+      const c2 = src[srcOff + 2]!;
+      const r = swapRb ? c2 : c0;
+      const g = c1;
+      const b = swapRb ? c0 : c2;
       const a = preserveAlpha ? src[srcOff + 3]! : 0xff;
       dst[dstOff + 0] = r;
       dst[dstOff + 1] = g;

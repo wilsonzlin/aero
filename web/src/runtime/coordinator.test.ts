@@ -6,12 +6,12 @@ import { MessageType } from "./protocol";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
 import type { DiskImageMetadata } from "../storage/metadata";
 import {
-  SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_LEGACY_TEXT,
   SCANOUT_SOURCE_WDDM,
   publishScanoutState,
   snapshotScanoutState,
 } from "../ipc/scanout_state";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 class MockWorker {
   // Global postMessage trace to assert coordinator message ordering across workers.
@@ -972,7 +972,7 @@ describe("runtime/coordinator", () => {
       width: 0,
       height: 0,
       pitchBytes: 0,
-      format: SCANOUT_FORMAT_B8G8R8X8,
+      format: AerogpuFormat.B8G8R8X8Unorm,
     });
     const before = snapshotScanoutState(scanout);
     expect(before.source).toBe(SCANOUT_SOURCE_WDDM);

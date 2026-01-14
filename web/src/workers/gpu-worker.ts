@@ -189,6 +189,7 @@ let scanoutState: Int32Array | null = null;
 let wddmScanoutRgba: Uint8Array | null = null;
 let wddmScanoutWidth = 0;
 let wddmScanoutHeight = 0;
+let wddmScanoutFormat: number | null = null;
 // Compatibility fallback for harnesses that do not provide `scanoutState`.
 //
 // When set, treat WDDM/AeroGPU as owning scanout so legacy shared-framebuffer updates do not
@@ -1260,29 +1261,43 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
 
   const fmt = snap.format >>> 0;
   // Supported scanout formats:
-  // - BGRX: force alpha=255 so presenters (which may render with blending enabled) do not show
-  //         random transparency from uninitialized X bytes.
-  // - BGRA: preserve alpha (required for correctness + matches `scanout_swizzle.ts` behavior).
-  if (
-    fmt !== SCANOUT_FORMAT_B8G8R8X8 &&
-    fmt !== SCANOUT_FORMAT_B8G8R8A8 &&
-    fmt !== SCANOUT_FORMAT_B8G8R8X8_SRGB &&
-    fmt !== SCANOUT_FORMAT_B8G8R8A8_SRGB
-  ) {
-    emitScanoutReadbackInvalid(snap, "Scanout: unsupported format", {
-      expected: [
-        SCANOUT_FORMAT_B8G8R8X8,
-        SCANOUT_FORMAT_B8G8R8A8,
-        SCANOUT_FORMAT_B8G8R8X8_SRGB,
-        SCANOUT_FORMAT_B8G8R8A8_SRGB,
-      ],
-      got: fmt,
-    });
-    return null;
+  // - BGRX/RGBX: force alpha=255 so presenters (which may render with blending enabled) do not show
+  //              random transparency from uninitialized X bytes.
+  // - BGRA/RGBA: preserve alpha (required for correctness + matches `scanout_swizzle.ts` behavior).
+  let kind: ScanoutSwizzleKind;
+  switch (fmt) {
+    case SCANOUT_FORMAT_B8G8R8X8:
+    case SCANOUT_FORMAT_B8G8R8X8_SRGB:
+      kind = "bgrx";
+      break;
+    case SCANOUT_FORMAT_B8G8R8A8:
+    case SCANOUT_FORMAT_B8G8R8A8_SRGB:
+      kind = "bgra";
+      break;
+    case AerogpuFormat.R8G8B8A8Unorm:
+    case AerogpuFormat.R8G8B8A8UnormSrgb:
+      kind = "rgba";
+      break;
+    case AerogpuFormat.R8G8B8X8Unorm:
+    case AerogpuFormat.R8G8B8X8UnormSrgb:
+      kind = "rgbx";
+      break;
+    default:
+      emitScanoutReadbackInvalid(snap, "Scanout: unsupported format", {
+        expected: [
+          SCANOUT_FORMAT_B8G8R8X8,
+          SCANOUT_FORMAT_B8G8R8A8,
+          SCANOUT_FORMAT_B8G8R8X8_SRGB,
+          SCANOUT_FORMAT_B8G8R8A8_SRGB,
+          AerogpuFormat.R8G8B8A8Unorm,
+          AerogpuFormat.R8G8B8A8UnormSrgb,
+          AerogpuFormat.R8G8B8X8Unorm,
+          AerogpuFormat.R8G8B8X8UnormSrgb,
+        ],
+        got: fmt,
+      });
+      return null;
   }
-
-  const swizzleKind: ScanoutSwizzleKind =
-    fmt === SCANOUT_FORMAT_B8G8R8A8 || fmt === SCANOUT_FORMAT_B8G8R8A8_SRGB ? "bgra" : "bgrx";
 
   const width = snap.width >>> 0;
   const height = snap.height >>> 0;
@@ -1439,31 +1454,62 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
     const baseIndex = srcOffset >>> 2;
     const pitchWords = pitchBytes >>> 2;
     let dstRowBase = 0;
-    const preserveAlpha = swizzleKind === "bgra";
-    for (let y = 0; y < height; y += 1) {
-      const srcRowBase = baseIndex + y * pitchWords;
-      for (let x = 0; x < width; x += 1) {
-        const v = src32[srcRowBase + x]!;
-        if (preserveAlpha) {
-          // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
-          dst32[dstRowBase + x] =
-            ((v & 0xff000000) | ((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16)) >>> 0;
-        } else {
-          // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
-          dst32[dstRowBase + x] = (((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16) | 0xff000000) >>> 0;
+    switch (kind) {
+      case "rgba":
+        for (let y = 0; y < height; y += 1) {
+          const srcRowBase = baseIndex + y * pitchWords;
+          for (let x = 0; x < width; x += 1) {
+            dst32[dstRowBase + x] = src32[srcRowBase + x]!;
+          }
+          dstRowBase += width;
         }
-      }
-      dstRowBase += width;
+        break;
+      case "rgbx":
+        for (let y = 0; y < height; y += 1) {
+          const srcRowBase = baseIndex + y * pitchWords;
+          for (let x = 0; x < width; x += 1) {
+            dst32[dstRowBase + x] = (src32[srcRowBase + x]! | 0xff000000) >>> 0;
+          }
+          dstRowBase += width;
+        }
+        break;
+      case "bgra":
+        for (let y = 0; y < height; y += 1) {
+          const srcRowBase = baseIndex + y * pitchWords;
+          for (let x = 0; x < width; x += 1) {
+            const v = src32[srcRowBase + x]!;
+            // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
+            dst32[dstRowBase + x] =
+              ((v & 0xff000000) | ((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16)) >>> 0;
+          }
+          dstRowBase += width;
+        }
+        break;
+      case "bgrx":
+        for (let y = 0; y < height; y += 1) {
+          const srcRowBase = baseIndex + y * pitchWords;
+          for (let x = 0; x < width; x += 1) {
+            const v = src32[srcRowBase + x]!;
+            // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
+            dst32[dstRowBase + x] = (((v >>> 16) & 0xff) | (v & 0xff00) | ((v & 0xff) << 16) | 0xff000000) >>> 0;
+          }
+          dstRowBase += width;
+        }
+        break;
     }
   } else {
-    const preserveAlpha = swizzleKind === "bgra";
+    const swapRb = kind === "bgrx" || kind === "bgra";
+    const preserveAlpha = kind === "bgra" || kind === "rgba";
     for (let y = 0; y < height; y += 1) {
       const srcRowStart = srcOffset + y * pitchBytes;
       const dstRowStart = y * rowBytes;
       for (let x = 0; x < rowBytes; x += BYTES_PER_PIXEL_RGBA8) {
-        const b = src[srcRowStart + x]!;
-        const g = src[srcRowStart + x + 1]!;
-        const r = src[srcRowStart + x + 2]!;
+        const c0 = src[srcRowStart + x]!;
+        const c1 = src[srcRowStart + x + 1]!;
+        const c2 = src[srcRowStart + x + 2]!;
+        const r = swapRb ? c2 : c0;
+        const g = c1;
+        const b = swapRb ? c0 : c2;
         const a = preserveAlpha ? src[srcRowStart + x + 3]! : 255;
         out[dstRowStart + x + 0] = r;
         out[dstRowStart + x + 1] = g;
@@ -1475,6 +1521,7 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
 
   wddmScanoutWidth = width;
   wddmScanoutHeight = height;
+  wddmScanoutFormat = fmt;
   return { width, height, strideBytes: rowBytes, rgba8: out };
 };
 const noteWddmScanoutFallback = (): void => {
@@ -2679,6 +2726,10 @@ const presentOnce = async (): Promise<boolean> => {
             return true;
           }
         }
+
+        // WDDM owns scanout but we don't have pixels; do not fall back to the legacy
+        // shared framebuffer (that would "steal" scanout).
+        return false;
       }
 
       if (!frame) {
@@ -3652,6 +3703,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         wddmScanoutRgba = null;
         wddmScanoutWidth = 0;
         wddmScanoutHeight = 0;
+        wddmScanoutFormat = null;
         wddmScanoutRgbaCapacity = 0;
         wddmScanoutRgbaU32 = null;
         lastScanoutReadbackErrorGeneration = null;
@@ -3942,10 +3994,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             }
 
             const guest = guestU8;
-            if (!guest) {
-              postStub(typeof seq === "number" ? seq : undefined);
-              return true;
-            }
+            const vram = vramU8;
 
             try {
               const width = snap.width >>> 0;
@@ -3971,14 +4020,19 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 return true;
               }
               // Supported scanout formats (AeroGPU formats).
-              if (
-                format !== SCANOUT_FORMAT_B8G8R8X8 &&
-                format !== SCANOUT_FORMAT_B8G8R8A8 &&
-                format !== SCANOUT_FORMAT_B8G8R8X8_SRGB &&
-                format !== SCANOUT_FORMAT_B8G8R8A8_SRGB
-              ) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
+              switch (format) {
+                case SCANOUT_FORMAT_B8G8R8X8:
+                case SCANOUT_FORMAT_B8G8R8X8_SRGB:
+                case SCANOUT_FORMAT_B8G8R8A8:
+                case SCANOUT_FORMAT_B8G8R8A8_SRGB:
+                case AerogpuFormat.R8G8B8A8Unorm:
+                case AerogpuFormat.R8G8B8A8UnormSrgb:
+                case AerogpuFormat.R8G8B8X8Unorm:
+                case AerogpuFormat.R8G8B8X8UnormSrgb:
+                  break;
+                default:
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
               }
               if (pitchBytes < rowBytes || pitchBytes % BYTES_PER_PIXEL_RGBA8 !== 0) {
                 postStub(typeof seq === "number" ? seq : undefined);
@@ -4023,7 +4077,6 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               // This affects validation: guest RAM has PCI holes/high-RAM remap, while VRAM is a
               // separate contiguous SharedArrayBuffer.
               const scanoutIsInVram = (() => {
-                const vram = vramU8;
                 if (!vram || vramSizeBytes === 0) return false;
                 const vramBase = BigInt(vramBasePaddr >>> 0);
                 const vramEnd = vramBase + BigInt(vramSizeBytes >>> 0);
@@ -4038,6 +4091,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               })();
 
               if (!scanoutIsInVram) {
+                if (!guest) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+
                 // Guest RAM-backed scanout: validate that the descriptor rows are actually backed by
                 // guest RAM before using the cached last-presented scanout buffer. Without this, a
                 // corrupt `base_paddr` could cause us to return stale cached pixels instead of
@@ -4085,6 +4143,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 cached &&
                 wddmScanoutWidth === width &&
                 wddmScanoutHeight === height &&
+                wddmScanoutFormat === format &&
                 cached.byteLength >= outBytes
               ) {
                 out = cached.subarray(0, outBytes).slice();
@@ -4762,6 +4821,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       wddmScanoutRgba = null;
       wddmScanoutWidth = 0;
       wddmScanoutHeight = 0;
+      wddmScanoutFormat = null;
       wddmScanoutRgbaCapacity = 0;
       wddmScanoutRgbaU32 = null;
       lastScanoutReadbackErrorGeneration = null;

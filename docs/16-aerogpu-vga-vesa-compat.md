@@ -387,7 +387,7 @@ The emulator must render:
 Presentation pipeline requirements:
 
 - Source selection is based solely on `ScanoutState`.
-- Pixel conversion handles `B8G8R8X8` / `B8G8R8A8` → canvas RGBA (scanout is treated as opaque for presentation).
+- Pixel conversion handles BGRA/BGRX/RGBA/RGBX (and sRGB variants) → canvas RGBA. X8 formats must force `alpha=255`.
 - Switching sources is atomic and does not free/relocate the backing memory, preventing stale pointers.
 
 ---
@@ -484,7 +484,7 @@ For `ScanoutState.source = Wddm` (`SCANOUT_SOURCE_WDDM`), the worker:
    - Otherwise treat it as guest RAM and use `guestRangeInBounds` + `guestPaddrToRamOffset` to
      translate it into an offset into `guestU8`.
 4. Converts the scanout surface to packed RGBA8 for the canvas (currently treating scanout as
-   opaque; alpha is forced to `0xFF` for presentation).
+   opaque for X8 formats (alpha forced to `0xFF`), but preserves alpha for A8 formats.
 
 This same “VRAM aperture fast-path” idea is also used for WDDM hardware cursor surfaces (which are
 often allocated in VRAM).
@@ -503,7 +503,8 @@ Workers should treat these as immutable for the lifetime of a VM instance.
 
 ### Current limitations
 
-- WDDM scanout readback currently supports only `B8G8R8X8` / `B8G8R8A8` (plus their sRGB variants).
+- WDDM scanout readback currently supports only 32bpp packed pixel formats:
+  `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus their sRGB variants).
 - Readback paths require `base_paddr` and derived byte ranges to fit within JS safe integer range
   (`<= 2^53-1`).
 - Some unit tests/harnesses set `vramMiB=0`, in which case VRAM-backed scanout/cursor surfaces are

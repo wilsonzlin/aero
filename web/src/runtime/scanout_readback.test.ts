@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import { readScanoutRgba8FromGuestRam, tryComputeScanoutRgba8ByteLength } from "./scanout_readback";
 
 describe("runtime/scanout_readback", () => {
@@ -126,5 +127,20 @@ describe("runtime/scanout_readback", () => {
     const width = 0x3fff_ffff;
     const height = 2;
     expect(tryComputeScanoutRgba8ByteLength(width, height)).toBeNull();
+  });
+
+  it("converts sRGB RGBX->RGBA and forces alpha=255", () => {
+    const guest = new Uint8Array([
+      // pixel0: R=1,G=2,B=3,X=0
+      1, 2, 3, 0,
+    ]);
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: AerogpuFormat.R8G8B8X8UnormSrgb,
+    });
+    expect(Array.from(out.rgba8)).toEqual([1, 2, 3, 255]);
   });
 });
