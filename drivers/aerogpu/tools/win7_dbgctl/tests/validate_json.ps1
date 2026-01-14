@@ -196,6 +196,7 @@ Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--siz
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--size", "--json", "--read-gpa", "0x0") -NoImplicitJson
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "--json") -NoImplicitJson
 Assert-ValidJson -ExpectedCommand "dump-scanout-bmp" -Args @("--dump-scanout-bmp", "--json") -NoImplicitJson
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--json", "") -NoImplicitJson
 
 # Best-effort cleanup to avoid clutter in local runs. On failure, artifacts may be left behind for debugging.
 $artifacts = @(
