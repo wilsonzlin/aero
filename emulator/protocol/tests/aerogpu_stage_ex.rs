@@ -1,7 +1,9 @@
 use core::mem::{offset_of, size_of};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_create_shader_dxbc_payload_le, decode_cmd_hdr_le, decode_stage_ex, encode_stage_ex,
+    decode_cmd_create_shader_dxbc_payload_le, decode_cmd_hdr_le,
+    decode_cmd_set_shader_resource_buffers_bindings_le,
+    decode_cmd_set_unordered_access_buffers_bindings_le, decode_stage_ex, encode_stage_ex,
     resolve_shader_stage_with_ex, resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers,
     AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
     AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader,
@@ -510,4 +512,100 @@ fn extended_stage_ex_resolves_geometry_hull_domain() {
             expected
         );
     }
+}
+
+#[test]
+fn cmd_writer_stage_ex_encodes_srv_uav_buffers() {
+    let mut w = AerogpuCmdWriter::new();
+    let srv_bindings: [AerogpuShaderResourceBufferBinding; 2] = [
+        AerogpuShaderResourceBufferBinding {
+            buffer: 10,
+            offset_bytes: 16,
+            size_bytes: 64,
+            reserved0: 0,
+        },
+        AerogpuShaderResourceBufferBinding {
+            buffer: 11,
+            offset_bytes: 0,
+            size_bytes: 128,
+            reserved0: 0,
+        },
+    ];
+    let uav_bindings: [AerogpuUnorderedAccessBufferBinding; 2] = [
+        AerogpuUnorderedAccessBufferBinding {
+            buffer: 20,
+            offset_bytes: 0,
+            size_bytes: 256,
+            initial_count: 0,
+        },
+        AerogpuUnorderedAccessBufferBinding {
+            buffer: 21,
+            offset_bytes: 32,
+            size_bytes: 96,
+            initial_count: 123,
+        },
+    ];
+
+    w.set_shader_resource_buffers_ex(AerogpuShaderStageEx::Hull, 5, &srv_bindings);
+    w.set_unordered_access_buffers_ex(AerogpuShaderStageEx::Domain, 7, &uav_bindings);
+
+    let buf = w.finish();
+    let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    // SET_SHADER_RESOURCE_BUFFERS (stage_ex)
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let pkt = &buf[cursor..cursor + hdr.size_bytes as usize];
+    let (cmd, bindings) = decode_cmd_set_shader_resource_buffers_bindings_le(pkt).unwrap();
+    let shader_stage = cmd.shader_stage;
+    let reserved0 = cmd.reserved0;
+    let start_slot = cmd.start_slot;
+    let buffer_count = cmd.buffer_count;
+    assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+    assert_eq!(reserved0, AerogpuShaderStageEx::Hull as u32);
+    assert_eq!(start_slot, 5);
+    assert_eq!(buffer_count, srv_bindings.len() as u32);
+    assert_eq!(bindings.len(), srv_bindings.len());
+    for (got, exp) in bindings.iter().zip(srv_bindings.iter()) {
+        let got_buffer = got.buffer;
+        let got_offset_bytes = got.offset_bytes;
+        let got_size_bytes = got.size_bytes;
+        let exp_buffer = exp.buffer;
+        let exp_offset_bytes = exp.offset_bytes;
+        let exp_size_bytes = exp.size_bytes;
+        assert_eq!(got_buffer, exp_buffer);
+        assert_eq!(got_offset_bytes, exp_offset_bytes);
+        assert_eq!(got_size_bytes, exp_size_bytes);
+    }
+    cursor += hdr.size_bytes as usize;
+
+    // SET_UNORDERED_ACCESS_BUFFERS (stage_ex)
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let pkt = &buf[cursor..cursor + hdr.size_bytes as usize];
+    let (cmd, bindings) = decode_cmd_set_unordered_access_buffers_bindings_le(pkt).unwrap();
+    let shader_stage = cmd.shader_stage;
+    let reserved0 = cmd.reserved0;
+    let start_slot = cmd.start_slot;
+    let uav_count = cmd.uav_count;
+    assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+    assert_eq!(reserved0, AerogpuShaderStageEx::Domain as u32);
+    assert_eq!(start_slot, 7);
+    assert_eq!(uav_count, uav_bindings.len() as u32);
+    assert_eq!(bindings.len(), uav_bindings.len());
+    for (got, exp) in bindings.iter().zip(uav_bindings.iter()) {
+        let got_buffer = got.buffer;
+        let got_offset_bytes = got.offset_bytes;
+        let got_size_bytes = got.size_bytes;
+        let got_initial_count = got.initial_count;
+        let exp_buffer = exp.buffer;
+        let exp_offset_bytes = exp.offset_bytes;
+        let exp_size_bytes = exp.size_bytes;
+        let exp_initial_count = exp.initial_count;
+        assert_eq!(got_buffer, exp_buffer);
+        assert_eq!(got_offset_bytes, exp_offset_bytes);
+        assert_eq!(got_size_bytes, exp_size_bytes);
+        assert_eq!(got_initial_count, exp_initial_count);
+    }
+    cursor += hdr.size_bytes as usize;
+
+    assert_eq!(cursor, buf.len());
 }
