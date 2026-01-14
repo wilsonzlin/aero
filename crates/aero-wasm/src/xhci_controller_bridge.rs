@@ -23,6 +23,7 @@ use js_sys::Uint8Array;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::xhci::XhciController;
+use aero_usb::xhci::context::{XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT};
 use aero_usb::MemoryBus;
 use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
 
@@ -30,10 +31,10 @@ const XHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"XHCB";
 const XHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
 // Maximum downstream port value encoded in an xHCI route string (4-bit nibbles).
-const XHCI_MAX_ROUTE_PORT: u32 = 15;
+const XHCI_MAX_ROUTE_PORT: u32 = XHCI_ROUTE_STRING_MAX_PORT as u32;
 // The Route String field is 20 bits wide (5 nibbles), so xHCI can only encode up to 5 downstream
 // hub tiers (root port + 5 hub ports).
-const XHCI_MAX_ROUTE_TIER_COUNT: usize = 5;
+const XHCI_MAX_ROUTE_TIER_COUNT: usize = XHCI_ROUTE_STRING_MAX_DEPTH;
 
 // Defensive cap for host-provided snapshot payloads. This is primarily to keep the JS→WASM copy
 // bounded for `restore_state(bytes: &[u8])` parameters.

@@ -2,7 +2,7 @@ use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::xhci::context::{InputContext32, InputControlContext, SlotContext};
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
-use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
+use aero_usb::{SetupPacket, UsbHubAttachError, UsbInResult, UsbOutResult};
 
 mod util;
 
@@ -177,4 +177,20 @@ fn xhci_detach_clears_slot_device_binding() {
             .device_attached(),
         "slot state should record detached device"
     );
+}
+
+#[test]
+fn xhci_attach_at_path_rejects_downstream_port_over_15() {
+    let mut ctrl = XhciController::new();
+    let res = ctrl.attach_at_path(&[0, 16], Box::new(UsbHidKeyboardHandle::new()));
+    assert_eq!(res, Err(UsbHubAttachError::InvalidPort));
+}
+
+#[test]
+fn xhci_attach_at_path_rejects_paths_deeper_than_5_hub_tiers() {
+    let mut ctrl = XhciController::new();
+    // Root port + 6 downstream hubs (Route String only supports 5).
+    let path = [0, 1, 1, 1, 1, 1, 1];
+    let res = ctrl.attach_at_path(&path, Box::new(UsbHidKeyboardHandle::new()));
+    assert_eq!(res, Err(UsbHubAttachError::InvalidPort));
 }

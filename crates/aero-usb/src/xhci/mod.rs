@@ -395,6 +395,16 @@ impl XhciController {
         if root_port >= self.ports.len() {
             return Err(UsbHubAttachError::InvalidPort);
         }
+        // xHCI Slot Context Route Strings encode downstream hub port numbers in 4-bit nibbles,
+        // limiting reachable ports to 1..=15 and limiting depth to 5 hub tiers.
+        if rest.len() > context::XHCI_ROUTE_STRING_MAX_DEPTH {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        for &hop in rest {
+            if hop == 0 || hop > context::XHCI_ROUTE_STRING_MAX_PORT {
+                return Err(UsbHubAttachError::InvalidPort);
+            }
+        }
 
         if rest.is_empty() {
             if self.ports[root_port].has_device() {
@@ -425,6 +435,14 @@ impl XhciController {
         if root_port >= self.ports.len() {
             return Err(UsbHubAttachError::InvalidPort);
         }
+        if rest.len() > context::XHCI_ROUTE_STRING_MAX_DEPTH {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        for &hop in rest {
+            if hop == 0 || hop > context::XHCI_ROUTE_STRING_MAX_PORT {
+                return Err(UsbHubAttachError::InvalidPort);
+            }
+        }
 
         if rest.is_empty() {
             if !self.ports[root_port].has_device() {
@@ -451,6 +469,8 @@ impl XhciController {
         if port_count == 0 {
             return Err(UsbHubAttachError::InvalidPort);
         }
+        // Clamp to the maximum downstream port number representable in a Route String nibble.
+        let port_count = port_count.min(context::XHCI_ROUTE_STRING_MAX_PORT);
         let root_port = root_port as usize;
         if root_port >= self.ports.len() {
             return Err(UsbHubAttachError::InvalidPort);
