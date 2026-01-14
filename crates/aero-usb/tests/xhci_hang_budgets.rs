@@ -257,6 +257,88 @@ fn ep0_transfer_engine_rejects_link_trb_reserved_bits() {
 }
 
 #[test]
+fn ep0_transfer_engine_data_stage_buffer_ptr_overflow_does_not_wrap() {
+    // Regression test: buffer pointers are guest-controlled u64 addresses. When advancing through a
+    // multi-packet DATA stage, address arithmetic must not wrap around `u64` and alias low memory.
+    struct LargeInDevice;
+
+    impl UsbDeviceModel for LargeInDevice {
+        fn handle_control_request(
+            &mut self,
+            setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Data(vec![0xAB; setup.w_length as usize])
+        }
+    }
+
+    let mut mem = CountingMem::new(0x20_000, 64, 64);
+
+    let tr_ring = 0x1000u64;
+    let event_ring = 0x2000u64;
+
+    let setup = SetupPacket {
+        bm_request_type: 0xc0, // DeviceToHost | Vendor | Device
+        b_request: 0x01,
+        w_value: 0,
+        w_index: 0,
+        w_length: 16,
+    };
+    let setup_bytes = [
+        setup.bm_request_type,
+        setup.b_request,
+        setup.w_value as u8,
+        (setup.w_value >> 8) as u8,
+        setup.w_index as u8,
+        (setup.w_index >> 8) as u8,
+        setup.w_length as u8,
+        (setup.w_length >> 8) as u8,
+    ];
+
+    let mut setup_trb = Trb::new(u64::from_le_bytes(setup_bytes), 0, 0);
+    setup_trb.set_cycle(true);
+    setup_trb.set_trb_type(TrbType::SetupStage);
+    setup_trb.write_to(&mut mem, tr_ring);
+
+    // Choose a buffer pointer that will overflow on the second max-packet-size chunk: after writing
+    // 8 bytes at `buf_ptr`, adding 8 would wrap to 0 if the controller used `wrapping_add`.
+    let buf_ptr = !0x7u64; // 0xffff...fff8
+    let mut data_trb = Trb::new(buf_ptr, setup.w_length as u32, 0);
+    data_trb.set_cycle(true);
+    data_trb.set_trb_type(TrbType::DataStage);
+    data_trb.set_dir_in(true);
+    data_trb.write_to(&mut mem, tr_ring + TRB_LEN as u64);
+
+    let mut status_trb = Trb::new(0, 0, 0);
+    status_trb.set_cycle(true);
+    status_trb.set_trb_type(TrbType::StatusStage);
+    status_trb.set_dir_in(false);
+    status_trb.write_to(&mut mem, tr_ring + 2 * TRB_LEN as u64);
+
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.set_event_ring(event_ring, 8);
+    xhci.hub_mut().attach(0, Box::new(LargeInDevice));
+
+    let slot_id = xhci.enable_slot(0).expect("slot allocation");
+    assert!(xhci.configure_ep0(slot_id, tr_ring, true, 8));
+
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+
+    // The controller must not write to address 0 due to `u64` wraparound.
+    assert_eq!(
+        mem.data[0..8],
+        [0u8; 8],
+        "controller must not wrap buffer pointer arithmetic to low memory"
+    );
+
+    // Overflow should surface as a TRB error completion.
+    let ev = Trb::read_from(&mut mem, event_ring);
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert_eq!(ev.completion_code_raw(), CompletionCode::TrbError.as_u8());
+    assert_eq!(ev.parameter, tr_ring + TRB_LEN as u64);
+}
+
+#[test]
 fn ep0_transfer_engine_link_loop_is_bounded_and_faults() {
     // A malformed ring can contain a loop of Link TRBs that never reaches a transfer TRB. Ensure we
     // don't burn an unbounded per-doorbell budget following links forever.

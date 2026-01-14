@@ -1309,7 +1309,11 @@ impl ControlEndpoint {
                                         updated_trb.parameter = u64::from_le_bytes(*immediate);
                                         write_xhci_trb(mem, trb_addr, &updated_trb);
                                     } else {
-                                        let addr = buffer_ptr.wrapping_add(*transferred as u64);
+                                        let Some(addr) = buffer_ptr.checked_add(*transferred as u64)
+                                        else {
+                                            completion = Some(CompletionCode::TrbError);
+                                            break;
+                                        };
                                         mem.write_physical(addr, &chunk);
                                     }
                                     *transferred = transferred.saturating_add(got);
@@ -1348,7 +1352,11 @@ impl ControlEndpoint {
                                     }
                                 } else {
                                     chunk.resize(chunk_max, 0);
-                                    let addr = buffer_ptr.wrapping_add(*transferred as u64);
+                                    let Some(addr) = buffer_ptr.checked_add(*transferred as u64)
+                                    else {
+                                        completion = Some(CompletionCode::TrbError);
+                                        break;
+                                    };
                                     mem.read_physical(addr, &mut chunk);
                                 }
 
