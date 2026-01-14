@@ -10,11 +10,11 @@ If multiple INFs match the same virtio device ID (e.g. both bind `PCI\VEN_1AF4&D
 binding can become nondeterministic.
 
 This script scans all driver INFs under `drivers/` and fails if more than one INF
-references one of Aero's contract-v1 modern virtio PCI device IDs:
+references one of Aero's contract-v1 modern virtio PCI device IDs.
 
   - `PCI\VEN_1AF4&DEV_1041` (virtio-net)
   - `PCI\VEN_1AF4&DEV_1042` (virtio-blk)
-  - `PCI\VEN_1AF4&DEV_1052` (virtio-input)
+  - `PCI\VEN_1AF4&DEV_1052` (virtio-input *and* virtio-tablet; multi-function / SUBSYS-qualified)
   - `PCI\VEN_1AF4&DEV_1059` (virtio-snd)
 
 The check ignores comments (lines starting with ';' and inline `; ...` comments) so
@@ -241,7 +241,13 @@ if (-not $infFiles -or $infFiles.Count -eq 0) {
 $hwidPatterns = @(
   [pscustomobject]@{ Name = 'virtio-net (DEV_1041)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1041') },
   [pscustomobject]@{ Name = 'virtio-blk (DEV_1042)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1042') },
-  [pscustomobject]@{ Name = 'virtio-input (DEV_1052)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1052') },
+  # virtio-input is multi-function: keyboard/mouse/tablet share DEV_1052 but are distinguished via SUBSYS IDs.
+  # Enforce uniqueness per SUBSYS and for the strict generic fallback (no SUBSYS).
+  [pscustomobject]@{ Name = 'virtio-input keyboard (DEV_1052 SUBSYS_00101AF4)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4') },
+  [pscustomobject]@{ Name = 'virtio-input mouse (DEV_1052 SUBSYS_00111AF4)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4') },
+  [pscustomobject]@{ Name = 'virtio-input tablet (DEV_1052 SUBSYS_00121AF4)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4') },
+  # Note: this matches the strict generic fallback only (`...&DEV_1052&REV_01`), not the SUBSYS-qualified lines.
+  [pscustomobject]@{ Name = 'virtio-input fallback (DEV_1052&REV_01)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1052&REV_01') },
   [pscustomobject]@{ Name = 'virtio-snd (DEV_1059)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1059') }
 )
 
@@ -308,7 +314,7 @@ if ($conflicts.Count -gt 0) {
   exit 1
 }
 
-Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/DEV_1042/DEV_1052/DEV_1059)."
+Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (virtio-net/blk/snd + virtio-input SUBSYS/fallback patterns)."
 
 # Enforce that there is only one MSBuild project that produces aero_virtio_blk.sys / aero_virtio_net.sys.
 $projFiles = @(Get-ChildItem -LiteralPath $driversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)
