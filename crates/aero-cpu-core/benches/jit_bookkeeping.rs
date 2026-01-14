@@ -19,6 +19,8 @@ use aero_cpu_core::jit::runtime::{
     CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
 };
 #[cfg(not(target_arch = "wasm32"))]
+use aero_cpu_core::jit::runtime::PageVersionTracker;
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -484,10 +486,65 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn bench_page_version_tracker(c: &mut Criterion) {
+    const OPS_PER_ITER: usize = 4096;
+
+    let mut group = c.benchmark_group("jit/page_versions");
+
+    group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+    group.bench_function("bump_write_1_page", |b| {
+        let tracker = PageVersionTracker::new(1024);
+        let paddr = 0x1234u64;
+        let len = 4usize;
+
+        b.iter(|| {
+            for _ in 0..OPS_PER_ITER {
+                tracker.bump_write(black_box(paddr), black_box(len));
+            }
+            black_box(tracker.version(0));
+        });
+    });
+
+    group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+    group.bench_function("bump_write_2_pages", |b| {
+        let tracker = PageVersionTracker::new(1024);
+        // Straddle a page boundary.
+        let paddr = 0x1FF0u64;
+        let len = 0x40usize;
+
+        b.iter(|| {
+            for _ in 0..OPS_PER_ITER {
+                tracker.bump_write(black_box(paddr), black_box(len));
+            }
+            black_box(tracker.version(1));
+        });
+    });
+
+    // Larger range write: fewer ops per iter so the bench stays reasonably fast under the CI
+    // profile.
+    const BIG_OPS_PER_ITER: usize = 256;
+    group.throughput(Throughput::Elements(BIG_OPS_PER_ITER as u64));
+    group.bench_function("bump_write_16_pages", |b| {
+        let tracker = PageVersionTracker::new(4096);
+        let paddr = 0u64;
+        let len = 16 * 4096usize;
+
+        b.iter(|| {
+            for _ in 0..BIG_OPS_PER_ITER {
+                tracker.bump_write(black_box(paddr), black_box(len));
+            }
+            black_box(tracker.version(0));
+        });
+    });
+
+    group.finish();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
-    targets = bench_code_cache, bench_hotness_profile, bench_jit_runtime_prepare_block
+    targets = bench_code_cache, bench_hotness_profile, bench_jit_runtime_prepare_block, bench_page_version_tracker
 }
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
