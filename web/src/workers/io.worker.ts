@@ -5463,18 +5463,14 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // (synthetic USB HID / virtio-input) rely on `KeyHidUsage` events and would otherwise
         // cause duplicated input in the guest.
         if (keyboardInputBackend === "ps2") {
-          if (i8042Wasm) {
-            i8042Wasm.injectKeyScancode(packed, len);
-          } else if (i8042Ts) {
-            const bytes = new Uint8Array(len);
-            for (let j = 0; j < len; j++) {
-              bytes[j] = (packed >>> (j * 8)) & 0xff;
-            }
-            i8042Ts.injectKeyboardBytes(bytes);
-          }
-        }
-        break;
-      }
+           if (i8042Wasm) {
+             i8042Wasm.injectKeyScancode(packed, len);
+           } else if (i8042Ts) {
+            i8042Ts.injectKeyScancodePacked(packed, len);
+           }
+         }
+         break;
+       }
       default:
         // Should be unreachable: `validateInputBatchBuffer` rejects unknown types.
         break;

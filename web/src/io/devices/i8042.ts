@@ -1036,6 +1036,35 @@ export class I8042Controller implements PortIoHandler {
   }
 
   /**
+   * Inject host keyboard scancode bytes (packed into a single u32, little-endian) into the controller.
+   *
+   * This mirrors the worker `InputEventType.KeyScancode` payload format and avoids per-event
+   * `Uint8Array` allocations in the TS fallback path.
+   *
+   * - packedLE: low byte is the first scancode byte to inject.
+   * - len: number of bytes to inject (1..=4). Other values are ignored.
+   */
+  injectKeyScancodePacked(packedLE: number, len: number): void {
+    if (!Number.isFinite(len)) return;
+    const n = Math.floor(len);
+    if (n !== len || n < 1 || n > 4) return;
+
+    // Keep behaviour consistent with `injectKeyboardBytes`: inject through the keyboard device,
+    // respecting scanningEnabled/scancodeSet and the keyboard output queue limit.
+    if (this.#keyboard.scanningEnabled && this.#keyboard.scancodeSet === 2) {
+      let packed = packedLE >>> 0;
+      for (let i = 0; i < n; i++) {
+        if (this.#keyboard.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
+        this.#keyboard.outQueue.push(packed & 0xff);
+        packed >>>= 8;
+      }
+    }
+
+    this.#pumpDeviceQueues();
+    this.#syncStatusAndIrq();
+  }
+
+  /**
    * Host-side injection API: relative mouse motion in PS/2 coordinate space.
    *
    * - dx: right is positive

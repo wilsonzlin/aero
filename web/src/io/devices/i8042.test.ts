@@ -385,6 +385,49 @@ describe("io/devices/I8042Controller", () => {
     expect(drainAllOutputBytes(dev)).toEqual([0x1c, 0xf0, 0x1c]);
   });
 
+  it("injects packed keyboard scancode bytes (len=1..4) in-order and matches injectKeyboardBytes", () => {
+    const packed = 0x44332211;
+    const bytes = [0x11, 0x22, 0x33, 0x44];
+
+    for (let len = 1; len <= 4; len++) {
+      const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+      const packedDev = new I8042Controller(irqSink);
+      const bytesDev = new I8042Controller(irqSink);
+
+      // Disable translation so output bytes match injected bytes exactly.
+      for (const dev of [packedDev, bytesDev]) {
+        dev.portWrite(0x0064, 1, 0x60);
+        dev.portWrite(0x0060, 1, 0x05);
+      }
+
+      packedDev.injectKeyScancodePacked(packed, len);
+      bytesDev.injectKeyboardBytes(Uint8Array.from(bytes.slice(0, len)));
+
+      const packedOut = drainAllOutputBytes(packedDev);
+      const bytesOut = drainAllOutputBytes(bytesDev);
+
+      expect(packedOut).toEqual(bytes.slice(0, len));
+      expect(packedOut).toEqual(bytesOut);
+    }
+  });
+
+  it("ignores packed keyboard scancode injections with invalid len values", () => {
+    const packed = 0x44332211;
+    const invalidLens = [0, 5, -1, 3.5, Number.NaN, Number.POSITIVE_INFINITY];
+
+    for (const len of invalidLens) {
+      const irqSink: IrqSink = { raiseIrq: () => {}, lowerIrq: () => {} };
+      const dev = new I8042Controller(irqSink);
+
+      // Disable translation so any injected bytes would be visible.
+      dev.portWrite(0x0064, 1, 0x60);
+      dev.portWrite(0x0060, 1, 0x05);
+
+      dev.injectKeyScancodePacked(packed, len);
+      expect(drainAllOutputBytes(dev)).toEqual([]);
+    }
+  });
+
   it("translates PrintScreen Set-2 scancode sequences to Set-1 multi-byte sequences", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
     const dev = new I8042Controller(irqSink);
