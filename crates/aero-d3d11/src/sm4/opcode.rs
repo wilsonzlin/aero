@@ -465,6 +465,10 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_IMAX), Some("imax"));
         assert_eq!(opcode_name(OPCODE_UMIN), Some("umin"));
         assert_eq!(opcode_name(OPCODE_UMAX), Some("umax"));
+        assert_eq!(opcode_name(OPCODE_IMUL), Some("imul"));
+        assert_eq!(opcode_name(OPCODE_AND), Some("and"));
+        assert_eq!(opcode_name(OPCODE_OR), Some("or"));
+        assert_eq!(opcode_name(OPCODE_USHR), Some("ushr"));
         assert_eq!(opcode_name(OPCODE_IEQ), Some("ieq"));
         assert_eq!(opcode_name(OPCODE_IGE), Some("ige"));
         assert_eq!(opcode_name(OPCODE_ILT), Some("ilt"));
