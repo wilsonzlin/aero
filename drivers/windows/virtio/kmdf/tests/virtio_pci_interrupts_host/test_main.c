@@ -696,10 +696,16 @@ static void TestMsixProgramQueueVectorReadbackFailure(void)
     queues[0] = 1;
     queues[1] = 2;
 
-    InstallReadRegisterUshortOverride((volatile const USHORT*)&commonCfg.queue_msix_vector, 0 /* wrong value */);
+    /* Device rejects queue vector programming by returning VIRTIO_PCI_MSI_NO_VECTOR. */
+    InstallReadRegisterUshortOverride((volatile const USHORT*)&commonCfg.queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
     st = VirtioPciProgramMsixVectors(&commonCfg, NULL, 2, 3 /* config vector */, queues);
     assert(st == STATUS_DEVICE_HARDWARE_ERROR);
+    assert(commonCfg.msix_config == 3);
     ClearReadRegisterUshortOverride();
+
+    /* Only the first queue should have been attempted. */
+    assert(ReadCommonCfgQueueVector(&commonCfg, 0) == 1);
+    assert(ReadCommonCfgQueueVector(&commonCfg, 1) == VIRTIO_PCI_MSI_NO_VECTOR);
 
     UninstallCommonCfgQueueVectorWindowHooks();
 }
@@ -712,9 +718,11 @@ static void TestMsixProgramConfigVectorReadbackFailure(void)
     memset((void*)&commonCfg, 0, sizeof(commonCfg));
     InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 0);
 
-    InstallReadRegisterUshortOverride((volatile const USHORT*)&commonCfg.msix_config, 0 /* wrong value */);
+    /* Device rejects config vector programming by returning VIRTIO_PCI_MSI_NO_VECTOR. */
+    InstallReadRegisterUshortOverride((volatile const USHORT*)&commonCfg.msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
     st = VirtioPciProgramMsixVectors(&commonCfg, NULL, 0, 3 /* config vector */, NULL);
     assert(st == STATUS_DEVICE_HARDWARE_ERROR);
+    assert(commonCfg.msix_config == 3);
     ClearReadRegisterUshortOverride();
 
     UninstallCommonCfgQueueVectorWindowHooks();
