@@ -41,8 +41,14 @@ bash ./drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso
 For convenience, Aero also provides one-shot wrappers that do the extraction + packaging in one command:
 
 - `bash ./drivers/scripts/make-driver-pack.sh` (driver pack zip/staging dir)
-- `bash ./drivers/scripts/make-virtio-driver-iso.sh` (mountable drivers ISO)
+- `bash ./drivers/scripts/make-virtio-driver-iso.sh` (mountable drivers ISO; prefers the deterministic Rust ISO writer when `cargo` is available)
 - `bash ./drivers/scripts/make-guest-tools-from-virtio-win.sh` (Guest Tools ISO + zip)
+
+Determinism note:
+
+- The drivers ISO builder (`tools/driver-iso/build.py`) defaults to a deterministic Rust backend when `cargo` is available.
+- To force a deterministic ISO timestamp, you can pass through PowerShell args to the wrapper, e.g.:
+  `bash ./drivers/scripts/make-virtio-driver-iso.sh --virtio-win-iso virtio-win.iso -- -IsoBackend rust -SourceDateEpoch 0`
 
 ## What gets extracted
 
