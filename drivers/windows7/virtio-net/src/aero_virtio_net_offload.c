@@ -97,6 +97,7 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6
   uint8_t version;
   uint8_t next;
   size_t off;
+  size_t iter;
 
   if (!ipv6 || !l3_len_out || !proto_out) {
     return AEROVNET_OFFLOAD_ERR_INVAL;
@@ -123,7 +124,7 @@ static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6
    * helper is used on potentially untrusted frames (host-provided in unit tests
    * and guest-provided in the miniport), so keep parsing work deterministic.
    */
-  for (size_t iter = 0; iter < 8u; iter++) {
+  for (iter = 0; iter < 8u; iter++) {
     if (next == AEROVNET_IPPROTO_TCP) {
       *l3_len_out = off;
       *proto_out = next;
