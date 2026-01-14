@@ -4213,7 +4213,12 @@ function renderAudioPanel(): HTMLElement {
     if (cc === 0 || cap === 0) return { ok: false, error: "Audio output ringBuffer has invalid channelCount/capacityFrames." };
 
     const metrics = typeof o.getMetrics === "function" ? o.getMetrics() : null;
-    const sampleRate = typeof metrics?.sampleRate === "number" ? metrics.sampleRate : 0;
+    const sampleRate =
+      typeof metrics?.sampleRate === "number"
+        ? metrics.sampleRate
+        : typeof o.context?.sampleRate === "number"
+          ? o.context.sampleRate
+          : 0;
     if (!Number.isFinite(sampleRate) || sampleRate <= 0) return { ok: false, error: "Audio output sample rate unavailable." };
 
     const readIndex = ring.readIndex as Uint32Array;
