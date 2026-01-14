@@ -1348,6 +1348,32 @@ impl AeroGpuMmioDevice {
                     break 'doorbell;
                 }
 
+                // Defensive: reject ring mappings that would wrap the u64 physical address space.
+                //
+                // Some `MemoryBus` implementations iterate bytewise using `wrapping_add`, so allowing a ring
+                // GPA near `u64::MAX` could cause device reads/writes to silently wrap to low memory.
+                if self
+                    .ring_gpa
+                    .checked_add(RING_HEADER_SIZE_BYTES)
+                    .is_none()
+                    || self
+                        .ring_gpa
+                        .checked_add(u64::from(self.ring_size_bytes))
+                        .is_none()
+                {
+                    // Drop any pending work by syncing head -> tail where possible. We avoid reading the
+                    // full ring header here because `ring_gpa + RING_HEADER_SIZE_BYTES` may wrap.
+                    if let (Some(tail_addr), Some(head_addr)) = (
+                        self.ring_gpa.checked_add(RING_TAIL_OFFSET),
+                        self.ring_gpa.checked_add(RING_HEAD_OFFSET),
+                    ) {
+                        let tail = mem.read_u32(tail_addr);
+                        mem.write_u32(head_addr, tail);
+                    }
+                    self.record_error(pci::AerogpuErrorCode::Oob, 0);
+                    break 'doorbell;
+                }
+
                 let mut hdr_buf = [0u8; ring::AerogpuRingHeader::SIZE_BYTES];
                 mem.read_physical(self.ring_gpa, &mut hdr_buf);
                 let Ok(ring_hdr) = ring::AerogpuRingHeader::decode_from_le_bytes(&hdr_buf) else {

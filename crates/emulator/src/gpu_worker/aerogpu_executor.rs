@@ -437,6 +437,32 @@ impl AeroGpuExecutor {
             return;
         }
 
+        // Defensive: reject ring mappings that would wrap the u64 physical address space.
+        //
+        // Some `MemoryBus` implementations iterate bytewise using `wrapping_add`, so allowing a ring
+        // GPA near `u64::MAX` could cause device reads/writes to silently wrap to low memory.
+        if regs
+            .ring_gpa
+            .checked_add(AEROGPU_RING_HEADER_SIZE_BYTES)
+            .is_none()
+            || regs
+                .ring_gpa
+                .checked_add(u64::from(regs.ring_size_bytes))
+                .is_none()
+        {
+            // Drop any pending work by syncing head -> tail where possible. We avoid reading the
+            // full ring header here because `ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES` may wrap.
+            let tail = regs
+                .ring_gpa
+                .checked_add(crate::devices::aerogpu_ring::RING_TAIL_OFFSET)
+                .map(|addr| mem.read_u32(addr))
+                .unwrap_or(0);
+            AeroGpuRingHeader::write_head(mem, regs.ring_gpa, tail);
+            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+            regs.record_error(AerogpuErrorCode::Oob, 0);
+            return;
+        }
+
         let ring = AeroGpuRingHeader::read_from(mem, regs.ring_gpa);
         if !ring.is_valid(regs.ring_size_bytes) {
             regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);

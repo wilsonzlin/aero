@@ -70,6 +70,45 @@ fn aerogpu_ring_reset_with_overflowing_ring_gpa_is_nonpanicking_and_records_oob_
 }
 
 #[test]
+fn aerogpu_doorbell_with_overflowing_ring_gpa_records_oob_error() {
+    let mut m = new_minimal_aerogpu_machine();
+    enable_bus_mastering(&mut m);
+
+    let bdf = m.aerogpu().expect("expected AeroGPU device to be present");
+    let bar0 = m
+        .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
+        .expect("expected AeroGPU BAR0 to be assigned by BIOS");
+
+    // Program a ring GPA that will overflow when the device tries to read the ring header / compute
+    // descriptor addresses during doorbell processing.
+    let ring_gpa = u64::MAX - 1;
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
+        (ring_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES),
+        0x1000,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
+        pci::AEROGPU_RING_CONTROL_ENABLE,
+    );
+
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+
+    let error_code = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_CODE));
+    let error_count = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_COUNT));
+    assert_eq!(error_code, pci::AerogpuErrorCode::Oob as u32);
+    assert_eq!(error_count, 1);
+}
+
+#[test]
 fn aerogpu_fence_page_write_with_overflowing_gpa_is_nonpanicking() {
     let mut m = new_minimal_aerogpu_machine();
     enable_bus_mastering(&mut m);
