@@ -220,4 +220,80 @@ describe("disk_worker list_disks repairs aerospar sizeBytes", () => {
     expect(repaired.disks[id]?.format).toBe("aerospar");
     expect(repaired.disks[id]?.sizeBytes).toBe(logicalSize);
   });
+
+  it("treats truncated aerospar magic as aerospar to avoid leaking header bytes as raw", async () => {
+    vi.resetModules();
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    const id = "disk3";
+    const fileName = `${id}.img`;
+
+    // Create a file that begins with the aerospar magic but is too small to contain a full header.
+    const bytes = new TextEncoder().encode("AEROSPAR"); // 8 bytes
+    const disksDir = await opfsGetDisksDir();
+    const fh = await disksDir.getFileHandle(fileName, { create: true });
+    const w = await fh.createWritable({ keepExistingData: false });
+    await w.write(bytes);
+    await w.close();
+
+    const state: DiskManagerState = {
+      version: METADATA_VERSION,
+      disks: {
+        [id]: {
+          source: "local",
+          id,
+          name: "truncated",
+          backend: "opfs",
+          kind: "hdd",
+          // Intentionally wrong: old metadata might treat this as raw because the extension is `.img`.
+          format: "raw",
+          fileName,
+          sizeBytes: bytes.byteLength,
+          createdAtMs: Date.now(),
+          lastUsedAtMs: undefined,
+        },
+      },
+      mounts: {},
+    };
+    await opfsWriteState(state);
+
+    await import("./disk_worker.ts");
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "list_disks",
+        payload: {},
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(true);
+    expect(resp.result[0].format).toBe("aerospar");
+
+    const repaired = await opfsReadState();
+    expect(repaired.disks[id]?.format).toBe("aerospar");
+  });
 });

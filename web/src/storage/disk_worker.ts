@@ -170,6 +170,34 @@ async function sniffAerosparseDiskSizeBytesFromFile(file: File): Promise<number 
   return out;
 }
 
+async function looksLikeAerosparseDiskFromFile(file: File): Promise<boolean> {
+  const sniffLen = Math.min(file.size, 12);
+  if (sniffLen < AEROSPARSE_MAGIC.length) return false;
+  let buf: ArrayBuffer;
+  const sliceFn = (file as unknown as { slice?: unknown }).slice;
+  if (typeof sliceFn === "function") {
+    buf = await (sliceFn as (start?: number, end?: number) => Blob).call(file, 0, sniffLen).arrayBuffer();
+  } else {
+    const arrayBufferFn = (file as unknown as { arrayBuffer?: unknown }).arrayBuffer;
+    if (typeof arrayBufferFn !== "function") return false;
+    const full = await (arrayBufferFn as () => Promise<ArrayBuffer>).call(file);
+    buf = full.slice(0, sniffLen);
+  }
+
+  const bytes = new Uint8Array(buf);
+  if (bytes.byteLength < AEROSPARSE_MAGIC.length) return false;
+  for (let i = 0; i < AEROSPARSE_MAGIC.length; i += 1) {
+    if (bytes[i] !== AEROSPARSE_MAGIC[i]) return false;
+  }
+
+  // Treat truncated headers as aerosparse so callers surface corruption errors instead of silently
+  // interpreting the header bytes as a raw disk.
+  if (bytes.byteLength < 12) return true;
+
+  const version = new DataView(buf).getUint32(8, true);
+  return version === 1;
+}
+
 function assertValidDiskBackend(backend: unknown): asserts backend is DiskBackend {
   if (backend !== "opfs" && backend !== "idb") {
     throw new Error("cacheBackend must be 'opfs' or 'idb'");
@@ -279,8 +307,21 @@ async function bestEffortRepairOpfsAerosparMetadata(store: ReturnType<typeof get
   try {
     const handle = await opfsGetDiskFileHandle(meta.fileName, { create: false, dirPath: meta.opfsDirectory });
     const file = await handle.getFile();
-    const diskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
-    if (diskSizeBytes === null) return;
+    // Only attempt repair when the file bytes look like an aerosparse disk.
+    // This aligns with Rust-side `detect_format` logic (magic+version) and avoids silently opening
+    // aerosparse-looking images as raw (which would expose the header bytes to the guest).
+    const looksAerospar = await looksLikeAerosparseDiskFromFile(file);
+    if (!looksAerospar) return;
+
+    // Only set sizeBytes when we can fully validate the header; otherwise keep the existing
+    // capacity metadata but still correct the format so opens fail with a corruption error
+    // instead of leaking header bytes.
+    let diskSizeBytes: number | null = null;
+    try {
+      diskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
+    } catch {
+      diskSizeBytes = null;
+    }
     const nextFormat: DiskFormat = "aerospar";
     const nextKind: DiskKind = "hdd";
     let changed = false;
@@ -292,7 +333,7 @@ async function bestEffortRepairOpfsAerosparMetadata(store: ReturnType<typeof get
       meta.kind = nextKind;
       changed = true;
     }
-    if (meta.sizeBytes !== diskSizeBytes) {
+    if (diskSizeBytes !== null && meta.sizeBytes !== diskSizeBytes) {
       meta.sizeBytes = diskSizeBytes;
       changed = true;
     }
