@@ -26,6 +26,18 @@ describe("gpu/test-card", () => {
 
       expect(srgbEncodeChannel(linear)).toBe(expected);
     });
+
+    it("uses the linear segment for very dark values", () => {
+      // Compute the expected value without calling the function under test.
+      const linear = 0.002;
+      const v = Math.min(1, Math.max(0, linear));
+      const srgb = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+      const expected = Math.min(255, Math.max(0, Math.round(srgb * 255)));
+
+      expect(srgbEncodeChannel(linear)).toBe(expected);
+      // Sanity: this should be in the "low end" range (single-digit / teen values).
+      expect(expected).toBeLessThan(20);
+    });
   });
 
   describe("createGpuColorTestCardRgba8Linear", () => {
@@ -37,7 +49,10 @@ describe("gpu/test-card", () => {
       expect(rgba.length).toBe(width * height * 4);
 
       // Left half: grayscale ramp, full alpha.
+      expect(getPixelRgba(rgba, width, 0, 1)).toEqual([0, 0, 0, 255]);
       expect(getPixelRgba(rgba, width, 1, 1)).toEqual([85, 85, 85, 255]);
+      expect(getPixelRgba(rgba, width, 2, 1)).toEqual([170, 170, 170, 255]);
+      expect(getPixelRgba(rgba, width, 3, 1)).toEqual([255, 255, 255, 255]);
 
       // Right half: magenta with top->bottom alpha gradient (height=4 => y=0..3 => a=0,1/3,2/3,1).
       expect(getPixelRgba(rgba, width, 4, 0)).toEqual([255, 0, 255, 0]);
