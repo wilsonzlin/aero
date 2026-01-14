@@ -334,6 +334,8 @@ export class WebGpuPresenter {
       outputColorSpace: opts.outputColorSpace ?? "srgb",
       alphaMode: opts.alphaMode ?? "opaque",
       flipY: opts.flipY ?? false,
+      // Optional diagnostics hook: when provided, uncaptured WebGPU errors will be routed here.
+      ...(typeof opts.onError === "function" ? { onError: opts.onError } : {}),
     };
 
     const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
