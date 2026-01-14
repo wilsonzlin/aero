@@ -86,8 +86,8 @@ pub const MAX_SAMPLER_SLOTS: u32 = 16;
 /// spaces.
 pub const MAX_UAV_SLOTS: u32 = 8;
 
-/// Reserved bind group index for internal emulation buffers (expanded geometry, indirect args,
-/// counters, etc).
+/// Bind group index used for internal emulation helpers (vertex pulling, expanded geometry output,
+/// counters, indirect args, etc).
 ///
 /// WebGPU guarantees `maxBindGroups >= 4`, so AeroGPU's D3D11 executor reserves `@group(0..=2)` for
 /// VS/PS/CS resources and uses `@group(3)` for both:
