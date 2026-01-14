@@ -246,6 +246,29 @@ fn decode_sampler_dcl() {
 }
 
 #[test]
+fn decode_legacy_sampler_dcl_with_decl_token() {
+    // Some older toolchains encode sampler `dcl_*` declarations with an extra "decl token"
+    // operand (texture type in bits 27..31) instead of packing the type into opcode_token[16..20].
+    //
+    // dcl_cube s0  (legacy form)
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        31u32 | (3u32 << 24), // opcode=dcl, length=3 tokens (opcode + decl_token + dst)
+        3u32 << 27,           // decl_token: texture type = cube
+        dst_token(10, 0, 0xF),
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let dcl = &shader.instructions[0];
+    assert_eq!(dcl.opcode, Opcode::Dcl);
+    assert_eq!(
+        dcl.dcl.as_ref().unwrap().usage,
+        DclUsage::TextureType(TextureType::TextureCube)
+    );
+}
+
+#[test]
 fn decode_ps2_texld() {
     // ps_2_0 texld r0, t0, s0
     let tokens = vec![

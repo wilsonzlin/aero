@@ -314,6 +314,7 @@ pub(crate) fn varying_location(
         RegFile::Output => match semantic {
             Some(Semantic::Color(i)) => u32::from(*i),
             Some(Semantic::TexCoord(i)) => 4 + u32::from(*i),
+            None => 4 + index,
             _ => OTHER_VARYING_LOCATION_BASE + index,
         },
 

@@ -1220,109 +1220,101 @@ fn build_alpha_test_wgsl_variant(
     alpha_test_func: u32,
     alpha_test_ref: u8,
 ) -> Result<String, AerogpuD3d9Error> {
-    const FS_SIG_PREFIX: &str = "@fragment\nfn fs_main";
+    // The D3D9 shader translator's `fs_main` signature has evolved over time (struct names, empty
+    // input handling, etc). Keep alpha-test injection robust by pattern-matching the signature
+    // instead of hard-coding specific type names.
+    //
+    // Expected forms:
+    // - `@fragment\nfn fs_main(input: FsIn) -> FsOut {\n`
+    // - `@fragment\nfn fs_main() -> FsOut {\n`
+    // - fixed-function: `@fragment\nfn fs_main(input: FragmentIn) -> vec4<f32> {\n`
+    //
+    // We'll rewrite the original entry point into `fs_main_inner` (removing the `@fragment`
+    // attribute), then append a new `@fragment fn fs_main(...)` wrapper that performs alpha test.
+    const MARKER: &str = "@fragment\nfn fs_main";
 
-    // Historical note: the D3D9 WGSL generators have used a few different naming conventions for
-    // their fragment entrypoint types (`PsInput`/`PsOutput`, `FsIn`/`FsOut`, fixed-function
-    // `FragmentIn` with a bare `vec4<f32>` return type). Keep the alpha-test injection tolerant of
-    // these variations by parsing the function signature rather than string-matching exact type
-    // names.
-    let sig_start = base.find(FS_SIG_PREFIX).ok_or_else(|| {
-        AerogpuD3d9Error::ShaderTranslation(
+    let Some(sig_start) = base.find(MARKER) else {
+        return Err(AerogpuD3d9Error::ShaderTranslation(
+            "alpha-test WGSL injection failed: could not locate fs_main".into(),
+        ));
+    };
+    let sig_rest = &base[sig_start + MARKER.len()..];
+    let Some(open_brace_rel) = sig_rest.find("{\n") else {
+        return Err(AerogpuD3d9Error::ShaderTranslation(
             "alpha-test WGSL injection failed: unrecognized fs_main signature".into(),
-        )
-    })?;
+        ));
+    };
 
-    // Find the opening `{` for the entrypoint signature.
-    let brace_rel = base[sig_start..].find('{').ok_or_else(|| {
-        AerogpuD3d9Error::ShaderTranslation(
-            "alpha-test WGSL injection failed: malformed fs_main signature".into(),
-        )
-    })?;
-    let mut sig_end = sig_start + brace_rel + 1;
-    // Consume the trailing newline (all current generators emit it) so replacement is exact.
-    if base.as_bytes().get(sig_end) == Some(&b'\n') {
-        sig_end += 1;
-    }
+    let sig_len = MARKER.len() + open_brace_rel + 2; // include "{\n"
+    let old_sig = &base[sig_start..sig_start + sig_len];
+    let suffix = &old_sig[MARKER.len()..]; // "(...) -> ... {\n"
 
-    let old_sig = &base[sig_start..sig_end];
-    let original_fn_line = old_sig.strip_prefix("@fragment\n").ok_or_else(|| {
-        AerogpuD3d9Error::ShaderTranslation(
-            "alpha-test WGSL injection failed: malformed fs_main signature".into(),
-        )
-    })?;
-    let inner_fn_line = original_fn_line.replacen("fn fs_main", "fn fs_main_inner", 1);
+    let new_sig = format!("fn fs_main_inner{suffix}");
+    let wrapper_sig = format!("fn fs_main{suffix}");
 
-    let (call_expr, alpha_expr) = {
-        let open_paren = original_fn_line.find('(').ok_or_else(|| {
-            AerogpuD3d9Error::ShaderTranslation(
-                "alpha-test WGSL injection failed: malformed fs_main signature".into(),
-            )
-        })?;
-        let close_paren = original_fn_line[open_paren + 1..]
-            .find(')')
-            .map(|idx| open_paren + 1 + idx)
+    let call_expr = {
+        let params = suffix
+            .strip_prefix('(')
+            .and_then(|s| s.split_once(')'))
+            .map(|(params, _rest)| params)
             .ok_or_else(|| {
                 AerogpuD3d9Error::ShaderTranslation(
-                    "alpha-test WGSL injection failed: malformed fs_main signature".into(),
+                    "alpha-test WGSL injection failed: unrecognized fs_main parameters".into(),
                 )
             })?;
-        let params = &original_fn_line[open_paren + 1..close_paren];
-
-        let args: String = params
-            .split(',')
-            .filter_map(|p| {
-                let p = p.trim();
-                if p.is_empty() {
-                    return None;
-                }
-                let before_colon = p.split_once(':').map(|(a, _)| a).unwrap_or(p);
-                // Strip any parameter attributes (e.g. `@location(0)`).
+        let params = params.trim();
+        if params.is_empty() {
+            "fs_main_inner()".to_owned()
+        } else {
+            let mut names = Vec::new();
+            for part in params.split(',') {
+                let part = part.trim();
+                let Some((before_colon, _ty)) = part.split_once(':') else {
+                    continue;
+                };
                 let name = before_colon
                     .split_whitespace()
                     .last()
-                    .unwrap_or(before_colon)
+                    .unwrap_or("")
                     .trim();
-                Some(name)
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+                if !name.is_empty() {
+                    names.push(name.to_owned());
+                }
+            }
+            format!("fs_main_inner({})", names.join(", "))
+        }
+    };
 
-        let call_expr = if args.is_empty() {
-            "fs_main_inner()".to_owned()
-        } else {
-            format!("fs_main_inner({args})")
+    let alpha_expr = {
+        let Some((_before_arrow, after_arrow)) = suffix.split_once("->") else {
+            return Err(AerogpuD3d9Error::ShaderTranslation(
+                "alpha-test WGSL injection failed: unrecognized fs_main return type".into(),
+            ));
         };
-
-        let arrow = original_fn_line.find("->").ok_or_else(|| {
-            AerogpuD3d9Error::ShaderTranslation(
-                "alpha-test WGSL injection failed: malformed fs_main signature".into(),
-            )
-        })?;
-        let brace = original_fn_line.find('{').ok_or_else(|| {
-            AerogpuD3d9Error::ShaderTranslation(
-                "alpha-test WGSL injection failed: malformed fs_main signature".into(),
-            )
-        })?;
-        let return_ty = original_fn_line[arrow + 2..brace].trim();
-        let alpha_expr = if return_ty.contains("vec4") {
+        let return_ty = after_arrow
+            .split('{')
+            .next()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AerogpuD3d9Error::ShaderTranslation(
+                    "alpha-test WGSL injection failed: unrecognized fs_main return type".into(),
+                )
+            })?;
+        if return_ty.contains("vec4") {
             // Fixed-function shaders return a bare vec4.
             "out.a"
         } else {
             // SM2/SM3 shaders return a struct with `oC0`.
             "out.oC0.a"
-        };
-        (call_expr, alpha_expr)
+        }
     };
 
-    let mut out = base.replacen(old_sig, &inner_fn_line, 1);
+    let mut out = base.replacen(old_sig, &new_sig, 1);
     out.push_str("\n@fragment\n");
-    out.push_str(original_fn_line);
-    out.push_str(&format!("  let out = {};\n", call_expr));
-    out.push_str(&format!(
-        "  let a: f32 = clamp({}, 0.0, 1.0);\n",
-        alpha_expr
-    ));
+    out.push_str(&wrapper_sig);
+    out.push_str(&format!("  let out = {call_expr};\n"));
+    out.push_str(&format!("  let a: f32 = clamp({alpha_expr}, 0.0, 1.0);\n"));
     out.push_str(&format!(
         "  let alpha_ref: f32 = f32({}u) / 255.0;\n",
         alpha_test_ref
