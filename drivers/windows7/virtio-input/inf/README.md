@@ -22,12 +22,13 @@ Optional legacy filename alias / generic fallback:
 
 - `virtio-input.inf.disabled` is a legacy filename alias for workflows/tools that still reference `virtio-input.inf`
   instead of `aero_virtio_input.inf`.
-  - It also carries an **opt-in** revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for
-    environments that do not expose the Aero contract subsystem IDs (e.g. stock QEMU).
   - Rename it to `virtio-input.inf` to enable it.
 - The alias INF is checked in as `*.inf.disabled` to avoid accidentally shipping/installing **two** overlapping
-  keyboard/mouse INFs. If you enable the alias, do **not** ship it alongside `aero_virtio_input.inf`
-  (they overlap on `SUBSYS_0010`/`SUBSYS_0011`).
+  keyboard/mouse INFs. If you enable the alias, do **not** ship it alongside `aero_virtio_input.inf`.
+- The alias INF is allowed to differ in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide an opt-in
+  revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do not expose the Aero
+  contract subsystem IDs (e.g. stock QEMU). Outside of the models sections it is expected to stay in sync with
+  `aero_virtio_input.inf` (CI enforces this via `..\scripts\check-inf-alias.py`).
 
 ## Notes
 
@@ -36,7 +37,7 @@ Optional legacy filename alias / generic fallback:
 `..\scripts\verify-inf.ps1` performs a lightweight, regex-based validation of
 `aero_virtio_input.inf` to ensure it continues to match Aero's packaging/contract
 expectations (HID class, catalog filename, KMDF version, required contract v1 HWIDs,
-distinct keyboard vs mouse `DeviceDesc` strings, and MSI interrupt settings).
+distinct keyboard vs mouse `DeviceDesc` strings, no generic fallback binding, and MSI interrupt settings).
 
 The validator currently targets only the **keyboard/mouse** INF (`aero_virtio_input.inf`)
 and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]` and
@@ -45,16 +46,12 @@ and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]`
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
 
-It also expects the canonical keyboard/mouse INF to be **SUBSYS-gated** and explicitly forbids the
-revision-gated generic fallback HWID:
-
-- `PCI\VEN_1AF4&DEV_1052&REV_01`
-
-The generic fallback is available only via the opt-in legacy alias INF (`virtio-input.inf.disabled`,
-rename it to `virtio-input.inf` to enable it).
+It also expects the canonical keyboard/mouse INF to be **SUBSYS-gated** and explicitly forbids the revision-gated generic
+fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`). The generic fallback mapping is available only via the opt-in legacy alias
+INF (`virtio-input.inf.disabled`, rename it to `virtio-input.inf` to enable it).
 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
-devices bind via `aero_virtio_tablet.inf` when that INF is installed (that INF is more specific and will win over the generic fallback).
+devices bind via `aero_virtio_tablet.inf` when that INF is installed.
 
 Run it from any PowerShell prompt:
 
