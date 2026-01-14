@@ -7,6 +7,9 @@ set(VIOINPUT_TEST_CFLAGS "")
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     # Keep assertions enabled even in Release builds (CMake adds -DNDEBUG by default).
     set(VIOINPUT_TEST_CFLAGS -Wall -Wextra -Werror -UNDEBUG)
+elseif (MSVC)
+    # Keep assertions enabled even in Release builds (CMake adds /DNDEBUG by default).
+    set(VIOINPUT_TEST_CFLAGS /UNDEBUG)
 endif ()
 
 add_executable(hid_translate_test
