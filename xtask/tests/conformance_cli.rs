@@ -36,6 +36,8 @@ fn conformance_smoke_runs_small_corpus() {
             "16",
             "--report-path",
             report.to_str().unwrap(),
+            "--",
+            "instruction_conformance_host_reference",
         ])
         .assert()
         .success();
@@ -50,4 +52,3 @@ fn conformance_smoke_runs_small_corpus() {
         "report should include failures=0; got:\n{json}"
     );
 }
-
