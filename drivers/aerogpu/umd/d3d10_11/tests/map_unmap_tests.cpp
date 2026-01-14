@@ -7599,10 +7599,12 @@ bool TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange() {
     return false;
   }
   const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
-  if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+  const uint64_t expected_dirty_offset = static_cast<uint64_t>(box.top) * static_cast<uint64_t>(row_pitch);
+  const uint64_t expected_dirty_size = static_cast<uint64_t>(box.bottom - box.top) * static_cast<uint64_t>(row_pitch);
+  if (!Check(dirty_cmd->offset_bytes == expected_dirty_offset, "RESOURCE_DIRTY_RANGE offset_bytes matches box row range")) {
     return false;
   }
-  if (!Check(dirty_cmd->size_bytes == total_bytes, "RESOURCE_DIRTY_RANGE size_bytes == full texture bytes")) {
+  if (!Check(dirty_cmd->size_bytes == expected_dirty_size, "RESOURCE_DIRTY_RANGE size_bytes matches box row range")) {
     return false;
   }
 
@@ -7884,10 +7886,16 @@ bool TestGuestBackedUpdateSubresourceUPBcTextureBoxDirtyRange() {
       return false;
     }
     const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
-    if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+    const uint32_t block_top = box.top / 4u;
+    const uint32_t block_bottom = (box.bottom + 3u) / 4u;
+    const uint64_t expected_dirty_offset =
+        static_cast<uint64_t>(block_top) * static_cast<uint64_t>(row_pitch);
+    const uint64_t expected_dirty_size =
+        static_cast<uint64_t>(block_bottom - block_top) * static_cast<uint64_t>(row_pitch);
+    if (!Check(dirty_cmd->offset_bytes == expected_dirty_offset, "RESOURCE_DIRTY_RANGE offset_bytes matches box block-row range")) {
       return false;
     }
-    if (!Check(dirty_cmd->size_bytes == total_bytes, "RESOURCE_DIRTY_RANGE size_bytes == full texture bytes")) {
+    if (!Check(dirty_cmd->size_bytes == expected_dirty_size, "RESOURCE_DIRTY_RANGE size_bytes matches box block-row range")) {
       return false;
     }
 

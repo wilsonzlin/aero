@@ -11826,6 +11826,34 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       alloc_checkpoint.rollback();
       return;
     }
+
+    // For boxed updates, mark only the affected row span dirty. This avoids
+    // clobbering GPU-side writes in untouched rows when the host processes the
+    // RESOURCE_DIRTY_RANGE upload.
+    uint64_t dirty_offset = dst_sub_layout.offset_bytes;
+    uint64_t dirty_size = dst_sub_layout.size_bytes;
+    if (!full_subresource_update) {
+      const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_sub_layout.row_pitch_bytes);
+      const uint64_t row_start_bytes = static_cast<uint64_t>(block_top) * row_pitch_u64;
+      dirty_offset = dst_sub_layout.offset_bytes + row_start_bytes;
+      dirty_size = static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
+      if ((block_top != 0 && row_pitch_u64 != 0 && row_start_bytes / row_pitch_u64 != block_top) ||
+          dirty_offset < dst_sub_layout.offset_bytes ||
+          (row_pitch_u64 != 0 && dirty_size / row_pitch_u64 != copy_height_blocks)) {
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+          unlock_args.SubresourceIndex = 0;
+        }
+        __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+          unlock_args.SubResourceIndex = 0;
+        }
+        (void)unlock(&unlock_args);
+        alloc_checkpoint.rollback();
+        SetError(dev, E_INVALIDARG);
+        return;
+      }
+    }
     auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
     if (!dirty) {
       D3DDDICB_UNLOCK unlock_args = {};
@@ -11843,8 +11871,8 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
     dirty->resource_handle = res->handle;
     dirty->reserved0 = 0;
-    dirty->offset_bytes = dst_sub_layout.offset_bytes;
-    dirty->size_bytes = dst_sub_layout.size_bytes;
+    dirty->offset_bytes = dirty_offset;
+    dirty->size_bytes = dirty_size;
 
     const uint32_t wddm_pitch = dst_sub_layout.row_pitch_bytes;
     uint8_t* wddm_base =

@@ -9343,6 +9343,26 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       return;
     }
 
+    // Mark only the affected row span dirty. This avoids clobbering GPU-side
+    // writes in untouched rows when the host processes RESOURCE_DIRTY_RANGE.
+    const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_pitch);
+    const uint64_t row_start_bytes = static_cast<uint64_t>(block_top) * row_pitch_u64;
+    const uint64_t dirty_offset = dst_layout.offset_bytes + row_start_bytes;
+    const uint64_t dirty_size = static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
+    if ((block_top != 0 && row_pitch_u64 != 0 && row_start_bytes / row_pitch_u64 != block_top) ||
+        dirty_offset < dst_layout.offset_bytes ||
+        (row_pitch_u64 != 0 && dirty_size / row_pitch_u64 != copy_height_blocks)) {
+      restore_storage_from_allocation();
+      dev->cmd.rollback(cmd_checkpoint);
+      alloc_checkpoint.rollback();
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      InitUnlockForWrite(&unlock_args);
+      (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_args);
+      set_error(dev, E_INVALIDARG);
+      return;
+    }
+
     auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
     if (!dirty) {
       restore_storage_from_allocation();
@@ -9357,8 +9377,8 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     }
     dirty->resource_handle = res->handle;
     dirty->reserved0 = 0;
-    dirty->offset_bytes = dst_layout.offset_bytes;
-    dirty->size_bytes = dst_layout.size_bytes;
+    dirty->offset_bytes = dirty_offset;
+    dirty->size_bytes = dirty_size;
 
     // Commit the updated bytes into the guest allocation now that the dirty
     // range is recorded.
