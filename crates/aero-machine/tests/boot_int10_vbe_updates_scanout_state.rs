@@ -32,6 +32,119 @@ fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
     sector
 }
 
+fn build_int10_vbe_set_mode_and_display_start_boot_sector(x_off: u16, y_off: u16) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+
+    // mov bx, 0x4118 (mode 0x118 + LFB requested)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0x41]);
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // mov ax, 0x4F07 (VBE Set/Get Display Start)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x07, 0x4F]);
+    i += 3;
+
+    // xor bx, bx (BL=0 set)
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xDB]);
+    i += 2;
+
+    // mov cx, x_off
+    sector[i] = 0xB9;
+    sector[i + 1..i + 3].copy_from_slice(&x_off.to_le_bytes());
+    i += 3;
+
+    // mov dx, y_off
+    sector[i] = 0xBA;
+    sector[i + 1..i + 3].copy_from_slice(&y_off.to_le_bytes());
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+fn build_int10_vbe_set_mode_stride_bytes_and_display_start_boot_sector(
+    bytes_per_scan_line: u16,
+    x_off: u16,
+    y_off: u16,
+) -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+
+    // mov bx, 0x4118 (mode 0x118 + LFB requested)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0x41]);
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // mov ax, 0x4F06 (VBE Set/Get Logical Scan Line Length)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x06, 0x4F]);
+    i += 3;
+
+    // mov bx, 0x0002 (BL=2 set in bytes)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x02, 0x00]);
+    i += 3;
+
+    // mov cx, bytes_per_scan_line
+    sector[i] = 0xB9;
+    sector[i + 1..i + 3].copy_from_slice(&bytes_per_scan_line.to_le_bytes());
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // mov ax, 0x4F07 (VBE Set/Get Display Start)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x07, 0x4F]);
+    i += 3;
+
+    // xor bx, bx (BL=0 set)
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xDB]);
+    i += 2;
+
+    // mov cx, x_off
+    sector[i] = 0xB9;
+    sector[i + 1..i + 3].copy_from_slice(&x_off.to_le_bytes());
+    i += 3;
+
+    // mov dx, y_off
+    sector[i] = 0xBA;
+    sector[i + 1..i + 3].copy_from_slice(&y_off.to_le_bytes());
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn run_until_halt(m: &mut Machine) {
     for _ in 0..100 {
         match m.run_slice(10_000) {
@@ -113,4 +226,77 @@ fn boot_sector_int10_vbe_does_not_override_wddm_scanout_state() {
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap.generation, generation_before);
+}
+
+#[test]
+fn boot_sector_int10_vbe_display_start_updates_scanout_state_base() {
+    let boot = build_int10_vbe_set_mode_and_display_start_boot_sector(1, 0);
+
+    let scanout_state = Arc::new(ScanoutState::new());
+
+    let mut m = Machine::new(MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        // Keep the test output deterministic.
+        enable_serial: false,
+        enable_i8042: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    m.set_scanout_state(Some(scanout_state.clone()));
+
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+    assert_eq!(snap.base_paddr(), u64::from(SVGA_LFB_BASE) + 4);
+    assert_eq!(snap.width, 1024);
+    assert_eq!(snap.height, 768);
+    assert_eq!(snap.pitch_bytes, 1024 * 4);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+}
+
+#[test]
+fn boot_sector_int10_vbe_scanline_bytes_and_display_start_update_scanout_state() {
+    let bytes_per_scan_line = 4101u16;
+    let x_off = 1u16;
+    let y_off = 4u16;
+    let boot = build_int10_vbe_set_mode_stride_bytes_and_display_start_boot_sector(
+        bytes_per_scan_line,
+        x_off,
+        y_off,
+    );
+
+    let scanout_state = Arc::new(ScanoutState::new());
+
+    let mut m = Machine::new(MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_serial: false,
+        enable_i8042: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    m.set_scanout_state(Some(scanout_state.clone()));
+
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+
+    run_until_halt(&mut m);
+
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+    assert_eq!(
+        snap.base_paddr(),
+        u64::from(SVGA_LFB_BASE) + u64::from(y_off) * u64::from(bytes_per_scan_line) + 4
+    );
+    assert_eq!(snap.width, 1024);
+    assert_eq!(snap.height, 768);
+    assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 }

@@ -7671,6 +7671,16 @@ impl Machine {
         let cx_before = self.cpu.state.gpr[gpr::RCX] as u16;
         let dx_before = self.cpu.state.gpr[gpr::RDX] as u16;
         let vbe_mode_before = self.bios.video.vbe.current_mode;
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        let vbe_scanout_sig_before = vbe_mode_before.map(|mode| {
+            (
+                mode,
+                self.bios.video.vbe.lfb_base,
+                self.bios.video.vbe.bytes_per_scan_line,
+                self.bios.video.vbe.display_start_x,
+                self.bios.video.vbe.display_start_y,
+            )
+        });
 
         // Detect classic VGA mode sets (INT 10h AH=00h). The HLE BIOS updates BDA state and clears
         // framebuffer memory, but does not perform VGA port I/O itself. Program the emulated VGA
@@ -7926,42 +7936,63 @@ impl Machine {
         }
 
         // Publish legacy scanout transitions (text <-> VBE LFB) so external presentation layers
-        // can follow BIOS-driven mode sets.
+        // can follow BIOS-driven mode sets and panning/stride updates.
         //
         // If the scanout has already been claimed by the WDDM path, do not allow legacy INT 10h
         // calls to steal it back (sticky handoff semantics; see docs/16-aerogpu-vga-vesa-compat.md).
         #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         if vector == 0x10 {
-            let vbe_mode_after = self.bios.video.vbe.current_mode;
-            if vbe_mode_before != vbe_mode_after {
-                if let Some(scanout_state) = &self.scanout_state {
-                    if scanout_state.snapshot().source != SCANOUT_SOURCE_WDDM {
-                        match vbe_mode_after {
-                            None => {
-                                scanout_state.publish(ScanoutStateUpdate {
-                                    source: SCANOUT_SOURCE_LEGACY_TEXT,
-                                    base_paddr_lo: 0,
-                                    base_paddr_hi: 0,
-                                    width: 0,
-                                    height: 0,
-                                    pitch_bytes: 0,
-                                    format: SCANOUT_FORMAT_B8G8R8X8,
-                                });
-                            }
-                            Some(mode) => {
-                                if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
-                                    let base = u64::from(self.bios.video.vbe.lfb_base);
-                                    scanout_state.publish(ScanoutStateUpdate {
-                                        source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
-                                        base_paddr_lo: base as u32,
-                                        base_paddr_hi: (base >> 32) as u32,
-                                        width: u32::from(mode_info.width),
-                                        height: u32::from(mode_info.height),
-                                        pitch_bytes: u32::from(self.bios.video.vbe.bytes_per_scan_line),
-                                        format: SCANOUT_FORMAT_B8G8R8X8,
-                                    });
-                                }
-                            }
+            let vbe_scanout_sig_after = self.bios.video.vbe.current_mode.map(|mode| {
+                (
+                    mode,
+                    self.bios.video.vbe.lfb_base,
+                    self.bios.video.vbe.bytes_per_scan_line,
+                    self.bios.video.vbe.display_start_x,
+                    self.bios.video.vbe.display_start_y,
+                )
+            });
+
+            if vbe_scanout_sig_before != vbe_scanout_sig_after {
+                let Some(scanout_state) = &self.scanout_state else {
+                    return;
+                };
+                if scanout_state.snapshot().source == SCANOUT_SOURCE_WDDM {
+                    return;
+                }
+
+                match vbe_scanout_sig_after {
+                    None => {
+                        scanout_state.publish(ScanoutStateUpdate {
+                            source: SCANOUT_SOURCE_LEGACY_TEXT,
+                            base_paddr_lo: 0,
+                            base_paddr_hi: 0,
+                            width: 0,
+                            height: 0,
+                            pitch_bytes: 0,
+                            format: SCANOUT_FORMAT_B8G8R8X8,
+                        });
+                    }
+                    Some((mode, lfb_base, bytes_per_scan_line, start_x, start_y)) => {
+                        if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                            let pitch = u64::from(
+                                bytes_per_scan_line.max(mode_info.bytes_per_scan_line()),
+                            );
+                            let bytes_per_pixel = u64::from(mode_info.bytes_per_pixel()).max(1);
+                            let base = u64::from(lfb_base)
+                                .saturating_add(u64::from(start_y).saturating_mul(pitch))
+                                .saturating_add(
+                                    u64::from(start_x).saturating_mul(bytes_per_pixel),
+                                );
+
+                            scanout_state.publish(ScanoutStateUpdate {
+                                source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                                base_paddr_lo: base as u32,
+                                base_paddr_hi: (base >> 32) as u32,
+                                width: u32::from(mode_info.width),
+                                height: u32::from(mode_info.height),
+                                pitch_bytes: pitch as u32,
+                                format: SCANOUT_FORMAT_B8G8R8X8,
+                            });
                         }
                     }
                 }
