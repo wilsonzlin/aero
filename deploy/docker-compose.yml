@@ -328,6 +328,12 @@ services:
       - MAX_SIGNALING_MESSAGE_BYTES
       - MAX_SIGNALING_MESSAGES_PER_SECOND
 
+      # Optional relay engine hardening / NAT behavior.
+      - UDP_BINDING_IDLE_TIMEOUT
+      - UDP_INBOUND_FILTER_MODE
+      - UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT
+      - MAX_ALLOWED_REMOTES_PER_BINDING
+
       # Optional: L2 tunnel bridging (WebRTC DataChannel label `l2` <-> backend WS `/l2`).
       #
       # The `l2` DataChannel MUST be fully reliable and ordered:
