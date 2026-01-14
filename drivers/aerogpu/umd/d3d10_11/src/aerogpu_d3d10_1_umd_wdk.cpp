@@ -838,6 +838,43 @@ static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResou
       dev, res, write, [&](HRESULT hr) { set_error(dev, hr); });
 }
 
+// Best-effort allocation-list tracking used by optional "fast path" packets.
+//
+// Unlike `TrackWddmAllocForSubmitLocked`, this does not set the global
+// `wddm_submit_allocation_list_oom` poison flag or call SetError on OOM: callers
+// must skip emitting any packet that would reference `res` if this returns false.
+static bool TryTrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write) {
+  if (!dev || !res) {
+    return false;
+  }
+  if (dev->wddm_submit_allocation_list_oom) {
+    return false;
+  }
+  if (res->backing_alloc_id == 0 || res->wddm_allocation_handle == 0) {
+    return true;
+  }
+
+  const uint32_t handle = res->wddm_allocation_handle;
+  for (auto& entry : dev->wddm_submit_allocation_handles) {
+    if (entry.allocation_handle == handle) {
+      if (write) {
+        entry.write = 1;
+      }
+      return true;
+    }
+  }
+
+  aerogpu::d3d10_11::WddmSubmitAllocation entry{};
+  entry.allocation_handle = handle;
+  entry.write = write ? 1 : 0;
+  try {
+    dev->wddm_submit_allocation_handles.push_back(entry);
+  } catch (...) {
+    return false;
+  }
+  return true;
+}
+
 static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
@@ -1644,28 +1681,38 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
 
         const bool transfer_aligned = ((copy_bytes & 3ull) == 0);
         const bool same_buffer = (dst->handle == src->handle);
+        bool emitted_copy = false;
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && transfer_aligned && !same_buffer) {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
-          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
+          const auto cmd_checkpoint = dev->cmd.checkpoint();
+          const WddmAllocListCheckpoint alloc_checkpoint(dev);
 
-          auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
-          if (!cmd) {
-            return finish(E_OUTOFMEMORY);
+          if (TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true) &&
+              TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false)) {
+            auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+            if (cmd) {
+              cmd->dst_buffer = dst->handle;
+              cmd->src_buffer = src->handle;
+              cmd->dst_offset_bytes = 0;
+              cmd->src_offset_bytes = 0;
+              cmd->size_bytes = copy_bytes;
+              uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+              if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
+                copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+              }
+              cmd->flags = copy_flags;
+              cmd->reserved0 = 0;
+              TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
+              emitted_copy = true;
+            }
           }
-          cmd->dst_buffer = dst->handle;
-          cmd->src_buffer = src->handle;
-          cmd->dst_offset_bytes = 0;
-          cmd->src_offset_bytes = 0;
-          cmd->size_bytes = copy_bytes;
-          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-          if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
-            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+
+          if (!emitted_copy) {
+            dev->cmd.rollback(cmd_checkpoint);
+            alloc_checkpoint.rollback();
           }
-          cmd->flags = copy_flags;
-          cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
-        } else if (copy_bytes) {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+        }
+
+        if (!emitted_copy && copy_bytes) {
           emit_upload_resource_locked(dev, dst, 0, copy_bytes);
         }
       } else if (dst->kind == ResourceKind::Texture2D) {
@@ -1771,46 +1818,62 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
         }
 
         const bool same_texture = (dst->handle == src->handle);
+        bool emitted_copy = false;
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && !same_texture) {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
-          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
+          const auto cmd_checkpoint = dev->cmd.checkpoint();
+          const WddmAllocListCheckpoint alloc_checkpoint(dev);
 
-          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-          if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
-            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
-          }
-          for (uint32_t sub = 0; sub < subresource_count; ++sub) {
-            const Texture2DSubresourceLayout dst_sub = dst->tex2d_subresources[sub];
-            const Texture2DSubresourceLayout src_sub = src->tex2d_subresources[sub];
-
-            const uint32_t copy_w = std::min(dst_sub.width, src_sub.width);
-            const uint32_t copy_h = std::min(dst_sub.height, src_sub.height);
-            if (copy_w == 0 || copy_h == 0) {
-              continue;
+          if (TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true) &&
+              TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false)) {
+            uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+            if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
+              copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
             }
 
-            auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
-            if (!cmd) {
-              return finish(E_OUTOFMEMORY);
+            bool ok = true;
+            for (uint32_t sub = 0; sub < subresource_count; ++sub) {
+              const Texture2DSubresourceLayout dst_sub = dst->tex2d_subresources[sub];
+              const Texture2DSubresourceLayout src_sub = src->tex2d_subresources[sub];
+
+              const uint32_t copy_w = std::min(dst_sub.width, src_sub.width);
+              const uint32_t copy_h = std::min(dst_sub.height, src_sub.height);
+              if (copy_w == 0 || copy_h == 0) {
+                continue;
+              }
+
+              auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+              if (!cmd) {
+                ok = false;
+                break;
+              }
+              cmd->dst_texture = dst->handle;
+              cmd->src_texture = src->handle;
+              cmd->dst_mip_level = dst_sub.mip_level;
+              cmd->dst_array_layer = dst_sub.array_layer;
+              cmd->src_mip_level = src_sub.mip_level;
+              cmd->src_array_layer = src_sub.array_layer;
+              cmd->dst_x = 0;
+              cmd->dst_y = 0;
+              cmd->src_x = 0;
+              cmd->src_y = 0;
+              cmd->width = copy_w;
+              cmd->height = copy_h;
+              cmd->flags = copy_flags;
+              cmd->reserved0 = 0;
             }
-            cmd->dst_texture = dst->handle;
-            cmd->src_texture = src->handle;
-            cmd->dst_mip_level = dst_sub.mip_level;
-            cmd->dst_array_layer = dst_sub.array_layer;
-            cmd->src_mip_level = src_sub.mip_level;
-            cmd->src_array_layer = src_sub.array_layer;
-            cmd->dst_x = 0;
-            cmd->dst_y = 0;
-            cmd->src_x = 0;
-            cmd->src_y = 0;
-            cmd->width = copy_w;
-            cmd->height = copy_h;
-            cmd->flags = copy_flags;
-            cmd->reserved0 = 0;
+            if (ok) {
+              TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
+              emitted_copy = true;
+            }
           }
-          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
-        } else if (dst_total != 0) {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+
+          if (!emitted_copy) {
+            dev->cmd.rollback(cmd_checkpoint);
+            alloc_checkpoint.rollback();
+          }
+        }
+
+        if (!emitted_copy && dst_total != 0) {
           emit_upload_resource_locked(dev, dst, 0, dst_total);
         }
       }
@@ -1957,28 +2020,38 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
 
         const bool transfer_aligned = ((dst_off & 3ull) == 0) && ((src_left & 3ull) == 0) && ((bytes & 3ull) == 0);
         const bool same_buffer = (dst->handle == src->handle);
+        bool emitted_copy = false;
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && transfer_aligned && bytes && !same_buffer) {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
-          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
+          const auto cmd_checkpoint = dev->cmd.checkpoint();
+          const WddmAllocListCheckpoint alloc_checkpoint(dev);
 
-          auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
-          if (!cmd) {
-            return finish(E_OUTOFMEMORY);
+          if (TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true) &&
+              TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false)) {
+            auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+            if (cmd) {
+              cmd->dst_buffer = dst->handle;
+              cmd->src_buffer = src->handle;
+              cmd->dst_offset_bytes = dst_off;
+              cmd->src_offset_bytes = src_left;
+              cmd->size_bytes = bytes;
+              uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+              if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
+                copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+              }
+              cmd->flags = copy_flags;
+              cmd->reserved0 = 0;
+              TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
+              emitted_copy = true;
+            }
           }
-          cmd->dst_buffer = dst->handle;
-          cmd->src_buffer = src->handle;
-          cmd->dst_offset_bytes = dst_off;
-          cmd->src_offset_bytes = src_left;
-          cmd->size_bytes = bytes;
-          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-          if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
-            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+
+          if (!emitted_copy) {
+            dev->cmd.rollback(cmd_checkpoint);
+            alloc_checkpoint.rollback();
           }
-          cmd->flags = copy_flags;
-          cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
-        } else if (bytes) {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+        }
+
+        if (!emitted_copy && bytes) {
           emit_upload_resource_locked(dev, dst, dst_off, bytes);
         }
         return finish(S_OK);
@@ -2146,35 +2219,45 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
         }
 
         const bool same_texture = (dst->handle == src->handle);
+        bool emitted_copy = false;
         if (aerogpu::d3d10_11::SupportsTransfer(dev) && !same_texture) {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
-          TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
+          const auto cmd_checkpoint = dev->cmd.checkpoint();
+          const WddmAllocListCheckpoint alloc_checkpoint(dev);
 
-          auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
-          if (!cmd) {
-            return finish(E_OUTOFMEMORY);
+          if (TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true) &&
+              TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false)) {
+            auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+            if (cmd) {
+              cmd->dst_texture = dst->handle;
+              cmd->src_texture = src->handle;
+              cmd->dst_mip_level = dst_sub.mip_level;
+              cmd->dst_array_layer = dst_sub.array_layer;
+              cmd->src_mip_level = src_sub.mip_level;
+              cmd->src_array_layer = src_sub.array_layer;
+              cmd->dst_x = dst_x;
+              cmd->dst_y = dst_y;
+              cmd->src_x = src_left;
+              cmd->src_y = src_top;
+              cmd->width = copy_w;
+              cmd->height = copy_h;
+              uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+              if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
+                copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+              }
+              cmd->flags = copy_flags;
+              cmd->reserved0 = 0;
+              TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
+              emitted_copy = true;
+            }
           }
-          cmd->dst_texture = dst->handle;
-          cmd->src_texture = src->handle;
-          cmd->dst_mip_level = dst_sub.mip_level;
-          cmd->dst_array_layer = dst_sub.array_layer;
-          cmd->src_mip_level = src_sub.mip_level;
-          cmd->src_array_layer = src_sub.array_layer;
-          cmd->dst_x = dst_x;
-          cmd->dst_y = dst_y;
-          cmd->src_x = src_left;
-          cmd->src_y = src_top;
-          cmd->width = copy_w;
-          cmd->height = copy_h;
-          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-          if (dst->bind_flags == 0 && dst->backing_alloc_id != 0) {
-            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+
+          if (!emitted_copy) {
+            dev->cmd.rollback(cmd_checkpoint);
+            alloc_checkpoint.rollback();
           }
-          cmd->flags = copy_flags;
-          cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
-        } else {
-          TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+        }
+
+        if (!emitted_copy) {
           emit_upload_resource_locked(dev, dst, dst_sub.offset_bytes, dst_sub.size_bytes);
         }
         return finish(S_OK);

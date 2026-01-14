@@ -1880,6 +1880,43 @@ static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResou
       dev, res, write, [hDevice](HRESULT hr) { SetError(hDevice, hr); });
 }
 
+// Best-effort allocation-list tracking used by optional "fast path" packets.
+//
+// Unlike `TrackWddmAllocForSubmitLocked`, this does not set the global
+// `wddm_submit_allocation_list_oom` poison flag or call SetError on OOM: callers
+// must skip emitting any packet that would reference `res` if this returns false.
+static bool TryTrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write) {
+  if (!dev || !res) {
+    return false;
+  }
+  if (dev->wddm_submit_allocation_list_oom) {
+    return false;
+  }
+  if (res->backing_alloc_id == 0 || res->wddm_allocation_handle == 0) {
+    return true;
+  }
+
+  const uint32_t handle = res->wddm_allocation_handle;
+  for (auto& entry : dev->wddm_submit_allocation_handles) {
+    if (entry.allocation_handle == handle) {
+      if (write) {
+        entry.write = 1;
+      }
+      return true;
+    }
+  }
+
+  aerogpu::d3d10_11::WddmSubmitAllocation entry{};
+  entry.allocation_handle = handle;
+  entry.write = write ? 1 : 0;
+  try {
+    dev->wddm_submit_allocation_handles.push_back(entry);
+  } catch (...) {
+    return false;
+  }
+  return true;
+}
+
 static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
@@ -5156,8 +5193,10 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       return;
     }
 
-    TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
-    TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+    if (!TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false) ||
+        !TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true)) {
+      return;
+    }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     if (!cmd) {
       // COPY_BUFFER is an optimization; the CPU copy + upload has already run.
@@ -5397,8 +5436,10 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       return;
     }
 
-    TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
-    TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+    if (!TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false) ||
+        !TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true)) {
+      return;
+    }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
     if (!cmd) {
       // COPY_TEXTURE2D is an optimization; the CPU copy + upload has already run.
