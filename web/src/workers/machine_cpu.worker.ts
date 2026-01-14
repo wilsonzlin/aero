@@ -120,6 +120,10 @@ let wasmMachine: InstanceType<WasmApi["Machine"]> | null = null;
 let snapshotOpChain: Promise<void> = Promise.resolve();
 let vmSnapshotPaused = false;
 
+// Avoid per-event allocations when falling back to `inject_keyboard_bytes` (older WASM builds).
+// Preallocate small scancode buffers for len=1..4.
+const packedScancodeScratch = [new Uint8Array(0), new Uint8Array(1), new Uint8Array(2), new Uint8Array(3), new Uint8Array(4)];
+
 function post(msg: ProtocolMessage | ConfigAckMessage): void {
   ctx.postMessage(msg);
 }
@@ -264,17 +268,17 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const packed = words[off + 2] >>> 0;
       const len = Math.min(words[off + 3] >>> 0, 4);
       if (len === 0) continue;
-      try {
-        if (typeof machine.inject_key_scancode_bytes === "function") {
-          machine.inject_key_scancode_bytes(packed, len);
-        } else if (typeof machine.inject_keyboard_bytes === "function") {
-          const bytes = new Uint8Array(len);
-          for (let j = 0; j < len; j++) bytes[j] = (packed >>> (j * 8)) & 0xff;
-          machine.inject_keyboard_bytes(bytes);
+        try {
+          if (typeof machine.inject_key_scancode_bytes === "function") {
+            machine.inject_key_scancode_bytes(packed, len);
+          } else if (typeof machine.inject_keyboard_bytes === "function") {
+            const bytes = packedScancodeScratch[len]!;
+            for (let j = 0; j < len; j++) bytes[j] = (packed >>> (j * 8)) & 0xff;
+            machine.inject_keyboard_bytes(bytes);
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
-      }
     } else if (type === InputEventType.MouseMove) {
       const dx = words[off + 2] | 0;
       const dyPs2 = words[off + 3] | 0;
