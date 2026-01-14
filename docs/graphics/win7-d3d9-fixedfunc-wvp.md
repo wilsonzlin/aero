@@ -39,7 +39,7 @@ This covers the fixed-function FVFs:
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (VS WVP constants; optional fixed-function lighting)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants; optional fixed-function lighting)
 
-When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally uploads a reserved fixed-function lighting constant block (starting at `c244`) via `ensure_fixedfunc_lighting_constants_locked()` (normal transform, light 0, material, global ambient).
+When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally uploads a reserved fixed-function lighting constant block (`c244..c253`; `kFixedfuncLightingStartRegister = 244`) via `ensure_fixedfunc_lighting_constants_locked()` (normal transform, light 0, material, global ambient). Uploads are gated by `Device::fixedfunc_lighting_dirty` and occur at draw time when a lit fixed-function VS variant is active.
 
 ## Pre-transformed `D3DFVF_XYZRHW*` draws (no WVP)
 
