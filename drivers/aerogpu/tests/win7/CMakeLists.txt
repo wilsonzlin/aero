@@ -178,6 +178,11 @@ aerogpu_add_win7_test(dbgctl_selftest_sanity
 )
 target_link_libraries(dbgctl_selftest_sanity PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(alloc_table_readonly_sanity
+  alloc_table_readonly_sanity/main.cpp
+)
+target_link_libraries(alloc_table_readonly_sanity PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9_raster_status_sanity
   d3d9_raster_status_sanity/main.cpp
 )

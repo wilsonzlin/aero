@@ -618,6 +618,53 @@ static inline bool AerogpuDumpCreateAllocationTrace(const D3DKMT_FUNCS* f,
   return AerogpuEscapeWithTimeout(f, adapter, out_dump, sizeof(*out_dump), 2000, out_status);
 }
 
+static inline bool AerogpuReadGpa(const D3DKMT_FUNCS* f,
+                                  D3DKMT_HANDLE adapter,
+                                  unsigned long long gpa,
+                                  uint32_t size_bytes,
+                                  aerogpu_escape_read_gpa_inout* inout,
+                                  NTSTATUS* out_status) {
+  if (inout) {
+    ZeroMemory(inout, sizeof(*inout));
+  }
+  if (!inout) {
+    if (out_status) {
+      *out_status = kStatusInvalidParameter;
+    }
+    return false;
+  }
+
+  if (size_bytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+    size_bytes = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+  }
+
+  inout->hdr.version = AEROGPU_ESCAPE_VERSION;
+  inout->hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
+  inout->hdr.size = sizeof(*inout);
+  inout->hdr.reserved0 = 0;
+  inout->gpa = (uint64_t)gpa;
+  inout->size_bytes = (uint32_t)size_bytes;
+  inout->reserved0 = 0;
+  inout->status = 0;
+  inout->bytes_copied = 0;
+
+  if (!AerogpuEscapeWithTimeout(f, adapter, inout, sizeof(*inout), 2000, out_status)) {
+    return false;
+  }
+
+  // Escape call succeeded; check operation status from the packet.
+  // KMD reports STATUS_SUCCESS (0) or STATUS_PARTIAL_COPY (0x8000000D) when it copied
+  // fewer bytes than requested (e.g. range truncated).
+  const uint32_t op_status = (uint32_t)inout->status;
+  if (op_status != 0 && op_status != 0x8000000Du) {
+    if (out_status) {
+      *out_status = (NTSTATUS)op_status;
+    }
+    return false;
+  }
+  return true;
+}
+
 static inline bool AerogpuMapSharedHandleDebugToken(const D3DKMT_FUNCS* f,
                                                     D3DKMT_HANDLE adapter,
                                                     unsigned long long shared_handle,

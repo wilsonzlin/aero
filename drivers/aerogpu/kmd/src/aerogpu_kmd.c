@@ -1438,6 +1438,14 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
             continue;
         }
 
+        /*
+         * Win7/WDDM 1.1 exposes per-submit write access via DXGK_ALLOCATIONLIST::Flags.WriteOperation (bit 0).
+         * Propagate this into the host-visible alloc table so host executors can reject unintended
+         * guest-memory writeback to allocations that are only read by this submission.
+         */
+        const BOOLEAN writeOp = ((List[i].Flags.Value & 0x1u) != 0) ? TRUE : FALSE;
+        const uint32_t entryFlags = writeOp ? 0u : (uint32_t)AEROGPU_ALLOC_FLAG_READONLY;
+
         const uint32_t allocId = (uint32_t)alloc->AllocationId;
         if (allocId == 0) {
             AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has alloc_id=0", i);
@@ -1454,7 +1462,7 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
                 SeenSize[slot] = (uint64_t)alloc->SizeBytes;
 
                 TmpEntries[entryCount].alloc_id = allocId;
-                TmpEntries[entryCount].flags = 0;
+                TmpEntries[entryCount].flags = entryFlags;
                 TmpEntries[entryCount].gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
                 TmpEntries[entryCount].size_bytes = (uint64_t)alloc->SizeBytes;
                 TmpEntries[entryCount].reserved0 = 0;
@@ -1495,6 +1503,11 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
                     if (entryIndex < entryCount) {
                         TmpEntries[entryIndex].size_bytes = sizeBytes;
                     }
+                }
+
+                /* Merge per-submit access flags across duplicate alloc_id entries (aliases). */
+                if (writeOp && entryIndex < entryCount) {
+                    TmpEntries[entryIndex].flags &= ~(uint32_t)AEROGPU_ALLOC_FLAG_READONLY;
                 }
                 break;
             }
