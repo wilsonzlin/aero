@@ -225,7 +225,12 @@ async function main() {
             const w = typeof scanout.width === "number" ? scanout.width : "?";
             const h = typeof scanout.height === "number" ? scanout.height : "?";
             const pitch = typeof scanout.pitchBytes === "number" ? scanout.pitchBytes : "?";
-            const fmt = aerogpuFormatToString(typeof (scanout as any).format === "number" ? (scanout as any).format : Number.NaN);
+            // Newer workers include `format_str` directly so consumers don't have to reimplement
+            // the AerogpuFormat enum mapping.
+            const fmt =
+              typeof (scanout as any).format_str === "string"
+                ? (scanout as any).format_str
+                : aerogpuFormatToString(typeof (scanout as any).format === "number" ? (scanout as any).format : Number.NaN);
             const gen = typeof scanout.generation === "number" ? scanout.generation : "?";
             lines.push(`scanout=${src} gen=${gen} base=${base} ${w}x${h} pitch=${pitch} fmt=${fmt}`);
           }
