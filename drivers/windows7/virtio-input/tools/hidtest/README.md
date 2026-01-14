@@ -388,5 +388,12 @@ Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS):
 hidtest.exe --reset-counters
 ```
 
+Tip: combine with `--counters` / `--counters-json` to verify reset immediately:
+
+```bat
+hidtest.exe --reset-counters --counters
+hidtest.exe --reset-counters --counters-json
+```
+
 `--counters` / `--reset-counters` operate on the selected HID interface, so use `--keyboard` / `--mouse` if you want to
 inspect/reset the counters for a specific virtio-input device instance.
