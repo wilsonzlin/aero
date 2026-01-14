@@ -2397,6 +2397,12 @@ async fn download_object_bytes_with_retry(
         let result = s3.get_object().bucket(bucket).key(key).send().await;
         match result {
             Ok(output) => {
+                if let Some(encoding) = output.content_encoding() {
+                    let encoding = encoding.trim();
+                    if !encoding.eq_ignore_ascii_case("identity") {
+                        bail!("unexpected Content-Encoding for s3://{bucket}/{key}: {encoding}");
+                    }
+                }
                 if let Some(content_length) = output.content_length() {
                     let len_u64: u64 = content_length.try_into().map_err(|_| {
                         anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
@@ -2459,6 +2465,12 @@ async fn download_object_bytes_optional_with_retry(
         let result = s3.get_object().bucket(bucket).key(key).send().await;
         match result {
             Ok(output) => {
+                if let Some(encoding) = output.content_encoding() {
+                    let encoding = encoding.trim();
+                    if !encoding.eq_ignore_ascii_case("identity") {
+                        bail!("unexpected Content-Encoding for s3://{bucket}/{key}: {encoding}");
+                    }
+                }
                 if let Some(content_length) = output.content_length() {
                     let len_u64: u64 = content_length.try_into().map_err(|_| {
                         anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
