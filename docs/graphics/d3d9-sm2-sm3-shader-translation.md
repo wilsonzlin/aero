@@ -82,14 +82,16 @@ rather than `if (p0) { ... }` to satisfy naga uniformity validation.
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`
 
-### Task 439 — PS MISCTYPE builtins (`vPos`/`vFace` → `misc0`/`misc1`)
+### Task 439 — PS MISCTYPE (vPos/vFace) builtins
 
 **Status:** ✅ Done
 
-**What:** Track PS `misc` input usage and emit the corresponding WGSL builtins:
+**What:** Pixel shader `MISCTYPE` builtins:
 
-- `misc0` (`vPos`) → `@builtin(position)`
-- `misc1` (`vFace`) → `@builtin(front_facing)`
+- `misc0` (vPos) maps to WGSL `@builtin(position)` (in `FsIn.frag_pos`) and is exposed to the shader
+  body as `misc0: vec4<f32>`.
+- `misc1` (vFace) maps to WGSL `@builtin(front_facing)` and is exposed to the shader body as a
+  D3D-style `misc1: vec4<f32>` with `face` = `+1` or `-1`.
 
 **Where:**
 - `crates/aero-d3d9/src/sm3/wgsl.rs` (misc input tracking + builtin emission)
@@ -99,18 +101,19 @@ rather than `if (p0) { ... }` to satisfy naga uniformity validation.
   - `wgsl_ps3_vpos_misctype_builtin_compiles`
   - `wgsl_ps3_vface_misctype_builtin_compiles`
 
-### Task 468 — PS depth output (`oDepth`/`DepthOut` → WGSL `@builtin(frag_depth)`)
+### Task 468 — PS depth output (oDepth)
 
 **Status:** ✅ Done
 
-**What:** Support pixel shader depth output by mapping SM3 `oDepth`/`DepthOut` writes to WGSL
-`@builtin(frag_depth)`.
+**What:** Support pixel shader depth output by lowering D3D9 `oDepth` / `RegFile::DepthOut` to WGSL
+`@builtin(frag_depth)` and assigning from `oDepth.x`.
 
 **Where:**
 - `crates/aero-d3d9/src/sm3/wgsl.rs`
 
-**Test:**
+**Tests:**
 - `crates/aero-d3d9/tests/sm3_wgsl_depth_out.rs`
+  - `wgsl_ps30_writes_odepth_emits_frag_depth`
 
 ### Task 124 — D3D9 half-pixel center convention (`half_pixel_center`)
 
@@ -131,5 +134,5 @@ position by `(-1/viewport_width, +1/viewport_height) * w` in translated vertex s
 
 - Sampler state mapping (filtering, address modes, LOD bias, etc.) is handled in the runtime pipeline setup,
   not in the SM2/SM3 WGSL generator. Comparison samplers / depth-compare sampling are not modeled here yet.
-- The SM3 **software reference interpreter** (`crates/aero-d3d9/src/sm3/software.rs`) currently only models
-  `Texture2D` and `TextureCube` sampling; it does not emulate 1D/3D sampling yet.
+- The SM3 **software reference interpreter** (`crates/aero-d3d9/src/sm3/software.rs`) currently models
+  `Texture2D` + `TextureCube` sampling; it does not emulate 1D/3D sampling yet.
