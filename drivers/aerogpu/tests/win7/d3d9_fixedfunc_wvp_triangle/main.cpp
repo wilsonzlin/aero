@@ -396,12 +396,11 @@ static int RunD3D9FixedfuncWvpTriangle(int argc, char** argv) {
   }
   (void)stats;
 
-  reporter.Pass("OK");
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
   int rc = RunD3D9FixedfuncWvpTriangle(argc, argv);
-  aerogpu_test::FlushStdoutStderr();
+  aerogpu_test::FlushStdout();
   return rc;
 }
