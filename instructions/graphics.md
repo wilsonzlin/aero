@@ -26,6 +26,7 @@ Key docs for that bring-up:
 - [`docs/abi/aerogpu-pci-identity.md`](../docs/abi/aerogpu-pci-identity.md) — canonical AeroGPU PCI IDs + current `aero_machine::Machine` status
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../docs/16-aerogpu-vga-vesa-compat.md) — required VGA/VBE compatibility + scanout handoff model
 - [`docs/graphics/win7-vblank-present-requirements.md`](../docs/graphics/win7-vblank-present-requirements.md) — Win7 vblank/present timing contract (DWM/Aero stability)
+- [`docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md`](../docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md) — mapping from legacy “scratchpad task IDs” (SM3/DXBC/shared-surface) to in-tree implementations/tests (avoid duplicate work)
 
 Quick reality check (as of this repo revision):
 
@@ -92,6 +93,7 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 **Must read:**
 
 - [`docs/graphics/status.md`](../docs/graphics/status.md) — Canonical “what’s implemented vs missing” graphics status page
+- [`docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md`](../docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md) — scratchpad task ID → code/test mapping (SM3/DXBC/shared-surface); use this to avoid duplicating already-implemented work
 - [`docs/04-graphics-subsystem.md`](../docs/04-graphics-subsystem.md) — Graphics architecture overview
 - [`docs/16-d3d9ex-dwm-compatibility.md`](../docs/16-d3d9ex-dwm-compatibility.md) — D3D9Ex for DWM/Aero
 - [`docs/16-d3d10-11-translation.md`](../docs/16-d3d10-11-translation.md) — D3D10/11 details
