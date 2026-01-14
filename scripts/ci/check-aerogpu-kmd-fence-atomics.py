@@ -8,8 +8,11 @@ Why:
   - Fence bookkeeping fields (LastSubmittedFence/LastCompletedFence/etc) are
     accessed across multiple contexts (submit thread, ISR/DPC, dbgctl escapes).
 
-This script scans AeroGPU Win7 KMD source files under `drivers/aerogpu/kmd/src/`
-and enforces that
+This script:
+  - validates fence-field alignment invariants in
+    `drivers/aerogpu/kmd/include/aerogpu_kmd.h`, and
+  - scans AeroGPU Win7 KMD source files under `drivers/aerogpu/kmd/src/`
+    and enforces that
 member accesses to the fence fields are never performed as plain loads/stores.
 In practice this means every occurrence must take the address of the field
 (`&Adapter->LastCompletedFence`, etc), so the value is read/written via an
@@ -454,19 +457,28 @@ def _check_header_invariants() -> list[str]:
     text = HDR.read_text(encoding="utf-8", errors="replace")
 
     for field in sorted(FENCE_FIELDS):
-        decl_re = re.compile(
-            rf"DECLSPEC_ALIGN\s*\(\s*8\s*\)\s*(?:volatile\s+)?ULONGLONG\s+{re.escape(field)}\s*;",
-            re.MULTILINE,
-        )
+        decl_re = re.compile(rf"DECLSPEC_ALIGN\s*\(\s*8\s*\)[^;]*\bULONGLONG\b[^;]*\b{re.escape(field)}\b\s*;",
+                             re.MULTILINE)
         if not decl_re.search(text):
             errors.append(f"{field}: missing `DECLSPEC_ALIGN(8) (volatile) ULONGLONG {field};` declaration in aerogpu_kmd.h")
 
-        c_assert_re = re.compile(
-            rf"C_ASSERT\s*\(\s*\(\s*FIELD_OFFSET\s*\(\s*AEROGPU_ADAPTER\s*,\s*{re.escape(field)}\s*\)\s*&\s*7u\s*\)\s*==\s*0\s*\)\s*;",
-            re.MULTILINE,
-        )
-        if not c_assert_re.search(text):
-            errors.append(f"{field}: missing FIELD_OFFSET 8-byte alignment C_ASSERT in aerogpu_kmd.h")
+        field_offset_re = rf"FIELD_OFFSET\s*\(\s*AEROGPU_ADAPTER\s*,\s*{re.escape(field)}\s*\)"
+        c_assert_re = re.compile(rf"C_ASSERT\s*\(\s*[^;]*{field_offset_re}[^;]*\)\s*;", re.MULTILINE)
+        c_asserts = list(c_assert_re.finditer(text))
+        if not c_asserts:
+            errors.append(f"{field}: missing FIELD_OFFSET alignment C_ASSERT in aerogpu_kmd.h")
+            continue
+
+        # Be tolerant of suffix variations (7, 7u, 0x7U, 7ULL, etc) as well as
+        # alternate formulations (`% 8`).
+        has_alignment_check = False
+        for m in c_asserts:
+            stmt = m.group(0)
+            if re.search(r"&\s*\(?\s*(?:0x)?7[uUlL]*\s*\)?", stmt) or re.search(r"%\s*\(?\s*8[uUlL]*\s*\)?", stmt):
+                has_alignment_check = True
+                break
+        if not has_alignment_check:
+            errors.append(f"{field}: FIELD_OFFSET C_ASSERT does not appear to enforce 8-byte alignment (expected '& 7' or '% 8')")
 
     return errors
 
