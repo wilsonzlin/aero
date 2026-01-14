@@ -27,12 +27,6 @@ function alignUpBigInt(value: bigint, alignment: bigint): bigint {
   return ((value + alignment - 1n) / alignment) * alignment;
 }
 
-function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
-  // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, but `File`/`Blob` inputs
-  // are typed to accept only `ArrayBuffer`-backed views. Ensure the backing store is transferable.
-  return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
-}
-
 function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: number }): Uint8Array<ArrayBuffer> {
   const { diskSizeBytes, blockSizeBytes } = options;
   const blockSizeBig = BigInt(blockSizeBytes);

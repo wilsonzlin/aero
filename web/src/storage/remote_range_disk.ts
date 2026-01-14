@@ -27,6 +27,43 @@ const MAX_REMOTE_INFLIGHT_BYTES = 512 * 1024 * 1024; // 512 MiB
 const MAX_REMOTE_SHA256_MANIFEST_ENTRIES = 1_000_000;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nullProto<T extends object>(): T {
+  return Object.create(null) as T;
+}
+
+function nullProtoCopy<T extends object>(value: unknown): T {
+  if (!isRecord(value)) return nullProto<T>();
+  // Copy only own enumerable properties into a null-prototype object so callers never observe
+  // inherited fields (prototype pollution).
+  return Object.assign(nullProto<T>(), value as object);
+}
+
+function requireRemoteCacheKeyParts(raw: unknown): RemoteCacheKeyParts {
+  if (!isRecord(raw)) {
+    throw new Error("cacheKeyParts must be an object");
+  }
+  const rec = raw as Record<string, unknown>;
+  const imageId = hasOwn(rec, "imageId") ? rec.imageId : undefined;
+  const version = hasOwn(rec, "version") ? rec.version : undefined;
+  const deliveryType = hasOwn(rec, "deliveryType") ? rec.deliveryType : undefined;
+  if (typeof imageId !== "string" || !imageId.trim()) throw new Error("cacheKeyParts.imageId must not be empty");
+  if (typeof version !== "string" || !version.trim()) throw new Error("cacheKeyParts.version must not be empty");
+  if (typeof deliveryType !== "string" || !deliveryType.trim()) throw new Error("cacheKeyParts.deliveryType must not be empty");
+  const out = Object.create(null) as RemoteCacheKeyParts;
+  out.imageId = imageId;
+  out.version = version;
+  out.deliveryType = deliveryType;
+  return out;
+}
+
 /**
  * Errors from the metadata store / sparse cache backend are wrapped so that callers can fall back
  * to an ephemeral in-memory cache when OPFS is unavailable (e.g. Node, older browsers, or
@@ -822,10 +859,16 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   static async open(url: string, options: RemoteRangeDiskOptions): Promise<RemoteRangeDisk> {
-    const sourceId = options.cacheKeyParts.imageId;
-    const credentials = options.credentials ?? "same-origin";
+    const safeOptions = nullProtoCopy<RemoteRangeDiskOptions>(options);
+    safeOptions.cacheKeyParts = requireRemoteCacheKeyParts(safeOptions.cacheKeyParts);
+    const sourceId = safeOptions.cacheKeyParts.imageId;
+    const credentialsRaw = safeOptions.credentials;
+    const credentials = credentialsRaw === undefined ? "same-origin" : credentialsRaw;
+    if (credentials !== "same-origin" && credentials !== "include" && credentials !== "omit") {
+      throw new Error(`invalid credentials=${String(credentialsRaw)}`);
+    }
     const lease = staticDiskLease(url, credentials);
-    return await RemoteRangeDisk.openWithLease({ sourceId, lease }, options);
+    return await RemoteRangeDisk.openWithLease({ sourceId, lease }, safeOptions);
   }
 
   static async openWithLease(
@@ -838,12 +881,16 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     if (!params.lease.url) throw new Error("lease.url must not be empty");
 
-    const chunkSize = options.chunkSize ?? RANGE_STREAM_CHUNK_SIZE;
-    const maxConcurrentFetches = options.maxConcurrentFetches ?? 4;
-    const maxRetries = options.maxRetries ?? 4;
-    const readAheadChunks = options.readAheadChunks ?? 2;
-    const retryBaseDelayMs = options.retryBaseDelayMs ?? 100;
-    const leaseRefreshMarginMs = options.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS;
+    const safeOptions = nullProtoCopy<RemoteRangeDiskOptions>(options);
+    const cacheKeyParts = requireRemoteCacheKeyParts(safeOptions.cacheKeyParts);
+    safeOptions.cacheKeyParts = cacheKeyParts;
+
+    const chunkSize = safeOptions.chunkSize ?? RANGE_STREAM_CHUNK_SIZE;
+    const maxConcurrentFetches = safeOptions.maxConcurrentFetches ?? 4;
+    const maxRetries = safeOptions.maxRetries ?? 4;
+    const readAheadChunks = safeOptions.readAheadChunks ?? 2;
+    const retryBaseDelayMs = safeOptions.retryBaseDelayMs ?? 100;
+    const leaseRefreshMarginMs = safeOptions.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS;
 
     assertValidChunkSize(chunkSize);
     if (!Number.isInteger(maxConcurrentFetches) || maxConcurrentFetches <= 0) {
@@ -886,7 +933,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       throw new Error(`inflight bytes too large: max=${MAX_REMOTE_INFLIGHT_BYTES} got=${inflightBytes.toString()}`);
     }
 
-    const fetchFn = options.fetchFn ?? fetch;
+    const fetchFn = safeOptions.fetchFn ?? fetch;
     const resolvedOpts: ResolvedRemoteRangeDiskOptions = {
       chunkSize,
       maxConcurrentFetches,
@@ -896,10 +943,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       fetchFn,
     };
 
-    const cacheId = await RemoteCacheManager.deriveCacheKey(options.cacheKeyParts);
+    const cacheId = await RemoteCacheManager.deriveCacheKey(cacheKeyParts);
 
-    const usedDefaultMetadataStore = options.metadataStore === undefined;
-    const usedDefaultSparseCacheFactory = options.sparseCacheFactory === undefined;
+    const usedDefaultMetadataStore = safeOptions.metadataStore === undefined;
+    const usedDefaultSparseCacheFactory = safeOptions.sparseCacheFactory === undefined;
 
     const makeDisk = (metadataStore: RemoteRangeDiskMetadataStore, sparseCacheFactory: RemoteRangeDiskSparseCacheFactory) => {
       const disk = new RemoteRangeDisk(
@@ -907,11 +954,11 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         params.lease,
         resolvedOpts,
         leaseRefreshMarginMs,
-        options.sha256Manifest,
+        safeOptions.sha256Manifest,
         metadataStore,
         sparseCacheFactory,
         new Semaphore(maxConcurrentFetches),
-        options.cacheKeyParts,
+        cacheKeyParts,
       );
       disk.cacheId = cacheId;
       return disk;
@@ -936,8 +983,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
     try {
       return await openOnce(
-        options.metadataStore ?? new OpfsRemoteRangeDiskMetadataStore(),
-        options.sparseCacheFactory ?? new OpfsRemoteRangeDiskSparseCacheFactory(),
+        safeOptions.metadataStore ?? new OpfsRemoteRangeDiskMetadataStore(),
+        safeOptions.sparseCacheFactory ?? new OpfsRemoteRangeDiskSparseCacheFactory(),
       );
     } catch (err) {
       // Only fall back when the caller opted into the defaults (OPFS-backed cache) and the

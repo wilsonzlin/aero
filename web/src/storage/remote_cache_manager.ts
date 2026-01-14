@@ -153,6 +153,30 @@ function hasOwn(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireRemoteCacheKeyParts(raw: unknown): RemoteCacheKeyParts {
+  // Treat key parts as untrusted (can come from snapshots, persisted state, or postMessage).
+  // Ignore inherited fields (prototype pollution) and require well-typed own properties.
+  if (!isRecord(raw)) {
+    throw new Error("cache key parts must be an object");
+  }
+  const rec = raw as Record<string, unknown>;
+  const imageId = hasOwn(rec, "imageId") ? rec.imageId : undefined;
+  const version = hasOwn(rec, "version") ? rec.version : undefined;
+  const deliveryType = hasOwn(rec, "deliveryType") ? rec.deliveryType : undefined;
+  if (typeof imageId !== "string" || !imageId) throw new Error("imageId must not be empty");
+  if (typeof version !== "string" || !version) throw new Error("version must not be empty");
+  if (typeof deliveryType !== "string" || !deliveryType) throw new Error("deliveryType must not be empty");
+  const out = Object.create(null) as RemoteCacheKeyParts;
+  out.imageId = imageId;
+  out.version = version;
+  out.deliveryType = deliveryType;
+  return out;
+}
+
 function isNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const name = (err as { name?: unknown }).name;
@@ -333,16 +357,14 @@ export class RemoteCacheManager {
   }
 
   static async deriveCacheKey(parts: RemoteCacheKeyParts): Promise<string> {
-    if (!parts.imageId) throw new Error("imageId must not be empty");
-    if (!parts.version) throw new Error("version must not be empty");
-    if (!parts.deliveryType) throw new Error("deliveryType must not be empty");
+    const safeParts = requireRemoteCacheKeyParts(parts);
 
     // Version the key format so we can change it later without clobbering old caches.
     const material = JSON.stringify({
       keyVersion: 1,
-      imageId: parts.imageId,
-      version: parts.version,
-      deliveryType: parts.deliveryType,
+      imageId: safeParts.imageId,
+      version: safeParts.version,
+      deliveryType: safeParts.deliveryType,
     });
     const hex = await sha256Hex(new TextEncoder().encode(material));
     return `rc1_${hex}`;
@@ -439,7 +461,8 @@ export class RemoteCacheManager {
     parts: RemoteCacheKeyParts,
     opts: { chunkSizeBytes: number; validators: RemoteCacheValidators },
   ): Promise<{ cacheKey: string; dir: RemoteCacheDirectoryHandle; paths: RemoteCachePaths; meta: RemoteCacheMetaV1; invalidated: boolean }> {
-    const cacheKey = await RemoteCacheManager.deriveCacheKey(parts);
+    const safeParts = requireRemoteCacheKeyParts(parts);
+    const cacheKey = await RemoteCacheManager.deriveCacheKey(safeParts);
     const now = this.now();
     const paths = this.getCachePaths(cacheKey);
 
@@ -464,9 +487,9 @@ export class RemoteCacheManager {
       await this.clearCache(cacheKey);
       const next = Object.create(null) as RemoteCacheMetaV1;
       next.version = META_VERSION;
-      next.imageId = parts.imageId;
-      next.imageVersion = parts.version;
-      next.deliveryType = parts.deliveryType;
+      next.imageId = safeParts.imageId;
+      next.imageVersion = safeParts.version;
+      next.deliveryType = safeParts.deliveryType;
       next.validators = expectedValidators;
       next.chunkSizeBytes = opts.chunkSizeBytes;
       next.createdAtMs = now;

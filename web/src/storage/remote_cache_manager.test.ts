@@ -153,6 +153,34 @@ describe("RemoteCacheManager", () => {
     expect(a).not.toBe(d);
   });
 
+  it("does not accept inherited key parts (prototype pollution)", async () => {
+    const imageIdExisting = Object.getOwnPropertyDescriptor(Object.prototype, "imageId");
+    const versionExisting = Object.getOwnPropertyDescriptor(Object.prototype, "version");
+    const deliveryExisting = Object.getOwnPropertyDescriptor(Object.prototype, "deliveryType");
+    if (
+      (imageIdExisting && imageIdExisting.configurable === false) ||
+      (versionExisting && versionExisting.configurable === false) ||
+      (deliveryExisting && deliveryExisting.configurable === false)
+    ) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "imageId", { value: "img", configurable: true, writable: true });
+      Object.defineProperty(Object.prototype, "version", { value: "v1", configurable: true, writable: true });
+      Object.defineProperty(Object.prototype, "deliveryType", { value: remoteRangeDeliveryType(1024), configurable: true, writable: true });
+      await expect(RemoteCacheManager.deriveCacheKey({} as any)).rejects.toThrow(/imageId/i);
+    } finally {
+      if (imageIdExisting) Object.defineProperty(Object.prototype, "imageId", imageIdExisting);
+      else delete (Object.prototype as any).imageId;
+      if (versionExisting) Object.defineProperty(Object.prototype, "version", versionExisting);
+      else delete (Object.prototype as any).version;
+      if (deliveryExisting) Object.defineProperty(Object.prototype, "deliveryType", deliveryExisting);
+      else delete (Object.prototype as any).deliveryType;
+    }
+  });
+
   it("roundtrips metadata and reports cache status", async () => {
     const root = new MemDir();
     const mgr = new RemoteCacheManager(root, { now: () => 1234 });
