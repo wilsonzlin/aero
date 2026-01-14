@@ -2279,9 +2279,10 @@ impl ResourceUsage {
             ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
             ShaderStage::Pixel => wgpu::ShaderStages::FRAGMENT,
             ShaderStage::Compute => wgpu::ShaderStages::COMPUTE,
-            // Geometry shaders are executed via a compute emulation path, but still use their own
-            // stage-scoped bind group (`@group(3)`) so they don't collide with true compute shader
-            // resources (`@group(2)`).
+            // GS/HS/DS are executed via compute emulation paths, but still use their own stage-scoped
+            // bind group (`@group(3)`) so they don't collide with true compute shader resources
+            // (`@group(2)`). Since the pipeline is compute, their resources must be visible to
+            // compute.
             ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
                 wgpu::ShaderStages::COMPUTE
             }

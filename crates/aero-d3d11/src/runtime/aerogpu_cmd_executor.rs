@@ -15403,6 +15403,281 @@ fn cs_main() {
     }
 
     #[test]
+    fn gs_emulation_compute_pass_builds_vs_and_gs_bind_groups() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            if !exec.caps.supports_compute {
+                skip_or_panic(module_path!(), "backend does not support compute");
+                return;
+            }
+
+            // Register a GS-stage constant buffer, texture, and sampler. The GS emulation compute
+            // shader should see VS resources at group(0) and GS resources at group(3).
+            const GS_CB: u32 = 100;
+            const GS_TEX: u32 = 101;
+            const GS_SAMPLER: u32 = 102;
+
+            let cb_size = 64u64;
+            let cb = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aerogpu_cmd test gs cb"),
+                size: cb_size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            exec.resources.buffers.insert(
+                GS_CB,
+                BufferResource {
+                    buffer: cb,
+                    size: cb_size,
+                    gpu_size: cb_size,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    backing: None,
+                    dirty: None,
+                },
+            );
+
+            let tex = exec.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("aerogpu_cmd test gs tex"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            exec.resources.textures.insert(
+                GS_TEX,
+                Texture2dResource {
+                    texture: tex,
+                    view,
+                    desc: Texture2dDesc {
+                        width: 1,
+                        height: 1,
+                        mip_level_count: 1,
+                        array_layers: 1,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                    },
+                    format_u32: AEROGPU_FORMAT_R8G8B8A8_UNORM,
+                    backing: None,
+                    row_pitch_bytes: 4,
+                    dirty: false,
+                    guest_backing_is_current: true,
+                    host_shadow: None,
+                    host_shadow_valid: Vec::new(),
+                },
+            );
+
+            let sampler = exec.sampler_cache.get_or_create(
+                &exec.device,
+                &wgpu::SamplerDescriptor {
+                    label: Some("aerogpu_cmd test gs sampler"),
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::FilterMode::Linear,
+                    ..Default::default()
+                },
+            );
+            exec.resources.samplers.insert(GS_SAMPLER, sampler);
+
+            exec.bindings.stage_mut(ShaderStage::Geometry).set_constant_buffer(
+                0,
+                Some(BoundConstantBuffer {
+                    buffer: GS_CB,
+                    offset: 0,
+                    size: None,
+                }),
+            );
+            exec.bindings
+                .stage_mut(ShaderStage::Geometry)
+                .set_texture(0, Some(GS_TEX));
+            exec.bindings.stage_mut(ShaderStage::Geometry).set_sampler(
+                0,
+                Some(BoundSampler {
+                    sampler: GS_SAMPLER,
+                }),
+            );
+
+            // Compute shader layout: group(0)=VS, group(3)=GS.
+            let bindings = vec![
+                crate::Binding {
+                    group: 0,
+                    binding: crate::binding_model::BINDING_BASE_CBUFFER,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ConstantBuffer {
+                        slot: 0,
+                        reg_count: 4,
+                    },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_CBUFFER,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ConstantBuffer {
+                        slot: 0,
+                        reg_count: 4,
+                    },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_TEXTURE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::Texture2D { slot: 0 },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_SAMPLER,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::Sampler { slot: 0 },
+                },
+            ];
+
+            let info = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(bindings.as_slice())],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )
+            .expect("should build pipeline bindings info for groups 0..3");
+            assert_eq!(
+                info.group_layouts.len(),
+                4,
+                "expected empty group layouts for groups 1 and 2"
+            );
+
+            let layout_refs: Vec<&wgpu::BindGroupLayout> = info
+                .group_layouts
+                .iter()
+                .map(|l| l.layout.as_ref())
+                .collect();
+            let pipeline_layout = exec
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aerogpu_cmd test gs emulation pipeline layout"),
+                    bind_group_layouts: &layout_refs,
+                    push_constant_ranges: &[],
+                });
+
+            let provider_vs = CmdExecutorBindGroupProvider {
+                resources: &exec.resources,
+                legacy_constants: &exec.legacy_constants,
+                cbuffer_scratch: &exec.cbuffer_scratch,
+                dummy_uniform: &exec.dummy_uniform,
+                dummy_storage: &exec.dummy_storage,
+                dummy_texture_view: &exec.dummy_texture_view,
+                default_sampler: &exec.default_sampler,
+                stage: ShaderStage::Vertex,
+                stage_state: exec.bindings.stage(ShaderStage::Vertex),
+            };
+            let bg0 = reflection_bindings::build_bind_group(
+                &exec.device,
+                &mut exec.bind_group_cache,
+                &info.group_layouts[0],
+                &info.group_bindings[0],
+                &provider_vs,
+            )
+            .expect("VS bind group should build");
+
+            let entries: [BindGroupCacheEntry<'_>; 0] = [];
+            let bg1 = exec
+                .bind_group_cache
+                .get_or_create(&exec.device, &info.group_layouts[1], &entries);
+            let bg2 = exec
+                .bind_group_cache
+                .get_or_create(&exec.device, &info.group_layouts[2], &entries);
+
+            let provider_gs = CmdExecutorBindGroupProvider {
+                resources: &exec.resources,
+                legacy_constants: &exec.legacy_constants,
+                cbuffer_scratch: &exec.cbuffer_scratch,
+                dummy_uniform: &exec.dummy_uniform,
+                dummy_storage: &exec.dummy_storage,
+                dummy_texture_view: &exec.dummy_texture_view,
+                default_sampler: &exec.default_sampler,
+                stage: ShaderStage::Geometry,
+                stage_state: exec.bindings.stage(ShaderStage::Geometry),
+            };
+            let bg3 = reflection_bindings::build_bind_group(
+                &exec.device,
+                &mut exec.bind_group_cache,
+                &info.group_layouts[3],
+                &info.group_bindings[3],
+                &provider_gs,
+            )
+            .expect("GS bind group should build");
+
+            let wgsl = r#"
+struct Cb0 { regs: array<vec4<u32>, 4> };
+@group(0) @binding(0) var<uniform> vs_cb0: Cb0;
+
+struct GsCb0 { regs: array<vec4<u32>, 4> };
+@group(3) @binding(0) var<uniform> gs_cb0: GsCb0;
+@group(3) @binding(32) var gs_tex0: texture_2d<f32>;
+@group(3) @binding(160) var gs_samp0: sampler;
+
+@compute @workgroup_size(1)
+fn cs_main() {
+    let a: u32 = vs_cb0.regs[0].x;
+    let b: u32 = gs_cb0.regs[0].x;
+    let c: vec4<f32> = textureSampleLevel(gs_tex0, gs_samp0, vec2<f32>(0.0, 0.0), 0.0);
+    // Keep values alive to ensure naga/wgpu considers the bindings used.
+    if (a + b) == 0xFFFF_FFFFu && c.x < -1000.0 {
+        // unreachable
+    }
+}
+"#;
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let module = exec.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aerogpu_cmd test gs emulation cs"),
+                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+            });
+            let pipeline = exec.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("aerogpu_cmd test gs emulation pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: "cs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            });
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test gs emulation encoder"),
+                });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("aerogpu_cmd test gs emulation pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, bg0.as_ref(), &[]);
+                pass.set_bind_group(1, bg1.as_ref(), &[]);
+                pass.set_bind_group(2, bg2.as_ref(), &[]);
+                pass.set_bind_group(3, bg3.as_ref(), &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            exec.queue.submit([encoder.finish()]);
+            exec.poll_wait();
+
+            let err = exec.device.pop_error_scope().await;
+            assert!(err.is_none(), "unexpected wgpu validation error: {err:?}");
+        });
+    }
+
+    #[test]
     fn aerogpu_format_is_x8_includes_srgb_variants() {
         assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_B8G8R8X8_UNORM));
         assert!(aerogpu_format_is_x8(AEROGPU_FORMAT_R8G8B8X8_UNORM));
