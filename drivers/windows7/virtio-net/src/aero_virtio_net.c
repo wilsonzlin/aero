@@ -2250,7 +2250,6 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
   for (;;) {
     PVOID Cookie;
     AEROVNET_TX_REQUEST* TxReq;
-    NDIS_STATUS TxStatus;
 
     Cookie = NULL;
 
@@ -2265,21 +2264,15 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
     TxReq = (AEROVNET_TX_REQUEST*)Cookie;
 
     if (TxReq) {
-      TxStatus = TxReq->Cancelled ? NDIS_STATUS_REQUEST_ABORTED : NDIS_STATUS_SUCCESS;
-
-      if (TxStatus == NDIS_STATUS_SUCCESS) {
-        Adapter->StatTxPackets++;
-        Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
-      } else {
-        Adapter->StatTxErrors++;
-      }
+      Adapter->StatTxPackets++;
+      Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
 
       if (TxReq->State == AerovNetTxSubmitted) {
         RemoveEntryList(&TxReq->Link);
       }
       InsertTailList(&CompleteTxReqs, &TxReq->Link);
 
-      AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, &CompleteNblHead, &CompleteNblTail);
+      AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_SUCCESS, &CompleteNblHead, &CompleteNblTail);
     }
   }
 
@@ -3752,20 +3745,16 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
     }
   }
 
-  // Requests already submitted to the device cannot be cancelled deterministically,
-  // but we still mark them as cancelled so completion is reported with
-  // NDIS_STATUS_REQUEST_ABORTED.
+  // Requests already submitted to the device cannot be cancelled deterministically;
+  // track them for debugging/diagnostics only.
+#if DBG
   for (Entry = Adapter->TxSubmittedList.Flink; Entry != &Adapter->TxSubmittedList; Entry = Entry->Flink) {
     AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(Entry, AEROVNET_TX_REQUEST, Link);
     if (TxReq->Nbl != NULL && NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
-      if (!TxReq->Cancelled) {
-        TxReq->Cancelled = TRUE;
-#if DBG
-        InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSubmit);
-#endif
-      }
+      InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSubmit);
     }
   }
+#endif
 
   NdisReleaseSpinLock(&Adapter->Lock);
 
