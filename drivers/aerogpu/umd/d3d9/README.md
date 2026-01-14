@@ -316,6 +316,7 @@ The current implementation targets:
 - **Mipmapped textures**: default-pool textures with `MipLevels > 1` (and array layers via `Depth > 1`) are supported for
   common uncompressed formats (validated by `d3d9_mipmapped_texture_smoke`). BC/DXT mip chains are also supported when BC
   formats are exposed (see “BC/DXT textures” below).
+  - Cube textures are supported as 2D array textures with `Depth == 6` / `array_layers == 6` (and must be square).
   - On the Win7/WDDM path, multi-subresource textures currently fall back to **host-backed storage** (no guest allocation /
     `alloc_id`), because guest-backed allocations are single-subresource today (see `force_host_backing` in
     `device_create_resource()`).
