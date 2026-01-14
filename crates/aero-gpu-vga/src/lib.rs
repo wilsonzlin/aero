@@ -1290,10 +1290,18 @@ impl VgaDevice {
         let height = 200usize;
         self.back.fill(0);
         let start = self.crtc_start_address_bytes() & 0xFFFF;
+        // In chain-4 modes, the CRTC offset register (0x13) is programmed in terms of the per-plane
+        // scanline pitch. Multiply by 4 to get the logical pixel pitch in the CPU-visible A0000
+        // aperture.
+        let pitch = self
+            .crtc_offset_bytes()
+            .and_then(|bytes_per_plane| bytes_per_plane.checked_mul(4))
+            .unwrap_or(width);
         for y in 0..height {
             for x in 0..width {
-                let linear = y * width + x;
-                let addr = start.wrapping_add(linear) & 0xFFFF;
+                let dst_linear = y * width + x;
+                let mem_linear = y * pitch + x;
+                let addr = start.wrapping_add(mem_linear) & 0xFFFF;
                 let plane = addr & 3;
                 let off = addr >> 2;
                 let idx = if plane < self.config.legacy_plane_count {
@@ -1302,7 +1310,7 @@ impl VgaDevice {
                     0
                 };
                 let color = self.dac[(idx & self.pel_mask) as usize];
-                self.back[linear] = rgb_to_rgba_u32(color);
+                self.back[dst_linear] = rgb_to_rgba_u32(color);
             }
         }
     }
@@ -2475,6 +2483,28 @@ mod tests {
         dev.dirty = true;
         dev.present();
         assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[1]));
+    }
+
+    #[test]
+    fn mode13h_respects_crtc_offset_register() {
+        let mut dev = VgaDevice::new();
+        dev.set_mode_13h();
+
+        let base = 0xA0000u32;
+        dev.mem_write_u8(base + 0, 1);
+        // If the scanline pitch is 8 bytes (2 bytes/plane), the first pixel of row 1 reads from
+        // address 8.
+        dev.mem_write_u8(base + 8, 2);
+
+        // CRTC offset is in words when byte mode is disabled; offset=1 => 2 bytes/plane => 8 bytes
+        // of pixel data per scanline.
+        dev.crtc[0x13] = 1;
+        dev.dirty = true;
+        dev.present();
+
+        assert_eq!(dev.get_resolution(), (320, 200));
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[1]));
+        assert_eq!(dev.get_framebuffer()[320], rgb_to_rgba_u32(dev.dac[2]));
     }
 
     #[test]
