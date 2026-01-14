@@ -198,6 +198,7 @@ Ops/features referenced by the scratchpad tasks:
   - `dcl_2d` → `texture_2d<f32>` (`xy`)
   - `dcl_volume` → `texture_3d<f32>` (`xyz`)
   - `dcl_cube` → `texture_cube<f32>` (`xyz`)
+  - If a sampler has no `dcl_*` declaration, it defaults to `Texture2D` and is recorded as such in `bind_group_layout.sampler_texture_types`.
 
 **Implementation (key files):**
 - `crates/aero-d3d9/src/sm3/wgsl.rs` (sampler bindings + `IrOp::TexSample` lowering + `Stmt::Discard`)

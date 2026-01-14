@@ -17,6 +17,9 @@ For the broader “scratchpad task ID → implementation/test” audit, see
 **What:** Texture sampling lowering via `IrOp::TexSample`, plus texture/sampler binding emission and
 bind layout population (`bind_group_layout.{sampler_group,sampler_bindings,sampler_texture_types}`).
 
+Sampler texture types come from `dcl_* s#` when present; when absent, samplers default to `Texture2D`
+(and this default is recorded in `bind_group_layout.sampler_texture_types`).
+
 **Where:**
 - `crates/aero-d3d9/src/sm3/wgsl.rs`
 
