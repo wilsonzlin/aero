@@ -2491,7 +2491,7 @@ mod tests {
         dev.set_mode_13h();
 
         let base = 0xA0000u32;
-        dev.mem_write_u8(base + 0, 1);
+        dev.mem_write_u8(base, 1);
         // If the scanline pitch is 8 bytes (2 bytes/plane), the first pixel of row 1 reads from
         // address 8.
         dev.mem_write_u8(base + 8, 2);
