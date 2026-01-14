@@ -28,12 +28,18 @@
 //! The initial implementation is intentionally minimal and focuses on a small SM4 subset required
 //! by the in-tree GS tests:
 //! - Primitive emission: `emit` / `cut` / `emitthen_cut` (stream 0 only)
+//! - Predicate registers + predication: `setp` and DXBC instruction predication for non-control-flow
+//!   instructions
 //! - A small ALU subset (`mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`/`min`/`max`, plus `rcp`/`rsq`,
 //!   bitwise `and`, and a handful of pack/unpack + int/float conversion ops)
 //! - Structured control flow (`if`/`else`/`loop`/`switch` with `break`/`continue`)
 //!
-//! There is no texture sampling, buffer loads/stores, or barriers, and any unsupported instruction
-//! or operand shape is rejected by translation.
+//! Resource support is also intentionally limited:
+//! - Read-only Texture2D ops (`sample`, `sample_l`, `ld`)
+//! - Read-only SRV buffer ops (`ld_raw`, `ld_structured`)
+//!
+//! Resource writes/stores/UAVs and barrier/synchronization instructions are not supported, and any
+//! unsupported instruction or operand shape is rejected by translation.
 
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
