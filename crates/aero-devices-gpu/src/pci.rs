@@ -724,12 +724,12 @@ impl MmioHandler for AeroGpuBar1VramMmio {
             let Some(addr) = offset.checked_add(i as u64) else {
                 continue;
             };
+            // BAR1 reads beyond the allocated backing store return 0. The guest-visible BAR size is
+            // fixed by the PCI profile, but wasm32 builds may allocate a smaller VRAM backing store.
             let b = usize::try_from(addr)
                 .ok()
                 .and_then(|idx| vram.get(idx).copied())
-                // Out-of-range VRAM accesses should "float high" to match the rest of the
-                // emulator's MMIO semantics (unmapped reads yield 0xFF).
-                .unwrap_or(0xFF);
+                .unwrap_or(0);
             out |= (b as u64) << (i * 8);
         }
         out
