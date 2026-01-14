@@ -11465,6 +11465,8 @@ fn map_texture_usage_flags(flags: u32) -> wgpu::TextureUsages {
     if flags & AEROGPU_RESOURCE_USAGE_TEXTURE != 0 {
         usage |= wgpu::TextureUsages::TEXTURE_BINDING;
     }
+    // NOTE: `AEROGPU_RESOURCE_USAGE_STORAGE` is currently ignored for textures because SM5 storage
+    // textures (UAVs) are not yet implemented in the command-stream executor.
     if flags & (AEROGPU_RESOURCE_USAGE_RENDER_TARGET | AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL) != 0 {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
     }
