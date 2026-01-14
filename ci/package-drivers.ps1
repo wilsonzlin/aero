@@ -878,13 +878,13 @@ function New-IsoFromFolder {
 
         $powershellExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
         if ($powershellExe) {
-            & $powershellExe -NoProfile -ExecutionPolicy Bypass -STA -File $helper -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+            & $powershellExe -NoProfile -ExecutionPolicy Bypass -STA -File $helper -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel -LegacyIso:$LegacyIso
             if ($LASTEXITCODE -ne 0) {
                 throw "ISO creation failed (exit code $LASTEXITCODE)."
             }
         } else {
             . $helper
-            New-IsoFile -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel
+            New-IsoFile -SourcePath $Folder -IsoPath $IsoPath -VolumeLabel $VolumeLabel -LegacyIso:$LegacyIso
         }
     }
 
