@@ -1,6 +1,7 @@
 #include "aerogpu_ring.h"
 
 #include "aerogpu_kmd.h"
+#include <ntintsafe.h>
 #include "aerogpu_kmd_wdk_abi_asserts.h"
 #include "aerogpu_dbgctl_escape.h"
 #include "aerogpu_cmd.h"
@@ -50,6 +51,16 @@ extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
 /* Internal-only bits stored in AEROGPU_ALLOCATION::Flags (not exposed to UMD). */
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 #define AEROGPU_KMD_ALLOC_FLAG_PRIMARY 0x40000000u
+
+/*
+ * Hard cap on per-submit allocation-list sizes we will process when building submission metadata
+ * (AEROGPU_SUBMISSION_META), legacy submission descriptors, and per-submit allocation tables.
+ *
+ * Win7's driver caps advertise `MaxAllocationListSlotId = 0xFFFF`. Submissions are typically far
+ * smaller, but keep our cap aligned with the public contract while still preventing absurd values
+ * from driving integer overflows / unbounded allocations.
+ */
+#define AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT 0xFFFFu
 
 /*
  * Retain a small window of recently retired submissions so dbgctl tooling can
@@ -1051,6 +1062,12 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
     OutPa->QuadPart = 0;
     *OutSizeBytes = 0;
 
+    if (Count > AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    NTSTATUS st = STATUS_SUCCESS;
+
     struct aerogpu_alloc_entry* tmpEntries = NULL;
     uint32_t* seen = NULL;
     UINT* seenIndex = NULL;
@@ -1058,11 +1075,24 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
     uint64_t* seenSize = NULL;
     UINT entryCount = 0;
 
+    PVOID tableVa = NULL;
+    PHYSICAL_ADDRESS tablePa;
+    SIZE_T tableSizeBytes = 0;
+    SIZE_T entriesBytes = 0;
+    tablePa.QuadPart = 0;
+
     if (Count && List) {
-        const SIZE_T tmpBytes = (SIZE_T)Count * sizeof(*tmpEntries);
+        SIZE_T tmpBytes = 0;
+        st = RtlSizeTMult((SIZE_T)Count, sizeof(*tmpEntries), &tmpBytes);
+        if (!NT_SUCCESS(st)) {
+            st = STATUS_INTEGER_OVERFLOW;
+            goto cleanup;
+        }
+
         tmpEntries = (struct aerogpu_alloc_entry*)ExAllocatePoolWithTag(NonPagedPool, tmpBytes, AEROGPU_POOL_TAG);
         if (!tmpEntries) {
-            return STATUS_INSUFFICIENT_RESOURCES;
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto cleanup;
         }
         RtlZeroMemory(tmpEntries, tmpBytes);
 
@@ -1072,41 +1102,59 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
             cap <<= 1;
         }
 
-        const SIZE_T seenBytes = (SIZE_T)cap * sizeof(*seen);
+        SIZE_T seenBytes = 0;
+        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seen), &seenBytes);
+        if (!NT_SUCCESS(st)) {
+            st = STATUS_INTEGER_OVERFLOW;
+            goto cleanup;
+        }
+
         seen = (uint32_t*)ExAllocatePoolWithTag(NonPagedPool, seenBytes, AEROGPU_POOL_TAG);
         if (!seen) {
-            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-            return STATUS_INSUFFICIENT_RESOURCES;
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto cleanup;
         }
         RtlZeroMemory(seen, seenBytes);
 
-        const SIZE_T seenIndexBytes = (SIZE_T)cap * sizeof(*seenIndex);
+        SIZE_T seenIndexBytes = 0;
+        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seenIndex), &seenIndexBytes);
+        if (!NT_SUCCESS(st)) {
+            st = STATUS_INTEGER_OVERFLOW;
+            goto cleanup;
+        }
+
         seenIndex = (UINT*)ExAllocatePoolWithTag(NonPagedPool, seenIndexBytes, AEROGPU_POOL_TAG);
         if (!seenIndex) {
-            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-            return STATUS_INSUFFICIENT_RESOURCES;
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto cleanup;
         }
         RtlZeroMemory(seenIndex, seenIndexBytes);
 
-        const SIZE_T seenGpaBytes = (SIZE_T)cap * sizeof(*seenGpa);
+        SIZE_T seenGpaBytes = 0;
+        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seenGpa), &seenGpaBytes);
+        if (!NT_SUCCESS(st)) {
+            st = STATUS_INTEGER_OVERFLOW;
+            goto cleanup;
+        }
+
         seenGpa = (uint64_t*)ExAllocatePoolWithTag(NonPagedPool, seenGpaBytes, AEROGPU_POOL_TAG);
         if (!seenGpa) {
-            ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
-            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-            return STATUS_INSUFFICIENT_RESOURCES;
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto cleanup;
         }
         RtlZeroMemory(seenGpa, seenGpaBytes);
 
-        const SIZE_T seenSizeBytes = (SIZE_T)cap * sizeof(*seenSize);
+        SIZE_T seenSizeBytes = 0;
+        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seenSize), &seenSizeBytes);
+        if (!NT_SUCCESS(st)) {
+            st = STATUS_INTEGER_OVERFLOW;
+            goto cleanup;
+        }
+
         seenSize = (uint64_t*)ExAllocatePoolWithTag(NonPagedPool, seenSizeBytes, AEROGPU_POOL_TAG);
         if (!seenSize) {
-            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
-            ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
-            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-            return STATUS_INSUFFICIENT_RESOURCES;
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto cleanup;
         }
         RtlZeroMemory(seenSize, seenSizeBytes);
 
@@ -1172,22 +1220,8 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
                             (ULONGLONG)gpa,
                             (ULONGLONG)sizeBytes);
 #endif
-                        if (seenSize) {
-                            ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
-                        }
-                        if (seenGpa) {
-                            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
-                        }
-                        if (seenIndex) {
-                            ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
-                        }
-                        if (seen) {
-                            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-                        }
-                        if (tmpEntries) {
-                            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-                        }
-                        return STATUS_INVALID_PARAMETER;
+                        st = STATUS_INVALID_PARAMETER;
+                        goto cleanup;
                     }
 
                     /*
@@ -1215,98 +1249,67 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
      * reference guest-backed memory via alloc_id.
      */
     if (entryCount == 0) {
-        if (seen) {
-            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-        }
-        if (seenIndex) {
-            ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
-        }
-        if (seenGpa) {
-            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
-        }
-        if (seenSize) {
-            ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
-        }
-        if (tmpEntries) {
-            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-        }
-        return STATUS_SUCCESS;
+        st = STATUS_SUCCESS;
+        goto cleanup;
     }
 
-    const SIZE_T sizeBytes = sizeof(struct aerogpu_alloc_table_header) + ((SIZE_T)entryCount * sizeof(struct aerogpu_alloc_entry));
-    if (sizeBytes > UINT32_MAX) {
-        if (seen) {
-            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-        }
-        if (seenIndex) {
-            ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
-        }
-        if (seenGpa) {
-            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
-        }
-        if (seenSize) {
-            ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
-        }
-        if (tmpEntries) {
-            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-        }
-        return STATUS_INTEGER_OVERFLOW;
+    st = RtlSizeTMult((SIZE_T)entryCount, sizeof(struct aerogpu_alloc_entry), &entriesBytes);
+    if (!NT_SUCCESS(st)) {
+        st = STATUS_INTEGER_OVERFLOW;
+        goto cleanup;
     }
 
-    PHYSICAL_ADDRESS pa;
-    PVOID va = AeroGpuAllocContiguous(sizeBytes, &pa);
-    if (!va) {
-        if (seen) {
-            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-        }
-        if (seenIndex) {
-            ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
-        }
-        if (seenGpa) {
-            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
-        }
-        if (seenSize) {
-            ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
-        }
-        if (tmpEntries) {
-            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-        }
-        return STATUS_INSUFFICIENT_RESOURCES;
+    st = RtlSizeTAdd(sizeof(struct aerogpu_alloc_table_header), entriesBytes, &tableSizeBytes);
+    if (!NT_SUCCESS(st) || tableSizeBytes > UINT32_MAX) {
+        st = STATUS_INTEGER_OVERFLOW;
+        goto cleanup;
     }
 
-    struct aerogpu_alloc_table_header* hdr = (struct aerogpu_alloc_table_header*)va;
+    tableVa = AeroGpuAllocContiguous(tableSizeBytes, &tablePa);
+    if (!tableVa) {
+        st = STATUS_INSUFFICIENT_RESOURCES;
+        goto cleanup;
+    }
+
+    struct aerogpu_alloc_table_header* hdr = (struct aerogpu_alloc_table_header*)tableVa;
     hdr->magic = AEROGPU_ALLOC_TABLE_MAGIC;
     hdr->abi_version = AEROGPU_ABI_VERSION_U32;
-    hdr->size_bytes = (uint32_t)sizeBytes;
+    hdr->size_bytes = (uint32_t)tableSizeBytes;
     hdr->entry_count = (uint32_t)entryCount;
     hdr->entry_stride_bytes = (uint32_t)sizeof(struct aerogpu_alloc_entry);
     hdr->reserved0 = 0;
 
     if (entryCount) {
         struct aerogpu_alloc_entry* outEntries = (struct aerogpu_alloc_entry*)(hdr + 1);
-        RtlCopyMemory(outEntries, tmpEntries, (SIZE_T)entryCount * sizeof(*outEntries));
+        RtlCopyMemory(outEntries, tmpEntries, entriesBytes);
     }
 
-    if (seen) {
-        ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+    *OutVa = tableVa;
+    *OutPa = tablePa;
+    *OutSizeBytes = (UINT)tableSizeBytes;
+    tableVa = NULL;
+
+cleanup:
+    if (tableVa) {
+        AeroGpuFreeContiguousNonCached(tableVa, tableSizeBytes);
     }
-    if (seenIndex) {
-        ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
+    if (seenSize) {
+        ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
     }
     if (seenGpa) {
         ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
     }
-    if (seenSize) {
-        ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
+    if (seenIndex) {
+        ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
+    }
+    if (seen) {
+        ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
     }
     if (tmpEntries) {
         ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
     }
 
-    *OutVa = va;
-    *OutPa = pa;
-    *OutSizeBytes = (UINT)sizeBytes;
-    return STATUS_SUCCESS;
+    return st;
 }
 
 typedef struct _AEROGPU_SCANOUT_MMIO_SNAPSHOT {
@@ -7085,8 +7088,21 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ const AEROGPU_ADAPTER* A
         return STATUS_SUCCESS;
     }
 
-    SIZE_T metaSize = FIELD_OFFSET(AEROGPU_SUBMISSION_META, Allocations) +
-                      ((SIZE_T)AllocationCount * sizeof(aerogpu_legacy_submission_desc_allocation));
+    if (AllocationCount > AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    SIZE_T allocBytes = 0;
+    NTSTATUS st = RtlSizeTMult((SIZE_T)AllocationCount, sizeof(aerogpu_legacy_submission_desc_allocation), &allocBytes);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
+
+    SIZE_T metaSize = 0;
+    st = RtlSizeTAdd(FIELD_OFFSET(AEROGPU_SUBMISSION_META, Allocations), allocBytes, &metaSize);
+    if (!NT_SUCCESS(st)) {
+        return STATUS_INTEGER_OVERFLOW;
+    }
 
     AEROGPU_SUBMISSION_META* meta =
         (AEROGPU_SUBMISSION_META*)ExAllocatePoolWithTag(NonPagedPool, metaSize, AEROGPU_POOL_TAG);
@@ -7098,11 +7114,11 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ const AEROGPU_ADAPTER* A
     meta->AllocationCount = AllocationCount;
 
     if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1 && !SkipAllocTable) {
-        NTSTATUS st = AeroGpuBuildAllocTable(AllocationList,
-                                             AllocationCount,
-                                             &meta->AllocTableVa,
-                                             &meta->AllocTablePa,
-                                             &meta->AllocTableSizeBytes);
+        st = AeroGpuBuildAllocTable(AllocationList,
+                                    AllocationCount,
+                                    &meta->AllocTableVa,
+                                    &meta->AllocTablePa,
+                                    &meta->AllocTableSizeBytes);
         if (!NT_SUCCESS(st)) {
             ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
             return st;
@@ -7536,8 +7552,21 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     descPa.QuadPart = 0;
 
     if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
-        descSize = sizeof(aerogpu_legacy_submission_desc_header) +
-                   (SIZE_T)allocCount * sizeof(aerogpu_legacy_submission_desc_allocation);
+        if (allocCount > AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT) {
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
+            AeroGpuFreeSubmissionMeta(meta);
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        SIZE_T allocBytes = 0;
+        NTSTATUS st = RtlSizeTMult((SIZE_T)allocCount, sizeof(aerogpu_legacy_submission_desc_allocation), &allocBytes);
+        if (!NT_SUCCESS(st) ||
+            !NT_SUCCESS(RtlSizeTAdd(sizeof(aerogpu_legacy_submission_desc_header), allocBytes, &descSize)) ||
+            descSize > UINT32_MAX) {
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
+            AeroGpuFreeSubmissionMeta(meta);
+            return STATUS_INTEGER_OVERFLOW;
+        }
 
         aerogpu_legacy_submission_desc_header* desc =
             (aerogpu_legacy_submission_desc_header*)AeroGpuAllocContiguous(descSize, &descPa);
@@ -7558,7 +7587,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
 
         if (allocCount && meta) {
             aerogpu_legacy_submission_desc_allocation* out = (aerogpu_legacy_submission_desc_allocation*)(desc + 1);
-            RtlCopyMemory(out, meta->Allocations, (SIZE_T)allocCount * sizeof(*out));
+            RtlCopyMemory(out, meta->Allocations, allocBytes);
         }
     }
 
