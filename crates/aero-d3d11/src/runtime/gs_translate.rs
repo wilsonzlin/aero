@@ -1589,10 +1589,10 @@ mod tests {
             model: ShaderModel { major: 4, minor: 0 },
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Point,
+                    primitive: GsInputPrimitive::Point(1),
                 },
                 Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip,
+                    topology: GsOutputTopology::TriangleStrip(3),
                 },
                 Sm4Decl::GsMaxOutputVertexCount { max: 1 },
             ],
