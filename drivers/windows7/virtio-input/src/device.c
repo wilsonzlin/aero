@@ -988,13 +988,7 @@ static VOID VirtioInputEvtDeviceSurpriseRemoval(_In_ WDFDEVICE Device)
     }
 
     if (ctx->StatusQ != NULL) {
-        if (ctx->Interrupts.QueueLocks != NULL && ctx->Interrupts.QueueCount > 1) {
-            WdfSpinLockAcquire(ctx->Interrupts.QueueLocks[1]);
-            VirtioStatusQReset(ctx->StatusQ);
-            WdfSpinLockRelease(ctx->Interrupts.QueueLocks[1]);
-        } else {
-            VirtioStatusQReset(ctx->StatusQ);
-        }
+        VirtioStatusQReset(ctx->StatusQ);
     }
 }
 
@@ -1440,13 +1434,7 @@ NTSTATUS VirtioInputEvtDeviceReleaseHardware(_In_ WDFDEVICE Device, _In_ WDFCMRE
         }
 
         if (deviceContext->StatusQ != NULL) {
-            if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
-                WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
-                VirtioStatusQReset(deviceContext->StatusQ);
-                WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
-            } else {
-                VirtioStatusQReset(deviceContext->StatusQ);
-            }
+            VirtioStatusQReset(deviceContext->StatusQ);
         }
 
         if (deviceContext->StatusQ != NULL) {
@@ -1494,13 +1482,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
      * EV_BITS(EV_LED), StatusQ will fall back to emitting only the required LEDs
      * (NumLock/CapsLock/ScrollLock).
      */
-    if (deviceContext->Interrupts.QueueLocks != NULL && deviceContext->Interrupts.QueueCount > 1) {
-        WdfSpinLockAcquire(deviceContext->Interrupts.QueueLocks[1]);
-        VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, 0);
-        WdfSpinLockRelease(deviceContext->Interrupts.QueueLocks[1]);
-    } else {
-        VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, 0);
-    }
+    VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, 0);
 
     /*
      * Transport bring-up:
