@@ -472,6 +472,84 @@ fn sgl_rejects_segment_descriptor_with_nonzero_reserved_bytes_in_segment_list() 
 }
 
 #[test]
+fn sgl_rejects_nested_segment_length_not_multiple_of_16() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list1 = 0x70000u64;
+    let list2 = 0x71000u64;
+
+    // Root -> list1 containing a Segment descriptor with an invalid length.
+    write_sgl_desc(&mut mem, list1, list2, 20, 0x02); // Segment, length not multiple of 16
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x3E);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list1);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Root Segment (1 descriptor)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x3E);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_nested_segment_descriptor_requires_alignment() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list1 = 0x70000u64;
+    let list2 = 0x71008u64; // misaligned
+
+    write_sgl_desc(&mut mem, list1, list2, 16, 0x02); // Segment
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x3F);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list1);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Root Segment (1 descriptor)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x3F);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_nested_datablock_null_address() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+    // Data Block descriptor with addr=0 is invalid.
+    write_sgl_desc(&mut mem, list, 0, 512, 0x00);
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x40);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Root Segment (1 descriptor)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x40);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
 fn sgl_rejects_inline_descriptor_with_unknown_type() {
     let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
 
