@@ -684,6 +684,9 @@ default and do not affect overall PASS/FAIL.
 - Standalone guest lines:
   - `virtio-<dev>-irq|INFO|...`
   - `virtio-<dev>-irq|WARN|...`
+  - Note: newer guest selftests also emit a virtio-blk miniport IOCTL-derived diagnostics line:
+    - `virtio-blk-miniport-irq|INFO|mode=...|message_count=...|msix_config_vector=...|msix_queue0_vector=...`
+    - (and WARN variants like `virtio-blk-miniport-irq|WARN|reason=...|...` when the miniport contract is missing/truncated)
 - Mirrored host markers (for log scraping):
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_<DEV>_IRQ_DIAG|INFO/WARN|...`
 
