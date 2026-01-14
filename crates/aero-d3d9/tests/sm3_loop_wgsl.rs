@@ -160,3 +160,120 @@ fn loop_is_always_bounded_by_safety_cap() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn nested_loops_restore_al() {
+    // Build a shader with nested loops reusing `aL`. Correct lowering should save/restore `aL`
+    // around each `loop` to emulate SM2/3's loop stack semantics.
+    //
+    // ps_3_0:
+    //   defi i0, 0, 1, 1, 0   ; outer: 2 iterations
+    //   defi i1, 0, 0, 1, 0   ; inner: 1 iteration
+    //   def  c0, 0,0,0,0
+    //   def  c1, 1,0,0,0
+    //   def  c2, 2,0,0,0
+    //   mov r0, c0
+    //   loop aL, i0
+    //     add r0, r0, c1[aL]
+    //     loop aL, i1
+    //       add r0, r0, c2[aL]
+    //     endloop
+    //     add r0, r0, c1[aL]
+    //   endloop
+    //   mov oC0, r0
+    //   end
+    let mut tokens = Vec::new();
+    tokens.push(version_token(ShaderStage::Pixel, 3, 0));
+
+    // defi i0, 0, 1, 1, 0
+    tokens.push(opcode_token(82, 5));
+    tokens.push(dst_token(7, 0, 0xF));
+    tokens.extend([0u32, 1u32, 1u32, 0u32]);
+
+    // defi i1, 0, 0, 1, 0
+    tokens.push(opcode_token(82, 5));
+    tokens.push(dst_token(7, 1, 0xF));
+    tokens.extend([0u32, 0u32, 1u32, 0u32]);
+
+    let def_c = |idx: u32, x_bits: u32, out: &mut Vec<u32>| {
+        out.push(opcode_token(81, 5));
+        out.push(dst_token(2, idx, 0xF));
+        out.extend([x_bits, 0u32, 0u32, 0u32]);
+    };
+    def_c(0, 0x0000_0000, &mut tokens); // 0.0
+    def_c(1, 0x3F80_0000, &mut tokens); // 1.0
+    def_c(2, 0x4000_0000, &mut tokens); // 2.0
+
+    // mov r0, c0
+    tokens.push(opcode_token(1, 2));
+    tokens.push(dst_token(0, 0, 0xF));
+    tokens.push(src_token(2, 0, 0xE4, 0));
+
+    // loop aL, i0
+    tokens.push(opcode_token(27, 2));
+    tokens.push(src_token(15, 0, 0x00, 0)); // aL.x
+    tokens.push(src_token(7, 0, 0xE4, 0)); // i0
+
+    // add r0, r0, c1[aL]
+    let mut c1_rel = src_token(2, 1, 0xE4, 0);
+    c1_rel |= 0x0000_2000; // RELATIVE flag
+    tokens.push(opcode_token(2, 4));
+    tokens.push(dst_token(0, 0, 0xF));
+    tokens.push(src_token(0, 0, 0xE4, 0));
+    tokens.push(c1_rel);
+    tokens.push(src_token(15, 0, 0x00, 0)); // aL.x
+
+    // loop aL, i1
+    tokens.push(opcode_token(27, 2));
+    tokens.push(src_token(15, 0, 0x00, 0)); // aL.x
+    tokens.push(src_token(7, 1, 0xE4, 0)); // i1
+
+    // add r0, r0, c2[aL]
+    let mut c2_rel = src_token(2, 2, 0xE4, 0);
+    c2_rel |= 0x0000_2000; // RELATIVE flag
+    tokens.push(opcode_token(2, 4));
+    tokens.push(dst_token(0, 0, 0xF));
+    tokens.push(src_token(0, 0, 0xE4, 0));
+    tokens.push(c2_rel);
+    tokens.push(src_token(15, 0, 0x00, 0)); // aL.x
+
+    // endloop (inner)
+    tokens.push(opcode_token(29, 0));
+
+    // add r0, r0, c1[aL]
+    let mut c1_rel2 = src_token(2, 1, 0xE4, 0);
+    c1_rel2 |= 0x0000_2000; // RELATIVE flag
+    tokens.push(opcode_token(2, 4));
+    tokens.push(dst_token(0, 0, 0xF));
+    tokens.push(src_token(0, 0, 0xE4, 0));
+    tokens.push(c1_rel2);
+    tokens.push(src_token(15, 0, 0x00, 0)); // aL.x
+
+    // endloop (outer)
+    tokens.push(opcode_token(29, 0));
+
+    // mov oC0, r0
+    tokens.push(opcode_token(1, 2));
+    tokens.push(dst_token(8, 0, 0xF));
+    tokens.push(src_token(0, 0, 0xE4, 0));
+
+    // end
+    tokens.push(0x0000_FFFF);
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+
+    // Each loop should save and restore the loop register.
+    assert!(wgsl.matches("let _aero_saved_loop_reg").count() >= 2, "{wgsl}");
+    assert!(wgsl.contains("aL = _aero_saved_loop_reg;"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}

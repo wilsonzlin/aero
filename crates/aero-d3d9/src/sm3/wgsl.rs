@@ -1214,6 +1214,10 @@ fn emit_stmt(
 
             let _ = writeln!(wgsl, "{pad}{{");
             let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
+            let _ = writeln!(
+                wgsl,
+                "{pad1}let _aero_saved_loop_reg: vec4<i32> = {loop_reg};"
+            );
             let _ = writeln!(wgsl, "{pad1}let _aero_loop_end: i32 = ({ctrl}).y;");
             let _ = writeln!(wgsl, "{pad1}let _aero_loop_step: i32 = ({ctrl}).z;");
             let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = ({ctrl}).x;");
@@ -1231,6 +1235,7 @@ fn emit_stmt(
             let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
             let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
             let _ = writeln!(wgsl, "{pad1}}}");
+            let _ = writeln!(wgsl, "{pad1}{loop_reg} = _aero_saved_loop_reg;");
             let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Break => {
