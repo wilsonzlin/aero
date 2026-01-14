@@ -3,7 +3,7 @@
 use aero_devices::pci::profile::VIRTIO_DEVICE_CFG_BAR0_OFFSET;
 use aero_devices::pci::PciDevice as _;
 use aero_machine::{Machine, MachineConfig};
-use aero_storage::{MemBackend, RawDisk};
+use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 
 #[test]
 fn virtio_blk_attach_failure_does_not_disable_shared_disk_auto_attach() {
@@ -53,12 +53,12 @@ fn virtio_blk_attach_failure_does_not_disable_shared_disk_auto_attach() {
     let initial_capacity_sectors = u64::from_le_bytes(cap_bytes);
 
     // Attach a disk with an invalid (non-512-aligned) capacity; this should fail.
-    let bad_disk = RawDisk::create(MemBackend::new(), 513).unwrap();
+    let bad_disk = RawDisk::create(MemBackend::new(), (SECTOR_SIZE as u64) + 1).unwrap();
     assert!(m.attach_virtio_blk_disk(Box::new(bad_disk)).is_err());
 
     // If the failed attach incorrectly disabled shared-disk auto-attach, the virtio-blk capacity
     // config would remain stale after changing the shared disk backend.
-    let good_disk = RawDisk::create(MemBackend::new(), 2 * 512).unwrap();
+    let good_disk = RawDisk::create(MemBackend::new(), 2 * (SECTOR_SIZE as u64)).unwrap();
     m.set_disk_backend(Box::new(good_disk)).unwrap();
 
     virtio_blk
