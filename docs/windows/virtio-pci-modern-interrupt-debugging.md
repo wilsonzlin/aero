@@ -73,7 +73,9 @@ table (best-effort) and/or fail the harness when MSI-X is not enabled:
   - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - per device: `-Virtio{Net,Blk,Input,Snd}Vectors N` / `--virtio-{net,blk,input,snd}-vectors N`
 - Require MSI-X (harness checks):
-  - QMP MSI-X-enabled check: `-RequireVirtio{Net,Blk,Snd}Msix` / `--require-virtio-{net,blk,snd}-msix`
+  - QMP MSI-X-enabled check (virtio-blk/net/snd): `-RequireVirtio{Net,Blk,Snd}Msix` / `--require-virtio-{net,blk,snd}-msix`
+    - For virtio-blk and virtio-snd, the harness also requires the guest `virtio-*-msix` marker to report `mode=msix`
+      (end-to-end validation: Windows actually assigned message interrupts and the driver programmed virtio MSI-X routing).
   - Guest marker check (virtio-input): `-RequireVirtioInputMsix` / `--require-virtio-input-msix`
 
 See: [`drivers/windows7/tests/guest-selftest/README.md`](../../drivers/windows7/tests/guest-selftest/README.md).
