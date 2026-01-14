@@ -409,17 +409,13 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
 
         assert_eq!(kbd_install, mouse_install, "{section}: install section mismatch");
 
-        // The canonical INF (`aero_virtio_input.inf`) includes a strict contract-gated fallback
-        // match (no SUBSYS) so Windows can still bind the driver if subsystem IDs are not
-        // exposed/recognized. The tablet INF is more specific (`SUBSYS_0012...`) so it wins when
-        // present; see `drivers/windows7/virtio-input/docs/pci-hwids.md` for details.
+        // The canonical INF (`aero_virtio_input.inf`) intentionally does NOT include a generic
+        // `PCI\\VEN_1AF4&DEV_1052&REV_01` fallback match to avoid overlapping binding with the
+        // tablet INF. See `drivers/windows7/virtio-input/docs/pci-hwids.md` for details.
         let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
-        let (fallback_desc, fallback_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
-                .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
-        assert_eq!(
-            fallback_install, kbd_install,
-            "{section}: generic fallback install section mismatch"
+        assert!(
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
+            "{section}: canonical INF must not include a generic fallback HWID model entry"
         );
 
         assert_ne!(
@@ -427,21 +423,10 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             mouse_desc.to_ascii_lowercase(),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
-        assert_ne!(
-            fallback_desc.to_ascii_lowercase(),
-            kbd_desc.to_ascii_lowercase(),
-            "{section}: fallback DeviceDesc token must be generic (not keyboard)"
-        );
-        assert_ne!(
-            fallback_desc.to_ascii_lowercase(),
-            mouse_desc.to_ascii_lowercase(),
-            "{section}: fallback DeviceDesc token must be generic (not mouse)"
-        );
 
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
-        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
 
     let strings = inf_strings(&inf_contents);
