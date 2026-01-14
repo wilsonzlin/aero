@@ -31,11 +31,17 @@ Implementation references:
 - Rust synthesis: `crates/aero-usb/src/hid/report_descriptor.rs`
   - WebHID JSON schema + conversion layer: `crates/aero-usb/src/hid/webhid.rs`
 - Wire contract fixtures:
-  - Fixture JSON: `tests/fixtures/hid/webhid_normalized_mouse.json`
-  - TS contract test: `web/test/webhid_normalize_fixture.test.ts`
+  - Fixture JSON:
+    - `tests/fixtures/hid/webhid_normalized_mouse.json`
+    - `tests/fixtures/hid/webhid_normalized_keyboard.json`
+    - `tests/fixtures/hid/webhid_normalized_gamepad.json`
+  - TS contract tests:
+    - `web/test/webhid_normalize_fixture.test.ts` (node:test; run via repo-root `npm test`)
+    - `web/test/webhid_normalize_fixture.vitest.ts` (vitest; quick run via `npm -w web test -- webhid_normalize_fixture`)
   - Rust contract tests:
     - JSON schema roundtrip + synthesis smoke: `crates/aero-usb/tests/webhid_passthrough.rs`
     - Descriptor bytes regression: `crates/aero-wasm/tests/webhid_report_descriptor_synthesis.rs`
+    - WASM export regression (wasm32 only): `crates/aero-wasm/tests/webhid_report_descriptor_synthesis_wasm.rs`
 
 (`crates/emulator` re-exports the same synthesis code via `emulator::io::usb`, but `crates/aero-usb`
 is the implementation source of truth.)
