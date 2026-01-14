@@ -124,6 +124,9 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
 
+    // Transfers only execute while the controller is running.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     // Queue an endpoint doorbell but do not tick: the coalescing bitmap should mark it pending.
     ctrl.ring_doorbell(slot_id, EP_ID);
 
@@ -184,6 +187,9 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     slot_ctx.set_root_hub_port_number(1);
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    // Transfers only execute while the controller is running.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Ensure the output Slot Context in guest memory is populated. Deconfigure mode reads the Slot
     // Context from the output Device Context and mirrors it back into controller-local state; if we
