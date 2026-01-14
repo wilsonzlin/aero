@@ -1,33 +1,18 @@
-use core::mem::offset_of;
-
 use aero_devices_gpu::{
     irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig,
     AeroGpuFenceCompletionMode, AeroGpuPciDevice, ImmediateAeroGpuBackend,
 };
-use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_VERSION_U32, AEROGPU_MMIO_MAGIC};
-use aero_protocol::aerogpu::aerogpu_ring::{
-    AerogpuFencePage as ProtocolFencePage, AerogpuRingHeader as ProtocolRingHeader,
-    AerogpuSubmitDesc as ProtocolSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC,
+use aero_devices_gpu::ring::{
+    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
+    FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET, RING_ABI_VERSION_OFFSET,
+    RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET, RING_FLAGS_OFFSET, RING_HEAD_OFFSET,
+    RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET, RING_TAIL_OFFSET, SUBMIT_DESC_FLAGS_OFFSET,
+    SUBMIT_DESC_SIGNAL_FENCE_OFFSET, SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
+use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_VERSION_U32, AEROGPU_MMIO_MAGIC};
 use aero_devices::pci::PciDevice;
 use memory::MemoryBus;
 use memory::MmioHandler;
-
-const RING_MAGIC_OFFSET: u64 = offset_of!(ProtocolRingHeader, magic) as u64;
-const RING_ABI_VERSION_OFFSET: u64 = offset_of!(ProtocolRingHeader, abi_version) as u64;
-const RING_SIZE_BYTES_OFFSET: u64 = offset_of!(ProtocolRingHeader, size_bytes) as u64;
-const RING_ENTRY_COUNT_OFFSET: u64 = offset_of!(ProtocolRingHeader, entry_count) as u64;
-const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 = offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
-const RING_FLAGS_OFFSET: u64 = offset_of!(ProtocolRingHeader, flags) as u64;
-const RING_HEAD_OFFSET: u64 = offset_of!(ProtocolRingHeader, head) as u64;
-const RING_TAIL_OFFSET: u64 = offset_of!(ProtocolRingHeader, tail) as u64;
-
-const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 = offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
-const SUBMIT_DESC_FLAGS_OFFSET: u64 = offset_of!(ProtocolSubmitDesc, flags) as u64;
-const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 = offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
-
-const FENCE_PAGE_MAGIC_OFFSET: u64 = offset_of!(ProtocolFencePage, magic) as u64;
-const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 = offset_of!(ProtocolFencePage, completed_fence) as u64;
 
 fn new_test_device(executor: AeroGpuExecutorConfig) -> AeroGpuPciDevice {
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig {
@@ -66,7 +51,7 @@ fn doorbell_advances_completed_fence_with_immediate_backend_in_deferred_mode() {
     let ring_gpa = 0x1000u64;
     let ring_size = 0x1000u32;
     let entry_count = 8u32;
-    let entry_stride = ProtocolSubmitDesc::SIZE_BYTES as u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
     mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
     mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
@@ -76,8 +61,8 @@ fn doorbell_advances_completed_fence_with_immediate_backend_in_deferred_mode() {
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
 
-    let desc_gpa = ring_gpa + ProtocolRingHeader::SIZE_BYTES as u64;
-    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, ProtocolSubmitDesc::SIZE_BYTES as u32);
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
     mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
@@ -124,7 +109,7 @@ fn irq_status_enable_and_ack_semantics() {
     let ring_gpa = 0x1000u64;
     let ring_size = 0x1000u32;
     let entry_count = 8u32;
-    let entry_stride = ProtocolSubmitDesc::SIZE_BYTES as u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
     mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
     mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
@@ -134,18 +119,18 @@ fn irq_status_enable_and_ack_semantics() {
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
 
-    let desc0_gpa = ring_gpa + ProtocolRingHeader::SIZE_BYTES as u64;
-    mem.write_u32(desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, ProtocolSubmitDesc::SIZE_BYTES as u32);
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
     mem.write_u32(desc0_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 1);
 
     let desc1_gpa = desc0_gpa + u64::from(entry_stride);
-    mem.write_u32(desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, ProtocolSubmitDesc::SIZE_BYTES as u32);
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
     mem.write_u32(desc1_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc1_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 2);
 
     let desc2_gpa = desc1_gpa + u64::from(entry_stride);
-    mem.write_u32(desc2_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, ProtocolSubmitDesc::SIZE_BYTES as u32);
+    mem.write_u32(desc2_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
     mem.write_u32(desc2_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
     mem.write_u64(desc2_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 3);
 
