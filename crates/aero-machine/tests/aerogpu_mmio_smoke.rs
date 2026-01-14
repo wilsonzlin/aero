@@ -217,6 +217,31 @@ fn aerogpu_mmio_scanout_and_cursor_present() {
             0xFF00_FF00, // green
         ]
     );
+
+    // Cursor disabled: should not affect scanout.
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_ENABLE),
+        0,
+    );
+    m.display_present();
+    assert_eq!(m.display_resolution(), (2, 2));
+    assert_eq!(
+        m.display_framebuffer(),
+        &[0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00]
+    );
+
+    // Zero-sized cursor: cursor.enable=1 but width=0 means the cursor bitmap is ignored.
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_WIDTH), 0);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_ENABLE),
+        1,
+    );
+    m.display_present();
+    assert_eq!(m.display_resolution(), (2, 2));
+    assert_eq!(
+        m.display_framebuffer(),
+        &[0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00]
+    );
 }
 
 #[test]
