@@ -423,9 +423,12 @@ Known gaps / limitations (enforced by code/tests):
     - `triangle_strip` is expanded into an indexed **triangle list**
     - Note: executor wiring is still partial; the end-to-end translated-GS prepass path is currently
       only exercised by point-list draws and still assumes triangle-list output in some places.
-  - No GS instancing end-to-end (`dcl_gsinstancecount` / `[instance(n)]`): draws reject `gsinstancecount > 1`
+  - GS instancing (`dcl_gsinstancecount` / `[instance(n)]`, `SV_GSInstanceID`) is supported:
+    - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
   - No stream-out (SO / transform feedback)
-- Tessellation (Hull/Domain) execution is not implemented. Patchlist topologies are accepted in `SET_PRIMITIVE_TOPOLOGY`, but HS/DS shader execution is not wired yet (binding HS/DS causes draws to return a clear error), and the current compute-prepass path is still bring-up scaffolding (no real tessellation).
+- Tessellation (Hull/Domain) execution is not implemented. Patchlist topologies (and HS/DS-bound draws)
+  are routed through the compute-prepass path using the built-in synthetic expansion shader, but do
+  not execute guest HS/DS bytecode (no real tessellation).
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
   - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs)
 - SM5 compute/UAV bring-up is partially supported, but still has important limitations:

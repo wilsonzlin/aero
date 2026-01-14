@@ -203,6 +203,9 @@ Supported instructions/opcodes:
   - `EmitVertex` (`emit`)
   - `CutVertex` (`cut`)
   - `EmitVertex` + `CutVertex` (`emitthen_cut`)
+- **Predication / predicate registers (subset)**
+  - `setp` (predicate write; `p#` registers)
+  - DXBC instruction predication for non-control-flow instructions (emitted as WGSL `if` wrappers)
 - **Structured control flow**
   - `if` (`if_z` / `if_nz`)
   - `ifc` (`ifc` compare variants, including unsigned comparisons)
@@ -220,19 +223,32 @@ Supported instructions/opcodes:
   - `rcp`, `rsq`
   - `and` (bitwise AND on raw 32-bit lanes)
   - conversions: `itof`, `utof`, `ftoi`, `ftou`, `f32tof16`, `f16tof32`
+- **Resource reads (subset)**
+  - 2D textures:
+    - `sample`, `sample_l` (`Texture2D.Sample*`)
+    - `ld` (`Texture2D.Load`)
+  - SRV buffers:
+    - `ld_raw`
+    - `ld_structured`
 
 Supported operand surface (initial):
 
 - temp regs (`r#`) and output regs (`o#`) (note: only `o0` and `o1` are currently consumed by `emit`)
 - GS inputs via `v#[]` (no vertex index out of range for the declared input primitive)
+- constant buffers (`cb#[]`) for statically indexed reads (requires `dcl_constantbuffer`)
+- resources used by the supported read-only ops above:
+  - `t#` Texture2D (requires `dcl_resource_texture2d`)
+  - `t#` SRV buffer (requires `dcl_resource_buffer`)
+  - `s#` sampler (requires `dcl_sampler`)
 - immediate32 `vec4` constants (treated as raw 32-bit lane values; typically `f32` bit patterns)
 - swizzles, write masks, destination saturate (`_sat`), and basic operand modifiers (`abs` / `-` / `-abs`)
 - system values:
   - `SV_PrimitiveID`
-  - `SV_GSInstanceID` (GS instancing is not supported end-to-end yet; draws reject `gsinstancecount > 1`, so this currently always evaluates to 0)
+  - `SV_GSInstanceID` (honors `dcl_gsinstancecount` / `[instance(n)]`, values 0..n-1, default 0)
 
-Everything else (resource access like texture sampling / buffer loads/stores, barriers, most other
-SM4/SM5 opcodes, etc) is currently rejected by translation.
+Unsupported today (non-exhaustive): resource writes/stores/UAVs, barrier/synchronization opcodes
+(`sync`), and most other SM4/SM5 instructions. Unsupported features fail translation with a clear
+error.
 
 ---
 
@@ -247,8 +263,6 @@ Known limitations include:
     `CREATE_SHADER_DXBC` time.
 - **No stream-out (SO / transform feedback)**
   - GS output cannot be captured into D3D stream-out buffers
-- **No GS instancing**
-  - `[instance(n)]` / `dcl_gsinstancecount` with `n > 1` is rejected (fail-fast) at draw time.
 - **No adjacency (end-to-end)**
   - `lineadj` / `triadj` inputs are not supported by the command-stream executor yet
 - **Limited output topology / payload**
