@@ -14,6 +14,61 @@ struct Vertex {
   float v;
 };
 
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
+static void DumpTightBgra32(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            int row_pitch,
+                            int width,
+                            int height) {
+  if (!data || width <= 0 || height <= 0 || row_pitch < width * 4) {
+    return;
+  }
+  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
+    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
+  }
+  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
+}
+
 static int AbsInt(int v) { return v < 0 ? -v : v; }
 
 static bool ColorWithinTolerance(uint32_t got, uint32_t expected, int tol) {
@@ -414,6 +469,20 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
         } else {
           aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
         }
+
+        std::wstring bin_leaf(dump_leaf);
+        const size_t dot = bin_leaf.find_last_of(L'.');
+        if (dot != std::wstring::npos) {
+          bin_leaf.resize(dot);
+        }
+        bin_leaf += L".bin";
+        DumpTightBgra32(kTestName,
+                        &reporter,
+                        bin_leaf.c_str(),
+                        lr.pBits,
+                        (int)lr.Pitch,
+                        (int)desc.Width,
+                        (int)desc.Height);
       }
       sysmem->UnlockRect();
       return reporter.Fail("pixel mismatch (%s): center=0x%08lX expected 0x%08lX (tol=%d)",
@@ -438,6 +507,20 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
         } else {
           aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
         }
+
+        std::wstring bin_leaf(dump_leaf);
+        const size_t dot = bin_leaf.find_last_of(L'.');
+        if (dot != std::wstring::npos) {
+          bin_leaf.resize(dot);
+        }
+        bin_leaf += L".bin";
+        DumpTightBgra32(kTestName,
+                        &reporter,
+                        bin_leaf.c_str(),
+                        lr.pBits,
+                        (int)lr.Pitch,
+                        (int)desc.Width,
+                        (int)desc.Height);
       }
       sysmem->UnlockRect();
       return reporter.Fail("pixel mismatch (%s): corner(5,5)=0x%08lX expected clear=0x%08lX",
