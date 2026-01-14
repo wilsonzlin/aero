@@ -425,6 +425,9 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("IDirect3DSurface9::GetDesc", hr);
     }
+    if (desc.Format != D3DFMT_X8R8G8B8 && desc.Format != D3DFMT_A8R8G8B8) {
+      return reporter.Fail("unexpected backbuffer format: %lu", (unsigned long)desc.Format);
+    }
 
     ComPtr<IDirect3DSurface9> sysmem;
     hr = dev->CreateOffscreenPlainSurface(desc.Width,
@@ -454,36 +457,36 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
     const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
     const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
 
-    if (!ColorWithinTolerance(center, expected_center, expected_tol_rgb)) {
-      if (dump && dump_leaf) {
-        std::string err;
-        const std::wstring bmp_path =
-            aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), dump_leaf);
-        if (aerogpu_test::WriteBmp32BGRA(bmp_path,
-                                         (int)desc.Width,
-                                         (int)desc.Height,
-                                         lr.pBits,
-                                         (int)lr.Pitch,
-                                         &err)) {
-          reporter.AddArtifactPathW(bmp_path);
-        } else {
-          aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
-        }
-
-        std::wstring bin_leaf(dump_leaf);
-        const size_t dot = bin_leaf.find_last_of(L'.');
-        if (dot != std::wstring::npos) {
-          bin_leaf.resize(dot);
-        }
-        bin_leaf += L".bin";
-        DumpTightBgra32(kTestName,
-                        &reporter,
-                        bin_leaf.c_str(),
-                        lr.pBits,
-                        (int)lr.Pitch,
-                        (int)desc.Width,
-                        (int)desc.Height);
+    if (dump && dump_leaf) {
+      std::string err;
+      const std::wstring bmp_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), dump_leaf);
+      if (aerogpu_test::WriteBmp32BGRA(bmp_path,
+                                       (int)desc.Width,
+                                       (int)desc.Height,
+                                       lr.pBits,
+                                       (int)lr.Pitch,
+                                       &err)) {
+        reporter.AddArtifactPathW(bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
       }
+
+      std::wstring bin_leaf(dump_leaf);
+      const size_t dot = bin_leaf.find_last_of(L'.');
+      if (dot != std::wstring::npos) {
+        bin_leaf.resize(dot);
+      }
+      bin_leaf += L".bin";
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      bin_leaf.c_str(),
+                      lr.pBits,
+                      (int)lr.Pitch,
+                      (int)desc.Width,
+                      (int)desc.Height);
+    }
+
+    if (!ColorWithinTolerance(center, expected_center, expected_tol_rgb)) {
       sysmem->UnlockRect();
       return reporter.Fail("pixel mismatch (%s): center=0x%08lX expected 0x%08lX (tol=%d)",
                            label ? label : "?",
@@ -493,35 +496,6 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
     }
 
     if ((corner & 0x00FFFFFFu) != (kClear & 0x00FFFFFFu)) {
-      if (dump && dump_leaf) {
-        std::string err;
-        const std::wstring bmp_path =
-            aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), dump_leaf);
-        if (aerogpu_test::WriteBmp32BGRA(bmp_path,
-                                         (int)desc.Width,
-                                         (int)desc.Height,
-                                         lr.pBits,
-                                         (int)lr.Pitch,
-                                         &err)) {
-          reporter.AddArtifactPathW(bmp_path);
-        } else {
-          aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
-        }
-
-        std::wstring bin_leaf(dump_leaf);
-        const size_t dot = bin_leaf.find_last_of(L'.');
-        if (dot != std::wstring::npos) {
-          bin_leaf.resize(dot);
-        }
-        bin_leaf += L".bin";
-        DumpTightBgra32(kTestName,
-                        &reporter,
-                        bin_leaf.c_str(),
-                        lr.pBits,
-                        (int)lr.Pitch,
-                        (int)desc.Width,
-                        (int)desc.Height);
-      }
       sysmem->UnlockRect();
       return reporter.Fail("pixel mismatch (%s): corner(5,5)=0x%08lX expected clear=0x%08lX",
                            label ? label : "?",
@@ -630,6 +604,7 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
 int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   int rc = RunD3D9FixedFuncTexturedWvp(argc, argv);
+  aerogpu_test::FlushStdout();
   Sleep(30);
   return rc;
 }
