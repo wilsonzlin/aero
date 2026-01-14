@@ -64,6 +64,7 @@ pub struct AeroGpuPciDevice {
     vblank_period_ns: Option<u64>,
     next_vblank_deadline_ns: Option<u64>,
     boot_time_ns: Option<u64>,
+    vblank_irq_enable_pending: bool,
 
     doorbell_pending: bool,
     ring_reset_pending_dma: bool,
@@ -113,6 +114,7 @@ impl AeroGpuPciDevice {
             vblank_period_ns,
             next_vblank_deadline_ns: None,
             boot_time_ns: None,
+            vblank_irq_enable_pending: false,
             doorbell_pending: false,
             ring_reset_pending_dma: false,
         }
@@ -192,6 +194,7 @@ impl AeroGpuPciDevice {
         self.boot_time_ns.get_or_insert(now_ns);
 
         let dma_enabled = self.bus_master_enabled();
+        let suppress_vblank_irq = self.vblank_irq_enable_pending;
 
         if dma_enabled {
             self.executor.poll_backend_completions(&mut self.regs, mem);
@@ -234,12 +237,17 @@ impl AeroGpuPciDevice {
 
                         // Only latch the vblank IRQ status bit while the guest has it enabled.
                         // This prevents an immediate "stale" interrupt on re-enable.
-                        if (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) != 0 {
+                        if !suppress_vblank_irq
+                            && (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) != 0
+                        {
                             self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
                         }
 
                         if dma_enabled {
                             self.executor.process_vblank_tick(&mut self.regs, mem);
+                            if suppress_vblank_irq {
+                                self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                            }
                         }
 
                         next = next.saturating_add(period_ns);
@@ -267,6 +275,9 @@ impl AeroGpuPciDevice {
             // emulator behavior (guests are expected to re-ring the doorbell after enabling BME).
             self.doorbell_pending = false;
         }
+
+        // Only suppress vblank IRQ latching for a single `tick` call after the enable transition.
+        self.vblank_irq_enable_pending = false;
     }
 
     pub fn complete_fence(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
@@ -412,11 +423,22 @@ impl AeroGpuPciDevice {
                 self.doorbell_pending = true;
             }
             mmio::IRQ_ENABLE => {
+                let enabling_vblank = (value & irq_bits::SCANOUT_VBLANK) != 0
+                    && (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) == 0;
                 self.regs.irq_enable = value;
                 if (value & irq_bits::FENCE) == 0 {
                     self.regs.irq_status &= !irq_bits::FENCE;
                 }
                 if (value & irq_bits::SCANOUT_VBLANK) == 0 {
+                    self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                }
+                if enabling_vblank {
+                    // Mirror the legacy emulator behavior: when the guest enables vblank IRQs, do
+                    // not immediately latch an IRQ for any vblank edges that the device must
+                    // \"catch up\" (host stall / guest paused). The pending vblank edges should
+                    // still advance counters/timestamps, but the IRQ status bit must only be
+                    // latched on the *next* vblank edge after the enable becomes effective.
+                    self.vblank_irq_enable_pending = true;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                 }
                 self.update_irq_level();
@@ -502,6 +524,7 @@ impl PciDevice for AeroGpuPciDevice {
         self.ring_reset_pending_dma = false;
         self.next_vblank_deadline_ns = None;
         self.boot_time_ns = None;
+        self.vblank_irq_enable_pending = false;
     }
 }
 

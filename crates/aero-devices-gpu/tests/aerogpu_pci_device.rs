@@ -213,3 +213,53 @@ fn scanout_disable_stops_vblank_and_clears_pending_irq() {
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
     assert!(dev.irq_level());
 }
+
+#[test]
+fn enabling_vblank_irq_does_not_latch_stale_irq_from_catchup_ticks() {
+    #[derive(Clone, Debug, Default)]
+    struct NoDmaMemory;
+
+    impl MemoryBus for NoDmaMemory {
+        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected DMA read while bus mastering disabled");
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            panic!("unexpected DMA write while bus mastering disabled");
+        }
+    }
+
+    let mut mem = NoDmaMemory::default();
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(60),
+        ..Default::default()
+    };
+    let mut dev = AeroGpuPciDevice::new(cfg);
+
+    // Enable MMIO decoding but keep bus mastering disabled so tick cannot DMA into our dummy bus.
+    dev.config_mut().set_command(1 << 1);
+    dev.write(mmio::SCANOUT0_ENABLE, 4, 1);
+
+    let period_ns = u64::from(dev.regs.scanout0_vblank_period_ns);
+    assert_ne!(period_ns, 0, "test requires vblank pacing to be enabled");
+
+    // Establish a vblank schedule, then simulate a long host stall where we do not tick for a
+    // while. This means the next vblank deadline is in the past when we later enable IRQs.
+    dev.tick(&mut mem, 0);
+
+    // Enable vblank IRQ delivery while the device is behind on its vblank scheduler. The device
+    // must catch up its counters without immediately latching an interrupt for vblanks that
+    // occurred while IRQ delivery was disabled.
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK as u64);
+    dev.tick(&mut mem, period_ns * 3);
+
+    assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(
+        dev.regs.scanout0_vblank_seq > 0,
+        "vblank counters must advance even when IRQ delivery was disabled"
+    );
+
+    // The next vblank edge after the enable should latch the IRQ status bit.
+    dev.tick(&mut mem, period_ns * 4);
+    assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+}
