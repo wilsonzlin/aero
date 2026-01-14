@@ -130,6 +130,14 @@ export class WgpuWebGl2Presenter implements Presenter {
       if (before !== null && after !== null) return after > before;
       return true;
     } catch (err) {
+      // wasm panics manifest as `WebAssembly.RuntimeError: unreachable`. In some headless /
+      // blocklisted GPU configurations, the wgpu WebGL2 backend can hit internal panics during
+      // presentation even though `init_gpu()` succeeded. Treat these traps as an intentional
+      // frame drop (return false) so the caller can continue running and telemetry can still be
+      // collected, matching the present() "drop vs presented" contract.
+      if (err instanceof WebAssembly.RuntimeError && `${err.message}`.includes('unreachable')) {
+        return false;
+      }
       const message = err instanceof Error ? err.message : err != null ? String(err) : '';
       const suffix = message ? `: ${message}` : '';
       const cause =
@@ -206,6 +214,9 @@ export class WgpuWebGl2Presenter implements Presenter {
       if (before !== null && after !== null) return after > before;
       return true;
     } catch (err) {
+      if (err instanceof WebAssembly.RuntimeError && `${err.message}`.includes('unreachable')) {
+        return false;
+      }
       const message = err instanceof Error ? err.message : err != null ? String(err) : '';
       const suffix = message ? `: ${message}` : '';
       const cause =
