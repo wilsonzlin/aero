@@ -10,6 +10,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
@@ -77,16 +78,15 @@ fn push_bind_shaders_ex(
     hs: u32,
     ds: u32,
 ) {
-    // Extended payload appends `{gs, hs, ds}` after the legacy `{vs, ps, cs, reserved0}`.
-    let start = begin_cmd(stream, AerogpuCmdOpcode::BindShaders as u32);
-    stream.extend_from_slice(&vs.to_le_bytes());
-    stream.extend_from_slice(&ps.to_le_bytes());
-    stream.extend_from_slice(&cs.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0 (legacy GS handle) left zero.
-    stream.extend_from_slice(&gs.to_le_bytes());
-    stream.extend_from_slice(&hs.to_le_bytes());
-    stream.extend_from_slice(&ds.to_le_bytes());
-    end_cmd(stream, start);
+    // `aerogpu_cmd_bind_shaders` extended ABI:
+    // - Appends `{gs, hs, ds}` handles after the legacy payload.
+    //
+    // Use `AerogpuCmdWriter` here so packet sizing/padding stays correct and consistent across
+    // tests/fixtures.
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_ex(vs, ps, cs, gs, hs, ds);
+    let packet_stream = w.finish();
+    stream.extend_from_slice(&packet_stream[AerogpuCmdStreamHeader::SIZE_BYTES..]);
 }
 
 fn push_set_texture(stream: &mut Vec<u8>, stage: u32, slot: u32, texture: u32, stage_ex: u32) {
