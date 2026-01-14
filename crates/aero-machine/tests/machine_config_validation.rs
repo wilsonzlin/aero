@@ -138,10 +138,16 @@ fn enable_xhci_requires_enable_pc_platform() {
         ..Default::default()
     };
 
-    assert!(matches!(
-        Machine::new(cfg),
-        Err(MachineError::XhciRequiresPcPlatform)
-    ));
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("xhci without pc platform must be rejected"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, MachineError::XhciRequiresPcPlatform));
+    assert!(
+        err.to_string()
+            .contains("enable_xhci requires enable_pc_platform=true"),
+        "unexpected error message: {err}"
+    );
 }
 
 #[test]
@@ -153,10 +159,16 @@ fn enable_aerogpu_requires_enable_pc_platform() {
         ..Default::default()
     };
 
-    assert!(matches!(
-        Machine::new(cfg),
-        Err(MachineError::AeroGpuRequiresPcPlatform)
-    ));
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("aerogpu without pc platform must be rejected"),
+        Err(e) => e,
+    };
+    assert!(matches!(err, MachineError::AeroGpuRequiresPcPlatform));
+    assert!(
+        err.to_string()
+            .contains("enable_aerogpu requires enable_pc_platform=true"),
+        "unexpected error message: {err}"
+    );
 }
 
 #[test]
