@@ -729,7 +729,7 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
     if manifest.chunk_size == 0 {
         bail!("manifest chunkSize must be > 0");
     }
-    if manifest.chunk_size % 512 != 0 {
+    if !manifest.chunk_size.is_multiple_of(512) {
         bail!(
             "manifest chunkSize must be a multiple of 512 bytes, got {}",
             manifest.chunk_size
@@ -930,7 +930,6 @@ async fn verify_chunks(
         let bucket = bucket.to_string();
         let version_prefix = version_prefix.to_string();
         let manifest = Arc::clone(&manifest);
-        let chunk_index_width = chunk_index_width;
         let pb = pb.clone();
         let chunks_verified = Arc::clone(&chunks_verified);
         let cancelled = Arc::clone(&cancelled);
@@ -1097,7 +1096,7 @@ fn expected_chunk_size(manifest: &ManifestV1, index: u64) -> Result<u64> {
     }
 }
 
-fn expected_chunk_sha256<'a>(manifest: &'a ManifestV1, index: u64) -> Result<Option<&'a str>> {
+fn expected_chunk_sha256(manifest: &ManifestV1, index: u64) -> Result<Option<&str>> {
     let Some(chunks) = &manifest.chunks else {
         return Ok(None);
     };
@@ -1419,7 +1418,7 @@ fn validate_args(args: &PublishArgs) -> Result<()> {
     if args.chunk_size == 0 {
         bail!("--chunk-size must be > 0");
     }
-    if args.chunk_size % 512 != 0 {
+    if !args.chunk_size.is_multiple_of(512) {
         bail!("--chunk-size must be a multiple of 512 bytes");
     }
     if args.concurrency == 0 {
@@ -1756,6 +1755,7 @@ async fn build_s3_client(
     Ok(S3Client::from_conf(s3_config_builder.build()))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn worker_loop(
     work_rx: async_channel::Receiver<ChunkJob>,
     result_tx: tokio::sync::mpsc::UnboundedSender<ChunkResult>,
@@ -1859,6 +1859,7 @@ async fn upload_json_object<T: Serialize>(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn put_object_with_retry(
     s3: &S3Client,
     bucket: &str,
