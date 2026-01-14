@@ -45,6 +45,12 @@ describe("quantizeGamepadAxis", () => {
     expect(quantizeGamepadAxis(1, 0.1)).toBe(127);
     expect(quantizeGamepadAxis(-1, 0.1)).toBe(-127);
   });
+
+  it("treats non-finite input values as zero", () => {
+    expect(quantizeGamepadAxis(Number.NaN, 0)).toBe(0);
+    expect(quantizeGamepadAxis(Number.POSITIVE_INFINITY, 0)).toBe(0);
+    expect(quantizeGamepadAxis(Number.NEGATIVE_INFINITY, 0)).toBe(0);
+  });
 });
 
 describe("gamepadButtonsToBitfield", () => {
