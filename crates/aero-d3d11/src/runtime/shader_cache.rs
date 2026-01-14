@@ -578,3 +578,9 @@ impl ShaderCache {
         Ok(())
     }
 }
+
+impl Default for ShaderCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
