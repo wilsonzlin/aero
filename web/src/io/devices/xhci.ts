@@ -1,5 +1,5 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
-import type { PciBar, PciDevice } from "../bus/pci.ts";
+import type { PciAddress, PciBar, PciDevice } from "../bus/pci.ts";
 import type { IrqSink, TickableDevice } from "../device_manager.ts";
 
 export type XhciControllerBridgeLike = {
@@ -86,7 +86,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
   readonly irqLine = XHCI_IRQ_LINE;
   readonly interruptPin = 0x01 as const; // INTA#
   // Keep a stable BDF so guest driver installation and snapshots are deterministic.
-  readonly bdf = { bus: 0, device: 0x0d, function: 0 };
+  bdf: PciAddress = { bus: 0, device: 0x0d, function: 0 };
 
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: XHCI_MMIO_BAR_SIZE }, null, null, null, null, null];
 
