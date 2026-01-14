@@ -796,11 +796,12 @@ Notes:
 - `AEROGPU_TOPOLOGY_TRIANGLEFAN` remains for the D3D9 path; D3D11 does not emit triangle fans.
 - Adjacency/patch topologies are not directly expressible in WebGPU render pipelines and therefore
   require the compute-expansion pipeline (GS/HS/DS emulation).
-  - Until the relevant emulation kernels exist, the runtime MUST NOT silently reinterpret the
-    topology as a non-adjacency/list/strip topology (that would silently misrender).
+  - Not all relevant emulation kernels exist yet (notably patchlists and strip/strip-adjacency), so
+    the runtime MUST NOT silently reinterpret the topology as a non-adjacency/list/strip topology
+    (that would silently misrender).
   - Acceptable behaviors are:
-    - route the draw through the emulation path (executing a supported GS when present; otherwise
-      using bring-up scaffolding / synthetic expansion for plumbing tests), or
+    - route the draw through the emulation path (executing a supported translated GS prepass when
+      present; otherwise using bring-up scaffolding / synthetic expansion for plumbing tests), or
     - reject the draw with a clear error.
   - Implementation note: the in-tree D3D11 executor currently routes adjacency/patchlist topologies
     through the emulation path to exercise render-pass splitting + indirect draw plumbing even when
