@@ -208,6 +208,9 @@ fn input_help_mentions_flags_and_steps() {
         ))
         .stdout(predicate::str::contains("src/workers/io_xhci_init.test.ts"))
         .stdout(predicate::str::contains(
+            "src/workers/machine_cpu.worker_threads.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/workers/uhci_runtime_hub_config.test.ts",
         ))
         .stdout(predicate::str::contains(
