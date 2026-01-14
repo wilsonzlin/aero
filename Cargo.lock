@@ -129,15 +129,33 @@ dependencies = [
  "aero-gpu",
  "aero-protocol",
  "anyhow",
+ "blake3",
  "bytemuck",
  "criterion",
  "futures-intrusive",
+ "js-sys",
  "naga 24.0.0",
  "pollster",
+ "serde",
+ "serde-wasm-bindgen",
  "tracing",
  "tracing-subscriber",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
+ "wgpu",
+]
+
+[[package]]
+name = "aero-d3d11-wasm"
+version = "0.1.0"
+dependencies = [
+ "aero-d3d11",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wgpu",
 ]
 

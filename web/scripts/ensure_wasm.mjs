@@ -23,6 +23,11 @@ export function ensureVariant(variant) {
         "web/src/wasm",
         variant === "threaded" ? "pkg-threaded-gpu" : "pkg-single-gpu",
     );
+    const outDirAeroD3d11 = path.join(
+        repoRoot,
+        "web/src/wasm",
+        variant === "threaded" ? "pkg-threaded-d3d11" : "pkg-single-d3d11",
+    );
     const outDirAeroJit = path.join(
         repoRoot,
         "web/src/wasm",
@@ -37,6 +42,13 @@ export function ensureVariant(variant) {
         {
             id: "gpu",
             files: [path.join(outDirAeroGpu, "aero_gpu_wasm.js"), path.join(outDirAeroGpu, "aero_gpu_wasm_bg.wasm")],
+        },
+        {
+            id: "d3d11",
+            files: [
+                path.join(outDirAeroD3d11, "aero_d3d11_wasm.js"),
+                path.join(outDirAeroD3d11, "aero_d3d11_wasm_bg.wasm"),
+            ],
         },
     ];
 

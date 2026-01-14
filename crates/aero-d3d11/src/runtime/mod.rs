@@ -11,6 +11,15 @@ pub mod pipeline_layout_cache;
 pub mod scratch_allocator;
 mod reflection_bindings;
 pub mod resources;
+// Persistent shader translation cache is only available in the browser/WASM build.
+#[cfg(target_arch = "wasm32")]
+mod shader_cache;
+#[cfg(target_arch = "wasm32")]
+pub use shader_cache::{
+    PersistedBinding, PersistedBindingKind, PersistedShaderArtifact, PersistedShaderStage,
+    PersistedVsInputSignatureElement, ShaderCache, ShaderCacheSource, ShaderCacheStats,
+    ShaderTranslationFlags, D3D11_TRANSLATOR_CACHE_VERSION,
+};
 pub mod state;
 pub mod strip_to_list;
 pub mod vertex_pulling;

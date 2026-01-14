@@ -39,8 +39,8 @@ fn vertex_pulling_wgsl_uses_reserved_binding_range() -> Result<()> {
 
     let wgsl = pulling.wgsl_prelude();
 
-    // Vertex pulling bindings must live in the reserved "expansion internal" range so they can
-    // coexist with `stage_ex` GS/HS/DS D3D bindings in the same `@group(3)`.
+    // Vertex pulling bindings must live in the reserved internal range so they can be combined
+    // with other emulation helpers without colliding with the D3D11 register-space bindings.
     assert!(
         wgsl.contains(&format!(
             "@group({}) @binding({}) var<uniform> aero_vp_ia",

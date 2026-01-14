@@ -1,0 +1,20 @@
+[package]
+name = "aero-d3d11-wasm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+aero-d3d11 = { path = "../aero-d3d11" }
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+# Enable the wgpu WebGL backend for maximum browser compatibility when the crate is
+# built as a top-level wasm-pack package (features are unified across the graph).
+wgpu = { version = "0.20", features = ["webgl"] }
+

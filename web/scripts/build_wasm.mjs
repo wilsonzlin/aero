@@ -10,7 +10,7 @@ function usageAndExit() {
             "",
             "Options:",
             "  --packages <list>   Comma-separated package list to build (default: all).",
-            "                     Known packages: core,gpu,jit",
+            "                     Known packages: core,gpu,d3d11,jit",
         ].join("\n"),
     );
     process.exit(2);
@@ -216,6 +216,17 @@ const outDirAeroJit = path.join(
             : "pkg-jit-single-dev",
 );
 
+const outDirAeroD3d11 = path.join(
+    wasmRoot,
+    variant === "threaded"
+        ? isRelease
+            ? "pkg-threaded-d3d11"
+            : "pkg-threaded-d3d11-dev"
+        : isRelease
+            ? "pkg-single-d3d11"
+            : "pkg-single-d3d11-dev",
+);
+
 const packages = [
     {
         id: "core",
@@ -236,6 +247,16 @@ const packages = [
         // The GPU worker module follows the same imported-memory contract as the main runtime.
         importMemory: true,
         threaded: true,
+    },
+    {
+        id: "d3d11",
+        cratePath: path.join(repoRoot, "crates/aero-d3d11-wasm"),
+        outDir: outDirAeroD3d11,
+        outName: "aero_d3d11_wasm",
+        // The D3D11 shader-cache demo module is self-contained; it does not share the main
+        // runtime's imported memory.
+        importMemory: false,
+        threaded: false,
     },
 ];
 

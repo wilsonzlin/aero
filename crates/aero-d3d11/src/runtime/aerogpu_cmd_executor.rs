@@ -56,6 +56,12 @@ use super::indirect_args::DrawIndexedIndirectArgs;
 use super::index_pulling::{
     IndexPullingParams, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
 };
+#[cfg(target_arch = "wasm32")]
+use super::shader_cache::{
+    PersistedBinding, PersistedShaderArtifact, PersistedShaderStage,
+    PersistedVsInputSignatureElement, ShaderCache as PersistentShaderCache, ShaderCacheSource,
+    ShaderCacheStats, ShaderTranslationFlags as PersistentShaderTranslationFlags,
+};
 use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::reflection_bindings;
 use super::vertex_pulling::{
@@ -81,6 +87,23 @@ const LEGACY_CONSTANTS_SIZE_BYTES: u64 = 4096 * 16;
 // Our current DXBC→WGSL translation always emits `@location(0)` output, so we bind an internal
 // dummy color attachment for depth-only passes to satisfy validation.
 const DEPTH_ONLY_DUMMY_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+#[cfg(target_arch = "wasm32")]
+fn compute_wgpu_caps_hash(device: &wgpu::Device, backend: wgpu::Backend) -> String {
+    // This hash is included in the persistent shader cache key to avoid reusing translation output
+    // across WebGPU capability changes. It does not need to match the JS-side
+    // `computeWebGpuCapsHash`; it only needs to be stable for a given device/browser.
+    const VERSION: &[u8] = b"aero-d3d11 wgpu caps hash v1";
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(VERSION);
+    hasher.update(format!("{backend:?}").as_bytes());
+    hasher.update(&device.features().bits().to_le_bytes());
+    // `wgpu::Limits` is a large struct without `Serialize`; use a debug representation for a
+    // stable-ish byte stream. Any change here just forces retranslation, which is safe.
+    hasher.update(format!("{:?}", device.limits()).as_bytes());
+    hasher.finalize().to_hex().to_string()
+}
 
 // Opcode constants from `aerogpu_cmd.h` (via the canonical `aero-protocol` enum).
 const OPCODE_NOP: u32 = AerogpuCmdOpcode::Nop as u32;
@@ -1035,6 +1058,16 @@ pub struct AerogpuD3d11Executor {
     pipeline_layout_cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>>,
     pipeline_cache: PipelineCache,
 
+    /// WASM-only persistent shader translation cache (IndexedDB/OPFS).
+    #[cfg(target_arch = "wasm32")]
+    persistent_shader_cache: PersistentShaderCache,
+    /// Translation flags used for persistent shader cache lookups (wasm32 only).
+    ///
+    /// Includes a stable per-device capabilities hash so cached artifacts are not reused when
+    /// WebGPU limits/features differ.
+    #[cfg(target_arch = "wasm32")]
+    persistent_shader_cache_flags: PersistentShaderTranslationFlags,
+
     /// Resources referenced by commands recorded into the current `wgpu::CommandEncoder`.
     ///
     /// `wgpu::Queue::write_*` operations are ordered relative to `queue.submit` calls, so when we
@@ -1245,6 +1278,12 @@ impl AerogpuD3d11Executor {
         }
 
         let gpu_scratch = GpuScratchAllocator::new(&device);
+        #[cfg(target_arch = "wasm32")]
+        let persistent_shader_cache_flags = PersistentShaderTranslationFlags::new(Some(
+            compute_wgpu_caps_hash(&device, backend),
+        ));
+        #[cfg(target_arch = "wasm32")]
+        let persistent_shader_cache = PersistentShaderCache::new();
 
         Self {
             caps,
@@ -1271,6 +1310,10 @@ impl AerogpuD3d11Executor {
             bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
             pipeline_layout_cache: PipelineLayoutCache::new(),
             pipeline_cache,
+            #[cfg(target_arch = "wasm32")]
+            persistent_shader_cache,
+            #[cfg(target_arch = "wasm32")]
+            persistent_shader_cache_flags,
             encoder_used_buffers: HashSet::new(),
             encoder_used_textures: HashSet::new(),
             encoder_has_commands: false,
@@ -1469,6 +1512,12 @@ impl AerogpuD3d11Executor {
             pipeline_layouts: self.pipeline_layout_cache.stats(),
             bind_groups: self.bind_group_cache.stats(),
         }
+    }
+
+    /// Snapshot of D3D11 DXBC->WGSL shader cache counters (wasm32 only).
+    #[cfg(target_arch = "wasm32")]
+    pub fn shader_cache_stats(&self) -> ShaderCacheStats {
+        self.persistent_shader_cache.stats()
     }
 
     pub fn texture_size(&self, texture_id: u32) -> Result<(u32, u32)> {
@@ -1984,6 +2033,13 @@ impl AerogpuD3d11Executor {
                             );
                         }
                     }
+                    // Shader creation uses the persistent shader cache on wasm, which requires async IO.
+                    // Reject synchronous execution to avoid silently bypassing persistence.
+                    OPCODE_CREATE_SHADER_DXBC => {
+                        bail!(
+                            "CREATE_SHADER_DXBC requires async execution on wasm (call execute_cmd_stream_async); first CREATE_SHADER_DXBC at packet {packet_index}"
+                        );
+                    }
                     _ => {}
                 }
 
@@ -2028,6 +2084,12 @@ impl AerogpuD3d11Executor {
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<ExecuteReport> {
         let mut pending_writebacks = Vec::new();
+        #[cfg(target_arch = "wasm32")]
+        let report = self
+            .execute_cmd_stream_inner_async(stream_bytes, allocs, guest_mem, &mut pending_writebacks)
+            .await?;
+
+        #[cfg(not(target_arch = "wasm32"))]
         let report = self.execute_cmd_stream_inner(
             stream_bytes,
             allocs,
@@ -2141,6 +2203,120 @@ impl AerogpuD3d11Executor {
 
             Ok(())
         })();
+
+        match result {
+            Ok(()) => {
+                self.queue.submit([encoder.finish()]);
+                self.encoder_has_commands = false;
+                self.encoder_used_buffers.clear();
+                self.encoder_used_textures.clear();
+                Ok(report)
+            }
+            Err(err) => {
+                // Drop partially-recorded work, but still flush `queue.write_*` uploads so they
+                // don't remain queued indefinitely and reorder with later submissions.
+                self.encoder_has_commands = false;
+                self.encoder_used_buffers.clear();
+                self.encoder_used_textures.clear();
+                self.queue.submit([]);
+                Err(err)
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn execute_cmd_stream_inner_async(
+        &mut self,
+        stream_bytes: &[u8],
+        allocs: Option<&[AerogpuAllocEntry]>,
+        guest_mem: &mut dyn GuestMemory,
+        pending_writebacks: &mut Vec<PendingWriteback>,
+    ) -> Result<ExecuteReport> {
+        self.encoder_has_commands = false;
+        let iter = AerogpuCmdStreamIter::new(stream_bytes)
+            .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
+        let stream_size = iter.header().size_bytes as usize;
+        let mut iter = iter.peekable();
+
+        let alloc_map = AllocTable::new(allocs)?;
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aerogpu_cmd encoder"),
+            });
+
+        let mut report = ExecuteReport::default();
+
+        let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+        let result: Result<()> = async {
+            while let Some(next) = iter.peek() {
+                let (cmd_size, opcode) = match next {
+                    Ok(packet) => (packet.hdr.size_bytes as usize, packet.hdr.opcode),
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"
+                        ));
+                    }
+                };
+                let cmd_end = cursor
+                    .checked_add(cmd_size)
+                    .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
+                let cmd_bytes = stream_bytes
+                    .get(cursor..cmd_end)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "aerogpu_cmd: cmd overruns stream: cursor=0x{cursor:x} cmd_size=0x{cmd_size:x} stream_size=0x{stream_size:x}"
+                        )
+                    })?;
+
+                // Commands that need a render-pass boundary are handled by ending any
+                // in-flight pass before processing the opcode.
+                match opcode {
+                    OPCODE_DRAW | OPCODE_DRAW_INDEXED => {
+                        let mut stream = CmdStreamCtx {
+                            iter: &mut iter,
+                            cursor: &mut cursor,
+                            bytes: stream_bytes,
+                            size: stream_size,
+                        };
+                        self.exec_render_pass_load(
+                            &mut encoder,
+                            &mut stream,
+                            &alloc_map,
+                            guest_mem,
+                            &mut report,
+                        )?;
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                // Non-draw commands are processed directly.
+                iter.next().expect("peeked Some").map_err(|err| {
+                    anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}")
+                })?;
+
+                if opcode == OPCODE_CREATE_SHADER_DXBC {
+                    self.exec_create_shader_dxbc_persistent(cmd_bytes).await?;
+                } else {
+                    self.exec_non_draw_command(
+                        &mut encoder,
+                        opcode,
+                        cmd_bytes,
+                        &alloc_map,
+                        guest_mem,
+                        pending_writebacks,
+                        &mut report,
+                    )?;
+                }
+
+                report.commands = report.commands.saturating_add(1);
+                cursor = cmd_end;
+            }
+            Ok(())
+        }
+        .await;
 
         match result {
             Ok(()) => {
@@ -8281,6 +8457,231 @@ impl AerogpuD3d11Executor {
 
         self.resources.shaders.insert(shader_handle, shader);
         Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn exec_create_shader_dxbc_persistent(&mut self, cmd_bytes: &[u8]) -> Result<()> {
+        let (cmd, dxbc_bytes) = decode_cmd_create_shader_dxbc_payload_le(cmd_bytes)
+            .map_err(|e| anyhow!("CREATE_SHADER_DXBC: invalid payload: {e:?}"))?;
+        let shader_handle = cmd.shader_handle;
+        let stage_u32 = cmd.stage;
+
+        let stage = match stage_u32 {
+            0 => ShaderStage::Vertex,
+            1 => ShaderStage::Pixel,
+            2 => ShaderStage::Compute,
+            _ => bail!("CREATE_SHADER_DXBC: unknown shader stage {stage_u32}"),
+        };
+
+        let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
+
+        let flags = self.persistent_shader_cache_flags.clone();
+
+        // At most one invalidation+retranslate retry for corruption defense.
+        let mut invalidated_once = false;
+
+        loop {
+            let (artifact, source) = self
+                .persistent_shader_cache
+                .get_or_translate_with_source(dxbc_bytes, flags.clone(), || async {
+                    // Translation path (only on miss).
+                    let dxbc = DxbcFile::parse(dxbc_bytes)
+                        .context("DXBC parse failed")
+                        .map_err(|e| e.to_string())?;
+                    let program = Sm4Program::parse_from_dxbc(&dxbc)
+                        .context("DXBC decode failed")
+                        .map_err(|e| e.to_string())?;
+
+                    // Geometry/hull/domain stages are not represented in the AeroGPU command stream
+                    // (WebGPU does not expose them), but Win7 D3D11 applications may still create
+                    // these shaders. Persist an explicit "ignored" result so we can skip re-parsing
+                    // them on subsequent runs.
+                    let parsed_stage = match program.stage {
+                        crate::ShaderStage::Vertex => Some(ShaderStage::Vertex),
+                        crate::ShaderStage::Pixel => Some(ShaderStage::Pixel),
+                        crate::ShaderStage::Compute => Some(ShaderStage::Compute),
+                        crate::ShaderStage::Geometry
+                        | crate::ShaderStage::Hull
+                        | crate::ShaderStage::Domain => None,
+                        other => {
+                            return Err(format!(
+                                "CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"
+                            ));
+                        }
+                    };
+
+                    if let Some(parsed_stage) = parsed_stage {
+                        if parsed_stage != stage {
+                            return Err(format!(
+                                "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})"
+                            ));
+                        }
+                    }
+
+                    if parsed_stage.is_none() {
+                        return Ok(PersistedShaderArtifact {
+                            wgsl: String::new(),
+                            stage: PersistedShaderStage::Ignored,
+                            bindings: Vec::new(),
+                            vs_input_signature: Vec::new(),
+                        });
+                    }
+
+                    let signatures = parse_signatures(&dxbc)
+                        .context("parse DXBC signatures")
+                        .map_err(|e| e.to_string())?;
+                    let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
+
+                    let (wgsl, reflection) = if signature_driven {
+                        let translated =
+                            try_translate_sm4_signature_driven(&dxbc, &program, &signatures)
+                                .map_err(|e| e.to_string())?;
+                        (translated.wgsl, translated.reflection)
+                    } else {
+                        (
+                            crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap(&program)
+                                .map_err(|e| e.to_string())?
+                                .wgsl,
+                            ShaderReflection::default(),
+                        )
+                    };
+
+                    let bindings: Vec<PersistedBinding> = reflection
+                        .bindings
+                        .iter()
+                        .map(PersistedBinding::from_binding)
+                        .collect();
+
+                    let vs_input_signature = if stage == ShaderStage::Vertex {
+                        if signature_driven {
+                            let module = program
+                                .decode()
+                                .context("decode SM4/5 token stream")
+                                .map_err(|e| e.to_string())?;
+                            extract_vs_input_signature_unique_locations(&signatures, &module)
+                                .context("extract VS input signature")
+                                .map_err(|e| e.to_string())?
+                        } else {
+                            extract_vs_input_signature(&signatures)
+                                .context("extract VS input signature")
+                                .map_err(|e| e.to_string())?
+                        }
+                    } else {
+                        Vec::new()
+                    };
+                    let vs_input_signature: Vec<PersistedVsInputSignatureElement> =
+                        vs_input_signature
+                            .iter()
+                            .map(PersistedVsInputSignatureElement::from_element)
+                            .collect();
+
+                    Ok(PersistedShaderArtifact {
+                        wgsl,
+                        stage: PersistedShaderStage::from_stage(stage),
+                        bindings,
+                        vs_input_signature,
+                    })
+                })
+                .await
+                .map_err(|err| anyhow!(err.as_string().unwrap_or_else(|| format!("{err:?}"))))?;
+
+            let Some(artifact_stage) = artifact.stage.to_stage() else {
+                // Ignored shader stage (GS/HS/DS): accept create but do not track a shader resource.
+                return Ok(());
+            };
+
+            if artifact_stage != stage {
+                if !invalidated_once {
+                    invalidated_once = true;
+                    let _ = self
+                        .persistent_shader_cache
+                        .invalidate(dxbc_bytes, flags.clone())
+                        .await;
+                    continue;
+                }
+                // Fall back to the non-persistent path to avoid looping forever.
+                return self.exec_create_shader_dxbc(cmd_bytes);
+            }
+
+            // Optional: validate cached WGSL on persistent hit to guard against corruption/staleness.
+            if source == ShaderCacheSource::Persistent {
+                self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            }
+
+            let PersistedShaderArtifact {
+                wgsl,
+                bindings,
+                vs_input_signature,
+                ..
+            } = artifact;
+
+            let reflection = ShaderReflection {
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                bindings: bindings.iter().map(PersistedBinding::to_binding).collect(),
+            };
+            let vs_input_signature: Vec<VsInputSignatureElement> = vs_input_signature
+                .into_iter()
+                .map(PersistedVsInputSignatureElement::to_element)
+                .collect();
+
+            let entry_point = match stage {
+                ShaderStage::Vertex => "vs_main",
+                ShaderStage::Pixel => "fs_main",
+                ShaderStage::Compute => "cs_main",
+            };
+
+            let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                &self.device,
+                map_pipeline_cache_stage(stage),
+                &wgsl,
+                Some("aerogpu_cmd shader"),
+            );
+
+            let depth_clamp_wgsl_hash = if stage == ShaderStage::Vertex {
+                let clamped = wgsl_depth_clamp_variant(&wgsl);
+                let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                    &self.device,
+                    map_pipeline_cache_stage(stage),
+                    &clamped,
+                    Some("aerogpu_cmd VS (depth clamp)"),
+                );
+                Some(hash)
+            } else {
+                None
+            };
+
+            if source == ShaderCacheSource::Persistent {
+                self.poll();
+                let err = self.device.pop_error_scope().await;
+                if let Some(err) = err {
+                    if !invalidated_once {
+                        invalidated_once = true;
+                        let _ = self
+                            .persistent_shader_cache
+                            .invalidate(dxbc_bytes, flags.clone())
+                            .await;
+                        continue;
+                    }
+                    return Err(anyhow!(
+                        "cached WGSL failed wgpu validation for shader {shader_handle}: {err:?}"
+                    ));
+                }
+            }
+
+            let shader = ShaderResource {
+                stage,
+                wgsl_hash: hash,
+                depth_clamp_wgsl_hash,
+                dxbc_hash_fnv1a64,
+                entry_point,
+                vs_input_signature,
+                reflection,
+                wgsl_source: wgsl,
+            };
+            self.resources.shaders.insert(shader_handle, shader);
+            return Ok(());
+        }
     }
 
     fn exec_destroy_shader(&mut self, cmd_bytes: &[u8]) -> Result<()> {

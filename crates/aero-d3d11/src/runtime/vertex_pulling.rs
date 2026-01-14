@@ -33,8 +33,9 @@ pub const VERTEX_PULLING_GROUP: u32 = BIND_GROUP_INTERNAL_EMULATION;
 /// First `@binding` number reserved for vertex pulling + compute-expansion internal resources
 /// within [`VERTEX_PULLING_GROUP`].
 ///
-/// Bindings below this range are reserved for D3D-style register mappings when `@group(3)` is used
-/// for GS/HS/DS resource bindings (via the `stage_ex` ABI extension).
+/// Using [`BINDING_BASE_INTERNAL`] keeps internal emulation bindings disjoint from the D3D11
+/// register-space ranges (`b#`/`t#`/`s#`/`u#`), and makes it safe to colocate vertex pulling with
+/// other internal helpers if that becomes necessary.
 ///
 /// This is anchored on [`crate::binding_model::BINDING_BASE_INTERNAL`] so all internal bindings are
 /// guaranteed to stay disjoint from the D3D11 register-space ranges (`b#`/`t#`/`s#`/`u#`).
@@ -47,8 +48,7 @@ pub const VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE: u32 = VERTEX_PULLING_BINDIN
 
 /// `@binding` number for the vertex pulling uniform buffer inside [`VERTEX_PULLING_GROUP`].
 ///
-/// This lives in the compute-expansion internal range so it can coexist with D3D register bindings
-/// when `@group(3)` is used for GS/HS/DS resources.
+/// This lives in the reserved internal binding range.
 pub const VERTEX_PULLING_UNIFORM_BINDING: u32 = VERTEX_PULLING_BINDING_BASE;
 
 /// Per-slot vertex buffer dynamic state needed for address calculation.

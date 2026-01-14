@@ -63,6 +63,8 @@ members = [
     "crates/aero-debug",
     "crates/aero-interrupts",
     "crates/aero-d3d11",
+    # wasm-pack package used by web harnesses / Playwright tests.
+    "crates/aero-d3d11-wasm",
     "crates/aero-machine",
     "crates/aero-machine-cli",
     "crates/devices",
