@@ -1087,6 +1087,8 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::Cut { .. }
             | Sm4Inst::BufInfoRaw { .. }
             | Sm4Inst::BufInfoStructured { .. }
+            | Sm4Inst::BufInfoRawUav { .. }
+            | Sm4Inst::BufInfoStructuredUav { .. }
             | Sm4Inst::Unknown { .. }
             | Sm4Inst::Ret => {}
         }
@@ -2295,6 +2297,11 @@ fn scan_resources(
                 validate_slot("srv_buffer", buffer.slot, MAX_TEXTURE_SLOTS)?;
                 srv_buffers.insert(buffer.slot);
             }
+            Sm4Inst::BufInfoRawUav { dst: _, uav }
+            | Sm4Inst::BufInfoStructuredUav { dst: _, uav, .. } => {
+                validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
+                uav_buffers.insert(uav.slot);
+            }
             Sm4Inst::Unknown { .. } => {}
             Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
             Sm4Inst::Ret => {}
@@ -2646,7 +2653,10 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(selector, &mut scan_reg);
             }
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
-            Sm4Inst::BufInfoRaw { dst, .. } | Sm4Inst::BufInfoStructured { dst, .. } => {
+            Sm4Inst::BufInfoRaw { dst, .. }
+            | Sm4Inst::BufInfoStructured { dst, .. }
+            | Sm4Inst::BufInfoRawUav { dst, .. }
+            | Sm4Inst::BufInfoStructuredUav { dst, .. } => {
                 scan_reg(dst.reg);
             }
             Sm4Inst::Unknown { .. } => {}
@@ -3740,6 +3750,35 @@ fn emit_instructions(
                 // - zw = 0
                 let expr =
                     format!("bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))");
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
+            }
+            Sm4Inst::BufInfoRawUav { dst, uav } => {
+                let dwords = format!("arrayLength(&u{}.data)", uav.slot);
+                let bytes = format!("({dwords}) * 4u");
+                // Output packing:
+                // - x = total byte size
+                // - yzw = 0
+                let expr = format!(
+                    "bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))"
+                );
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
+            }
+            Sm4Inst::BufInfoStructuredUav {
+                dst,
+                uav,
+                stride_bytes,
+            } => {
+                let dwords = format!("arrayLength(&u{}.data)", uav.slot);
+                let byte_size = format!("({dwords}) * 4u");
+                let stride = format!("{}u", stride_bytes);
+                let elem_count = format!("({byte_size}) / ({stride})");
+                // Output packing:
+                // - x = element count
+                // - y = stride (bytes)
+                // - zw = 0
+                let expr = format!(
+                    "bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))"
+                );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::WorkgroupBarrier => {

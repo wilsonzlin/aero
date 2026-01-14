@@ -218,31 +218,54 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
     //
     // `bufinfo` output packing differs between raw and structured buffers; the instruction token
     // stream does not encode the stride directly, so we derive it from the corresponding
-    // `dcl_resource_structured` declaration when available.
+    // `dcl_resource_structured` / `dcl_uav_structured` declaration when available.
     //
     // This keeps `decode_instruction` context-free while still letting downstream stages (e.g. WGSL
     // translation) distinguish `ByteAddressBuffer.GetDimensions` from
     // `StructuredBuffer.GetDimensions`.
     let mut srv_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
+    let mut uav_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
     for decl in &decls {
-        if let Sm4Decl::ResourceBuffer { slot, stride, kind } = decl {
-            srv_buffer_decls.insert(*slot, (*kind, *stride));
+        match decl {
+            Sm4Decl::ResourceBuffer { slot, stride, kind } => {
+                srv_buffer_decls.insert(*slot, (*kind, *stride));
+            }
+            Sm4Decl::UavBuffer { slot, stride, kind } => {
+                uav_buffer_decls.insert(*slot, (*kind, *stride));
+            }
+            _ => {}
         }
     }
-    if !srv_buffer_decls.is_empty() {
+    if !srv_buffer_decls.is_empty() || !uav_buffer_decls.is_empty() {
         for inst in &mut instructions {
-            if let Sm4Inst::BufInfoRaw { dst, buffer } = inst {
-                if let Some((BufferKind::Structured, stride)) =
-                    srv_buffer_decls.get(&buffer.slot).copied()
-                {
-                    if stride != 0 {
-                        *inst = Sm4Inst::BufInfoStructured {
-                            dst: dst.clone(),
-                            buffer: *buffer,
-                            stride_bytes: stride,
-                        };
+            match inst {
+                Sm4Inst::BufInfoRaw { dst, buffer } => {
+                    if let Some((BufferKind::Structured, stride)) =
+                        srv_buffer_decls.get(&buffer.slot).copied()
+                    {
+                        if stride != 0 {
+                            *inst = Sm4Inst::BufInfoStructured {
+                                dst: dst.clone(),
+                                buffer: *buffer,
+                                stride_bytes: stride,
+                            };
+                        }
                     }
                 }
+                Sm4Inst::BufInfoRawUav { dst, uav } => {
+                    if let Some((BufferKind::Structured, stride)) =
+                        uav_buffer_decls.get(&uav.slot).copied()
+                    {
+                        if stride != 0 {
+                            *inst = Sm4Inst::BufInfoStructuredUav {
+                                dst: dst.clone(),
+                                uav: *uav,
+                                stride_bytes: stride,
+                            };
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -1064,9 +1087,29 @@ fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u32, Sm4DecodeError> {
 fn decode_bufinfo(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
     let mut dst = decode_dst(r)?;
     dst.saturate = saturate;
-    let buffer = decode_buffer_ref(r)?;
+    let op = decode_raw_operand(r)?;
+    if op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("bufinfo operand cannot be immediate"),
+        });
+    }
+    let slot = one_index(op.ty, &op.indices, r.base_at)?;
     r.expect_eof()?;
-    Ok(Sm4Inst::BufInfoRaw { dst, buffer })
+    match op.ty {
+        OPERAND_TYPE_RESOURCE => Ok(Sm4Inst::BufInfoRaw {
+            dst,
+            buffer: BufferRef { slot },
+        }),
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW => Ok(Sm4Inst::BufInfoRawUav {
+            dst,
+            uav: UavRef { slot },
+        }),
+        other => Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperandType { ty: other },
+        }),
+    }
 }
 
 fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {

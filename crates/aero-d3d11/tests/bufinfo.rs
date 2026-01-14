@@ -72,6 +72,13 @@ fn reg_src_resource(slot: u32) -> Vec<u32> {
     ]
 }
 
+fn reg_src_uav(slot: u32) -> Vec<u32> {
+    vec![
+        operand_token(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 0, OPERAND_SEL_MASK, 0, 1),
+        slot,
+    ]
+}
+
 fn assert_wgsl_validates(wgsl: &str) {
     let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
     let mut validator = naga::valid::Validator::new(
@@ -180,6 +187,120 @@ fn decodes_and_translates_bufinfo_structured_uses_decl_stride() {
     assert!(
         translated.wgsl.contains("bitcast<vec4<f32>>"),
         "expected structured bufinfo to store integer bits via bitcast:\n{}",
+        translated.wgsl
+    );
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn decodes_and_translates_bufinfo_raw_uav_to_array_length() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_thread_group 1, 1, 1
+    body.push(opcode_token(OPCODE_DCL_THREAD_GROUP, 4));
+    body.push(1);
+    body.push(1);
+    body.push(1);
+
+    // bufinfo r0.x, u0
+    body.push(opcode_token(OPCODE_TEST_BUFINFO, 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::X));
+    body.extend_from_slice(&reg_src_uav(0));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 = compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(matches!(
+        module.instructions[0],
+        Sm4Inst::BufInfoRawUav { .. }
+    ));
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
+        .expect("translate");
+
+    assert!(
+        translated.wgsl.contains("arrayLength(&u0.data)"),
+        "expected uav bufinfo to use arrayLength:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("* 4u"),
+        "expected uav bufinfo to convert dwords to bytes:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<f32>>"),
+        "expected uav bufinfo to store integer bits via bitcast:\n{}",
+        translated.wgsl
+    );
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn decodes_and_translates_bufinfo_structured_uav_uses_decl_stride() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_thread_group 1, 1, 1
+    body.push(opcode_token(OPCODE_DCL_THREAD_GROUP, 4));
+    body.push(1);
+    body.push(1);
+    body.push(1);
+
+    // dcl_uav_structured u0, stride=16
+    body.push(opcode_token(OPCODE_DCL_UAV_STRUCTURED, 4));
+    body.extend_from_slice(&reg_src_uav(0));
+    body.push(16);
+
+    // bufinfo r0.xy, u0
+    body.push(opcode_token(OPCODE_TEST_BUFINFO, 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask(0b0011)));
+    body.extend_from_slice(&reg_src_uav(0));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 = compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        matches!(
+            module.instructions[0],
+            Sm4Inst::BufInfoStructuredUav {
+                stride_bytes: 16,
+                ..
+            }
+        ),
+        "expected structured uav bufinfo to be refined using the declared stride"
+    );
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
+        .expect("translate");
+    assert!(
+        translated.wgsl.contains("16u"),
+        "expected stride literal in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("arrayLength(&u0.data)"),
+        "expected uav structured bufinfo to use arrayLength:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<f32>>"),
+        "expected structured uav bufinfo to store integer bits via bitcast:\n{}",
         translated.wgsl
     );
     assert_wgsl_validates(&translated.wgsl);

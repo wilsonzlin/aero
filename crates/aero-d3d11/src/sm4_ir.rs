@@ -536,6 +536,26 @@ pub enum Sm4Inst {
         buffer: BufferRef,
         stride_bytes: u32,
     },
+    /// `bufinfo` on a raw UAV buffer (e.g. `RWByteAddressBuffer.GetDimensions`).
+    ///
+    /// Output packing:
+    /// - `dst.x` = total buffer size in **bytes**.
+    /// - other lanes are 0 (but still respect `dst.mask`).
+    BufInfoRawUav {
+        dst: DstOperand,
+        uav: UavRef,
+    },
+    /// `bufinfo` on a structured UAV buffer (e.g. `RWStructuredBuffer.GetDimensions`).
+    ///
+    /// Output packing:
+    /// - `dst.x` = element count
+    /// - `dst.y` = stride in bytes
+    /// - other lanes are 0 (but still respect `dst.mask`).
+    BufInfoStructuredUav {
+        dst: DstOperand,
+        uav: UavRef,
+        stride_bytes: u32,
+    },
     Ret,
 }
 
