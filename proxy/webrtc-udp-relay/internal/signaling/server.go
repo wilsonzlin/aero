@@ -168,31 +168,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webrtc/offer", s.handleWebRTCOffer)
 }
 
-func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	s.RegisterRoutes(mux)
-	return mux
-}
-
-// ServeHTTP provides minimal routing for tests and simple deployments.
-//
-// The production binary typically wires routes through httpserver.Server.Mux()
-// using RegisterRoutes.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.Method == http.MethodPost && r.URL.Path == "/session":
-		s.handleCreateSession(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/offer":
-		s.handleOffer(w, r)
-	case r.Method == http.MethodGet && r.URL.Path == "/webrtc/signal":
-		s.handleWebSocketSignal(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/webrtc/offer":
-		s.handleWebRTCOffer(w, r)
-	default:
-		http.NotFound(w, r)
-	}
-}
-
 func (s *Server) Close() {
 	s.mu.Lock()
 	webrtcSessions := make([]*webrtcpeer.Session, 0, len(s.webrtcSessions))
