@@ -172,3 +172,79 @@ fn ep0_transfer_engine_self_link_faults_and_emits_event() {
         "second event ring entry should still be empty"
     );
 }
+
+#[test]
+fn ep0_transfer_engine_data_stage_work_is_bounded_per_doorbell() {
+    // Control DATA transfers are packetized and can be guest-amplified by choosing a tiny
+    // max-packet-size. Ensure we bound the amount of per-call work so a single doorbell can't
+    // monopolize the CPU.
+    struct LargeInDevice;
+
+    impl UsbDeviceModel for LargeInDevice {
+        fn handle_control_request(
+            &mut self,
+            setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Data(vec![0xAB; setup.w_length as usize])
+        }
+    }
+
+    let mut mem = CountingMem::new(0x40_000, 64, 300);
+
+    let tr_ring = 0x1000u64;
+    let buf = 0x4000u64;
+
+    let setup = SetupPacket {
+        bm_request_type: 0xc0, // DeviceToHost | Vendor | Device
+        b_request: 0x01,
+        w_value: 0,
+        w_index: 0,
+        w_length: 4096,
+    };
+    let setup_bytes = [
+        setup.bm_request_type,
+        setup.b_request,
+        setup.w_value as u8,
+        (setup.w_value >> 8) as u8,
+        setup.w_index as u8,
+        (setup.w_index >> 8) as u8,
+        setup.w_length as u8,
+        (setup.w_length >> 8) as u8,
+    ];
+
+    let mut setup_trb = Trb::new(u64::from_le_bytes(setup_bytes), 0, 0);
+    setup_trb.set_cycle(true);
+    setup_trb.set_trb_type(TrbType::SetupStage);
+    setup_trb.write_to(&mut mem, tr_ring);
+
+    let mut data_trb = Trb::new(buf, setup.w_length as u32, 0);
+    data_trb.set_cycle(true);
+    data_trb.set_trb_type(TrbType::DataStage);
+    data_trb.set_dir_in(true);
+    data_trb.write_to(&mut mem, tr_ring + TRB_LEN as u64);
+
+    let mut status_trb = Trb::new(0, 0, 0);
+    status_trb.set_cycle(true);
+    status_trb.set_trb_type(TrbType::StatusStage);
+    status_trb.set_dir_in(false);
+    status_trb.write_to(&mut mem, tr_ring + 2 * TRB_LEN as u64);
+
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.hub_mut().attach(0, Box::new(LargeInDevice));
+
+    let slot_id = xhci.enable_slot(0).expect("slot allocation");
+    assert!(xhci.configure_ep0(slot_id, tr_ring, true, 8));
+
+    // A single doorbell should not transfer the entire payload. Prior implementations processed the
+    // full DATA stage packet-by-packet in one call; this would perform 512 writes (4096/8) and blow
+    // the write budget above. With a bounded per-call packet budget, we make partial progress and
+    // retry on a later tick.
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+
+    let start = buf as usize;
+    // Ensure we made at least some progress.
+    assert_eq!(mem.data[start], 0xAB);
+    // But we should not have completed the entire DATA stage in one call.
+    assert_eq!(mem.data[start + setup.w_length as usize - 1], 0);
+}

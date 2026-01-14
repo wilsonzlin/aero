@@ -614,6 +614,13 @@ impl XhciTransferExecutor {
 
 const MAX_TRBS_PER_RUN: usize = 1024;
 const MAX_CONTROL_DATA_LEN: u32 = 64 * 1024;
+/// Maximum number of control DATA packets processed per `ControlEndpoint::process` call.
+///
+/// Control transfer DATA TRBs can specify up to `MAX_CONTROL_DATA_LEN` bytes. Processing that entire
+/// payload packet-by-packet in one call can be extremely expensive (especially when the max packet
+/// size is small), so cap the number of packets we will process per call and retry in a future
+/// tick. This keeps work deterministic and bounded even for adversarial guests.
+const MAX_CONTROL_DATA_PACKETS_PER_RUN: usize = 256;
 
 // Common TRB control bits.
 const TRB_CTRL_IOC: u32 = 1 << 5;
@@ -1098,8 +1105,10 @@ impl ControlEndpoint {
                     let mut completion: Option<CompletionCode> = None;
                     let max_packet = self.max_packet_size as u32;
                     let mut remaining = len.saturating_sub(*transferred);
+                    let mut packet_budget = MAX_CONTROL_DATA_PACKETS_PER_RUN;
 
-                    while remaining != 0 {
+                    while remaining != 0 && packet_budget != 0 {
+                        packet_budget -= 1;
                         let chunk_max = remaining.min(max_packet) as usize;
 
                         match direction {
@@ -1189,6 +1198,15 @@ impl ControlEndpoint {
                                 }
                             }
                         }
+                    }
+
+                    // If we still have bytes remaining and did not observe any terminal condition
+                    // (short packet / stall / timeout), we've exhausted the deterministic per-call
+                    // work budget. Yield and retry the DATA stage on a future tick without
+                    // consuming the DATA TRB.
+                    if remaining != 0 && completion.is_none() && !short_packet {
+                        self.schedule_retry(now_ms);
+                        return;
                     }
 
                     if let Some(completion) = completion {
