@@ -102,10 +102,12 @@ fn configure_endpoint_preserves_xhc_owned_slot_context_fields() {
         icc.set_add_flags((1 << 0) | (1 << 1) | (1 << 3));
         icc.write_to(&mut mem, input_ctx_cfg);
 
-        // Slot Context: intentionally leave Speed and USB Device Address unset (0) to ensure
-        // Configure Endpoint preserves xHC-owned fields from the output Device Context.
+        // Slot Context: intentionally leave Speed, USB Device Address, Route String, and Root Hub
+        // Port Number unset/invalid so the controller must preserve xHC-owned/topology fields from
+        // the output Device Context.
         let mut slot_ctx = SlotContext::default();
-        slot_ctx.set_root_hub_port_number(1);
+        slot_ctx.set_route_string(0x1234);
+        slot_ctx.set_root_hub_port_number(0);
         slot_ctx.set_context_entries(3);
         slot_ctx.write_to(&mut mem, input_ctx_cfg + CONTEXT_SIZE as u64);
 
@@ -159,4 +161,5 @@ fn configure_endpoint_preserves_xhc_owned_slot_context_fields() {
     );
     assert_eq!(slot_after_cfg.context_entries(), 3);
     assert_eq!(slot_after_cfg.root_hub_port_number(), 1);
+    assert_eq!(slot_after_cfg.route_string(), 0);
 }

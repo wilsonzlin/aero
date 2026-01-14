@@ -98,7 +98,10 @@ fn evaluate_context_preserves_xhc_owned_slot_context_fields() {
         icc.write_to(&mut mem, input_ctx_eval);
 
         let mut slot_ctx = SlotContext::default();
-        slot_ctx.set_root_hub_port_number(1);
+        // Deliberately provide bogus/empty topology fields; the controller must preserve the output
+        // Slot Context's Route String + Root Hub Port Number.
+        slot_ctx.set_route_string(0x1234);
+        slot_ctx.set_root_hub_port_number(0);
         slot_ctx.set_context_entries(1);
         slot_ctx.write_to(&mut mem, input_ctx_eval + CONTEXT_SIZE as u64);
 
@@ -136,9 +139,13 @@ fn evaluate_context_preserves_xhc_owned_slot_context_fields() {
         speed_before,
         "Evaluate Context must preserve the xHC-owned speed field"
     );
+    assert_eq!(slot_after.root_hub_port_number(), 1);
+    assert_eq!(slot_after.route_string(), 0);
 
     // Also verify the controller-local Slot Context mirror preserved the same xHC-owned fields.
     let slot_state = xhci.slot_state(slot_id).expect("slot should be enabled");
     assert_eq!(slot_state.slot_context().usb_device_address(), slot_id);
     assert_eq!(slot_state.slot_context().speed(), speed_before);
+    assert_eq!(slot_state.slot_context().root_hub_port_number(), 1);
+    assert_eq!(slot_state.slot_context().route_string(), 0);
 }
