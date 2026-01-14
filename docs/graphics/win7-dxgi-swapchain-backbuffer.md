@@ -173,6 +173,10 @@ dxgkrnl/runtime passes into the miniport via `DxgkDdiCreateAllocation`.
    - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`
    - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe`
 
+   CI-staged driver packages also include dbgctl at:
+   - `out\packages\aerogpu\x64\tools\aerogpu_dbgctl.exe`
+   - `out\packages\aerogpu\x86\tools\aerogpu_dbgctl.exe`
+
    Example (Win7 x64; replace `<GuestToolsDrive>` with your mounted ISO/zip drive letter, e.g. `D`):
 
    ```cmd
