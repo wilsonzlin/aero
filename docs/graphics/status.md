@@ -601,11 +601,13 @@ Known gaps / limitations (enforced by code/tests):
     deterministic triangle) so apps that select patchlists speculatively can still render *something*
     during bring-up.
   - Patchlist topology **with HS+DS bound** routes through an initial tessellation compute prepass
-    pipeline (currently PatchList3 only) that expands the patch list into an indexed triangle list
-    for rendering. Guest HS/DS DXBC is not executed yet; the pipeline uses stub/passthrough
-    stages (HS passthrough currently writes a fixed tess factor: `4.0`).
+    pipeline (currently PatchList3 only): VS-as-compute vertex pulling stub → HS passthrough → layout
+    pass (patch metadata + indirect args) → DS evaluation via `DomainEvalPipeline` (placeholder DS) →
+    tri-domain integer index generation via `TriDomainIntegerIndexGen`. Guest HS/DS DXBC is not
+    executed yet; the HS passthrough currently writes a fixed tess factor: `4.0`.
   - Tessellation building blocks live under `crates/aero-d3d11/src/runtime/tessellation/` (VS-as-compute
-    stub, HS passthrough, layout pass, DS passthrough, index gen, sizing/guardrails).
+    stub, HS passthrough, layout pass, DS evaluation (`DomainEvalPipeline`), tri-domain integer index
+    gen, sizing/guardrails).
   - Guest HS/DS handles/resources are tracked for state/binding, but not executed yet.
   - Design doc: [`docs/graphics/tessellation-emulation.md`](./tessellation-emulation.md)
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
