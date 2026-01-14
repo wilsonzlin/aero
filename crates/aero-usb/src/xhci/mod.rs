@@ -2320,6 +2320,11 @@ impl XhciController {
         if self.host_controller_error {
             return;
         }
+        // Mirror the command-ring gating: endpoint transfers only make progress while the
+        // controller is running.
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+            return;
+        }
 
         let mut trb_budget = max_trbs;
         // Process each currently-active endpoint at most once per tick. This ensures deterministic
