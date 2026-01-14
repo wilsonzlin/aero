@@ -14190,7 +14190,10 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 0 && const_cmd->vec4_count == 4, "WVP constants cover c0..c3")) {
+  // Fixed-function WVP constants are uploaded to a reserved high range so apps
+  // switching between fixed-function and user vertex shaders do not observe
+  // clobbered low constant registers.
+  if (!Check(const_cmd->start_register == 240 && const_cmd->vec4_count == 4, "WVP constants cover c240..c243")) {
     return false;
   }
   const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
@@ -18482,6 +18485,188 @@ bool TestFvfXyzrhwTex1DrawPrimitiveUpEmulationConvertsVertices() {
     return false;
   }
   if (!Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZRHW|TEX1(no diffuse) UP: v preserved")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
+}
+
+bool TestFvfXyzrhwTex1DrawPrimitiveUpEmulationAppliesViewportOffsetAndRhw() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "SetViewport must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // Use a non-zero viewport offset to validate the XYZRHW conversion path
+  // respects vp.X/vp.Y (not just width/height).
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 10.0f;
+  vp.Y = 20.0f;
+  vp.Width = 128.0f;
+  vp.Height = 64.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x104u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    float u;
+    float v;
+  };
+
+  Vertex verts[3]{};
+  verts[0] = {vp.X + vp.Width * 0.25f, vp.Y + vp.Height * 0.25f, 0.6f, 2.0f, 0.25f, 0.75f};
+  verts[1] = {vp.X + vp.Width * 0.75f, vp.Y + vp.Height * 0.25f, 0.6f, 1.0f, 0.75f, 0.75f};
+  verts[2] = {vp.X + vp.Width * 0.50f, vp.Y + vp.Height * 0.75f, 0.6f, 1.0f, 0.50f, 0.25f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const size_t expected_bytes = AlignUp(sizeof(verts), 4);
+  std::vector<uint8_t> vb_upload(expected_bytes, 0);
+  size_t vb_uploaded_bytes = 0;
+
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (upload->resource_handle == up_vb_handle) {
+        const size_t payload_bytes = upload->size_bytes;
+        if (!Check(upload->offset_bytes + payload_bytes <= expected_bytes, "upload_resource(UP VB) bounds")) {
+          return false;
+        }
+        if (!Check(sizeof(*upload) + payload_bytes <= hdr->size_bytes, "upload_resource(UP VB) payload bounds")) {
+          return false;
+        }
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+        std::memcpy(vb_upload.data() + upload->offset_bytes, payload, payload_bytes);
+        vb_uploaded_bytes += payload_bytes;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+
+  if (!Check(vb_uploaded_bytes == expected_bytes, "UP VB upload emitted")) {
+    return false;
+  }
+
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  std::memcpy(&x0, vb_upload.data() + 0, sizeof(float));
+  std::memcpy(&y0, vb_upload.data() + 4, sizeof(float));
+  std::memcpy(&z0, vb_upload.data() + 8, sizeof(float));
+  std::memcpy(&w0, vb_upload.data() + 12, sizeof(float));
+  std::memcpy(&u0, vb_upload.data() + 16, sizeof(float));
+  std::memcpy(&v0, vb_upload.data() + 20, sizeof(float));
+
+  const float expected_w = 1.0f / verts[0].rhw;
+  const float expected_ndc_x = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_ndc_y = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
+
+  if (!Check(std::fabs(x0 - expected_ndc_x * expected_w) < 1e-6f, "XYZRHW|TEX1 viewport offset: x0 matches RHW clip conversion")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_ndc_y * expected_w) < 1e-6f, "XYZRHW|TEX1 viewport offset: y0 matches RHW clip conversion")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z * expected_w) < 1e-6f, "XYZRHW|TEX1 viewport offset: z scales by w")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected_w) < 1e-6f, "XYZRHW|TEX1 viewport offset: w computed from rhw")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZRHW|TEX1 viewport offset: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZRHW|TEX1 viewport offset: v preserved")) {
     return false;
   }
   return ValidateStream(buf, len);
@@ -29500,6 +29685,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwTex1DrawPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmulationConvertsVertices();
   failures += !aerogpu::TestFvfXyzrhwTex1DrawPrimitiveUpEmulationConvertsVertices();
+  failures += !aerogpu::TestFvfXyzrhwTex1DrawPrimitiveUpEmulationAppliesViewportOffsetAndRhw();
   failures += !aerogpu::TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion();
   failures += !aerogpu::TestFvfXyzTex1DrawPrimitiveNoScratchVbConversion();
   failures += !aerogpu::TestFvfXyzTex1DrawPrimitiveUpDoesNotConvertVertices();
