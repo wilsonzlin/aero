@@ -238,12 +238,19 @@ Aero uses BIOS drive numbers that match common PC conventions:
 When booting from a CD, the El Torito boot image expects to find the CD drive number in **`DL`**
 when it starts executing.
 
-Note: Aero’s BIOS currently models **exactly one** INT 13h “boot device” at a time as selected by
-`BiosConfig::boot_drive` / `DL`. In particular:
+Note: Aero’s BIOS can service multiple drive numbers via INT 13h when the corresponding backends
+are present. In the canonical Win7 topology this means:
 
-* Only the selected CD drive number (typically `0xE0`) is reported present in the CD drive range.
-* When booting from CD (`DL=0xE0..=0xEF`), the BIOS reports **no fixed disks** via the BDA and HDD
-  `INT 13h` drive numbers (`0x80..`) are not present.
+* `DL=0xE0` routes to the install-media ISO (2048-byte sectors via EDD).
+* `DL=0x80` routes to the primary HDD (512-byte sectors via EDD).
+
+Boot selection (the `DL` value provided to the boot image) is still primarily driven by
+`BiosConfig::boot_drive`, and firmware also supports an optional “CD-first when present” policy
+flag (`BiosConfig::boot_from_cd_if_present`) that attempts a CD boot when an ISO is attached and
+otherwise falls back to the configured HDD boot drive.
+
+When booting from CD (`DL=0xE0..=0xEF`), the BIOS Data Area fixed-disk count is still derived from
+HDD backend presence so guests can access HDD0 during install/recovery.
 
 ---
 
