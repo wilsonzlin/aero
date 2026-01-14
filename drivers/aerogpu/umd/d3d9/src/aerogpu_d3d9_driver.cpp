@@ -12559,9 +12559,11 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     stateblock_record_render_state_locked(dev, i, sb->render_state_values[i]);
   }
 
-  // Fixed-function state: transforms. These do not affect the current AeroGPU
-  // command stream yet, but they must be round-trippable via GetTransform and
-  // via state blocks.
+  // Fixed-function state: transforms. Cached for GetTransform/state blocks, and
+  // consumed by bring-up fixed-function paths that apply a WVP transform (e.g.
+  // the `XYZ|DIFFUSE|TEX1` fixed-function VS and the fixed-function
+  // ProcessVertices CPU transform). Mark the reserved fixed-function WVP constant
+  // range dirty when relevant matrices change.
   if (sb->transform_mask.any()) {
     for (uint32_t t = 0; t < Device::kTransformCacheCount; ++t) {
       if (!sb->transform_mask.test(t)) {
