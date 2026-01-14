@@ -3,7 +3,7 @@ use memory::MmioHandler as _;
 
 #[test]
 fn bar1_mmio_read_write_roundtrip() {
-    let dev = AeroGpuPciDevice::new();
+    let dev = AeroGpuPciDevice::default();
     let mut bar1 = dev.bar1_mmio_handler();
 
     bar1.write(0x1234, 4, 0xAABB_CCDD);
@@ -22,4 +22,3 @@ fn legacy_vga_alias_maps_text_buffer_to_expected_offset() {
     assert_eq!(off, 0xB8000 - LEGACY_VGA_PADDR_BASE);
     assert_eq!(off, 0x18_000);
 }
-

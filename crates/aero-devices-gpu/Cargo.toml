@@ -6,6 +6,8 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-aero-protocol = { path = "../../emulator/protocol" }
 aero-devices = { path = "../devices" }
+aero-protocol = { path = "../../emulator/protocol" }
 memory = { path = "../memory" }
+
+[dev-dependencies]

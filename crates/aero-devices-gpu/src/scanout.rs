@@ -287,6 +287,16 @@ impl Default for AeroGpuCursorConfig {
 
 impl AeroGpuCursorConfig {
     pub fn read_rgba(&self, mem: &mut dyn MemoryBus) -> Option<Vec<u8>> {
+        if !self.enable {
+            return None;
+        }
+
+        // MVP: only support 32bpp cursor formats.
+        let bytes_per_pixel = self.format.bytes_per_pixel()?;
+        if bytes_per_pixel != 4 {
+            return None;
+        }
+
         read_rgba_from_guest(
             self.enable,
             self.width,
@@ -310,9 +320,7 @@ mod tests {
 
     impl VecMemory {
         fn new(size: usize) -> Self {
-            Self {
-                data: vec![0; size],
-            }
+            Self { data: vec![0; size] }
         }
 
         fn range(&self, paddr: u64, len: usize) -> core::ops::Range<usize> {
@@ -409,3 +417,4 @@ mod tests {
         assert!(cursor.read_rgba(&mut mem).is_none());
     }
 }
+
