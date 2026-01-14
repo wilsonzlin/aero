@@ -140,10 +140,10 @@ Steps:
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
   --machine             Also run targeted `aero-machine` tests (USB: UHCI/EHCI/xHCI + USB2 routing; input: i8042 + virtio-input; plus snapshot/restore).
-  --wasm                Also run targeted wasm-pack tests for WASM USB/input regressions (does not require `node_modules`).
+  --wasm                Also run targeted wasm-pack tests for WASM USB/input regressions (requires Node; does not require `node_modules`).
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
-  --with-wasm            Also run the `aero-wasm` input integration smoke tests.
+  --with-wasm            Also run host-side `aero-wasm` input integration smoke tests (no wasm-pack; does not require `node_modules`).
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
