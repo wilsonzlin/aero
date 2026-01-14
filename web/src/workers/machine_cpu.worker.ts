@@ -92,13 +92,6 @@ function setMachineBusy(busy: boolean): void {
   }
 }
 
-function waitForMachineIdle(): Promise<void> {
-  if (!machineBusy) return Promise.resolve();
-  return new Promise((resolve) => {
-    machineIdleWaiters.push(resolve);
-  });
-}
-
 let pendingBootDisks: SetBootDisksMessage | null = null;
 
 type InputBatchMessage = {
@@ -953,7 +946,7 @@ ctx.onmessage = (ev) => {
           postVmSnapshot({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
           return;
         }
-        void waitForMachineIdle().then(() => {
+        machineIdleWaiters.push(() => {
           postVmSnapshot({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
         });
         return;
