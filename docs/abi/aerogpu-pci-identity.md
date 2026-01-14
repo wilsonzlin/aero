@@ -38,7 +38,8 @@ The canonical machine supports **two mutually-exclusive** display configurations
 
   The reference/full versioned-AeroGPU device model with real **command execution** (GPU worker
   backends, transfer/render operations, etc) still lives in `crates/emulator` and is not yet wired
-  into `aero_machine::Machine`.
+  into `aero_machine::Machine` (see:
+  [`21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)).
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000` (see

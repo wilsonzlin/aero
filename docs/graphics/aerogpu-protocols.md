@@ -31,7 +31,7 @@ Note on the canonical machine (`aero_machine::Machine`):
   definitions plus a ring executor (doorbell processing, fence tracking, vsync/vblank pacing) and
   a reusable PCI wrapper. The full versioned-AeroGPU device model with real **command execution**
   (transfer/render ops, worker backends, etc) lives in `crates/emulator` and is not yet wired into
-  `aero_machine::Machine`.
+  `aero_machine::Machine` (see: [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)).
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
   when `MachineConfig::enable_vga=true`, plus a minimal “Standard VGA”-like PCI stub at `00:0c.0`
   (`1234:1111`) used only for VBE LFB MMIO routing.

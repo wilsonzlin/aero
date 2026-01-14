@@ -38,8 +38,10 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   INT 10h VBE mode set/clear writes land in BAR1-backed VRAM (leaving the first 256KiB reserved for
   legacy VGA planar storage).
 
-  Full 3D command execution still lives in `crates/emulator`; the `aero_machine` BAR0 transport is
-  currently a no-op command executor with fence completion so the Win7 KMD doesn't deadlock.
+  Full 3D command execution still lives in `crates/emulator` (see:
+  [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)); the `aero_machine` BAR0
+  transport is currently a no-op command executor with fence completion so the Win7 KMD doesn't
+  deadlock.
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
   `aero_gpu_vga` VGA/VBE device model for boot display, and exposes a minimal Bochs/QEMU “Standard
   VGA”-like PCI stub at `00:0c.0` (`1234:1111`) so the VBE linear framebuffer (LFB) aperture is

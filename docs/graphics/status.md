@@ -22,6 +22,8 @@ Legend:
 > - a sandbox/legacy “monolithic emulator” crate (`crates/emulator`).
 >
 > This doc calls out both where it matters, but treats `aero-machine` as the canonical integration surface unless explicitly marked “legacy/sandbox”.
+>
+> See also: [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md) (explicit `crates/emulator` → canonical stack plan + deletion targets).
 
 ---
 
