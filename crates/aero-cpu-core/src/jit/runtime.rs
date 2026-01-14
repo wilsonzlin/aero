@@ -199,6 +199,12 @@ pub trait CodeVersionTable: core::fmt::Debug + Send {
     /// Number of `u32` entries in the dense table.
     fn len(&self) -> usize;
 
+    /// Returns `true` if the table has no entries.
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Read the version entry at `idx` (`0 <= idx < len()`).
     fn get(&self, idx: usize) -> u32;
 
