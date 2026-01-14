@@ -32,6 +32,38 @@ fn main() {}
 ```
 "#
 )]
+#![cfg_attr(
+    not(feature = "legacy-usb-ehci"),
+    doc = r#"
+
+## Legacy USB EHCI wrapper (feature gated)
+
+The emulator previously carried a thin PCI/MMIO wrapper around the `aero-usb` EHCI controller model.
+This is not part of the canonical VM device stack, so it is intentionally hidden behind
+`--features legacy-usb-ehci`.
+
+```compile_fail
+use emulator::io::usb::ehci;
+fn main() {}
+```
+"#
+)]
+#![cfg_attr(
+    not(feature = "legacy-usb-xhci"),
+    doc = r#"
+
+## Legacy USB xHCI wrapper (feature gated)
+
+The emulator previously carried a thin PCI/MMIO wrapper around the `aero-usb` xHCI controller model.
+This is not part of the canonical VM device stack, so it is intentionally hidden behind
+`--features legacy-usb-xhci`.
+
+```compile_fail
+use emulator::io::usb::xhci;
+fn main() {}
+```
+"#
+)]
 
 #[cfg(feature = "legacy-audio")]
 pub mod audio;

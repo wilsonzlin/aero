@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-usb-xhci")]
+
 use emulator::io::pci::{MmioDevice, PciDevice};
 use emulator::io::usb::xhci::{regs, XhciController, XhciPciDevice};
 use memory::MemoryBus;

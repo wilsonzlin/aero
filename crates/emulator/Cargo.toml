@@ -23,6 +23,12 @@ storage-device-crates = []
 legacy-audio = []
 # Legacy deterministic SMP/APIC model + snapshot harness.
 legacy-smp-model = ["dep:aero-smp-model"]
+# Legacy emulator-specific PCI wrappers for `aero-usb` EHCI (USB 2.0) / xHCI (USB 3.x).
+#
+# The canonical PC platform uses `aero-devices` USB models instead; keep these wrappers behind
+# explicit features to avoid new code depending on the legacy emulator integration.
+legacy-usb-ehci = []
+legacy-usb-xhci = []
 aerogpu-trace = ["dep:aero-gpu-trace"]
 # Legacy AeroGPU PCI/MMIO bring-up device model + tests (legacy vendor 1AED).
 aerogpu-legacy = ["dep:aero-aerogpu", "aero-aerogpu/legacy-abi"]
