@@ -5032,6 +5032,14 @@ function Get-AeroPciIdsFromQueryPci {
     $devs = $BusObj.devices
     if ($null -eq $devs) { return }
     foreach ($dev in $devs) {
+      # Recurse into bridge bus, if present (do this even if we can't parse vendor/device IDs for the
+      # bridge itself; some QEMU builds may omit them).
+      $childBus = $null
+      try { $childBus = $dev.pci_bridge.bus } catch { }
+      if ($null -ne $childBus) {
+        Visit-AeroQueryPciBus -BusObj $childBus -BusFallback $busNum
+      }
+
       $vd = Get-AeroPciVendorDeviceFromQueryPciDevice -Device $dev
       $vendor = $vd.VendorId
       $device = $vd.DeviceId
@@ -5056,13 +5064,6 @@ function Get-AeroPciIdsFromQueryPci {
         Slot              = $slot
         Function          = $function
       })
-
-      # Recurse into bridge bus, if present.
-      $childBus = $null
-      try { $childBus = $dev.pci_bridge.bus } catch { }
-      if ($null -ne $childBus) {
-        Visit-AeroQueryPciBus -BusObj $childBus -BusFallback $busNum
-      }
     }
   }
 
@@ -5266,6 +5267,14 @@ function Get-AeroPciMsixInfoFromQueryPci {
     $devs = $BusObj.devices
     if ($null -eq $devs) { return }
     foreach ($dev in $devs) {
+      # Recurse into bridge bus, if present (do this even if we can't parse vendor/device IDs for the
+      # bridge itself; some QEMU builds may omit them).
+      $childBus = $null
+      try { $childBus = $dev.pci_bridge.bus } catch { }
+      if ($null -ne $childBus) {
+        Visit-AeroQueryPciBusForMsix -BusObj $childBus -BusFallback $busNum
+      }
+
       $vd = Get-AeroPciVendorDeviceFromQueryPciDevice -Device $dev
       $vendor = $vd.VendorId
       $device = $vd.DeviceId
@@ -5304,13 +5313,6 @@ function Get-AeroPciMsixInfoFromQueryPci {
         MsixEnabled = $msixEnabled
         Source      = "query-pci"
       })
-
-      # Recurse into bridge bus, if present.
-      $childBus = $null
-      try { $childBus = $dev.pci_bridge.bus } catch { }
-      if ($null -ne $childBus) {
-        Visit-AeroQueryPciBusForMsix -BusObj $childBus -BusFallback $busNum
-      }
     }
   }
 
