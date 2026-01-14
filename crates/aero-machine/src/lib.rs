@@ -2888,14 +2888,16 @@ impl PciIoBarWindow {
 
 impl aero_platform::io::PortIoDevice for PciIoBarWindow {
     fn read(&mut self, port: u16, size: u8) -> u32 {
+        let mask = Self::read_all_ones(size);
         let size_usize = match size {
             1 | 2 | 4 => size as usize,
-            _ => return Self::read_all_ones(size),
+            _ => return mask,
         };
         self.router
             .borrow_mut()
             .dispatch_read(port, size_usize)
-            .unwrap_or_else(|| Self::read_all_ones(size))
+            .map(|v| v & mask)
+            .unwrap_or(mask)
     }
 
     fn write(&mut self, port: u16, size: u8, value: u32) {
