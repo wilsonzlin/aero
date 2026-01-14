@@ -1610,6 +1610,123 @@ mod tests {
     }
 
     #[test]
+    fn two_ports_irq_gating_and_w1c_clearing() {
+        // Ensure:
+        // - Multiple ports can complete commands in a single process() tick.
+        // - HBA.IS aggregates per-port PxIS bits.
+        // - IRQ assertion is gated by (GHC.IE && (PxIS & PxIE) != 0 for any port).
+        // - PxIS uses W1C semantics and IRQ deasserts once no enabled pending interrupts remain.
+
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq.clone()), 2);
+        let mut mem = TestMemory::new(0x20_000);
+
+        // Attach drives to both ports.
+        let capacity = 32 * SECTOR_SIZE as u64;
+        let disk0 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let disk1 = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        ctl.attach_drive(0, AtaDrive::new(Box::new(disk0)).unwrap());
+        ctl.attach_drive(1, AtaDrive::new(Box::new(disk1)).unwrap());
+
+        let p0 = PORT_BASE;
+        let p1 = PORT_BASE + PORT_STRIDE;
+
+        // Program both ports (CLB/FB/CMD/IE). Leave global GHC.IE disabled so IRQ must not assert.
+        let clb0 = 0x1000;
+        let fb0 = 0x2000;
+        let ctba0 = 0x3000;
+        let data0 = 0x4000;
+
+        let clb1 = 0x5000;
+        let fb1 = 0x6000;
+        let ctba1 = 0x7000;
+        let data1 = 0x8000;
+
+        for (pbase, clb, fb) in [(p0, clb0, fb0), (p1, clb1, fb1)] {
+            ctl.write_u32(pbase + PORT_REG_CLB, clb as u32);
+            ctl.write_u32(pbase + PORT_REG_CLBU, 0);
+            ctl.write_u32(pbase + PORT_REG_FB, fb as u32);
+            ctl.write_u32(pbase + PORT_REG_FBU, 0);
+            ctl.write_u32(pbase + PORT_REG_IE, PORT_IS_DHRS);
+            ctl.write_u32(pbase + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+        }
+
+        // IDENTIFY for both ports, issued before a single process() call.
+        write_cmd_header(&mut mem, clb0, 0, ctba0, 1, false);
+        write_cfis(&mut mem, ctba0, ATA_CMD_IDENTIFY, 0, 0);
+        write_prdt(&mut mem, ctba0, 0, data0, SECTOR_SIZE as u32);
+
+        write_cmd_header(&mut mem, clb1, 0, ctba1, 1, false);
+        write_cfis(&mut mem, ctba1, ATA_CMD_IDENTIFY, 0, 0);
+        write_prdt(&mut mem, ctba1, 0, data1, SECTOR_SIZE as u32);
+
+        ctl.write_u32(p0 + PORT_REG_CI, 1);
+        ctl.write_u32(p1 + PORT_REG_CI, 1);
+
+        ctl.process(&mut mem);
+
+        // Per-port interrupt status should be set for both ports.
+        assert_ne!(ctl.read_u32(p0 + PORT_REG_IS) & PORT_IS_DHRS, 0);
+        assert_ne!(ctl.read_u32(p1 + PORT_REG_IS) & PORT_IS_DHRS, 0);
+
+        // HBA.IS aggregates pending port interrupts even if they are not enabled for IRQ.
+        assert_eq!(ctl.read_u32(HBA_REG_IS), 0b11);
+
+        // GHC.IE is still disabled: IRQ must remain deasserted.
+        assert!(!irq.level());
+
+        // Enabling GHC.IE must immediately assert IRQ because enabled pending interrupts exist.
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        assert!(irq.level());
+
+        // Disabling all per-port IE bits must deassert IRQ even though PxIS is still set.
+        ctl.write_u32(p0 + PORT_REG_IE, 0);
+        ctl.write_u32(p1 + PORT_REG_IE, 0);
+        assert!(!irq.level());
+        assert_eq!(
+            ctl.read_u32(HBA_REG_IS),
+            0b11,
+            "disabling PxIE must not affect aggregated HBA.IS"
+        );
+
+        // Re-enable PxIE only on port 1; IRQ should assert (port 1 has pending enabled PxIS).
+        ctl.write_u32(p1 + PORT_REG_IE, PORT_IS_DHRS);
+        assert!(irq.level());
+
+        // Clear port 1's interrupt status via W1C; IRQ should now deassert because:
+        // - port 0 still has pending PxIS but PxIE is disabled
+        // - port 1 no longer has pending PxIS
+        ctl.write_u32(p1 + PORT_REG_IS, PORT_IS_DHRS);
+        assert!(!irq.level());
+        assert_eq!(ctl.read_u32(HBA_REG_IS), 0b01);
+
+        // Re-enable PxIE for port 0, and IRQ should assert due to its pending PxIS.
+        ctl.write_u32(p0 + PORT_REG_IE, PORT_IS_DHRS);
+        assert!(irq.level());
+
+        // Clear the remaining pending interrupt; IRQ should deassert and HBA.IS clear.
+        ctl.write_u32(p0 + PORT_REG_IS, PORT_IS_DHRS);
+        assert!(!irq.level());
+        assert_eq!(ctl.read_u32(HBA_REG_IS), 0);
+
+        // Sanity-check that IDENTIFY DMA wrote data for both ports.
+        let mut out0 = [0u8; SECTOR_SIZE];
+        mem.read_physical(data0, &mut out0);
+        assert_eq!(out0[0], 0x40);
+
+        let mut out1 = [0u8; SECTOR_SIZE];
+        mem.read_physical(data1, &mut out1);
+        assert_eq!(out1[0], 0x40);
+
+        // Ensure the IRQ line toggled as expected.
+        assert_eq!(
+            irq.transitions(),
+            vec![true, false, true, false, true, false],
+            "unexpected IRQ transition sequence; check IRQ gating logic"
+        );
+    }
+
+    #[test]
     fn cap2_boh_and_bohc_reads_writes_are_stable() {
         let irq = TestIrqLine::default();
         let mut ctl = AhciController::new(Box::new(irq), 1);
