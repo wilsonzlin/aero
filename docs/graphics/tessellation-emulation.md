@@ -13,10 +13,11 @@ layouts**, the **bind group + ABI model**, the initial **supported subset**, and
 strategy**.
 
 > Current repo status: tessellation (HS/DS) execution is **not** wired up yet in the host-side
-> D3D11 executor. Patchlist topologies are accepted by `SET_PRIMITIVE_TOPOLOGY`, but binding HS/DS
-> currently hits a `todo!` at draw time, and the GS/HS/DS compute-prepass path is still a placeholder
-> (no real tessellation output). Treat the rest of this document as the target design until HS/DS
-> execution lands; see [`docs/graphics/status.md`](./status.md).
+> D3D11 executor. Patchlist topologies are accepted by `SET_PRIMITIVE_TOPOLOGY`, but when HS/DS are
+> bound the draw currently returns a clear error (instead of executing tessellation). The GS/HS/DS
+> compute-prepass path is also still a placeholder (no real tessellation output). Treat the rest of
+> this document as the target design until HS/DS execution lands; see
+> [`docs/graphics/status.md`](./status.md).
 >
 > Related:
 > - [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D11→WebGPU mapping)
