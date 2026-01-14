@@ -112,6 +112,9 @@ pub enum StorageTextureFormat {
     Rgba16Float,
     Rgba16Uint,
     Rgba16Sint,
+    Rg32Float,
+    Rg32Uint,
+    Rg32Sint,
     Rgba32Float,
     Rgba32Uint,
     Rgba32Sint,
@@ -137,6 +140,9 @@ impl StorageTextureFormat {
             StorageTextureFormat::Rgba16Float => "rgba16float",
             StorageTextureFormat::Rgba16Uint => "rgba16uint",
             StorageTextureFormat::Rgba16Sint => "rgba16sint",
+            StorageTextureFormat::Rg32Float => "rg32float",
+            StorageTextureFormat::Rg32Uint => "rg32uint",
+            StorageTextureFormat::Rg32Sint => "rg32sint",
             StorageTextureFormat::Rgba32Float => "rgba32float",
             StorageTextureFormat::Rgba32Uint => "rgba32uint",
             StorageTextureFormat::Rgba32Sint => "rgba32sint",
@@ -155,6 +161,9 @@ impl StorageTextureFormat {
             StorageTextureFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
             StorageTextureFormat::Rgba16Uint => wgpu::TextureFormat::Rgba16Uint,
             StorageTextureFormat::Rgba16Sint => wgpu::TextureFormat::Rgba16Sint,
+            StorageTextureFormat::Rg32Float => wgpu::TextureFormat::Rg32Float,
+            StorageTextureFormat::Rg32Uint => wgpu::TextureFormat::Rg32Uint,
+            StorageTextureFormat::Rg32Sint => wgpu::TextureFormat::Rg32Sint,
             StorageTextureFormat::Rgba32Float => wgpu::TextureFormat::Rgba32Float,
             StorageTextureFormat::Rgba32Uint => wgpu::TextureFormat::Rgba32Uint,
             StorageTextureFormat::Rgba32Sint => wgpu::TextureFormat::Rgba32Sint,
@@ -169,14 +178,17 @@ impl StorageTextureFormat {
             StorageTextureFormat::Rgba8Unorm
             | StorageTextureFormat::Rgba8Snorm
             | StorageTextureFormat::Rgba16Float
+            | StorageTextureFormat::Rg32Float
             | StorageTextureFormat::Rgba32Float
             | StorageTextureFormat::R32Float => StorageTextureValueType::F32,
             StorageTextureFormat::Rgba8Uint
             | StorageTextureFormat::Rgba16Uint
+            | StorageTextureFormat::Rg32Uint
             | StorageTextureFormat::Rgba32Uint
             | StorageTextureFormat::R32Uint => StorageTextureValueType::U32,
             StorageTextureFormat::Rgba8Sint
             | StorageTextureFormat::Rgba16Sint
+            | StorageTextureFormat::Rg32Sint
             | StorageTextureFormat::Rgba32Sint
             | StorageTextureFormat::R32Sint => StorageTextureValueType::I32,
         }
@@ -364,7 +376,7 @@ impl fmt::Display for ShaderTranslateError {
             ),
             ShaderTranslateError::UnsupportedUavTextureFormat { slot, format } => write!(
                 f,
-                "typed UAV u{slot} uses unsupported DXGI format {format}; supported formats: rgba8unorm (28), rgba8snorm (31), rgba8uint (30), rgba8sint (32), rgba16float (10), rgba16uint (12), rgba16sint (14), rgba32float (2), rgba32uint (3), rgba32sint (4), r32float (41), r32uint (42), r32sint (43)"
+                "typed UAV u{slot} uses unsupported DXGI format {format}; supported formats: rgba8unorm (28), rgba8snorm (31), rgba8uint (30), rgba8sint (32), rgba16float (10), rgba16uint (12), rgba16sint (14), rg32float (16), rg32uint (17), rg32sint (18), rgba32float (2), rgba32uint (3), rgba32sint (4), r32float (41), r32uint (42), r32sint (43)"
             ),
             ShaderTranslateError::PixelShaderMissingColorOutputs => {
                 write!(
@@ -3723,6 +3735,12 @@ fn scan_resources(
             12 => StorageTextureFormat::Rgba16Uint,
             // DXGI_FORMAT_R16G16B16A16_SINT
             14 => StorageTextureFormat::Rgba16Sint,
+            // DXGI_FORMAT_R32G32_FLOAT
+            16 => StorageTextureFormat::Rg32Float,
+            // DXGI_FORMAT_R32G32_UINT
+            17 => StorageTextureFormat::Rg32Uint,
+            // DXGI_FORMAT_R32G32_SINT
+            18 => StorageTextureFormat::Rg32Sint,
             // DXGI_FORMAT_R32G32B32A32_FLOAT
             2 => StorageTextureFormat::Rgba32Float,
             // DXGI_FORMAT_R32G32B32A32_UINT
@@ -5791,28 +5809,26 @@ fn emit_instructions(
                     .copied()
                     .ok_or(ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot })?;
 
-                // DXBC `store_uav_typed` carries a write mask on the `u#` operand. Most typed UAV
-                // stores are 4-component and therefore require a full `xyzw` mask; partial masks
-                // would require a read-modify-write sequence (not supported yet).
+                // DXBC `store_uav_typed` carries a write mask on the `u#` operand. WebGPU/WGSL
+                // `textureStore()` always writes a whole texel, so partial component stores would
+                // require a read-modify-write sequence (not supported yet).
                 //
-                // Single-channel `r32*` typed UAVs are common (`RWTexture2D<float>` /
-                // `RWTexture2D<uint>` / `RWTexture2D<int>`). In that case, only `.x` is meaningful;
-                // treat any mask that doesn't include `.x` as a no-op.
-                let mask_bits = mask.0 & 0xF;
-                let effective_mask = match format {
+                // Many typed UAV formats have fewer than 4 channels (`r32*`, `rg32*`). For those,
+                // ignore writes to unused components and require that all meaningful components be
+                // present in the mask.
+                let required_mask = match format {
                     StorageTextureFormat::R32Float
                     | StorageTextureFormat::R32Uint
-                    | StorageTextureFormat::R32Sint => mask_bits & WriteMask::X.0,
-                    _ => mask_bits,
+                    | StorageTextureFormat::R32Sint => WriteMask::X.0,
+                    StorageTextureFormat::Rg32Float
+                    | StorageTextureFormat::Rg32Uint
+                    | StorageTextureFormat::Rg32Sint => WriteMask::X.0 | WriteMask::Y.0,
+                    _ => WriteMask::XYZW.0,
                 };
-                if effective_mask == 0 {
-                    // Store is fully masked out; no side effects.
-                } else if format == StorageTextureFormat::R32Float
-                    || format == StorageTextureFormat::R32Uint
-                    || format == StorageTextureFormat::R32Sint
-                {
-                    // r32* accepts any mask containing `.x`.
-                } else if effective_mask != WriteMask::XYZW.0 {
+
+                let mask_bits = mask.0 & 0xF;
+                let effective_mask = mask_bits & required_mask;
+                if effective_mask != 0 && effective_mask != required_mask {
                     return Err(ShaderTranslateError::UnsupportedWriteMask {
                         inst_index,
                         opcode: "store_uav_typed",
@@ -5837,8 +5853,7 @@ fn emit_instructions(
                     }
                 };
 
-                // Only emit the store when at least one component is enabled. For r32 formats this
-                // is equivalent to `mask.x`.
+                // Only emit the store when at least one meaningful component is enabled.
                 if effective_mask != 0 {
                     w.line(&format!(
                         "textureStore(u{}, vec2<i32>({x}, {y}), {value});",
