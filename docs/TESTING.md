@@ -260,9 +260,14 @@ enable deterministic framebuffer/serial checkpoints.
 These tests are defined under the workspace root `tests/` directory (e.g. `tests/boot_sector.rs`,
 `tests/freedos_boot.rs`, `tests/windows7_boot.rs`, and `tests/boot/basic_boot.rs`).
 
-The canonical way to run them is via the `emulator` crate: it registers them as explicit `[[test]]`
-targets in `crates/emulator/Cargo.toml` (paths like `../../tests/boot_sector.rs`), so you can run
-them with `cargo test -p emulator --test ...`.
+The **supported** way to run them is via the `emulator` crate: it registers them as explicit
+`[[test]]` targets in `crates/emulator/Cargo.toml` (paths like `../../tests/boot_sector.rs`), so you
+can run them with `cargo test -p emulator --test ...`.
+
+Note: this is a **test harness / dependency hygiene** choice (see the note below on `-p aero`), and
+does *not* imply `crates/emulator` is the canonical VM wiring layer. Canonical machine wiring lives
+in `crates/aero-machine` (`aero_machine::Machine`); see [`docs/vm-crate-map.md`](./vm-crate-map.md)
+and [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md).
 
 Avoid running them via the workspace root package (`-p aero`): `aero` intentionally does not carry
 the `firmware`/`memory` dev-deps needed by `boot_basic`, and it also pulls in heavyweight GPU
