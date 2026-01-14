@@ -10911,6 +10911,15 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
     const BOOLEAN poweredOn =
         (adapter->Bar0 != NULL) &&
         ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+    const BOOLEAN acceptingSubmissions =
+        (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
+    /*
+     * Some dbgctl escapes read device MMIO state for diagnostics. During resume/teardown windows,
+     * dxgkrnl may report the adapter as D0 (DevicePowerState==D0) before the driver has fully
+     * restored ring/IRQ state, and MMIO reads can be unreliable. Gate optional MMIO reads on the
+     * same "ready" signal used by submission paths.
+     */
+    const BOOLEAN mmioSafe = poweredOn && acceptingSubmissions;
 
     aerogpu_escape_header* hdr = (aerogpu_escape_header*)pEscape->pPrivateDriverData;
     if (hdr->version != AEROGPU_ESCAPE_VERSION) {
@@ -10930,7 +10939,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         uint32_t magic = 0;
         uint32_t version = 0;
         uint64_t features = 0;
-        if (poweredOn) {
+        if (mmioSafe) {
             magic = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
                 version = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
@@ -10977,7 +10986,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.reserved0 = 0;
         if (!adapter->Bar0) {
             out->mmio_version = 0;
-        } else if (!poweredOn) {
+        } else if (!mmioSafe) {
             out->mmio_version = adapter->DeviceAbiVersion;
         } else if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
             out->mmio_version = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ABI_VERSION);
@@ -11100,7 +11109,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 head = adapter->RingHeader->head;
                 tail = adapter->RingHeader->tail;
                 ringValid = TRUE;
-            } else if (poweredOn) {
+            } else if (mmioSafe) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
                 tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
                 ringValid = TRUE;
@@ -11229,7 +11238,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              * adapter is in D0.
              */
             tail = adapter->RingTail;
-            if (poweredOn) {
+            if (mmioSafe) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
             } else {
                 head = tail;
@@ -11367,7 +11376,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              * adapter is in D0.
              */
             tail = adapter->RingTail;
-            if (poweredOn) {
+            if (mmioSafe) {
                 head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
             } else {
                 head = tail;
@@ -12179,7 +12188,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         BOOLEAN vblankSupported = FALSE;
-        if (poweredOn) {
+        if (mmioSafe) {
             const BOOLEAN haveFeaturesRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG));
             const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
             if (!haveFeaturesRegs || !haveVblankRegs) {
@@ -12204,7 +12213,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         out->flags = AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID | AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED;
 
-        if (poweredOn) {
+        if (mmioSafe) {
             const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG));
             if (haveIrqRegs) {
                 out->irq_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
@@ -12222,7 +12231,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                                                                AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
             out->vblank_period_ns = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
         } else {
-            /* Avoid MMIO reads while the adapter is not in D0; return best-effort cached values. */
+            /* Avoid MMIO reads while the adapter is not in D0 (or not yet restored); return cached values. */
             out->irq_enable = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
             out->irq_status = 0;
             out->vblank_seq = AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
@@ -12271,8 +12280,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->mmio_pitch_bytes = 0;
         out->mmio_fb_gpa = 0;
 
-        if (!poweredOn) {
-            /* Avoid MMIO reads while the adapter is not in D0; return best-effort cached values. */
+        if (!mmioSafe) {
+            /* Avoid MMIO reads while the adapter is not in D0 (or not yet restored); return cached values. */
             out->mmio_enable = out->cached_enable;
             out->mmio_width = out->cached_width;
             out->mmio_height = out->cached_height;
@@ -12333,7 +12342,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->reserved1 = 0;
 
         BOOLEAN cursorSupported = FALSE;
-        if (poweredOn) {
+        if (mmioSafe) {
             const BOOLEAN haveCursorRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG));
             if (!haveCursorRegs) {
                 return STATUS_SUCCESS;
@@ -12371,7 +12380,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_SUCCESS;
         }
 
-        /* Avoid MMIO reads while the adapter is not in D0; return best-effort cached values. */
+        /* Avoid MMIO reads while the adapter is not in D0 (or not yet restored); return cached values. */
         cursorSupported = ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0) ? TRUE : FALSE;
         if (!cursorSupported) {
             return STATUS_SUCCESS;
