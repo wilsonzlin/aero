@@ -642,13 +642,15 @@ for name in mentioned_list:
 duplicates = sorted([name for name, count in mentioned_counts.items() if count > 1])
 if duplicates:
     raise SystemExit(
-        f"{readme_path}: duplicate Expected results bullets for test(s): {', '.join(duplicates)}"
+        f"{readme_path}: duplicate Expected results bullets for test(s): {', '.join(duplicates)}\n"
+        "Tip: ensure each test appears exactly once under '## Expected results'"
     )
 
 missing = [t for t in manifest_tests if t not in mentioned_counts]
 if missing:
     raise SystemExit(
-        f"{readme_path}: missing Expected results bullets for manifest test(s): {', '.join(missing)}"
+        f"{readme_path}: missing Expected results bullets for manifest test(s): {', '.join(missing)}\n"
+        "Tip: add a bullet for each manifest test under '## Expected results'"
     )
 
 cmake_targets = set(
@@ -657,7 +659,8 @@ cmake_targets = set(
 missing_cmake = [t for t in manifest_tests if t not in cmake_targets]
 if missing_cmake:
     raise SystemExit(
-        f"{cmake_path}: missing aerogpu_add_win7_test entries for manifest test(s): {', '.join(missing_cmake)}"
+        f"{cmake_path}: missing aerogpu_add_win7_test entries for manifest test(s): {', '.join(missing_cmake)}\n"
+        "Tip: add aerogpu_add_win7_test(...) entries in CMakeLists.txt for each new manifest test"
     )
 
 # Warn on extra CMake targets that look like tests but are not listed in the
