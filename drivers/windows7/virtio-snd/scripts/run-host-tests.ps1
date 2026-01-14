@@ -16,6 +16,9 @@
   It can be run from anywhere (repo root, driver directory, etc). It locates the repo root
   based on the script location.
 
+  Requirements:
+    - PowerShell 7+ (`pwsh`) or Windows PowerShell 5.1 (`powershell.exe`)
+
   Defaults:
     - (full suite)  out/virtiosnd-tests
     - (-HostOnly)   out/virtiosnd-host-tests

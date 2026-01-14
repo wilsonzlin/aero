@@ -393,7 +393,7 @@ Prerequisites:
   - On Windows, Visual Studio / “Build Tools for Visual Studio” (MSVC) is recommended.
     - Run from a “Developer PowerShell/Command Prompt for VS” so `cl.exe` is available.
     - Ninja is optional.
-- On Windows, PowerShell (`pwsh` or Windows PowerShell). If script execution is blocked, use
+- On Windows, PowerShell 7+ (`pwsh`) or Windows PowerShell 5.1 (`powershell.exe`). If script execution is blocked, use
   `-ExecutionPolicy Bypass` (or `Set-ExecutionPolicy -Scope Process Bypass`).
 
 ### Full host-buildable suite (recommended)
