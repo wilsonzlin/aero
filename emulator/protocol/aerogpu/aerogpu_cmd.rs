@@ -1333,6 +1333,10 @@ pub struct AerogpuCmdSetShaderResourceBuffers {
 
 impl AerogpuCmdSetShaderResourceBuffers {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_shader_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.shader_stage, self.reserved0)
+    }
 }
 
 #[repr(C, packed)]
@@ -1364,6 +1368,10 @@ pub struct AerogpuCmdSetUnorderedAccessBuffers {
 
 impl AerogpuCmdSetUnorderedAccessBuffers {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_shader_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.shader_stage, self.reserved0)
+    }
 }
 
 /* -------------------------------- Drawing -------------------------------- */

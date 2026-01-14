@@ -295,6 +295,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_srv.shader_stage,
                             cmd_srv.reserved0,
                         );
+                        let _ = cmd_srv.resolved_shader_stage();
                     }
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
                         let _ = cmd::decode_cmd_set_shader_resource_buffers_bindings_le(packet_bytes);
@@ -310,6 +311,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_uav.shader_stage,
                             cmd_uav.reserved0,
                         );
+                        let _ = cmd_uav.resolved_shader_stage();
                     }
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
                         let _ =
