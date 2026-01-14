@@ -154,7 +154,7 @@ pub struct UhciRuntime {
     /// Externally managed USB HID passthrough devices attached via
     /// [`UhciRuntime::attach_usb_hid_passthrough_device`].
     ///
-    /// These are usually synthetic browser input devices (keyboard/mouse/gamepad) that live in JS
+    /// These are usually synthetic browser input devices (keyboard/mouse/gamepad/consumer-control) that live in JS
     /// as `UsbHidPassthroughBridge` instances. We track their handles so we can reattach them when
     /// the external hub is replaced (e.g. due to a port-count grow) or during snapshot restore.
     ///
@@ -483,7 +483,7 @@ impl UhciRuntime {
 
     /// Attach a generic USB HID passthrough device at the given guest USB topology path.
     ///
-    /// This is primarily used for Aero's synthetic browser input devices (keyboard/mouse/gamepad),
+    /// This is primarily used for Aero's synthetic browser input devices (keyboard/mouse/gamepad/consumer-control),
     /// which are modeled as fixed USB HID devices behind the external hub on root port 0.
     pub fn attach_usb_hid_passthrough_device(
         &mut self,
@@ -1450,7 +1450,7 @@ impl UhciRuntime {
 
         // Reattach any externally managed HID passthrough devices before restoring hub state.
         //
-        // These devices are typically created and owned by JS (e.g. Aero's synthetic keyboard/mouse/gamepad),
+        // These devices are typically created and owned by JS (e.g. Aero's synthetic keyboard/mouse/gamepad/consumer-control),
         // so we cannot recreate them here. Instead, we keep track of their `UsbHidPassthroughHandle`s when
         // they are attached and reattach them after snapshot reset so the hub snapshot can load their
         // dynamic state.

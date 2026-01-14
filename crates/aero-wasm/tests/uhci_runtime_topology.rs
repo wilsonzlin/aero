@@ -27,11 +27,11 @@ fn uhci_runtime_can_attach_external_hub_with_configurable_port_count() {
     let mut rt = make_runtime();
 
     let hub_path = serde_wasm_bindgen::to_value(&vec![0u32]).expect("hub path to JsValue");
-    rt.webhid_attach_hub(hub_path, Some(4))
+    rt.webhid_attach_hub(hub_path, Some(5))
         .expect("attach hub ok");
 
     // Should accept attachments to the highest configured downstream port.
-    let path = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path to JsValue");
+    let path = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("path to JsValue");
     rt.webhid_attach_at_path(
         1,
         0x1234,
@@ -52,8 +52,8 @@ fn uhci_runtime_supports_multiple_webhid_devices_behind_hub() {
 
     let collections = webhid_mouse_collections_json();
 
-    // Hub ports 1..=3 are reserved for synthetic HID devices, so use port 4+ for WebHID passthrough.
-    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("path1");
+    // Hub ports 1..=4 are reserved for synthetic HID devices, so use port 5+ for WebHID passthrough.
+    let path1 = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("path1");
     rt.webhid_attach_at_path(
         1,
         0x1234,
@@ -64,7 +64,7 @@ fn uhci_runtime_supports_multiple_webhid_devices_behind_hub() {
     )
     .expect("attach dev1 ok");
 
-    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("path2");
+    let path2 = serde_wasm_bindgen::to_value(&vec![0u32, 6u32]).expect("path2");
     rt.webhid_attach_at_path(
         2,
         0x1234,
@@ -110,7 +110,7 @@ fn uhci_runtime_resizes_external_hub_and_reattaches_devices() {
 
     let collections = webhid_mouse_collections_json();
 
-    let p1 = serde_wasm_bindgen::to_value(&vec![0u32, 4u32]).expect("p1");
+    let p1 = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("p1");
     rt.webhid_attach_at_path(
         10,
         0x1234,
@@ -121,7 +121,7 @@ fn uhci_runtime_resizes_external_hub_and_reattaches_devices() {
     )
     .expect("attach dev10 ok");
 
-    let p2 = serde_wasm_bindgen::to_value(&vec![0u32, 5u32]).expect("p2");
+    let p2 = serde_wasm_bindgen::to_value(&vec![0u32, 6u32]).expect("p2");
     rt.webhid_attach_at_path(
         11,
         0x1234,
