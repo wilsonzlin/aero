@@ -13914,10 +13914,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  if (state < 256) {
+  stateblock_record_render_state_locked(dev, state, value);
+
+  const bool cached_same = (state < 256) && (dev->render_states[state] == value);
+  if (!cached_same && state < 256) {
     dev->render_states[state] = value;
   }
-  stateblock_record_render_state_locked(dev, state, value);
 
   // Fixed-function lighting is implemented by the fixed-function fallback VS
   // variants and consumes a reserved VS constant range. Changes to lighting
@@ -13976,6 +13978,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
         return trace.ret(hr);
       }
     }
+  }
+
+  if (cached_same) {
+    // Skip redundant render-state uploads: setting identical state again is a
+    // no-op, but still recorded above for state blocks.
+    return trace.ret(S_OK);
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_state>(dev, AEROGPU_CMD_SET_RENDER_STATE);
