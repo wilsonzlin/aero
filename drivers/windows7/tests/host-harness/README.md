@@ -843,14 +843,15 @@ To enable end-to-end testing:
                 **Aero VirtIO Input Device** name.
               - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
         - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
-    - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
-      an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
-      to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
-      - If you need the strict revision-gated generic fallback binding (no contract subsystem IDs), you must also opt into
-        the legacy alias INF (the `*.inf.disabled` file; drop the `.disabled` suffix to enable) and include it in the allow list.
+      - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
+        an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
+        to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
+        - If you need the strict revision-gated generic fallback binding (no contract subsystem IDs), you must also opt into
+          the legacy alias INF (the `*.inf.disabled` file; drop the `.disabled` suffix to enable) and include it in the allow
+          list.
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
-       `-WithTabletEvents`, `-EnableTabletEvents`) /
-       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+        `-WithTabletEvents`, `-EnableTabletEvents`) /
+        `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
       `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
     - attaches `virtio-tablet-pci`
     - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
