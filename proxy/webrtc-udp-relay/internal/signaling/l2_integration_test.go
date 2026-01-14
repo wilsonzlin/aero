@@ -24,6 +24,11 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/signaling"
 )
 
+const (
+	l2TypePing byte = 0x01
+	l2TypePong byte = 0x02
+)
+
 func startTestL2Backend(t *testing.T) (wsURL string, upgradeCount *atomic.Int64) {
 	return startTestL2BackendWithToken(t, "")
 }
@@ -81,10 +86,10 @@ func startTestL2BackendWithToken(t *testing.T, token string) (wsURL string, upgr
 				continue
 			}
 			msg, err := l2tunnel.DecodeMessage(payload)
-			if err != nil || msg.Type != l2tunnel.TypePing {
+			if err != nil || msg.Type != l2TypePing {
 				continue
 			}
-			out, err := l2tunnel.EncodeWithLimits(l2tunnel.TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
+			out, err := l2tunnel.EncodeWithLimits(l2TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
 			if err != nil {
 				continue
 			}
@@ -168,10 +173,10 @@ func startTestL2BackendWithQueryToken(t *testing.T, expectedToken string) (wsURL
 				continue
 			}
 			msg, err := l2tunnel.DecodeMessage(payload)
-			if err != nil || msg.Type != l2tunnel.TypePing {
+			if err != nil || msg.Type != l2TypePing {
 				continue
 			}
-			out, err := l2tunnel.EncodeWithLimits(l2tunnel.TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
+			out, err := l2tunnel.EncodeWithLimits(l2TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
 			if err != nil {
 				continue
 			}

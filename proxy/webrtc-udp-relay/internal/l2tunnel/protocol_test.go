@@ -81,8 +81,8 @@ func TestL2TunnelVectors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DecodeMessage: %v", err)
 			}
-			if msg.Version != Version {
-				t.Fatalf("Version=%#x, want %#x", msg.Version, Version)
+			if msg.Version != version {
+				t.Fatalf("Version=%#x, want %#x", msg.Version, version)
 			}
 			if msg.Type != v.MsgType {
 				t.Fatalf("Type=%#x, want %#x", msg.Type, v.MsgType)
@@ -113,14 +113,14 @@ func TestL2TunnelVectors(t *testing.T) {
 
 			var encoded []byte
 			switch msg.Type {
-			case TypeFrame:
-				encoded, err = EncodeFrame(payload)
-			case TypePing:
+			case typeFrame:
+				encoded, err = EncodeWithLimits(typeFrame, 0, payload, DefaultLimits)
+			case typePing:
 				encoded, err = EncodePing(payload)
-			case TypePong:
+			case typePong:
 				encoded, err = EncodePong(payload)
-			case TypeError:
-				encoded, err = EncodeErrorMessage(payload)
+			case typeError:
+				encoded, err = EncodeWithLimits(typeError, 0, payload, DefaultLimits)
 			default:
 				t.Fatalf("unsupported msg type in vectors: %#x", msg.Type)
 			}
@@ -141,7 +141,7 @@ func TestL2TunnelVectors(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected DecodeMessage to fail")
 			}
-			de, ok := err.(*DecodeError)
+			de, ok := err.(*decodeError)
 			if !ok {
 				t.Fatalf("expected *DecodeError, got %T (%v)", err, err)
 			}

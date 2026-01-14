@@ -19,6 +19,11 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 )
 
+const (
+	l2TypePing byte = 0x01
+	l2TypePong byte = 0x02
+)
+
 type lastHandshake struct {
 	Origin      string `json:"origin"`
 	Token       string `json:"token"`
@@ -134,11 +139,11 @@ func main() {
 				continue
 			}
 			msg, err := l2tunnel.DecodeMessage(payload)
-			if err != nil || msg.Type != l2tunnel.TypePing {
+			if err != nil || msg.Type != l2TypePing {
 				continue
 			}
 			// Echo the PING payload (and flags) back as a PONG.
-			out, err := l2tunnel.EncodeWithLimits(l2tunnel.TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
+			out, err := l2tunnel.EncodeWithLimits(l2TypePong, msg.Flags, msg.Payload, l2tunnel.DefaultLimits)
 			if err != nil {
 				continue
 			}

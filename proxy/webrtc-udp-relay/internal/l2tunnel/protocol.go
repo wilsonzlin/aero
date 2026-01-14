@@ -24,45 +24,45 @@ const (
 	TokenSubprotocolPrefix = "aero-l2-token."
 
 	// Header constants for the L2 tunnel framing protocol.
-	Magic   byte = 0xA2
-	Version byte = 0x03
+	magic   byte = 0xA2
+	version byte = 0x03
 
-	TypeFrame byte = 0x00
-	TypePing  byte = 0x01
-	TypePong  byte = 0x02
-	TypeError byte = 0x7F
+	typeFrame byte = 0x00
+	typePing  byte = 0x01
+	typePong  byte = 0x02
+	typeError byte = 0x7F
 
-	HeaderLen = 4
+	headerLen = 4
 
 	// Recommended default payload limits (see docs/l2-tunnel-protocol.md).
-	DefaultMaxFramePayload   = 2048
-	DefaultMaxControlPayload = 256
+	defaultMaxFramePayload   = 2048
+	defaultMaxControlPayload = 256
 
 	// ErrorStructuredHeaderLen is the structured ERROR payload header length:
 	//   code(u16 BE) | msg_len(u16 BE)
-	ErrorStructuredHeaderLen = 4
+	errorStructuredHeaderLen = 4
 
 	// Structured ERROR payload codes (see docs/l2-tunnel-protocol.md).
-	ErrorCodeProtocolError    = 1
-	ErrorCodeAuthRequired     = 2
-	ErrorCodeAuthInvalid      = 3
-	ErrorCodeOriginMissing    = 4
-	ErrorCodeOriginDenied     = 5
-	ErrorCodeQuotaBytes       = 6
-	ErrorCodeQuotaFPS         = 7
-	ErrorCodeQuotaConnections = 8
-	ErrorCodeBackpressure     = 9
+	errorCodeProtocolError    = 1
+	errorCodeAuthRequired     = 2
+	errorCodeAuthInvalid      = 3
+	errorCodeOriginMissing    = 4
+	errorCodeOriginDenied     = 5
+	errorCodeQuotaBytes       = 6
+	errorCodeQuotaFPS         = 7
+	errorCodeQuotaConnections = 8
+	errorCodeBackpressure     = 9
 )
 
-// Limits control the maximum payload sizes accepted/encoded for L2 tunnel
+// limits control the maximum payload sizes accepted/encoded for L2 tunnel
 // messages.
-type Limits struct {
+type limits struct {
 	MaxFramePayload   int
 	MaxControlPayload int
 }
 
-func (l Limits) maxPayloadForType(msgType byte) int {
-	if msgType == TypeFrame {
+func (l limits) maxPayloadForType(msgType byte) int {
+	if msgType == typeFrame {
 		if l.MaxFramePayload < 0 {
 			return 0
 		}
@@ -75,9 +75,9 @@ func (l Limits) maxPayloadForType(msgType byte) int {
 }
 
 // DefaultLimits matches the recommended default limits in the spec.
-var DefaultLimits = Limits{
-	MaxFramePayload:   DefaultMaxFramePayload,
-	MaxControlPayload: DefaultMaxControlPayload,
+var DefaultLimits = limits{
+	MaxFramePayload:   defaultMaxFramePayload,
+	MaxControlPayload: defaultMaxControlPayload,
 }
 
 // Message is a decoded L2 tunnel message.
@@ -88,71 +88,71 @@ type Message struct {
 	Payload []byte
 }
 
-type DecodeErrorCode string
+type decodeErrorCode string
 
 const (
-	DecodeErrorTooShort           DecodeErrorCode = "too_short"
-	DecodeErrorInvalidMagic       DecodeErrorCode = "invalid_magic"
-	DecodeErrorUnsupportedVersion DecodeErrorCode = "unsupported_version"
-	DecodeErrorPayloadTooLarge    DecodeErrorCode = "payload_too_large"
+	decodeErrorTooShort           decodeErrorCode = "too_short"
+	decodeErrorInvalidMagic       decodeErrorCode = "invalid_magic"
+	decodeErrorUnsupportedVersion decodeErrorCode = "unsupported_version"
+	decodeErrorPayloadTooLarge    decodeErrorCode = "payload_too_large"
 )
 
-// DecodeError reports why an L2 tunnel message failed to decode.
-type DecodeError struct {
-	Code    DecodeErrorCode
+// decodeError reports why an L2 tunnel message failed to decode.
+type decodeError struct {
+	Code    decodeErrorCode
 	Message string
 }
 
-func (e *DecodeError) Error() string {
+func (e *decodeError) Error() string {
 	return e.Message
 }
 
 // EncodeWithLimits encodes an L2 tunnel message (header + payload) while
 // enforcing the provided payload limits.
-func EncodeWithLimits(msgType byte, flags byte, payload []byte, limits Limits) ([]byte, error) {
+func EncodeWithLimits(msgType byte, flags byte, payload []byte, limits limits) ([]byte, error) {
 	max := limits.maxPayloadForType(msgType)
 	if len(payload) > max {
 		return nil, fmt.Errorf("payload too large: %d > %d", len(payload), max)
 	}
 
-	out := make([]byte, HeaderLen+len(payload))
-	out[0] = Magic
-	out[1] = Version
+	out := make([]byte, headerLen+len(payload))
+	out[0] = magic
+	out[1] = version
 	out[2] = msgType
 	out[3] = flags
-	copy(out[HeaderLen:], payload)
+	copy(out[headerLen:], payload)
 	return out, nil
 }
 
-// DecodeWithLimits decodes an L2 tunnel message while enforcing the provided
+// decodeWithLimits decodes an L2 tunnel message while enforcing the provided
 // payload limits.
-func DecodeWithLimits(buf []byte, limits Limits) (Message, error) {
-	if len(buf) < HeaderLen {
-		return Message{}, &DecodeError{
-			Code:    DecodeErrorTooShort,
-			Message: fmt.Sprintf("message too short: %d < %d", len(buf), HeaderLen),
+func decodeWithLimits(buf []byte, limits limits) (Message, error) {
+	if len(buf) < headerLen {
+		return Message{}, &decodeError{
+			Code:    decodeErrorTooShort,
+			Message: fmt.Sprintf("message too short: %d < %d", len(buf), headerLen),
 		}
 	}
-	if buf[0] != Magic {
-		return Message{}, &DecodeError{
-			Code:    DecodeErrorInvalidMagic,
+	if buf[0] != magic {
+		return Message{}, &decodeError{
+			Code:    decodeErrorInvalidMagic,
 			Message: fmt.Sprintf("invalid magic: 0x%02x", buf[0]),
 		}
 	}
-	if buf[1] != Version {
-		return Message{}, &DecodeError{
-			Code:    DecodeErrorUnsupportedVersion,
+	if buf[1] != version {
+		return Message{}, &decodeError{
+			Code:    decodeErrorUnsupportedVersion,
 			Message: fmt.Sprintf("unsupported version: 0x%02x", buf[1]),
 		}
 	}
 
 	msgType := buf[2]
 	flags := buf[3]
-	payload := buf[HeaderLen:]
+	payload := buf[headerLen:]
 	max := limits.maxPayloadForType(msgType)
 	if len(payload) > max {
-		return Message{}, &DecodeError{
-			Code:    DecodeErrorPayloadTooLarge,
+		return Message{}, &decodeError{
+			Code:    decodeErrorPayloadTooLarge,
 			Message: fmt.Sprintf("payload too large: %d > %d", len(payload), max),
 		}
 	}
@@ -165,29 +165,19 @@ func DecodeWithLimits(buf []byte, limits Limits) (Message, error) {
 	}, nil
 }
 
-// EncodeFrame encodes a FRAME message using DefaultLimits.
-func EncodeFrame(payload []byte) ([]byte, error) {
-	return EncodeWithLimits(TypeFrame, 0, payload, DefaultLimits)
-}
-
 // EncodePing encodes a PING message using DefaultLimits.
 func EncodePing(payload []byte) ([]byte, error) {
-	return EncodeWithLimits(TypePing, 0, payload, DefaultLimits)
+	return EncodeWithLimits(typePing, 0, payload, DefaultLimits)
 }
 
 // EncodePong encodes a PONG message using DefaultLimits.
 func EncodePong(payload []byte) ([]byte, error) {
-	return EncodeWithLimits(TypePong, 0, payload, DefaultLimits)
-}
-
-// EncodeErrorMessage encodes an ERROR message using DefaultLimits.
-func EncodeErrorMessage(payload []byte) ([]byte, error) {
-	return EncodeWithLimits(TypeError, 0, payload, DefaultLimits)
+	return EncodeWithLimits(typePong, 0, payload, DefaultLimits)
 }
 
 // DecodeMessage decodes an L2 tunnel message using DefaultLimits.
 func DecodeMessage(buf []byte) (Message, error) {
-	return DecodeWithLimits(buf, DefaultLimits)
+	return decodeWithLimits(buf, DefaultLimits)
 }
 
 // EncodeStructuredErrorPayload encodes a structured ERROR payload:
@@ -199,11 +189,11 @@ func EncodeStructuredErrorPayload(code uint16, message string, maxPayloadBytes i
 	if maxPayloadBytes < 0 {
 		maxPayloadBytes = 0
 	}
-	if maxPayloadBytes < ErrorStructuredHeaderLen {
+	if maxPayloadBytes < errorStructuredHeaderLen {
 		return []byte{}
 	}
 
-	maxMsgLen := maxPayloadBytes - ErrorStructuredHeaderLen
+	maxMsgLen := maxPayloadBytes - errorStructuredHeaderLen
 	if maxMsgLen > 0xffff {
 		maxMsgLen = 0xffff
 	}
@@ -218,10 +208,10 @@ func EncodeStructuredErrorPayload(code uint16, message string, maxPayloadBytes i
 		}
 	}
 
-	out := make([]byte, ErrorStructuredHeaderLen+len(msgBytes))
+	out := make([]byte, errorStructuredHeaderLen+len(msgBytes))
 	binary.BigEndian.PutUint16(out[0:2], code)
 	binary.BigEndian.PutUint16(out[2:4], uint16(len(msgBytes)))
-	copy(out[ErrorStructuredHeaderLen:], msgBytes)
+	copy(out[errorStructuredHeaderLen:], msgBytes)
 	return out
 }
 
@@ -230,15 +220,15 @@ func EncodeStructuredErrorPayload(code uint16, message string, maxPayloadBytes i
 // It returns (code, message, true) only if the payload matches the exact
 // structured encoding and the message bytes are valid UTF-8.
 func DecodeStructuredErrorPayload(payload []byte) (uint16, string, bool) {
-	if len(payload) < ErrorStructuredHeaderLen {
+	if len(payload) < errorStructuredHeaderLen {
 		return 0, "", false
 	}
 	code := binary.BigEndian.Uint16(payload[0:2])
 	msgLen := int(binary.BigEndian.Uint16(payload[2:4]))
-	if len(payload) != ErrorStructuredHeaderLen+msgLen {
+	if len(payload) != errorStructuredHeaderLen+msgLen {
 		return 0, "", false
 	}
-	msgBytes := payload[ErrorStructuredHeaderLen:]
+	msgBytes := payload[errorStructuredHeaderLen:]
 	if !utf8.Valid(msgBytes) {
 		return 0, "", false
 	}
