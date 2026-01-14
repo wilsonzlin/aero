@@ -69,6 +69,10 @@ fn opcode_token(opcode: u32, len: u32) -> u32 {
     opcode | (len << OPCODE_LEN_SHIFT)
 }
 
+fn opcode_token_with_test(opcode: u32, len: u32, test: u32) -> u32 {
+    opcode | (len << OPCODE_LEN_SHIFT) | ((test & OPCODE_TEST_MASK) << OPCODE_TEST_SHIFT)
+}
+
 fn opcode_token_setp(len: u32, cmp: u32) -> u32 {
     OPCODE_SETP | (len << OPCODE_LEN_SHIFT) | (cmp << SETP_CMP_SHIFT)
 }
@@ -710,6 +714,134 @@ fn decodes_and_translates_predicated_ret() {
     assert!(
         return_count >= 2,
         "expected predicated ret to emit an additional return out (count={return_count}):\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_predicated_breakc_in_loop() {
+    // loop
+    //   (+p0.x) breakc_eq l(0.0), l(0.0)
+    //   break
+    // endloop
+    // mov o0, l(1,1,1,1)
+    // ret
+    let mut body = Vec::<u32>::new();
+
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    let pred_p0x = pred_operand(0, 0);
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(0.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_BREAKC,
+        1 + pred_p0x.len() as u32 + a.len() as u32 + b.len() as u32,
+        2, // eq (D3D10_SB_INSTRUCTION_TEST)
+    ));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // Ensure the loop can terminate even if the predicate is false.
+    body.push(opcode_token(OPCODE_BREAK, 1));
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+
+    let imm1 = imm32_vec4([1.0f32.to_bits(); 4]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + imm1.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm1);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::BreakC { .. }))));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("if (") && translated.wgsl.contains("p0.x"),
+        "expected predicated breakc to lower via WGSL if:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_predicated_continuec_in_loop() {
+    // loop
+    //   (+p0.x) continuec_eq l(0.0), l(1.0)  (false, but exercises translation)
+    //   break
+    // endloop
+    // mov o0, l(1,1,1,1)
+    // ret
+    let mut body = Vec::<u32>::new();
+
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    let pred_p0x = pred_operand(0, 0);
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(1.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_CONTINUEC,
+        1 + pred_p0x.len() as u32 + a.len() as u32 + b.len() as u32,
+        2, // eq (D3D10_SB_INSTRUCTION_TEST)
+    ));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // Exit the loop.
+    body.push(opcode_token(OPCODE_BREAK, 1));
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+
+    let imm1 = imm32_vec4([1.0f32.to_bits(); 4]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + imm1.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm1);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::ContinueC { .. }))));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("if (") && translated.wgsl.contains("continue;"),
+        "expected predicated continuec to lower via WGSL if:\n{}",
         translated.wgsl
     );
 }
