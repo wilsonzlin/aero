@@ -138,6 +138,13 @@ typedef struct _VIRTIO_NET_HDR_OFFLOAD_RX_INFO {
 /*
  * Parse an Ethernet frame (with up to 2 VLAN tags) and locate the L3/L4 headers.
  * Offsets are relative to the beginning of the Ethernet frame.
+ *
+ * Notes:
+ * - On success, `Info->L4Proto` is always populated (for IPv4/IPv6). If the
+ *   transport header cannot be parsed (unsupported protocol, non-first fragment,
+ *   or truncated transport header), `Info->L4Len` is set to 0.
+ * - `Info->IsFragmented` is set if the IP packet is fragmented (IPv4 MF/offset
+ *   or an IPv6 Fragment header).
  */
 VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrame(const uint8_t* Frame, size_t FrameLen, VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info);
 
