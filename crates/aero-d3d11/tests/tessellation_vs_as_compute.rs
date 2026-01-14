@@ -760,3 +760,235 @@ fn vs_as_compute_loads_u16x2_input() {
         assert_eq!(vecs, vec![[123.0, 456.0, 0.0, 1.0]]);
     });
 }
+
+#[test]
+fn vs_as_compute_loads_extended_formats() {
+    fn assert_approx(a: f32, b: f32, eps: f32) {
+        let d = (a - b).abs();
+        assert!(d <= eps, "expected {a} ~= {b} (eps={eps}), abs diff {d}");
+    }
+
+    fn assert_vec4_approx(got: [f32; 4], expected: [f32; 4]) {
+        for i in 0..4 {
+            assert_approx(got[i], expected[i], 1e-6);
+        }
+    }
+
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
+            "aero-d3d11 VS-as-compute extended format test device",
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return;
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        async fn run_case(
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            dxgi_format: u32,
+            mask: u8,
+            stride: u32,
+            vb_bytes: &[u8],
+            expected: [f32; 4],
+            assert_vec4: fn([f32; 4], [f32; 4]),
+        ) {
+            // ILAY: one element at location 0.
+            let mut ilay = Vec::new();
+            push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+            push_u32(&mut ilay, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+            push_u32(&mut ilay, 1); // element_count
+            push_u32(&mut ilay, 0); // reserved0
+                                     // Element: semantic hash + index are arbitrary as long as signature matches.
+            push_u32(&mut ilay, 0xDEAD_BEEFu32);
+            push_u32(&mut ilay, 0);
+            push_u32(&mut ilay, dxgi_format);
+            push_u32(&mut ilay, 0); // input_slot
+            push_u32(&mut ilay, 0); // aligned_byte_offset
+            push_u32(&mut ilay, 0); // per-vertex
+            push_u32(&mut ilay, 0); // step rate
+            let layout = InputLayoutDesc::parse(&ilay).unwrap();
+
+            let signature = [VsInputSignatureElement {
+                semantic_name_hash: 0xDEAD_BEEF,
+                semantic_index: 0,
+                input_register: 0,
+                mask,
+                shader_location: 0,
+            }];
+
+            let slot_strides = [stride];
+            let binding = InputLayoutBinding::new(&layout, &slot_strides);
+            let pulling = VertexPullingLayout::new(&binding, &signature).unwrap();
+
+            let vb = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("VS-as-compute extended vb"),
+                size: vb_bytes.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&vb, 0, vb_bytes);
+
+            let ia_uniform_bytes = pulling.pack_uniform_bytes(
+                &[VertexPullingSlot {
+                    base_offset_bytes: 0,
+                    stride_bytes: stride,
+                }],
+                VertexPullingDrawParams::default(),
+            );
+            let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("VS-as-compute extended ia uniform"),
+                size: ia_uniform_bytes.len() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+            let cfg = VsAsComputeConfig {
+                control_point_count: 1,
+                out_reg_count: 1,
+                indexed: false,
+            };
+            let pipeline = VsAsComputePipeline::new(device, &pulling, cfg).unwrap();
+
+            let mut scratch =
+                ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+            let vs_out_regs =
+                alloc_vs_out_regs(&mut scratch, device, 1, 1, cfg.out_reg_count).unwrap();
+
+            let bg = pipeline
+                .create_bind_group_group3(
+                    device,
+                    &pulling,
+                    &[&vb],
+                    &ia_uniform,
+                    None,
+                    None,
+                    &vs_out_regs,
+                )
+                .unwrap();
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("VS-as-compute extended encoder"),
+            });
+            pipeline.dispatch(&mut encoder, 1, 1, &bg).unwrap();
+            queue.submit([encoder.finish()]);
+
+            let bytes = read_back_buffer(
+                device,
+                queue,
+                vs_out_regs.buffer.as_ref(),
+                vs_out_regs.offset,
+                vs_out_regs.size,
+            )
+            .await
+            .unwrap();
+            let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
+            let vecs = unpack_vec4_u32_as_f32(&words);
+            assert_eq!(vecs.len(), 1);
+            assert_vec4(vecs[0], expected);
+        }
+
+        // i16x2 (-1, -32768)
+        let mut vb_i16 = Vec::new();
+        vb_i16.extend_from_slice(&(-1i16).to_le_bytes());
+        vb_i16.extend_from_slice(&(-32768i16).to_le_bytes());
+        run_case(
+            &device,
+            &queue,
+            38,  // DXGI_FORMAT_R16G16_SINT
+            0x3, // xy
+            4,
+            &vb_i16,
+            [-1.0, -32768.0, 0.0, 1.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // i8x4 (-1, 1, -128, 127)
+        let vb_i8 = [(-1i8) as u8, 1u8, (-128i8) as u8, 127u8];
+        run_case(
+            &device,
+            &queue,
+            32,  // DXGI_FORMAT_R8G8B8A8_SINT
+            0xF, // xyzw
+            4,
+            &vb_i8,
+            [-1.0, 1.0, -128.0, 127.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // unorm16x2 (0.0, 1.0)
+        let mut vb_un16 = Vec::new();
+        vb_un16.extend_from_slice(&0u16.to_le_bytes());
+        vb_un16.extend_from_slice(&0xffffu16.to_le_bytes());
+        run_case(
+            &device,
+            &queue,
+            35,  // DXGI_FORMAT_R16G16_UNORM
+            0x3, // xy
+            4,
+            &vb_un16,
+            [0.0, 1.0, 0.0, 1.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // snorm16x2 (-1.0, 1.0)
+        let mut vb_sn16 = Vec::new();
+        vb_sn16.extend_from_slice(&(-32768i16).to_le_bytes());
+        vb_sn16.extend_from_slice(&(32767i16).to_le_bytes());
+        run_case(
+            &device,
+            &queue,
+            37,  // DXGI_FORMAT_R16G16_SNORM
+            0x3, // xy
+            4,
+            &vb_sn16,
+            [-1.0, 1.0, 0.0, 1.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // f16x4 (1.0, -2.0, 4.0, 0.0)
+        let mut vb_f16x4 = Vec::new();
+        vb_f16x4.extend_from_slice(&0x3c00u16.to_le_bytes()); // 1.0
+        vb_f16x4.extend_from_slice(&0xc000u16.to_le_bytes()); // -2.0
+        vb_f16x4.extend_from_slice(&0x4400u16.to_le_bytes()); // 4.0
+        vb_f16x4.extend_from_slice(&0x0000u16.to_le_bytes()); // 0.0
+        run_case(
+            &device,
+            &queue,
+            10,  // DXGI_FORMAT_R16G16B16A16_FLOAT
+            0xF, // xyzw
+            8,
+            &vb_f16x4,
+            [1.0, -2.0, 4.0, 0.0],
+            assert_vec4_approx,
+        )
+        .await;
+
+        // snorm8x4 (-1.0, 1.0, 0.0, -1/127)
+        let vb_sn8 = [(-128i8) as u8, 127u8, 0u8, (-1i8) as u8];
+        run_case(
+            &device,
+            &queue,
+            31,  // DXGI_FORMAT_R8G8B8A8_SNORM
+            0xF, // xyzw
+            4,
+            &vb_sn8,
+            [-1.0, 1.0, 0.0, -(1.0 / 127.0)],
+            assert_vec4_approx,
+        )
+        .await;
+    });
+}
