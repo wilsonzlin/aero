@@ -12674,8 +12674,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       stateblock_record_sampler_state_locked(dev, stage, s, value);
     }
 
-    // Texture stage state (fixed function). No command emission; cache-only so
-    // GetTextureStageState + state blocks are deterministic.
+    // Texture stage state (fixed function). No direct command emission; values
+    // are cached so GetTextureStageState + state blocks are deterministic, and
+    // stage0 is consulted by the UMD's minimal fixed-function fallback path to
+    // select a pixel shader variant.
     for (uint32_t s = 0; s < 256; ++s) {
       const uint32_t idx = stage * 256u + s;
       if (!sb->texture_stage_state_mask.test(idx)) {
