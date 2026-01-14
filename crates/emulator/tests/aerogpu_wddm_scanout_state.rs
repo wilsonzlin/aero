@@ -238,3 +238,92 @@ fn disable_before_claim_keeps_legacy_scanout() {
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 0);
     assert_eq!(scanout_state.snapshot(), legacy);
 }
+
+#[test]
+fn invalid_pitch_does_not_claim_wddm_scanout_until_fixed() {
+    let mut mem = DummyMemory;
+    let scanout_state = Arc::new(ScanoutState::new());
+    let mut dev = new_test_device(scanout_state.clone());
+
+    // Program a scanout config with an invalid pitch (not a multiple of bytes-per-pixel) and
+    // enable scanout. This must not claim WDDM scanout ownership (legacy display must remain
+    // active).
+    const WIDTH: u32 = 1;
+    const HEIGHT: u32 = 1;
+    const FB: u64 = 0x1234_5678_9abc_def0;
+    const INVALID_PITCH_BYTES: u32 = 5; // not multiple of 4
+    const VALID_PITCH_BYTES: u32 = 4;
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, WIDTH);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, HEIGHT);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, INVALID_PITCH_BYTES);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, FB as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (FB >> 32) as u32);
+
+    let legacy = scanout_state.snapshot();
+    assert_eq!(legacy.source, SCANOUT_SOURCE_LEGACY_TEXT);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    assert_eq!(scanout_state.snapshot(), legacy);
+
+    // Fix the pitch while scanout remains enabled. This must cause WDDM scanout to be claimed and
+    // published immediately.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, VALID_PITCH_BYTES);
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), FB);
+    assert_eq!(snap.width, WIDTH);
+    assert_eq!(snap.height, HEIGHT);
+    assert_eq!(snap.pitch_bytes, VALID_PITCH_BYTES);
+}
+
+#[test]
+fn fb_gpa_overflow_does_not_claim_wddm_scanout_until_fixed() {
+    let mut mem = DummyMemory;
+    let scanout_state = Arc::new(ScanoutState::new());
+    let mut dev = new_test_device(scanout_state.clone());
+
+    // Program a scanout config whose address arithmetic overflows (`FB_GPA + scanout_size` wraps).
+    // This must not claim WDDM scanout ownership.
+    const WIDTH: u32 = 1;
+    const HEIGHT: u32 = 2;
+    const PITCH_BYTES: u32 = 4;
+    // This overflows when adding end_offset (= 8 bytes for HEIGHT=2, PITCH=4, ROW_BYTES=4).
+    const FB_OVERFLOW: u64 = u64::MAX - 4;
+    const FB_VALID: u64 = 0x0010_0000;
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, WIDTH);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, HEIGHT);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, FB_OVERFLOW as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (FB_OVERFLOW >> 32) as u32);
+
+    let legacy = scanout_state.snapshot();
+    assert_eq!(legacy.source, SCANOUT_SOURCE_LEGACY_TEXT);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    assert_eq!(scanout_state.snapshot(), legacy);
+
+    // Fix the framebuffer address while scanout remains enabled; WDDM scanout should now claim and
+    // publish the valid descriptor.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, FB_VALID as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (FB_VALID >> 32) as u32);
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), FB_VALID);
+    assert_eq!(snap.width, WIDTH);
+    assert_eq!(snap.height, HEIGHT);
+    assert_eq!(snap.pitch_bytes, PITCH_BYTES);
+}
