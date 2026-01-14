@@ -2881,6 +2881,16 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
             tail = 0;
         }
         Adapter->RingTail = tail;
+        /*
+         * Repair the monotonic tail sequence counter to match the observed masked indices.
+         * Internal submission retirement relies on LegacyRingHeadSeq/LegacyRingTailSeq to be
+         * consistent (no modulo arithmetic).
+         */
+        {
+            const ULONG pending =
+                (tail >= head) ? (tail - head) : (tail + Adapter->RingEntryCount - head);
+            Adapter->LegacyRingTailSeq = Adapter->LegacyRingHeadSeq + pending;
+        }
     }
 
     ULONG nextTail = (tail + 1) % Adapter->RingEntryCount;
@@ -12334,6 +12344,16 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         tail = 0;
                     }
                     adapter->RingTail = tail;
+                    /*
+                     * Repair the monotonic tail sequence counter to match the observed masked indices.
+                     * Internal submission retirement relies on LegacyRingHeadSeq/LegacyRingTailSeq to be
+                     * consistent (no modulo arithmetic).
+                     */
+                    {
+                        const ULONG pending =
+                            (tail >= head) ? (tail - head) : (tail + adapter->RingEntryCount - head);
+                        adapter->LegacyRingTailSeq = adapter->LegacyRingHeadSeq + pending;
+                    }
                 }
                 headBefore = head;
 
