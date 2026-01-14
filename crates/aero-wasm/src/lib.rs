@@ -3929,7 +3929,6 @@ impl Machine {
                 if let Some(v) = get_bool("enable_reset_ctrl")? {
                     cfg.enable_reset_ctrl = v;
                 }
-            }
         }
 
         // Synthetic HID devices are always attached behind UHCI.
