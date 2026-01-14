@@ -47,7 +47,6 @@ const COMMON_FOURCCS: &[FourCC] = &[
     FourCC(*b"SPDB"),
     FourCC(*b"SFI0"),
     FourCC(*b"IFCE"),
-    FourCC(*b"PCSG"),
 ];
 
 fn is_signature_fourcc(fourcc: FourCC) -> bool {
