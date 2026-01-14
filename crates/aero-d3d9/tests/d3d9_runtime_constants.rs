@@ -71,17 +71,19 @@ fn d3d9_runtime_constants_support_ranges_and_vertex_stage() {
         // This triangle is entirely off-screen unless the vertex shader applies an offset.
         // The built-in vertex shader uses vertex constants c0.xy + c1.xy as the offset, so we can
         // validate both ranged updates and vertex-stage constant visibility.
+        //
+        // Use clockwise winding so the default D3D9 cull mode (cull CCW) doesn't discard it.
         let verts: [Vertex; 3] = [
             Vertex {
                 pos: [-3.0, -3.0],
                 uv: [0.0, 0.0],
             },
             Vertex {
-                pos: [1.0, -3.0],
+                pos: [-3.0, 1.0],
                 uv: [0.0, 0.0],
             },
             Vertex {
-                pos: [-3.0, 1.0],
+                pos: [1.0, -3.0],
                 uv: [0.0, 0.0],
             },
         ];
@@ -186,4 +188,3 @@ fn d3d9_runtime_constants_reject_out_of_range_updates() {
         }
     });
 }
-
