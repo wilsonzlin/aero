@@ -192,14 +192,16 @@ mod tests {
                 &JsValue::from_str("device.1"),
             )
             .expect("Reflect::set(kind)");
-            let bytes = Uint8Array::new_with_length(max as u32);
+            // Avoid allocating/copying a full 64 MiB device blob into the bounded wasm heap (see
+            // `runtime_alloc`). We still validate that a non-trivial payload parses successfully.
+            let bytes = Uint8Array::new_with_length(1024 * 1024);
             Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
                 .expect("Reflect::set(bytes)");
             devices.push(&obj);
 
-            let parsed = parse_devices_js(devices.into()).expect("64 MiB device blob accepted");
+            let parsed = parse_devices_js(devices.into()).expect("device blob accepted");
             assert_eq!(parsed.len(), 1);
-            assert_eq!(parsed[0].data.len(), max);
+            assert_eq!(parsed[0].data.len(), 1024 * 1024);
         }
 
         // Too large should error before copying bytes into wasm memory.
@@ -211,9 +213,31 @@ mod tests {
             &JsValue::from_str("device.1"),
         )
         .expect("Reflect::set(kind)");
-        let bytes = Uint8Array::new_with_length((max + 1) as u32);
-        Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
-            .expect("Reflect::set(bytes)");
+        // Create a Uint8Array *view* over guest RAM to avoid allocating `max + 1` bytes on the JS
+        // heap. `parse_devices_js` should reject by length before copying into the wasm heap.
+        let oversized_len = max + 1;
+        {
+            let layout = crate::guest_ram_layout(0);
+            let base = u64::from(layout.guest_base());
+            let required_bytes = base + oversized_len as u64;
+            let required_pages =
+                required_bytes.div_ceil(crate::guest_layout::WASM_PAGE_BYTES) as usize;
+            let cur_pages = core::arch::wasm32::memory_size(0);
+            if cur_pages < required_pages {
+                let delta = required_pages - cur_pages;
+                let prev = core::arch::wasm32::memory_grow(0, delta);
+                assert_ne!(prev, usize::MAX, "memory.grow failed in test setup");
+            }
+
+            unsafe {
+                core::ptr::write_bytes(layout.guest_base() as *mut u8, 0, oversized_len);
+                let slice =
+                    core::slice::from_raw_parts(layout.guest_base() as *const u8, oversized_len);
+                let bytes = Uint8Array::view(slice);
+                Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
+                    .expect("Reflect::set(bytes)");
+            }
+        }
         devices.push(&obj);
 
         let err =

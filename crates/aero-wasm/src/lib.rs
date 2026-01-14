@@ -232,9 +232,13 @@ pub fn wasm_start() {
 }
 
 // Some browser-only APIs used by `aero-wasm` (notably OPFS sync access handles) are worker-only.
-// Configure wasm-bindgen tests for this crate to run in a worker when targeting wasm32.
-#[cfg(all(test, target_arch = "wasm32"))]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_worker);
+//
+// Do not globally force wasm-bindgen tests to run in a browser worker. CI runs wasm-bindgen tests
+// under Node (`wasm-pack test --node`), and configuring the entire crate as worker-only would skip
+// all unit tests in that environment.
+//
+// Tests that require a worker should opt into worker mode in their specific test crate via:
+// `wasm_bindgen_test_configure!(run_in_worker);`
 
 /// Placeholder API exported to JS. Both the threaded and single WASM variants
 /// are built from this crate and must expose an identical surface.

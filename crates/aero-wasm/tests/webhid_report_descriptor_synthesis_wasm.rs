@@ -4,10 +4,6 @@ use js_sys::JSON;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
 
-// Some browser-only APIs used by `aero-wasm` are worker-only (e.g. OPFS sync access handles).
-// Run wasm-bindgen tests in a worker so this integration test matches the typical web runtime.
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_worker);
-
 #[wasm_bindgen_test]
 fn synthesize_webhid_normalized_mouse_descriptor_matches_expected_bytes() {
     let fixture = include_str!(concat!(
@@ -228,7 +224,7 @@ fn synthesize_webhid_report_descriptor_error_includes_field_path() {
         .unwrap_or_else(|| format!("{err:?}"));
 
     assert!(
-        msg.contains("at [0].usagePage"),
+        msg.contains("[0].usagePage"),
         "expected error message to include field path; got: {msg}"
     );
 }

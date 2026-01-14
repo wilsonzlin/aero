@@ -485,7 +485,6 @@ mod tests {
         assert_eq!(snapshot.devices.len(), 1);
         assert_eq!(snapshot.devices[0].data.len(), max);
 
-        // Drop the large allocation before testing the failure case.
         snapshot.devices.clear();
 
         let err = snapshot
