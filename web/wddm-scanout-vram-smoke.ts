@@ -50,6 +50,12 @@ declare global {
           bottomLeft: number[];
           bottomRight: number[];
         };
+        scanoutUpdate: {
+          x: number;
+          y: number;
+          before: number[];
+          after: number[];
+        };
       }>;
     };
   }
@@ -460,6 +466,62 @@ async function main(): Promise<void> {
       return [rgba[i + 0] ?? 0, rgba[i + 1] ?? 0, rgba[i + 2] ?? 0, rgba[i + 3] ?? 0];
     }
 
+    // Verify that WDDM scanout presentation is not suppressed when the scanout descriptor is
+    // unchanged (scanout memory can change without a ScanoutState generation bump).
+    //
+    // Mutate a single pixel in the scanout backing store, force a present pass via the
+    // deterministic screenshot API (which calls into `handleTick()` in scanout mode), then
+    // confirm the presented output updates accordingly.
+    const scanoutUpdateX = 8;
+    const scanoutUpdateY = 8;
+    const scanoutUpdateBefore = sample(presentedRgba8, presentedWidth, scanoutUpdateX, scanoutUpdateY);
+    let scanoutUpdateAfter = scanoutUpdateBefore;
+    if (pass) {
+      {
+        const pxOff = scanoutUpdateY * pitchBytes + scanoutUpdateX * 4;
+        // BGRX => green pixel (0,255,0,255) after swizzle + alpha policy.
+        backing[pxOff + 0] = 0; // B
+        backing[pxOff + 1] = 255; // G
+        backing[pxOff + 2] = 0; // R
+        backing[pxOff + 3] = 0; // X
+      }
+
+      const expected = [0, 255, 0, 255];
+      const deadline = performance.now() + 2000;
+      while (performance.now() < deadline) {
+        // Force a present pass in scanout mode via screenshot request (awaited in worker).
+        await requestScreenshot();
+        const shot = await requestPresentedScreenshot(false);
+        const w = Number(shot.width) | 0;
+        const h = Number(shot.height) | 0;
+        if (w <= scanoutUpdateX || h <= scanoutUpdateY) {
+          await sleep(20);
+          continue;
+        }
+        const rgba = new Uint8Array(shot.rgba8);
+        scanoutUpdateAfter = sample(rgba, w, scanoutUpdateX, scanoutUpdateY);
+        if (
+          scanoutUpdateAfter[0] === expected[0] &&
+          scanoutUpdateAfter[1] === expected[1] &&
+          scanoutUpdateAfter[2] === expected[2] &&
+          scanoutUpdateAfter[3] === expected[3]
+        ) {
+          break;
+        }
+        await sleep(20);
+      }
+      if (
+        scanoutUpdateAfter[0] !== expected[0] ||
+        scanoutUpdateAfter[1] !== expected[1] ||
+        scanoutUpdateAfter[2] !== expected[2] ||
+        scanoutUpdateAfter[3] !== expected[3]
+      ) {
+        throw new Error(
+          `Scanout update not reflected in presented output (expected ${expected.join(",")} at ${scanoutUpdateX},${scanoutUpdateY}; got ${scanoutUpdateAfter.join(",")})`,
+        );
+      }
+    }
+
     log(`backend=${backend}`);
     log(`hash=${hash} expected=${expectedHash} ${pass ? "PASS" : "FAIL"}`);
     log(`sourceHash=${sourceHash} expectedSource=${expectedSourceHash}`);
@@ -496,6 +558,12 @@ async function main(): Promise<void> {
           topRight: sample(presentedRgba8, presentedWidth, presentedWidth - 9, 8),
           bottomLeft: sample(presentedRgba8, presentedWidth, 8, presentedHeight - 9),
           bottomRight: sample(presentedRgba8, presentedWidth, presentedWidth - 9, presentedHeight - 9),
+        },
+        scanoutUpdate: {
+          x: scanoutUpdateX,
+          y: scanoutUpdateY,
+          before: scanoutUpdateBefore,
+          after: scanoutUpdateAfter,
         },
       }),
       cursorOk,

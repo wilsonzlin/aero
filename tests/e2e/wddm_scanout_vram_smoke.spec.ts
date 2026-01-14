@@ -63,6 +63,15 @@ test("wddm scanout smoke: presents from VRAM aperture base_paddr (BGRX->RGBA, al
   expect(result.samples.cursor.pixel).toEqual([0, 0, 0, 255]);
   expect(result.samples.cursor.nearby).toEqual([255, 0, 0, 255]);
 
+  // WDDM scanout must continue updating even when ScanoutState is unchanged (scanout memory can
+  // change without a generation bump). The smoke harness mutates a pixel and expects the
+  // presented output to reflect it.
+  expect(result.samples.scanoutUpdate).toBeTruthy();
+  expect(result.samples.scanoutUpdate.x).toBe(8);
+  expect(result.samples.scanoutUpdate.y).toBe(8);
+  expect(result.samples.scanoutUpdate.before).toEqual([255, 0, 0, 255]);
+  expect(result.samples.scanoutUpdate.after).toEqual([0, 255, 0, 255]);
+
   // Validate the "X" byte in BGRX is ignored and alpha is forced to 255.
   for (const sample of [
     result.samples.source.topLeft,
