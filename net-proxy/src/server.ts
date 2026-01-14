@@ -306,6 +306,23 @@ function setDohCorsHeaders(
   res.setHeader("Access-Control-Allow-Headers", allowHeaders);
 }
 
+function maxBase64UrlLenForBytes(byteLength: number): number {
+  const n = clampInt(byteLength, 0, Number.MAX_SAFE_INTEGER);
+  const fullTriplets = Math.floor(n / 3);
+  const rem = n % 3;
+  if (rem === 0) return fullTriplets * 4;
+  if (rem === 1) return fullTriplets * 4 + 2;
+  return fullTriplets * 4 + 3;
+}
+
+function base64UrlPrefixForHeader(base64url: string, maxChars = 16): string {
+  let len = Math.min(base64url.length, maxChars);
+  // `decodeBase64UrlToBuffer` rejects lengths with `len % 4 === 1`.
+  if (len % 4 === 1) len -= 1;
+  if (len <= 0) return "";
+  return base64url.slice(0, len);
+}
+
 async function handleDnsQuery(req: http.IncomingMessage, res: http.ServerResponse, url: URL, config: ProxyConfig): Promise<void> {
   if (req.method !== "GET" && req.method !== "POST") {
     sendDnsMessage(res, 405, encodeDnsResponse({ id: 0, rcode: 1 }));
@@ -321,7 +338,23 @@ async function handleDnsQuery(req: http.IncomingMessage, res: http.ServerRespons
         sendDnsMessage(res, 400, encodeDnsResponse({ id: 0, rcode: 1 }));
         return;
       }
-      query = decodeBase64UrlToBuffer(dnsParam);
+      // Avoid decoding arbitrarily large `dns` query params into buffers. For valid base64url,
+      // the encoded length is strictly monotonic with decoded byte length, so we can enforce
+      // `dohMaxQueryBytes` before decoding the full message.
+      const maxEncodedLen = maxBase64UrlLenForBytes(config.dohMaxQueryBytes);
+      if (dnsParam.length > maxEncodedLen) {
+        tooLarge = true;
+        // Best-effort decode of the DNS header (first 12 bytes) so we can preserve query ID/flags
+        // in the 413 response without allocating the entire message.
+        const prefix = base64UrlPrefixForHeader(dnsParam, 16);
+        try {
+          query = prefix ? decodeBase64UrlToBuffer(prefix) : Buffer.alloc(0);
+        } catch {
+          query = Buffer.alloc(0);
+        }
+      } else {
+        query = decodeBase64UrlToBuffer(dnsParam);
+      }
     } else {
       const contentType = (req.headers["content-type"] ?? "").split(";", 1)[0]?.trim().toLowerCase();
       if (contentType !== "application/dns-message") {
