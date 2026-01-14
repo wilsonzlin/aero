@@ -104,47 +104,83 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
             continue;
         }
 
-        let len = ((opcode_token >> 24) & 0x0F) as usize;
-        if r.remaining() < len {
+        // D3D9 SM2/SM3 encode the *total* instruction length in DWORD tokens (including the
+        // opcode token itself) in bits 24..27. Some operand-less instructions encode this value
+        // as `0`, which is interpreted as a 1-token instruction.
+        let mut len = ((opcode_token >> 24) & 0x0F) as usize;
+        if len == 0 {
+            len = 1;
+        }
+        let operand_len = len.saturating_sub(1);
+        if r.remaining() < operand_len {
             return Err(ShaderParseError::TruncatedInstruction {
                 opcode: opcode_raw,
                 at_token,
-                needed_tokens: len,
+                needed_tokens: operand_len,
                 remaining_tokens: r.remaining(),
             });
         }
-        let operands = r.read_many(len).unwrap();
+        let operands = r.read_many(operand_len).unwrap();
 
         if opcode_raw == OPCODE_DCL {
-            if operands.len() < 2 {
-                return Err(ShaderParseError::TruncatedInstruction {
-                    opcode: opcode_raw,
-                    at_token,
-                    needed_tokens: 2,
-                    remaining_tokens: operands.len(),
-                });
-            }
-            let decl_token = operands[0];
-            let dst_token = operands[1];
-            let dst = decode_dst(dst_token);
+            // D3D9 `DCL` encoding differs between toolchains:
+            // - Modern compilers may use a single destination register token, with usage / texture
+            //   type encoded in the opcode token.
+            // - Older assemblers encode a second "decl token" operand containing usage / sampler
+            //   type information.
+            let (decl_token, dst_token, dst_token_idx) = match operands {
+                // Modern form: `dcl <dst>`
+                [dst_token] => (None, *dst_token, 0usize),
+                // Legacy form: `dcl <decl_token>, <dst>`
+                [decl_token, dst_token, ..] => (Some(*decl_token), *dst_token, 1usize),
+                _ => {
+                    return Err(ShaderParseError::TruncatedInstruction {
+                        opcode: opcode_raw,
+                        at_token,
+                        needed_tokens: 1,
+                        remaining_tokens: operands.len(),
+                    })
+                }
+            };
+
+            let dst = decode_dst(dst_token, stage);
             if matches!(dst.reg.ty, RegisterType::Unknown(_)) {
                 return Err(ShaderParseError::InvalidRegisterEncoding {
                     token: dst_token,
-                    at_token: at_token + 2,
+                    at_token: at_token + 1 + dst_token_idx,
                 });
             }
 
             match dst.reg.ty {
                 RegisterType::Sampler => {
-                    let tex_ty_raw = ((decl_token >> 27) & 0xF) as u8;
+                    // Legacy form: texture type in decl_token[27..31].
+                    // Modern form: texture type in opcode_token[16..20].
+                    let tex_ty_raw = match decl_token {
+                        Some(decl_token) => ((decl_token >> 27) & 0xF) as u8,
+                        None => ((opcode_token >> 16) & 0xF) as u8,
+                    };
                     declarations.push(Decl::Sampler {
                         reg: dst.reg,
                         texture_type: SamplerTextureType::from_raw(tex_ty_raw),
                     });
                 }
                 _ => {
-                    let usage_raw = (decl_token & 0x1F) as u8;
-                    let usage_index = ((decl_token >> 16) & 0xF) as u8;
+                    // Vertex-stage DCLs carry semantic usage information. Pixel-stage DCLs are
+                    // typically just register declarations (e.g. `dcl t0`), so we infer texcoord
+                    // usage for texture register declarations and fall back to opcode/declaration
+                    // token bits otherwise.
+                    let (usage_raw, usage_index) = if stage == ShaderStage::Pixel
+                        && matches!(dst.reg.ty, RegisterType::Texture)
+                    {
+                        (5u8, dst.reg.num as u8)
+                    } else if let Some(decl_token) = decl_token {
+                        ((decl_token & 0x1F) as u8, ((decl_token >> 16) & 0xF) as u8)
+                    } else {
+                        (
+                            ((opcode_token >> 16) & 0xF) as u8,
+                            ((opcode_token >> 20) & 0xF) as u8,
+                        )
+                    };
                     declarations.push(Decl::Dcl {
                         reg: dst.reg,
                         usage: Usage::from_raw(usage_raw),
@@ -160,8 +196,7 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
         let specific = ((opcode_token >> 16) & 0xFF) as u8;
 
         if let Some(opcode) = decode_opcode(opcode_raw, specific) {
-            let mut idx = 0usize;
-            let predicate = if predicated {
+            let (operands, predicate) = if predicated {
                 if operands.is_empty() {
                     return Err(ShaderParseError::TruncatedInstruction {
                         opcode: opcode_raw,
@@ -170,13 +205,20 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                         remaining_tokens: 0,
                     });
                 }
-                let token_idx = idx;
-                let pred = decode_src(operands, &mut idx);
-                validate_src(&pred, operands, at_token + 1, token_idx)?;
-                Some(pred)
+                let pred_token_idx = operands.len() - 1;
+                let pred_slice = &operands[pred_token_idx..];
+                let mut pred_idx = 0usize;
+                let pred = decode_src(pred_slice, &mut pred_idx, stage);
+                validate_src(&pred, pred_slice, at_token + 1 + pred_token_idx, 0)?;
+                (&operands[..pred_token_idx], Some(pred))
             } else {
-                None
+                (operands, None)
             };
+
+            let mut idx = 0usize;
+            // The predicate register token (when present) is part of the operand stream, but is
+            // treated separately from normal dst/src operands.
+            let pred_operand_tokens = if predicated { 1usize } else { 0 };
 
             let has_dst = matches!(
                 opcode,
@@ -187,6 +229,7 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                     | crate::Opcode::Lrp
                     | crate::Opcode::Dp3
                     | crate::Opcode::Dp4
+                    | crate::Opcode::M4x4
                     | crate::Opcode::Min
                     | crate::Opcode::Max
                     | crate::Opcode::Rcp
@@ -213,13 +256,13 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                     return Err(ShaderParseError::TruncatedInstruction {
                         opcode: opcode_raw,
                         at_token,
-                        needed_tokens: idx + 1,
-                        remaining_tokens: operands.len(),
+                        needed_tokens: idx + 1 + pred_operand_tokens,
+                        remaining_tokens: operand_len,
                     });
                 }
                 let dst_token_idx = idx;
                 let dst_token = operands[dst_token_idx];
-                let dst = crate::reg::decode_dst(dst_token);
+                let dst = crate::reg::decode_dst(dst_token, stage);
                 if matches!(dst.reg.ty, RegisterType::Unknown(_)) {
                     return Err(ShaderParseError::InvalidRegisterEncoding {
                         token: dst_token,
@@ -241,15 +284,15 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                 return Err(ShaderParseError::TruncatedInstruction {
                     opcode: opcode_raw,
                     at_token,
-                    needed_tokens: idx + 1,
-                    remaining_tokens: operands.len(),
+                    needed_tokens: idx + 1 + pred_operand_tokens,
+                    remaining_tokens: operand_len,
                 });
             }
 
             let mut src = Vec::new();
             while idx < operands.len() {
                 let token_idx = idx;
-                let s = decode_src(operands, &mut idx);
+                let s = decode_src(operands, &mut idx, stage);
                 validate_src(&s, operands, at_token + 1, token_idx)?;
                 src.push(s);
             }

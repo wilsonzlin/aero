@@ -1,5 +1,5 @@
 use crate::reg::{
-    DstParam, Register, RegisterType, RelativeAddress, SrcModifier, SrcParam, Swizzle,
+    DstParam, Register, RegisterType, RelativeAddress, ShaderStage, SrcModifier, SrcParam, Swizzle,
 };
 
 const REGNUM_MASK: u32 = 0x0000_07FF;
@@ -22,18 +22,65 @@ const SRCMOD_MASK: u32 = 0x0F00_0000;
 
 const ADDR_MODE_RELATIVE: u32 = 0x0000_2000;
 
-fn decode_reg(token: u32) -> Register {
+#[derive(Debug, Clone, Copy)]
+enum RegDecodeContext {
+    Src,
+    Dst,
+    Relative,
+}
+
+fn decode_reg(token: u32, stage: ShaderStage, ctx: RegDecodeContext) -> Register {
     let num = (token & REGNUM_MASK) as u16;
     let ty_raw = (((token & REGTYPE_MASK) >> REGTYPE_SHIFT)
         | ((token & REGTYPE_MASK2) >> REGTYPE_SHIFT2)) as u8;
+
+    // Register type values follow `D3DSHADER_PARAM_REGISTER_TYPE`. Some encodings are
+    // stage-dependent:
+    //   - type 3 is `a#` (vertex) or `t#` (pixel)
+    //   - type 8 is `o#` (vertex) or `oC#` (pixel)
+    //
+    // Additionally, type 3 used in a relative-addressing token (the token after a parameter with
+    // the RELATIVE bit set) is always treated as an address register, regardless of stage.
+    let ty = match ty_raw {
+        0 => RegisterType::Temp,
+        1 => RegisterType::Input,
+        2 => RegisterType::Const,
+        3 => match ctx {
+            RegDecodeContext::Relative => RegisterType::Addr,
+            RegDecodeContext::Src | RegDecodeContext::Dst => match stage {
+                ShaderStage::Vertex => RegisterType::Addr,
+                ShaderStage::Pixel => RegisterType::Texture,
+            },
+        },
+        4 => RegisterType::RastOut,
+        5 => RegisterType::AttrOut,
+        6 => RegisterType::TexCoordOutOrOutput,
+        7 => RegisterType::ConstInt,
+        8 => match stage {
+            ShaderStage::Vertex => RegisterType::Output,
+            ShaderStage::Pixel => RegisterType::ColorOut,
+        },
+        9 => RegisterType::DepthOut,
+        10 => RegisterType::Sampler,
+        11 => RegisterType::Const2,
+        12 => RegisterType::Const3,
+        13 => RegisterType::Const4,
+        14 => RegisterType::ConstBool,
+        15 => RegisterType::Loop,
+        16 => RegisterType::TempFloat16,
+        17 => RegisterType::MiscType,
+        18 => RegisterType::Label,
+        19 => RegisterType::Predicate,
+        other => RegisterType::Unknown(other),
+    };
     Register {
-        ty: RegisterType::from_raw(ty_raw),
+        ty,
         num,
     }
 }
 
-pub fn decode_dst_param(token: u32) -> DstParam {
-    let reg = decode_reg(token);
+pub fn decode_dst_param(token: u32, stage: ShaderStage) -> DstParam {
+    let reg = decode_reg(token, stage, RegDecodeContext::Dst);
     let write_mask = ((token & DST_WRITEMASK_MASK) >> DST_WRITEMASK_SHIFT) as u8;
     let dstmod = ((token & DSTMOD_MASK) >> DSTMOD_SHIFT) as u8;
     DstParam {
@@ -45,19 +92,14 @@ pub fn decode_dst_param(token: u32) -> DstParam {
     }
 }
 
-pub fn decode_src_param(tokens: &[u32], idx: &mut usize) -> SrcParam {
+pub fn decode_src_param(tokens: &[u32], idx: &mut usize, stage: ShaderStage) -> SrcParam {
     if *idx >= tokens.len() {
         return SrcParam::Immediate(0);
     }
     let token = tokens[*idx];
     *idx += 1;
 
-    // Parameter tokens have bit31 set. If it's not set, treat it as an immediate literal.
-    if token & 0x8000_0000 == 0 {
-        return SrcParam::Immediate(token);
-    }
-
-    let reg = decode_reg(token);
+    let reg = decode_reg(token, stage, RegDecodeContext::Src);
     let swz = ((token & SRC_SWIZZLE_MASK) >> SRC_SWIZZLE_SHIFT) as u8;
     let swizzle = Swizzle::from_byte(swz);
     let mod_raw = ((token & SRCMOD_MASK) >> SRCMOD_SHIFT) as u8;
@@ -67,19 +109,13 @@ pub fn decode_src_param(tokens: &[u32], idx: &mut usize) -> SrcParam {
     if token & ADDR_MODE_RELATIVE != 0 && *idx < tokens.len() {
         let rel_token = tokens[*idx];
         *idx += 1;
-        if rel_token & 0x8000_0000 != 0 {
-            let rel_reg = decode_reg(rel_token);
-            let rel_swz = ((rel_token & SRC_SWIZZLE_MASK) >> SRC_SWIZZLE_SHIFT) as u8;
-            let rel_swizzle = Swizzle::from_byte(rel_swz);
-            relative = Some(RelativeAddress {
-                reg: rel_reg,
-                component: rel_swizzle.x,
-            });
-        } else {
-            // Relative token wasn't a register token; step back so it can be treated as an
-            // immediate by the caller.
-            *idx -= 1;
-        }
+        let rel_reg = decode_reg(rel_token, stage, RegDecodeContext::Relative);
+        let rel_swz = ((rel_token & SRC_SWIZZLE_MASK) >> SRC_SWIZZLE_SHIFT) as u8;
+        let rel_swizzle = Swizzle::from_byte(rel_swz);
+        relative = Some(RelativeAddress {
+            reg: rel_reg,
+            component: rel_swizzle.x,
+        });
     }
 
     SrcParam::Register {

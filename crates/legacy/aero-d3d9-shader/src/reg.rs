@@ -18,11 +18,13 @@ pub enum RegisterType {
     Input,
     Const,
     Addr,
+    Texture,
     RastOut,
     AttrOut,
     TexCoordOutOrOutput,
     ConstInt,
     ColorOut,
+    Output,
     DepthOut,
     Sampler,
     Const2,
@@ -326,10 +328,10 @@ fn observe_src(stats: &mut ShaderStats, src: &SrcParam) {
     }
 }
 
-pub(crate) fn decode_dst(token: u32) -> DstParam {
-    decode_dst_param(token)
+pub(crate) fn decode_dst(token: u32, stage: ShaderStage) -> DstParam {
+    decode_dst_param(token, stage)
 }
 
-pub(crate) fn decode_src(tokens: &[u32], idx: &mut usize) -> SrcParam {
-    decode_src_param(tokens, idx)
+pub(crate) fn decode_src(tokens: &[u32], idx: &mut usize, stage: ShaderStage) -> SrcParam {
+    decode_src_param(tokens, idx, stage)
 }

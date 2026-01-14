@@ -124,6 +124,7 @@ fn format_register(shader: &D3d9Shader, reg: Register) -> String {
         RegisterType::ConstBool => format!("b{}", reg.num),
         RegisterType::Sampler => format!("s{}", reg.num),
         RegisterType::Addr => format!("a{}", reg.num),
+        RegisterType::Texture => format!("t{}", reg.num),
         RegisterType::Loop => "aL".to_string(),
         RegisterType::Predicate => format!("p{}", reg.num),
         RegisterType::Label => format!("l{}", reg.num),
@@ -142,6 +143,7 @@ fn format_register(shader: &D3d9Shader, reg: Register) -> String {
             }
         }
         RegisterType::ColorOut => format!("oC{}", reg.num),
+        RegisterType::Output => format!("o{}", reg.num),
         RegisterType::DepthOut => "oDepth".to_string(),
         RegisterType::Unknown(raw) => format!("reg{}[{}]", raw, reg.num),
         RegisterType::Const2 => format!("c2_{}", reg.num),
@@ -219,6 +221,8 @@ fn format_src(shader: &D3d9Shader, src: &SrcParam) -> String {
                     RegisterType::ConstBool => s.push('b'),
                     RegisterType::Sampler => s.push('s'),
                     RegisterType::Addr => s.push('a'),
+                    RegisterType::Texture => s.push('t'),
+                    RegisterType::Output => s.push('o'),
                     RegisterType::Predicate => s.push('p'),
                     RegisterType::Label => s.push('l'),
                     _ => {

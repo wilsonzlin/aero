@@ -288,19 +288,19 @@ fn malformed_dxbc_chunk_offset_past_end_errors() {
 const VS_2_0_PASSTHROUGH: [u32; 14] = [
     0xFFFE_0200, // vs_2_0
     // dcl_position v0
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0000,
     0x900F_0000,
     // dcl_texcoord0 v1
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0005,
     0x900F_0001,
     // mov oPos, v0
-    0x0200_0001,
+    0x0300_0001,
     0xC00F_0000,
     0x90E4_0000,
     // mov oT0, v1
-    0x0200_0001,
+    0x0300_0001,
     0xE00F_0000,
     0x90E4_0001,
     // end
@@ -310,20 +310,20 @@ const VS_2_0_PASSTHROUGH: [u32; 14] = [
 const PS_2_0_TEX_SAMPLE: [u32; 15] = [
     0xFFFF_0200, // ps_2_0
     // dcl_texcoord0 v0
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0005,
     0x900F_0000,
     // dcl_2d s0
-    0x0200_001F,
+    0x0300_001F,
     0x9000_0000,
     0xA00F_0800,
     // texld r0, v0, s0
-    0x0300_0042,
+    0x0400_0042,
     0x800F_0000,
     0x90E4_0000,
     0xA0E4_0800,
     // mov oC0, r0
-    0x0200_0001,
+    0x0300_0001,
     0x800F_0800,
     0x80E4_0000,
     // end
@@ -333,25 +333,25 @@ const PS_2_0_TEX_SAMPLE: [u32; 15] = [
 const PS_2_0_LRP: [u32; 19] = [
     0xFFFF_0200, // ps_2_0
     // dcl_texcoord0 v0
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0005,
     0x900F_0000,
     // dcl_texcoord1 v1
-    0x0200_001F,
+    0x0300_001F,
     0x8001_0005,
     0x900F_0001,
     // dcl_texcoord2 v2
-    0x0200_001F,
+    0x0300_001F,
     0x8002_0005,
     0x900F_0002,
     // lrp r0, v0, v1, v2
-    0x0400_0012,
+    0x0500_0012,
     0x800F_0000,
     0x90E4_0000,
     0x90E4_0001,
     0x90E4_0002,
     // mov oC0, r0
-    0x0200_0001,
+    0x0300_0001,
     0x800F_0800,
     0x80E4_0000,
     // end
@@ -361,43 +361,43 @@ const PS_2_0_LRP: [u32; 19] = [
 const VS_3_0_IF: [u32; 30] = [
     0xFFFE_0300, // vs_3_0
     // dcl_position v0
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0000,
     0x900F_0000,
     // dcl_position o0
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0000,
     0xE00F_0000,
     // dcl_texcoord0 v1
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0005,
     0x900F_0001,
     // dcl_texcoord0 o1
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0005,
     0xE00F_0001,
     // mov o0, v0
-    0x0200_0001,
+    0x0300_0001,
     0xE00F_0000,
     0x90E4_0000,
     // mov o1, v1
-    0x0200_0001,
+    0x0300_0001,
     0xE00F_0001,
     0x90E4_0001,
     // setp p0.x, v0.x, c0.x
-    0x0300_005E,
+    0x0400_005E,
     0xB001_1000,
     0x9000_0000,
     0xA000_0000,
     // if p0.x
-    0x0100_0028,
+    0x0200_0028,
     0xB000_1000,
     // mov o1, v1
-    0x0200_0001,
+    0x0300_0001,
     0xE00F_0001,
     0x90E4_0001,
     // endif
-    0x0000_002B,
+    0x0100_002B,
     // end
     0x0000_FFFF,
 ];
@@ -405,23 +405,23 @@ const VS_3_0_IF: [u32; 30] = [
 const PS_3_0_TEXKILL: [u32; 17] = [
     0xFFFF_0300, // ps_3_0
     // dcl_texcoord0 v0
-    0x0200_001F,
+    0x0300_001F,
     0x8000_0005,
     0x900F_0000,
     // dcl_2d s0
-    0x0200_001F,
+    0x0300_001F,
     0x9000_0000,
     0xA00F_0800,
     // texld r0, v0, s0
-    0x0300_0042,
+    0x0400_0042,
     0x800F_0000,
     0x90E4_0000,
     0xA0E4_0800,
     // texkill r0
-    0x0100_0041,
+    0x0200_0041,
     0x80E4_0000,
     // mov oC0, r0
-    0x0200_0001,
+    0x0300_0001,
     0x800F_0800,
     0x80E4_0000,
     // end
@@ -573,7 +573,7 @@ fn parse_dxbc_skips_non_shader_chunks() {
 
 #[test]
 fn malformed_truncated_instruction_errors() {
-    let words = [0xFFFE_0200, 0x0200_0001, 0xC00F_0000];
+    let words = [0xFFFE_0200, 0x0300_0001, 0xC00F_0000];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
     assert_eq!(
         err,
@@ -619,7 +619,7 @@ fn malformed_unknown_opcode_specific_field_errors() {
 #[test]
 fn malformed_truncated_unknown_opcode_errors() {
     // Unknown opcode with a non-zero operand length, but a truncated operand stream.
-    let words = [0xFFFE_0200, 0x0200_7777, 0x800F_0000];
+    let words = [0xFFFE_0200, 0x0300_7777, 0x800F_0000];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
     assert_eq!(
         err,
@@ -667,7 +667,7 @@ fn malformed_mov_missing_dst_token_errors() {
 #[test]
 fn malformed_mov_missing_src_token_errors() {
     // mov with only a dst token should be rejected (needs at least one src token).
-    let words = [0xFFFE_0200, 0x0100_0001, 0x800F_0000, 0x0000_FFFF];
+    let words = [0xFFFE_0200, 0x0200_0001, 0x800F_0000, 0x0000_FFFF];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
     assert_eq!(
         err,
@@ -685,9 +685,9 @@ fn malformed_predicated_mov_missing_src_token_errors() {
     // Predicated mov with a predicate + dst but missing a src token.
     let words = [
         0xFFFE_0200,
-        0x1200_0001, // mov len=2 + predicated
-        0xB000_1000, // p0.x
+        0x1300_0001, // mov len=3 + predicated
         0x800F_0000, // r0
+        0xB000_1000, // p0.x
         0x0000_FFFF,
     ];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
@@ -746,7 +746,7 @@ fn malformed_invalid_register_encoding_errors() {
     let invalid_reg_token = 0xF00F_1800;
     let words = [
         0xFFFE_0200, // vs_2_0
-        0x0200_0001, // mov (len=2)
+        0x0300_0001, // mov (len=3)
         invalid_reg_token,
         0x90E4_0000, // v0
         0x0000_FFFF, // end
@@ -787,7 +787,7 @@ fn malformed_invalid_src_register_encoding_errors() {
     let invalid_src_token = 0xF0E4_1800;
     let words = [
         0xFFFE_0200, // vs_2_0
-        0x0200_0001, // mov (len=2)
+        0x0300_0001, // mov (len=3)
         0x800F_0000, // r0
         invalid_src_token,
         0x0000_FFFF, // end
@@ -811,7 +811,7 @@ fn malformed_invalid_relative_register_encoding_errors() {
     let relative_reg_token = 0xF000_1800;
     let words = [
         0xFFFE_0200, // vs_2_0
-        0x0300_0001, // mov (len=3)
+        0x0400_0001, // mov (len=4)
         0x800F_0000, // r0
         0xA0E4_2000, // c0 (relative)
         relative_reg_token,
@@ -838,7 +838,7 @@ fn malformed_absurd_regular_instruction_length_errors() {
         ShaderParseError::TruncatedInstruction {
             opcode: 0x0001,
             at_token: 1,
-            needed_tokens: 15,
+            needed_tokens: 14,
             remaining_tokens: 1,
         }
     );
@@ -850,7 +850,7 @@ fn malformed_unknown_opcode_with_operands_errors() {
     // error (and don't panic while reading the operand tokens).
     let words = [
         0xFFFE_0200, // vs_2_0
-        0x0200_7777, // unknown opcode 0x7777, len=2
+        0x0300_7777, // unknown opcode 0x7777, len=3
         0x800F_0000, // r0 (arbitrary operand)
         0x90E4_0000, // v0 (arbitrary operand)
         0x0000_FFFF, // end
@@ -872,7 +872,7 @@ fn malformed_invalid_dcl_register_encoding_errors() {
     let invalid_reg_token = 0xF00F_1800;
     let words = [
         0xFFFE_0200, // vs_2_0
-        0x0200_001F, // dcl (len=2)
+        0x0300_001F, // dcl (len=3)
         0x8000_0000, // usage token (position)
         invalid_reg_token,
         0x0000_FFFF, // end
@@ -893,10 +893,10 @@ fn malformed_invalid_predicate_register_encoding_errors() {
     let invalid_pred_token = 0xF000_1800;
     let words = [
         0xFFFE_0200, // vs_2_0
-        0x1300_0001, // mov (len=3) + predicated flag
-        invalid_pred_token,
+        0x1400_0001, // mov (len=4) + predicated flag
         0x800F_0000, // r0
         0x90E4_0000, // v0
+        invalid_pred_token,
         0x0000_FFFF, // end
     ];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
@@ -904,7 +904,7 @@ fn malformed_invalid_predicate_register_encoding_errors() {
         err,
         ShaderParseError::InvalidRegisterEncoding {
             token: invalid_pred_token,
-            at_token: 2,
+            at_token: 4,
         }
     );
 }
@@ -928,7 +928,7 @@ fn malformed_truncated_comment_errors() {
 #[test]
 fn malformed_truncated_dcl_errors() {
     // dcl has a fixed operand length of 2 tokens; make the stream end after only 1 operand.
-    let words = [0xFFFE_0200, 0x0200_001F, 0x8000_0000];
+    let words = [0xFFFE_0200, 0x0300_001F, 0x8000_0000];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
     assert_eq!(
         err,
@@ -943,8 +943,8 @@ fn malformed_truncated_dcl_errors() {
 
 #[test]
 fn malformed_dcl_with_invalid_length_nibble_errors() {
-    // dcl with an invalid length nibble (1) should still return a structured error and not panic
-    // when attempting to access operands[1].
+    // dcl with a length nibble that yields zero operands should still return a structured error
+    // and not panic when attempting to decode operand tokens.
     let words = [0xFFFE_0200, 0x0100_001F, 0x8000_0000, 0x0000_FFFF];
     let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
     assert_eq!(
@@ -952,8 +952,76 @@ fn malformed_dcl_with_invalid_length_nibble_errors() {
         ShaderParseError::TruncatedInstruction {
             opcode: 0x001F,
             at_token: 1,
-            needed_tokens: 2,
-            remaining_tokens: 1,
+            needed_tokens: 1,
+            remaining_tokens: 0,
         }
     );
+}
+
+#[test]
+fn parse_real_fixture_ps_2_0_sample() {
+    let shader = D3d9Shader::parse(include_bytes!(
+        "../../../aero-d3d9/tests/fixtures/dxbc/ps_2_0_sample.dxbc"
+    ))
+    .unwrap();
+    assert_eq!(shader.stage, ShaderStage::Pixel);
+    assert_eq!(shader.model.major, 2);
+    assert_eq!(shader.model.minor, 0);
+    assert_eq!(shader.declarations.len(), 1);
+    assert_eq!(shader.instructions.len(), 3);
+    let dis = shader.disassemble();
+    assert!(dis.contains("ps_2_0"));
+    // Ensure we can decode fxc-style `t#` register tokens (bit31 is not required).
+    assert!(dis.contains("texld r0, t0, s0"));
+    assert!(dis.contains("mov oC0, r0"));
+}
+
+#[test]
+fn parse_real_fixture_ps_3_0_math() {
+    let shader =
+        D3d9Shader::parse(include_bytes!("../../../aero-d3d9/tests/fixtures/dxbc/ps_3_0_math.dxbc"))
+            .unwrap();
+    assert_eq!(shader.stage, ShaderStage::Pixel);
+    assert_eq!(shader.model.major, 3);
+    assert_eq!(shader.model.minor, 0);
+    assert_eq!(shader.declarations.len(), 1);
+    assert_eq!(shader.instructions.len(), 4);
+    let dis = shader.disassemble();
+    assert!(dis.contains("ps_3_0"));
+    assert!(dis.contains("dp3 r0, t0, c0"));
+    assert!(dis.contains("rsq r1, r0"));
+    assert!(dis.contains("mov oC0, r0"));
+}
+
+#[test]
+fn parse_real_fixture_vs_2_0_simple() {
+    let shader =
+        D3d9Shader::parse(include_bytes!("../../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc"))
+            .unwrap();
+    assert_eq!(shader.stage, ShaderStage::Vertex);
+    assert_eq!(shader.model.major, 2);
+    assert_eq!(shader.model.minor, 0);
+    assert_eq!(shader.declarations.len(), 1);
+    assert_eq!(shader.instructions.len(), 2);
+    let dis = shader.disassemble();
+    assert!(dis.contains("vs_2_0"));
+    assert!(dis.contains("m4x4 oPos, v0, c0"));
+    assert!(dis.contains("mov oT0, v1"));
+}
+
+#[test]
+fn parse_real_fixture_vs_3_0_branch() {
+    let shader =
+        D3d9Shader::parse(include_bytes!("../../../aero-d3d9/tests/fixtures/dxbc/vs_3_0_branch.dxbc"))
+            .unwrap();
+    assert_eq!(shader.stage, ShaderStage::Vertex);
+    assert_eq!(shader.model.major, 3);
+    assert_eq!(shader.model.minor, 0);
+    assert_eq!(shader.declarations.len(), 1);
+    assert_eq!(shader.instructions.len(), 5);
+    let dis = shader.disassemble();
+    assert!(dis.contains("vs_3_0"));
+    assert!(dis.contains("if b0"));
+    assert!(dis.contains("endif"));
+    assert!(dis.contains("mov oPos, r0"));
 }
