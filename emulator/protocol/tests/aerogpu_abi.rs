@@ -2604,16 +2604,16 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_completed_fence"),
         24
     );
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 32);
+    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "ring0_size_bytes"),
-        32
+        40
     );
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "ring0_entry_count"),
-        36
+        44
     );
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_head"), 40);
-    assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "ring0_tail"), 44);
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "total_submissions"),
         48
