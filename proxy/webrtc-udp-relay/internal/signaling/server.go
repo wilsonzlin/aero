@@ -503,9 +503,11 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 
 	waitCtx, cancel := context.WithTimeout(r.Context(), s.iceGatheringTimeout())
 	defer cancel()
+	timedOut := false
 	select {
 	case <-gatherComplete:
 	case <-waitCtx.Done():
+		timedOut = errors.Is(waitCtx.Err(), context.DeadlineExceeded)
 	}
 	// If the request is canceled (client disconnected), abort without writing a
 	// response; otherwise return the best-effort SDP even if ICE gathering isn't
@@ -520,6 +522,10 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		_ = sess.Close()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to gather local description")
 		return
+	}
+
+	if timedOut {
+		s.incMetric(metrics.ICEGatheringTimeout)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -652,9 +658,11 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 
 	waitCtx, cancel := context.WithTimeout(r.Context(), s.iceGatheringTimeout())
 	defer cancel()
+	timedOut := false
 	select {
 	case <-gatherComplete:
 	case <-waitCtx.Done():
+		timedOut = errors.Is(waitCtx.Err(), context.DeadlineExceeded)
 	}
 	if r.Context().Err() != nil {
 		_ = sess.Close()
@@ -666,6 +674,10 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		_ = sess.Close()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "missing local description")
 		return
+	}
+
+	if timedOut {
+		s.incMetric(metrics.ICEGatheringTimeout)
 	}
 
 	writeJSON(w, http.StatusOK, httpOfferResponse{

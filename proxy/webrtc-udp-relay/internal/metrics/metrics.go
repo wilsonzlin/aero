@@ -20,6 +20,11 @@ const (
 	// closed because they failed to reach a connected state within the configured
 	// connect timeout.
 	WebRTCSessionConnectTimeout = "webrtc_session_connect_timeout"
+
+	// ICEGatheringTimeout counts responses served by non-trickle HTTP signaling
+	// endpoints (/offer, /webrtc/offer) where the relay returned an SDP answer
+	// before ICE gathering completed because the configured timeout was hit.
+	ICEGatheringTimeout = "ice_gathering_timeout"
 )
 
 // WebSocket UDP relay (/udp) counters.

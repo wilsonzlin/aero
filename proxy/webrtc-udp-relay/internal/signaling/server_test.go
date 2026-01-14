@@ -359,8 +359,12 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	t.Cleanup(func() { gatheringCompletePromise = oldPromise })
 
 	api := webrtc.NewAPI()
+	cfg := config.Config{MaxSessions: 1}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
+		Sessions:            sm,
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
@@ -435,6 +439,10 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	if elapsed > 250*time.Millisecond {
 		t.Fatalf("request took too long: %s", elapsed)
 	}
+
+	if got := m.Get(metrics.ICEGatheringTimeout); got != 1 {
+		t.Fatalf("%s=%d, want 1", metrics.ICEGatheringTimeout, got)
+	}
 }
 
 func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
@@ -446,8 +454,12 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	t.Cleanup(func() { gatheringCompletePromise = oldPromise })
 
 	api := webrtc.NewAPI()
+	cfg := config.Config{MaxSessions: 1}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
+		Sessions:            sm,
 		WebRTC:              api,
 		RelayConfig:         relay.DefaultConfig(),
 		Policy:              policy.NewDevDestinationPolicy(),
@@ -520,6 +532,10 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 	}
 	if elapsed > 250*time.Millisecond {
 		t.Fatalf("request took too long: %s", elapsed)
+	}
+
+	if got := m.Get(metrics.ICEGatheringTimeout); got != 1 {
+		t.Fatalf("%s=%d, want 1", metrics.ICEGatheringTimeout, got)
 	}
 }
 
@@ -627,6 +643,9 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if sm.ActiveSessions() == 0 {
+			if got := m.Get(metrics.ICEGatheringTimeout); got != 0 {
+				t.Fatalf("%s=%d, want 0", metrics.ICEGatheringTimeout, got)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -743,6 +762,9 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if sm.ActiveSessions() == 0 {
+			if got := m.Get(metrics.ICEGatheringTimeout); got != 0 {
+				t.Fatalf("%s=%d, want 0", metrics.ICEGatheringTimeout, got)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
