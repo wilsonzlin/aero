@@ -887,6 +887,105 @@ fn endpoint_ring_reset_helpers_clear_ep0_control_td_state() {
 }
 
 #[test]
+fn command_ring_context_commands_reset_ep0_control_td_state() {
+    let mut mem = TestMem::new(0x20_000);
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+    let eval_ctx = 0x3000u64;
+    let cfg_ctx = 0x3400u64;
+    let cmd_ring = 0x4000u64;
+
+    let mut ctrl = super::XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion.completion_code, super::CommandCompletionCode::Success);
+    let slot_id = completion.slot_id;
+    assert_ne!(slot_id, 0);
+
+    mem.write_u64(dcbaa + (u64::from(slot_id) * 8), dev_ctx);
+
+    // Evaluate Context input context: Drop=0, Add=EP0.
+    mem.write_u32(eval_ctx + 0x00, 0);
+    mem.write_u32(eval_ctx + 0x04, 1 << 1);
+    let eval_trdp = 0x9000u64;
+    let eval_raw = eval_trdp | 1;
+    mem.write_u32(eval_ctx + 0x40 + 8, eval_raw as u32);
+    mem.write_u32(eval_ctx + 0x40 + 12, (eval_raw >> 32) as u32);
+
+    // Configure Endpoint input context: Drop=0, Add=EP0.
+    mem.write_u32(cfg_ctx + 0x00, 0);
+    mem.write_u32(cfg_ctx + 0x04, 1 << 1);
+    let cfg_trdp = 0xa000u64;
+    let cfg_raw = cfg_trdp;
+    mem.write_u32(cfg_ctx + 0x40 + 8, cfg_raw as u32);
+    mem.write_u32(cfg_ctx + 0x40 + 12, (cfg_raw >> 32) as u32);
+
+    // Command ring:
+    //  - TRB0: Evaluate Context (slot, eval_ctx)
+    //  - TRB1: Configure Endpoint (slot, cfg_ctx)
+    {
+        let mut trb0 = Trb::new(eval_ctx, 0, 0);
+        trb0.set_trb_type(TrbType::EvaluateContextCommand);
+        trb0.set_slot_id(slot_id);
+        trb0.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, trb0);
+    }
+    {
+        let mut trb1 = Trb::new(cfg_ctx, 0, 0);
+        trb1.set_trb_type(TrbType::ConfigureEndpointCommand);
+        trb1.set_slot_id(slot_id);
+        trb1.set_cycle(true);
+        mem.write_trb(cmd_ring + 1 * 16, trb1);
+    }
+
+    ctrl.set_command_ring(cmd_ring, true);
+
+    // Evaluate Context updates EP0's transfer ring state and should clear any in-flight EP0 control
+    // TD tracking.
+    ctrl.ep0_control_td[usize::from(slot_id)] = super::ControlTdState {
+        td_start: None,
+        td_cursor: None,
+        data_expected: 7,
+        data_transferred: 3,
+        completion_code: CompletionCode::TrbError,
+    };
+    ctrl.process_command_ring(&mut mem, 1);
+    assert_eq!(
+        ctrl.ep0_control_td[usize::from(slot_id)],
+        super::ControlTdState::default()
+    );
+    let ring = ctrl
+        .slot_state(slot_id)
+        .unwrap()
+        .transfer_ring(1)
+        .expect("EP0 transfer ring cursor should be updated");
+    assert_eq!(ring.dequeue_ptr(), eval_trdp);
+    assert!(ring.cycle_state());
+
+    // Configure Endpoint can also update EP0; ensure it resets control TD tracking as well.
+    ctrl.ep0_control_td[usize::from(slot_id)] = super::ControlTdState {
+        td_start: None,
+        td_cursor: None,
+        data_expected: 99,
+        data_transferred: 12,
+        completion_code: CompletionCode::StallError,
+    };
+    ctrl.process_command_ring(&mut mem, 1);
+    assert_eq!(
+        ctrl.ep0_control_td[usize::from(slot_id)],
+        super::ControlTdState::default()
+    );
+    let ring = ctrl
+        .slot_state(slot_id)
+        .unwrap()
+        .transfer_ring(1)
+        .expect("EP0 transfer ring cursor should be updated");
+    assert_eq!(ring.dequeue_ptr(), cfg_trdp);
+    assert!(!ring.cycle_state());
+}
+
+#[test]
 fn controller_snapshot_roundtrip_is_deterministic() {
     use aero_io_snapshot::io::state::IoSnapshot;
 
