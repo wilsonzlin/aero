@@ -10,9 +10,10 @@
 ; Note: this file is checked in disabled-by-default (as `*.inf.disabled`) to
 ; avoid accidentally shipping/installing **two** INFs that match the same HWIDs.
 ;
-; Maintenance note: from the first section header (`[Version]`) onward, this
-; legacy alias must remain byte-for-byte identical to `aero_virtio_input.inf`
-; (only the leading banner/comments may differ).
+; Maintenance note: this file is allowed to diverge from `aero_virtio_input.inf`
+; only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add an opt-in
+; strict revision-gated generic fallback HWID match (no SUBSYS). Outside those
+; models sections, it should stay in sync with the canonical INF.
 ;
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
@@ -67,9 +68,8 @@ aero_virtio_input.sys = 1
 ; `aero_virtio_tablet.inf` (SUBSYS_0012). That INF's HWID is more specific, so it
 ; wins over the generic fallback when both are installed.
 ;
-; Legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf`
-; to enable). It should remain byte-for-byte identical to this INF from the first
-; section header (`[Version]`) onward (only the banner/comments may differ). See:
+; Maintenance note: outside the models sections, keep this INF in sync with
+; `aero_virtio_input.inf`. See:
 ;   drivers/windows7/virtio-input/scripts/check-inf-alias.py
 ;
 ; If your device enumerates with a different DEV id, add it here.

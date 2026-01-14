@@ -72,18 +72,15 @@ drivers/windows7/tests/
   - By default the guest selftest reports `virtio-input-tablet-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-tablet-events` (alias: `--test-tablet-events`) / env var
     `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1` to enable it.
-  - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
-    HID interface.
+    - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+      HID interface.
     - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-    - If your QEMU/device does **not** expose the Aero contract subsystem IDs, the device can still bind via the
-      strict revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) in
-      `drivers/windows7/virtio-input/inf/aero_virtio_input.inf`.
-      - Caveat: when binding via the generic fallback entry, Device Manager will show the generic
-        **Aero VirtIO Input Device** name (not the keyboard/mouse/tablet-specific names).
-      - If you want to exercise the **contract tablet** binding specifically (HWID `...&SUBSYS_00121AF4&REV_01`),
-        adjust/emulate the subsystem IDs to the contract values so the tablet binds via `aero_virtio_tablet.inf`.
-    - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
+    - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
+      to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) in the optional legacy
+      alias INF under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled` suffix to
+      enable), and the driver classifies it as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`). When binding via the
+      fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
