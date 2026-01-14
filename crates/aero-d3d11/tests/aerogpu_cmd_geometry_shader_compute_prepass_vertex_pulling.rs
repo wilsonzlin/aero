@@ -46,13 +46,13 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
 
         let max_storage_buffers = exec.device().limits().max_storage_buffers_per_shader_stage;
         // The placeholder vertex-pulling prepass binds:
-        // - 4 storage buffers for emulation outputs (expanded verts/indices/indirect/counter)
+        // - 2 storage buffers for emulation outputs (expanded verts + indirect args)
         // - 1+ storage buffers for IA vertex pulling
-        if max_storage_buffers < 5 {
+        if max_storage_buffers < 3 {
             common::skip_or_panic(
                 test_name,
                 &format!(
-                    "requires >=5 storage buffers per shader stage for vertex pulling (got {max_storage_buffers})"
+                    "requires >=3 storage buffers per shader stage for vertex pulling (got {max_storage_buffers})"
                 ),
             );
             return;

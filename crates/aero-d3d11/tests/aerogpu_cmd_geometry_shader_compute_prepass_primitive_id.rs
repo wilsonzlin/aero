@@ -11,7 +11,6 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
-const DUMMY_GS: u32 = 0xCAFE_BABE;
 
 #[test]
 fn aerogpu_cmd_geometry_shader_compute_prepass_primitive_id() {
@@ -53,13 +52,13 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_primitive_id() {
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        // Force the compute-prepass path by binding a dummy GS handle (without requiring
-        // patchlist+tessellation validation).
-        writer.bind_shaders_with_gs(VS, DUMMY_GS, PS, 0);
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
-        // Draw two triangles; the compute-prepass uses `global_invocation_id.x` as a synthetic
-        // `SV_PrimitiveID`.
-        writer.draw(6, 1, 0, 0);
+        // Force the compute-prepass path by using a topology that cannot be expressed in a WebGPU
+        // render pipeline (adjacency).
+        writer.bind_shaders(VS, PS, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::LineListAdj);
+        // Draw 2 primitives (LineListAdj uses 4 vertices per primitive). The compute prepass uses
+        // `global_invocation_id.x` as a synthetic `SV_PrimitiveID`.
+        writer.draw(8, 1, 0, 0);
 
         let stream = writer.finish();
 

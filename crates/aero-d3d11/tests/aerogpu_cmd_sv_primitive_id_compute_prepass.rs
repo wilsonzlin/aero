@@ -11,7 +11,6 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PRIMITIVE_ID: &[u8] = include_bytes!("fixtures/ps_primitive_id.dxbc");
-const DUMMY_GS: u32 = 0xCAFE_BABE;
 
 #[test]
 fn aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives() {
@@ -58,15 +57,15 @@ fn aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives() {
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PRIMITIVE_ID);
 
-        // Force the GS/HS/DS compute-prepass path by binding a dummy GS handle (without depending
-        // on patchlist+tessellation validation).
-        writer.bind_shaders_with_gs(VS, DUMMY_GS, PS, 0);
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
-        // Request 2 primitives (TriangleList with 6 vertices). The compute prepass expands each
+        // Force the GS/HS/DS compute-prepass path by using a topology that cannot be expressed in
+        // a WebGPU render pipeline (adjacency).
+        writer.bind_shaders(VS, PS, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::LineListAdj);
+        // Request 2 primitives (LineListAdj with 8 vertices). The compute prepass expands each
         // primitive into a triangle, and the pixel shader uses SV_PrimitiveID to output:
         // - primitive 0: black
         // - primitive 1: red
-        writer.draw(6, 1, 0, 0);
+        writer.draw(8, 1, 0, 0);
 
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);

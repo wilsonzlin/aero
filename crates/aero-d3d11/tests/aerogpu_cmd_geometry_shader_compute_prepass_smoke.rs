@@ -11,7 +11,6 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
-const DUMMY_GS: u32 = 0xCAFE_BABE;
 
 #[test]
 fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
@@ -70,11 +69,12 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        // Bind an unknown (dummy) GS handle to force the compute-prepass path without depending on
-        // D3D11 patchlist topologies (which now require HS+DS).
-        writer.bind_shaders_with_gs(VS, DUMMY_GS, PS, 0);
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
-        writer.draw(3, 1, 0, 0);
+        // Force the compute-prepass path by using an adjacency topology (not supported by WebGPU
+        // render pipelines).
+        writer.bind_shaders(VS, PS, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::LineListAdj);
+        // Line-list-adj expands 4 vertices into 1 primitive.
+        writer.draw(4, 1, 0, 0);
 
         let stream = writer.finish();
 
