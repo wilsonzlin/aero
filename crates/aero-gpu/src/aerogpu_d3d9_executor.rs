@@ -2622,14 +2622,19 @@ impl AerogpuD3d9Executor {
                 });
             }
 
+            let expected_entry_point = match bytecode_stage {
+                shader::ShaderStage::Vertex => "vs_main",
+                shader::ShaderStage::Pixel => "fs_main",
+            };
             let entry_point: &'static str = match reflection.entry_point.as_str() {
-                "vs_main" => "vs_main",
-                "fs_main" => "fs_main",
+                entry_point if entry_point == expected_entry_point => expected_entry_point,
                 other => {
                     debug!(
                         shader_handle,
+                        stage = ?bytecode_stage,
                         entry_point = other,
-                        "cached shader entry point is unsupported; invalidating and retranslating"
+                        expected = expected_entry_point,
+                        "cached shader entry point does not match stage; invalidating and retranslating"
                     );
                     if !invalidated_once {
                         invalidated_once = true;

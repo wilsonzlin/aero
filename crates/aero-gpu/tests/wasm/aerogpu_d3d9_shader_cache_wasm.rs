@@ -509,6 +509,99 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_stage_mismatch() {
 }
 
 #[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_reflection_entry_point_mismatch() {
+    // Install a minimal stub `AeroPersistentGpuCache` so the Rust wasm persistent cache wrapper
+    // can exercise invalidation + retry behavior when cached reflection metadata is stale.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let vs_bytes = assemble_vs_pos_only();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &vs_bytes);
+    let stream = writer.finish();
+
+    // First run: persistent get -> miss, translate, then persistent put.
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(
+        keys.length(),
+        1,
+        "expected a single shader entry to be persisted"
+    );
+    let key = keys.get(0);
+    let cached = map.get(&key);
+    assert!(
+        !cached.is_undefined() && !cached.is_null(),
+        "expected persisted cache entry to exist"
+    );
+
+    // Corrupt the cached reflection entry point to simulate a stale entry (e.g. old schema / bug).
+    // Keep stage intact so the executor must validate stage+entry point consistency.
+    let reflection =
+        Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
+    let reflection_obj: Object = reflection
+        .clone()
+        .dyn_into()
+        .expect("cached.reflection should be an object");
+    Reflect::set(
+        &reflection_obj,
+        &JsValue::from_str("entryPoint"),
+        &JsValue::from_str("fs_main"),
+    )
+    .expect("set reflection.entryPoint");
+
+    // Second run after reset: persistent get -> hit with stale reflection, invalidate, retranslate,
+    // then persistent put with updated reflection.
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+
+    // 1st run: get+put
+    // 2nd run: get (hit stale) + delete + get (miss) + put (retranslated)
+    assert_eq!(
+        get_calls, 3,
+        "expected invalidate+retry to re-check persistence"
+    );
+    assert_eq!(
+        put_calls, 2,
+        "expected retranslation to be persisted after invalidation"
+    );
+    assert_eq!(delete_calls, 1, "expected stale cached entry to be deleted");
+
+    let cached_after = map.get(&key);
+    let reflection_after =
+        Reflect::get(&cached_after, &JsValue::from_str("reflection")).expect("get reflection");
+    let entry_point_after = Reflect::get(&reflection_after, &JsValue::from_str("entryPoint"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    assert_eq!(
+        entry_point_after, "vs_main",
+        "expected retranslation to restore correct entry point metadata"
+    );
+}
+
+#[wasm_bindgen_test(async)]
 async fn d3d9_executor_does_not_invalidate_cache_on_guest_stage_mismatch() {
     // If the guest passes a mismatched stage in CREATE_SHADER_DXBC, we should return an error but
     // not delete the cached artifact (since it may be valid for later correct calls).
