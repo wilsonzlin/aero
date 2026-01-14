@@ -14,14 +14,18 @@ describe("InputCapture recycled buffer pool", () => {
       // Keep in sync with `MAX_RECYCLED_BUFFERS_PER_BUCKET` in `input_capture.ts`.
       const cap = 4;
       const n = cap + 8;
+      const h = capture as unknown as {
+        handleWorkerMessage: (ev: MessageEvent<unknown>) => void;
+        recycledBuffersBySize: Map<number, ArrayBuffer[]>;
+      };
 
       for (let i = 0; i < n; i++) {
-        (capture as any).handleWorkerMessage({
+        h.handleWorkerMessage({
           data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(byteLength) },
         } as unknown as MessageEvent<unknown>);
       }
 
-      const bucket = (capture as any).recycledBuffersBySize.get(byteLength);
+      const bucket = h.recycledBuffersBySize.get(byteLength);
       expect(bucket).toHaveLength(cap);
     });
   });

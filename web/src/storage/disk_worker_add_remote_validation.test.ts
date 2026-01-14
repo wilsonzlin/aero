@@ -142,7 +142,7 @@ describe("disk_worker add_remote validation", () => {
   });
 
   it("rejects remote qcow2 images by content sniffing", async () => {
-    const bytesForRange = (start: number, len: number): Uint8Array => {
+    const bytesForRange = (start: number, len: number): Uint8Array<ArrayBuffer> => {
       const out = new Uint8Array(len);
       if (start === 0 && len >= 8) {
         // qcow2 magic + version 3 (big-endian)

@@ -12,7 +12,8 @@ describe("InputCapture option sanitization", () => {
 
       win.addEventListener = vi.fn(() => {});
       win.removeEventListener = vi.fn(() => {});
-      win.setInterval = vi.fn(() => 1);
+      const setIntervalMock = vi.fn((_handler: TimerHandler, _timeout?: number) => 1);
+      win.setInterval = setIntervalMock;
       win.clearInterval = vi.fn(() => {});
 
       const canvas = makeCanvasStub();
@@ -27,7 +28,10 @@ describe("InputCapture option sanitization", () => {
       capture.start();
 
       expect(win.setInterval).toHaveBeenCalled();
-      const intervalMs = (win.setInterval as any).mock.calls[0][1] as number;
+      const intervalMs = setIntervalMock.mock.calls[0]?.[1];
+      if (typeof intervalMs !== "number") {
+        throw new Error(`expected setInterval to be called with a number timeout, got ${String(intervalMs)}`);
+      }
       expect(Number.isFinite(intervalMs)).toBe(true);
       expect(intervalMs).toBeGreaterThanOrEqual(1);
 
@@ -43,7 +47,8 @@ describe("InputCapture option sanitization", () => {
 
       win.addEventListener = vi.fn(() => {});
       win.removeEventListener = vi.fn(() => {});
-      win.setInterval = vi.fn(() => 1);
+      const setIntervalMock = vi.fn((_handler: TimerHandler, _timeout?: number) => 1);
+      win.setInterval = setIntervalMock;
       win.clearInterval = vi.fn(() => {});
 
       const canvas = makeCanvasStub();
@@ -57,7 +62,10 @@ describe("InputCapture option sanitization", () => {
 
       capture.start();
 
-      const intervalMs = (win.setInterval as any).mock.calls[0][1] as number;
+      const intervalMs = setIntervalMock.mock.calls[0]?.[1];
+      if (typeof intervalMs !== "number") {
+        throw new Error(`expected setInterval to be called with a number timeout, got ${String(intervalMs)}`);
+      }
       // Default is 125Hz -> 8ms interval.
       expect(intervalMs).toBe(8);
 

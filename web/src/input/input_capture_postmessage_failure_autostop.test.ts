@@ -47,8 +47,9 @@ describe("InputCapture postMessage failures", () => {
         stopPropagation,
       } as unknown as KeyboardEvent;
 
-      (capture as any).handleKeyDown(event);
-      expect((capture as any).queue.size).toBeGreaterThan(0);
+      const h = capture as unknown as { handleKeyDown: (ev: KeyboardEvent) => void; queue: { size: number } };
+      h.handleKeyDown(event);
+      expect(h.queue.size).toBeGreaterThan(0);
 
       // The flush should fail and trigger an automatic stop (clearing the timer).
       capture.flushNow();
