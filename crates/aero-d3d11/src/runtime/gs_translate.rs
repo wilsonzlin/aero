@@ -420,13 +420,14 @@ fn default_varyings_from_decls(module: &Sm4Module) -> Vec<u32> {
 /// The generated WGSL uses the following fixed bind group layout:
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
 /// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
-/// - `@group(0) @binding(2)` indirect args + counters (`GsPrepassState`, read_write)
-///   - `DrawIndexedIndirectArgs` fields at offset 0 so the render pass can call
+/// - `@group(0) @binding(2)` state buffer (`GsPrepassState`, read_write)
+///   - `state.out_indirect`: `DrawIndexedIndirectArgs` at offset 0 so the render pass can call
 ///     `draw_indexed_indirect` with the same buffer+offset.
+///   - `state.counters`: `GsPrepassCounters`
 /// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
 /// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read_write)
-/// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
-///   model (`@binding(BINDING_BASE_CBUFFER + slot)`)
+/// - `@group(3)` referenced `b#`/`t#`/`s#` resources following the shared executor binding model
+///   (e.g. `@binding(BINDING_BASE_CBUFFER + slot)`).
 pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
     module: &Sm4Module,
     varyings: &[u32],
@@ -445,11 +446,13 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
 /// The generated WGSL uses the following fixed bind group layout:
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
 /// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
-/// - `@group(0) @binding(2)` indirect args + counters (`GsPrepassState`, read_write)
+/// - `@group(0) @binding(2)` state buffer (`GsPrepassState`, read_write)
+///   - `state.out_indirect`: `DrawIndexedIndirectArgs`
+///   - `state.counters`: `GsPrepassCounters`
 /// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
 /// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read_write)
-/// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
-///   model (`@binding(BINDING_BASE_CBUFFER + slot)`)
+/// - `@group(3)` referenced `b#`/`t#`/`s#` resources following the shared executor binding model
+///   (e.g. `@binding(BINDING_BASE_CBUFFER + slot)`).
 pub fn translate_gs_module_to_wgsl_compute_prepass(
     module: &Sm4Module,
 ) -> Result<String, GsTranslateError> {

@@ -5375,11 +5375,6 @@ impl AerogpuD3d11Executor {
             .expansion_scratch
             .alloc_gs_prepass_state_draw_indexed(&self.device)
             .map_err(|e| anyhow!("GS prepass: alloc indirect+counter state buffer: {e}"))?;
-        let indirect_args_alloc = ExpansionScratchAlloc {
-            buffer: state_alloc.buffer.clone(),
-            offset: state_alloc.offset,
-            size: GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
-        };
         let counter_offset = state_alloc
             .offset
             .checked_add(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES)
@@ -5390,6 +5385,11 @@ impl AerogpuD3d11Executor {
             counter_offset,
             &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
         );
+        let indirect_args_alloc = ExpansionScratchAlloc {
+            buffer: Arc::clone(&state_alloc.buffer),
+            offset: state_alloc.offset,
+            size: GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+        };
 
         // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
         let mut params_bytes = [0u8; 16];
@@ -5443,7 +5443,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 4,
+                binding: 3,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -5453,7 +5453,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 5,
+                binding: 4,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     // Bound as `read_write` even though the prepass only reads it: vertex pulling
@@ -5528,7 +5528,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 3,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: params_alloc.buffer.as_ref(),
                         offset: params_alloc.offset,
@@ -5536,7 +5536,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: gs_inputs_alloc.buffer.as_ref(),
                         offset: gs_inputs_alloc.offset,
@@ -5902,6 +5902,7 @@ impl AerogpuD3d11Executor {
                 self.state.primitive_topology
             {
                 let actual = u32::from(control_points);
+
                 let hs_handle = self.state.hs.ok_or_else(|| {
                     anyhow!(
                         "PATCHLIST draw requires HS+DS, but no hull shader (HS) is bound (topology=PatchList{actual})"
@@ -6725,10 +6726,7 @@ impl AerogpuD3d11Executor {
                 label: &'static str,
                 bytes: &[u8],
             ) -> (wgpu::Buffer, u64) {
-                assert!(
-                    !bytes.is_empty(),
-                    "uniform buffer payload must be non-empty"
-                );
+                assert!(!bytes.is_empty(), "uniform buffer payload must be non-empty");
                 let size = bytes.len() as u64;
                 // Ensure the backing buffer is large enough for the declared binding size and keeps a
                 // 16-byte granularity (uniform struct alignment).
@@ -10984,8 +10982,8 @@ impl AerogpuD3d11Executor {
             .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
 
         let Some(shadow) = buf.host_shadow.as_deref() else {
-            // Should be rare (shadow is allocated for index buffers on GL), but fall back to wgpu's
-            // built-in behavior if we can't inspect the index data.
+            // Should be rare (host_shadow is allocated for index buffers on GL), but fall back to
+            // wgpu's built-in behavior if we can't inspect the index data.
             pass.draw_indexed(index_range, base_vertex, instances);
             return Ok(());
         };
