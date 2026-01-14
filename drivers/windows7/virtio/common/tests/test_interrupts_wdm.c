@@ -34,6 +34,41 @@ typedef struct interrupts_test_ctx {
     int trigger_once;
 } interrupts_test_ctx_t;
 
+typedef struct ke_insert_queue_dpc_hook_ctx {
+    int call_count;
+    LONG inflight_at_call[4];
+    BOOLEAN inserted_at_call[4];
+    ULONG message_id_at_call[4];
+} ke_insert_queue_dpc_hook_ctx_t;
+
+static VOID ke_insert_queue_dpc_hook(_Inout_ PKDPC Dpc,
+                                     _In_opt_ PVOID SystemArgument1,
+                                     _In_opt_ PVOID SystemArgument2,
+                                     _In_opt_ PVOID Context)
+{
+    PVIRTIO_PCI_WDM_INTERRUPTS intr;
+    ke_insert_queue_dpc_hook_ctx_t* ctx = (ke_insert_queue_dpc_hook_ctx_t*)Context;
+
+    (void)SystemArgument1;
+    (void)SystemArgument2;
+
+    assert(ctx != NULL);
+    assert(Dpc != NULL);
+
+    intr = (PVIRTIO_PCI_WDM_INTERRUPTS)Dpc->DeferredContext;
+    assert(intr != NULL);
+    assert(intr->Mode == VirtioPciWdmInterruptModeMessage);
+    assert(intr->u.Message.MessageDpcs != NULL);
+
+    assert(ctx->call_count >= 0);
+    assert(ctx->call_count < (int)(sizeof(ctx->inflight_at_call) / sizeof(ctx->inflight_at_call[0])));
+
+    ctx->inserted_at_call[ctx->call_count] = Dpc->Inserted;
+    ctx->inflight_at_call[ctx->call_count] = InterlockedCompareExchange(&intr->u.Message.DpcInFlight, 0, 0);
+    ctx->message_id_at_call[ctx->call_count] = (ULONG)(Dpc - intr->u.Message.MessageDpcs);
+    ctx->call_count++;
+}
+
 static VOID evt_config(_Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrupts, _In_opt_ PVOID Cookie)
 {
     interrupts_test_ctx_t* ctx = (interrupts_test_ctx_t*)Cookie;
@@ -626,6 +661,59 @@ static void test_message_route_can_enable_all_on_vector0_fallback(void)
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_message_isr_increments_dpc_inflight_before_queueing_dpc(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+    ke_insert_queue_dpc_hook_ctx_t hook_ctx;
+
+    desc = make_msg_desc(2); /* msg0=config, msg1=queue0 */
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    WdkTestSetKeInsertQueueDpcHook(ke_insert_queue_dpc_hook, &hook_ctx);
+
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+
+    /*
+     * Trigger two interrupts for the same message before running its DPC.
+     *
+     * ISR increments DpcInFlight *before* calling KeInsertQueueDpc, and then
+     * decrements it on the "already queued" path. This test observes the
+     * transient DpcInFlight=2 case on the second interrupt.
+     */
+    assert(WdkTestTriggerMessageInterrupt(intr.u.Message.MessageInfo, 1) != FALSE);
+    assert(WdkTestTriggerMessageInterrupt(intr.u.Message.MessageInfo, 1) != FALSE);
+
+    assert(hook_ctx.call_count == 2);
+
+    /* First insert attempt: DPC not queued yet, DpcInFlight should already be 1. */
+    assert(hook_ctx.message_id_at_call[0] == 1);
+    assert(hook_ctx.inserted_at_call[0] == FALSE);
+    assert(hook_ctx.inflight_at_call[0] == 1);
+
+    /* Second attempt: DPC was already queued, but ISR has incremented DpcInFlight to 2 before attempting to queue. */
+    assert(hook_ctx.message_id_at_call[1] == 1);
+    assert(hook_ctx.inserted_at_call[1] != FALSE);
+    assert(hook_ctx.inflight_at_call[1] == 2);
+
+    /* One DPC instance should still be pending (queued). */
+    assert(intr.u.Message.DpcInFlight == 1);
+    assert(intr.u.Message.MessageDpcs[1].Inserted != FALSE);
+
+    /* Drain the queued DPC and ensure state returns to idle. */
+    assert(WdkTestRunQueuedDpc(&intr.u.Message.MessageDpcs[1]) != FALSE);
+    assert(intr.u.Message.DpcInFlight == 0);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+
+    WdkTestClearKeInsertQueueDpcHook();
+}
+
 int main(void)
 {
     test_connect_validation();
@@ -641,6 +729,7 @@ int main(void)
     test_disconnect_cancels_queued_dpc();
     test_set_message_route_validation();
     test_message_route_can_enable_all_on_vector0_fallback();
+    test_message_isr_increments_dpc_inflight_before_queueing_dpc();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");
     return 0;
