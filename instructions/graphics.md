@@ -34,7 +34,8 @@ Quick reality check (as of this repo revision):
   `aero_machine` also exposes a **transitional** Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` used only
   to route the VBE LFB through PCI MMIO (stub BAR mirrors the configured LFB base; legacy default
   `0xE000_0000`).
-- ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` / `MachineConfig::win7_graphics(...)`
+- ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` (requires `enable_pc_platform=true`) /
+  `MachineConfig::win7_graphics(...)`
   exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM** and VRAM-backed legacy VGA/VBE decode (`0xA0000..0xC0000`),
   **minimal BAR0 MMIO + ring/fence transport** (no-op command execution), BAR0 scanout regs + vblank tick/IRQ, and
   WDDM scanout presentation/boot→WDDM handoff via `Machine::display_present` (see
@@ -104,17 +105,26 @@ Graphics is what makes Windows 7 "usable." The Aero glass interface, DWM composi
 ### Display Output
 
 ```rust
+// `aero_gpu_vga::DisplayOutput` (implemented by `aero_gpu_vga::VgaDevice`).
 pub trait DisplayOutput {
     fn get_framebuffer(&self) -> &[u32];
     fn get_resolution(&self) -> (u32, u32);
     fn present(&mut self);
 }
-
-pub trait GpuCommandProcessor {
-    fn submit_commands(&mut self, commands: &[GpuCommand]);
-    fn flush(&mut self);
-}
 ```
+
+In the canonical machine (`crates/aero-machine`), the host reads display output via:
+
+- `Machine::display_present()`
+- `Machine::display_framebuffer()` (RGBA8888)
+- `Machine::display_resolution()`
+
+### Host-side AeroGPU command processing (Rust)
+
+- Command stream parsing + Ex-facing state machine (fence/present bookkeeping): `crates/aero-gpu/src/{protocol.rs,command_processor.rs}`
+- WebGPU-backed command execution:
+  - D3D9: `crates/aero-gpu/src/aerogpu_d3d9_executor.rs`
+  - D3D10/11: `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`
 
 ### AeroGPU Device ↔ Driver Protocol
 
@@ -283,11 +293,12 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_bar0_mmio_vblank --locked
 
-# Run D3D9 focused translator tests (no GPU required)
+# Run D3D9 translator-focused tests (no GPU required)
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test vertex_decl_translate --locked
-bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_fixed_function --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
 
-# Run D3D9 integration tests (wgpu/WebGPU; may skip unless AERO_REQUIRE_WEBGPU=1)
+# Run D3D9 WebGPU integration tests (wgpu/WebGPU; may skip unless AERO_REQUIRE_WEBGPU=1)
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_fixed_function --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_vertex_input --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_blend_depth_stencil --locked
 
