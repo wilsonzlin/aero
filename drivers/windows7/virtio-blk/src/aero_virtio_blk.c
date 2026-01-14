@@ -2116,6 +2116,26 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
   }
 #endif
 
+#ifdef SRB_FUNCTION_POWER
+  /*
+   * Power management SRBs can be delivered with varying addressing fields. This
+   * miniport does not implement explicit power state transitions; treat as
+   * no-op success so system sleep/resume does not fail due to unsupported SRBs.
+   */
+  case SRB_FUNCTION_POWER:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_WMI
+  /*
+   * WMI SRBs are optional diagnostics queries. Treat as no-op success.
+   */
+  case SRB_FUNCTION_WMI:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
   case SRB_FUNCTION_PNP: {
     /*
      * Basic PnP handling for real-world StorPort stacks.
