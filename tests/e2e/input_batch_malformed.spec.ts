@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("IO worker survives malformed in:input-batch messages", async ({ page }) => {
+  test.setTimeout(30_000);
   await page.goto("/", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
@@ -33,7 +34,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
 
@@ -129,12 +130,16 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       await recycle;
     };
 
-    const runCase = async (sendMalformed: () => void): Promise<{ batchBefore: number; batchAfter: number }> => {
+    const runCase = async (
+      sendMalformed: () => void,
+    ): Promise<{ batchBefore: number; batchAfter: number; dropsBefore: number; dropsAfter: number }> => {
       const batchBefore = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
+      const dropsBefore = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
       sendMalformed();
       await sendValidInputBatch();
       const batchAfter = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
-      return { batchBefore, batchAfter };
+      const dropsAfter = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
+      return { batchBefore, batchAfter, dropsBefore, dropsAfter };
     };
 
     try {
@@ -182,6 +187,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
   expect(result.ok).toBe(true);
   expect(result.workerError).toBeNull();
   expect(result.caseA.batchAfter).toBeGreaterThan(result.caseA.batchBefore);
+  expect(result.caseA.dropsAfter).toBeGreaterThan(result.caseA.dropsBefore);
   expect(result.caseB.batchAfter).toBeGreaterThan(result.caseB.batchBefore);
+  expect(result.caseB.dropsAfter).toBeGreaterThan(result.caseB.dropsBefore);
 });
-
