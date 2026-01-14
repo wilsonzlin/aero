@@ -71,6 +71,8 @@ pub const BDA_BASE: u64 = 0x0000_0400;
 // The BDA models a ring buffer of 16-bit "keystroke words" (scan code in AH, ASCII in AL). The
 // legacy convention uses `head == tail` to indicate an empty buffer, so one slot is intentionally
 // left unused to avoid ambiguity between "empty" and "full".
+const BDA_KEYBOARD_BUF_HEAD_OFFSET: u64 = 0x1A; // 0x40:0x1A -> 0x41A absolute
+const BDA_KEYBOARD_BUF_TAIL_OFFSET: u64 = 0x1C; // 0x40:0x1C -> 0x41C absolute
 const BDA_KEYBOARD_BUF_START: u16 = 0x001E; // 0x40:0x1E -> 0x41E absolute
 const BDA_KEYBOARD_BUF_END: u16 = 0x003E; // 0x40:0x3E -> 0x43E absolute (exclusive)
 const KEYBOARD_QUEUE_CAPACITY: usize =

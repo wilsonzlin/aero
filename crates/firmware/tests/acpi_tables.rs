@@ -141,8 +141,7 @@ fn find_device_body<'a>(aml: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
             let pkg_off = i + 2;
             if let Some((pkg_len, pkg_len_bytes)) = parse_pkg_length(aml, pkg_off) {
                 let payload_start = pkg_off + pkg_len_bytes;
-                // AML PkgLength includes the size of the PkgLength field itself.
-                let payload_end = payload_start.checked_add(pkg_len.saturating_sub(pkg_len_bytes))?;
+                let payload_end = payload_start.checked_add(pkg_len)?;
                 if payload_end <= aml.len() && payload_start + 4 <= payload_end {
                     if &aml[payload_start..payload_start + 4] == name {
                         // The payload is: NameSeg (4) + TermList.
@@ -178,8 +177,7 @@ fn parse_prt_entries(aml: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
 
     let (pkg_len, pkg_len_bytes) = parse_pkg_length(aml, offset)?;
     offset += pkg_len_bytes;
-    // AML PkgLength includes the size of the PkgLength field itself.
-    let pkg_end = offset + pkg_len.saturating_sub(pkg_len_bytes);
+    let pkg_end = offset + pkg_len;
 
     let count = *aml.get(offset)? as usize;
     offset += 1;
@@ -192,7 +190,7 @@ fn parse_prt_entries(aml: &[u8]) -> Option<Vec<(u32, u8, u32)>> {
         offset += 1;
         let (entry_len, entry_len_bytes) = parse_pkg_length(aml, offset)?;
         offset += entry_len_bytes;
-        let entry_end = offset + entry_len.saturating_sub(entry_len_bytes);
+        let entry_end = offset + entry_len;
 
         let entry_count = *aml.get(offset)? as usize;
         if entry_count != 4 {

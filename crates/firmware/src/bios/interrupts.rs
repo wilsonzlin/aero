@@ -4,9 +4,9 @@ use aero_cpu_core::state::{
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    CdromDevice, ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_START, BIOS_SEGMENT,
-    DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET,
-    KEYBOARD_QUEUE_CAPACITY,
+    CdromDevice, ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_HEAD_OFFSET,
+    BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SEGMENT, DISKETTE_PARAM_TABLE_OFFSET,
+    EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET, KEYBOARD_QUEUE_CAPACITY,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
@@ -90,9 +90,6 @@ pub(super) fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
     //
     // The canonical source of truth remains `bios.keyboard_queue`; we treat the BDA as a
     // best-effort compatibility mirror.
-    const HEAD_OFF: u64 = 0x1A;
-    const TAIL_OFF: u64 = 0x1C;
-
     // The classic ring buffer uses head==tail to indicate empty, so we leave one entry unused to
     // avoid ambiguity.
     let max_words = KEYBOARD_QUEUE_CAPACITY;
@@ -108,19 +105,19 @@ pub(super) fn sync_keyboard_bda(bios: &Bios, bus: &mut dyn BiosBus) {
         bus.write_u16(addr, 0);
     }
 
-    bus.write_u16(BDA_BASE + HEAD_OFF, BDA_KEYBOARD_BUF_START);
+    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET, BDA_KEYBOARD_BUF_START);
     let tail = BDA_KEYBOARD_BUF_START.wrapping_add((used as u16) * 2);
-    bus.write_u16(BDA_BASE + TAIL_OFF, tail);
+    bus.write_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET, tail);
 }
 
 #[cfg(test)]
 fn keyboard_bda_head(bus: &mut dyn BiosBus) -> u16 {
-    bus.read_u16(BDA_BASE + 0x1A)
+    bus.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_HEAD_OFFSET)
 }
 
 #[cfg(test)]
 fn keyboard_bda_tail(bus: &mut dyn BiosBus) -> u16 {
-    bus.read_u16(BDA_BASE + 0x1C)
+    bus.read_u16(BDA_BASE + BDA_KEYBOARD_BUF_TAIL_OFFSET)
 }
 
 fn handle_int11(cpu: &mut CpuState, bus: &mut dyn BiosBus) {
@@ -1981,7 +1978,7 @@ mod tests {
         mem.write_u64(dap_addr + 8, 1); // LBA
         mem.write_u64(dap_addr + 16, FLAT_DST); // flat buffer pointer
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2249,7 +2246,7 @@ mod tests {
         mem.write_u64(dap_addr + 8, 1); // ISO LBA
         mem.write_u64(dap_addr + 16, FLAT_DST); // flat buffer pointer
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2304,7 +2301,7 @@ mod tests {
         // Also seed the real destination with a different sentinel so we can see the overwrite.
         mem.write_physical(FLAT_DST, &vec![0xDD; 2048]);
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
