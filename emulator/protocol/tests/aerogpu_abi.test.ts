@@ -260,10 +260,15 @@ const repoRoot = path.resolve(testDir, "../../..");
 
 function parseAbiDump(text: string): AbiDump {
   const sizes = new Map<string, number>();
+  const sizeLines = new Map<string, number>();
   const offsets = new Map<string, number>();
+  const offsetLines = new Map<string, number>();
   const consts = new Map<string, bigint>();
+  const constLines = new Map<string, number>();
 
+  let lineNo = 0;
   for (const line of text.split("\n")) {
+    lineNo++;
     const trimmed = line.trim();
     if (!trimmed) continue;
 
@@ -275,28 +280,46 @@ function parseAbiDump(text: string): AbiDump {
       if (prev !== undefined) {
         // Duplicates can happen when multiple PRs touch the C ABI dump helper and get merged with
         // minimal conflict resolution. Accept identical duplicates but still fail if values differ.
-        if (prev !== value) throw new Error(`Duplicate SIZE for ${key}: saw ${prev} and ${value}`);
+        if (prev !== value) {
+          const prevLine = sizeLines.get(key) ?? 0;
+          throw new Error(
+            `duplicate SIZE for ${key}: first @${prevLine} = ${prev}, again @${lineNo} = ${value}: ${trimmed}`,
+          );
+        }
         continue;
       }
       sizes.set(key, value);
+      sizeLines.set(key, lineNo);
     } else if (parts[0] === "OFF") {
       const key = `${parts[1]}.${parts[2]}`;
       const value = Number(parts[3]!);
       const prev = offsets.get(key);
       if (prev !== undefined) {
-        if (prev !== value) throw new Error(`Duplicate OFF for ${key}: saw ${prev} and ${value}`);
+        if (prev !== value) {
+          const prevLine = offsetLines.get(key) ?? 0;
+          throw new Error(
+            `duplicate OFF for ${key}: first @${prevLine} = ${prev}, again @${lineNo} = ${value}: ${trimmed}`,
+          );
+        }
         continue;
       }
       offsets.set(key, value);
+      offsetLines.set(key, lineNo);
     } else if (parts[0] === "CONST") {
       const key = parts[1]!;
       const value = BigInt(parts[2]!);
       const prev = consts.get(key);
       if (prev !== undefined) {
-        if (prev !== value) throw new Error(`Duplicate CONST for ${key}: saw ${prev} and ${value}`);
+        if (prev !== value) {
+          const prevLine = constLines.get(key) ?? 0;
+          throw new Error(
+            `duplicate CONST for ${key}: first @${prevLine} = ${prev}, again @${lineNo} = ${value}: ${trimmed}`,
+          );
+        }
         continue;
       }
       consts.set(key, value);
+      constLines.set(key, lineNo);
     } else {
       throw new Error(`Unknown ABI dump tag: ${parts[0]}`);
     }
