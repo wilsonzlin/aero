@@ -142,16 +142,18 @@ describe("JitWorkerClient", () => {
     expect(msg).toMatchObject({ type: "jit:tier1", entryRip: 0n, maxBytes: 1024, bitness: 64, memoryShared: true });
     const id = (msg as { id: number }).id;
 
+    // Minimal valid WebAssembly module: magic + version.
+    const module = new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
     worker.dispatchMessage({
       type: "jit:tier1:compiled",
       id,
       entryRip: 0n,
-      module: {},
+      module,
       codeByteLen: 4,
       exitToInterpreter: false,
     });
 
-    await expect(promise).resolves.toEqual({ module: {}, entryRip: 0n, codeByteLen: 4, exitToInterpreter: false });
+    await expect(promise).resolves.toEqual({ module, entryRip: 0n, codeByteLen: 4, exitToInterpreter: false });
   });
 
   it("compileTier1 handles wasm-bytes fallback responses", async () => {
