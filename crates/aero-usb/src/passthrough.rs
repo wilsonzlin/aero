@@ -1256,6 +1256,20 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_empty_bytes() {
+        let err = snapshot_load_err(Vec::new());
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_after_action_count() {
+        // Declare one action but omit the body; should report UnexpectedEof.
+        let bytes = Encoder::new().u32(1).u32(1).finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
     fn snapshot_load_rejects_completion_count_over_limit() {
         // Intentionally truncate the snapshot after `completion_count`. Without the guard, this
         // would attempt to decode 1025 completions and hit UnexpectedEof.
