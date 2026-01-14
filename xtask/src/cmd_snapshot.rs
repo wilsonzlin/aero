@@ -1243,6 +1243,9 @@ fn decode_bios_device_detail(
     let mut vbe_lfb_base: Option<u32> = None;
     let mut cpu_count: Option<u8> = None;
     let mut enable_acpi: Option<bool> = None;
+    let mut boot_order: Option<Vec<String>> = None;
+    let mut cd_boot_drive: Option<u8> = None;
+    let mut boot_from_cd_if_present: Option<bool> = None;
 
     loop {
         let pos = file.stream_position().ok()?;
@@ -1312,6 +1315,43 @@ fn decode_bios_device_detail(
                     None
                 };
             }
+            // v5 extension: BIOS boot order / CD boot policy.
+            4 => {
+                let len = match read_u8_lossy(file) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let mut out = Vec::with_capacity(len as usize);
+                let mut truncated = false;
+                for _ in 0..len {
+                    let dev = match read_u8_lossy(file) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            truncated = true;
+                            break;
+                        }
+                    };
+                    out.push(match dev {
+                        0 => "hdd".to_string(),
+                        1 => "cdrom".to_string(),
+                        2 => "floppy".to_string(),
+                        other => format!("0x{other:02x}"),
+                    });
+                }
+                if truncated {
+                    break;
+                }
+                boot_order = Some(out);
+
+                cd_boot_drive = match read_u8_lossy(file) {
+                    Ok(v) => Some(v),
+                    Err(_) => break,
+                };
+                boot_from_cd_if_present = match read_u8_lossy(file) {
+                    Ok(v) => Some(v != 0),
+                    Err(_) => break,
+                };
+            }
             _ => break,
         }
     }
@@ -1336,6 +1376,15 @@ fn decode_bios_device_detail(
     }
     if let Some(enabled) = enable_acpi {
         s.push_str(&format!(" acpi={enabled}"));
+    }
+    if let Some(order) = boot_order {
+        s.push_str(&format!(" boot_order=[{}]", order.join(",")));
+    }
+    if let Some(drive) = cd_boot_drive {
+        s.push_str(&format!(" cd_boot_drive=0x{drive:02x}"));
+    }
+    if let Some(flag) = boot_from_cd_if_present {
+        s.push_str(&format!(" boot_from_cd_if_present={flag}"));
     }
 
     Some(s)

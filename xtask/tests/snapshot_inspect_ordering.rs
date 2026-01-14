@@ -1207,6 +1207,14 @@ impl SnapshotSource for BiosDeviceSource {
         data.push(1); // present
         data.extend_from_slice(&0x1234_5678u32.to_le_bytes());
 
+        // v5 extension: boot order + CD boot policy.
+        data.push(4);
+        data.push(2); // len
+        data.push(1); // cdrom
+        data.push(0); // hdd
+        data.push(0xE0); // cd_boot_drive
+        data.push(1); // boot_from_cd_if_present
+
         vec![DeviceState {
             id: DeviceId::BIOS,
             version: 1,
@@ -1256,7 +1264,10 @@ fn snapshot_inspect_decodes_bios_device_state() {
         ))
         .stdout(predicate::str::contains("bda_tick_count=1234"))
         .stdout(predicate::str::contains("video_mode=0x03"))
-        .stdout(predicate::str::contains("tty_len=5"));
+        .stdout(predicate::str::contains("tty_len=5"))
+        .stdout(predicate::str::contains("boot_order=[cdrom,hdd]"))
+        .stdout(predicate::str::contains("cd_boot_drive=0xe0"))
+        .stdout(predicate::str::contains("boot_from_cd_if_present=true"));
 }
 
 struct SerialDeviceSource;
