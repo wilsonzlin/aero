@@ -384,13 +384,17 @@ impl XhciControllerBridge {
     }
 
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
+        // Completions can race disconnects due to async host WebUSB operations; ignore late
+        // completions when the passthrough device is detached.
+        if !self.webusb_connected {
+            return Ok(());
+        }
+
         let completion: UsbHostCompletion =
             serde_wasm_bindgen::from_value(completion).map_err(|e| js_error(e))?;
 
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                dev.push_completion(completion);
-            }
+        if let Some(dev) = self.webusb.as_ref() {
+            dev.push_completion(completion);
         }
         Ok(())
     }
