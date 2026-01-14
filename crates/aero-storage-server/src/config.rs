@@ -159,7 +159,7 @@ impl Config {
         let cors_origin = args.cors_origin;
         let cors_origins = if !cors_origin.is_empty() {
             Some(parse_origin_list(&cors_origin.join(",")))
-        } else if let Ok(v) = env::var("AERO_STORAGE_SERVER_CORS_ORIGIN") {
+        } else if let Some(v) = parse_env_string("AERO_STORAGE_SERVER_CORS_ORIGIN") {
             let v = v.trim();
             (!v.is_empty()).then(|| parse_origin_list(v))
         } else {
@@ -169,8 +169,8 @@ impl Config {
 
         let cross_origin_resource_policy = args
             .cross_origin_resource_policy
-            .or_else(|| env::var("AERO_STORAGE_CORP").ok())
-            .or_else(|| env::var("AERO_STORAGE_SERVER_CROSS_ORIGIN_RESOURCE_POLICY").ok())
+            .or_else(|| parse_env_string("AERO_STORAGE_CORP"))
+            .or_else(|| parse_env_string("AERO_STORAGE_SERVER_CROSS_ORIGIN_RESOURCE_POLICY"))
             .unwrap_or_else(|| "same-site".to_string());
         let cross_origin_resource_policy = cross_origin_resource_policy.trim().to_string();
         let cross_origin_resource_policy = if cross_origin_resource_policy.is_empty() {
@@ -181,7 +181,7 @@ impl Config {
 
         let log_level = args
             .log_level
-            .or_else(|| env::var("AERO_STORAGE_SERVER_LOG_LEVEL").ok())
+            .or_else(|| parse_env_string("AERO_STORAGE_SERVER_LOG_LEVEL"))
             .unwrap_or_else(|| "info".to_string());
         let log_level = normalize_log_level(log_level);
 
@@ -191,7 +191,7 @@ impl Config {
 
         let metrics_auth_token = args
             .metrics_auth_token
-            .or_else(|| env::var("AERO_STORAGE_METRICS_AUTH_TOKEN").ok());
+            .or_else(|| parse_env_string("AERO_STORAGE_METRICS_AUTH_TOKEN"));
         let metrics_auth_token = metrics_auth_token.and_then(|v| {
             let v = v.trim().to_string();
             (!v.is_empty()).then_some(v)
@@ -232,6 +232,17 @@ fn parse_env(var: &str) -> Option<SocketAddr> {
             eprintln!(
                 "warning: invalid {var} value: {value:?} (expected socket address like 127.0.0.1:8080); ignoring"
             );
+            None
+        }
+    }
+}
+
+fn parse_env_string(var: &str) -> Option<String> {
+    match env::var(var) {
+        Ok(v) => Some(v),
+        Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => {
+            eprintln!("warning: {var} must be valid UTF-8; ignoring");
             None
         }
     }
@@ -288,7 +299,7 @@ fn parse_env_bool(var: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_log_level, parse_env, parse_env_bool, parse_env_path};
+    use super::{normalize_log_level, parse_env, parse_env_bool, parse_env_path, parse_env_string};
     use std::path::PathBuf;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -375,6 +386,48 @@ mod tests {
 
         std::env::set_var(VAR, "127.0.0.1:12345");
         assert_eq!(parse_env(VAR), Some("127.0.0.1:12345".parse().unwrap()));
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[test]
+    fn parse_env_string_missing_is_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_STRING_MISSING";
+        std::env::remove_var(VAR);
+        assert!(parse_env_string(VAR).is_none());
+    }
+
+    #[test]
+    fn parse_env_string_valid_is_some() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_STRING_VALID";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "hello");
+        assert_eq!(parse_env_string(VAR).as_deref(), Some("hello"));
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_env_string_invalid_utf8_is_none() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_STRING_INVALID_UTF8";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, OsString::from_vec(vec![0xFF, 0xFE, 0xFD]));
+        assert!(parse_env_string(VAR).is_none());
 
         match prev {
             Some(v) => std::env::set_var(VAR, v),
