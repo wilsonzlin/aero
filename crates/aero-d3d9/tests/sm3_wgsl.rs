@@ -1,3 +1,5 @@
+#[cfg(not(target_arch = "wasm32"))]
+use std::borrow::Cow;
 use std::fs;
 
 use aero_d3d9::dxbc;
@@ -36,6 +38,91 @@ fn dst_token(regtype: u8, index: u32, mask: u8) -> u32 {
 
 fn src_token(regtype: u8, index: u32, swizzle: u8, srcmod: u8) -> u32 {
     reg_token(regtype, index) | ((swizzle as u32) << 16) | ((srcmod as u32) << 24)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn request_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    // `AERO_REQUIRE_WEBGPU=1` means WebGPU is a hard requirement; anything else
+    // (including `0`/unset) means tests should skip when no adapter/device is available.
+    let require_webgpu = std::env::var("AERO_REQUIRE_WEBGPU")
+        .ok()
+        .map(|raw| {
+            let v = raw.trim();
+            v == "1"
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("yes")
+                || v.eq_ignore_ascii_case("on")
+        })
+        .unwrap_or(false);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+        if needs_runtime_dir {
+            let dir = std::env::temp_dir().join(format!(
+                "aero-d3d9-xdg-runtime-{}-sm3-wgsl",
+                std::process::id()
+            ));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
+    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::PRIMARY
+        },
+        ..Default::default()
+    });
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: true,
+    }))
+    .or_else(|| {
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    });
+    let adapter = match adapter {
+        Some(adapter) => adapter,
+        None => {
+            if require_webgpu {
+                panic!("AERO_REQUIRE_WEBGPU is enabled but wgpu request_adapter returned None");
+            }
+            eprintln!("skipping WebGPU-dependent test: no suitable adapter");
+            return None;
+        }
+    };
+
+    match pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("aero-d3d9-sm3-wgsl-tests"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+        },
+        None,
+    )) {
+        Ok(device) => Some(device),
+        Err(err) => {
+            if require_webgpu {
+                panic!("AERO_REQUIRE_WEBGPU is enabled but request_device failed: {err:?}");
+            }
+            eprintln!("skipping WebGPU-dependent test: request_device failed: {err:?}");
+            None
+        }
+    }
 }
 
 #[test]
@@ -2519,4 +2606,159 @@ fn wgsl_ps3_vface_misctype_builtin_compiles() {
     )
     .validate(&module)
     .expect("wgsl validate");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
+    // Coarse integration test that SM3 WGSL bindings match the existing AeroGPU D3D9 executor
+    // pipeline layout contract:
+    // - group(0): constants (VERTEX+FRAGMENT)
+    // - group(1): VS samplers (VERTEX only)
+    // - group(2): PS samplers (FRAGMENT only)
+    //
+    // This catches regressions where SM3 WGSL sampler declarations drift back to group(0) or use
+    // incorrect binding numbering.
+    let Some((device, _queue)) = request_device() else {
+        return;
+    };
+
+    // vs_3_0:
+    //   texld r0, c0, s0
+    //   mov oPos, r0
+    //   end
+    let vs_tokens = vec![
+        version_token(ShaderStage::Vertex, 3, 0),
+        opcode_token(66, 3),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    // ps_2_0:
+    //   texld r0, c0, s0
+    //   mov oC0, r0
+    //   end
+    let ps_tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        opcode_token(66, 3),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let vs_decoded = decode_u32_tokens(&vs_tokens).unwrap();
+    let vs_ir = build_ir(&vs_decoded).unwrap();
+    verify_ir(&vs_ir).unwrap();
+    let vs_out = generate_wgsl(&vs_ir).unwrap();
+
+    let ps_decoded = decode_u32_tokens(&ps_tokens).unwrap();
+    let ps_ir = build_ir(&ps_decoded).unwrap();
+    verify_ir(&ps_ir).unwrap();
+    let ps_out = generate_wgsl(&ps_ir).unwrap();
+
+    let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sm3-wgsl-test.constants_bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let samplers_vs_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sm3-wgsl-test.samplers_vs_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let samplers_ps_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sm3-wgsl-test.samplers_ps_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("sm3-wgsl-test.pipeline_layout"),
+        bind_group_layouts: &[&constants_bgl, &samplers_vs_bgl, &samplers_ps_bgl],
+        push_constant_ranges: &[],
+    });
+
+    let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("sm3-wgsl-test.vs"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(vs_out.wgsl.clone())),
+    });
+    let ps_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("sm3-wgsl-test.ps"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Owned(ps_out.wgsl.clone())),
+    });
+
+    // Pipeline creation validates shader bind groups against the provided pipeline layout.
+    let _pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sm3-wgsl-test.pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs_module,
+            entry_point: vs_out.entry_point,
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &ps_module,
+            entry_point: ps_out.entry_point,
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
 }
