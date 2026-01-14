@@ -4486,7 +4486,17 @@ HRESULT AEROGPU_APIENTRY CreateUnorderedAccessView11(D3D11DDI_HDEVICE hDevice,
                                                      const D3D11DDIARG_CREATEUNORDEREDACCESSVIEW* pDesc,
                                                      D3D11DDI_HUNORDEREDACCESSVIEW hView,
                                                      D3D11DDI_HRTUNORDEREDACCESSVIEW) {
-  if (!hDevice.pDrvPrivate || !pDesc || !hView.pDrvPrivate) {
+  if (!hDevice.pDrvPrivate || !hView.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  // Always construct the view object so DestroyUnorderedAccessView11 is safe even
+  // if we reject the descriptor.
+  auto* uav = new (hView.pDrvPrivate) UnorderedAccessView();
+  uav->buffer = {};
+  uav->resource = nullptr;
+
+  if (!pDesc) {
     return E_INVALIDARG;
   }
 
@@ -4511,7 +4521,6 @@ HRESULT AEROGPU_APIENTRY CreateUnorderedAccessView11(D3D11DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  auto* uav = new (hView.pDrvPrivate) UnorderedAccessView();
   uav->resource = res;
   uav->buffer.buffer = res->handle;
   uav->buffer.offset_bytes = 0;
@@ -4577,7 +4586,9 @@ void AEROGPU_APIENTRY DestroyUnorderedAccessView11(D3D11DDI_HDEVICE, D3D11DDI_HU
   if (!hView.pDrvPrivate) {
     return;
   }
-  FromHandle<D3D11DDI_HUNORDEREDACCESSVIEW, UnorderedAccessView>(hView)->~UnorderedAccessView();
+  auto* view = FromHandle<D3D11DDI_HUNORDEREDACCESSVIEW, UnorderedAccessView>(hView);
+  view->~UnorderedAccessView();
+  new (view) UnorderedAccessView();
 }
 
 template <typename T, typename = void>
