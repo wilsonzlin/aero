@@ -618,6 +618,12 @@ impl AeroGpuMmioDevice {
         if self.scanout0_fb_gpa == 0 {
             return false;
         }
+        if self.scanout0_fb_gpa_lo_pending {
+            // Drivers typically update 64-bit framebuffer addresses by writing LO then HI.
+            // Avoid claiming the WDDM scanout while the update is torn so hosts never observe a
+            // transient, incorrect base address (especially for scanouts above 4GiB).
+            return false;
+        }
 
         // WDDM scanout is currently limited to 32-bit formats that the host scanout path can
         // render deterministically.
