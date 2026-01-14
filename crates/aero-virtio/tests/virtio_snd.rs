@@ -5,6 +5,7 @@ use aero_virtio::devices::snd::{
     VirtioSnd, VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL,
     VIRTIO_SND_QUEUE_EVENT, VIRTIO_SND_QUEUE_RX, VIRTIO_SND_QUEUE_TX, VIRTIO_SND_R_PCM_PREPARE,
     VIRTIO_SND_R_PCM_SET_PARAMS, VIRTIO_SND_R_PCM_START, VIRTIO_SND_S_OK,
+    VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED,
 };
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
 use aero_virtio::pci::{
@@ -363,6 +364,111 @@ fn virtio_snd_eventq_buffers_are_not_completed_without_events() {
     let mut isr = [0u8; 1];
     dev.bar0_read(caps.isr, &mut isr);
     assert_eq!(isr[0], 0);
+}
+
+#[test]
+fn virtio_snd_eventq_completes_buffer_when_event_is_queued() {
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let (irq, irq_state) = SharedLegacyIrq::new();
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(irq));
+
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
+    let caps = parse_caps(&mut dev);
+
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 1.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_EVENT,
+        desc,
+        avail,
+        used,
+    );
+
+    // Post one writable buffer.
+    let buf = 0x4000;
+    mem.write(buf, &[0u8; 8]).unwrap();
+    write_desc(&mut mem, desc, 0, buf, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+
+    // Queue a pending event payload into the device model.
+    dev.device_mut::<VirtioSnd<aero_audio::ring::AudioRingBuffer>>()
+        .unwrap()
+        .queue_event(VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED, 0);
+
+    dev.bar0_write(
+        caps.notify + u64::from(VIRTIO_SND_QUEUE_EVENT) * u64::from(caps.notify_mult),
+        &VIRTIO_SND_QUEUE_EVENT.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(
+        u16::from_le_bytes(mem.get_slice(used + 2, 2).unwrap().try_into().unwrap()),
+        1
+    );
+    let used_id = u32::from_le_bytes(mem.get_slice(used + 4, 4).unwrap().try_into().unwrap());
+    let used_len = u32::from_le_bytes(mem.get_slice(used + 8, 4).unwrap().try_into().unwrap());
+    assert_eq!(used_id, 0);
+    assert_eq!(used_len, 8);
+
+    let expected_evt = [
+        0x00, 0x11, 0x00, 0x00, // type = PCM_PERIOD_ELAPSED
+        0x00, 0x00, 0x00, 0x00, // data = stream_id 0
+    ];
+    assert_eq!(mem.get_slice(buf, 8).unwrap(), &expected_evt);
+    assert!(
+        irq_state.borrow().raised > 0,
+        "completing an eventq buffer should raise an interrupt"
+    );
 }
 
 #[test]
