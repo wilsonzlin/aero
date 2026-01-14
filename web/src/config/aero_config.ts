@@ -52,10 +52,13 @@ export interface AeroConfig {
   l2TunnelTokenTransport?: L2TunnelTokenTransport;
   /**
    * @deprecated
-   * Legacy VM-mode toggle used by older harnesses.
+   * Deprecated legacy disk selection field used by older harnesses.
    *
    * Disk selection now flows through DiskManager + `setBootDisks`, and VM/demo policies should
    * instead be keyed off explicit runtime selection (`vmRuntime`, task 127) and boot-disk presence.
+   *
+   * Best-effort compatibility: the legacy `web/` UI may treat this as an *initial mount hint* to
+   * populate DiskManager mounts. It is not a runtime mode toggle.
    */
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;

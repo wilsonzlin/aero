@@ -168,7 +168,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 | `workers` | bool | `enableWorkers` | `?workers=0` |
 | `webgpu`  | bool | `enableWebGPU` | `?webgpu=1` |
 | `proxy`   | string \| `null` | `proxyUrl` | `?proxy=https%3A%2F%2Fgateway.example.com` |
-| `disk`    | string \| `null` | `activeDiskImage` (deprecated) | `?disk=win7-sp1.img` |
+| `disk`    | string \| `null` | `activeDiskImage` (deprecated; legacy mount hint) | `?disk=win7-sp1.img` |
 | `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
 | `scale`   | number | `uiScale` | `?scale=1.25` |
 | `vm`      | `legacy|machine` | `vmRuntime` | `?vm=machine` |
@@ -188,7 +188,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 - Some settings may be forced off at runtime if the browser lacks required capabilities (e.g. workers require `SharedArrayBuffer` + cross-origin isolation).
 - `proxy` (`proxyUrl`) may be either an absolute `ws(s)://` / `http(s)://` URL or a same-origin path like `/l2` (legacy alias: `/eth`).
 - `vmRuntime` can also be set via `?machine=1` (shorthand for `?vm=machine`).
-- `disk` / `activeDiskImage` is deprecated. Disk selection now flows through the DiskManager mounts + `setBootDisks`, and VM/demo policies should be keyed off `vmRuntime` + boot-disk presence.
+- `disk` / `activeDiskImage` is deprecated. Disk selection now flows through the DiskManager mounts + `setBootDisks`, and VM/demo policies are keyed off `vmRuntime` + boot-disk presence. For compatibility, the legacy `web/` UI may treat `activeDiskImage` as a best-effort initial mount hint (it does **not** act as a VM-mode toggle).
 
 ### VM runtime modes (`vmRuntime`)
 
