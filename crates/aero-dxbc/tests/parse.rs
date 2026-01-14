@@ -99,6 +99,32 @@ fn malformed_total_size_smaller_than_header_is_error() {
 }
 
 #[test]
+fn malformed_total_size_exceeds_buffer_len_is_error() {
+    let mut bytes = build_dxbc(&[]);
+    // total_size field is at offset 24.
+    let bad_total_size = (bytes.len() as u32) + 1;
+    bytes[24..28].copy_from_slice(&bad_total_size.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("exceeds buffer length"));
+}
+
+#[test]
+fn malformed_total_size_truncates_chunk_payload_is_error() {
+    // Keep the buffer length unchanged but shrink the declared total_size so it
+    // truncates the final byte of the chunk payload. This ensures the parser
+    // uses declared `total_size` as the authoritative bounds.
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3, 4])]);
+    let bad_total_size = (bytes.len() as u32) - 1;
+    bytes[24..28].copy_from_slice(&bad_total_size.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("outside total_size"));
+}
+
+#[test]
 fn malformed_chunk_count_makes_offset_table_oob_is_error() {
     // Declare a huge chunk_count but keep total_size minimal, ensuring the offset
     // table end computation stays safe and is rejected.
@@ -182,7 +208,7 @@ fn rejects_excessive_chunk_count() {
     bytes.extend_from_slice(&[0u8; 16]); // checksum
     bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
     bytes.extend_from_slice(&32u32.to_le_bytes()); // total size
-    bytes.extend_from_slice(&5000u32.to_le_bytes()); // chunk_count
+    bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // chunk_count
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }), "{err:?}");
@@ -227,4 +253,21 @@ fn malformed_chunk_offset_integer_wrap_is_error() {
         err,
         DxbcError::MalformedOffsets { .. } | DxbcError::OutOfBounds { .. }
     ));
+}
+
+#[test]
+fn malformed_chunk_offset_misaligned_after_offset_table_is_error() {
+    // Chunk offsets are not guaranteed to be 4-byte aligned in the wild; ensure
+    // that a misaligned offset is handled safely (no panic / OOB read).
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3, 4])]);
+
+    // For a single-chunk DXBC, the chunk offset table ends at 36. Use a
+    // deliberately misaligned offset just after it.
+    let offset_table_end = 4 + 16 + 4 + 4 + 4 + 4;
+    let bad_off = (offset_table_end as u32) + 1;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
 }
