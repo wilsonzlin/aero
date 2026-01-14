@@ -780,17 +780,26 @@ It also mirrors the final guest result marker into a stable host marker:
 
 ### virtio-blk reset (guest IOCTL; optional)
 
-The guest selftest includes an opt-in `virtio-blk-reset` test that forces a virtio-blk miniport/device reset via a
-control IOCTL (driver diagnostics interface) and validates that the driver recovers cleanly.
+The guest selftest includes an opt-in `virtio-blk-reset` test that validates the **miniport reset/recovery** path:
+it issues `AEROVBLK_IOCTL_FORCE_RESET` and then verifies the disk stack recovers (smoke I/O + post-reset miniport query).
 
 To enable end-to-end testing:
 
 1. Provision the guest image so the scheduled selftest runs with `--test-blk-reset`
    (or set env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1` in the guest).
    - When generating provisioning media with `New-AeroWin7TestImage.ps1`, bake this in via:
+   - When generating provisioning media with `New-AeroWin7TestImage.ps1`, bake this in via:
      `-TestBlkReset` (adds `--test-blk-reset` to the scheduled task).
-2. Run the host harness with blk-reset enabled so it requires:
-   `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS`.
+2. Run the host harness with blk-reset gating enabled so it requires the guest marker to PASS
+   (and treats SKIP/FAIL/missing as failure):
+   - PowerShell: `-WithBlkReset`
+   - Python: `--with-blk-reset`
+
+The guest emits one of:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...`
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported` (miniport does not support the reset IOCTL)
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...`
 
 Example (PowerShell):
 

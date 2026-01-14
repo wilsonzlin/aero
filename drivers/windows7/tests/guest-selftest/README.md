@@ -34,6 +34,19 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Disabled by default; enable with `--test-blk-resize` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1`).
     - Emits `...|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`, then waits for a host-side QMP resize and polls until
       Windows reports a larger disk size (hard timeout, default 60s).
+  - Optional miniport reset/recovery test (`virtio-blk-reset`):
+    - Disabled by default; enable with `--test-blk-reset` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1`).
+    - Issues the miniport IOCTL `AEROVBLK_IOCTL_FORCE_RESET`, then verifies:
+      - post-reset smoke disk I/O works
+      - the miniport `AEROVBLK_IOCTL_QUERY` still returns a valid payload
+    - Emits a dedicated machine marker:
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported` when the miniport reports the reset IOCTL
+        is not supported
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...` on failure
+    - Intended to be paired with host-harness gating:
+      - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -WithBlkReset`
+      - Python: `invoke_aero_virtio_win7_tests.py --with-blk-reset`
 - **virtio-net**
   - Detect a virtio network adapter (SetupAPI hardware IDs).
   - Wait for link + DHCP IPv4 address (non-APIPA).

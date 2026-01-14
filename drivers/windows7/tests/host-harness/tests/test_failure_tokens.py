@@ -158,7 +158,7 @@ class FailureTokenTests(unittest.TestCase):
         h = self.harness
 
         msg = h._virtio_blk_reset_skip_failure_message(
-            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|performed=0|reason=not_supported\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported\n"
         )
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_SKIPPED:"))
