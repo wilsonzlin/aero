@@ -83,6 +83,74 @@ def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def extract_c_function_body(text: str, func_name: str) -> str | None:
+    """
+    Returns the full function body (including the outer braces) for a C function
+    in `text`, or None if not found.
+
+    This is intentionally lightweight: it only needs to be robust enough to
+    extract a single known KMD helper for a CI guardrail.
+    """
+
+    idx = text.find(func_name)
+    if idx < 0:
+        return None
+
+    # Find the first '{' after the name and then brace-match.
+    brace_start = text.find("{", idx)
+    if brace_start < 0:
+        return None
+
+    depth = 0
+    for end in range(brace_start, len(text)):
+        c = text[end]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace_start : end + 1]
+
+    return None
+
+
+def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
+    """
+    Guardrail for AGPU-ShareToken refcount tracking:
+
+    - `AeroGpuShareTokenRefIncrementLocked` must not call `ExAllocatePoolWithTag`
+      while `Adapter->AllocationsLock` is held.
+    - The implementation is expected to drop the spin lock, allocate, then
+      re-acquire and re-check before inserting.
+    """
+
+    kmd_path = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
+    if not kmd_path.exists():
+        errors.append(f"{kmd_path.relative_to(ROOT)}: missing (cannot validate share-token locking guardrail)")
+        return
+
+    text = read_text(kmd_path)
+    body = extract_c_function_body(text, "AeroGpuShareTokenRefIncrementLocked")
+    if body is None:
+        errors.append(f"{kmd_path.relative_to(ROOT)}: AeroGpuShareTokenRefIncrementLocked not found")
+        return
+
+    # This helper is named "*Locked" and is expected to be entered with the lock
+    # held by the caller.
+    lock_held = True
+    for idx, raw_line in enumerate(body.splitlines(), start=1):
+        line = raw_line.strip()
+        if "KeReleaseSpinLock(&Adapter->AllocationsLock" in line:
+            lock_held = False
+        elif "KeAcquireSpinLock(&Adapter->AllocationsLock" in line:
+            lock_held = True
+
+        if "ExAllocatePoolWithTag(" in line and lock_held:
+            errors.append(
+                f"{kmd_path.relative_to(ROOT)}:{idx}: ExAllocatePoolWithTag called while Adapter->AllocationsLock is held"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -114,6 +182,8 @@ def main() -> int:
         for required in required_list:
             if required not in text:
                 errors.append(f"{path.relative_to(ROOT)}: missing required reference: {required}")
+
+    check_no_pool_alloc_under_allocations_lock(errors)
 
     if errors:
         print("ERROR: AeroGPU shared-surface ShareToken contract regression detected.", file=sys.stderr)
