@@ -1126,7 +1126,7 @@ impl Mmu {
             ));
         }
 
-        if access.is_execute() && self.nx_enabled() && nx {
+        if access.is_execute() && nx {
             return Err(PageFault::new(
                 vaddr,
                 pf_error_code(true, access, is_user, false),
