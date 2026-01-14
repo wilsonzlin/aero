@@ -150,8 +150,7 @@ fn command_ring_processor_rejects_link_trb_reserved_bits() {
     let mut bytes = [0u8; TRB_LEN];
     mem.read_physical(event_ring_base, &mut bytes);
     assert_eq!(
-        bytes,
-        [0u8; TRB_LEN],
+        bytes, [0u8; TRB_LEN],
         "processor must not write completion events when the Link TRB is malformed"
     );
 }
