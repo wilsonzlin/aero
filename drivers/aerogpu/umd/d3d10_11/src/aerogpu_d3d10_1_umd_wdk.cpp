@@ -6816,54 +6816,6 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  // Hazard mitigation: when binding SRVs, ensure the resource is not still bound
-  // for output (RTV/DSV).
-  //
-  // D3D10/10.1 expects the driver to automatically unbind conflicting output
-  // bindings.
-  bool rt_state_changed = false;
-  for (UINT i = 0; i < num_views; ++i) {
-    AeroGpuResource* srv_res = nullptr;
-    if (phViews && phViews[i].pDrvPrivate) {
-      auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(phViews[i]);
-      srv_res = view ? view->resource : nullptr;
-    }
-    if (!srv_res) {
-      continue;
-    }
-
-    if (dev->current_dsv_res == srv_res) {
-      dev->current_dsv_res = nullptr;
-      dev->current_dsv = 0;
-      rt_state_changed = true;
-    }
-
-    for (uint32_t slot = 0; slot < dev->current_rtv_count && slot < AEROGPU_MAX_RENDER_TARGETS; ++slot) {
-      if (dev->current_rtv_resources[slot] == srv_res) {
-        dev->current_rtv_resources[slot] = nullptr;
-        dev->current_rtvs[slot] = 0;
-        rt_state_changed = true;
-      }
-    }
-  }
-
-  if (rt_state_changed) {
-    NormalizeRenderTargetsNoGapsLocked(dev);
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
-      return;
-    }
-    cmd->color_count = dev->current_rtv_count;
-    cmd->depth_stencil = dev->current_dsv;
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      cmd->colors[i] = 0;
-    }
-    for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      cmd->colors[i] = dev->current_rtvs[i];
-    }
-  }
-
   for (UINT i = 0; i < num_views; i++) {
     const uint32_t slot = static_cast<uint32_t>(start_slot + i);
     aerogpu_handle_t tex = 0;
