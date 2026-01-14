@@ -507,6 +507,12 @@ impl VgaDevice {
             if pitch_bytes == 0 {
                 return disabled;
             }
+            // Packed pixel scanout requires whole-pixel alignment so each scanline begins on a
+            // pixel boundary. This matches the assumptions made by scanout consumers (e.g. web
+            // readback paths require `pitchBytes % bytesPerPixel == 0`).
+            if pitch_bytes % bytes_per_pixel != 0 {
+                return disabled;
+            }
 
             let row_bytes = match width.checked_mul(bytes_per_pixel) {
                 Some(v) => v,
@@ -3139,6 +3145,26 @@ mod tests {
 
         let base = (u64::from(update.base_paddr_hi) << 32) | u64::from(update.base_paddr_lo);
         assert_eq!(base, 0xD000_0000 + 3 * 512 + 2 * 4);
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
+    #[test]
+    fn scanout_update_disables_when_pitch_is_not_pixel_aligned() {
+        let mut dev = VgaDevice::new();
+        dev.set_svga_lfb_base(0xD000_0000);
+        dev.set_svga_mode(64, 32, 32, true);
+
+        // Choose a pitch that is >= width*bytes_per_pixel but not divisible by 4.
+        dev.set_vbe_bytes_per_scan_line_override(64 * 4 + 1);
+
+        let update = dev.active_scanout_update();
+        assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+        assert_eq!(update.base_paddr_lo, 0);
+        assert_eq!(update.base_paddr_hi, 0);
+        assert_eq!(update.width, 0);
+        assert_eq!(update.height, 0);
+        assert_eq!(update.pitch_bytes, 0);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
     }
 
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
