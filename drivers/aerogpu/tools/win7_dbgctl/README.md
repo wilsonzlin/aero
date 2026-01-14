@@ -109,6 +109,7 @@ Minimum supported commands:
   Dumps a KMD-provided perf/health counter snapshot, including:
   - fence + ring progress (ring0 head/tail),
   - submit counters (total / render / present / internal),
+  - submit-path contiguous allocation pool counters (hit/miss/bytes_saved, when supported),
   - ring push failures (submission path failures before reaching the device),
   - IRQ delivery counters (fence/vblank/spurious + error IRQ snapshot when available; dbgctl may fall back to `--query-fence` on older builds),
   - reset counts, vblank counters, and selftest stats (count + last error when available), and
@@ -447,6 +448,7 @@ This tool currently supports JSON output for snapshot-style commands and other b
 
 Notes:
 - `--query-perf --json` includes a best-effort `last_error` object (via `AEROGPU_ESCAPE_OP_QUERY_ERROR`) when supported by the installed KMD.
+- `--query-perf --json` includes a `contig_pool` object when the installed KMD exposes the appended contig-pool fields.
 
 ## Build (Windows 7)
 
