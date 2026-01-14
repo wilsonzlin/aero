@@ -466,8 +466,10 @@ pub struct MachineConfig {
     /// - BAR0: an MVP AeroGPU MMIO register block (MAGIC/ABI/FEATURES, ring/fence transport,
     ///   IRQ status/enable/ack, scanout0 + cursor registers, and vblank counters) suitable for WDDM
     ///   driver detection and `D3DKMTWaitForVerticalBlankEvent` pacing.
-    /// - BAR1: a dedicated VRAM aperture, and the legacy VGA window (`0xA0000..0xC0000`) as an
-    ///   alias of the first 128KiB of that VRAM (for firmware/bootloader compatibility).
+    /// - BAR1: a dedicated VRAM aperture:
+    ///   - the legacy VGA window (`0xA0000..0xC0000`) is an alias of `VRAM[0..0x20000)` (128KiB),
+    ///   - the first 256KiB is reserved for legacy VGA planar storage (4 × 64KiB planes), and
+    ///   - the BIOS VBE linear framebuffer begins at `BAR1_BASE + VBE_LFB_OFFSET` (`0x40000`).
     ///
     /// This is the foundation required by `docs/16-aerogpu-vga-vesa-compat.md` for
     /// firmware/bootloader compatibility and for the guest WDDM driver to claim scanout.

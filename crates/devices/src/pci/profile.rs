@@ -890,7 +890,10 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 /// In the canonical `aero_machine::Machine`, `MachineConfig::enable_aerogpu=true` wires an MVP
 /// device model behind this identity:
 /// - BAR0: AeroGPU MMIO registers (ring + doorbell + fence + scanout/cursor register surface)
-/// - BAR1: a host-backed VRAM aperture (with the legacy VGA window aliased into the first 128KiB)
+/// - BAR1: a host-backed VRAM aperture:
+///   - the legacy VGA window aliases into `VRAM[0..0x20000)` (128KiB)
+///   - the first 256KiB is reserved for legacy VGA planar storage (4 × 64KiB planes)
+///   - the VBE linear framebuffer begins at `VRAM[0x40000..]` (`PhysBasePtr = BAR1_BASE + 0x40000`)
 ///
 /// Boot display in the canonical machine can still be provided by the standalone `aero_gpu_vga`
 /// VGA/VBE device model when `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`). In that
