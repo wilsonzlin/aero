@@ -12060,7 +12060,7 @@ int wmain(int argc, wchar_t** argv) {
   // The host harness can optionally attach a virtio-snd PCI function. When the device is present,
   // exercise the playback + capture + duplex paths automatically so audio regressions are caught
   // even if the image runs the selftest without extra flags. Use `--disable-snd` to skip all
-  // virtio-snd testing, or `--test-snd/--require-snd` to fail if the device is missing.
+  // virtio-snd testing, or `--test-snd/--require-snd`/`--require-snd-msix` to fail if the device is missing.
   auto snd_pci = opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
                                 : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
   if (!opt.disable_snd && snd_pci.empty()) {
@@ -12085,7 +12085,7 @@ int wmain(int argc, wchar_t** argv) {
           ? IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1059", L"PCI\\VEN_1AF4&DEV_1018"})
           : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1059"});
 
-  const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
+  const bool want_snd_playback = opt.require_snd || opt.require_snd_msix || !snd_pci.empty();
   const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
   const bool want_snd_capture =
       !opt.disable_snd_capture &&

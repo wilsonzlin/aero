@@ -287,7 +287,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Use `--require-snd` (alias: `--test-snd`) to make missing virtio-snd fail the overall selftest.
     - Use `--require-snd-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1`) to make the overall selftest
       **FAIL** when virtio-snd is not using MSI-X (mode != `msix`) in the `virtio-snd-msix` diagnostic marker
-      (or when the optional diagnostics device is unavailable).
+      (or when the optional diagnostics device is unavailable, or when the virtio-snd device is missing).
   - Playback failures cause the overall selftest to **FAIL**.
   - Also emits a separate `virtio-snd-capture` marker by attempting to detect a virtio-snd **capture** endpoint
     (MMDevice `eCapture`).
