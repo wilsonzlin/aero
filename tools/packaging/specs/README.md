@@ -12,6 +12,21 @@ Packaging Inputs (manifest.json)”), which helps avoid confusion caused by spec
 `drivers[].name` is the **driver directory name** under the packager input tree:
 `drivers/{x86,amd64}/<name>/`.
 
+## JSON Schema (`$schema`)
+
+Specs may include an optional `$schema` field to enable editor/CI validation.
+
+In this repo, `tools/packaging/specs/*.json` use:
+
+```json
+{
+  "$schema": "../packaging-spec.schema.json"
+}
+```
+
+The packager ignores `$schema` at runtime, but accepts it under strict spec parsing
+(`deny_unknown_fields`).
+
 ## Optional spec flags
 
 - `fail_on_unlisted_driver_dirs` (default: `false`)

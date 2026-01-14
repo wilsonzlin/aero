@@ -248,6 +248,9 @@ The packager uses a small JSON spec to validate and sanity-check the driver arti
 
 See `tools/packaging/aero_packager/testdata/spec.json` for a minimal example.
 
+Specs may include an optional `$schema` field for editor/CI validation:
+`tools/packaging/packaging-spec.schema.json` (draft 2020-12).
+
 The current schema uses a unified `drivers` list:
 
 ```json
