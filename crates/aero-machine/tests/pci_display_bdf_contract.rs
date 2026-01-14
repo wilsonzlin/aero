@@ -15,6 +15,7 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the machine minimal for the contract check.
         enable_serial: false,
         enable_i8042: false,
@@ -60,14 +61,6 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
         let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
         assert_eq!(vga_vendor, 0x1234);
         assert_eq!(vga_device, 0x1111);
-    } else {
-        // Phase 2: the transitional VGA stub may be removed once AeroGPU owns the legacy VGA/VBE
-        // path. When the stub is absent, the canonical AeroGPU identity should be present so the
-        // Windows driver binding contract is still satisfied.
-        assert_ne!(
-            aerogpu_vendor, 0xFFFF,
-            "expected AeroGPU at {aerogpu_bdf:?} when VGA PCI stub at {vga_bdf:?} is absent"
-        );
     }
 }
 

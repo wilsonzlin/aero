@@ -5,6 +5,7 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     let cfg = MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();
@@ -20,11 +21,8 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     m.io_write(0x01CE, 2, 0x0004);
     m.io_write(0x01CF, 2, 0x0041);
 
-    // The VBE LFB base may either be:
-    // - the legacy VGA stub BAR (Phase 1), or
-    // - an offset into AeroGPU VRAM BAR1 (Phase 2, legacy VGA/VBE integrated into AeroGPU).
-    //
-    // Always use the firmware-reported VBE PhysBasePtr so this test stays robust across both.
+    // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
+    // changes (e.g. standalone VGA stub vs AeroGPU BAR1-backed legacy VBE).
     let base = u64::from(m.vbe_lfb_base());
     // Write a red pixel at (0,0) in packed 32bpp BGRX via *machine memory*.
     m.write_physical_u32(base, 0x00FF_0000);
