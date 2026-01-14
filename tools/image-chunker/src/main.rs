@@ -1639,6 +1639,9 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
             manifest.chunk_size
         );
     }
+    if manifest.total_size == 0 {
+        bail!("manifest totalSize must be > 0");
+    }
     if !manifest.total_size.is_multiple_of(sector) {
         bail!(
             "manifest totalSize must be a multiple of {sector} bytes, got {}",
@@ -1671,6 +1674,17 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
         bail!(
             "manifest chunkIndexWidth {} is unreasonably large (max 32)",
             manifest.chunk_index_width
+        );
+    }
+    let min_width = manifest
+        .chunk_count
+        .saturating_sub(1)
+        .to_string()
+        .len()
+        .max(1);
+    if width_usize < min_width {
+        bail!(
+            "manifest chunkIndexWidth too small: need>={min_width} got={width_usize}"
         );
     }
     if let Some(chunks) = &manifest.chunks {
@@ -3844,6 +3858,27 @@ mod tests {
     }
 
     #[test]
+    fn validate_manifest_v1_rejects_zero_total_size() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: 0,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 0,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected totalSize validation failure");
+        assert!(
+            err.to_string().contains("manifest totalSize must be > 0"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn validate_manifest_v1_rejects_non_sector_aligned_total_size() {
         let manifest = ManifestV1 {
             schema: MANIFEST_SCHEMA.to_string(),
@@ -3864,6 +3899,27 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("manifest totalSize must be a multiple"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunk_index_width_too_small() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: (SECTOR_SIZE as u64) * 11,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 11,
+            chunk_index_width: 1,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunkIndexWidth validation failure");
+        assert!(
+            err.to_string().contains("chunkIndexWidth too small"),
             "unexpected error: {err}"
         );
     }
