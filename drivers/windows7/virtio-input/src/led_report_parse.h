@@ -58,6 +58,10 @@ typedef int32_t NTSTATUS;
  * Output:
  *   - led_bitfield_out: receives the LED bitfield (NumLock/CapsLock/etc).
  *
+ * Note: The HID boot keyboard LED output report defines 5 LED bits (NumLock,
+ * CapsLock, ScrollLock, Compose, Kana) and 3 padding bits. This helper masks
+ * the parsed value to the 5 defined bits (0x1F).
+ *
  * Behavior (legacy):
  *   - If buffer_len >= 2 and buffer[0] == report_id, treat buffer[1] as the LED
  *     bitfield.

@@ -63,6 +63,20 @@ gcc -std=c11 -Wall -Wextra -Werror \
 ```bash
 # From drivers/windows7/virtio-input/tests/
 gcc -std=c11 -Wall -Wextra -Werror \
+  -o /tmp/led_report_parse_test \
+  led_report_parse_test.c ../src/led_report_parse.c && /tmp/led_report_parse_test
+```
+
+```bash
+# From drivers/windows7/virtio-input/tests/
+gcc -std=c11 -Wall -Wextra -Werror \
+  -o /tmp/led_output_pipeline_test \
+  led_output_pipeline_test.c ../src/led_report_parse.c ../src/led_translate.c && /tmp/led_output_pipeline_test
+```
+
+```bash
+# From drivers/windows7/virtio-input/tests/
+gcc -std=c11 -Wall -Wextra -Werror \
   -o /tmp/virtio_statusq_test \
   virtio_statusq_test.c ../src/virtio_statusq.c && /tmp/virtio_statusq_test
 ```
