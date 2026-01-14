@@ -21,9 +21,13 @@ namespace {
 
 // Portable D3D9 FVF bits (from d3d9types.h).
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
+constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
+constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
+constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
 
 // D3DTSS_* (from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;
@@ -204,56 +208,42 @@ size_t CountOpcode(const uint8_t* buf, size_t len, uint32_t opcode) {
   return count;
 }
 
-} // namespace
-
-int main() {
+template <typename VertexT>
+bool TestStage0ColorOpImmediateRebindForFvf(
+    uint32_t fvf,
+    const VertexT* tri,
+    const char* fvf_name) {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
-    return 1;
+    return false;
   }
 
   auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
   if (!Check(dev != nullptr, "device pointer")) {
-    return 1;
+    return false;
   }
 
   dev->cmd.reset();
 
-  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuseTex1);
-  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
-    return 1;
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, fvf);
+  if (!Check(hr == S_OK, fvf_name)) {
+    return false;
   }
 
   D3DDDI_HRESOURCE hTex{};
   if (!CreateDummyTexture(&cleanup, &hTex)) {
-    return 1;
+    return false;
   }
 
   hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
   if (!Check(hr == S_OK, "SetTexture(stage0)")) {
-    return 1;
+    return false;
   }
 
-  struct Vertex {
-    float x;
-    float y;
-    float z;
-    uint32_t color;
-    float u;
-    float v;
-  };
-
-  constexpr uint32_t kWhite = 0xFFFFFFFFu;
-  const Vertex tri[3] = {
-      {-1.0f, -1.0f, 0.0f, kWhite, 0.0f, 0.0f},
-      {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f},
-      {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f},
-  };
-
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(Vertex));
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexT));
   if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
-    return 1;
+    return false;
   }
 
   // Record where the first draw ended so we can ensure the stage-state update
@@ -265,7 +255,7 @@ int main() {
                                                kD3dTssColorOp,
                                                kD3dTopSelectArg1);
   if (!Check(hr == S_OK, "SetTextureStageState(stage0 COLOROP=SELECTARG1)")) {
-    return 1;
+    return false;
   }
 
   dev->cmd.finalize();
@@ -274,7 +264,7 @@ int main() {
 
   const auto binds = CollectBinds(buf, len);
   if (!Check(binds.size() >= 2, "expected >= 2 BIND_SHADERS packets")) {
-    return 1;
+    return false;
   }
 
   aerogpu_handle_t ps_before = 0;
@@ -288,17 +278,102 @@ int main() {
   }
 
   if (!Check(ps_before != 0, "expected a PS bind during first draw")) {
-    return 1;
+    return false;
   }
   if (!Check(ps_after != 0, "expected an immediate PS rebind after SetTextureStageState")) {
-    return 1;
+    return false;
   }
   if (!Check(ps_before != ps_after, "expected PS handles to differ across the rebind")) {
-    return 1;
+    return false;
   }
 
   // Sanity: we only issued one draw call, but still observed multiple shader binds.
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 1, "expected exactly 1 DRAW packet")) {
+    return false;
+  }
+
+  return true;
+}
+
+} // namespace
+
+int main() {
+  // Keep a single executable and validate immediate stage0 PS rebind behavior for
+  // several supported FVFs.
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+
+  struct VertexXyzDiffuse {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+  };
+  const VertexXyzDiffuse tri_xyz_diffuse[3] = {
+      {-1.0f, -1.0f, 0.0f, kWhite},
+      {1.0f, -1.0f, 0.0f, kWhite},
+      {0.0f, 1.0f, 0.0f, kWhite},
+  };
+
+  struct VertexXyzDiffuseTex1 {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+    float u;
+    float v;
+  };
+  const VertexXyzDiffuseTex1 tri_xyz_diffuse_tex1[3] = {
+      {-1.0f, -1.0f, 0.0f, kWhite, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f},
+  };
+
+  struct VertexXyzrhwDiffuse {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+  const VertexXyzrhwDiffuse tri_xyzrhw_diffuse[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, kWhite},
+      {1.0f, 0.0f, 0.0f, 1.0f, kWhite},
+      {0.0f, 1.0f, 0.0f, 1.0f, kWhite},
+  };
+
+  struct VertexXyzrhwDiffuseTex1 {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+  const VertexXyzrhwDiffuseTex1 tri_xyzrhw_diffuse_tex1[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, kWhite, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, kWhite, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, kWhite, 0.0f, 1.0f},
+  };
+
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuseTex1,
+                                             tri_xyz_diffuse_tex1,
+                                             "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return 1;
+  }
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzrhwDiffuseTex1,
+                                             tri_xyzrhw_diffuse_tex1,
+                                             "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return 1;
+  }
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuse,
+                                             tri_xyz_diffuse,
+                                             "SetFVF(XYZ|DIFFUSE)")) {
+    return 1;
+  }
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzrhwDiffuse,
+                                             tri_xyzrhw_diffuse,
+                                             "SetFVF(XYZRHW|DIFFUSE)")) {
     return 1;
   }
 
