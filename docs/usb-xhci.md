@@ -245,7 +245,9 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
       integration does not model a periodic controller tick.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
-  - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
+  - A small DMA read on the rising edge of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
+    - Some integrations cannot provide DMA during the MMIO write itself, so the controller may defer
+      the read + synthetic interrupt until the next tick once DMA is available (`pending_dma_on_run`).
   - A level-triggered interrupt condition surfaced as `irq_level()` (interrupter 0 interrupt enable +
     pending; USBSTS.EINT is derived from pending), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
