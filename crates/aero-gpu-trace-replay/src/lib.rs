@@ -821,6 +821,8 @@ fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
         AerogpuCmdOpcode::UploadResource => "UploadResource",
         AerogpuCmdOpcode::CopyBuffer => "CopyBuffer",
         AerogpuCmdOpcode::CopyTexture2d => "CopyTexture2d",
+        AerogpuCmdOpcode::CreateTextureView => "CreateTextureView",
+        AerogpuCmdOpcode::DestroyTextureView => "DestroyTextureView",
         AerogpuCmdOpcode::CreateShaderDxbc => "CreateShaderDxbc",
         AerogpuCmdOpcode::DestroyShader => "DestroyShader",
         AerogpuCmdOpcode::BindShaders => "BindShaders",
@@ -1136,6 +1138,87 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " dst_texture={dst_texture} src_texture={src_texture} dst_mip_level={dst_mip_level} dst_array_layer={dst_array_layer} src_mip_level={src_mip_level} src_array_layer={src_array_layer} dst_xy={dst_x},{dst_y} src_xy={src_x},{src_y} size={width}x{height} flags=0x{flags:08X}"
                         );
+                    }
+                    AerogpuCmdOpcode::CreateTextureView => {
+                        if pkt.payload.len() < 36 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 36 bytes",
+                            });
+                        }
+
+                        let view_handle = u32_le_at(pkt.payload, 0).unwrap();
+                        let texture_handle = u32_le_at(pkt.payload, 4).unwrap();
+                        let format = u32_le_at(pkt.payload, 8).unwrap();
+                        let base_mip_level = u32_le_at(pkt.payload, 12).unwrap();
+                        let mip_level_count = u32_le_at(pkt.payload, 16).unwrap();
+                        let base_array_layer = u32_le_at(pkt.payload, 20).unwrap();
+                        let array_layer_count = u32_le_at(pkt.payload, 24).unwrap();
+
+                        let format_name = match format {
+                            v if v == AerogpuFormat::Invalid as u32 => Some("Invalid"),
+                            v if v == AerogpuFormat::B8G8R8A8Unorm as u32 => Some("B8G8R8A8Unorm"),
+                            v if v == AerogpuFormat::B8G8R8X8Unorm as u32 => Some("B8G8R8X8Unorm"),
+                            v if v == AerogpuFormat::R8G8B8A8Unorm as u32 => Some("R8G8B8A8Unorm"),
+                            v if v == AerogpuFormat::R8G8B8X8Unorm as u32 => Some("R8G8B8X8Unorm"),
+                            v if v == AerogpuFormat::B5G6R5Unorm as u32 => Some("B5G6R5Unorm"),
+                            v if v == AerogpuFormat::B5G5R5A1Unorm as u32 => Some("B5G5R5A1Unorm"),
+                            v if v == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
+                                Some("B8G8R8A8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
+                                Some("B8G8R8X8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {
+                                Some("R8G8B8A8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
+                                Some("R8G8B8X8UnormSrgb")
+                            }
+                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => Some("D24UnormS8Uint"),
+                            v if v == AerogpuFormat::D32Float as u32 => Some("D32Float"),
+                            v if v == AerogpuFormat::BC1RgbaUnorm as u32 => Some("BC1RgbaUnorm"),
+                            v if v == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
+                                Some("BC1RgbaUnormSrgb")
+                            }
+                            v if v == AerogpuFormat::BC2RgbaUnorm as u32 => Some("BC2RgbaUnorm"),
+                            v if v == AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
+                                Some("BC2RgbaUnormSrgb")
+                            }
+                            v if v == AerogpuFormat::BC3RgbaUnorm as u32 => Some("BC3RgbaUnorm"),
+                            v if v == AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
+                                Some("BC3RgbaUnormSrgb")
+                            }
+                            v if v == AerogpuFormat::BC7RgbaUnorm as u32 => Some("BC7RgbaUnorm"),
+                            v if v == AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
+                                Some("BC7RgbaUnormSrgb")
+                            }
+                            _ => None,
+                        };
+
+                        let _ = write!(
+                            line,
+                            " view_handle={view_handle} texture_handle={texture_handle} format=0x{format:08X}"
+                        );
+                        if let Some(name) = format_name {
+                            let _ = write!(line, " format_name={name}");
+                        }
+                        let _ = write!(
+                            line,
+                            " base_mip_level={base_mip_level} mip_level_count={mip_level_count} base_array_layer={base_array_layer} array_layer_count={array_layer_count}"
+                        );
+                    }
+                    AerogpuCmdOpcode::DestroyTextureView => {
+                        if pkt.payload.len() < 8 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 8 bytes",
+                            });
+                        }
+                        let view_handle = u32_le_at(pkt.payload, 0).unwrap();
+                        let _ = write!(line, " view_handle={view_handle}");
                     }
                     AerogpuCmdOpcode::CreateShaderDxbc => {
                         let (cmd, dxbc) =
