@@ -5,13 +5,11 @@ use std::env;
 use std::process::Command;
 
 const DEFAULT_CASES: usize = 512;
-// Keep in sync with `crates/conformance/src/lib.rs` (`AERO_CONFORMANCE_SEED` fallback).
-const DEFAULT_SEED: u64 = 0x_52c6_71d9_a4f2_31b9;
 
 #[derive(Debug)]
 struct ConformanceOpts {
     cases: usize,
-    seed: u64,
+    seed: Option<u64>,
     filter: Option<String>,
     report_path: Option<String>,
     reference_isolate: Option<bool>,
@@ -93,14 +91,18 @@ requires a unix x86_64 host."
         .args(["test", "-p", "conformance", "--locked"]);
 
     // Ensure the child process gets a fully-specified set of conformance knobs.
-    cmd.env("AERO_CONFORMANCE_CASES", opts.cases.to_string())
-        .env("AERO_CONFORMANCE_SEED", opts.seed.to_string());
+    cmd.env("AERO_CONFORMANCE_CASES", opts.cases.to_string());
 
-    // Clear optional vars to avoid surprising inheritance from the parent process.
+    // Clear vars to avoid surprising inheritance from the parent process. We then re-add
+    // the ones selected by CLI args (or explicitly passed through from env).
+    cmd.env_remove("AERO_CONFORMANCE_SEED");
     cmd.env_remove("AERO_CONFORMANCE_FILTER");
     cmd.env_remove("AERO_CONFORMANCE_REPORT_PATH");
     cmd.env_remove("AERO_CONFORMANCE_REFERENCE_ISOLATE");
 
+    if let Some(seed) = opts.seed {
+        cmd.env("AERO_CONFORMANCE_SEED", seed.to_string());
+    }
     if let Some(filter) = &opts.filter {
         cmd.env("AERO_CONFORMANCE_FILTER", filter);
     }
@@ -133,7 +135,7 @@ fn parse_args(args: Vec<String>) -> Result<ConformanceOpts> {
 
     let mut opts = ConformanceOpts {
         cases: env_cases.unwrap_or(DEFAULT_CASES),
-        seed: env_seed.unwrap_or(DEFAULT_SEED),
+        seed: env_seed,
         filter: env_var_nonempty("AERO_CONFORMANCE_FILTER"),
         report_path: env_var_nonempty("AERO_CONFORMANCE_REPORT_PATH"),
         reference_isolate: env::var("AERO_CONFORMANCE_REFERENCE_ISOLATE")
@@ -159,19 +161,19 @@ fn parse_args(args: Vec<String>) -> Result<ConformanceOpts> {
             }
             "--seed" => {
                 let raw = next_value(&mut iter, &arg)?;
-                opts.seed = parse_u64(&raw).map_err(|_| {
+                opts.seed = Some(parse_u64(&raw).map_err(|_| {
                     XtaskError::Message(format!(
                         "invalid --seed value `{raw}` (expected integer: decimal or 0x.. hex)"
                     ))
-                })?;
+                })?);
             }
             val if val.starts_with("--seed=") => {
                 let raw = &val["--seed=".len()..];
-                opts.seed = parse_u64(raw).map_err(|_| {
+                opts.seed = Some(parse_u64(raw).map_err(|_| {
                     XtaskError::Message(format!(
                         "invalid --seed value `{raw}` (expected integer: decimal or 0x.. hex)"
                     ))
-                })?;
+                })?);
             }
             "--filter" => {
                 let raw = next_value(&mut iter, &arg)?;
@@ -248,4 +250,3 @@ fn parse_u64(raw: &str) -> std::result::Result<u64, ()> {
         cleaned.parse::<u64>().map_err(|_| ())
     }
 }
-
