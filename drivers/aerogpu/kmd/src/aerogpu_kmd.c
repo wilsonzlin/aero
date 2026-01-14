@@ -5323,7 +5323,10 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
             if (!pinned && msi->pfnPinMode && pinW != 0 && pinH != 0) {
                 const ULONG cw = cur->VideoSignalInfo.ActiveSize.cx;
                 const ULONG ch = cur->VideoSignalInfo.ActiveSize.cy;
-                if (AeroGpuModeWithinMax(cw, ch)) {
+                const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = cur->VideoSignalInfo.ScanLineOrdering;
+                if (AeroGpuModeWithinMax(cw, ch) &&
+                    (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED) &&
+                    AeroGpuIsSupportedVidPnVSyncFrequency(cur->VideoSignalInfo.VSyncFreq.Numerator, cur->VideoSignalInfo.VSyncFreq.Denominator)) {
                     const ULONG diffW = (cw > pinW) ? (cw - pinW) : (pinW - cw);
                     const ULONG diffH = (ch > pinH) ? (ch - pinH) : (pinH - ch);
                     if (diffW <= 2u && diffH <= 2u) {
@@ -5334,11 +5337,16 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
                 }
             }
 
-            AeroGpuModeListAddUnique(existing,
-                                     &existingCount,
-                                     (UINT)(sizeof(existing) / sizeof(existing[0])),
-                                     cur->VideoSignalInfo.ActiveSize.cx,
-                                     cur->VideoSignalInfo.ActiveSize.cy);
+            {
+                const ULONG cw = cur->VideoSignalInfo.ActiveSize.cx;
+                const ULONG ch = cur->VideoSignalInfo.ActiveSize.cy;
+                const D3DKMDT_VIDEO_SIGNAL_SCANLINE_ORDERING order = cur->VideoSignalInfo.ScanLineOrdering;
+                if (AeroGpuIsSupportedVidPnModeDimensions(cw, ch) &&
+                    (order == D3DKMDT_VSSLO_PROGRESSIVE || order == D3DKMDT_VSSLO_UNINITIALIZED) &&
+                    AeroGpuIsSupportedVidPnVSyncFrequency(cur->VideoSignalInfo.VSyncFreq.Numerator, cur->VideoSignalInfo.VSyncFreq.Denominator)) {
+                    AeroGpuModeListAddUnique(existing, &existingCount, (UINT)(sizeof(existing) / sizeof(existing[0])), cw, ch);
+                }
+            }
 
             const D3DKMDT_MONITOR_SOURCE_MODE* next = NULL;
             st = msi->pfnAcquireNextModeInfo(pRecommend->hMonitorSourceModeSet, cur, &next);
