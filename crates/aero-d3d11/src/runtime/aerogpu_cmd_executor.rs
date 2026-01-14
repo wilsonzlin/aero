@@ -39,16 +39,15 @@ use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::binding_model::{
-    BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    BINDING_GS_EMUL_VERTEX_OUTPUTS,
-    BINDING_INTERNAL_EXPANDED_VERTICES, BIND_GROUP_INTERNAL_EMULATION,
-    D3D11_MAX_CONSTANT_BUFFER_SLOTS, EXPANDED_VERTEX_MAX_VARYINGS, MAX_SAMPLER_SLOTS,
-    MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
+    BINDING_GS_EMUL_VERTEX_OUTPUTS, BINDING_INTERNAL_EXPANDED_VERTICES,
+    BIND_GROUP_INTERNAL_EMULATION, D3D11_MAX_CONSTANT_BUFFER_SLOTS, EXPANDED_VERTEX_MAX_VARYINGS,
+    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::input_layout::{
-    fnv1a_32, map_layout_to_shader_locations_compact,
-    AEROGPU_INPUT_LAYOUT_BLOB_FLAG_GS_EMULATION_OUTPUT, InputLayoutBinding, InputLayoutDesc,
-    VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
+    fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
+    VertexBufferLayoutOwned, VsInputSignatureElement,
+    AEROGPU_INPUT_LAYOUT_BLOB_FLAG_GS_EMULATION_OUTPUT, MAX_INPUT_SLOTS,
 };
 use crate::sm4::opcode as sm4_opcode;
 use crate::{
@@ -214,10 +213,30 @@ fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
     out
 }
 
+// Bindings for the placeholder geometry/tessellation compute prepass.
+//
+// Group 3 (`BIND_GROUP_INTERNAL_EMULATION`) is reserved for:
+// - extended D3D stages (GS/HS/DS) exposed via `stage_ex`, and
+// - internal emulation helpers (vertex pulling, expansion scratch, indirect args, etc).
+//
+// Internal bindings must use `@binding >= BINDING_BASE_INTERNAL` to avoid colliding with
+// D3D register-space bindings (`b#`/`t#`/`s#`/`u#`).
+const GEOMETRY_PREPASS_GS_CB0_BINDING: u32 = BINDING_BASE_CBUFFER + 0;
+const GEOMETRY_PREPASS_OUT_VERTICES_BINDING: u32 = INDEX_PULLING_BUFFER_BINDING + 1;
+const GEOMETRY_PREPASS_OUT_INDICES_BINDING: u32 = GEOMETRY_PREPASS_OUT_VERTICES_BINDING + 1;
+const GEOMETRY_PREPASS_OUT_INDIRECT_BINDING: u32 = GEOMETRY_PREPASS_OUT_VERTICES_BINDING + 2;
+const GEOMETRY_PREPASS_OUT_COUNTER_BINDING: u32 = GEOMETRY_PREPASS_OUT_VERTICES_BINDING + 3;
+const GEOMETRY_PREPASS_PARAMS_BINDING: u32 = GEOMETRY_PREPASS_OUT_VERTICES_BINDING + 4;
+const GEOMETRY_PREPASS_DEPTH_PARAMS_BINDING: u32 = GEOMETRY_PREPASS_OUT_VERTICES_BINDING + 5;
+
 const GEOMETRY_PREPASS_CS_WGSL: &str = r#"
 struct ExpandedVertex {
     pos: vec4<f32>,
     varyings: array<vec4<f32>, 32>,
+};
+
+struct GsCb0 {
+    offset: vec4<f32>,
 };
 
 struct Params {
@@ -229,12 +248,13 @@ struct DepthParams {
     data: vec4<f32>,
 };
 
-@group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
-@group(0) @binding(1) var<storage, read_write> out_indices: array<u32>;
-@group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
-@group(0) @binding(3) var<storage, read_write> out_counter: array<u32>;
-@group(0) @binding(4) var<uniform> params: Params;
-@group(0) @binding(5) var<uniform> depth_params: DepthParams;
+@group(3) @binding(0) var<uniform> gs_cb0: GsCb0;
+@group(3) @binding(267) var<storage, read_write> out_vertices: array<ExpandedVertex>;
+@group(3) @binding(268) var<storage, read_write> out_indices: array<u32>;
+@group(3) @binding(269) var<storage, read_write> out_indirect: array<u32>;
+@group(3) @binding(270) var<storage, read_write> out_counter: array<u32>;
+@group(3) @binding(271) var<uniform> params: Params;
+@group(3) @binding(272) var<uniform> depth_params: DepthParams;
 
 fn write_varyings(vid: u32, v: vec4<f32>) {
     // Keep placeholder prepass behavior location-agnostic by filling every varying slot.
@@ -257,6 +277,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
+    let offset = gs_cb0.offset.xy;
     let z = depth_params.data.x;
 
     // Default placeholder color:
@@ -290,19 +311,34 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             let seg_w: f32 = 2.0 / f32(gs_instance_count);
             let seg_center: f32 = -1.0 + (f32(gs_instance_id) + 0.5) * seg_w;
             let scale_x: f32 = seg_w * 0.5;
-            out_vertices[base + 0u].pos = vec4<f32>(seg_center + (-0.5 * scale_x), -0.5, z, 1.0);
-            out_vertices[base + 1u].pos = vec4<f32>(seg_center + (0.0 * scale_x), 0.5, z, 1.0);
-            out_vertices[base + 2u].pos = vec4<f32>(seg_center + (0.5 * scale_x), -0.5, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(
+                seg_center + (-0.5 * scale_x) + offset.x,
+                -0.5 + offset.y,
+                z,
+                1.0,
+            );
+            out_vertices[base + 1u].pos = vec4<f32>(
+                seg_center + (0.0 * scale_x) + offset.x,
+                0.5 + offset.y,
+                z,
+                1.0,
+            );
+            out_vertices[base + 2u].pos = vec4<f32>(
+                seg_center + (0.5 * scale_x) + offset.x,
+                -0.5 + offset.y,
+                z,
+                1.0,
+            );
         } else if (params.counts.w != 0u) {
             // Clockwise centered triangle (matches default `FrontFace::Cw` + back-face culling).
-            out_vertices[base + 0u].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
-            out_vertices[base + 1u].pos = vec4<f32>(0.0, 0.5, z, 1.0);
-            out_vertices[base + 2u].pos = vec4<f32>(0.5, -0.5, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(-0.5 + offset.x, -0.5 + offset.y, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(0.0 + offset.x, 0.5 + offset.y, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(0.5 + offset.x, -0.5 + offset.y, z, 1.0);
         } else {
             // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-            out_vertices[base + 0u].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
-            out_vertices[base + 1u].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
-            out_vertices[base + 2u].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(-1.0 + offset.x, -1.0 + offset.y, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(-1.0 + offset.x, 3.0 + offset.y, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(3.0 + offset.x, -1.0 + offset.y, z, 1.0);
         }
 
         write_varyings(base + 0u, c);
@@ -325,9 +361,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             x1 = 3.0;
         }
 
-        out_vertices[base + 0u].pos = vec4<f32>(x0, -1.0, z, 1.0);
-        out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, z, 1.0);
-        out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, z, 1.0);
+        out_vertices[base + 0u].pos = vec4<f32>(x0 + offset.x, -1.0 + offset.y, z, 1.0);
+        out_vertices[base + 1u].pos = vec4<f32>(x0 + offset.x, 3.0 + offset.y, z, 1.0);
+        out_vertices[base + 2u].pos = vec4<f32>(x1 + offset.x, -1.0 + offset.y, z, 1.0);
 
         write_varyings(base + 0u, c);
         write_varyings(base + 1u, c);
@@ -371,6 +407,10 @@ struct ExpandedVertex {
     varyings: array<vec4<f32>, 32>,
 };
 
+struct GsCb0 {
+    offset: vec4<f32>,
+};
+
 struct Params {
     color: vec4<f32>,
     counts: vec4<u32>,
@@ -380,12 +420,13 @@ struct DepthParams {
     data: vec4<f32>,
 };
 
-@group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
-@group(0) @binding(1) var<storage, read_write> out_indices: array<u32>;
-@group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
-@group(0) @binding(3) var<storage, read_write> out_counter: array<u32>;
-@group(0) @binding(4) var<uniform> params: Params;
-@group(0) @binding(5) var<uniform> depth_params: DepthParams;
+@group(3) @binding(0) var<uniform> gs_cb0: GsCb0;
+@group(3) @binding(267) var<storage, read_write> out_vertices: array<ExpandedVertex>;
+@group(3) @binding(268) var<storage, read_write> out_indices: array<u32>;
+@group(3) @binding(269) var<storage, read_write> out_indirect: array<u32>;
+@group(3) @binding(270) var<storage, read_write> out_counter: array<u32>;
+@group(3) @binding(271) var<uniform> params: Params;
+@group(3) @binding(272) var<uniform> depth_params: DepthParams;
 
 fn write_varyings(vid: u32, v: vec4<f32>) {
     // Keep placeholder prepass behavior location-agnostic by filling every varying slot.
@@ -409,6 +450,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let z = depth_params.data.x;
+    let offset = gs_cb0.offset.xy;
 
     // Default placeholder color:
     // - primitive 0: `params.color` (red in tests)
@@ -440,18 +482,33 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             let seg_w: f32 = 2.0 / f32(gs_instance_count);
             let seg_center: f32 = -1.0 + (f32(gs_instance_id) + 0.5) * seg_w;
             let scale_x: f32 = seg_w * 0.5;
-            out_vertices[base + 0u].pos = vec4<f32>(seg_center + (-0.5 * scale_x), -0.5, z, 1.0);
-            out_vertices[base + 1u].pos = vec4<f32>(seg_center + (0.0 * scale_x), 0.5, z, 1.0);
-            out_vertices[base + 2u].pos = vec4<f32>(seg_center + (0.5 * scale_x), -0.5, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(
+                seg_center + (-0.5 * scale_x) + offset.x,
+                -0.5 + offset.y,
+                z,
+                1.0,
+            );
+            out_vertices[base + 1u].pos = vec4<f32>(
+                seg_center + (0.0 * scale_x) + offset.x,
+                0.5 + offset.y,
+                z,
+                1.0,
+            );
+            out_vertices[base + 2u].pos = vec4<f32>(
+                seg_center + (0.5 * scale_x) + offset.x,
+                -0.5 + offset.y,
+                z,
+                1.0,
+            );
         } else if (params.counts.w != 0u) {
-            out_vertices[base + 0u].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
-            out_vertices[base + 1u].pos = vec4<f32>(0.0, 0.5, z, 1.0);
-            out_vertices[base + 2u].pos = vec4<f32>(0.5, -0.5, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(-0.5 + offset.x, -0.5 + offset.y, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(0.0 + offset.x, 0.5 + offset.y, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(0.5 + offset.x, -0.5 + offset.y, z, 1.0);
         } else {
             // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-            out_vertices[base + 0u].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
-            out_vertices[base + 1u].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
-            out_vertices[base + 2u].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+            out_vertices[base + 0u].pos = vec4<f32>(-1.0 + offset.x, -1.0 + offset.y, z, 1.0);
+            out_vertices[base + 1u].pos = vec4<f32>(-1.0 + offset.x, 3.0 + offset.y, z, 1.0);
+            out_vertices[base + 2u].pos = vec4<f32>(3.0 + offset.x, -1.0 + offset.y, z, 1.0);
         }
 
         write_varyings(base + 0u, c);
@@ -474,9 +531,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             x1 = 3.0;
         }
 
-        out_vertices[base + 0u].pos = vec4<f32>(x0, -1.0, z, 1.0);
-        out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, z, 1.0);
-        out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, z, 1.0);
+        out_vertices[base + 0u].pos = vec4<f32>(x0 + offset.x, -1.0 + offset.y, z, 1.0);
+        out_vertices[base + 1u].pos = vec4<f32>(x0 + offset.x, 3.0 + offset.y, z, 1.0);
+        out_vertices[base + 2u].pos = vec4<f32>(x1 + offset.x, -1.0 + offset.y, z, 1.0);
 
         write_varyings(base + 0u, c);
         write_varyings(base + 1u, c);
@@ -4335,6 +4392,33 @@ impl AerogpuD3d11Executor {
             let (params_buffer, _params_buffer_size) =
                 create_uniform_buffer("aerogpu_cmd geometry prepass params uniform", &params_bytes);
 
+            // Ensure any resources referenced by the placeholder prepass are uploaded before executing
+            // the compute pass. The prepass reads GS cbuffer b0 as `@group(3) @binding(0)`.
+            let prepass_resource_bindings = reflection_bindings::PipelineBindingsInfo {
+                layout_key: PipelineLayoutKey::empty(),
+                group_layouts: Vec::new(),
+                group_bindings: vec![
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![crate::Binding {
+                        group: VERTEX_PULLING_GROUP,
+                        binding: GEOMETRY_PREPASS_GS_CB0_BINDING,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        kind: crate::BindingKind::ConstantBuffer {
+                            slot: 0,
+                            reg_count: 1,
+                        },
+                    }],
+                ],
+            };
+            self.ensure_bound_resources_uploaded(
+                encoder,
+                &prepass_resource_bindings,
+                allocs,
+                guest_mem,
+            )?;
+
             let depth_params_buffer = self
                 .legacy_constants
                 .get(&ShaderStage::Compute)
@@ -4348,11 +4432,14 @@ impl AerogpuD3d11Executor {
             //   input layout is bound.
             // - Indexed draws can still bind index pulling even without an input layout (useful for
             //   future VS-as-compute shaders that use only `SV_VertexID`).
-            let mut vertex_pulling_bgl: Option<
-                aero_gpu::bindings::layout_cache::CachedBindGroupLayout,
-            > = None;
-            let mut vertex_pulling_bg: Option<wgpu::BindGroup> = None;
-            let mut vertex_pulling_cs_wgsl: Option<Arc<str>> = None;
+            let mut prepass_group3_extra_bgl_entries: Vec<wgpu::BindGroupLayoutEntry> = Vec::new();
+            let mut prepass_group3_extra_bg_entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::new();
+            let mut prepass_cs_wgsl: Option<Arc<str>> = None;
+            // Keep transient uniform buffers alive until the prepass bind group is built.
+            let mut vp_uniform_buffer: Option<wgpu::Buffer> = None;
+            let mut vp_index_params_buffer: Option<wgpu::Buffer> = None;
+            let mut index_pulling_params_buffer: Option<wgpu::Buffer> = None;
+
             if !patchlist_only_emulation {
                 if let Some(layout_handle) = self.state.input_layout {
                     let vs = self
@@ -4364,6 +4451,7 @@ impl AerogpuD3d11Executor {
                     if vs.stage != ShaderStage::Vertex {
                         bail!("shader {vs_handle} is not a vertex shader");
                     }
+
                     let layout = self
                         .resources
                         .input_layouts
@@ -4395,10 +4483,10 @@ impl AerogpuD3d11Executor {
 
                         let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
                         let pulling = VertexPullingLayout::new(&binding, sig).map_err(|e| {
-                        anyhow!(
-                            "failed to build vertex pulling layout for input layout {layout_handle}: {e}"
-                        )
-                    })?;
+                            anyhow!(
+                                "failed to build vertex pulling layout for input layout {layout_handle}: {e}"
+                            )
+                        })?;
 
                         let bgl_entries = pulling.bind_group_layout_entries();
                         let mut bgl_entries_with_index_pulling = bgl_entries.clone();
@@ -4458,7 +4546,7 @@ impl AerogpuD3d11Executor {
                         .expect("inserted above");
                     let pulling = &cached.pulling;
 
-                    // Build per-slot uniform data + bind group.
+                    // Build per-slot uniform data + bind group entries.
                     let mut slots: Vec<VertexPullingSlot> =
                         Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
                     let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
@@ -4482,9 +4570,9 @@ impl AerogpuD3d11Executor {
                             .unwrap_or(0);
                         if vb.stride_bytes < required_stride {
                             bail!(
-                            "vertex buffer slot {d3d_slot} stride {} is smaller than required stride {required_stride}",
-                            vb.stride_bytes
-                        );
+                                "vertex buffer slot {d3d_slot} stride {} is smaller than required stride {required_stride}",
+                                vb.stride_bytes
+                            );
                         }
 
                         let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
@@ -4512,15 +4600,16 @@ impl AerogpuD3d11Executor {
                     }
 
                     let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
-                    let (vp_uniform_buffer, vp_uniform_size) = create_uniform_buffer(
+                    let (vp_uniform, vp_uniform_size) = create_uniform_buffer(
                         "aerogpu_cmd geometry prepass vertex pulling uniform",
                         &uniform_bytes,
                     );
+                    let vp_uniform = vp_uniform_buffer.insert(vp_uniform);
 
                     vp_bg_entries.push(wgpu::BindGroupEntry {
                         binding: VERTEX_PULLING_UNIFORM_BINDING,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &vp_uniform_buffer,
+                            buffer: vp_uniform,
                             offset: 0,
                             size: wgpu::BufferSize::new(vp_uniform_size),
                         }),
@@ -4531,10 +4620,7 @@ impl AerogpuD3d11Executor {
                     } else {
                         &cached.bgl_entries
                     };
-
-                    // Keep index pulling resources alive until after bind group creation.
-                    let mut index_pulling_params = None;
-                    let mut index_pulling_buffer: Option<&wgpu::Buffer> = None;
+                    prepass_group3_extra_bgl_entries = bgl_entries.clone();
 
                     if opcode == OPCODE_DRAW_INDEXED {
                         let ib = self.state.index_buffer.expect("checked above");
@@ -4543,7 +4629,6 @@ impl AerogpuD3d11Executor {
                             .buffers
                             .get(&ib.buffer)
                             .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
-                        index_pulling_buffer = Some(&ib_buf.buffer);
 
                         let index_format = match ib.format {
                             wgpu::IndexFormat::Uint16 => super::index_pulling::INDEX_FORMAT_U16,
@@ -4555,48 +4640,32 @@ impl AerogpuD3d11Executor {
                             index_format,
                             _pad0: 0,
                         };
-
                         let params_bytes = params.to_le_bytes();
                         let (params_buffer, params_buffer_size) = create_uniform_buffer(
                             "aerogpu_cmd geometry prepass index pulling params",
                             &params_bytes,
                         );
-                        index_pulling_params = Some((params_buffer, params_buffer_size));
-                    }
+                        let params_buffer = vp_index_params_buffer.insert(params_buffer);
 
-                    if let (Some((params_buffer, params_buffer_size)), Some(ib_buffer)) =
-                        (index_pulling_params.as_ref(), index_pulling_buffer)
-                    {
                         vp_bg_entries.push(wgpu::BindGroupEntry {
                             binding: INDEX_PULLING_PARAMS_BINDING,
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                                 buffer: params_buffer,
                                 offset: 0,
-                                size: wgpu::BufferSize::new(*params_buffer_size),
+                                size: wgpu::BufferSize::new(params_buffer_size),
                             }),
                         });
                         vp_bg_entries.push(wgpu::BindGroupEntry {
                             binding: INDEX_PULLING_BUFFER_BINDING,
-                            resource: ib_buffer.as_entire_binding(),
+                            resource: ib_buf.buffer.as_entire_binding(),
                         });
+
+                        prepass_cs_wgsl = Some(cached.wgsl_with_index_pulling.clone());
+                    } else {
+                        prepass_cs_wgsl = Some(cached.wgsl_no_index_pulling.clone());
                     }
 
-                    let vp_bgl = self
-                        .bind_group_layout_cache
-                        .get_or_create(&self.device, bgl_entries);
-                    let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("aerogpu_cmd vertex pulling bind group"),
-                        layout: vp_bgl.layout.as_ref(),
-                        entries: &vp_bg_entries,
-                    });
-
-                    vertex_pulling_cs_wgsl = Some(if opcode == OPCODE_DRAW_INDEXED {
-                        cached.wgsl_with_index_pulling.clone()
-                    } else {
-                        cached.wgsl_no_index_pulling.clone()
-                    });
-                    vertex_pulling_bgl = Some(vp_bgl);
-                    vertex_pulling_bg = Some(vp_bg);
+                    prepass_group3_extra_bg_entries = vp_bg_entries;
                 } else if opcode == OPCODE_DRAW_INDEXED {
                     // Even without an input layout, indexed draws still need index pulling when executing
                     // the IA/VS stages in compute. Bind the real index buffer + params so future VS-as-
@@ -4626,8 +4695,9 @@ impl AerogpuD3d11Executor {
                         "aerogpu_cmd geometry prepass index pulling params",
                         &params_bytes,
                     );
+                    let params_buffer = index_pulling_params_buffer.insert(params_buffer);
 
-                    let ip_bgl_entries = [
+                    let ip_bgl_entries = vec![
                         wgpu::BindGroupLayoutEntry {
                             binding: INDEX_PULLING_PARAMS_BINDING,
                             visibility: wgpu::ShaderStages::COMPUTE,
@@ -4649,27 +4719,6 @@ impl AerogpuD3d11Executor {
                             count: None,
                         },
                     ];
-                    let ip_bgl = self
-                        .bind_group_layout_cache
-                        .get_or_create(&self.device, &ip_bgl_entries);
-                    let ip_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("aerogpu_cmd index pulling bind group"),
-                        layout: ip_bgl.layout.as_ref(),
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: INDEX_PULLING_PARAMS_BINDING,
-                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                    buffer: &params_buffer,
-                                    offset: 0,
-                                    size: wgpu::BufferSize::new(params_buffer_size),
-                                }),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: INDEX_PULLING_BUFFER_BINDING,
-                                resource: ib_buf.buffer.as_entire_binding(),
-                            },
-                        ],
-                    });
 
                     // Cache the simple (index pulling only) prepass WGSL so we don't re-format it every draw.
                     static INDEX_PULLING_PREPASS_WGSL: std::sync::OnceLock<Arc<str>> =
@@ -4680,21 +4729,48 @@ impl AerogpuD3d11Executor {
                             INDEX_PULLING_PARAMS_BINDING,
                             INDEX_PULLING_BUFFER_BINDING,
                         );
-                        Arc::from(format!(
-                            "{ip_wgsl}
-{GEOMETRY_PREPASS_CS_WGSL}"
-                        ))
+                        Arc::from(format!("{ip_wgsl}\n{GEOMETRY_PREPASS_CS_WGSL}"))
                     });
-                    vertex_pulling_cs_wgsl = Some(cached_wgsl.clone());
-                    vertex_pulling_bgl = Some(ip_bgl);
-                    vertex_pulling_bg = Some(ip_bg);
+
+                    prepass_cs_wgsl = Some(cached_wgsl.clone());
+                    prepass_group3_extra_bgl_entries = ip_bgl_entries;
+                    prepass_group3_extra_bg_entries = vec![
+                        wgpu::BindGroupEntry {
+                            binding: INDEX_PULLING_PARAMS_BINDING,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: params_buffer,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(params_buffer_size),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: INDEX_PULLING_BUFFER_BINDING,
+                            resource: ib_buf.buffer.as_entire_binding(),
+                        },
+                    ];
                 }
             }
 
-            // Build compute prepass pipeline + bind group.
-            let compute_bgl_entries = [
+            // Build bind-group layout for the compute prepass. All bindings live in the reserved
+            // internal/emulation group (`@group(3)`), with:
+            // - GS/HS/DS stage_ex resources in the low D3D binding ranges (`b#`/`t#`/`s#`/`u#`)
+            // - internal expansion resources in the reserved internal range (`@binding >= 256`)
+            let mut prepass_bgl_entries: Vec<wgpu::BindGroupLayoutEntry> =
+                Vec::with_capacity(1 + prepass_group3_extra_bgl_entries.len() + 6);
+            prepass_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: GEOMETRY_PREPASS_GS_CB0_BINDING,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            });
+            prepass_bgl_entries.extend(prepass_group3_extra_bgl_entries);
+            prepass_bgl_entries.extend_from_slice(&[
                 wgpu::BindGroupLayoutEntry {
-                    binding: 0,
+                    binding: GEOMETRY_PREPASS_OUT_VERTICES_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -4710,7 +4786,7 @@ impl AerogpuD3d11Executor {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: GEOMETRY_PREPASS_OUT_INDICES_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -4720,7 +4796,7 @@ impl AerogpuD3d11Executor {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: GEOMETRY_PREPASS_OUT_INDIRECT_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -4732,7 +4808,7 @@ impl AerogpuD3d11Executor {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
+                    binding: GEOMETRY_PREPASS_OUT_COUNTER_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -4744,7 +4820,7 @@ impl AerogpuD3d11Executor {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 4,
+                    binding: GEOMETRY_PREPASS_PARAMS_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -4754,7 +4830,7 @@ impl AerogpuD3d11Executor {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 5,
+                    binding: GEOMETRY_PREPASS_DEPTH_PARAMS_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -4763,117 +4839,159 @@ impl AerogpuD3d11Executor {
                     },
                     count: None,
                 },
-            ];
+            ]);
+            prepass_bgl_entries.sort_by_key(|e| e.binding);
 
-            let compute_bgl = self
+            let prepass_bgl = self
                 .bind_group_layout_cache
-                .get_or_create(&self.device, &compute_bgl_entries);
+                .get_or_create(&self.device, &prepass_bgl_entries);
+
+            let required_cb0_size = wgpu::BufferSize::new(16).expect("non-zero buffer size");
+            let uniform_offset_align =
+                self.device.limits().min_uniform_buffer_offset_alignment as u64;
+            let gs_cb0_binding = {
+                let stage = ShaderStage::Geometry;
+                let stage_bindings = self.bindings.stage(stage);
+                let required_size_u64 = required_cb0_size.get();
+
+                let mut buffer: &wgpu::Buffer = &self.dummy_uniform;
+                let mut offset: u64 = 0;
+
+                if let Some(cb) = stage_bindings.constant_buffer(0) {
+                    let (resolved, total_size) = if cb.buffer == legacy_constants_buffer_id(stage) {
+                        (
+                            self.legacy_constants
+                                .get(&stage)
+                                .expect("legacy constants buffer exists for every stage"),
+                            LEGACY_CONSTANTS_SIZE_BYTES,
+                        )
+                    } else {
+                        match self.resources.buffers.get(&cb.buffer) {
+                            Some(buf) => (&buf.buffer, buf.size),
+                            None => (&self.dummy_uniform, 0),
+                        }
+                    };
+
+                    if total_size >= required_size_u64 && cb.offset < total_size {
+                        let remaining = total_size - cb.offset;
+                        let size = cb.size.unwrap_or(remaining).min(remaining);
+                        if size >= required_size_u64 {
+                            if cb.offset != 0
+                                && uniform_offset_align != 0
+                                && cb.offset % uniform_offset_align != 0
+                            {
+                                if let Some(scratch) = self.cbuffer_scratch.get(&(stage, 0)) {
+                                    buffer = &scratch.buffer;
+                                    offset = 0;
+                                }
+                            } else {
+                                buffer = resolved;
+                                offset = cb.offset;
+                            }
+                        }
+                    }
+                }
+
+                wgpu::BufferBinding {
+                    buffer,
+                    offset,
+                    size: Some(required_cb0_size),
+                }
+            };
+
+            let mut prepass_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
+                Vec::with_capacity(1 + prepass_group3_extra_bg_entries.len() + 6);
+            prepass_bg_entries.push(wgpu::BindGroupEntry {
+                binding: GEOMETRY_PREPASS_GS_CB0_BINDING,
+                resource: wgpu::BindingResource::Buffer(gs_cb0_binding),
+            });
+            prepass_bg_entries.extend(prepass_group3_extra_bg_entries);
+            prepass_bg_entries.extend_from_slice(&[
+                wgpu::BindGroupEntry {
+                    binding: GEOMETRY_PREPASS_OUT_VERTICES_BINDING,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: expanded_vertex_alloc.buffer.as_ref(),
+                        offset: expanded_vertex_alloc.offset,
+                        size: wgpu::BufferSize::new(expanded_vertex_size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GEOMETRY_PREPASS_OUT_INDICES_BINDING,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: expanded_index_alloc.buffer.as_ref(),
+                        offset: expanded_index_alloc.offset,
+                        size: wgpu::BufferSize::new(expanded_index_size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GEOMETRY_PREPASS_OUT_INDIRECT_BINDING,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: indirect_args_alloc.buffer.as_ref(),
+                        offset: indirect_args_alloc.offset,
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GEOMETRY_PREPASS_OUT_COUNTER_BINDING,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: counter_alloc.buffer.as_ref(),
+                        offset: counter_alloc.offset,
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GEOMETRY_PREPASS_PARAMS_BINDING,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &params_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PARAMS_SIZE_BYTES),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GEOMETRY_PREPASS_DEPTH_PARAMS_BINDING,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: depth_params_buffer,
+                        offset: 0,
+                        size: Some(depth_params_size),
+                    }),
+                },
+            ]);
+            prepass_bg_entries.sort_by_key(|e| e.binding);
+
+            let prepass_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aerogpu_cmd geometry prepass bind group"),
+                layout: prepass_bgl.layout.as_ref(),
+                entries: &prepass_bg_entries,
+            });
+
             let empty_bgl = self
                 .bind_group_layout_cache
                 .get_or_create(&self.device, &[]);
-            let (compute_layout_key, compute_pipeline_layout) = if let Some(vp_bgl) =
-                &vertex_pulling_bgl
-            {
-                // Vertex pulling WGSL is written to `@group(VERTEX_PULLING_GROUP)`. This compute prepass
-                // uses `@group(0)` for its output buffers, so we must insert empty bind-group layouts for
-                // any intermediate groups so the pipeline layout has a compatible layout at
-                // `VERTEX_PULLING_GROUP`.
-                let mut hashes: Vec<u64> = Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
-                let mut layouts: Vec<&wgpu::BindGroupLayout> =
-                    Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
-                hashes.push(compute_bgl.hash);
-                layouts.push(compute_bgl.layout.as_ref());
-                for _ in 1..VERTEX_PULLING_GROUP {
-                    hashes.push(empty_bgl.hash);
-                    layouts.push(empty_bgl.layout.as_ref());
-                }
-                hashes.push(vp_bgl.hash);
-                layouts.push(vp_bgl.layout.as_ref());
-
-                let key = PipelineLayoutKey {
-                    bind_group_layout_hashes: hashes,
-                };
-                let layout = self.pipeline_layout_cache.get_or_create(
-                    &self.device,
-                    &key,
-                    &layouts,
-                    Some("aerogpu_cmd geometry prepass pipeline layout (vertex pulling)"),
-                );
-                (key, layout)
-            } else {
-                let key = PipelineLayoutKey {
-                    bind_group_layout_hashes: vec![compute_bgl.hash],
-                };
-                let layouts = [compute_bgl.layout.as_ref()];
-                let layout = self.pipeline_layout_cache.get_or_create(
-                    &self.device,
-                    &key,
-                    &layouts,
-                    Some("aerogpu_cmd geometry prepass pipeline layout"),
-                );
-                (key, layout)
-            };
-
-            let compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu_cmd geometry prepass bind group"),
-                layout: compute_bgl.layout.as_ref(),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: expanded_vertex_alloc.buffer.as_ref(),
-                            offset: expanded_vertex_alloc.offset,
-                            size: wgpu::BufferSize::new(expanded_vertex_size),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: expanded_index_alloc.buffer.as_ref(),
-                            offset: expanded_index_alloc.offset,
-                            size: wgpu::BufferSize::new(expanded_index_size),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: indirect_args_alloc.buffer.as_ref(),
-                            offset: indirect_args_alloc.offset,
-                            size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: counter_alloc.buffer.as_ref(),
-                            offset: counter_alloc.offset,
-                            size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &params_buffer,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PARAMS_SIZE_BYTES),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: depth_params_buffer,
-                            offset: 0,
-                            size: Some(depth_params_size),
-                        }),
-                    },
+            let compute_layout_key = PipelineLayoutKey {
+                bind_group_layout_hashes: vec![
+                    empty_bgl.hash,
+                    empty_bgl.hash,
+                    empty_bgl.hash,
+                    prepass_bgl.hash,
                 ],
-            });
+            };
+            let compute_pipeline_layout = self.pipeline_layout_cache.get_or_create(
+                &self.device,
+                &compute_layout_key,
+                &[
+                    empty_bgl.layout.as_ref(),
+                    empty_bgl.layout.as_ref(),
+                    empty_bgl.layout.as_ref(),
+                    prepass_bgl.layout.as_ref(),
+                ],
+                Some("aerogpu_cmd geometry prepass pipeline layout"),
+            );
 
             let compute_pipeline_ptr = {
                 let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
                     &self.device,
                     aero_gpu::pipeline_key::ShaderStage::Compute,
-                    vertex_pulling_cs_wgsl
+                    prepass_cs_wgsl
                         .as_deref()
                         .unwrap_or(GEOMETRY_PREPASS_CS_WGSL),
                     Some("aerogpu_cmd geometry prepass CS"),
@@ -4900,12 +5018,10 @@ impl AerogpuD3d11Executor {
             let compute_pipeline = unsafe { &*compute_pipeline_ptr };
 
             self.encoder_has_commands = true;
-            let empty_bind_group = vertex_pulling_bg.as_ref().map(|_| {
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("aerogpu_cmd empty bind group"),
-                    layout: empty_bgl.layout.as_ref(),
-                    entries: &[],
-                })
+            let empty_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aerogpu_cmd empty bind group"),
+                layout: empty_bgl.layout.as_ref(),
+                entries: &[],
             });
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -4913,20 +5029,10 @@ impl AerogpuD3d11Executor {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(compute_pipeline);
-                pass.set_bind_group(0, &compute_bind_group, &[]);
-                if let Some(bg) = vertex_pulling_bg.as_ref() {
-                    // The vertex pulling bind group lives in `@group(VERTEX_PULLING_GROUP)` (currently
-                    // group 3), but WebGPU pipeline layouts are dense (group 0..N). When we include
-                    // `VERTEX_PULLING_GROUP` in the pipeline layout we must also include placeholder
-                    // (empty) layouts for any intermediate groups, and wgpu requires compatible bind
-                    // groups to be set for them as well.
-                    if let Some(empty_bg) = empty_bind_group.as_ref() {
-                        for group in 1..VERTEX_PULLING_GROUP {
-                            pass.set_bind_group(group, empty_bg, &[]);
-                        }
-                    }
-                    pass.set_bind_group(VERTEX_PULLING_GROUP, bg, &[]);
+                for group in 0..VERTEX_PULLING_GROUP {
+                    pass.set_bind_group(group, &empty_bind_group, &[]);
                 }
+                pass.set_bind_group(VERTEX_PULLING_GROUP, &prepass_bind_group, &[]);
                 pass.dispatch_workgroups(primitive_count, gs_instance_count, 1);
             }
         }
@@ -4973,7 +5079,6 @@ impl AerogpuD3d11Executor {
                 4,
             );
         }
-
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
         // executor caches).
         let mut render_bind_groups =
@@ -5423,7 +5528,12 @@ impl AerogpuD3d11Executor {
             )
         };
         let vs = vs_handle
-            .and_then(|vs_handle| self.resources.shaders.get(&vs_handle).map(|s| (vs_handle, s)))
+            .and_then(|vs_handle| {
+                self.resources
+                    .shaders
+                    .get(&vs_handle)
+                    .map(|s| (vs_handle, s))
+            })
             .map(|(vs_handle, shader)| (vs_handle, shader.clone()));
         if let Some((vs_handle, vs)) = vs.as_ref() {
             if vs.stage != ShaderStage::Vertex {
@@ -7011,16 +7121,14 @@ impl AerogpuD3d11Executor {
                             let group_u32 = group_index as u32;
                             if passthrough_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
                                 let (buf_handle, offset_bytes, binding) = if emulation_active {
-                                    let Some(buf_handle) = self.state.emulated_expanded_vertex_buffer
+                                    let Some(buf_handle) =
+                                        self.state.emulated_expanded_vertex_buffer
                                     else {
                                         bail!("emulated draw requires an expanded vertex buffer");
                                     };
-                                    let buf_handle = self.shared_surfaces.resolve_handle(buf_handle);
-                                    (
-                                        buf_handle,
-                                        0u64,
-                                        BINDING_INTERNAL_EXPANDED_VERTICES,
-                                    )
+                                    let buf_handle =
+                                        self.shared_surfaces.resolve_handle(buf_handle);
+                                    (buf_handle, 0u64, BINDING_INTERNAL_EXPANDED_VERTICES)
                                 } else {
                                     let info = gs_emulation_output_vertex_pulling_info(
                                         &self.device,
@@ -7032,15 +7140,25 @@ impl AerogpuD3d11Executor {
                                             "render pass expected GS-emulation-output vertex pulling info, but current state does not provide it"
                                         )
                                     })?;
-                                    let buf_handle = self.shared_surfaces.resolve_handle(info.buffer);
-                                    (buf_handle, info.offset_bytes, BINDING_GS_EMUL_VERTEX_OUTPUTS)
+                                    let buf_handle =
+                                        self.shared_surfaces.resolve_handle(info.buffer);
+                                    (
+                                        buf_handle,
+                                        info.offset_bytes,
+                                        BINDING_GS_EMUL_VERTEX_OUTPUTS,
+                                    )
                                 };
 
-                                if passthrough_bound_storage_buffer != Some((buf_handle, offset_bytes))
+                                if passthrough_bound_storage_buffer
+                                    != Some((buf_handle, offset_bytes))
                                     || current_bind_groups[group_index].is_none()
                                 {
                                     let buf = self.resources.buffers.get(&buf_handle).ok_or_else(
-                                        || anyhow!("unknown passthrough vertex buffer {buf_handle}"),
+                                        || {
+                                            anyhow!(
+                                                "unknown passthrough vertex buffer {buf_handle}"
+                                            )
+                                        },
                                     )?;
                                     let entries = [BindGroupCacheEntry {
                                         binding,
@@ -7059,7 +7177,8 @@ impl AerogpuD3d11Executor {
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
                                     current_bind_groups[group_index] = Some(ptr);
-                                    passthrough_bound_storage_buffer = Some((buf_handle, offset_bytes));
+                                    passthrough_bound_storage_buffer =
+                                        Some((buf_handle, offset_bytes));
                                 }
 
                                 let ptr = current_bind_groups[group_index]
@@ -7293,16 +7412,14 @@ impl AerogpuD3d11Executor {
                             let group_u32 = group_index as u32;
                             if passthrough_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
                                 let (buf_handle, offset_bytes, binding) = if emulation_active {
-                                    let Some(buf_handle) = self.state.emulated_expanded_vertex_buffer
+                                    let Some(buf_handle) =
+                                        self.state.emulated_expanded_vertex_buffer
                                     else {
                                         bail!("emulated draw requires an expanded vertex buffer");
                                     };
-                                    let buf_handle = self.shared_surfaces.resolve_handle(buf_handle);
-                                    (
-                                        buf_handle,
-                                        0u64,
-                                        BINDING_INTERNAL_EXPANDED_VERTICES,
-                                    )
+                                    let buf_handle =
+                                        self.shared_surfaces.resolve_handle(buf_handle);
+                                    (buf_handle, 0u64, BINDING_INTERNAL_EXPANDED_VERTICES)
                                 } else {
                                     let info = gs_emulation_output_vertex_pulling_info(
                                         &self.device,
@@ -7314,15 +7431,25 @@ impl AerogpuD3d11Executor {
                                             "render pass expected GS-emulation-output vertex pulling info, but current state does not provide it"
                                         )
                                     })?;
-                                    let buf_handle = self.shared_surfaces.resolve_handle(info.buffer);
-                                    (buf_handle, info.offset_bytes, BINDING_GS_EMUL_VERTEX_OUTPUTS)
+                                    let buf_handle =
+                                        self.shared_surfaces.resolve_handle(info.buffer);
+                                    (
+                                        buf_handle,
+                                        info.offset_bytes,
+                                        BINDING_GS_EMUL_VERTEX_OUTPUTS,
+                                    )
                                 };
 
-                                if passthrough_bound_storage_buffer != Some((buf_handle, offset_bytes))
+                                if passthrough_bound_storage_buffer
+                                    != Some((buf_handle, offset_bytes))
                                     || current_bind_groups[group_index].is_none()
                                 {
                                     let buf = self.resources.buffers.get(&buf_handle).ok_or_else(
-                                        || anyhow!("unknown passthrough vertex buffer {buf_handle}"),
+                                        || {
+                                            anyhow!(
+                                                "unknown passthrough vertex buffer {buf_handle}"
+                                            )
+                                        },
                                     )?;
                                     let entries = [BindGroupCacheEntry {
                                         binding,
@@ -7341,7 +7468,8 @@ impl AerogpuD3d11Executor {
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
                                     current_bind_groups[group_index] = Some(ptr);
-                                    passthrough_bound_storage_buffer = Some((buf_handle, offset_bytes));
+                                    passthrough_bound_storage_buffer =
+                                        Some((buf_handle, offset_bytes));
                                 }
 
                                 let ptr = current_bind_groups[group_index]
@@ -10404,7 +10532,6 @@ impl AerogpuD3d11Executor {
             crate::ShaderStage::Domain => ShaderStage::Domain,
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
         };
-
         let stage =
             self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
         if parsed_stage != stage {
@@ -10459,15 +10586,20 @@ impl AerogpuD3d11Executor {
 
         let (wgsl, reflection) = match stage {
             ShaderStage::Geometry => {
+                let mut bindings = Vec::new();
                 // Attempt to translate a minimal subset of SM4 geometry shaders into a compute-based
                 // geometry prepass. If translation fails (unsupported opcodes/declarations), fall
                 // back to an empty compute shader so the handle can still be created/bound; draws
                 // with that GS bound will later return a clear "geometry shader not supported"
                 // error.
-                let translation =
-                    match crate::sm4::decode_program(&program).context("decode SM4/5 token stream")
-                    {
-                        Ok(module) => match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
+                let translation = match crate::sm4::decode_program(&program)
+                    .context("decode SM4/5 token stream")
+                {
+                    Ok(module) => {
+                        bindings = crate::shader_translate::reflect_resource_bindings(&module)
+                            .ok()
+                            .unwrap_or_default();
+                        match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                             &module,
                             entry_point,
                         ) {
@@ -10476,23 +10608,33 @@ impl AerogpuD3d11Executor {
                                 gs_prepass_error = Some(e.to_string());
                                 None
                             }
-                        },
-                        Err(e) => {
-                            gs_prepass_error = Some(e.to_string());
-                            None
                         }
-                    };
+                    }
+                    Err(e) => {
+                        gs_prepass_error = Some(e.to_string());
+                        None
+                    }
+                };
                 if let Some(t) = translation {
                     gs_prepass = Some(GsPrepassMetadata {
                         verts_per_primitive: t.info.input_verts_per_primitive,
                         input_reg_count: t.info.input_reg_count,
                         max_output_vertices: t.info.max_output_vertex_count,
                     });
-                    (t.wgsl, ShaderReflection::default())
+                    (
+                        t.wgsl,
+                        ShaderReflection {
+                            bindings,
+                            ..Default::default()
+                        },
+                    )
                 } else {
                     (
                         format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
-                        ShaderReflection::default(),
+                        ShaderReflection {
+                            bindings,
+                            ..Default::default()
+                        },
                     )
                 }
             }
@@ -10501,7 +10643,16 @@ impl AerogpuD3d11Executor {
                 // to translate yet.
                 (
                     format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
-                    ShaderReflection::default(),
+                    {
+                        let module = crate::sm4::decode_program(&program)
+                            .context("decode SM4/5 token stream")?;
+                        let bindings = crate::shader_translate::reflect_resource_bindings(&module)
+                            .map_err(|e| anyhow!("reflect DXBC resource bindings: {e}"))?;
+                        ShaderReflection {
+                            bindings,
+                            ..Default::default()
+                        }
+                    },
                 )
             }
             ShaderStage::Vertex | ShaderStage::Pixel | ShaderStage::Compute => {
@@ -13930,7 +14081,8 @@ fn gs_emulation_output_vertex_pulling_info(
     // Storage-buffer vertex pulling is only available on backends that support storage buffers
     // (mirrors `runtime::aerogpu_resources::device_supports_storage_buffers`).
     let limits = device.limits();
-    if limits.max_storage_buffers_per_shader_stage == 0 || limits.max_compute_workgroups_per_dimension == 0
+    if limits.max_storage_buffers_per_shader_stage == 0
+        || limits.max_compute_workgroups_per_dimension == 0
     {
         bail!(
             "GS emulation output requires storage buffers, but this device/backend does not support them (max_storage_buffers_per_shader_stage={}, max_compute_workgroups_per_dimension={})",
