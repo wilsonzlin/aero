@@ -16952,9 +16952,7 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
   if (res->mip_levels < 2) {
     return trace.ret(kD3DErrInvalidCall);
   }
-  if (res->depth != 1) {
-    return trace.ret(kD3DErrInvalidCall);
-  }
+  const uint32_t layers = std::max(1u, res->depth);
   if (res->width == 0 || res->height == 0) {
     return trace.ret(kD3DErrInvalidCall);
   }
@@ -17012,6 +17010,16 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
     return trace.ret(kD3DErrInvalidCall);
   }
   if (full_layout.total_size_bytes == 0 || full_layout.total_size_bytes > res->size_bytes) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (layers == 0) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if ((full_layout.total_size_bytes % static_cast<uint64_t>(layers)) != 0) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  const uint64_t layer_size_bytes = full_layout.total_size_bytes / static_cast<uint64_t>(layers);
+  if (layer_size_bytes == 0) {
     return trace.ret(kD3DErrInvalidCall);
   }
 
@@ -17195,63 +17203,72 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
     return static_cast<uint8_t>((sum + 2u) / 4u);
   };
 
-  for (uint32_t level = 0; level + 1 < res->mip_levels; ++level) {
-    Texture2dMipLevelLayout src{};
-    Texture2dMipLevelLayout dst{};
-    if (!calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, level, &src) ||
-        !calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, level + 1, &dst)) {
+  for (uint32_t layer = 0; layer < layers; ++layer) {
+    const uint64_t layer_base = static_cast<uint64_t>(layer) * layer_size_bytes;
+    if (layer_base > res->size_bytes) {
       return unlock_and_ret(kD3DErrInvalidCall);
     }
 
-    const uint64_t src_end = src.offset_bytes + static_cast<uint64_t>(src.slice_pitch_bytes);
-    const uint64_t dst_end = dst.offset_bytes + static_cast<uint64_t>(dst.slice_pitch_bytes);
-    if (src_end > res->size_bytes || dst_end > res->size_bytes) {
-      return unlock_and_ret(kD3DErrInvalidCall);
-    }
+    for (uint32_t level = 0; level + 1 < res->mip_levels; ++level) {
+      Texture2dMipLevelLayout src{};
+      Texture2dMipLevelLayout dst{};
+      if (!calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, level, &src) ||
+          !calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, level + 1, &dst)) {
+        return unlock_and_ret(kD3DErrInvalidCall);
+      }
 
-    const uint8_t* src_base = base + static_cast<size_t>(src.offset_bytes);
-    uint8_t* dst_base = base + static_cast<size_t>(dst.offset_bytes);
+      const uint64_t src_off = layer_base + src.offset_bytes;
+      const uint64_t dst_off = layer_base + dst.offset_bytes;
+      const uint64_t src_end = src_off + static_cast<uint64_t>(src.slice_pitch_bytes);
+      const uint64_t dst_end = dst_off + static_cast<uint64_t>(dst.slice_pitch_bytes);
+      if (src_end > res->size_bytes || dst_end > res->size_bytes) {
+        return unlock_and_ret(kD3DErrInvalidCall);
+      }
 
-    const uint32_t src_w = src.width;
-    const uint32_t src_h = src.height;
-    const uint32_t dst_w = dst.width;
-    const uint32_t dst_h = dst.height;
+      const uint8_t* src_base = base + static_cast<size_t>(src_off);
+      uint8_t* dst_base = base + static_cast<size_t>(dst_off);
 
-    if (src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) {
-      return unlock_and_ret(kD3DErrInvalidCall);
-    }
+      const uint32_t src_w = src.width;
+      const uint32_t src_h = src.height;
+      const uint32_t dst_w = dst.width;
+      const uint32_t dst_h = dst.height;
 
-    for (uint32_t y = 0; y < dst_h; ++y) {
-      const uint32_t sy0 = std::min<uint32_t>(2u * y, src_h - 1u);
-      const uint32_t sy1 = std::min<uint32_t>(2u * y + 1u, src_h - 1u);
+      if (src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) {
+        return unlock_and_ret(kD3DErrInvalidCall);
+      }
 
-      const uint8_t* row0 = src_base + static_cast<size_t>(sy0) * src.row_pitch_bytes;
-      const uint8_t* row1 = src_base + static_cast<size_t>(sy1) * src.row_pitch_bytes;
-      uint8_t* out_row = dst_base + static_cast<size_t>(y) * dst.row_pitch_bytes;
+      for (uint32_t y = 0; y < dst_h; ++y) {
+        const uint32_t sy0 = std::min<uint32_t>(2u * y, src_h - 1u);
+        const uint32_t sy1 = std::min<uint32_t>(2u * y + 1u, src_h - 1u);
 
-      for (uint32_t x = 0; x < dst_w; ++x) {
-        const uint32_t sx0 = std::min<uint32_t>(2u * x, src_w - 1u);
-        const uint32_t sx1 = std::min<uint32_t>(2u * x + 1u, src_w - 1u);
+        const uint8_t* row0 = src_base + static_cast<size_t>(sy0) * src.row_pitch_bytes;
+        const uint8_t* row1 = src_base + static_cast<size_t>(sy1) * src.row_pitch_bytes;
+        uint8_t* out_row = dst_base + static_cast<size_t>(y) * dst.row_pitch_bytes;
 
-        const uint8_t* p00 = row0 + static_cast<size_t>(sx0) * bpp;
-        const uint8_t* p10 = row0 + static_cast<size_t>(sx1) * bpp;
-        const uint8_t* p01 = row1 + static_cast<size_t>(sx0) * bpp;
-        const uint8_t* p11 = row1 + static_cast<size_t>(sx1) * bpp;
+        for (uint32_t x = 0; x < dst_w; ++x) {
+          const uint32_t sx0 = std::min<uint32_t>(2u * x, src_w - 1u);
+          const uint32_t sx1 = std::min<uint32_t>(2u * x + 1u, src_w - 1u);
 
-        const Rgba8 c00 = decode(p00);
-        const Rgba8 c10 = decode(p10);
-        const Rgba8 c01 = decode(p01);
-        const Rgba8 c11 = decode(p11);
+          const uint8_t* p00 = row0 + static_cast<size_t>(sx0) * bpp;
+          const uint8_t* p10 = row0 + static_cast<size_t>(sx1) * bpp;
+          const uint8_t* p01 = row1 + static_cast<size_t>(sx0) * bpp;
+          const uint8_t* p11 = row1 + static_cast<size_t>(sx1) * bpp;
 
-        Rgba8 out{};
-        out.r = avg4(c00.r, c10.r, c01.r, c11.r);
-        out.g = avg4(c00.g, c10.g, c01.g, c11.g);
-        out.b = avg4(c00.b, c10.b, c01.b, c11.b);
-        const bool opaque_alpha = (gen_format == MipGenFormat::kX8R8G8B8) ||
-                                  (gen_format == MipGenFormat::kX1R5G5B5);
-        out.a = opaque_alpha ? 0xFFu : avg4(c00.a, c10.a, c01.a, c11.a);
+          const Rgba8 c00 = decode(p00);
+          const Rgba8 c10 = decode(p10);
+          const Rgba8 c01 = decode(p01);
+          const Rgba8 c11 = decode(p11);
 
-        encode(out_row + static_cast<size_t>(x) * bpp, out);
+          Rgba8 out{};
+          out.r = avg4(c00.r, c10.r, c01.r, c11.r);
+          out.g = avg4(c00.g, c10.g, c01.g, c11.g);
+          out.b = avg4(c00.b, c10.b, c01.b, c11.b);
+          const bool opaque_alpha = (gen_format == MipGenFormat::kX8R8G8B8) ||
+                                    (gen_format == MipGenFormat::kX1R5G5B5);
+          out.a = opaque_alpha ? 0xFFu : avg4(c00.a, c10.a, c01.a, c11.a);
+
+          encode(out_row + static_cast<size_t>(x) * bpp, out);
+        }
       }
     }
   }
@@ -17259,97 +17276,56 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
   // Host visibility:
   // - Guest-backed: signal the dirty byte range so the host can re-upload from guest memory.
   // - Host-allocated: upload the generated bytes (mips beyond level 0) directly via UPLOAD_RESOURCE.
-  if (res->handle != 0 && res->backing_alloc_id != 0) {
-    // GenerateMipSubLevels only writes mips beyond level 0, so only mark that tail
-    // as dirty to avoid unnecessary host uploads of unchanged mip0 data.
+  if (res->handle != 0) {
+    // GenerateMipSubLevels only writes mips beyond level 0.
     Texture2dMipLevelLayout mip1{};
     if (!calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, /*level=*/1, &mip1)) {
       return unlock_and_ret(kD3DErrInvalidCall);
     }
-    if (mip1.offset_bytes > res->size_bytes) {
-      return unlock_and_ret(kD3DErrInvalidCall);
-    }
-    const uint64_t dirty_offset = mip1.offset_bytes;
-    const uint64_t dirty_size = static_cast<uint64_t>(res->size_bytes) - dirty_offset;
-
-    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
-      return unlock_and_ret(E_OUTOFMEMORY);
-    }
-    const HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/false);
-    if (FAILED(track_hr)) {
-      return unlock_and_ret(track_hr);
-    }
-    auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    if (!cmd) {
-      return unlock_and_ret(E_OUTOFMEMORY);
-    }
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
-    cmd->offset_bytes = dirty_offset;
-    cmd->size_bytes = dirty_size;
-  } else if (res->handle != 0 && res->backing_alloc_id == 0) {
-    // Upload mips beyond level 0.
-    Texture2dMipLevelLayout mip1{};
-    if (!calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, /*level=*/1, &mip1)) {
-      return unlock_and_ret(kD3DErrInvalidCall);
-    }
-    if (mip1.offset_bytes > res->size_bytes) {
+    if (mip1.offset_bytes > layer_size_bytes || mip1.offset_bytes > res->size_bytes) {
       return unlock_and_ret(kD3DErrInvalidCall);
     }
 
-    const uint64_t upload_offset = mip1.offset_bytes;
-    const uint64_t upload_size = static_cast<uint64_t>(res->size_bytes) - upload_offset;
-
-    const uint8_t* src = base + static_cast<size_t>(upload_offset);
-    uint64_t remaining = upload_size;
-    uint64_t cur_offset = upload_offset;
-
-    while (remaining) {
-      // Ensure we can fit at least a minimal upload packet (header + 1 byte).
-      const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
-      if (!ensure_cmd_space(dev, min_needed)) {
-        return unlock_and_ret(E_OUTOFMEMORY);
+    for (uint32_t layer = 0; layer < layers; ++layer) {
+      const uint64_t layer_base = static_cast<uint64_t>(layer) * layer_size_bytes;
+      const uint64_t start = layer_base + mip1.offset_bytes;
+      const uint64_t end = layer_base + layer_size_bytes;
+      if (start > end || end > res->size_bytes) {
+        return unlock_and_ret(kD3DErrInvalidCall);
       }
-
-      // Uploads write into the resource. Track its backing allocation so the
-      // host can resolve the destination memory via the per-submit alloc table.
-      const HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/true);
-      if (FAILED(track_hr)) {
-        return unlock_and_ret(track_hr);
-      }
-
-      // Allocation tracking may have split/flushed the submission; ensure we
-      // still have room for at least a minimal upload packet before sizing the
-      // next chunk.
-      if (!ensure_cmd_space(dev, min_needed)) {
-        return unlock_and_ret(E_OUTOFMEMORY);
-      }
-
-      const size_t avail = dev->cmd.bytes_remaining();
-      size_t chunk = 0;
-      if (avail > sizeof(aerogpu_cmd_upload_resource)) {
-        chunk = std::min<size_t>(static_cast<size_t>(remaining), avail - sizeof(aerogpu_cmd_upload_resource));
-      }
-      while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
-        chunk--;
-      }
-      if (!chunk) {
-        submit(dev);
+      const uint64_t size = end - start;
+      if (size == 0) {
         continue;
       }
 
-      auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(dev, AEROGPU_CMD_UPLOAD_RESOURCE, src, chunk);
-      if (!cmd) {
-        return unlock_and_ret(E_OUTOFMEMORY);
+      if (res->backing_alloc_id != 0) {
+        if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
+          return unlock_and_ret(E_OUTOFMEMORY);
+        }
+        const HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/false);
+        if (FAILED(track_hr)) {
+          return unlock_and_ret(track_hr);
+        }
+        auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        if (!cmd) {
+          return unlock_and_ret(E_OUTOFMEMORY);
+        }
+        cmd->resource_handle = res->handle;
+        cmd->reserved0 = 0;
+        cmd->offset_bytes = start;
+        cmd->size_bytes = size;
+      } else {
+        if (start > 0xFFFFFFFFull || size > 0xFFFFFFFFull) {
+          return unlock_and_ret(E_FAIL);
+        }
+        const HRESULT upload_hr = emit_upload_resource_range_locked(dev,
+                                                                    res,
+                                                                    static_cast<uint32_t>(start),
+                                                                    static_cast<uint32_t>(size));
+        if (FAILED(upload_hr)) {
+          return unlock_and_ret(upload_hr);
+        }
       }
-      cmd->resource_handle = res->handle;
-      cmd->reserved0 = 0;
-      cmd->offset_bytes = cur_offset;
-      cmd->size_bytes = chunk;
-
-      src += chunk;
-      cur_offset += chunk;
-      remaining -= chunk;
     }
   }
 
