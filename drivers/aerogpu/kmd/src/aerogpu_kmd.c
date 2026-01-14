@@ -763,12 +763,20 @@ static VOID AeroGpuMetaHandleFreeAll(_Inout_ AEROGPU_ADAPTER* Adapter)
     }
 }
 
+typedef enum _AEROGPU_INTERNAL_SUBMISSION_KIND {
+    AEROGPU_INTERNAL_SUBMISSION_KIND_UNKNOWN = 0,
+    AEROGPU_INTERNAL_SUBMISSION_KIND_RELEASE_SHARED_SURFACE = 1,
+    AEROGPU_INTERNAL_SUBMISSION_KIND_SELFTEST = 2,
+} AEROGPU_INTERNAL_SUBMISSION_KIND;
 typedef struct _AEROGPU_PENDING_INTERNAL_SUBMISSION {
     LIST_ENTRY ListEntry;
     ULONG RingTailAfter;
+    ULONG Kind; /* enum AEROGPU_INTERNAL_SUBMISSION_KIND */
     ULONGLONG ShareToken;
     PVOID CmdVa;
     SIZE_T CmdSizeBytes;
+    PVOID DescVa;       /* legacy submission descriptor (optional) */
+    SIZE_T DescSizeBytes;
 } AEROGPU_PENDING_INTERNAL_SUBMISSION;
 
 static __forceinline AEROGPU_PENDING_INTERNAL_SUBMISSION*
@@ -1800,10 +1808,29 @@ static VOID AeroGpuSetScanoutEnable(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG
     }
 }
 
+static __forceinline VOID AeroGpuLegacyRingUpdateHeadSeqLocked(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG HeadIndex)
+{
+    if (!Adapter || Adapter->RingEntryCount == 0) {
+        return;
+    }
+
+    const ULONG oldIndex = Adapter->LegacyRingHeadIndex;
+    if (HeadIndex == oldIndex) {
+        return;
+    }
+
+    const ULONG delta = (HeadIndex > oldIndex) ? (HeadIndex - oldIndex) : (HeadIndex + Adapter->RingEntryCount - oldIndex);
+    Adapter->LegacyRingHeadSeq += delta;
+    Adapter->LegacyRingHeadIndex = HeadIndex;
+}
+
 static NTSTATUS AeroGpuLegacyRingInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
     Adapter->RingEntryCount = AEROGPU_RING_ENTRY_COUNT_DEFAULT;
     Adapter->RingTail = 0;
+    Adapter->LegacyRingHeadIndex = 0;
+    Adapter->LegacyRingHeadSeq = 0;
+    Adapter->LegacyRingTailSeq = 0;
 
     const SIZE_T ringBytes = Adapter->RingEntryCount * sizeof(aerogpu_legacy_ring_entry);
     Adapter->RingVa = AeroGpuAllocContiguous(ringBytes, &Adapter->RingPa);
@@ -1826,6 +1853,9 @@ static NTSTATUS AeroGpuV1RingInit(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
     Adapter->RingEntryCount = AEROGPU_RING_ENTRY_COUNT_DEFAULT;
     Adapter->RingTail = 0;
+    Adapter->LegacyRingHeadIndex = 0;
+    Adapter->LegacyRingHeadSeq = 0;
+    Adapter->LegacyRingTailSeq = 0;
 
     SIZE_T ringBytes = sizeof(struct aerogpu_ring_header) +
                        (SIZE_T)Adapter->RingEntryCount * sizeof(struct aerogpu_submit_desc);
@@ -1892,6 +1922,9 @@ static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
     Adapter->RingSizeBytes = 0;
     Adapter->RingEntryCount = 0;
     Adapter->RingTail = 0;
+    Adapter->LegacyRingHeadIndex = 0;
+    Adapter->LegacyRingHeadSeq = 0;
+    Adapter->LegacyRingTailSeq = 0;
     Adapter->RingHeader = NULL;
 
     AeroGpuFreeContiguousNonCached(Adapter->FencePageVa, PAGE_SIZE);
@@ -1930,6 +1963,7 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     KeAcquireSpinLock(&Adapter->RingLock, &oldIrql);
 
     ULONG head = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+    AeroGpuLegacyRingUpdateHeadSeqLocked(Adapter, head);
     ULONG nextTail = (Adapter->RingTail + 1) % Adapter->RingEntryCount;
     if (nextTail == head) {
         KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
@@ -1952,6 +1986,7 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
      */
     Adapter->LastSubmittedFence = (ULONGLONG)Fence;
     Adapter->RingTail = nextTail;
+    Adapter->LegacyRingTailSeq += 1;
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_RING_TAIL, Adapter->RingTail);
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_RING_DOORBELL, 1);
 
@@ -2038,6 +2073,17 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     return STATUS_SUCCESS;
 }
 
+static __forceinline VOID AeroGpuFreeInternalSubmission(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                                        _In_opt_ AEROGPU_PENDING_INTERNAL_SUBMISSION* Sub)
+{
+    if (!Adapter || !Sub) {
+        return;
+    }
+    AeroGpuFreeContiguousNonCached(Sub->CmdVa, Sub->CmdSizeBytes);
+    AeroGpuFreeContiguousNonCached(Sub->DescVa, Sub->DescSizeBytes);
+    AeroGpuFreePendingInternalSubmission(Adapter, Sub);
+}
+
 static VOID AeroGpuFreeAllInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
     for (;;) {
@@ -2055,23 +2101,42 @@ static VOID AeroGpuFreeAllInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
             return;
         }
 
-        AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-        AeroGpuFreePendingInternalSubmission(Adapter, sub);
+        AeroGpuFreeInternalSubmission(Adapter, sub);
     }
 }
 
 static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
-    if (!Adapter || Adapter->AbiKind != AEROGPU_ABI_KIND_V1 || !Adapter->RingHeader) {
+    if (!Adapter) {
         return;
     }
 
     for (;;) {
-        const ULONG head = Adapter->RingHeader->head;
         AEROGPU_PENDING_INTERNAL_SUBMISSION* sub = NULL;
 
         KIRQL oldIrql;
         KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
+
+        ULONG head = 0;
+        if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            if (!Adapter->RingHeader) {
+                KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+                return;
+            }
+            head = Adapter->RingHeader->head;
+        } else {
+            if (!Adapter->Bar0 || Adapter->RingEntryCount == 0) {
+                KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+                return;
+            }
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&Adapter->RingLock, &ringIrql);
+            const ULONG headIndex = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+            AeroGpuLegacyRingUpdateHeadSeqLocked(Adapter, headIndex);
+            head = Adapter->LegacyRingHeadSeq;
+            KeReleaseSpinLock(&Adapter->RingLock, ringIrql);
+        }
+
         if (!IsListEmpty(&Adapter->PendingInternalSubmissions)) {
             PLIST_ENTRY entry = Adapter->PendingInternalSubmissions.Flink;
             AEROGPU_PENDING_INTERNAL_SUBMISSION* candidate =
@@ -2087,8 +2152,7 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
             return;
         }
 
-        AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-        AeroGpuFreePendingInternalSubmission(Adapter, sub);
+        AeroGpuFreeInternalSubmission(Adapter, sub);
     }
 }
 
@@ -2605,6 +2669,7 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
 
         if (NT_SUCCESS(st)) {
             internal->RingTailAfter = ringTailAfter;
+            internal->Kind = AEROGPU_INTERNAL_SUBMISSION_KIND_RELEASE_SHARED_SURFACE;
             internal->ShareToken = ShareToken;
             internal->CmdVa = cmdVa;
             internal->CmdSizeBytes = cmdSizeBytes;
@@ -3743,6 +3808,22 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                             } else {
                                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
                             }
+                        } else {
+                            if (adapter->RingVa && adapter->RingEntryCount != 0) {
+                                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
+                                AeroGpuWriteRegU32(adapter,
+                                                   AEROGPU_LEGACY_REG_RING_BASE_HI,
+                                                   (ULONG)(adapter->RingPa.QuadPart >> 32));
+                                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
+                            }
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
+                            adapter->RingTail = 0;
+                            adapter->LegacyRingHeadIndex = 0;
+                            adapter->LegacyRingHeadSeq = 0;
+                            adapter->LegacyRingTailSeq = 0;
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+                        }
                         }
                     } else {
                         BOOLEAN ringOk = FALSE;
@@ -3767,6 +3848,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                         AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
                         AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
                         adapter->RingTail = 0;
+                        adapter->LegacyRingHeadIndex = 0;
+                        adapter->LegacyRingHeadSeq = 0;
+                        adapter->LegacyRingTailSeq = 0;
                         AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
                     }
 
@@ -3814,8 +3898,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                 PLIST_ENTRY entry = RemoveHeadList(&internalToFree);
                 AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
                     CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
-                AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-                AeroGpuFreePendingInternalSubmission(adapter, sub);
+                AeroGpuFreeInternalSubmission(adapter, sub);
             }
         }
 
@@ -4053,6 +4136,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
             adapter->RingTail = 0;
+            adapter->LegacyRingHeadIndex = 0;
+            adapter->LegacyRingHeadSeq = 0;
+            adapter->LegacyRingTailSeq = 0;
 
             /* Legacy fence interrupts are acknowledged via INT_ACK. */
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
@@ -8771,6 +8857,9 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
                 }
             } else {
                 adapter->RingTail = 0;
+                adapter->LegacyRingHeadIndex = 0;
+                adapter->LegacyRingHeadSeq = 0;
+                adapter->LegacyRingTailSeq = 0;
                 if (poweredOn) {
                     AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
                     AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
@@ -8831,8 +8920,7 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         PLIST_ENTRY entry = RemoveHeadList(&internalToFree);
         AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
             CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
-        AeroGpuFreeContiguousNonCached(sub->CmdVa, sub->CmdSizeBytes);
-        AeroGpuFreePendingInternalSubmission(adapter, sub);
+        AeroGpuFreeInternalSubmission(adapter, sub);
     }
     return STATUS_SUCCESS;
 }
@@ -10604,6 +10692,21 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             desc->allocation_count = 0;
         }
 
+        AEROGPU_PENDING_INTERNAL_SUBMISSION* selftestInternal = AeroGpuAllocPendingInternalSubmission(adapter);
+        if (!selftestInternal) {
+            AeroGpuFreeContiguousNonCached(descVa, sizeof(aerogpu_legacy_submission_desc_header));
+            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES;
+            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+            return STATUS_SUCCESS;
+        }
+        selftestInternal->Kind = AEROGPU_INTERNAL_SUBMISSION_KIND_SELFTEST;
+        selftestInternal->ShareToken = 0;
+        selftestInternal->CmdVa = dmaVa;
+        selftestInternal->CmdSizeBytes = dmaSizeBytes;
+        selftestInternal->DescVa = descVa;
+        selftestInternal->DescSizeBytes = descVa ? sizeof(aerogpu_legacy_submission_desc_header) : 0;
+
         /* Push directly to the ring under RingLock for determinism. */
         ULONG headBefore = 0;
         NTSTATUS pushStatus = STATUS_SUCCESS;
@@ -10655,12 +10758,14 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     KeMemoryBarrier();
                     adapter->RingTail = tail + 1;
                     adapter->RingHeader->tail = adapter->RingTail;
+                    selftestInternal->RingTailAfter = adapter->RingTail;
                     KeMemoryBarrier();
 
                     AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_DOORBELL, 1);
                 }
             } else {
                 ULONG head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+                AeroGpuLegacyRingUpdateHeadSeqLocked(adapter, head);
                 ULONG tail = adapter->RingTail;
                 headBefore = head;
 
@@ -10681,6 +10786,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                     KeMemoryBarrier();
                     adapter->RingTail = nextTail;
+                    adapter->LegacyRingTailSeq += 1;
+                    selftestInternal->RingTailAfter = adapter->LegacyRingTailSeq;
                     AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, adapter->RingTail);
                     AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_DOORBELL, 1);
                 }
@@ -10690,8 +10797,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         }
 
         if (!NT_SUCCESS(pushStatus)) {
-            AeroGpuFreeContiguousNonCached(descVa, sizeof(aerogpu_legacy_submission_desc_header));
-            AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
+            AeroGpuFreeInternalSubmission(adapter, selftestInternal);
             io->error_code = (pushStatus == STATUS_DEVICE_BUSY)
                                  ? AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY
                                  : AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
@@ -10721,14 +10827,19 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              * descriptor/DMA buffer to avoid use-after-free if the device
              * consumes it later.
              */
+            {
+                KIRQL pendingIrql;
+                KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+                InsertTailList(&adapter->PendingInternalSubmissions, &selftestInternal->ListEntry);
+                KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+            }
             io->passed = 0;
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT;
             InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
             return STATUS_SUCCESS;
         }
 
-        AeroGpuFreeContiguousNonCached(descVa, sizeof(aerogpu_legacy_submission_desc_header));
-        AeroGpuFreeContiguousNonCached(dmaVa, dmaSizeBytes);
+        AeroGpuFreeInternalSubmission(adapter, selftestInternal);
 
         /*
          * VBlank sanity (optional, gated by device feature bits).
@@ -11472,27 +11583,43 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                      entry = entry->Flink) {
                     const AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
                         CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
-                    if (!sub || !sub->CmdVa || sub->CmdSizeBytes == 0) {
+                    if (!sub) {
                         continue;
                     }
 
-                    const ULONGLONG base = (ULONGLONG)MmGetPhysicalAddress(sub->CmdVa).QuadPart;
-                    const ULONGLONG size = (ULONGLONG)sub->CmdSizeBytes;
-                    if (gpa < base) {
-                        continue;
+                    struct range {
+                        const void* Va;
+                        SIZE_T Size;
+                    } ranges[] = {
+                        {sub->CmdVa, sub->CmdSizeBytes},
+                        {sub->DescVa, sub->DescSizeBytes},
+                    };
+                    for (UINT i = 0; i < (UINT)(sizeof(ranges) / sizeof(ranges[0])); ++i) {
+                        if (!ranges[i].Va || ranges[i].Size == 0) {
+                            continue;
+                        }
+
+                        const ULONGLONG base = (ULONGLONG)MmGetPhysicalAddress((PVOID)ranges[i].Va).QuadPart;
+                        const ULONGLONG size = (ULONGLONG)ranges[i].Size;
+                        if (gpa < base) {
+                            continue;
+                        }
+                        const ULONGLONG offset = gpa - base;
+                        if (offset >= size) {
+                            continue;
+                        }
+                        const ULONGLONG maxBytesU64 = size - offset;
+                        bytesToCopy = (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
+                        if (bytesToCopy != reqBytes) {
+                            opSt = STATUS_PARTIAL_COPY;
+                        }
+                        RtlCopyMemory(out, (const PUCHAR)ranges[i].Va + (SIZE_T)offset, bytesToCopy);
+                        found = TRUE;
+                        break;
                     }
-                    const ULONGLONG offset = gpa - base;
-                    if (offset >= size) {
-                        continue;
+                    if (found) {
+                        break;
                     }
-                    const ULONGLONG maxBytesU64 = size - offset;
-                    bytesToCopy = (maxBytesU64 < (ULONGLONG)reqBytes) ? (ULONG)maxBytesU64 : reqBytes;
-                    if (bytesToCopy != reqBytes) {
-                        opSt = STATUS_PARTIAL_COPY;
-                    }
-                    RtlCopyMemory(out, (const PUCHAR)sub->CmdVa + (SIZE_T)offset, bytesToCopy);
-                    found = TRUE;
-                    break;
                 }
             }
 

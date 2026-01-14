@@ -267,6 +267,16 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG RingSizeBytes;
     ULONG RingEntryCount;
     ULONG RingTail;
+    /*
+     * Legacy ABI ring head/tail registers are masked indices (wrap at RingEntryCount).
+     * Track monotonic head/tail sequence numbers so internal submissions (dbgctl
+     * selftest) can be retired safely without relying on modulo arithmetic.
+     *
+     * Only meaningful when AbiKind == AEROGPU_ABI_KIND_LEGACY.
+     */
+    ULONG LegacyRingHeadIndex;
+    ULONG LegacyRingHeadSeq;
+    ULONG LegacyRingTailSeq;
     struct aerogpu_ring_header* RingHeader; /* Only when AbiKind == AEROGPU_ABI_KIND_V1 */
     struct aerogpu_fence_page* FencePageVa; /* Only when AbiKind == AEROGPU_ABI_KIND_V1 */
     PHYSICAL_ADDRESS FencePagePa;
