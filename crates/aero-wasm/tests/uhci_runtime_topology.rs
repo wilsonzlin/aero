@@ -77,15 +77,14 @@ fn uhci_runtime_supports_multiple_webhid_devices_behind_hub() {
 }
 
 #[wasm_bindgen_test]
-fn uhci_runtime_webusb_attach_is_strict_about_preferred_port() {
+fn uhci_runtime_webhid_attach_skips_reserved_webusb_root_port() {
     let mut rt = make_runtime();
 
-    // Root port 1 is free initially.
-    assert_eq!(rt.webusb_attach(Some(1)).expect("webusb attach ok"), 1);
-
-    // Occupy port 1 with a WebHID device and ensure WebUSB attach fails.
-    rt.webusb_detach();
-    rt.webhid_attach(
+    // Root port 1 is reserved for the guest-visible WebUSB passthrough device. Even when WebUSB is
+    // currently detached, WebHID root-port attachment should never consume it so WebUSB hotplug
+    // remains available.
+    let port = rt
+        .webhid_attach(
         1,
         0x1234,
         0x5678,
@@ -93,12 +92,10 @@ fn uhci_runtime_webusb_attach_is_strict_about_preferred_port() {
         webhid_mouse_collections_json(),
         Some(1),
     )
-    .expect("webhid attach root port 1 ok");
+    .expect("webhid attach ok");
+    assert_eq!(port, 0);
 
-    assert!(
-        rt.webusb_attach(Some(1)).is_err(),
-        "expected webusb_attach(1) to error when port 1 is occupied"
-    );
+    assert_eq!(rt.webusb_attach(Some(1)).expect("webusb attach ok"), 1);
 }
 
 #[wasm_bindgen_test]

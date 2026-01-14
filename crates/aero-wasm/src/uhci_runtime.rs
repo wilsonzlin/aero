@@ -1714,12 +1714,17 @@ impl UhciRuntime {
                     PORT_COUNT - 1
                 )));
             }
-            if self.port_is_free(idx) {
+            // Root port 1 is reserved for WebUSB passthrough. Even if WebUSB is currently detached,
+            // keep this stable so host-side code can assume the port is available for hotplug.
+            if idx != WEBUSB_ROOT_PORT && self.port_is_free(idx) {
                 return Ok(idx);
             }
         }
 
         for idx in 0..PORT_COUNT {
+            if idx == WEBUSB_ROOT_PORT {
+                continue;
+            }
             if self.port_is_free(idx) {
                 return Ok(idx);
             }
