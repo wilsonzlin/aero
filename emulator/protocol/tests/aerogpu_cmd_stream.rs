@@ -308,6 +308,30 @@ fn variable_payload_decoders_allow_trailing_bytes() {
     push_u32(&mut set_constant_buffers_payload, 0); // reserved0
     push_u32(&mut set_constant_buffers_payload, 0xDEAD_BEEF); // trailing extension
 
+    let mut set_srvs_payload = Vec::new();
+    push_u32(&mut set_srvs_payload, 1); // shader_stage
+    push_u32(&mut set_srvs_payload, 0); // start_slot
+    push_u32(&mut set_srvs_payload, 1); // buffer_count
+    push_u32(&mut set_srvs_payload, 0); // reserved0
+    // binding[0]
+    push_u32(&mut set_srvs_payload, 10); // buffer
+    push_u32(&mut set_srvs_payload, 0); // offset_bytes
+    push_u32(&mut set_srvs_payload, 64); // size_bytes
+    push_u32(&mut set_srvs_payload, 0); // reserved0
+    push_u32(&mut set_srvs_payload, 0xDEAD_BEEF); // trailing extension
+
+    let mut set_uavs_payload = Vec::new();
+    push_u32(&mut set_uavs_payload, 2); // shader_stage
+    push_u32(&mut set_uavs_payload, 0); // start_slot
+    push_u32(&mut set_uavs_payload, 1); // uav_count
+    push_u32(&mut set_uavs_payload, 0); // reserved0
+    // binding[0]
+    push_u32(&mut set_uavs_payload, 20); // buffer
+    push_u32(&mut set_uavs_payload, 4); // offset_bytes
+    push_u32(&mut set_uavs_payload, 128); // size_bytes
+    push_u32(&mut set_uavs_payload, 0); // initial_count
+    push_u32(&mut set_uavs_payload, 0xDEAD_BEEF); // trailing extension
+
     let stream = build_stream(vec![
         build_packet(
             AerogpuCmdOpcode::CreateShaderDxbc as u32,
@@ -330,13 +354,21 @@ fn variable_payload_decoders_allow_trailing_bytes() {
             AerogpuCmdOpcode::SetConstantBuffers as u32,
             set_constant_buffers_payload,
         ),
+        build_packet(
+            AerogpuCmdOpcode::SetShaderResourceBuffers as u32,
+            set_srvs_payload,
+        ),
+        build_packet(
+            AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32,
+            set_uavs_payload,
+        ),
     ]);
 
     let packets = AerogpuCmdStreamIter::new(&stream)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(packets.len(), 6);
+    assert_eq!(packets.len(), 8);
 
     let (_create_shader, parsed_dxbc) = packets[0].decode_create_shader_dxbc_payload_le().unwrap();
     assert_eq!(parsed_dxbc, dxbc_bytes);
@@ -359,6 +391,20 @@ fn variable_payload_decoders_allow_trailing_bytes() {
     assert_eq!(bindings.len(), 1);
     let buffer = bindings[0].buffer;
     assert_eq!(buffer, 100);
+
+    let (_set_srvs, bindings) = packets[6]
+        .decode_set_shader_resource_buffers_payload_le()
+        .unwrap();
+    assert_eq!(bindings.len(), 1);
+    let buffer = bindings[0].buffer;
+    assert_eq!(buffer, 10);
+
+    let (_set_uavs, bindings) = packets[7]
+        .decode_set_unordered_access_buffers_payload_le()
+        .unwrap();
+    assert_eq!(bindings.len(), 1);
+    let buffer = bindings[0].buffer;
+    assert_eq!(buffer, 20);
 }
 
 #[test]
