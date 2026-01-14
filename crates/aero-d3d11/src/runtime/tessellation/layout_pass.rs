@@ -114,6 +114,11 @@ var<uniform> params: LayoutParams;
 
 // Output of HS patch-constant phase:
 // per patch: (edge0, edge1, edge2, inside).
+//
+// Note: this buffer is logically read-only here, but it is allocated from shared scratch storage.
+// wgpu treats `storage, read_write` usage as exclusive within a compute dispatch; binding different
+// slices of the same underlying buffer as both read-only and read-write triggers validation errors.
+// Bind as read_write to keep usage consistent within the dispatch.
 @group({group}) @binding({hs_tess_factors_binding})
 // NOTE: Bound as `read_write` even though the layout pass only reads it. wgpu tracks usage at the
 // whole-buffer granularity, and the tessellation prepass allocates all scratch buffers from a

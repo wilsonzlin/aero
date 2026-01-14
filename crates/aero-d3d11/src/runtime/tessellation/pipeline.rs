@@ -77,7 +77,6 @@ pub(crate) struct LayoutPassPipeline {
 pub(crate) struct DsPassthroughPipeline {
     #[allow(dead_code)]
     empty_bg: wgpu::BindGroup,
-    #[allow(dead_code)]
     bgl_group3: wgpu::BindGroupLayout,
     #[allow(dead_code)]
     pipeline: wgpu::ComputePipeline,
@@ -221,6 +220,11 @@ struct HsParams {{
 var<uniform> params: HsParams;
 
 // VS outputs, packed as `[patch][control_point][reg]`.
+//
+// Note: This buffer is read-only for this pass, but it is allocated from the shared expansion
+// scratch backing buffer. wgpu treats `storage, read_write` usage as exclusive within a compute
+// dispatch, so if any other slice of the same underlying buffer is bound as read_write we must
+// also bind this slice as read_write to avoid mixed buffer usages.
 @group({group}) @binding({vs_out_binding})
 // NOTE: This is bound as `read_write` even though we only read it. wgpu tracks buffer usage at the
 // whole-buffer granularity (not per binding range), so mixing `read` and `read_write` storage views
@@ -349,12 +353,23 @@ fn hs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         })
     }
 
-    pub fn pipeline(&self) -> &wgpu::ComputePipeline {
-        &self.pipeline
-    }
-
-    pub fn empty_bind_group(&self) -> &wgpu::BindGroup {
-        &self.empty_bg
+    pub fn dispatch(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group_group3: &wgpu::BindGroup,
+        control_point_count: u32,
+        patch_count_total: u32,
+    ) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("aero-d3d11 tessellation HS pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.empty_bg, &[]);
+        pass.set_bind_group(1, &self.empty_bg, &[]);
+        pass.set_bind_group(2, &self.empty_bg, &[]);
+        pass.set_bind_group(GROUP_INTERNAL, bind_group_group3, &[]);
+        pass.dispatch_workgroups(control_point_count, patch_count_total, 1);
     }
 
     pub fn create_bind_group_group3(
@@ -519,12 +534,21 @@ impl LayoutPassPipeline {
         })
     }
 
-    pub fn pipeline(&self) -> &wgpu::ComputePipeline {
-        &self.pipeline
-    }
-
-    pub fn empty_bind_group(&self) -> &wgpu::BindGroup {
-        &self.empty_bg
+    pub fn dispatch(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group_group3: &wgpu::BindGroup,
+    ) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("aero-d3d11 tessellation layout pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.empty_bg, &[]);
+        pass.set_bind_group(1, &self.empty_bg, &[]);
+        pass.set_bind_group(2, &self.empty_bg, &[]);
+        pass.set_bind_group(GROUP_INTERNAL, bind_group_group3, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
     }
 
     pub fn create_bind_group_group3(
@@ -609,14 +633,12 @@ impl DsPassthroughPipeline {
         // Triangle-domain integer partitioning.
         let tess_lib = tessellator::wgsl_tri_tessellator_lib_default();
 
-        // For P0, restrict to the common "triangle patch" case:
+        // For now, restrict to the common "triangle patch" case:
         // - 3 control points
         // - expanded vertex record matching `runtime::wgsl_link::generate_passthrough_vs_wgsl`
         //   (pos + `EXPANDED_VERTEX_MAX_VARYINGS` varyings).
-        //
-        // Future work can extend this to higher-order patches by teaching the placeholder DS how
-        // to evaluate additional control points (or by linking the translated DS WGSL).
         let out_reg_count: u32 = 1 + EXPANDED_VERTEX_MAX_VARYINGS;
+        let expanded_vertex_stride_bytes: u64 = u64::from(out_reg_count) * 16;
         let wgsl = format!(
             r#"
 {tess_lib}
@@ -635,9 +657,14 @@ struct PatchMeta {{
     index_count: u32,
 }};
 
+// HS output control points register file. This pass is read-only, but the buffer is allocated from
+// shared scratch memory; bind as read_write so wgpu does not see mixed storage buffer usages on the
+// same underlying buffer.
 @group({group}) @binding({hs_out_binding})
 var<storage, read_write> hs_out_regs: array<vec4<u32>>;
 
+// Per-patch metadata written by the layout pass. Read-only here, but see note above about
+// `storage, read_write` exclusivity in wgpu.
 @group({group}) @binding({patch_meta_binding})
 var<storage, read_write> patch_meta: array<PatchMeta>;
 
@@ -754,11 +781,8 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
-                        // One `ExpandedVertex` record:
-                        // `pos: vec4<f32>` + `varyings: array<vec4<f32>, EXPANDED_VERTEX_MAX_VARYINGS>`.
-                        min_binding_size: wgpu::BufferSize::new(
-                            u64::from(1 + EXPANDED_VERTEX_MAX_VARYINGS) * 16,
-                        ),
+                        // Ensure the layout is valid for the expanded-vertex struct payload.
+                        min_binding_size: wgpu::BufferSize::new(expanded_vertex_stride_bytes),
                     },
                     count: None,
                 },
@@ -804,8 +828,22 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         })
     }
 
-    pub fn pipeline(&self) -> &wgpu::ComputePipeline {
-        &self.pipeline
+    pub fn dispatch(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group_group3: &wgpu::BindGroup,
+        patch_count_total: u32,
+    ) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("aero-d3d11 tessellation DS pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.empty_bg, &[]);
+        pass.set_bind_group(1, &self.empty_bg, &[]);
+        pass.set_bind_group(2, &self.empty_bg, &[]);
+        pass.set_bind_group(GROUP_INTERNAL, bind_group_group3, &[]);
+        pass.dispatch_workgroups(patch_count_total, 1, 1);
     }
 
     pub fn empty_bind_group(&self) -> &wgpu::BindGroup {

@@ -147,7 +147,6 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
     let vert_in_tri: u32 = local_index % 3u;
     let tri_id: u32 = local_index / 3u;
-
     // Index generation is parameterized by winding so we can share the same per-triangle
     // tessellator math for both CCW and CW topologies.
     //
