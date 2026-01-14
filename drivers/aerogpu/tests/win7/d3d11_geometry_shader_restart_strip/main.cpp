@@ -155,6 +155,11 @@ static int RunD3D11GeometryShaderRestartStrip(int argc, char** argv) {
         "Usage: %s.exe [--dump] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
+    aerogpu_test::PrintfStdout("");
+    aerogpu_test::PrintfStdout("When --dump is set, writes:");
+    aerogpu_test::PrintfStdout("  d3d11_geometry_shader_restart_strip.bmp");
+    aerogpu_test::PrintfStdout("  d3d11_geometry_shader_restart_strip.bin");
+    aerogpu_test::PrintfStdout("  d3d11_geometry_shader_restart_strip_{vs,gs,ps}.dxbc");
     return 0;
   }
 
