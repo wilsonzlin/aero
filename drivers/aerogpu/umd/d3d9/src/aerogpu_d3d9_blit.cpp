@@ -173,21 +173,7 @@ bool clamp_rect(const RECT* in, uint32_t width, uint32_t height, RECT* out) {
 }
 
 bool ensure_cmd_space(Device* dev, size_t bytes_needed) {
-  if (!dev) {
-    return false;
-  }
-
-  if (dev->cmd.bytes_remaining() >= bytes_needed) {
-    return true;
-  }
-
-  // Flush the current submission and retry. This allows the blit helper to run
-  // against span-backed DMA buffers with bounded capacity.
-  if (!dev->cmd.empty()) {
-    (void)submit_locked(dev);
-  }
-
-  return dev->cmd.bytes_remaining() >= bytes_needed;
+  return ensure_cmd_space_locked(dev, bytes_needed);
 }
 
 HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write) {
@@ -199,6 +185,27 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
   // not use WDDM allocation handles or runtime-provided allocation lists.
   if (dev->wddm_context.hContext == 0) {
     return S_OK;
+  }
+
+// Ensure we have a valid WDDM allocation list bound before we try to write
+// entries into it. In real Win7 builds, `ensure_cmd_space(..., 0)` will acquire
+// runtime-provided DMA buffers + allocation lists (CreateContext persistent
+// buffers or AllocateCb/GetCommandBufferCb fallback) without forcing a submit.
+#if defined(_WIN32)
+  if (!ensure_cmd_space(dev, 0)) {
+    return E_FAIL;
+  }
+#endif
+
+  // Allocation tracking requires a bound allocation-list buffer. In portable
+  // builds/tests we may toggle `hContext` without wiring a list; treat that as
+  // "tracking disabled" so unit tests focused on other behavior keep working.
+  if (!dev->alloc_list_tracker.list_base() || dev->alloc_list_tracker.list_capacity_effective() == 0) {
+#if defined(_WIN32)
+    return E_FAIL;
+#else
+    return S_OK;
+#endif
   }
 
   if (res->backing_alloc_id == 0) {
@@ -229,6 +236,22 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
   if (ref.status == AllocRefStatus::kNeedFlush) {
     // Split the submission and retry.
     (void)submit_locked(dev);
+
+#if defined(_WIN32)
+    // AllocateCb/DeallocateCb runtimes deallocate the active allocation list on
+    // every submit, so reacquire/rebind before retrying.
+    if (!ensure_cmd_space(dev, 0)) {
+      return E_FAIL;
+    }
+#endif
+
+    if (!dev->alloc_list_tracker.list_base() || dev->alloc_list_tracker.list_capacity_effective() == 0) {
+#if defined(_WIN32)
+      return E_FAIL;
+#else
+      return S_OK;
+#endif
+    }
 
     if (write) {
       ref = dev->alloc_list_tracker.track_render_target_write(

@@ -22017,6 +22017,10 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 
 } // namespace
 
+bool ensure_cmd_space_locked(Device* dev, size_t bytes_needed) {
+  return ensure_cmd_space(dev, bytes_needed);
+}
+
 uint64_t submit_locked(Device* dev, bool is_present) {
   return submit(dev, is_present);
 }
