@@ -24,6 +24,10 @@ class Win7VirtioHarnessWorkflowQemuExtraArgsInputTests(unittest.TestCase):
         self.assertIn("args+=(--)", self.text)
         # Ensure CRLF pasted input is handled robustly.
         self.assertIn("line=\"${line%$'\\r'}\"", self.text)
+        # Ensure we trim and ignore comment/blank lines (useful when pasting from docs).
+        self.assertIn('line="${line#"${line%%[![:space:]]*}"}"', self.text)
+        self.assertIn('line="${line%"${line##*[![:space:]]}"}"', self.text)
+        self.assertIn(r'if [[ -z "${line}" || "${line}" == \#* ]]; then', self.text)
 
 
 if __name__ == "__main__":

@@ -332,9 +332,12 @@ jobs:
               echo "  qemu_extra_args:"
               while IFS= read -r line; do
                 line="${line%$'\r'}"
-                if [[ -n "${line}" ]]; then
-                  echo "    - ${line}"
+                line="${line#"${line%%[![:space:]]*}"}"
+                line="${line%"${line##*[![:space:]]}"}"
+                if [[ -z "${line}" || "${line}" == \#* ]]; then
+                  continue
                 fi
+                echo "    - ${line}"
               done <<<"${{ inputs.qemu_extra_args }}"
             else
               echo "  qemu_extra_args: ''"
@@ -805,9 +808,12 @@ jobs:
               args+=(--)
               while IFS= read -r line; do
                 line="${line%$'\r'}"
-                if [[ -n "${line}" ]]; then
-                  args+=("${line}")
+                line="${line#"${line%%[![:space:]]*}"}"
+                line="${line%"${line##*[![:space:]]}"}"
+                if [[ -z "${line}" || "${line}" == \#* ]]; then
+                  continue
                 fi
+                args+=("${line}")
               done <<<"${qemu_extra_args}"
             fi
 
