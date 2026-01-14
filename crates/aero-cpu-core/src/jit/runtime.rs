@@ -153,6 +153,15 @@ impl Clone for PageVersionTracker {
 }
 
 impl PageVersionTracker {
+    /// Hard cap on the number of tracked 4KiB pages in the dense page-version table.
+    ///
+    /// The table is exposed to JIT code as a dense `u32[]`. Without a cap, an embedder could
+    /// configure an absurd page count and force an attempt to allocate terabytes of host memory.
+    ///
+    /// `4_194_304` pages = 16GiB of guest-physical address space, requiring at most 16MiB of host
+    /// memory for the version table (`u32` per page).
+    pub const MAX_TRACKED_PAGES: usize = 4_194_304;
+
     /// Maximum number of page-version entries returned by [`Self::snapshot`].
     ///
     /// A snapshot is stored in every compiled block's metadata. Even though `byte_len` is a `u32`,
@@ -172,6 +181,7 @@ impl PageVersionTracker {
     /// never resized, so the table pointer returned by [`Self::table_ptr_len`] remains stable for
     /// the lifetime of the tracker.
     pub fn new(max_pages: usize) -> Self {
+        let max_pages = max_pages.min(Self::MAX_TRACKED_PAGES);
         let mut versions = Vec::with_capacity(max_pages);
         versions.resize_with(max_pages, || Cell::new(0));
         Self {
