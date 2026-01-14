@@ -1268,6 +1268,9 @@ export class RuntimeDiskWorker {
         const entry = await this.requireDisk(handle);
 
         const byteLength = requireSafeNonNegativeInteger((msg.payload as any).byteLength, "byteLength");
+        if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
+          throw new Error(`readInto too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
+        }
         assertSectorAligned(byteLength, entry.disk.sectorSize);
         checkedOffset(lba, byteLength, entry.disk.sectorSize);
 
@@ -1327,6 +1330,9 @@ export class RuntimeDiskWorker {
           throw new Error("invalid src");
         }
         const byteLength = requireSafeNonNegativeInteger((src as any).byteLength, "src.byteLength");
+        if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
+          throw new Error(`writeFrom too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
+        }
         assertSectorAligned(byteLength, entry.disk.sectorSize);
         checkedOffset(lba, byteLength, entry.disk.sectorSize);
 
