@@ -27575,6 +27575,24 @@ HRESULT AEROGPU_D3D9_CALL adapter_test_set_completed_fence(D3DDDI_HADAPTER hAdap
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_test_set_resource_backing(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hResource,
+    uint32_t backing_alloc_id,
+    uint32_t backing_offset_bytes,
+    WddmAllocationHandle wddm_hAllocation) {
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  auto* res = as_resource(hResource);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  res->backing_alloc_id = backing_alloc_id;
+  res->backing_offset_bytes = backing_offset_bytes;
+  res->wddm_hAllocation = wddm_hAllocation;
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;

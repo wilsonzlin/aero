@@ -60,6 +60,12 @@ AllocRef AEROGPU_D3D9_CALL device_test_track_render_target_write(
     uint64_t share_token);
 HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features);
 HRESULT AEROGPU_D3D9_CALL adapter_test_set_completed_fence(D3DDDI_HADAPTER hAdapter, uint64_t completed_fence);
+HRESULT AEROGPU_D3D9_CALL device_test_set_resource_backing(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hResource,
+    uint32_t backing_alloc_id,
+    uint32_t backing_offset_bytes,
+    WddmAllocationHandle wddm_hAllocation);
 HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
     D3DDDI_HDEVICE hDevice,
     uint32_t src_index,
@@ -36300,12 +36306,14 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   reset_stream();
   auto* vb0 = reinterpret_cast<Resource*>(hVb0.pDrvPrivate);
   auto* vb1 = reinterpret_cast<Resource*>(hVb1.pDrvPrivate);
-  vb0->backing_alloc_id = 101;
-  vb1->backing_alloc_id = 202;
-  vb0->backing_offset_bytes = 1;
-  vb1->backing_offset_bytes = 2;
-  vb0->wddm_hAllocation = 0x101;
-  vb1->wddm_hAllocation = 0x202;
+  hr = device_test_set_resource_backing(create_dev.hDevice, hVb0, /*alloc_id=*/101, /*offset_bytes=*/1, /*hAllocation=*/0x101);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(vb0)")) {
+    return false;
+  }
+  hr = device_test_set_resource_backing(create_dev.hDevice, hVb1, /*alloc_id=*/202, /*offset_bytes=*/2, /*hAllocation=*/0x202);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(vb1)")) {
+    return false;
+  }
   vb0->storage[0] = 0xA0;
   vb1->storage[0] = 0xB0;
   const aerogpu_handle_t vb0_before = vb0->handle;
@@ -36352,12 +36360,14 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   reset_stream();
   auto* tex0 = reinterpret_cast<Resource*>(hTex0.pDrvPrivate);
   auto* tex1 = reinterpret_cast<Resource*>(hTex1.pDrvPrivate);
-  tex0->backing_alloc_id = 303;
-  tex1->backing_alloc_id = 404;
-  tex0->backing_offset_bytes = 3;
-  tex1->backing_offset_bytes = 4;
-  tex0->wddm_hAllocation = 0x303;
-  tex1->wddm_hAllocation = 0x404;
+  hr = device_test_set_resource_backing(create_dev.hDevice, hTex0, /*alloc_id=*/303, /*offset_bytes=*/3, /*hAllocation=*/0x303);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(tex0)")) {
+    return false;
+  }
+  hr = device_test_set_resource_backing(create_dev.hDevice, hTex1, /*alloc_id=*/404, /*offset_bytes=*/4, /*hAllocation=*/0x404);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(tex1)")) {
+    return false;
+  }
   tex0->storage[0] = 0xC0;
   tex1->storage[0] = 0xD0;
   const aerogpu_handle_t tex0_before = tex0->handle;
@@ -36399,12 +36409,14 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   reset_stream();
   auto* ib0 = reinterpret_cast<Resource*>(hIb0.pDrvPrivate);
   auto* ib1 = reinterpret_cast<Resource*>(hIb1.pDrvPrivate);
-  ib0->backing_alloc_id = 505;
-  ib1->backing_alloc_id = 606;
-  ib0->backing_offset_bytes = 5;
-  ib1->backing_offset_bytes = 6;
-  ib0->wddm_hAllocation = 0x505;
-  ib1->wddm_hAllocation = 0x606;
+  hr = device_test_set_resource_backing(create_dev.hDevice, hIb0, /*alloc_id=*/505, /*offset_bytes=*/5, /*hAllocation=*/0x505);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(ib0)")) {
+    return false;
+  }
+  hr = device_test_set_resource_backing(create_dev.hDevice, hIb1, /*alloc_id=*/606, /*offset_bytes=*/6, /*hAllocation=*/0x606);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(ib1)")) {
+    return false;
+  }
   ib0->storage[0] = 0xE0;
   ib1->storage[0] = 0xF0;
   const aerogpu_handle_t ib0_before = ib0->handle;
@@ -36670,17 +36682,12 @@ bool TestPresentBackbufferRotationUndoOnSmallAllocList() {
     return false;
   }
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    // Ensure the rebinding sequence references two distinct alloc-backed
-    // resources: RT0 = backbuffer0, texture0 = backbuffer1.
-    sc->backbuffers[0]->backing_alloc_id = 1;
-    sc->backbuffers[0]->wddm_hAllocation = 0x1111u;
-    sc->backbuffers[1]->backing_alloc_id = 2;
-    sc->backbuffers[1]->wddm_hAllocation = 0x2222u;
-  }
   D3DDDI_HRESOURCE hBb0{};
   hBb0.pDrvPrivate = sc->backbuffers[0];
+  hr = device_test_set_resource_backing(create_dev.hDevice, hBb0, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/0x1111u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(backbuffer0)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hBb0);
   if (!Check(hr == S_OK, "SetRenderTarget(backbuffer0)")) {
     return false;
@@ -36692,6 +36699,10 @@ bool TestPresentBackbufferRotationUndoOnSmallAllocList() {
   }
   D3DDDI_HRESOURCE hBb1{};
   hBb1.pDrvPrivate = sc->backbuffers[1];
+  hr = device_test_set_resource_backing(create_dev.hDevice, hBb1, /*alloc_id=*/2, /*offset_bytes=*/0, /*hAllocation=*/0x2222u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(backbuffer1)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hBb1);
   if (!Check(hr == S_OK, "SetTexture(stage0=backbuffer1)")) {
     return false;
@@ -37091,12 +37102,14 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
 
   const aerogpu_handle_t h0 = res0->handle;
   const aerogpu_handle_t h1 = res1->handle;
-  res0->backing_alloc_id = 111;
-  res1->backing_alloc_id = 222;
-  res0->backing_offset_bytes = 4;
-  res1->backing_offset_bytes = 8;
-  res0->wddm_hAllocation = 0xABC;
-  res1->wddm_hAllocation = 0xDEF;
+  hr = device_test_set_resource_backing(create_dev.hDevice, cleanup.resources[0], /*alloc_id=*/111, /*offset_bytes=*/4, /*hAllocation=*/0xABC);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(res0)")) {
+    return false;
+  }
+  hr = device_test_set_resource_backing(create_dev.hDevice, cleanup.resources[1], /*alloc_id=*/222, /*offset_bytes=*/8, /*hAllocation=*/0xDEF);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(res1)")) {
+    return false;
+  }
   if (!res0->storage.empty()) {
     res0->storage[0] = 0xA1;
   }
