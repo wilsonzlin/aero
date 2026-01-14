@@ -159,48 +159,6 @@ fn find_webusb_passthrough_device(
     None
 }
 
-fn find_webusb_passthrough_path_in_device(
-    dev: &mut AttachedUsbDevice,
-    prefix: &mut Vec<u8>,
-) -> Option<Vec<u8>> {
-    let model_any = dev.model() as &dyn core::any::Any;
-    if model_any
-        .downcast_ref::<UsbWebUsbPassthroughDevice>()
-        .is_some()
-    {
-        return Some(prefix.clone());
-    }
-
-    if let Some(hub) = dev.as_hub_mut() {
-        for port in 0..hub.num_ports() {
-            if let Some(child) = hub.downstream_device_mut(port) {
-                // Hub ports are 1-based in the guest-visible topology path contract.
-                prefix.push((port + 1) as u8);
-                if let Some(found) = find_webusb_passthrough_path_in_device(child, prefix) {
-                    prefix.pop();
-                    return Some(found);
-                }
-                prefix.pop();
-            }
-        }
-    }
-
-    None
-}
-
-fn find_webusb_passthrough_device_path(ctrl: &mut EhciController) -> Option<Vec<u8>> {
-    let hub = ctrl.hub_mut();
-    for root_port in 0..hub.num_ports() {
-        if let Some(mut dev) = hub.port_device_mut(root_port) {
-            let mut prefix = vec![root_port as u8];
-            if let Some(found) = find_webusb_passthrough_path_in_device(&mut dev, &mut prefix) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
 fn recover_webusb_passthrough_device(ctrl: &mut EhciController) -> Option<UsbWebUsbPassthroughDevice> {
     // Prefer the reserved root port.
     let hub = ctrl.hub_mut();
