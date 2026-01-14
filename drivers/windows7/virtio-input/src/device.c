@@ -2295,6 +2295,41 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                             "compat: keyboard EV_BITS(EV_LED) query failed: %!STATUS! (continuing)\n",
                             status);
                     } else {
+                        /*
+                         * Even in compat mode, if the device advertises EV_LED and
+                         * provides an EV_BITS(EV_LED) bitmap, plumb it into the
+                         * statusq so we only emit LED codes the device claims to
+                         * support.
+                         */
+                        {
+                            UCHAR ledSupportedMask;
+
+                            ledSupportedMask = 0;
+                            if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_NUML)) {
+                                ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_NUML);
+                            }
+                            if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_CAPSL)) {
+                                ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_CAPSL);
+                            }
+                            if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_SCROLLL)) {
+                                ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_SCROLLL);
+                            }
+                            if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_COMPOSE)) {
+                                ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_COMPOSE);
+                            }
+                            if (VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_KANA)) {
+                                ledSupportedMask |= (UCHAR)(1u << VIRTIO_INPUT_LED_KANA);
+                            }
+
+                            deviceContext->KeyboardLedSupportedBitmask = ledSupportedMask;
+                            VirtioStatusQSetKeyboardLedSupportedMask(deviceContext->StatusQ, ledSupportedMask);
+
+                            VIOINPUT_LOG(
+                                VIOINPUT_LOG_VIRTQ,
+                                "compat: keyboard EV_BITS(EV_LED): supported_mask=0x%02X (codes 0..4)\n",
+                                (ULONG)ledSupportedMask);
+                        }
+
                         if (!VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_NUML) || !VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_CAPSL) ||
                             !VioInputBitmapTestBit(bits, VIRTIO_INPUT_LED_SCROLLL)) {
                             VIOINPUT_LOG(
