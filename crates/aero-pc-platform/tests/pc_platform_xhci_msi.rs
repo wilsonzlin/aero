@@ -179,6 +179,107 @@ fn pc_platform_xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
 }
 
 #[test]
+fn pc_platform_xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Switch into APIC mode so MSI delivery reaches the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable BAR0 MMIO decode + bus mastering.
+    pci_enable_mmio(&mut pc, bdf);
+    pci_enable_bus_mastering(&mut pc, bdf);
+
+    // Locate and program MSI, but leave the MSI address unprogrammed/invalid.
+    let msi_cap = find_capability(&mut pc, bdf, PCI_CAP_ID_MSI)
+        .expect("xHCI should expose an MSI capability in PCI config space");
+    let base = u16::from(msi_cap);
+
+    let ctrl = pci_cfg_read_u16(&mut pc, bdf, base + 0x02);
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(
+        is_64bit,
+        "test assumes xHCI MSI capability is using the 64-bit layout"
+    );
+    assert!(per_vector_masking, "test requires per-vector masking support");
+    let pending_off = base + 0x14;
+
+    let vector: u8 = 0x66;
+    // Address low/high left as 0: invalid xAPIC MSI address.
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x04, 0);
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x08, 0);
+    pci_cfg_write_u16(&mut pc, bdf, base + 0x0c, u16::from(vector));
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x10, 0); // unmask
+    pci_cfg_write_u16(&mut pc, bdf, base + 0x02, ctrl | 1); // MSI enable
+
+    // Sync the canonical MSI state into the device model before raising interrupts.
+    pc.tick(0);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    let xhci = pc.xhci.as_ref().expect("xHCI enabled").clone();
+    xhci.borrow_mut().raise_event_interrupt();
+
+    // MSI delivery is blocked by the invalid address; interrupt must not be delivered and must not
+    // fall back to INTx.
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+    assert!(
+        !xhci.borrow().irq_level(),
+        "xHCI INTx should be suppressed while MSI is active"
+    );
+
+    // Sync so the canonical PCI config space observes the device-managed pending bit.
+    pc.tick(0);
+    assert_ne!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to latch while the MSI address is invalid"
+    );
+
+    // Clear the interrupt condition before completing MSI programming so delivery relies solely on
+    // the pending bit.
+    xhci.borrow_mut().clear_event_interrupt();
+    pc.tick(0);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+    assert_ne!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to remain set after clearing the interrupt condition"
+    );
+
+    // Now program a valid MSI address; the next xHCI interrupt service should observe the pending
+    // bit and deliver without requiring a new rising edge.
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x04, 0xfee0_0000);
+    pci_cfg_write_u32(&mut pc, bdf, base + 0x08, 0);
+    pc.tick(0);
+
+    xhci.borrow_mut().clear_event_interrupt();
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector));
+    pc.interrupts.borrow_mut().acknowledge(vector);
+    pc.interrupts.borrow_mut().eoi(vector);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // Sync once more so the canonical config space reflects the pending-bit clear.
+    pc.tick(0);
+    assert_eq!(
+        pci_cfg_read_u32(&mut pc, bdf, pending_off) & 1,
+        0,
+        "expected MSI pending bit to clear after delivery"
+    );
+}
+
+#[test]
 fn pc_platform_xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
     let mut pc = PcPlatform::new_with_config(
         2 * 1024 * 1024,
