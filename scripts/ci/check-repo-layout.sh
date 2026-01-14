@@ -375,6 +375,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 - <<'PY'
 import json
+import posixpath
 from pathlib import Path
 
 driver_root = Path("drivers/windows7/virtio-snd")
@@ -387,7 +388,19 @@ additional = manifest.get("additionalFiles", [])
 if not isinstance(additional, list):
     raise SystemExit(f"{manifest_path}: expected additionalFiles to be an array")
 
-additional_set = {str(x).strip().replace("\\\\", "/") for x in additional if isinstance(x, str) and str(x).strip()}
+def normalize_manifest_path(value: str) -> str | None:
+    s = value.strip()
+    if not s:
+        return None
+    # JSON manifests may use Windows-style `\` path separators. Normalize to POSIX-style so this
+    # check can compare against `Path(...).as_posix()` results deterministically.
+    s = s.replace("\\", "/")
+    s = posixpath.normpath(s)
+    if s in ("", ".", "/"):
+        return None
+    return s
+
+additional_set = {p for x in additional if isinstance(x, str) for p in [normalize_manifest_path(x)] if p}
 
 helper_exts = {".md", ".sh", ".ps1", ".cmd", ".py"}
 helper_files = set()
