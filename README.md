@@ -300,6 +300,9 @@ Prereqs:
 - `wasm-pack` (`cargo install --locked wasm-pack`)
 - For the **threaded/shared-memory** variant: the pinned nightly toolchain declared in `scripts/toolchains.json`
   (`rust.nightlyWasm`) + `rust-src` (used to rebuild `std` with atomics enabled). `just setup` installs this automatically.
+  - Threaded builds also enable the internal Cargo feature `wasm-threaded` so Rust takes the shared-memory-safe paths
+    (byte-granular atomic loads/stores, shared scanout/cursor state headers, etc). The web build scripts handle this
+    automatically; include `--features wasm-threaded` if building crates manually.
 
 Manual install (if needed):
 
