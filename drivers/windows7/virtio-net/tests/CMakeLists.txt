@@ -18,6 +18,12 @@ set_target_properties(aero_virtio_net_offload_tests PROPERTIES
     C_STANDARD_REQUIRED YES
 )
 
+if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(aero_virtio_net_offload_tests PRIVATE
+        -Wall -Wextra -Werror
+    )
+endif ()
+
 add_test(NAME aero_virtio_net_offload_tests COMMAND aero_virtio_net_offload_tests)
 
 if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/host/CMakeLists.txt")

@@ -17,5 +17,10 @@ set_target_properties(virtio_net_hdr_offload_tests PROPERTIES
     C_STANDARD_REQUIRED YES
 )
 
-add_test(NAME virtio_net_hdr_offload_tests COMMAND virtio_net_hdr_offload_tests)
+if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(virtio_net_hdr_offload_tests PRIVATE
+        -Wall -Wextra -Werror
+    )
+endif ()
 
+add_test(NAME virtio_net_hdr_offload_tests COMMAND virtio_net_hdr_offload_tests)
