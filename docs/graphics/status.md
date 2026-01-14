@@ -307,6 +307,11 @@ The D3D9 implementation is split into:
   - `texld`/`texldp`/`texldb`/`texldd`/`texldl` lower to WGSL `textureSample*` variants, with texture/sampler binding emission and bind-layout mapping.
   - `texkill` lowers to `discard` when any component of the operand is `< 0`, preserving predication nesting.
   - Details + tests: [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md)
+- [x] D3D9 shader translation cache (in-memory + WASM-only persistent cache)
+  - In-memory cache: [`crates/aero-d3d9/src/shader_translate.rs`](../../crates/aero-d3d9/src/shader_translate.rs) (`ShaderCache`)
+  - Persistent cache (WASM): [`crates/aero-d3d9/src/runtime/shader_cache.rs`](../../crates/aero-d3d9/src/runtime/shader_cache.rs) + browser backing store [`web/gpu-cache/persistent_cache.ts`](../../web/gpu-cache/persistent_cache.ts)
+  - Executor wiring: [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs)
+  - Test (WASM): [`crates/aero-gpu/tests/wasm/aerogpu_d3d9_shader_cache_wasm.rs`](../../crates/aero-gpu/tests/wasm/aerogpu_d3d9_shader_cache_wasm.rs)
 
 Code pointers:
 
