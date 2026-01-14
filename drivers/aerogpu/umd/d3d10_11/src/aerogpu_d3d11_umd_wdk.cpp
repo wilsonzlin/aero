@@ -4866,7 +4866,9 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
 
   out->handle = AllocateGlobalHandle(dev->adapter);
   if (!out->handle) {
-    out->~Shader();
+    // Leave the object alive in pDrvPrivate memory. Some runtimes may still
+    // probe Destroy* after a failed Create*, and double-destruction would be
+    // unsafe.
     return E_FAIL;
   }
   out->stage = stage;
@@ -4877,7 +4879,7 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
     // made it into the command stream (some runtimes may probe Destroy after a
     // failed Create).
     out->handle = 0;
-    out->~Shader();
+    std::vector<uint8_t>().swap(out->dxbc);
     return E_OUTOFMEMORY;
   }
   std::memcpy(out->dxbc.data(), pCode, static_cast<size_t>(code_size));
@@ -4901,7 +4903,7 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
       AEROGPU_CMD_CREATE_SHADER_DXBC, out->dxbc.data(), out->dxbc.size());
   if (!cmd) {
     out->handle = 0;
-    out->~Shader();
+    std::vector<uint8_t>().swap(out->dxbc);
     SetError(dev, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
   }
