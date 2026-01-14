@@ -1,7 +1,6 @@
 use std::boxed::Box;
 
 use aero_usb::xhci::context::{InputControlContext, SlotContext, CONTEXT_SIZE};
-use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
@@ -129,6 +128,13 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     // Slot Context from the output Device Context and mirrors it back into controller-local state;
     // if we leave it zeroed, the slot would no longer resolve to the attached device when
     // executing transfers after dropping endpoints.
+    let mut out_slot_ctx = SlotContext::default();
+    out_slot_ctx.set_root_hub_port_number(1);
+    out_slot_ctx.write_to(&mut mem, dev_ctx);
+
+    // Ensure the output Slot Context in guest memory is populated. Configure Endpoint updates the
+    // controller-local Slot Context from the output Device Context; if we leave it zeroed, the slot
+    // would no longer resolve to an attached device after the drop command completes.
     let mut out_slot_ctx = SlotContext::default();
     out_slot_ctx.set_root_hub_port_number(1);
     out_slot_ctx.write_to(&mut mem, dev_ctx);
