@@ -132,6 +132,10 @@ export async function reattachMachineSnapshotDisks(opts: {
     // Prefer restore-aware helpers when available; they preserve guest-visible ATAPI media state.
     (machine as unknown as { attach_install_media_iso_opfs_for_restore?: unknown }).attach_install_media_iso_opfs_for_restore ??
     (machine as unknown as { attachInstallMediaIsoOpfsForRestore?: unknown }).attachInstallMediaIsoOpfsForRestore ??
+    // Back-compat: some builds expose a dedicated `_existing` helper for the same restore-aware ISO attachment path.
+    (machine as unknown as { attach_install_media_iso_opfs_existing?: unknown }).attach_install_media_iso_opfs_existing ??
+    (machine as unknown as { attach_install_media_iso_opfs_existing_and_set_overlay_ref?: unknown })
+      .attach_install_media_iso_opfs_existing_and_set_overlay_ref ??
     (machine as unknown as { attach_install_media_iso_opfs_for_restore_and_set_overlay_ref?: unknown })
       .attach_install_media_iso_opfs_for_restore_and_set_overlay_ref ??
     (machine as unknown as { attachInstallMediaIsoOpfsForRestoreAndSetOverlayRef?: unknown })
