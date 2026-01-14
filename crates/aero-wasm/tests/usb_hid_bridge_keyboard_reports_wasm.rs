@@ -35,7 +35,10 @@ fn usb_hid_bridge_keyboard_press_and_release_produce_reports() {
     );
 
     let a_down = bridge.drain_next_keyboard_report();
-    assert!(!a_down.is_null(), "expected a keyboard report after key press");
+    assert!(
+        !a_down.is_null(),
+        "expected a keyboard report after key press"
+    );
     assert_eq!(
         js_u8_array_to_vec(a_down),
         vec![0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00],
@@ -69,4 +72,3 @@ fn usb_hid_bridge_keyboard_press_and_release_produce_reports() {
         "expected no further keyboard reports"
     );
 }
-
