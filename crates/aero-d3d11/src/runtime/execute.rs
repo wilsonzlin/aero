@@ -978,40 +978,23 @@ impl D3D11Runtime {
             .difference(&keep_output_locations)
             .copied()
             .collect();
-
-<<<<<<< HEAD
-        if !missing_outputs.is_empty() {
-            linked_fs_wgsl =
-                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
-                    linked_fs_wgsl.as_ref(),
-                    &keep_output_locations,
-                ));
-        }
-
-        let trimmed_fs_module = if linked_fs_wgsl.as_ref() == fs.wgsl.as_str() {
-            None
-        } else {
-            let wgsl = linked_fs_wgsl.into_owned();
-            Some(
-                self.device
-                    .create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some("aero-d3d11 trimmed fragment shader"),
-                        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-                    }),
-            )
-=======
         // Defer creation of the trimmed shader module until after we've decoded the rest of the
         // pipeline descriptor so we don't hold a borrow of `self.pipelines` across other `&self`
         // method calls.
-        let trimmed_fs_wgsl = if missing_outputs.is_empty() {
-            None
-        } else {
-            Some(super::wgsl_link::trim_ps_outputs_to_locations(
-                &fs.wgsl,
-                &keep_output_locations,
-            ))
->>>>>>> 1cf59acae (test: make MRT trimming tests backend-agnostic)
-        };
+        let trimmed_fs_wgsl: Option<String> =
+            if linked_fs_wgsl.as_ref() == fs.wgsl.as_str() && missing_outputs.is_empty() {
+                None
+            } else {
+                // Apply MRT output trimming on top of any PS input trimming already done above.
+                let mut wgsl = linked_fs_wgsl.into_owned();
+                if !missing_outputs.is_empty() {
+                    wgsl = super::wgsl_link::trim_ps_outputs_to_locations(
+                        &wgsl,
+                        &keep_output_locations,
+                    );
+                }
+                Some(wgsl)
+            };
 
         let trimmed_vs_module = if vs_can_trim_outputs
             && ps_link_locations.is_subset(&vs_outputs)
@@ -2332,63 +2315,9 @@ mod tests {
                 }
             "#;
 
-<<<<<<< HEAD
-            // Baseline: the untrimmed shader should fail validation when paired with a single
-            // color target.
-            let vs = rt
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("d3d11 runtime mrt baseline vs"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
-                });
-            let fs = rt
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("d3d11 runtime mrt baseline fs"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
-                });
-            let layout = rt
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("d3d11 runtime mrt baseline layout"),
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
-
-            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let _ = rt
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("d3d11 runtime mrt baseline pipeline"),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &vs,
-                        entry_point: "vs_main",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &fs,
-                        entry_point: "fs_main",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                });
-            rt.device.poll(wgpu::Maintain::Wait);
-            let err = rt.device.pop_error_scope().await;
-=======
             let keep_output_locations = BTreeSet::from([0u32]);
             let expected_trimmed_wgsl =
                 super::super::wgsl_link::trim_ps_outputs_to_locations(fs_wgsl, &keep_output_locations);
->>>>>>> 1cf59acae (test: make MRT trimming tests backend-agnostic)
             assert!(
                 !expected_trimmed_wgsl.contains("@location(1)"),
                 "sanity check: trimmed WGSL should drop unbound outputs"
