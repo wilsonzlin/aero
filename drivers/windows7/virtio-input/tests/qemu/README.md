@@ -237,14 +237,14 @@ The list will also include more specific forms, e.g.:
 The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Aero contract v1, `REV_01`).
 
 - Keyboard/mouse: `aero_virtio_input.inf`
-  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names
-  - includes a strict generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no SUBSYS; for environments that do not expose Aero subsystem IDs)
+  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names.
+  - includes a strict generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no SUBSYS; for environments that do not expose Aero subsystem IDs).
 - Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet).
-- Optional legacy filename alias (disabled by default): `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+- Legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
   - legacy filename alias for workflows/tools that still reference `virtio-input.inf`
   - from the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `aero_virtio_input.inf`
     (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`)
-  - do **not** ship/install it alongside `aero_virtio_input.inf` (overlapping INF binding can be confusing)
+  - do **not** ship/install it alongside `aero_virtio_input.inf` (duplicate INFs can lead to confusing binding/upgrade behavior)
 
 If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will bind via the strict generic fallback entry
 and the device will appear with the generic **Aero VirtIO Input Device** name.

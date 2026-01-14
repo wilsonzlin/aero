@@ -47,9 +47,9 @@ When binding via the generic fallback entry, Device Manager will show **Aero Vir
 Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed (its `SUBSYS_0012...` HWID is more specific than the generic fallback, so it will win).
 
 The repo also carries a legacy filename alias (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
-for workflows/tools that still reference `virtio-input.inf`. The alias INF is allowed to differ in the models sections
-(`Aero.NTx86` / `Aero.NTamd64`); outside of the models sections it is expected to stay in sync with
-`inf/aero_virtio_input.inf` (see `../scripts/check-inf-alias.py`).
+for workflows/tools that still reference `virtio-input.inf`. From the first section header (`[Version]`) onward, the
+alias is expected to remain byte-for-byte identical to `inf/aero_virtio_input.inf` (different filename only; leading
+banner/comment block may differ; see `../scripts/check-inf-alias.py`).
 
 Do not ship/install both filenames at the same time (they overlap on the same HWIDs and can cause confusing install/binding behavior).
 

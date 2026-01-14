@@ -10,23 +10,13 @@ For compatibility with older tooling/workflows, the repo also keeps a legacy
 filename alias INF (checked in disabled-by-default):
   - drivers/windows7/virtio-input/inf/virtio-input.inf.disabled
 
-Policy:
-  - The canonical INF *and* the legacy alias INF both include:
-      - explicit SUBSYS-qualified model lines for the Aero contract v1 keyboard
-        (SUBSYS_0010) and mouse (SUBSYS_0011), and
-      - a strict revision-gated generic fallback HWID (no SUBSYS):
-          PCI\\VEN_1AF4&DEV_1052&REV_01
-    The fallback is required by the current Windows device/driver contract policy
-    (and by `tools/device_contract_validator`) so binding remains revision-gated
-    even when subsystem IDs are absent/ignored.
-  - The alias INF is allowed to differ in the models sections (`[Aero.NTx86]` /
-    `[Aero.NTamd64]`), but must include the same required HWID bindings.
-  - Outside the models sections, the alias must stay in sync with the canonical
-    INF (from the first section header onward).
+Developers may locally enable the alias by renaming it to `virtio-input.inf`.
 
-Comparison notes:
-  - Comments and empty lines are ignored.
-  - Section names are treated case-insensitively (normalized to lowercase for comparison).
+Policy:
+  - From the first section header (`[Version]`) onward, the alias must remain
+    byte-for-byte identical to the canonical INF.
+  - Only the leading banner/comment block (before the first section header) may
+    differ.
 
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
@@ -39,209 +29,34 @@ import sys
 from pathlib import Path
 
 
-MODELS_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
-BASE_HWID = r"PCI\VEN_1AF4&DEV_1052"
-FALLBACK_HWID = r"PCI\VEN_1AF4&DEV_1052&REV_01"
-KEYBOARD_HWID = r"PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01"
-MOUSE_HWID = r"PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01"
-TABLET_SUBSYS = "SUBSYS_00121AF4"
-
-
-def strip_inf_comments(line: str) -> str:
-    """Remove INF comments (starting with ';') outside of quoted strings."""
-
-    out: list[str] = []
-    in_quote = False
-    for ch in line:
-        if ch == '"':
-            in_quote = not in_quote
-        if (not in_quote) and ch == ";":
-            break
-        out.append(ch)
-    return "".join(out)
-
-
-def inf_functional_lines(path: Path) -> list[str]:
+def inf_functional_bytes(path: Path) -> bytes:
     """
-    Return normalized INF lines for comparison.
+    Return the INF bytes starting from the first section header line.
 
-    - Starts at the first section header (or the first unexpected functional
-      line if one appears before any section header).
-    - Drops models sections (Aero.NTx86 / Aero.NTamd64) entirely.
-    - Drops comments and empty lines.
+    This intentionally ignores the leading comment/banner block so a legacy alias
+    INF can use a different filename header while still enforcing byte-for-byte
+    equality of all functional sections/keys.
     """
 
-    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    data = path.read_bytes()
+    lines = data.splitlines(keepends=True)
 
-    start: int | None = None
-    for i, line in enumerate(raw_lines):
-        stripped = line.lstrip(" \t")
-        if stripped.startswith("["):
-            start = i
-            break
-        if stripped.startswith(";") or stripped.strip() == "":
-            continue
-        # Unexpected functional content before the first section header: keep it.
-        start = i
-        break
+    for i, line in enumerate(lines):
+        stripped = line.lstrip(b" \t")
 
-    if start is None:
-        raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
+        # First section header (e.g. "[Version]") starts the functional region.
+        if stripped.startswith(b"["):
+            return b"".join(lines[i:])
 
-    out: list[str] = []
-    skip_section = False
-    for line in raw_lines[start:]:
-        stripped = line.lstrip(" \t")
-        if stripped.startswith("[") and "]" in stripped:
-            sect_name = stripped[1 : stripped.index("]")].strip()
-            # INF section names are case-insensitive. Normalize them so we don't
-            # flag drift due to casing-only differences.
-            sect_name_norm = sect_name.lower()
-            skip_section = sect_name_norm in MODELS_SECTIONS
-            if skip_section:
-                continue
-            out.append(f"[{sect_name_norm}]")
+        # Ignore leading comments and blank lines.
+        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
             continue
 
-        if skip_section:
-            continue
+        # Unexpected preamble content (not comment, not blank, not section):
+        # treat it as functional to avoid masking drift.
+        return b"".join(lines[i:])
 
-        no_comment = strip_inf_comments(line).strip()
-        if no_comment == "":
-            continue
-        out.append(no_comment)
-    return out
-
-
-def find_hwid_model_lines(*, path: Path, section: str, hwid: str) -> tuple[bool, list[str]]:
-    """
-    Find model lines containing `hwid` within a specific models section.
-
-    Returns `(section_seen, matches)` where `matches` contains the (comment-stripped)
-    lines that included `hwid`.
-    """
-
-    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-
-    target = section.lower()
-    section_seen = False
-    matches: list[str] = []
-
-    current: str | None = None
-    for line in raw_lines:
-        stripped = line.lstrip(" \t")
-        if stripped.startswith("[") and "]" in stripped:
-            current = stripped[1 : stripped.index("]")].strip().lower()
-            if current == target:
-                section_seen = True
-            continue
-
-        if current != target:
-            continue
-
-        no_comment = strip_inf_comments(line).strip()
-        if not no_comment:
-            continue
-
-        if hwid.lower() in no_comment.lower():
-            matches.append(no_comment)
-
-    return section_seen, matches
-
-
-def section_active_lines(*, path: Path, section: str) -> tuple[bool, list[str]]:
-    """
-    Return all non-empty, comment-stripped lines within a section.
-
-    This is used for lightweight policy checks (no full INF parser).
-    """
-
-    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-
-    target = section.lower()
-    section_seen = False
-    current: str | None = None
-    lines: list[str] = []
-
-    for line in raw_lines:
-        stripped = line.lstrip(" \t")
-        if stripped.startswith("[") and "]" in stripped:
-            current = stripped[1 : stripped.index("]")].strip().lower()
-            if current == target:
-                section_seen = True
-            continue
-
-        if current != target:
-            continue
-
-        no_comment = strip_inf_comments(line).strip()
-        if not no_comment:
-            continue
-        lines.append(no_comment)
-
-    return section_seen, lines
-
-
-def enforce_models_policy(*, path: Path) -> list[str]:
-    """
-    Enforce the virtio-input model line policy for a given INF.
-
-    Returns a list of human-readable error strings (empty if OK).
-    """
-
-    errors: list[str] = []
-    for sect in ("Aero.NTx86", "Aero.NTamd64"):
-        seen, lines = section_active_lines(path=path, section=sect)
-        if not seen:
-            errors.append(f"{path}: missing required models section [{sect}].")
-            continue
-
-        def _matches(needle: str) -> list[str]:
-            n = needle.lower()
-            return [l for l in lines if n in l.lower()]
-
-        kb = _matches(KEYBOARD_HWID)
-        ms = _matches(MOUSE_HWID)
-        fb = _matches(FALLBACK_HWID)
-
-        if len(kb) != 1:
-            errors.append(
-                f"{path}: [{sect}] expected exactly one keyboard model line ({KEYBOARD_HWID}); "
-                + ("missing." if not kb else f"found {len(kb)}:\n  " + "\n  ".join(kb))
-            )
-        if len(ms) != 1:
-            errors.append(
-                f"{path}: [{sect}] expected exactly one mouse model line ({MOUSE_HWID}); "
-                + ("missing." if not ms else f"found {len(ms)}:\n  " + "\n  ".join(ms))
-            )
-        if len(fb) != 1:
-            errors.append(
-                f"{path}: [{sect}] expected exactly one strict fallback model line ({FALLBACK_HWID}); "
-                + ("missing." if not fb else f"found {len(fb)}:\n  " + "\n  ".join(fb))
-            )
-
-        # Reject any rev-less matches: we require revision gating to encode the contract major
-        # version and to avoid binding to non-contract devices.
-        revless = [
-            l
-            for l in lines
-            if BASE_HWID.lower() in l.lower() and "&rev_" not in l.lower()
-        ]
-        if revless:
-            errors.append(
-                f"{path}: [{sect}] contains rev-less model line(s) matching {BASE_HWID} (missing &REV_.. qualifier):\n  "
-                + "\n  ".join(revless)
-            )
-
-        # Tablet subsystem IDs belong in `aero_virtio_tablet.inf` (more specific HWID), not here.
-        tablet = [l for l in lines if TABLET_SUBSYS.lower() in l.lower()]
-        if tablet:
-            errors.append(
-                f"{path}: [{sect}] contains unexpected tablet subsystem model line(s) ({TABLET_SUBSYS}); "
-                "tablet devices must bind via aero_virtio_tablet.inf:\n  " + "\n  ".join(tablet)
-            )
-
-    return errors
+    raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
 
 
 def main() -> int:
@@ -266,24 +81,15 @@ def main() -> int:
         )
         return 0
 
-    canonical_body = inf_functional_lines(canonical)
-    alias_body = inf_functional_lines(alias)
+    canonical_body = inf_functional_bytes(canonical)
+    alias_body = inf_functional_bytes(alias)
     if canonical_body == alias_body:
-        # Even if the non-models sections match, enforce the models/HWID policy.
-        # This guards against accidental driver binding changes which can silently
-        # break in-guest installs and Guest Tools packaging/validation.
-        errors = [*enforce_models_policy(path=canonical), *enforce_models_policy(path=alias)]
-        if errors:
-            sys.stderr.write("virtio-input INF models policy violation(s):\n")
-            for e in errors:
-                sys.stderr.write(f"- {e}\n")
-            return 1
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
     sys.stderr.write(
         "The alias INF must match the canonical INF from [Version] onward "
-        "(excluding models sections Aero.NTx86/Aero.NTamd64).\n\n"
+        "(byte-for-byte; only the leading banner may differ).\n\n"
     )
 
     # Use repo-relative paths in the diff output to keep it readable and stable
@@ -291,15 +97,18 @@ def main() -> int:
     canonical_label = str(canonical.relative_to(repo_root))
     alias_label = str(alias.relative_to(repo_root))
 
+    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines()
+    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines()
+
     diff = difflib.unified_diff(
-        [l + "\n" for l in canonical_body],
-        [l + "\n" for l in alias_body],
+        canonical_lines,
+        alias_lines,
         fromfile=canonical_label,
         tofile=alias_label,
-        lineterm="\n",
+        lineterm="",
     )
     for line in diff:
-        sys.stderr.write(line)
+        sys.stderr.write(line + "\n")
 
     return 1
 

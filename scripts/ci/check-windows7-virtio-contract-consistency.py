@@ -306,6 +306,75 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
         + "".join(diff)
     )
 
+def inf_functional_bytes(path: Path) -> bytes:
+    """
+    Return the INF content starting from the first section header line.
+
+    This intentionally ignores the leading comment/banner block so a legacy alias
+    INF can use a different filename header while still enforcing byte-for-byte
+    equality of all functional sections/keys.
+    """
+
+    data = path.read_bytes()
+    lines = data.splitlines(keepends=True)
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip(b" \t")
+
+        # First section header (e.g. "[Version]") starts the functional region.
+        if stripped.startswith(b"["):
+            return b"".join(lines[i:])
+
+        # Ignore leading comments and blank lines.
+        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
+            continue
+
+        # Unexpected preamble content (not comment, not blank, not section):
+        # treat it as functional to avoid masking drift.
+        return b"".join(lines[i:])
+
+    raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
+
+
+def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, label: str) -> str | None:
+    """
+    Compare the canonical INF against its legacy filename alias.
+
+    Policy: from the first section header (`[Version]`) onward, the alias must be
+    byte-for-byte identical to the canonical INF. Only the leading banner/comment
+    block may differ.
+    """
+
+    try:
+        canonical_body = inf_functional_bytes(canonical)
+    except Exception as e:
+        return f"{label}: failed to read canonical INF functional bytes: {e}"
+
+    try:
+        alias_body = inf_functional_bytes(alias)
+    except Exception as e:
+        return f"{label}: failed to read alias INF functional bytes: {e}"
+
+    if canonical_body == alias_body:
+        return None
+
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+
+    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+
+    diff = difflib.unified_diff(
+        canonical_lines,
+        alias_lines,
+        fromfile=canonical_label,
+        tofile=alias_label,
+        lineterm="",
+    )
+
+    return f"{label}: INF alias drift detected (expected byte-identical from [Version] onward):\n" + "".join(diff)
+
+
 def parse_contract_major_version(md: str) -> int:
     m = re.search(r"^\*\*Contract version:\*\*\s*`(?P<major>\d+)\.", md, flags=re.M)
     if not m:
@@ -1937,29 +2006,22 @@ def validate_virtio_input_model_lines(
     inf_path: Path,
     strict_hwid: str,
     contract_rev: int,
-    require_fallback: bool,
     errors: list[str],
 ) -> None:
     """
     Validate the virtio-input model line policy for the given INF.
 
-    - The INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs
-      (distinct naming).
-    - If `require_fallback=True`, it must include the strict REV-qualified generic
-      fallback HWID (no SUBSYS) so binding remains revision-gated even when subsystem
-      IDs are absent/ignored. If `require_fallback=False`, it must not include that
-      fallback HWID.
+    - The INF must include:
+        - the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs (distinct naming), and
+        - the strict REV-qualified generic fallback HWID (no SUBSYS) so driver binding remains
+          revision-gated even if subsystem IDs are absent/ignored.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
 
-    The `require_fallback` flag controls which policy is enforced:
-      - `require_fallback=False`: forbid the strict fallback HWID.
-      - `require_fallback=True`: require the strict fallback HWID.
-
-    The legacy filename alias is expected to stay in sync with the canonical INF
-    outside the models sections (CI enforces this via an alias drift check) so it
-    cannot silently drift in behavior.
+    The legacy filename alias INF (`virtio-input.inf.disabled`) is expected to remain byte-for-byte identical
+    to the canonical INF (`aero_virtio_input.inf`) from the first section header (`[Version]`) onward (CI
+    enforces this).
     """
 
     model_entries = parse_inf_model_entries(inf_path)
@@ -2017,26 +2079,17 @@ def validate_virtio_input_model_lines(
             )
             continue
 
-        if require_fallback:
-            if len(fb) != 1:
-                errors.append(
-                    format_error(
-                        f"{inf_path.as_posix()}: expected exactly one fallback model line in [{section}] ({strict_hwid}):",
-                        [e.raw_line for e in fb] if fb else ["(missing)"],
-                    )
+        if len(fb) != 1:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: expected exactly one fallback model line in [{section}] ({strict_hwid}):",
+                    [e.raw_line for e in fb] if fb else ["(missing)"],
                 )
-                continue
-        else:
-            if fb:
-                errors.append(
-                    format_error(
-                        f"{inf_path.as_posix()}: unexpected fallback model line(s) in [{section}] ({strict_hwid}) (fallback not allowed for this INF):",
-                        [e.raw_line for e in fb],
-                    )
-                )
+            )
+            continue
 
         kb_entry, ms_entry = kb[0], ms[0]
-        fb_entry = fb[0] if fb else None
+        fb_entry = fb[0]
 
         # Model lines should share the same install section so behavior doesn't drift.
         expected_install = kb_entry.install_section
@@ -2074,7 +2127,7 @@ def validate_virtio_input_model_lines(
                 )
             )
 
-        entries_to_check = (kb_entry, ms_entry) if fb_entry is None else (kb_entry, ms_entry, fb_entry)
+        entries_to_check = (kb_entry, ms_entry, fb_entry)
         for entry in entries_to_check:
             desc = entry.device_desc.strip()
             if desc.startswith("%") and desc.endswith("%") and len(desc) > 2:
@@ -2096,7 +2149,7 @@ def validate_virtio_input_model_lines(
 
         kb_name = _resolve(kb_entry.device_desc).strip()
         ms_name = _resolve(ms_entry.device_desc).strip()
-        fb_name = _resolve(fb_entry.device_desc).strip() if fb_entry is not None else ""
+        fb_name = _resolve(fb_entry.device_desc).strip()
 
         if kb_name.lower() == ms_name.lower():
             errors.append(
@@ -2105,7 +2158,7 @@ def validate_virtio_input_model_lines(
                     [kb_entry.raw_line, ms_entry.raw_line],
                 )
             )
-        if fb_entry is not None and fb_name.lower() in {kb_name.lower(), ms_name.lower()}:
+        if fb_name.lower() in {kb_name.lower(), ms_name.lower()}:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: virtio-input fallback DeviceDesc string in [{section}] must be generic (must not equal keyboard/mouse):",
@@ -4271,7 +4324,6 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=True,
                 errors=errors,
             )
 
@@ -4295,25 +4347,22 @@ def main() -> None:
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
         # The legacy alias INF is kept for compatibility with workflows that reference the
-        # legacy `virtio-input.inf` name. It is allowed to diverge in the models sections
-        # (`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide an opt-in strict fallback HWID
-        # (no SUBSYS), but must otherwise stay in sync with the canonical INF.
+        # legacy `virtio-input.inf` name. It is expected to stay byte-for-byte identical to
+        # the canonical INF from [Version] onward (different filename only; leading comment
+        # banner may differ).
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
             contract_rev=contract_rev,
-            require_fallback=True,
             errors=errors,
         )
 
-        # The alias INF may differ in the models sections (it adds the generic fallback),
-        # but should otherwise stay in sync with the canonical INF.
-        drift = check_inf_alias_drift_excluding_sections(
+        # Keep the alias byte-identical to the canonical INF from [Version] onward.
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)

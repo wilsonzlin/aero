@@ -11,7 +11,8 @@
   - Must reference the expected catalog filename
   - Must target KMDF 1.9 (in-box on Win7 SP1)
   - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01)
-  - Must include the strict REV-qualified generic fallback HWID (no SUBSYS)
+  - Must include the strict, REV-qualified generic fallback HWID (no SUBSYS):
+    `PCI\VEN_1AF4&DEV_1052&REV_01`
   - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
@@ -160,8 +161,8 @@ function Add-Failure([System.Collections.Generic.List[string]]$Failures, [string
   }
 }
 
-$exitCode = 0
-try {
+  $exitCode = 0
+  try {
   $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
 
   $rawLines = Read-InfLines -Path $infPathResolved
@@ -280,17 +281,18 @@ foreach ($installSect in $installWdfSections) {
 #------------------------------------------------------------------------------
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
-# The canonical keyboard/mouse INF must include:
-#   - the SUBSYS-qualified Aero contract v1 keyboard/mouse IDs (distinct naming), and
-#   - a strict REV-qualified generic fallback HWID (no SUBSYS) so driver binding remains
-#     stable if subsystem IDs are not exposed/recognized.
+# Hardware ID policy:
+# - The keyboard/mouse INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse IDs (distinct
+#   keyboard/mouse naming) plus the strict, REV-qualified generic fallback HWID (no SUBSYS) so driver binding
+#   remains revision-gated even if subsystem IDs are absent/ignored.
+$fallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
 $requiredHwids = @(
   # Aero contract v1 keyboard (SUBSYS_0010)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
   # Aero contract v1 mouse (SUBSYS_0011)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
-  # Generic fallback (no SUBSYS)
-  'PCI\VEN_1AF4&DEV_1052&REV_01',
+  # Strict generic fallback (no SUBSYS)
+  $fallbackHwid,
 )
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
@@ -341,14 +343,14 @@ $requiredModelMappings = @(
   },
   @{
     Name = 'NTx86 fallback mapping'
-    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
-    Message = 'Missing x86 fallback model line in [Aero.NTx86] (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01).'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
+    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...&REV_01 ).'
   },
   @{
     Name = 'NTamd64 fallback mapping'
-    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
-    Message = 'Missing x64 fallback model line in [Aero.NTamd64] (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01).'
-  },
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
+    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...&REV_01 ).'
+  }
 )
 
 foreach ($m in $requiredModelMappings) {
