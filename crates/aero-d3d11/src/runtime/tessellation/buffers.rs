@@ -73,7 +73,7 @@ impl TessellationSizingParams {
         Self::new(
             patch_count_total,
             control_points,
-            super::MAX_TESS_FACTOR,
+            super::MAX_TESS_FACTOR_SUPPORTED,
             ds_output_register_count,
         )
     }
@@ -144,7 +144,7 @@ pub fn worst_case_vertices_per_patch(max_tess_factor: u32) -> Result<u64, Tessel
             "max_tess_factor must be > 0",
         ));
     }
-    let max_tess_factor = max_tess_factor.min(super::MAX_TESS_FACTOR);
+    let max_tess_factor = max_tess_factor.min(super::MAX_TESS_FACTOR_SUPPORTED);
     let n = max_tess_factor as u64;
     let np1 = n.checked_add(1).ok_or(TessellationSizingError::Overflow(
         "max_tess_factor + 1 overflows",
@@ -162,7 +162,7 @@ pub fn worst_case_indices_per_patch(max_tess_factor: u32) -> Result<u64, Tessell
             "max_tess_factor must be > 0",
         ));
     }
-    let max_tess_factor = max_tess_factor.min(super::MAX_TESS_FACTOR);
+    let max_tess_factor = max_tess_factor.min(super::MAX_TESS_FACTOR_SUPPORTED);
     let n = max_tess_factor as u64;
     let n2 = checked_mul_u64(n, n, "max_tess_factor^2")?;
     checked_mul_u64(6, n2, "indices per patch")
@@ -299,17 +299,27 @@ mod tests {
         assert_eq!(worst_case_vertices_per_patch(1).unwrap(), 4);
         assert_eq!(worst_case_indices_per_patch(1).unwrap(), 6);
 
-        assert_eq!(worst_case_vertices_per_patch(64).unwrap(), 4225);
-        assert_eq!(worst_case_indices_per_patch(64).unwrap(), 24576);
+        assert_eq!(
+            worst_case_vertices_per_patch(crate::runtime::tessellation::MAX_TESS_FACTOR_SUPPORTED)
+                .unwrap(),
+            289
+        );
+        assert_eq!(
+            worst_case_indices_per_patch(crate::runtime::tessellation::MAX_TESS_FACTOR_SUPPORTED)
+                .unwrap(),
+            1536
+        );
 
-        // D3D11 clamps tessellation factors to MAX_TESS_FACTOR.
+        // The runtime clamps tessellation factors to MAX_TESS_FACTOR_SUPPORTED.
         assert_eq!(
             worst_case_vertices_per_patch(65).unwrap(),
-            worst_case_vertices_per_patch(64).unwrap()
+            worst_case_vertices_per_patch(crate::runtime::tessellation::MAX_TESS_FACTOR_SUPPORTED)
+                .unwrap()
         );
         assert_eq!(
             worst_case_indices_per_patch(65).unwrap(),
-            worst_case_indices_per_patch(64).unwrap()
+            worst_case_indices_per_patch(crate::runtime::tessellation::MAX_TESS_FACTOR_SUPPORTED)
+                .unwrap()
         );
     }
 
@@ -380,7 +390,9 @@ mod tests {
     fn detects_overflow() {
         // Keep element counts within u32 so we validate u64 byte-size overflow paths.
         // (D3D-style indexing/indirect args are u32-based.)
-        let params = TessellationSizingParams::new(174_000, 1, 64, u32::MAX);
+        // With MAX_TESS_FACTOR_SUPPORTED clamping, use a larger patch count to overflow the
+        // expanded vertex byte-size calculation.
+        let params = TessellationSizingParams::new(1_000_000, 1, 64, u32::MAX);
         assert!(matches!(
             TessellationDrawScratchSizes::new(params),
             Err(TessellationSizingError::Overflow(_))
@@ -390,7 +402,7 @@ mod tests {
     #[test]
     fn rejects_counts_that_exceed_u32() {
         // Chosen so the expanded index count exceeds u32::MAX without overflowing u64.
-        let params = TessellationSizingParams::new(1_000_000, 1, 64, 1);
+        let params = TessellationSizingParams::new(3_000_000, 1, 64, 1);
         let err = TessellationDrawScratchSizes::new(params).unwrap_err();
         assert!(matches!(
             err,

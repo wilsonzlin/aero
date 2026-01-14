@@ -13,6 +13,12 @@ futures-intrusive = "0.5"
 pollster = "0.3"
 wgpu = "0.20"
 
+[features]
+# Enables extra GPU-side debug counters for tessellation/expansion compute passes.
+# This is intended for tests and diagnostics; it is off by default so production builds
+# don't pay the overhead.
+tessellation_debug_counters = []
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 blake3 = "1.5.0"
 js-sys = "0.3"

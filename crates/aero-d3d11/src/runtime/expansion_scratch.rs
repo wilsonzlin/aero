@@ -214,6 +214,14 @@ impl ExpansionScratchAllocator {
         self.state.as_ref().map(|s| s.arenas.per_frame_capacity)
     }
 
+    /// Ensure the scratch allocator is initialized.
+    ///
+    /// This is a lightweight operation after the first call, and does not consume any space from
+    /// the current frame segment.
+    pub fn init(&mut self, device: &wgpu::Device) -> Result<(), ExpansionScratchError> {
+        self.ensure_init(device)
+    }
+
     pub fn frames_in_flight(&self) -> usize {
         self.desc.frames_in_flight
     }

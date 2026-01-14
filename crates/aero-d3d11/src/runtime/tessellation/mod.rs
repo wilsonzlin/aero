@@ -29,6 +29,92 @@ use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchError}
 /// per-patch tess levels in the GPU layout pass.
 pub const MAX_TESS_FACTOR: u32 = super::tessellator::MAX_TESS_FACTOR;
 
+/// Maximum tessellation factor supported by the WebGPU emulation path.
+///
+/// D3D11's fixed-function tessellator supports factors up to [`MAX_TESS_FACTOR`] (64), but the
+/// compute-based expansion path needs to stay within reasonable WebGPU limits (scratch memory,
+/// dispatch sizes, etc). HS tess factors are clamped to this value.
+pub const MAX_TESS_FACTOR_SUPPORTED: u32 = 16;
+
+fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+fn lcm_u64(a: u64, b: u64) -> u64 {
+    debug_assert!(a > 0);
+    debug_assert!(b > 0);
+    let g = gcd_u64(a, b);
+    (a / g).saturating_mul(b)
+}
+
+fn align_up(value: u64, alignment: u64) -> u64 {
+    debug_assert!(alignment > 0);
+    let add = alignment - 1;
+    match value.checked_add(add) {
+        Some(v) => v / alignment * alignment,
+        None => u64::MAX / alignment * alignment,
+    }
+}
+
+fn scratch_storage_alignment(device: &wgpu::Device) -> u64 {
+    (device.limits().min_storage_buffer_offset_alignment as u64).max(1)
+}
+
+fn scratch_alloc_alignment(requested: u64, storage_alignment: u64) -> u64 {
+    lcm_u64(requested.max(1), lcm_u64(wgpu::COPY_BUFFER_ALIGNMENT, storage_alignment))
+}
+
+fn scratch_add_alloc(
+    offset: u64,
+    size: u64,
+    requested_alignment: u64,
+    storage_alignment: u64,
+) -> Result<u64, buffers::TessellationSizingError> {
+    let alignment = scratch_alloc_alignment(requested_alignment, storage_alignment);
+    let offset = align_up(offset, alignment);
+    let size = align_up(size, wgpu::COPY_BUFFER_ALIGNMENT);
+    offset
+        .checked_add(size)
+        .ok_or(buffers::TessellationSizingError::Overflow(
+            "scratch allocation offset overflow",
+        ))
+}
+
+fn compute_worst_case_scratch_usage_bytes(
+    device: &wgpu::Device,
+    sizes: &buffers::TessellationDrawScratchSizes,
+    debug_counters_bytes: u64,
+) -> Result<u64, buffers::TessellationSizingError> {
+    let storage_alignment = scratch_storage_alignment(device);
+    let mut offset = 0u64;
+
+    // VS/HS stage outputs and patch constants are vertex-like storage payloads.
+    for bytes in [
+        sizes.vs_out_bytes,
+        sizes.hs_out_bytes,
+        sizes.hs_patch_constants_bytes,
+        sizes.tess_metadata_bytes,
+        sizes.expanded_vertex_bytes,
+    ] {
+        offset = scratch_add_alloc(offset, bytes, 16, storage_alignment)?;
+    }
+
+    // Expanded indices + indirect args are u32-based.
+    offset = scratch_add_alloc(offset, sizes.expanded_index_bytes, 4, storage_alignment)?;
+    offset = scratch_add_alloc(offset, sizes.indirect_args_bytes, 4, storage_alignment)?;
+
+    if debug_counters_bytes != 0 {
+        offset = scratch_add_alloc(offset, debug_counters_bytes, 16, storage_alignment)?;
+    }
+
+    Ok(offset)
+}
+
 /// Uniform payload for the GPU tessellation *layout pass*.
 ///
 /// Layout matches the WGSL `LayoutParams` struct in [`layout_pass`], and is padded to 16 bytes so
@@ -98,10 +184,50 @@ pub struct TessellationRuntime {
     pipelines: pipeline::TessellationPipelines,
 }
 
+/// Structured scratch OOM error for tessellation expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TessellationScratchOomError {
+    pub patch_count_total: u32,
+    pub tess_factor_clamped: u32,
+    pub scratch_per_frame_capacity: u64,
+    pub device_max_buffer_size: u64,
+    pub sizes: buffers::TessellationDrawScratchSizes,
+    pub debug_counters_bytes: u64,
+    pub total_scratch_bytes: u64,
+}
+
+impl core::fmt::Display for TessellationScratchOomError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "tessellation scratch OOM: patch_count_total={} tess_factor_clamped={} \
+vs_out_bytes={} hs_out_bytes={} hs_patch_constants_bytes={} tess_metadata_bytes={} \
+expanded_vertex_bytes={} expanded_index_bytes={} indirect_args_bytes={} debug_counters_bytes={} \
+total_scratch_bytes={} scratch_per_frame_capacity={} device_max_buffer_size={}",
+            self.patch_count_total,
+            self.tess_factor_clamped,
+            self.sizes.vs_out_bytes,
+            self.sizes.hs_out_bytes,
+            self.sizes.hs_patch_constants_bytes,
+            self.sizes.tess_metadata_bytes,
+            self.sizes.expanded_vertex_bytes,
+            self.sizes.expanded_index_bytes,
+            self.sizes.indirect_args_bytes,
+            self.debug_counters_bytes,
+            self.total_scratch_bytes,
+            self.scratch_per_frame_capacity,
+            self.device_max_buffer_size
+        )
+    }
+}
+
+impl std::error::Error for TessellationScratchOomError {}
+
 #[derive(Debug)]
 pub enum TessellationRuntimeError {
     Sizing(buffers::TessellationSizingError),
     Scratch(ExpansionScratchError),
+    ScratchOom(TessellationScratchOomError),
 }
 
 impl core::fmt::Display for TessellationRuntimeError {
@@ -109,6 +235,7 @@ impl core::fmt::Display for TessellationRuntimeError {
         match self {
             TessellationRuntimeError::Sizing(e) => write!(f, "tessellation sizing error: {e}"),
             TessellationRuntimeError::Scratch(e) => write!(f, "tessellation scratch error: {e}"),
+            TessellationRuntimeError::ScratchOom(e) => write!(f, "{e}"),
         }
     }
 }
@@ -130,8 +257,64 @@ impl TessellationRuntime {
         scratch: &mut ExpansionScratchAllocator,
         params: buffers::TessellationSizingParams,
     ) -> Result<buffers::TessellationDrawScratch, TessellationRuntimeError> {
+        let tess_factor_clamped = params
+            .max_tess_factor
+            .clamp(1, MAX_TESS_FACTOR_SUPPORTED);
+        let params = buffers::TessellationSizingParams {
+            max_tess_factor: tess_factor_clamped,
+            ..params
+        };
+
         let sizes = buffers::TessellationDrawScratchSizes::new(params)
             .map_err(TessellationRuntimeError::Sizing)?;
+
+        // Preflight scratch usage before performing any allocations. This prevents the scratch
+        // allocator from silently growing to enormous buffers (or failing deep in the dispatch
+        // path) and produces an actionable error with computed sizes.
+        scratch
+            .init(device)
+            .map_err(TessellationRuntimeError::Scratch)?;
+        let scratch_per_frame_capacity = scratch.per_frame_capacity().ok_or_else(|| {
+            TessellationRuntimeError::Scratch(ExpansionScratchError::InvalidDescriptor(
+                "scratch allocator did not report per-frame capacity after init",
+            ))
+        })?;
+
+        let device_max_buffer_size = device.limits().max_buffer_size;
+        let debug_counters_bytes: u64 =
+            if cfg!(any(test, feature = "tessellation_debug_counters")) {
+                16
+            } else {
+                0
+            };
+        let total_scratch_bytes =
+            compute_worst_case_scratch_usage_bytes(device, &sizes, debug_counters_bytes)
+                .map_err(TessellationRuntimeError::Sizing)?;
+
+        let exceeds_device_limit = sizes.vs_out_bytes > device_max_buffer_size
+            || sizes.hs_out_bytes > device_max_buffer_size
+            || sizes.hs_patch_constants_bytes > device_max_buffer_size
+            || sizes.tess_metadata_bytes > device_max_buffer_size
+            || sizes.expanded_vertex_bytes > device_max_buffer_size
+            || sizes.expanded_index_bytes > device_max_buffer_size
+            || sizes.indirect_args_bytes > device_max_buffer_size
+            || debug_counters_bytes > device_max_buffer_size
+            || total_scratch_bytes > device_max_buffer_size;
+        let exceeds_scratch_capacity = total_scratch_bytes > scratch_per_frame_capacity;
+
+        if exceeds_device_limit || exceeds_scratch_capacity {
+            return Err(TessellationRuntimeError::ScratchOom(
+                TessellationScratchOomError {
+                    patch_count_total: params.patch_count_total,
+                    tess_factor_clamped,
+                    scratch_per_frame_capacity,
+                    device_max_buffer_size,
+                    sizes,
+                    debug_counters_bytes,
+                    total_scratch_bytes,
+                },
+            ));
+        }
 
         // Intermediate stage outputs are modelled as storage buffers, but allocating them via the
         // "vertex output" path keeps alignment consistent with other stage-emulation scratch.

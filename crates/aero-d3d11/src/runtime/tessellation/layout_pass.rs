@@ -10,7 +10,7 @@
 //! This pass intentionally runs with `@workgroup_size(1)` and only the `global_invocation_id.x==0`
 //! lane active so ordering is deterministic without atomics.
 
-use super::{tessellator::wgsl_tri_tessellator_lib, MAX_TESS_FACTOR};
+use super::{tessellator::wgsl_tri_tessellator_lib, MAX_TESS_FACTOR_SUPPORTED};
 
 /// Returns a WGSL compute shader implementing the tessellation layout pass.
 ///
@@ -19,7 +19,7 @@ use super::{tessellator::wgsl_tri_tessellator_lib, MAX_TESS_FACTOR};
 /// - `hs_tess_factors_binding`: storage `array<vec4<f32>>` (per patch: edge0, edge1, edge2, inside)
 /// - `out_patch_meta_binding`: storage `array<PatchMeta>`
 /// - `out_indirect_args_binding`: storage `DrawIndexedIndirectArgs`
-/// - `out_debug_binding`: storage `DebugOut` (debug flag: non-zero if any patch was clamped/skipped)
+/// - `out_debug_binding`: storage `DebugOut` (debug flag; and optional counters when enabled)
 pub fn wgsl_tessellation_layout_pass(
     group: u32,
     params_binding: u32,
@@ -28,7 +28,43 @@ pub fn wgsl_tessellation_layout_pass(
     out_indirect_args_binding: u32,
     out_debug_binding: u32,
 ) -> String {
-    let tri_lib = wgsl_tri_tessellator_lib(MAX_TESS_FACTOR);
+    let tri_lib = wgsl_tri_tessellator_lib(MAX_TESS_FACTOR_SUPPORTED);
+
+    // When enabled, the layout pass writes counters that can be read back in tests.
+    let include_counters = cfg!(any(test, feature = "tessellation_debug_counters"));
+    let (debug_struct, debug_init, debug_write) = if include_counters {
+        (
+            r#"
+struct DebugOut {
+    flag: u32,
+    total_vertices_written: u32,
+    total_indices_written: u32,
+    _pad0: u32,
+};
+"#,
+            r#"
+    out_debug.flag = 0u;
+    out_debug.total_vertices_written = 0u;
+    out_debug.total_indices_written = 0u;
+"#,
+            r#"
+    out_debug.total_vertices_written = total_vertices;
+    out_debug.total_indices_written = total_indices;
+"#,
+        )
+    } else {
+        (
+            r#"
+struct DebugOut {
+    flag: u32,
+};
+"#,
+            r#"
+    out_debug.flag = 0u;
+"#,
+            "",
+        )
+    };
     format!(
         r#"
 // ---- Layouts (must match Rust `#[repr(C)]` structs) ----
@@ -56,9 +92,7 @@ struct DrawIndexedIndirectArgs {{
     first_instance: u32,
 }};
 
-struct DebugOut {{
-    flag: u32,
-}};
+{debug_struct}
 
 {tri_lib}
 
@@ -112,7 +146,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         return;
     }}
 
-    out_debug.flag = 0u;
+{debug_init}
 
     var total_vertices: u32 = 0u;
     var total_indices: u32 = 0u;
@@ -171,6 +205,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     out_indirect.first_index = 0u;
     out_indirect.base_vertex = 0;
     out_indirect.first_instance = 0u;
+
+{debug_write}
 }}
 "#
     )
