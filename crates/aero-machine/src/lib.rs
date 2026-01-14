@@ -2731,6 +2731,14 @@ fn encode_aerogpu_snapshot_v1(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     out.extend_from_slice(&vram_len_u32.to_le_bytes());
     out.extend_from_slice(&vram.vram[..save_len]);
 
+    // Optional trailing BAR0 error payload (ABI 1.3+).
+    //
+    // Keep this *after* the variable-length VRAM payload so older snapshot decoders that stop
+    // after VRAM bytes remain forward-compatible.
+    out.extend_from_slice(&regs.error_code.to_le_bytes());
+    out.extend_from_slice(&regs.error_fence.to_le_bytes());
+    out.extend_from_slice(&regs.error_count.to_le_bytes());
+
     out
 }
 
@@ -2799,6 +2807,18 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     let vram_len = read_u32(bytes, &mut off)? as usize;
     let end = off.checked_add(vram_len)?;
     let vram = bytes.get(off..end)?.to_vec();
+
+    // Trailing BAR0 error payload (ABI 1.3+). This was added after the initial snapshot v1 format,
+    // so treat it as optional and default to zero when absent.
+    off = end;
+    let (error_code, error_fence, error_count) = if bytes.len() >= end.saturating_add(16) {
+        let error_code = read_u32(bytes, &mut off).unwrap_or(0);
+        let error_fence = read_u64(bytes, &mut off).unwrap_or(0);
+        let error_count = read_u32(bytes, &mut off).unwrap_or(0);
+        (error_code, error_fence, error_count)
+    } else {
+        (0, 0, 0)
+    };
     // Forward-compatible: ignore trailing bytes from future versions.
 
     Some(AeroGpuSnapshotV1 {
@@ -2812,6 +2832,9 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             completed_fence,
             irq_status,
             irq_enable,
+            error_code,
+            error_fence,
+            error_count,
             scanout0_enable,
             scanout0_width,
             scanout0_height,

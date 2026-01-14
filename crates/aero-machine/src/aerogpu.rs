@@ -20,7 +20,11 @@ const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
 
 fn supported_features() -> u64 {
-    pci::AEROGPU_FEATURE_FENCE_PAGE | pci::AEROGPU_FEATURE_SCANOUT | pci::AEROGPU_FEATURE_VBLANK
+    pci::AEROGPU_FEATURE_FENCE_PAGE
+        | pci::AEROGPU_FEATURE_CURSOR
+        | pci::AEROGPU_FEATURE_SCANOUT
+        | pci::AEROGPU_FEATURE_VBLANK
+        | pci::AEROGPU_FEATURE_ERROR_INFO
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -368,6 +372,18 @@ pub struct AeroGpuMmioDevice {
     irq_status: u32,
     irq_enable: u32,
 
+    // ---------------------------------------------------------------------
+    // Error reporting (ABI 1.3+)
+    // ---------------------------------------------------------------------
+    //
+    // These mirror the optional MMIO error registers in `drivers/aerogpu/protocol/aerogpu_pci.h`.
+    //
+    // Clearing `IRQ_STATUS.ERROR` via `IRQ_ACK` must *not* clear the latched payload; it remains
+    // valid until overwritten by a subsequent error (or until the device is reset).
+    error_code: u32,
+    error_fence: u64,
+    error_count: u32,
+
     scanout0_enable: bool,
     scanout0_width: u32,
     scanout0_height: u32,
@@ -413,6 +429,10 @@ pub(crate) struct AeroGpuMmioSnapshotV1 {
 
     pub irq_status: u32,
     pub irq_enable: u32,
+
+    pub error_code: u32,
+    pub error_fence: u64,
+    pub error_count: u32,
 
     pub scanout0_enable: u32,
     pub scanout0_width: u32,
@@ -466,6 +486,9 @@ impl Default for AeroGpuMmioDevice {
 
             irq_status: 0,
             irq_enable: 0,
+            error_code: pci::AerogpuErrorCode::None as u32,
+            error_fence: 0,
+            error_count: 0,
 
             scanout0_enable: false,
             scanout0_width: 0,
@@ -515,6 +538,13 @@ impl AeroGpuMmioDevice {
             clock,
             ..Default::default()
         };
+    }
+
+    fn record_error(&mut self, code: pci::AerogpuErrorCode, fence: u64) {
+        self.error_code = code as u32;
+        self.error_fence = fence;
+        self.error_count = self.error_count.saturating_add(1);
+        self.irq_status |= pci::AEROGPU_IRQ_ERROR;
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -745,6 +775,10 @@ impl AeroGpuMmioDevice {
             irq_status: self.irq_status,
             irq_enable: self.irq_enable,
 
+            error_code: self.error_code,
+            error_fence: self.error_fence,
+            error_count: self.error_count,
+
             scanout0_enable: self.scanout0_enable as u32,
             scanout0_width: self.scanout0_width,
             scanout0_height: self.scanout0_height,
@@ -786,6 +820,10 @@ impl AeroGpuMmioDevice {
 
         self.irq_status = snap.irq_status;
         self.irq_enable = snap.irq_enable;
+
+        self.error_code = snap.error_code;
+        self.error_fence = snap.error_fence;
+        self.error_count = snap.error_count;
 
         self.scanout0_enable = snap.scanout0_enable != 0;
         self.scanout0_width = snap.scanout0_width;
@@ -930,21 +968,25 @@ impl AeroGpuMmioDevice {
             return;
         }
         if self.ring_gpa == 0 || self.ring_size_bytes == 0 {
+            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
             return;
         }
 
         let mut hdr_buf = [0u8; ring::AerogpuRingHeader::SIZE_BYTES];
         mem.read_physical(self.ring_gpa, &mut hdr_buf);
         let Ok(ring_hdr) = ring::AerogpuRingHeader::decode_from_le_bytes(&hdr_buf) else {
+            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
             return;
         };
         if ring_hdr.validate_prefix().is_err() {
+            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
             return;
         }
 
         // The guest-declared ring size must not exceed the MMIO-programmed ring mapping size. The
         // mapping may be larger due to page rounding / extension space.
         if u64::from(ring_hdr.size_bytes) > u64::from(self.ring_size_bytes) {
+            self.record_error(pci::AerogpuErrorCode::Oob, 0);
             return;
         }
 
@@ -958,6 +1000,7 @@ impl AeroGpuMmioDevice {
         if pending > ring_hdr.entry_count {
             // Driver and device are out of sync; drop all pending work to avoid looping forever.
             mem.write_u32(self.ring_gpa + RING_HEAD_OFFSET, tail);
+            self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
             return;
         }
 
@@ -976,6 +1019,9 @@ impl AeroGpuMmioDevice {
             if let Ok(desc) = ring::AerogpuSubmitDesc::decode_from_le_bytes(&desc_buf) {
                 // Treat the command stream as a no-op for now. The goal is transport + fence
                 // completion so the Win7 KMD doesn't deadlock.
+                if desc.validate_prefix().is_err() {
+                    self.record_error(pci::AerogpuErrorCode::CmdDecode, desc.signal_fence);
+                }
                 if desc.signal_fence != 0 && desc.signal_fence > self.completed_fence {
                     self.completed_fence = desc.signal_fence;
 
@@ -984,6 +1030,8 @@ impl AeroGpuMmioDevice {
                         self.irq_status |= pci::AEROGPU_IRQ_FENCE;
                     }
                 }
+            } else {
+                self.record_error(pci::AerogpuErrorCode::CmdDecode, 0);
             }
 
             head = head.wrapping_add(1);
@@ -1025,6 +1073,11 @@ impl AeroGpuMmioDevice {
 
             x if x == pci::AEROGPU_MMIO_REG_IRQ_STATUS as u64 => self.irq_status,
             x if x == pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64 => self.irq_enable,
+
+            x if x == pci::AEROGPU_MMIO_REG_ERROR_CODE as u64 => self.error_code,
+            x if x == pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64 => self.error_fence as u32,
+            x if x == pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64 => (self.error_fence >> 32) as u32,
+            x if x == pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64 => self.error_count,
 
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64 => self.scanout0_enable as u32,
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64 => self.scanout0_width,
@@ -1274,5 +1327,55 @@ impl PciDevice for AeroGpuMmioDevice {
 
     fn config_mut(&mut self) -> &mut PciConfigSpace {
         &mut self.config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_mmio_regs_latch_and_survive_irq_ack() {
+        let mut dev = AeroGpuMmioDevice::default();
+
+        // Unmask ERROR IRQ delivery so `irq_level` reflects the status bit.
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64, pci::AEROGPU_IRQ_ERROR);
+
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_CODE as u64),
+            pci::AerogpuErrorCode::None as u32
+        );
+        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64), 0);
+        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64), 0);
+        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64), 0);
+
+        dev.record_error(pci::AerogpuErrorCode::Backend, 42);
+
+        assert!(dev.irq_level());
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_CODE as u64),
+            pci::AerogpuErrorCode::Backend as u32
+        );
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64),
+            42
+        );
+        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64), 0);
+        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64), 1);
+
+        // IRQ_ACK clears only the status bit; the error payload remains latched.
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_IRQ_ACK as u64, pci::AEROGPU_IRQ_ERROR);
+        assert!(!dev.irq_level());
+
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_CODE as u64),
+            pci::AerogpuErrorCode::Backend as u32
+        );
+        assert_eq!(
+            dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64),
+            42
+        );
+        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64), 0);
+        assert_eq!(dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64), 1);
     }
 }
