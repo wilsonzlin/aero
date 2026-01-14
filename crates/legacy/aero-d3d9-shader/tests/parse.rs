@@ -467,8 +467,7 @@ fn parse_vs_2_0_passthrough() {
 
 #[test]
 fn parse_vs_2_0_passthrough_operand_count_length_encoding() {
-    let shader =
-        D3d9Shader::parse(&words_to_bytes(&VS_2_0_PASSTHROUGH_OPERAND_COUNT_LEN)).unwrap();
+    let shader = D3d9Shader::parse(&words_to_bytes(&VS_2_0_PASSTHROUGH_OPERAND_COUNT_LEN)).unwrap();
     assert_eq!(shader.stage, ShaderStage::Vertex);
     assert_eq!(shader.model.major, 2);
     assert_eq!(shader.model.minor, 0);

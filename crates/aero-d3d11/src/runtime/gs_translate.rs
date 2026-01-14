@@ -601,7 +601,11 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
 ) -> Result<GsPrepassTranslation, GsTranslateError> {
     let varyings = default_varyings_from_decls(module);
     let varyings = (!varyings.is_empty()).then_some(varyings.as_slice());
-    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(module, entry_point, varyings)
+    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
+        module,
+        entry_point,
+        varyings,
+    )
 }
 
 fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(

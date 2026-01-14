@@ -58,7 +58,8 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
             // Retry after normalizing operand-count-encoded streams, but preserve the original
             // parse error when normalization does not help (important for tests that assert on
             // specific error shapes).
-            if let Some(normalized) = crate::len_normalize::normalize_sm2_sm3_instruction_lengths(&tokens)
+            if let Some(normalized) =
+                crate::len_normalize::normalize_sm2_sm3_instruction_lengths(&tokens)
             {
                 if let Ok(ok) = parse_tokens(&normalized) {
                     return Ok(ok);

@@ -1,8 +1,8 @@
 use aero_d3d11::binding_model::BINDING_BASE_CBUFFER;
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, DxbcFile, DxbcSignatureParameter,
-    DstOperand, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Inst,
-    Sm4Module, SrcKind, SrcOperand, Swizzle, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, DstOperand, DxbcFile,
+    DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel,
+    ShaderStage, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -112,4 +112,3 @@ fn translates_ds_cbuffer_in_group3_with_compute_visibility() {
     assert_eq!(cb.binding, BINDING_BASE_CBUFFER);
     assert_eq!(cb.visibility, wgpu::ShaderStages::COMPUTE);
 }
-

@@ -776,7 +776,8 @@ fn tier2_inline_tlb_constant_same_page_access_elides_cross_page_check() {
 }
 
 #[test]
-fn tier2_inline_tlb_constant_same_page_u64_load_imports_mmu_translate_and_elides_cross_page_check() {
+fn tier2_inline_tlb_constant_same_page_u64_load_imports_mmu_translate_and_elides_cross_page_check()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![Instr::LoadMem {
@@ -851,7 +852,8 @@ fn tier2_inline_tlb_constant_same_page_value_address_elides_cross_page_check() {
 }
 
 #[test]
-fn tier2_inline_tlb_constant_same_page_u64_store_imports_mmu_translate_and_elides_cross_page_check() {
+fn tier2_inline_tlb_constant_same_page_u64_store_imports_mmu_translate_and_elides_cross_page_check()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![Instr::StoreMem {

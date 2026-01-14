@@ -131,8 +131,9 @@ fn score_sm2_sm3_length_encoding(
 /// Returns a patched copy of `tokens` if the stream appears to use operand-count instruction length
 /// encoding.
 pub(crate) fn normalize_sm2_sm3_instruction_lengths(tokens: &[u32]) -> Option<Vec<u32>> {
-    let score_total = score_sm2_sm3_length_encoding(tokens, Sm2Sm3InstructionLengthEncoding::TotalLength)
-        .unwrap_or(i32::MIN);
+    let score_total =
+        score_sm2_sm3_length_encoding(tokens, Sm2Sm3InstructionLengthEncoding::TotalLength)
+            .unwrap_or(i32::MIN);
     let score_operands =
         score_sm2_sm3_length_encoding(tokens, Sm2Sm3InstructionLengthEncoding::OperandCount)
             .unwrap_or(i32::MIN);
@@ -175,4 +176,3 @@ pub(crate) fn normalize_sm2_sm3_instruction_lengths(tokens: &[u32]) -> Option<Ve
 
     Some(out)
 }
-
