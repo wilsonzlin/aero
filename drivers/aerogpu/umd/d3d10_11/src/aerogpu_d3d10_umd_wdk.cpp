@@ -229,6 +229,8 @@ using aerogpu::d3d10_11::kDxgiFormatBc7UnormSrgb;
 using aerogpu::d3d10_11::f32_bits;
 using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::FromHandle;
+using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
+using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 
 static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
   return aerogpu::shared_surface::D3d9FormatToDxgi(d3d9_format, dxgi_format_out, bpp_out);
@@ -1070,24 +1072,6 @@ static bool FillBlendRtDescsFromDesc(const DescT& desc,
   }
 
   return false;
-}
-
-static uint32_t aerogpu_sampler_filter_from_d3d_filter(uint32_t filter) {
-  // D3D10 point filtering is encoded as 0 for MIN_MAG_MIP_POINT; treat all other
-  // filters as linear for MVP bring-up.
-  return filter == 0 ? AEROGPU_SAMPLER_FILTER_NEAREST : AEROGPU_SAMPLER_FILTER_LINEAR;
-}
-
-static uint32_t aerogpu_sampler_address_from_d3d_mode(uint32_t mode) {
-  // D3D10 numeric values: 1=WRAP, 2=MIRROR, 3=CLAMP.
-  switch (mode) {
-    case 1:
-      return AEROGPU_SAMPLER_ADDRESS_REPEAT;
-    case 2:
-      return AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT;
-    default:
-      return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
-  }
 }
 
 struct AeroGpuSampler {

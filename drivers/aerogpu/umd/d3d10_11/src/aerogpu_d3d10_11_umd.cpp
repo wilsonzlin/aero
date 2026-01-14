@@ -150,6 +150,8 @@ using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
 using aerogpu::d3d10_11::f32_bits;
 using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::HashSemanticName;
+using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
+using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
@@ -223,18 +225,6 @@ constexpr uint32_t kD3D11MapWriteNoOverwrite = 5;
 
 // D3D11_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d11.h).
 constexpr uint32_t kD3D11MapFlagDoNotWait = 0x100000;
-
-// D3D11_FILTER subset (numeric values from d3d11.h).
-constexpr uint32_t kD3D11FilterMinMagMipPoint = 0;
-constexpr uint32_t kD3D11FilterMinMagMipLinear = 0x15;
-constexpr uint32_t kD3D11FilterAnisotropic = 0x55;
-
-// D3D11_TEXTURE_ADDRESS_MODE subset (numeric values from d3d11.h).
-constexpr uint32_t kD3D11TextureAddressWrap = 1;
-constexpr uint32_t kD3D11TextureAddressMirror = 2;
-constexpr uint32_t kD3D11TextureAddressClamp = 3;
-constexpr uint32_t kD3D11TextureAddressBorder = 4;
-constexpr uint32_t kD3D11TextureAddressMirrorOnce = 5;
 
 // D3D10/11 pipeline-state enums (numeric values from d3d10.h/d3d11.h).
 constexpr uint32_t kD3D10FillWireframe = 2;
@@ -505,33 +495,6 @@ bool compute_texture2d_total_bytes(uint32_t aerogpu_format,
   }
   *out_total_bytes = total;
   return true;
-}
-
-uint32_t d3d11_filter_to_aerogpu(uint32_t filter) {
-  switch (filter) {
-    case kD3D11FilterMinMagMipPoint:
-      return AEROGPU_SAMPLER_FILTER_NEAREST;
-    case kD3D11FilterMinMagMipLinear:
-      return AEROGPU_SAMPLER_FILTER_LINEAR;
-    case kD3D11FilterAnisotropic:
-      return AEROGPU_SAMPLER_FILTER_LINEAR;
-    default:
-      return AEROGPU_SAMPLER_FILTER_LINEAR;
-  }
-}
-
-uint32_t d3d11_address_mode_to_aerogpu(uint32_t mode) {
-  switch (mode) {
-    case kD3D11TextureAddressWrap:
-      return AEROGPU_SAMPLER_ADDRESS_REPEAT;
-    case kD3D11TextureAddressMirror:
-      return AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT;
-    case kD3D11TextureAddressClamp:
-    case kD3D11TextureAddressBorder:
-    case kD3D11TextureAddressMirrorOnce:
-    default:
-      return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
-  }
 }
 
 enum class ResourceKind : uint32_t {
@@ -4150,10 +4113,10 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
 
   auto* s = new (hSampler.pDrvPrivate) AeroGpuSampler();
   s->handle = dev->adapter->next_handle.fetch_add(1);
-  s->filter = d3d11_filter_to_aerogpu(pDesc->Filter);
-  s->address_u = d3d11_address_mode_to_aerogpu(pDesc->AddressU);
-  s->address_v = d3d11_address_mode_to_aerogpu(pDesc->AddressV);
-  s->address_w = d3d11_address_mode_to_aerogpu(pDesc->AddressW);
+  s->filter = aerogpu_sampler_filter_from_d3d_filter(pDesc->Filter);
+  s->address_u = aerogpu_sampler_address_from_d3d_mode(pDesc->AddressU);
+  s->address_v = aerogpu_sampler_address_from_d3d_mode(pDesc->AddressV);
+  s->address_w = aerogpu_sampler_address_from_d3d_mode(pDesc->AddressW);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_sampler>(AEROGPU_CMD_CREATE_SAMPLER);
   if (!cmd) {
@@ -4318,20 +4281,6 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
                                           : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
     s->state = state;
   }
-
-  // Validate CullMode: only NONE/FRONT/BACK are supported.
-  //
-  // Like FillMode, treat CullMode==0 as "unspecified" for compatibility with
-  // callers that pass a zero-initialized descriptor.
-  constexpr uint32_t kD3D11CullNone = 1;
-  constexpr uint32_t kD3D11CullFront = 2;
-  constexpr uint32_t kD3D11CullBack = 3;
-  if (s->state.cull_mode != 0 && s->state.cull_mode != kD3D11CullNone && s->state.cull_mode != kD3D11CullFront &&
-      s->state.cull_mode != kD3D11CullBack) {
-    s->state.cull_mode = kD3D11CullBack;
-    AEROGPU_D3D10_RET_HR(E_NOTIMPL);
-  }
-
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 

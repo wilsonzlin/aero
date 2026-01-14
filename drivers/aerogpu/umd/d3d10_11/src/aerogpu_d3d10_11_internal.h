@@ -402,6 +402,25 @@ inline uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
   return usage;
 }
 
+inline uint32_t aerogpu_sampler_filter_from_d3d_filter(uint32_t filter) {
+  // D3D10/11 point filtering is encoded as 0 for MIN_MAG_MIP_POINT. For the MVP
+  // bring-up path, treat all non-point filters as linear.
+  return filter == 0 ? AEROGPU_SAMPLER_FILTER_NEAREST : AEROGPU_SAMPLER_FILTER_LINEAR;
+}
+
+inline uint32_t aerogpu_sampler_address_from_d3d_mode(uint32_t mode) {
+  // D3D10/11 numeric values: 1=WRAP, 2=MIRROR, 3=CLAMP, 4=BORDER, 5=MIRROR_ONCE.
+  // The AeroGPU protocol currently supports REPEAT/MIRROR_REPEAT/CLAMP_TO_EDGE.
+  switch (mode) {
+    case 1:
+      return AEROGPU_SAMPLER_ADDRESS_REPEAT;
+    case 2:
+      return AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT;
+    default:
+      return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  }
+}
+
 enum class ResourceKind : uint32_t {
   Unknown = 0,
   Buffer = 1,

@@ -4064,24 +4064,6 @@ struct has_member_AddressW : std::false_type {};
 template <typename T>
 struct has_member_AddressW<T, std::void_t<decltype(std::declval<T>().AddressW)>> : std::true_type {};
 
-static uint32_t aerogpu_sampler_filter_from_d3d_filter(uint32_t filter) {
-  // D3D10/11 point filtering is encoded as 0 for MIN_MAG_MIP_POINT; treat all
-  // other filters as linear for MVP bring-up.
-  return filter == 0 ? AEROGPU_SAMPLER_FILTER_NEAREST : AEROGPU_SAMPLER_FILTER_LINEAR;
-}
-
-static uint32_t aerogpu_sampler_address_from_d3d_mode(uint32_t mode) {
-  // D3D10/11 numeric values: 1=WRAP, 2=MIRROR, 3=CLAMP.
-  switch (mode) {
-    case 1:
-      return AEROGPU_SAMPLER_ADDRESS_REPEAT;
-    case 2:
-      return AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT;
-    default:
-      return AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
-  }
-}
-
 struct Sampler {
   aerogpu_handle_t handle = 0;
   uint32_t filter = AEROGPU_SAMPLER_FILTER_LINEAR;

@@ -100,6 +100,27 @@ bool TestInternalDxgiFormatCompatHelpers() {
     return false;
   }
 
+  if (!Check(aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter(0) == AEROGPU_SAMPLER_FILTER_NEAREST,
+             "aerogpu_sampler_filter_from_d3d_filter maps MIN_MAG_MIP_POINT -> NEAREST")) {
+    return false;
+  }
+  if (!Check(aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter(0x15) == AEROGPU_SAMPLER_FILTER_LINEAR,
+             "aerogpu_sampler_filter_from_d3d_filter maps non-zero filters -> LINEAR")) {
+    return false;
+  }
+  if (!Check(aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode(1) == AEROGPU_SAMPLER_ADDRESS_REPEAT,
+             "aerogpu_sampler_address_from_d3d_mode maps WRAP -> REPEAT")) {
+    return false;
+  }
+  if (!Check(aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode(2) == AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT,
+             "aerogpu_sampler_address_from_d3d_mode maps MIRROR -> MIRROR_REPEAT")) {
+    return false;
+  }
+  if (!Check(aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode(3) == AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE,
+             "aerogpu_sampler_address_from_d3d_mode maps CLAMP -> CLAMP_TO_EDGE")) {
+    return false;
+  }
+
   return true;
 }
 
