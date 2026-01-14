@@ -68,6 +68,17 @@ const MAX_AEROGPU_ALLOC_TABLE_BYTES: u32 = 4 * 1024 * 1024;
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_AEROGPU_ALLOC_TABLE_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_PENDING_AEROGPU_SUBMISSIONS: usize = 256;
+// Total memory cap (in bytes) for queued `AerogpuSubmission` payloads.
+//
+// This bounds host memory use in cases where the host integration does not drain submissions fast
+// enough (or at all) while the guest continues submitting large command streams.
+//
+// Note: a single submission is already capped by `MAX_CMD_STREAM_SIZE_BYTES` + the alloc-table cap
+// above, so this is primarily a "queue backlog" limit.
+#[cfg(test)]
+const MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES: usize = 4 * 1024;
+#[cfg(not(test))]
+const MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES: usize = 128 * 1024 * 1024;
 
 fn supported_features() -> u64 {
     pci::AEROGPU_FEATURE_FENCE_PAGE
@@ -692,6 +703,7 @@ pub struct AeroGpuMmioDevice {
     // but fences are treated as immediately completed to preserve legacy bring-up semantics.
     submission_bridge_enabled: bool,
     pending_submissions: VecDeque<AerogpuSubmission>,
+    pending_submissions_bytes: usize,
 
     // ---------------------------------------------------------------------
     // Optional in-process execution backend (native/test integration hook).
@@ -832,6 +844,7 @@ impl Default for AeroGpuMmioDevice {
 
             submission_bridge_enabled: false,
             pending_submissions: VecDeque::new(),
+            pending_submissions_bytes: 0,
             backend: None,
 
             doorbell_pending: false,
@@ -884,6 +897,72 @@ impl AeroGpuMmioDevice {
         self.pending_fence_completions.clear();
         self.backend_completed_fences.clear();
         self.pending_submissions.clear();
+        self.pending_submissions_bytes = 0;
+    }
+
+    fn submission_payload_bytes(sub: &AerogpuSubmission) -> usize {
+        let alloc_bytes = sub
+            .alloc_table
+            .as_ref()
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
+        sub.cmd_stream.len().saturating_add(alloc_bytes)
+    }
+
+    fn pop_oldest_submission(&mut self) {
+        if let Some(old) = self.pending_submissions.pop_front() {
+            self.pending_submissions_bytes = self
+                .pending_submissions_bytes
+                .saturating_sub(Self::submission_payload_bytes(&old));
+
+            // If the submission bridge is enabled, dropping a submission payload could otherwise
+            // wedge fence progress if the guest is waiting for that fence to be executed
+            // out-of-process. Preserve forward progress by marking the dropped fence as completed
+            // and surfacing an error to the guest.
+            let fence = old.signal_fence;
+            if self.submission_bridge_enabled
+                && fence != 0
+                && fence > self.completed_fence
+                && self
+                    .pending_fence_completions
+                    .iter()
+                    .any(|pending| pending.fence_value == fence)
+            {
+                self.record_error(pci::AerogpuErrorCode::Backend, fence);
+                self.backend_completed_fences.insert(fence);
+            }
+        }
+    }
+
+    fn enqueue_submission(&mut self, sub: AerogpuSubmission) {
+        let bytes = Self::submission_payload_bytes(&sub);
+
+        // If a single submission is larger than the cap (should be impossible given the command
+        // stream / alloc table caps above), keep the newest submission by dropping all backlog.
+        if bytes > MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES {
+            while !self.pending_submissions.is_empty() {
+                self.pop_oldest_submission();
+            }
+            self.pending_submissions_bytes = 0;
+        }
+
+        // Enforce the entry-count cap.
+        while self.pending_submissions.len() >= MAX_PENDING_AEROGPU_SUBMISSIONS {
+            self.pop_oldest_submission();
+        }
+
+        // Enforce the total-bytes cap.
+        while self
+            .pending_submissions_bytes
+            .saturating_add(bytes)
+            .gt(&MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES)
+            && !self.pending_submissions.is_empty()
+        {
+            self.pop_oldest_submission();
+        }
+
+        self.pending_submissions.push_back(sub);
+        self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_add(bytes);
     }
 
     pub(crate) fn drain_pending_submissions(&mut self) -> Vec<AerogpuSubmission> {
@@ -894,6 +973,7 @@ impl AeroGpuMmioDevice {
         while let Some(sub) = self.pending_submissions.pop_front() {
             out.push(sub);
         }
+        self.pending_submissions_bytes = 0;
         out
     }
 
@@ -1361,6 +1441,7 @@ impl AeroGpuMmioDevice {
         self.backend_completed_fences.clear();
         self.fence_page_dirty = false;
         self.pending_submissions.clear();
+        self.pending_submissions_bytes = 0;
         if let Some(backend) = self.backend.as_mut() {
             backend.reset();
         }
@@ -1512,6 +1593,7 @@ impl AeroGpuMmioDevice {
             self.pending_fence_completions.clear();
             self.backend_completed_fences.clear();
             self.pending_submissions.clear();
+            self.pending_submissions_bytes = 0;
             self.fence_page_dirty = true;
             if let Some(backend) = self.backend.as_mut() {
                 backend.reset();
@@ -1764,23 +1846,7 @@ impl AeroGpuMmioDevice {
                     alloc_table,
                 };
 
-                if self.pending_submissions.len() == MAX_PENDING_AEROGPU_SUBMISSIONS {
-                    if let Some(dropped) = self.pending_submissions.pop_front() {
-                        let fence = dropped.signal_fence;
-                        if self.submission_bridge_enabled
-                            && fence != 0
-                            && fence > self.completed_fence
-                            && self
-                                .pending_fence_completions
-                                .iter()
-                                .any(|pending| pending.fence_value == fence)
-                        {
-                            self.record_error(pci::AerogpuErrorCode::Backend, fence);
-                            self.backend_completed_fences.insert(fence);
-                        }
-                    }
-                }
-                self.pending_submissions.push_back(sub);
+                self.enqueue_submission(sub);
                 queued_for_external = true;
             }
         }
@@ -2639,6 +2705,64 @@ mod tests {
             dev.irq_status & pci::AEROGPU_IRQ_SCANOUT_VBLANK,
             0,
             "load_state with scanout disabled should clear any latched vblank IRQ status bit"
+        );
+    }
+
+    fn make_submission(bytes: usize) -> AerogpuSubmission {
+        AerogpuSubmission {
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            signal_fence: 0,
+            cmd_stream: vec![0u8; bytes],
+            alloc_table: None,
+        }
+    }
+
+    #[test]
+    fn submission_queue_is_capped_by_total_bytes() {
+        let mut dev = AeroGpuMmioDevice::default();
+
+        dev.enqueue_submission(make_submission(3000));
+        assert_eq!(dev.pending_submissions.len(), 1);
+        assert_eq!(dev.pending_submissions_bytes, 3000);
+
+        // Exceeds the test cap (4KiB) => drop the oldest submission.
+        dev.enqueue_submission(make_submission(3000));
+        assert_eq!(dev.pending_submissions.len(), 1);
+        assert_eq!(dev.pending_submissions_bytes, 3000);
+
+        // 3000 + 1000 == 4000 <= 4096 => keep both.
+        dev.enqueue_submission(make_submission(1000));
+        assert_eq!(dev.pending_submissions.len(), 2);
+        assert_eq!(dev.pending_submissions_bytes, 4000);
+
+        // 4000 + 200 > 4096 => drop the oldest 3000-byte submission.
+        dev.enqueue_submission(make_submission(200));
+        assert_eq!(dev.pending_submissions.len(), 2);
+        assert_eq!(dev.pending_submissions_bytes, 1200);
+
+        let drained = dev.drain_pending_submissions();
+        assert_eq!(drained.len(), 2);
+        assert!(dev.pending_submissions.is_empty());
+        assert_eq!(dev.pending_submissions_bytes, 0);
+    }
+
+    #[test]
+    fn submission_queue_is_capped_by_entry_count() {
+        let mut dev = AeroGpuMmioDevice::default();
+
+        for _ in 0..(MAX_PENDING_AEROGPU_SUBMISSIONS + 1) {
+            dev.enqueue_submission(make_submission(1));
+        }
+
+        assert_eq!(
+            dev.pending_submissions.len(),
+            MAX_PENDING_AEROGPU_SUBMISSIONS
+        );
+        assert_eq!(
+            dev.pending_submissions_bytes,
+            MAX_PENDING_AEROGPU_SUBMISSIONS
         );
     }
 
