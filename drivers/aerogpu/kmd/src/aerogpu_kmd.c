@@ -2062,6 +2062,66 @@ static VOID AeroGpuAllocationUnmapCpu(_Inout_ AEROGPU_ALLOCATION* Alloc)
     Alloc->CpuMapWritePending = FALSE;
 }
 
+static __forceinline BOOLEAN AeroGpuAllocationHasCpuMapResources(_In_ const AEROGPU_ALLOCATION* Alloc)
+{
+    if (!Alloc) {
+        return FALSE;
+    }
+
+    /* Best-effort/unsafe inspection (can be called above PASSIVE_LEVEL). */
+    if (Alloc->CpuMapMdl != NULL || Alloc->CpuMapKernelVa != NULL || Alloc->CpuMapUserVa != NULL) {
+        return TRUE;
+    }
+    if (InterlockedCompareExchange((volatile LONG*)&Alloc->CpuMapRefCount, 0, 0) != 0) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static VOID AeroGpuAllocationDeferredFreeWorkItem(_In_ PVOID Context)
+{
+    AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)Context;
+    if (!alloc) {
+        return;
+    }
+
+    ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+
+    ExAcquireFastMutex(&alloc->CpuMapMutex);
+    AeroGpuAllocationUnmapCpu(alloc);
+    ExReleaseFastMutex(&alloc->CpuMapMutex);
+
+    ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+}
+
+static VOID AeroGpuAllocationQueueDeferredFree(_Inout_ AEROGPU_ALLOCATION* Alloc)
+{
+    if (!Alloc) {
+        return;
+    }
+
+    const KIRQL irql = KeGetCurrentIrql();
+    if (irql > DISPATCH_LEVEL) {
+        /*
+         * Cannot queue a work item at IRQL > DISPATCH_LEVEL. Leak the allocation
+         * rather than freeing it with CPU mapping resources still present.
+         */
+        AEROGPU_LOG("Allocation free: cannot defer free at IRQL=%lu (>DISPATCH), leaking allocation=%p alloc_id=%lu",
+                    (ULONG)irql,
+                    Alloc,
+                    (ULONG)Alloc->AllocationId);
+        return;
+    }
+
+    if (InterlockedCompareExchange(&Alloc->DeferredFreeQueued, 1, 0) != 0) {
+        return;
+    }
+
+    ExInitializeWorkItem(&Alloc->DeferredFreeWorkItem, AeroGpuAllocationDeferredFreeWorkItem, Alloc);
+    ExQueueWorkItem(&Alloc->DeferredFreeWorkItem, DelayedWorkQueue);
+}
+
 static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapter,
                                                  _In_ ULONGLONG ShareToken,
                                                  _Inout_ KIRQL* OldIrqlInOut)
@@ -2391,12 +2451,24 @@ static BOOLEAN AeroGpuUntrackAndFreeAllocation(_Inout_ AEROGPU_ADAPTER* Adapter,
     }
 
     const ULONGLONG shareToken = alloc->ShareToken;
-    if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+    const KIRQL irql = KeGetCurrentIrql();
+
+    if (irql == PASSIVE_LEVEL) {
         ExAcquireFastMutex(&alloc->CpuMapMutex);
         AeroGpuAllocationUnmapCpu(alloc);
         ExReleaseFastMutex(&alloc->CpuMapMutex);
+
+        ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+    } else if (AeroGpuAllocationHasCpuMapResources(alloc)) {
+        AEROGPU_LOG("Allocation free: deferring CPU unmap/free at IRQL=%lu allocation=%p alloc_id=%lu share_token=0x%I64x",
+                    (ULONG)irql,
+                    alloc,
+                    (ULONG)alloc->AllocationId,
+                    alloc->ShareToken);
+        AeroGpuAllocationQueueDeferredFree(alloc);
+    } else {
+        ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
     }
-    ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
 
     BOOLEAN shouldRelease = FALSE;
     if (shareToken != 0 && AeroGpuShareTokenRefDecrement(Adapter, shareToken, &shouldRelease) && shouldRelease) {
@@ -2408,6 +2480,8 @@ static BOOLEAN AeroGpuUntrackAndFreeAllocation(_Inout_ AEROGPU_ADAPTER* Adapter,
 
 static VOID AeroGpuFreeAllAllocations(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
+    const KIRQL irql = KeGetCurrentIrql();
+
     for (;;) {
         AEROGPU_ALLOCATION* alloc = NULL;
 
@@ -2423,13 +2497,21 @@ static VOID AeroGpuFreeAllAllocations(_Inout_ AEROGPU_ADAPTER* Adapter)
             return;
         }
 
-        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+        if (irql == PASSIVE_LEVEL) {
             ExAcquireFastMutex(&alloc->CpuMapMutex);
             AeroGpuAllocationUnmapCpu(alloc);
             ExReleaseFastMutex(&alloc->CpuMapMutex);
+            ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+        } else if (AeroGpuAllocationHasCpuMapResources(alloc)) {
+            AEROGPU_LOG("FreeAllAllocations: deferring CPU unmap/free at IRQL=%lu allocation=%p alloc_id=%lu share_token=0x%I64x",
+                        (ULONG)irql,
+                        alloc,
+                        (ULONG)alloc->AllocationId,
+                        alloc->ShareToken);
+            AeroGpuAllocationQueueDeferredFree(alloc);
+        } else {
+            ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
         }
-
-        ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
     }
 }
 

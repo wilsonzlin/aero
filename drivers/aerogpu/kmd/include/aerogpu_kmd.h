@@ -145,6 +145,14 @@ typedef struct _AEROGPU_ALLOCATION {
     SIZE_T CpuMapSize;       /* bytes mapped (page-aligned) */
     SIZE_T CpuMapPageOffset; /* byte offset into first page */
     BOOLEAN CpuMapWritePending;
+
+    /*
+     * Allocation teardown can occur at IRQL > PASSIVE_LEVEL (e.g. via CloseAllocation/DestroyAllocation),
+     * but CPU mapping resources must be released at PASSIVE_LEVEL. When required, we defer unmap/free to
+     * a work item that runs in PASSIVE context.
+     */
+    WORK_QUEUE_ITEM DeferredFreeWorkItem;
+    volatile LONG DeferredFreeQueued;
 } AEROGPU_ALLOCATION;
 
 typedef struct _AEROGPU_SHARE_TOKEN_REF {
