@@ -318,49 +318,62 @@ export class WebGpuPresenter {
   static async create(canvas: HTMLCanvasElement | OffscreenCanvas, opts: any = {}) {
     if (!navigator.gpu) throw new Error("WebGPU not supported");
 
-    const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
-    if (!adapter) throw new Error("No WebGPU adapter");
+    let device: GPUDevice | null = null;
+    let context: GPUCanvasContext | null = null;
+    try {
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+      if (!adapter) throw new Error("No WebGPU adapter");
 
-    const requiredFeatures = (opts.requiredFeatures ?? []) as GPUFeatureName[];
-    const device =
-      requiredFeatures.length > 0 ? await adapter.requestDevice({ requiredFeatures }) : await adapter.requestDevice();
-    const context = (canvas as any).getContext("webgpu");
-    if (!context) throw new Error("Canvas WebGPU context not available");
+      const requiredFeatures = (opts.requiredFeatures ?? []) as GPUFeatureName[];
+      device =
+        requiredFeatures.length > 0 ? await adapter.requestDevice({ requiredFeatures }) : await adapter.requestDevice();
+      context = (canvas as any).getContext("webgpu");
+      if (!context) throw new Error("Canvas WebGPU context not available");
 
-    const resolvedOpts = {
-      framebufferColorSpace: opts.framebufferColorSpace ?? "linear",
-      outputColorSpace: opts.outputColorSpace ?? "srgb",
-      alphaMode: opts.alphaMode ?? "opaque",
-      flipY: opts.flipY ?? false,
-      // Optional diagnostics hook: when provided, uncaptured WebGPU errors will be routed here.
-      ...(typeof opts.onError === "function" ? { onError: opts.onError } : {}),
-    };
+      const resolvedOpts = {
+        framebufferColorSpace: opts.framebufferColorSpace ?? "linear",
+        outputColorSpace: opts.outputColorSpace ?? "srgb",
+        alphaMode: opts.alphaMode ?? "opaque",
+        flipY: opts.flipY ?? false,
+        // Optional diagnostics hook: when provided, uncaptured WebGPU errors will be routed here.
+        ...(typeof opts.onError === "function" ? { onError: opts.onError } : {}),
+      };
 
-    const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
-    const srgbFormat = toSrgbFormat(canvasFormat);
+      const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+      const srgbFormat = toSrgbFormat(canvasFormat);
 
-    const alphaMode = resolvedOpts.alphaMode === "premultiplied" ? "premultiplied" : "opaque";
+      const alphaMode = resolvedOpts.alphaMode === "premultiplied" ? "premultiplied" : "opaque";
 
-    let viewFormat = canvasFormat;
-    let srgbEncodeInShader = resolvedOpts.outputColorSpace === "srgb";
+      let viewFormat = canvasFormat;
+      let srgbEncodeInShader = resolvedOpts.outputColorSpace === "srgb";
 
-    // Prefer an sRGB view format when requesting sRGB output.
-    // Chrome currently reports `bgra8unorm` as preferred and requires using `viewFormats`
-    // to render with an sRGB view.
-    if (resolvedOpts.outputColorSpace === "srgb" && srgbFormat) {
-      try {
-        // TS libdefs lag behind WebGPU; `viewFormats` is standard but may not be in types.
-        (context as any).configure({
-          device,
-          format: canvasFormat,
-          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-          alphaMode,
-          viewFormats: [srgbFormat],
-        });
-        viewFormat = srgbFormat;
-        srgbEncodeInShader = false; // GPU will encode when writing to the sRGB view.
-      } catch {
-        // Fall back to a linear view and do encoding in shader.
+      // Prefer an sRGB view format when requesting sRGB output.
+      // Chrome currently reports `bgra8unorm` as preferred and requires using `viewFormats`
+      // to render with an sRGB view.
+      if (resolvedOpts.outputColorSpace === "srgb" && srgbFormat) {
+        try {
+          // TS libdefs lag behind WebGPU; `viewFormats` is standard but may not be in types.
+          (context as any).configure({
+            device,
+            format: canvasFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+            alphaMode,
+            viewFormats: [srgbFormat],
+          });
+          viewFormat = srgbFormat;
+          srgbEncodeInShader = false; // GPU will encode when writing to the sRGB view.
+        } catch {
+          // Fall back to a linear view and do encoding in shader.
+          (context as any).configure({
+            device,
+            format: canvasFormat,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+            alphaMode,
+          });
+          viewFormat = canvasFormat;
+          srgbEncodeInShader = true;
+        }
+      } else {
         (context as any).configure({
           device,
           format: canvasFormat,
@@ -368,20 +381,33 @@ export class WebGpuPresenter {
           alphaMode,
         });
         viewFormat = canvasFormat;
-        srgbEncodeInShader = true;
+        srgbEncodeInShader = resolvedOpts.outputColorSpace === "srgb";
       }
-    } else {
-      (context as any).configure({
-        device,
-        format: canvasFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-        alphaMode,
-      });
-      viewFormat = canvasFormat;
-      srgbEncodeInShader = resolvedOpts.outputColorSpace === "srgb";
-    }
 
-    return new WebGpuPresenter(device, canvas, context, canvasFormat, viewFormat, srgbEncodeInShader, resolvedOpts, alphaMode);
+      return new WebGpuPresenter(
+        device,
+        canvas,
+        context,
+        canvasFormat,
+        viewFormat,
+        srgbEncodeInShader,
+        resolvedOpts,
+        alphaMode,
+      );
+    } catch (err) {
+      // Best-effort cleanup so tests / validation pages can retry without leaking GPU devices.
+      try {
+        (context as any)?.unconfigure?.();
+      } catch {
+        // Ignore.
+      }
+      try {
+        (device as any)?.destroy?.();
+      } catch {
+        // Ignore.
+      }
+      throw err;
+    }
   }
 
   /**
