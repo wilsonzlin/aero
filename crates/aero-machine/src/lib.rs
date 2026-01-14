@@ -4570,6 +4570,63 @@ impl Machine {
         self.xhci.clone()
     }
 
+    /// Attach a USB device model at a topology path on the xHCI root hub.
+    ///
+    /// Path semantics match [`aero_usb::xhci::XhciController::attach_at_path`]:
+    ///
+    /// - `path[0]` is the **root port index** (0-based).
+    /// - `path[1..]` are **hub port numbers** (1-based) for any nested hubs.
+    ///
+    /// If xHCI is not enabled on this machine, this call is a no-op and returns `Ok(())`.
+    pub fn usb_xhci_attach_at_path(
+        &mut self,
+        path: &[u8],
+        dev: Box<dyn aero_usb::UsbDeviceModel>,
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        let Some(xhci) = &self.xhci else {
+            return Ok(());
+        };
+        xhci.borrow_mut().controller_mut().attach_at_path(path, dev)
+    }
+
+    /// Detach any USB device model at a topology path on the xHCI root hub.
+    ///
+    /// Path semantics match [`aero_usb::xhci::XhciController::detach_at_path`]. If xHCI is not
+    /// enabled on this machine, this call is a no-op and returns `Ok(())`.
+    pub fn usb_xhci_detach_at_path(
+        &mut self,
+        path: &[u8],
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        let Some(xhci) = &self.xhci else {
+            return Ok(());
+        };
+        xhci.borrow_mut().controller_mut().detach_at_path(path)
+    }
+
+    /// Attach a USB device model directly to an xHCI root hub port.
+    ///
+    /// `port` is 0-based.
+    ///
+    /// If xHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
+    pub fn usb_xhci_attach_root(
+        &mut self,
+        port: u8,
+        model: Box<dyn aero_usb::UsbDeviceModel>,
+    ) -> Result<(), aero_usb::UsbHubAttachError> {
+        let path = [port];
+        self.usb_xhci_attach_at_path(&path, model)
+    }
+
+    /// Detach any USB device model from an xHCI root hub port.
+    ///
+    /// `port` is 0-based.
+    ///
+    /// If xHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
+    pub fn usb_xhci_detach_root(&mut self, port: u8) -> Result<(), aero_usb::UsbHubAttachError> {
+        let path = [port];
+        self.usb_xhci_detach_at_path(&path)
+    }
+
     /// Attach a USB device model to a UHCI root hub port.
     ///
     /// `port` is 0-based (UHCI exposes two root ports: `0` and `1`).
