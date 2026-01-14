@@ -2,8 +2,8 @@ mod common;
 
 use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, DxbcSignatureParameter, FourCC,
-    Sm4Program, Swizzle, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, translate_sm4_module_to_wgsl_ds_eval, DxbcFile,
+    DxbcSignatureParameter, FourCC, Sm4Program, Swizzle, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 use anyhow::{anyhow, Context, Result};
@@ -20,6 +20,108 @@ const D3D_NAME_DOMAIN_LOCATION: u32 = 12;
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
+}
+
+fn build_tri_interp_dxbc() -> Vec<u8> {
+    // Minimal ds_5_0 shader:
+    //   o0 = v0[0] * dl.x + v0[1] * dl.y + v0[2] * dl.z
+    // where dl = SV_DomainLocation (barycentric for tri domain).
+    const DCL_INPUT: u32 = 0x100;
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_input v0.xyzw
+    body.push(opcode_token(DCL_INPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
+
+    // dcl_input_siv v1.xyz, D3D_NAME_DOMAIN_LOCATION
+    body.push(opcode_token(DCL_INPUT, 4));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 1, WriteMask(0b0111)));
+    body.push(D3D_NAME_DOMAIN_LOCATION);
+
+    // dcl_input_siv v2.x, D3D_NAME_PRIMITIVE_ID
+    body.push(opcode_token(DCL_INPUT, 4));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 2, WriteMask(0b0001)));
+    body.push(D3D_NAME_PRIMITIVE_ID);
+
+    // dcl_output_siv o0.xyzw, D3D_NAME_POSITION
+    body.push(opcode_token(DCL_OUTPUT, 4));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.push(D3D_NAME_POSITION);
+
+    let dst_r0 = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let src_v0_0 = reg_src(OPERAND_TYPE_INPUT, &[0, 0], Swizzle::XYZW);
+    let src_v0_1 = reg_src(OPERAND_TYPE_INPUT, &[0, 1], Swizzle::XYZW);
+    let src_v0_2 = reg_src(OPERAND_TYPE_INPUT, &[0, 2], Swizzle::XYZW);
+    let src_dl_x = reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::XXXX);
+    let src_dl_y = reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::YYYY);
+    let src_dl_z = reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::ZZZZ);
+    let src_r0 = reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW);
+
+    // mul r0, v0[0], v1.xxxx
+    body.push(opcode_token(
+        OPCODE_MUL,
+        1 + dst_r0.len() as u32 + src_v0_0.len() as u32 + src_dl_x.len() as u32,
+    ));
+    body.extend_from_slice(&dst_r0);
+    body.extend_from_slice(&src_v0_0);
+    body.extend_from_slice(&src_dl_x);
+
+    // mad r0, v0[1], v1.yyyy, r0
+    body.push(opcode_token(
+        OPCODE_MAD,
+        1 + dst_r0.len() as u32
+            + src_v0_1.len() as u32
+            + src_dl_y.len() as u32
+            + src_r0.len() as u32,
+    ));
+    body.extend_from_slice(&dst_r0);
+    body.extend_from_slice(&src_v0_1);
+    body.extend_from_slice(&src_dl_y);
+    body.extend_from_slice(&src_r0);
+
+    // mad r0, v0[2], v1.zzzz, r0
+    body.push(opcode_token(
+        OPCODE_MAD,
+        1 + dst_r0.len() as u32
+            + src_v0_2.len() as u32
+            + src_dl_z.len() as u32
+            + src_r0.len() as u32,
+    ));
+    body.extend_from_slice(&dst_r0);
+    body.extend_from_slice(&src_v0_2);
+    body.extend_from_slice(&src_dl_z);
+    body.extend_from_slice(&src_r0);
+
+    // mov o0, r0
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&src_r0);
+
+    // ret
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 4 = domain shader.
+    let tokens = make_sm5_program_tokens(4, &body);
+    build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[
+                // Indexed control-point register file (v0[cp_id]).
+                sig_param("CP", 0, 0, 0b1111),
+                sig_param("SV_DomainLocation", 0, 1, 0b0111),
+                sig_param("SV_PrimitiveID", 0, 2, 0b0001),
+            ]),
+        ),
+        // Patch constant signature (unused by this shader, but required by the translator).
+        (FOURCC_PSGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111)]),
+        ),
+    ])
 }
 
 fn sig_param(name: &str, index: u32, register: u32, mask: u8) -> DxbcSignatureParameter {
@@ -263,105 +365,7 @@ fn wgpu_domain_shader_tri_interpolates_control_points() {
             return Ok(());
         }
 
-        // Minimal ds_5_0 shader:
-        //   o0 = v0[0] * dl.x + v0[1] * dl.y + v0[2] * dl.z
-        // where dl = SV_DomainLocation (barycentric for tri domain).
-        const DCL_INPUT: u32 = 0x100;
-        const DCL_OUTPUT: u32 = 0x101;
-
-        let mut body = Vec::<u32>::new();
-
-        // dcl_input v0.xyzw
-        body.push(opcode_token(DCL_INPUT, 3));
-        body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
-
-        // dcl_input_siv v1.xyz, D3D_NAME_DOMAIN_LOCATION
-        body.push(opcode_token(DCL_INPUT, 4));
-        body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 1, WriteMask(0b0111)));
-        body.push(D3D_NAME_DOMAIN_LOCATION);
-
-        // dcl_input_siv v2.x, D3D_NAME_PRIMITIVE_ID
-        body.push(opcode_token(DCL_INPUT, 4));
-        body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 2, WriteMask(0b0001)));
-        body.push(D3D_NAME_PRIMITIVE_ID);
-
-        // dcl_output_siv o0.xyzw, D3D_NAME_POSITION
-        body.push(opcode_token(DCL_OUTPUT, 4));
-        body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
-        body.push(D3D_NAME_POSITION);
-
-        let dst_r0 = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
-        let src_v0_0 = reg_src(OPERAND_TYPE_INPUT, &[0, 0], Swizzle::XYZW);
-        let src_v0_1 = reg_src(OPERAND_TYPE_INPUT, &[0, 1], Swizzle::XYZW);
-        let src_v0_2 = reg_src(OPERAND_TYPE_INPUT, &[0, 2], Swizzle::XYZW);
-        let src_dl_x = reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::XXXX);
-        let src_dl_y = reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::YYYY);
-        let src_dl_z = reg_src(OPERAND_TYPE_INPUT, &[1], Swizzle::ZZZZ);
-        let src_r0 = reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW);
-
-        // mul r0, v0[0], v1.xxxx
-        body.push(opcode_token(
-            OPCODE_MUL,
-            1 + dst_r0.len() as u32 + src_v0_0.len() as u32 + src_dl_x.len() as u32,
-        ));
-        body.extend_from_slice(&dst_r0);
-        body.extend_from_slice(&src_v0_0);
-        body.extend_from_slice(&src_dl_x);
-
-        // mad r0, v0[1], v1.yyyy, r0
-        body.push(opcode_token(
-            OPCODE_MAD,
-            1 + dst_r0.len() as u32
-                + src_v0_1.len() as u32
-                + src_dl_y.len() as u32
-                + src_r0.len() as u32,
-        ));
-        body.extend_from_slice(&dst_r0);
-        body.extend_from_slice(&src_v0_1);
-        body.extend_from_slice(&src_dl_y);
-        body.extend_from_slice(&src_r0);
-
-        // mad r0, v0[2], v1.zzzz, r0
-        body.push(opcode_token(
-            OPCODE_MAD,
-            1 + dst_r0.len() as u32
-                + src_v0_2.len() as u32
-                + src_dl_z.len() as u32
-                + src_r0.len() as u32,
-        ));
-        body.extend_from_slice(&dst_r0);
-        body.extend_from_slice(&src_v0_2);
-        body.extend_from_slice(&src_dl_z);
-        body.extend_from_slice(&src_r0);
-
-        // mov o0, r0
-        body.push(opcode_token(OPCODE_MOV, 1 + 2 + 2));
-        body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
-        body.extend_from_slice(&src_r0);
-
-        // ret
-        body.push(opcode_token(OPCODE_RET, 1));
-
-        // Stage type 4 = domain shader.
-        let tokens = make_sm5_program_tokens(4, &body);
-        let dxbc_bytes = build_dxbc(&[
-            (FOURCC_SHEX, tokens_to_bytes(&tokens)),
-            (
-                FOURCC_ISGN,
-                build_signature_chunk(&[
-                    // Indexed control-point register file (v0[cp_id]).
-                    sig_param("CP", 0, 0, 0b1111),
-                    sig_param("SV_DomainLocation", 0, 1, 0b0111),
-                    sig_param("SV_PrimitiveID", 0, 2, 0b0001),
-                ]),
-            ),
-            // Patch constant signature (unused by this shader, but required by the translator).
-            (FOURCC_PSGN, build_signature_chunk(&[])),
-            (
-                FOURCC_OSGN,
-                build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111)]),
-            ),
-        ]);
+        let dxbc_bytes = build_tri_interp_dxbc();
 
         let dxbc = DxbcFile::parse(&dxbc_bytes).context("DXBC parse")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("SM4 parse")?;
@@ -554,6 +558,173 @@ fn wgpu_domain_shader_tri_interpolates_control_points() {
             f32::from_le_bytes(out_bytes[base + 12..base + 16].try_into().unwrap()),
         ];
 
+        assert_eq!(out_f, [0.25, 0.25, 0.5, 1.0]);
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn wgpu_domain_shader_ds_eval_links_into_tessellation_domain_eval_wrapper() {
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return Ok(());
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return Ok(());
+        }
+
+        // Translate DS into the pure `ds_eval` helper for runtime tessellation evaluation.
+        let dxbc_bytes = build_tri_interp_dxbc();
+        let dxbc = DxbcFile::parse(&dxbc_bytes).context("DXBC parse")?;
+        let program = Sm4Program::parse_from_dxbc(&dxbc).context("SM4 parse")?;
+        let module = decode_program(&program).context("SM4 decode")?;
+        let signatures = parse_signatures(&dxbc).context("parse signatures")?;
+        let translated = translate_sm4_module_to_wgsl_ds_eval(&dxbc, &module, &signatures)
+            .context("translate ds_eval")?;
+
+        // Build the domain-eval wrapper (triangle-domain integer partitioning).
+        let out_reg_count: u32 = 1;
+        let ds_wgsl = aero_d3d11::runtime::tessellation::domain_eval::build_triangle_domain_eval_wgsl(
+            &translated.wgsl,
+            out_reg_count,
+        );
+
+        let ds_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ds_eval tri interpolation module"),
+            source: wgpu::ShaderSource::Wgsl(ds_wgsl.into()),
+        });
+
+        // Domain group (3) contains translated DS resources; this shader has none.
+        let domain_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ds_eval domain bgl"),
+            entries: &[],
+        });
+        let domain_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ds_eval domain bg"),
+            layout: &domain_bgl,
+            entries: &[],
+        });
+
+        // Patch metadata: one patch, tess level 4 => 15 vertices.
+        let tess_level: u32 = 4;
+        let vertex_count: u32 = (tess_level + 1) * (tess_level + 2) / 2;
+        assert_eq!(vertex_count, 15);
+        let meta = aero_d3d11::runtime::tessellation::TessellationLayoutPatchMeta {
+            tess_level,
+            vertex_base: 0,
+            index_base: 0,
+            vertex_count,
+            index_count: 3 * tess_level * tess_level,
+        };
+        let mut meta_bytes = [0u8; 20];
+        meta_bytes[0..4].copy_from_slice(&meta.tess_level.to_le_bytes());
+        meta_bytes[4..8].copy_from_slice(&meta.vertex_base.to_le_bytes());
+        meta_bytes[8..12].copy_from_slice(&meta.index_base.to_le_bytes());
+        meta_bytes[12..16].copy_from_slice(&meta.vertex_count.to_le_bytes());
+        meta_bytes[16..20].copy_from_slice(&meta.index_count.to_le_bytes());
+        let patch_meta = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ds_eval patch_meta"),
+            size: meta_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&patch_meta, 0, &meta_bytes);
+
+        // HS outputs: 3 control points (one vec4 per control point).
+        let cp0 = [1.0f32, 0.0, 0.0, 1.0];
+        let cp1 = [0.0f32, 1.0, 0.0, 1.0];
+        let cp2 = [0.0f32, 0.0, 1.0, 1.0];
+        let mut cp_bytes = Vec::<u8>::with_capacity(3 * 16);
+        for cp in [cp0, cp1, cp2] {
+            for f in cp {
+                cp_bytes.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+        let hs_control_points = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ds_eval hs_control_points"),
+            size: cp_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&hs_control_points, 0, &cp_bytes);
+
+        let hs_patch_constants = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ds_eval hs_patch_constants"),
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&hs_patch_constants, 0, &[0u8; 16]);
+
+        let out_vertices = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ds_eval out_vertices"),
+            size: vertex_count as u64 * out_reg_count as u64 * 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let ds_pipeline =
+            aero_d3d11::runtime::tessellation::domain_eval::DomainEvalPipeline::new(
+                &device,
+                &ds_module,
+                &domain_bgl,
+            );
+        let ds_internal_bg = ds_pipeline.create_internal_bind_group(
+            &device,
+            wgpu::BufferBinding {
+                buffer: &patch_meta,
+                offset: 0,
+                size: None,
+            },
+            wgpu::BufferBinding {
+                buffer: &hs_control_points,
+                offset: 0,
+                size: None,
+            },
+            wgpu::BufferBinding {
+                buffer: &hs_patch_constants,
+                offset: 0,
+                size: None,
+            },
+            wgpu::BufferBinding {
+                buffer: &out_vertices,
+                offset: 0,
+                size: None,
+            },
+        );
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("ds_eval encoder"),
+        });
+        ds_pipeline.dispatch(
+            &mut encoder,
+            &ds_internal_bg,
+            &domain_bg,
+            1,
+            aero_d3d11::runtime::tessellation::domain_eval::chunk_count_for_vertex_count(
+                vertex_count,
+            ),
+        );
+        queue.submit([encoder.finish()]);
+
+        // Vertex 6 in tess_level=4 corresponds to barycentrics (0.25, 0.25, 0.5).
+        let bytes = read_buffer(&device, &queue, &out_vertices, vertex_count as u64 * 16)
+            .await
+            .context("read back out_vertices")?;
+        let base = 6usize * 16;
+        let out_f = [
+            f32::from_le_bytes(bytes[base..base + 4].try_into().unwrap()),
+            f32::from_le_bytes(bytes[base + 4..base + 8].try_into().unwrap()),
+            f32::from_le_bytes(bytes[base + 8..base + 12].try_into().unwrap()),
+            f32::from_le_bytes(bytes[base + 12..base + 16].try_into().unwrap()),
+        ];
         assert_eq!(out_f, [0.25, 0.25, 0.5, 1.0]);
 
         Ok::<_, anyhow::Error>(())
