@@ -264,13 +264,13 @@ fn features_regs_advertise_vblank_when_enabled() {
 
     assert_ne!(features & proto::AEROGPU_FEATURE_VBLANK, 0);
 
-    const EXPECTED_60HZ_PERIOD_NS: u32 = 16_666_667;
+    let expected_period_ns: u32 = 1_000_000_000u64.div_ceil(60) as u32;
     let period = dev.mmio_read(
         &mut mem,
         proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS as u64,
         4,
     );
-    assert_eq!(period, EXPECTED_60HZ_PERIOD_NS);
+    assert_eq!(period, expected_period_ns);
 }
 
 #[test]
