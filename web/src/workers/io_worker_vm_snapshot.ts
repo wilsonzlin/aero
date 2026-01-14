@@ -5,10 +5,10 @@ import {
   VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
-  VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
   VM_SNAPSHOT_DEVICE_USB_KIND,
+  VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND,
   parseAeroIoSnapshotVersion,
   resolveVmSnapshotRestoreFromOpfsExport,
   resolveVmSnapshotSaveToOpfsExport,
@@ -65,6 +65,8 @@ const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}
 //
 // This uses the canonical string kind (`input.virtio_input`) from `vm_snapshot_wasm.ts` so restore
 // paths that normalize `device.<id>` kinds continue to work.
+// Note: older snapshots may store this as `device.24`; `normalizeRestoredDeviceKind` maps that to
+// the canonical `input.virtio_input` kind.
 
 function isPciBusSnapshot(bytes: Uint8Array): boolean {
   // `web/src/io/bus/pci.ts` uses an `aero-io-snapshot`-shaped 16-byte header and sets

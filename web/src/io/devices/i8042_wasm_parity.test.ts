@@ -174,12 +174,16 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       expect(assertDrainParity("mouse enable reporting ACK parity")).toEqual([0xfa]);
 
       // When both the keyboard and mouse have pending output, the canonical Rust model can
-      // interleave bytes fairly (driven by the internal `prefer_mouse` toggle). Ensure the TS
-      // fallback matches this scheduling.
+      // interleave bytes fairly (driven by the internal `prefer_mouse` toggle). Note that bytes
+      // already buffered in the controller's pending FIFO (e.g. from Set-2 -> Set-1 translation)
+      // are drained without updating `prefer_mouse`, so the exact interleaving depends on whether
+      // the next keyboard byte was queued in the same service pass as the mouse byte.
+      //
+      // Ensure the TS fallback matches this scheduling.
       const printPress = ps2Set2BytesForKeyEvent("PrintScreen", true)!;
       injectKeyboardScancodeBytes(ts, bridge, printPress);
       injectMouseMove(ts, bridge, 5, 3);
-      expect(assertDrainParity("interleaved keyboard+mouse parity")).toEqual([0xe0, 0x08, 0x2a, 0x05, 0xe0, 0x03, 0x37]);
+      expect(assertDrainParity("interleaved keyboard+mouse parity")).toEqual([0xe0, 0x08, 0x2a, 0xe0, 0x05, 0x03, 0x37]);
 
       const buttonMasks = [
         0x01, // left
@@ -252,9 +256,13 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
 
       // Side+extra (back+forward) buttons are only encoded in the 4th byte in device-id 0x04 mode.
       injectMouseButtons(ts, bridge, 0x18);
-      expect(assertDrainParity("mouse side/extra button parity (explorer mode)")).toHaveLength(4);
+      // Host injections provide an absolute bitmask; the canonical Rust model emits one packet per
+      // button transition. At this point the left button is still held (0x01), so moving to
+      // side+extra (0x18) flips 3 bits (left up, side down, extra down) => 3 packets * 4 bytes.
+      expect(assertDrainParity("mouse side/extra button parity (explorer mode)")).toHaveLength(12);
       injectMouseButtons(ts, bridge, 0x00);
-      expect(assertDrainParity("mouse side/extra release parity (explorer mode)")).toHaveLength(4);
+      // Releasing side+extra flips 2 bits => 2 packets * 4 bytes.
+      expect(assertDrainParity("mouse side/extra release parity (explorer mode)")).toHaveLength(8);
 
       // Disable Set-2 -> Set-1 translation (command byte bit 6) and ensure raw Set-2 output stays in parity.
       ts.portWrite(0x0064, 1, 0x60);

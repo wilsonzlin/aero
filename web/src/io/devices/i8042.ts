@@ -1073,8 +1073,13 @@ export class I8042Controller implements PortIoHandler {
     switch (port & 0xffff) {
       case 0x0060: {
         const item = this.#outShift();
+        // Rust i8042 maintains a single-byte output buffer plus a pending FIFO. The `prefer_mouse`
+        // toggle is only updated when a new byte is *loaded* into the empty output buffer from the
+        // keyboard/mouse device queues; draining already-buffered bytes (pending FIFO) does not
+        // affect the toggle.
+        const allowPreferMouseUpdate = this.#outLen === 0;
         this.#pumpDeviceQueues();
-        this.#syncStatusAndIrq();
+        this.#syncStatusAndIrq({ updatePreferMouse: allowPreferMouseUpdate });
         return item === null ? 0x00 : item & 0xff;
       }
       case 0x0064:
@@ -1489,7 +1494,8 @@ export class I8042Controller implements PortIoHandler {
     }
   }
 
-  #syncStatusAndIrq(): void {
+  #syncStatusAndIrq(opts: { updatePreferMouse?: boolean } = {}): void {
+    const updatePreferMouse = opts.updatePreferMouse !== false;
     if (this.#outLen > 0) this.#status |= STATUS_OBF;
     else this.#status &= ~STATUS_OBF;
 
@@ -1507,7 +1513,7 @@ export class I8042Controller implements PortIoHandler {
       this.#irqLastHeadToken = this.#headToken;
       // Update the interleaving preference to match the byte we just loaded into the output buffer.
       // When the output buffer becomes empty, keep the previous preference (mirrors Rust behavior).
-      if (head !== null) {
+      if (head !== null && updatePreferMouse) {
         this.#preferMouse = headSource === OUTPUT_SOURCE_KEYBOARD;
       }
       if (headSource === OUTPUT_SOURCE_KEYBOARD) {
