@@ -766,7 +766,13 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
   }, 25_000);
 
   it("clips cursors when hotX causes a negative origin", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const scanoutPaddr = 0x1000;
@@ -820,6 +826,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        vgaFramebuffer: segments.sharedFramebuffer,
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
         cursorState: segments.cursorState,
