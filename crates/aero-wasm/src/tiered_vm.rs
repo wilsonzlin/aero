@@ -1429,6 +1429,12 @@ fn meta_to_js(meta: &CompiledBlockMeta) -> Result<JsValue, JsValue> {
         &JsValue::from_f64(meta.byte_len as f64),
     )
     .map_err(|_| js_error("Failed to set meta.byte_len"))?;
+    Reflect::set(
+        &obj,
+        &JsValue::from_str("page_versions_generation"),
+        &u64_to_js_number(meta.page_versions_generation, "meta.page_versions_generation")?,
+    )
+    .map_err(|_| js_error("Failed to set meta.page_versions_generation"))?;
 
     let versions = Array::new();
     for snap in &meta.page_versions {
@@ -1476,6 +1482,14 @@ fn meta_from_js(meta: JsValue) -> Result<CompiledBlockMeta, JsValue> {
         return Err(js_error("meta.byte_len missing"));
     }
     let byte_len = js_number_to_u32(byte_len_val, "meta.byte_len")?;
+
+    let gen_val = Reflect::get(&meta, &JsValue::from_str("page_versions_generation"))
+        .map_err(|_| js_error("Failed to get meta.page_versions_generation"))?;
+    let page_versions_generation = if gen_val.is_undefined() || gen_val.is_null() {
+        0
+    } else {
+        js_number_to_u64(gen_val, "meta.page_versions_generation")?
+    };
 
     let page_versions_val = Reflect::get(&meta, &JsValue::from_str("page_versions"))
         .map_err(|_| js_error("meta.page_versions missing"))?;
@@ -1530,6 +1544,7 @@ fn meta_from_js(meta: JsValue) -> Result<CompiledBlockMeta, JsValue> {
     Ok(CompiledBlockMeta {
         code_paddr,
         byte_len,
+        page_versions_generation,
         page_versions,
         instruction_count: 0,
         inhibit_interrupts_after_block: false,
@@ -1697,6 +1712,12 @@ export function installAeroTieredMmioTestShims() {
             &JsValue::from_f64(byte_len as f64),
         )
         .expect("set meta.byte_len");
+        Reflect::set(
+            &obj,
+            &JsValue::from_str("page_versions_generation"),
+            &JsValue::from_f64(0.0),
+        )
+        .expect("set meta.page_versions_generation");
         let versions = Array::new();
         for v in page_versions {
             versions.push(v);

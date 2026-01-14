@@ -8,6 +8,7 @@ fn handle(entry_rip: u64, byte_len: u32) -> CompiledBlockHandle {
         meta: CompiledBlockMeta {
             code_paddr: entry_rip,
             byte_len,
+            page_versions_generation: 0,
             page_versions: Vec::new(),
             instruction_count: 0,
             inhibit_interrupts_after_block: false,

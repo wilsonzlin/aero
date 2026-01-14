@@ -100,10 +100,9 @@ fn reset_keeps_table_pointer_stable_and_rejects_old_snapshots() {
     let mut jit = JitRuntime::new(config, NullBackend::default(), compile);
 
     let code_paddr = 0x4000u64;
-    jit.on_guest_write(code_paddr, 1);
     let old_meta = jit.snapshot_meta(code_paddr, 1);
     assert_eq!(old_meta.page_versions.len(), 1);
-    assert_eq!(old_meta.page_versions[0].version, 1);
+    assert_eq!(old_meta.page_versions[0].version, 0);
 
     let (ptr0, len0) = jit.code_version_table_ptr_len();
     jit.reset();
@@ -125,4 +124,3 @@ fn reset_keeps_table_pointer_stable_and_rejects_old_snapshots() {
     );
     assert_eq!(jit.cache_len(), 0);
 }
-

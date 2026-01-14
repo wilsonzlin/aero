@@ -62,6 +62,7 @@ fn make_handle(entry_rip: u64) -> CompiledBlockHandle {
         meta: CompiledBlockMeta {
             code_paddr: entry_rip,
             byte_len: 32,
+            page_versions_generation: 0,
             page_versions: Vec::new(),
             instruction_count: 1,
             inhibit_interrupts_after_block: false,

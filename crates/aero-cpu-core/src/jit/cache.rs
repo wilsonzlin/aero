@@ -11,6 +11,12 @@ pub struct PageVersionSnapshot {
 pub struct CompiledBlockMeta {
     pub code_paddr: u64,
     pub byte_len: u32,
+    /// Snapshot generation for page-version validation.
+    ///
+    /// [`crate::jit::runtime::JitRuntime::reset`] increments the runtime's generation so
+    /// compilation results derived from pre-reset snapshots are rejected even if the per-page
+    /// version values happen to match (e.g. all zeros).
+    pub page_versions_generation: u64,
     pub page_versions: Vec<PageVersionSnapshot>,
     /// Architectural guest instruction count for this block (i.e. number of retired guest
     /// instructions when the block commits).

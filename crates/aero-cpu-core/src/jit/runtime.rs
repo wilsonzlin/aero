@@ -196,6 +196,12 @@ pub struct PageVersionTracker {
     /// practice this is vanishingly unlikely, and will become even less so if we only bump code
     /// pages in the future.
     versions: Box<[Cell<u32>]>,
+
+    /// Snapshot generation counter.
+    ///
+    /// [`Self::reset`] increments this so compilation results derived from pre-reset snapshots are
+    /// rejected even if the per-page version values happen to match (e.g. all zeros).
+    generation: Cell<u64>,
 }
 
 impl Default for PageVersionTracker {
@@ -208,6 +214,7 @@ impl core::fmt::Debug for PageVersionTracker {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PageVersionTracker")
             .field("max_pages", &self.versions.len())
+            .field("generation", &self.generation.get())
             .finish()
     }
 }
@@ -218,6 +225,7 @@ impl Clone for PageVersionTracker {
         for i in 0..self.versions.len() {
             out.versions[i].set(self.versions[i].get());
         }
+        out.generation.set(self.generation.get());
         out
     }
 }
@@ -257,6 +265,7 @@ impl PageVersionTracker {
         versions.resize_with(max_pages, || Cell::new(0));
         Self {
             versions: versions.into_boxed_slice(),
+            generation: Cell::new(0),
         }
     }
 
@@ -391,12 +400,19 @@ impl PageVersionTracker {
         self.versions.len()
     }
 
+    /// Snapshot generation for page-version validation.
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
     /// Zero all tracked page versions in-place.
     ///
     /// This preserves the exported table pointer/length: any generated JIT code that has cached
     /// the pointer returned by [`Self::table_ptr_len`] will continue to observe a valid table
     /// after reset, with all entries set to 0.
     pub fn reset(&self) {
+        self.generation
+            .set(self.generation.get().wrapping_add(1));
         for v in self.versions.iter() {
             v.set(0);
         }
@@ -544,6 +560,7 @@ where
         CompiledBlockMeta {
             code_paddr,
             byte_len,
+            page_versions_generation: self.page_versions.generation(),
             page_versions: self.page_versions.snapshot(code_paddr, byte_len),
             instruction_count: 0,
             inhibit_interrupts_after_block: false,
@@ -713,6 +730,10 @@ where
         // intentionally omit metadata for synthetic blocks.
         if handle.meta.page_versions.is_empty() {
             return true;
+        }
+
+        if handle.meta.page_versions_generation != self.page_versions.generation() {
+            return false;
         }
 
         // If the snapshot does not cover the full code span (e.g. because [`PageVersionTracker`]

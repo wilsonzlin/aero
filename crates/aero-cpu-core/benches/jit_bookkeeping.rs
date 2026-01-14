@@ -117,6 +117,7 @@ fn dummy_handle(entry_rip: u64, table_index: u32, byte_len: u32) -> CompiledBloc
         meta: CompiledBlockMeta {
             code_paddr: 0,
             byte_len,
+            page_versions_generation: 0,
             page_versions: Vec::new(),
             instruction_count: 0,
             inhibit_interrupts_after_block: false,
@@ -145,6 +146,7 @@ fn dummy_handle_with_pages(
         meta: CompiledBlockMeta {
             code_paddr: 0,
             byte_len,
+            page_versions_generation: 0,
             page_versions,
             instruction_count: 0,
             inhibit_interrupts_after_block: false,

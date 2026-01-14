@@ -141,6 +141,7 @@ fn jit_rollback_does_not_advance_perf_counters() {
         meta: CompiledBlockMeta {
             code_paddr: 0x1000,
             byte_len: 4,
+            page_versions_generation: 0,
             page_versions: Vec::new(),
             // Non-zero so the test would catch incorrectly counting uncommitted blocks.
             instruction_count: 5,

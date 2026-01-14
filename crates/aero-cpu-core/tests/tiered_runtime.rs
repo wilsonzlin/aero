@@ -314,6 +314,7 @@ fn code_cache_eviction_is_lru_and_size_capped() {
             meta: CompiledBlockMeta {
                 code_paddr: entry_rip,
                 byte_len,
+                page_versions_generation: 0,
                 page_versions: Vec::new(),
                 instruction_count: 0,
                 inhibit_interrupts_after_block: false,
@@ -351,6 +352,7 @@ fn code_cache_touch_many_times_does_not_break_eviction_or_accounting() {
             meta: CompiledBlockMeta {
                 code_paddr: entry_rip,
                 byte_len: 10,
+                page_versions_generation: 0,
                 page_versions: Vec::new(),
                 instruction_count: 0,
                 inhibit_interrupts_after_block: false,
@@ -917,6 +919,7 @@ fn step_reports_retired_instruction_counts_across_tiers() {
         meta: CompiledBlockMeta {
             code_paddr: 0x1000,
             byte_len: 4,
+            page_versions_generation: 0,
             page_versions: Vec::new(),
             instruction_count: 5,
             inhibit_interrupts_after_block: false,
@@ -931,6 +934,7 @@ fn step_reports_retired_instruction_counts_across_tiers() {
         meta: CompiledBlockMeta {
             code_paddr: 0x2000,
             byte_len: 4,
+            page_versions_generation: 0,
             page_versions: Vec::new(),
             instruction_count: 7,
             inhibit_interrupts_after_block: false,
