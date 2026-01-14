@@ -380,6 +380,9 @@ def main() -> int:
             if qemu_path.exists() and qemu_path.is_dir():
                 print(f"ERROR: qemu system binary path is a directory: {qemu_path}", file=sys.stderr)
                 return 2
+            if not qemu_path.exists():
+                print(f"ERROR: qemu-system binary not found: {qemu_path}", file=sys.stderr)
+                return 2
         except Exception:
             pass
 
