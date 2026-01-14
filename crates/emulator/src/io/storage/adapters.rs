@@ -231,6 +231,9 @@ impl<B: aero_storage::StorageBackend> ByteStorage for ByteStorageFromStorageBack
     }
 }
 
+// On non-wasm targets, emulator `DiskBackend` requires `Send`, so `VirtualDisk` adapters must be
+// `Send` as well.
+#[cfg(not(target_arch = "wasm32"))]
 impl<D: aero_storage::VirtualDisk + Send> DiskBackend for EmuDiskBackendFromVirtualDisk<D> {
     fn sector_size(&self) -> u32 {
         aero_storage::SECTOR_SIZE as u32
@@ -320,6 +323,92 @@ impl<D: aero_storage::VirtualDisk + Send> DiskBackend for EmuDiskBackendFromVirt
                 capacity_sectors,
             )
         })
+    }
+
+    fn flush(&mut self) -> DiskResult<()> {
+        self.0.flush().map_err(aero_storage_disk_error_to_emulator)
+    }
+}
+
+// wasm32 build: `DiskBackend` is intentionally `!Send` so browser disk handles can be used.
+#[cfg(target_arch = "wasm32")]
+impl<D: aero_storage::VirtualDisk> DiskBackend for EmuDiskBackendFromVirtualDisk<D> {
+    fn sector_size(&self) -> u32 {
+        aero_storage::SECTOR_SIZE as u32
+    }
+
+    fn total_sectors(&self) -> u64 {
+        self.0.capacity_bytes() / aero_storage::SECTOR_SIZE as u64
+    }
+
+    fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> DiskResult<()> {
+        let sector_size = self.sector_size();
+        if !buf.len().is_multiple_of(sector_size as usize) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buf.len(),
+                sector_size,
+            });
+        }
+        let sectors = (buf.len() / sector_size as usize) as u64;
+        let capacity_sectors = self.total_sectors();
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors,
+        })?;
+        if end > capacity_sectors {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors,
+            });
+        }
+
+        self.0
+            .read_sectors(lba, buf)
+            .map_err(|err| {
+                aero_storage_disk_error_to_emulator_with_sector_context(
+                    err,
+                    lba,
+                    sectors,
+                    capacity_sectors,
+                )
+            })
+    }
+
+    fn write_sectors(&mut self, lba: u64, buf: &[u8]) -> DiskResult<()> {
+        let sector_size = self.sector_size();
+        if !buf.len().is_multiple_of(sector_size as usize) {
+            return Err(DiskError::UnalignedBuffer {
+                len: buf.len(),
+                sector_size,
+            });
+        }
+        let sectors = (buf.len() / sector_size as usize) as u64;
+        let capacity_sectors = self.total_sectors();
+        let end = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors,
+        })?;
+        if end > capacity_sectors {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors,
+            });
+        }
+
+        self.0
+            .write_sectors(lba, buf)
+            .map_err(|err| {
+                aero_storage_disk_error_to_emulator_with_sector_context(
+                    err,
+                    lba,
+                    sectors,
+                    capacity_sectors,
+                )
+            })
     }
 
     fn flush(&mut self) -> DiskResult<()> {
