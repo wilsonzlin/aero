@@ -27,7 +27,6 @@ fn aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives() {
                 return;
             }
         };
-
         if !common::require_gs_prepass_or_skip(&exec, test_name) {
             return;
         }
