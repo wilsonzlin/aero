@@ -13,8 +13,8 @@ pub use decode::{decode_u32_tokens, decode_u8_le_bytes, DecodedShader};
 pub use ir::ShaderIr;
 pub use ir_builder::build_ir;
 pub use translate::{
-    translate_dxbc_to_wgsl, CachedShader, ShaderCache, ShaderCacheLookup, ShaderCacheLookupSource,
-    TranslateError, TranslatedShader,
+    translate_dxbc_to_wgsl, translate_dxbc_to_wgsl_with_options, CachedShader, ShaderCache,
+    ShaderCacheLookup, ShaderCacheLookupSource, TranslateError, TranslatedShader,
 };
 pub use types::{ShaderStage, ShaderVersion};
 pub use verify::verify_ir;

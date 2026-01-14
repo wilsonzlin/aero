@@ -63,12 +63,30 @@ impl std::ops::Deref for ShaderCacheLookup<'_> {
     }
 }
 
-#[derive(Default)]
 pub struct ShaderCache {
     map: HashMap<Hash, CachedShader>,
+    wgsl_options: wgsl::WgslOptions,
 }
 
 impl ShaderCache {
+    pub fn new(wgsl_options: wgsl::WgslOptions) -> Self {
+        Self {
+            map: HashMap::new(),
+            wgsl_options,
+        }
+    }
+
+    pub fn wgsl_options(&self) -> wgsl::WgslOptions {
+        self.wgsl_options
+    }
+
+    pub fn set_wgsl_options(&mut self, wgsl_options: wgsl::WgslOptions) {
+        if self.wgsl_options != wgsl_options {
+            self.wgsl_options = wgsl_options;
+            self.map.clear();
+        }
+    }
+
     pub fn get_or_translate(
         &mut self,
         bytes: &[u8],
@@ -82,7 +100,7 @@ impl ShaderCache {
                 shader: e.into_mut(),
             }),
             Entry::Vacant(e) => {
-                let translated = translate_dxbc_to_wgsl(bytes)?;
+                let translated = translate_dxbc_to_wgsl_with_options(bytes, self.wgsl_options)?;
                 let hash = *e.key();
                 Ok(ShaderCacheLookup {
                     source: ShaderCacheLookupSource::Translated,
@@ -90,6 +108,12 @@ impl ShaderCache {
                 })
             }
         }
+    }
+}
+
+impl Default for ShaderCache {
+    fn default() -> Self {
+        Self::new(wgsl::WgslOptions::default())
     }
 }
 
@@ -118,13 +142,20 @@ pub enum TranslateError {
 /// - group(1): vertex shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
 /// - group(2): pixel shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
 pub fn translate_dxbc_to_wgsl(bytes: &[u8]) -> Result<TranslatedShader, TranslateError> {
+    translate_dxbc_to_wgsl_with_options(bytes, wgsl::WgslOptions::default())
+}
+
+pub fn translate_dxbc_to_wgsl_with_options(
+    bytes: &[u8],
+    options: wgsl::WgslOptions,
+) -> Result<TranslatedShader, TranslateError> {
     let token_stream = dxbc::extract_shader_bytecode(bytes)?;
 
     let decoded = decode_u8_le_bytes(token_stream)?;
     let ir = build_ir(&decoded)?;
     verify_ir(&ir)?;
 
-    let wgsl_out = wgsl::generate_wgsl(&ir)?;
+    let wgsl_out = wgsl::generate_wgsl_with_options(&ir, options)?;
 
     // Build a compact used-samplers bitmask for the executor.
     let mut used_samplers_mask = 0u16;

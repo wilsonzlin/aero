@@ -588,7 +588,13 @@ fn try_translate_sm3(
     let decoded = sm3::decode_u8_le_bytes(token_stream).map_err(Sm3TranslateFailure::Decode)?;
     let ir = sm3::build_ir(&decoded).map_err(Sm3TranslateFailure::Build)?;
     sm3::verify_ir(&ir).map_err(Sm3TranslateFailure::Verify)?;
-    let wgsl = sm3::generate_wgsl(&ir).map_err(Sm3TranslateFailure::Wgsl)?;
+    let wgsl = sm3::generate_wgsl_with_options(
+        &ir,
+        sm3::wgsl::WgslOptions {
+            half_pixel_center: options.half_pixel_center,
+        },
+    )
+    .map_err(Sm3TranslateFailure::Wgsl)?;
     let used_samplers = collect_used_samplers_sm3(&ir);
     let sampler_texture_types = collect_sampler_texture_types_sm3(&ir);
     let semantic_locations = collect_semantic_locations_sm3(&ir);
@@ -605,16 +611,10 @@ fn try_translate_sm3(
         },
     };
 
-    let mut wgsl_str = wgsl.wgsl;
-    if stage == shader::ShaderStage::Vertex && options.half_pixel_center {
-        inject_half_pixel_center_sm3_vertex_wgsl(&mut wgsl_str)
-            .map_err(|message| Sm3TranslateFailure::Wgsl(sm3::wgsl::WgslError { message }))?;
-    }
-
     Ok(ShaderTranslation {
         backend: ShaderTranslateBackend::Sm3,
         version,
-        wgsl: wgsl_str,
+        wgsl: wgsl.wgsl,
         entry_point: wgsl.entry_point,
         uses_semantic_locations: ir.uses_semantic_locations,
         semantic_locations,
@@ -765,38 +765,4 @@ fn collect_used_samplers_block(block: &sm3::ir::Block, out: &mut BTreeSet<u16>) 
             | sm3::ir::Stmt::Discard { .. } => {}
         }
     }
-}
-
-fn inject_half_pixel_center_sm3_vertex_wgsl(wgsl: &mut String) -> Result<(), String> {
-    // Match `shader::generate_wgsl_with_options`' half-pixel declarations so the executor's bind
-    // group layout (group(3) binding(0) uniform buffer with 16 bytes) is compatible across both
-    // translation backends.
-    const DECL: &str =
-        "struct HalfPixel { inv_viewport: vec2<f32>, _pad: vec2<f32>, };\n@group(3) @binding(0) var<uniform> half_pixel: HalfPixel;\n\n";
-
-    if !wgsl.contains("@group(3) @binding(0) var<uniform> half_pixel") {
-        let insert_at = wgsl
-            .find("struct VsInput")
-            .or_else(|| wgsl.find("struct VsOut"))
-            .ok_or_else(|| {
-                "half-pixel injection failed: could not find vertex interface structs".to_owned()
-            })?;
-        wgsl.insert_str(insert_at, DECL);
-    }
-
-    let marker = "  out.pos = oPos;\n";
-    let Some(pos) = wgsl.find(marker) else {
-        return Err("half-pixel injection failed: could not find out.pos assignment".to_owned());
-    };
-    let insert_at = pos + marker.len();
-    if wgsl.contains("half_pixel.inv_viewport") {
-        // Already injected.
-        return Ok(());
-    }
-
-    wgsl.insert_str(
-        insert_at,
-        "  // D3D9 half-pixel center adjustment: emulate the D3D9 viewport transform's\n  // -0.5 window-space bias by nudging clip-space XY by (-1/width, +1/height) * w.\n  out.pos.x = out.pos.x - half_pixel.inv_viewport.x * out.pos.w;\n  out.pos.y = out.pos.y + half_pixel.inv_viewport.y * out.pos.w;\n",
-    );
-    Ok(())
 }
