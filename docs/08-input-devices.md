@@ -882,9 +882,12 @@ passthrough devices can coexist without fighting over port numbers:
   - root port **0**: external USB hub (synthetic HID devices + WebHID passthrough)
   - root port **1**: reserved for **WebUSB passthrough**
   - UHCI exposes exactly two root ports (0–1). EHCI/xHCI expose more root ports by default, but the
-    browser/WASM integration convention reserves ports 0–1 for these roles so WebUSB passthrough can
+    browser/WASM integration treats ports 0–1 as reserved for these roles so WebUSB passthrough can
     coexist with the external hub / WebHID / synthetic HID devices (including in WASM builds that
     omit UHCI).
+  - Note: for xHCI, only the WebUSB root port is enforced/reserved in the WASM bridge (typically root
+    port 1). The xHCI WebHID topology manager does not reserve any root port numbers; callers provide
+    full paths and must avoid the reserved WebUSB root port.
 - **External hub on root port 0**:
   - default downstream port count: **16**
   - reserved synthetic devices:
