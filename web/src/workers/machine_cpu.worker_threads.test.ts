@@ -355,4 +355,71 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       await worker.terminate();
     }
   }, 20_000);
+
+  it("enforces vm.snapshot.pause before machine restore RPCs and reports missing WASM", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const notPausedPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.restored" && (msg as any).requestId === 1,
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.machine.restoreFromOpfs", requestId: 1, path: "state/test.snap" });
+      const notPaused = (await notPausedPromise) as { ok?: unknown; error?: unknown };
+      if (notPaused.ok !== false) {
+        throw new Error("expected vm.snapshot.machine.restored to return ok=false when VM is not paused");
+      }
+      const notPausedErr = (notPaused.error as { message?: unknown } | undefined)?.message;
+      if (typeof notPausedErr !== "string" || !notPausedErr.toLowerCase().includes("paused")) {
+        throw new Error(`expected not-paused error message to mention pause, got: ${String(notPausedErr)}`);
+      }
+
+      const pauseAck = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 2,
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 2 });
+      await pauseAck;
+
+      const missingWasmPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.machine.restored" && (msg as any).requestId === 3,
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.machine.restoreFromOpfs", requestId: 3, path: "state/test.snap" });
+      const missingWasm = (await missingWasmPromise) as { ok?: unknown; error?: unknown };
+      if (missingWasm.ok !== false) {
+        throw new Error("expected vm.snapshot.machine.restored to return ok=false when WASM is unavailable");
+      }
+      const missingWasmErr = (missingWasm.error as { message?: unknown } | undefined)?.message;
+      if (typeof missingWasmErr !== "string" || !missingWasmErr.toLowerCase().includes("wasm")) {
+        throw new Error(`expected missing-WASM error message to mention WASM, got: ${String(missingWasmErr)}`);
+      }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
 });
