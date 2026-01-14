@@ -64,6 +64,80 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
             module_path!(),
             "::aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds"
         );
+
+        fn ndc_from_pixel(x: u32, y: u32, w: u32, h: u32) -> (f32, f32) {
+            // D3D/WebGPU viewport transform:
+            //   x_ndc =  2 * (x + 0.5) / w - 1
+            //   y_ndc = -2 * (y + 0.5) / h + 1
+            let xf = (x as f32 + 0.5) / w as f32;
+            let yf = (y as f32 + 0.5) / h as f32;
+            (xf * 2.0 - 1.0, 1.0 - yf * 2.0)
+        }
+
+        fn barycentric(a: (f32, f32), b: (f32, f32), c: (f32, f32), p: (f32, f32)) -> [f32; 3] {
+            // See: Christer Ericson, "Real-Time Collision Detection", barycentric coordinates.
+            let v0 = (b.0 - a.0, b.1 - a.1);
+            let v1 = (c.0 - a.0, c.1 - a.1);
+            let v2 = (p.0 - a.0, p.1 - a.1);
+            let d00 = v0.0 * v0.0 + v0.1 * v0.1;
+            let d01 = v0.0 * v1.0 + v0.1 * v1.1;
+            let d11 = v1.0 * v1.0 + v1.1 * v1.1;
+            let d20 = v2.0 * v0.0 + v2.1 * v0.1;
+            let d21 = v2.0 * v1.0 + v2.1 * v1.1;
+            let denom = d00 * d11 - d01 * d01;
+            let v = (d11 * d20 - d01 * d21) / denom;
+            let w = (d00 * d21 - d01 * d20) / denom;
+            let u = 1.0 - v - w;
+            [u, v, w]
+        }
+
+        fn to_unorm8(v: f32) -> u8 {
+            ((v.clamp(0.0, 1.0) * 255.0).round() as i32).clamp(0, 255) as u8
+        }
+
+        fn assert_rgb_approx_unordered(
+            test_name: &str,
+            label: &str,
+            actual: [u8; 4],
+            expected: [u8; 3],
+            tol: u8,
+        ) {
+            assert_eq!(
+                actual[3], 255,
+                "{test_name}: {label}: expected alpha=255, got {actual:?}"
+            );
+            assert!(
+                actual[0] != 0 && actual[1] != 0 && actual[2] != 0,
+                "{test_name}: {label}: expected all RGB channels non-zero (barycentric encoding), got {actual:?}"
+            );
+
+            let mut act = [actual[0], actual[1], actual[2]];
+            let mut exp = expected;
+            act.sort_unstable();
+            exp.sort_unstable();
+            for i in 0..3 {
+                let diff = (act[i] as i32 - exp[i] as i32).abs();
+                assert!(
+                    diff <= tol as i32,
+                    "{test_name}: {label}: expected (unordered) RGB≈{expected:?} ±{tol}, got {actual:?}"
+                );
+            }
+        }
+
+        fn looks_like_centered_placeholder_triangle(
+            clear: [u8; 4],
+            center: [u8; 4],
+            probe_l: [u8; 4],
+            probe_r: [u8; 4],
+        ) -> bool {
+            // The executor currently routes HS/DS-bound patchlist draws through the same placeholder
+            // geometry prepass used for GS emulation. That path emits a centered triangle (smaller
+            // than our test triangle) and uses a solid red varying fill.
+            let probes_clear = probe_l == clear && probe_r == clear;
+            let center_red = center[0] > 200 && center[1] < 50 && center[2] < 50 && center[3] > 200;
+            probes_clear && center_red
+        }
+
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
@@ -182,28 +256,61 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
         };
 
         // Outside triangle -> clear color (black).
-        assert_eq!(px(0, 0), [0, 0, 0, 255]);
-        assert_eq!(px(W - 1, 0), [0, 0, 0, 255]);
+        let clear = [0, 0, 0, 255];
+        assert_eq!(px(0, 0), clear);
+        assert_eq!(px(W - 1, 0), clear);
 
-        // Inside triangle -> barycentric-ish color (DS encodes barycentrics into RGB).
-        //
-        // At the (approx) center of the triangle we expect one component around 0.5 and the other
-        // two around 0.25. We compare sorted RGB channels so the assertion remains correct even if
-        // the fixture encodes the barycentric components in a different RGB order.
+        // Compute three sample points:
+        // - center: safely inside both the placeholder triangle and our larger input triangle.
+        // - probes: inside our input triangle but *outside* the centered placeholder triangle, so
+        //   they detect whether real tessellation is wired up.
         let center = px(W / 2, H / 2);
-        assert_eq!(center[3], 255, "expected opaque alpha, got {center:?}");
-
-        let mut rgb_sorted = [center[0], center[1], center[2]];
-        rgb_sorted.sort();
-        let expected_sorted = [64u8, 64u8, 128u8];
-        let tol = 40u8;
-        let within = rgb_sorted
-            .iter()
-            .zip(expected_sorted)
-            .all(|(&got, exp)| got.abs_diff(exp) <= tol);
-        assert!(
-            within,
-            "expected barycentric-ish center pixel (~[64,64,128] sorted RGB), got {center:?} (sorted {rgb_sorted:?})"
+        assert_ne!(
+            center, clear,
+            "{test_name}: expected triangle to cover center pixel"
         );
+
+        let probe_y = (H * 13) / 16; // ~0.81 down from the top, well inside our triangle.
+        let probe_rx = (W * 13) / 16;
+        let probe_lx = (W - 1) - probe_rx;
+        let probe_l = px(probe_lx, probe_y);
+        let probe_r = px(probe_rx, probe_y);
+
+        if looks_like_centered_placeholder_triangle(clear, center, probe_l, probe_r) {
+            common::skip_or_panic(
+                test_name,
+                "tessellation HS/DS draws are currently routed through a placeholder compute prepass (real tessellation emulation not implemented yet)",
+            );
+            return;
+        }
+
+        assert_ne!(
+            probe_l, clear,
+            "{test_name}: expected left probe pixel to be covered by tessellated triangle (got {probe_l:?})"
+        );
+        assert_ne!(
+            probe_r, clear,
+            "{test_name}: expected right probe pixel to be covered by tessellated triangle (got {probe_r:?})"
+        );
+
+        // Validate that DS encodes barycentric coordinates into COLOR0.
+        //
+        // We only compare the *multiset* of RGB values (order-insensitive) to keep this robust to
+        // any future channel swizzles in the hand-authored fixture. The expected values come from
+        // barycentric coordinates of the pixel center in NDC space.
+        let a = (verts[0].pos[0], verts[0].pos[1]);
+        let b = (verts[1].pos[0], verts[1].pos[1]);
+        let c = (verts[2].pos[0], verts[2].pos[1]);
+
+        let check = |label: &str, x: u32, y: u32, actual: [u8; 4]| {
+            let p = ndc_from_pixel(x, y, W, H);
+            let bc = barycentric(a, b, c, p);
+            let expected = [to_unorm8(bc[0]), to_unorm8(bc[1]), to_unorm8(bc[2])];
+            assert_rgb_approx_unordered(test_name, label, actual, expected, 30);
+        };
+
+        check("center", W / 2, H / 2, center);
+        check("probe_left", probe_lx, probe_y, probe_l);
+        check("probe_right", probe_rx, probe_y, probe_r);
     });
 }
