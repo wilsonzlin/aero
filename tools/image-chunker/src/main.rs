@@ -1234,6 +1234,13 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
     if manifest.mime_type.is_empty() {
         bail!("manifest mimeType must be non-empty");
     }
+    let sector = SECTOR_SIZE as u64;
+    if !manifest.total_size.is_multiple_of(sector) {
+        bail!(
+            "manifest totalSize must be a multiple of {sector} bytes, got {}",
+            manifest.total_size
+        );
+    }
     if manifest.chunk_size == 0 {
         bail!("manifest chunkSize must be > 0");
     }
@@ -2743,6 +2750,27 @@ mod tests {
             .expect_err("expected schema validation failure");
         assert!(
             err.to_string().contains("manifest schema mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_non_sector_aligned_total_size() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "win7".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: 513,
+            chunk_size: 512,
+            chunk_count: 2,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected totalSize alignment validation failure");
+        assert!(
+            err.to_string().contains("totalSize must be a multiple"),
             "unexpected error: {err}"
         );
     }
