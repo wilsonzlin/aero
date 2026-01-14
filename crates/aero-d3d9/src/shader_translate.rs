@@ -187,15 +187,22 @@ pub fn translate_d3d9_shader_to_wgsl(
             let ir = shader::to_ir(&program);
             let wgsl = shader::generate_wgsl_with_options(&ir, options)
                 .map_err(|e| ShaderTranslateError::Translation(e.to_string()))?;
+            let shader::ShaderIr {
+                uses_semantic_locations,
+                semantic_locations,
+                used_samplers,
+                sampler_texture_types,
+                ..
+            } = ir;
             Ok(ShaderTranslation {
                 backend: ShaderTranslateBackend::LegacyFallback,
                 version: program.version,
                 wgsl: wgsl.wgsl,
                 entry_point: wgsl.entry_point,
-                uses_semantic_locations: ir.uses_semantic_locations,
-                semantic_locations: ir.semantic_locations,
-                used_samplers: ir.used_samplers,
-                sampler_texture_types: ir.sampler_texture_types,
+                uses_semantic_locations,
+                semantic_locations,
+                used_samplers,
+                sampler_texture_types,
                 fallback_reason: Some(err.to_string()),
             })
         }

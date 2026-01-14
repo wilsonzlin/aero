@@ -107,9 +107,12 @@ pub const OPCODE_RET: u32 = 0x3e;
 // Geometry shader stream emission / cutting.
 //
 // Values from the D3D10+ tokenized shader format opcode table:
+// `D3D10_SB_OPCODE_TYPE_EMITTHENCUT`, `D3D10_SB_OPCODE_TYPE_EMITTHENCUT_STREAM`,
 // `D3D10_SB_OPCODE_TYPE_EMIT`, `D3D10_SB_OPCODE_TYPE_CUT`,
 // `D3D10_SB_OPCODE_TYPE_EMIT_STREAM`, `D3D10_SB_OPCODE_TYPE_CUT_STREAM`
 // in the Windows SDK header `d3d10tokenizedprogramformat.h`.
+pub const OPCODE_EMITTHENCUT: u32 = 0x3f;
+pub const OPCODE_EMITTHENCUT_STREAM: u32 = 0x40;
 pub const OPCODE_EMIT: u32 = 0x43;
 pub const OPCODE_CUT: u32 = 0x44;
 pub const OPCODE_EMIT_STREAM: u32 = 0x41;
@@ -336,6 +339,8 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_ELSE => Some("else"),
         OPCODE_ENDIF => Some("endif"),
         OPCODE_RET => Some("ret"),
+        OPCODE_EMITTHENCUT => Some("emitthen_cut"),
+        OPCODE_EMITTHENCUT_STREAM => Some("emitthen_cut_stream"),
         OPCODE_EMIT => Some("emit"),
         OPCODE_CUT => Some("cut"),
         OPCODE_EMIT_STREAM => Some("emit_stream"),

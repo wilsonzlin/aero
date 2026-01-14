@@ -1007,6 +1007,15 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::FirstbitShi { dst, src })
         }
+        OPCODE_EMITTHENCUT => {
+            r.expect_eof()?;
+            Ok(Sm4Inst::EmitThenCut { stream: 0 })
+        }
+        OPCODE_EMITTHENCUT_STREAM => {
+            let stream = decode_stream_index(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::EmitThenCut { stream })
+        }
         OPCODE_RET => {
             r.expect_eof()?;
             Ok(Sm4Inst::Ret)
@@ -1073,8 +1082,8 @@ pub fn decode_instruction(
 }
 
 fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u32, Sm4DecodeError> {
-    // `emit_stream` / `cut_stream` take a single immediate operand indicating the
-    // stream index (0..=3).
+    // `emit_stream` / `cut_stream` / `emitthen_cut_stream` take a single immediate operand
+    // indicating the stream index (0..=3).
     //
     // The operand is encoded as an immediate32 scalar (replicated lanes).
     let op = decode_raw_operand(r)?;

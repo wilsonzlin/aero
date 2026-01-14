@@ -902,7 +902,9 @@ fn decodes_sample_via_structural_fallback() {
     const DCL_DUMMY: u32 = 0x280;
     // Use an opcode ID that is not currently recognized by the decoder so we can exercise
     // the structural `sample` fallback path.
-    const OPCODE_UNKNOWN_SAMPLE: u32 = 0x40;
+    // Keep this below `DECLARATION_OPCODE_MIN` (0x100) so the decoder won't classify it as a
+    // declaration and skip the instruction stream.
+    const OPCODE_UNKNOWN_SAMPLE: u32 = 0x7f;
 
     let mut body = Vec::<u32>::new();
 

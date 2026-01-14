@@ -1118,6 +1118,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
             Sm4Inst::Emit { .. }
             | Sm4Inst::Cut { .. }
+            | Sm4Inst::EmitThenCut { .. }
             | Sm4Inst::BufInfoRaw { .. }
             | Sm4Inst::BufInfoStructured { .. }
             | Sm4Inst::BufInfoRawUav { .. }
@@ -2341,7 +2342,7 @@ fn scan_resources(
                 uav_buffers.insert(uav.slot);
             }
             Sm4Inst::Unknown { .. } => {}
-            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
+            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. } => {}
             Sm4Inst::Ret => {}
         }
     }
@@ -2702,7 +2703,7 @@ fn emit_temp_and_output_decls(
                 scan_reg(dst.reg);
             }
             Sm4Inst::Unknown { .. } => {}
-            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } => {}
+            Sm4Inst::Emit { .. } | Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. } => {}
             Sm4Inst::Ret => {}
         }
     }
@@ -3898,6 +3899,12 @@ fn emit_instructions(
                     format!("cut_stream({stream})")
                 };
                 return Err(ShaderTranslateError::UnsupportedInstruction { inst_index, opcode });
+            }
+            Sm4Inst::EmitThenCut { .. } => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index,
+                    opcode: "emitthen_cut".to_owned(),
+                });
             }
             Sm4Inst::Ret => {
                 // DXBC `ret` returns from the current shader invocation. We only need to emit an

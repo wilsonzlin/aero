@@ -314,6 +314,36 @@ fn gs_opcode_constants_match_d3d10_tokenized_format() {
     assert_eq!(OPCODE_CUT_STREAM, 0x42);
     assert_eq!(OPCODE_EMIT, 0x43);
     assert_eq!(OPCODE_CUT, 0x44);
+    assert_eq!(OPCODE_EMITTHENCUT, 0x3f);
+    assert_eq!(OPCODE_EMITTHENCUT_STREAM, 0x40);
+}
+
+#[test]
+fn decodes_emitthen_cut_variants() {
+    let mut body = Vec::<u32>::new();
+    body.push(opcode_token(OPCODE_EMITTHENCUT, 1));
+
+    // emitthen_cut_stream 2
+    let stream_op = imm32_scalar(2);
+    let mut emit_then_cut_stream = vec![opcode_token(
+        OPCODE_EMITTHENCUT_STREAM,
+        1 + stream_op.len() as u32,
+    )];
+    emit_then_cut_stream.extend_from_slice(&stream_op);
+    body.extend_from_slice(&emit_then_cut_stream);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm4_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("decode");
+
+    assert_eq!(module.stage, ShaderStage::Geometry);
+    assert!(matches!(
+        module.instructions.as_slice(),
+        [Sm4Inst::EmitThenCut { stream: 0 }, Sm4Inst::EmitThenCut { stream: 2 }, Sm4Inst::Ret]
+    ));
 }
 
 #[test]

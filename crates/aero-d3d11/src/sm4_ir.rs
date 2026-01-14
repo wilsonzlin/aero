@@ -504,6 +504,14 @@ pub enum Sm4Inst {
     Cut {
         stream: u32,
     },
+    /// Geometry shader `emit_then_cut` / `emit_then_cut_stream`.
+    ///
+    /// This is a compact encoding equivalent to `emit` followed by `cut` on the same stream.
+    ///
+    /// `stream` is always 0 for `emit_then_cut`, and 0..=3 for `emit_then_cut_stream`.
+    EmitThenCut {
+        stream: u32,
+    },
     /// Structured `switch` statement.
     ///
     /// The SM4/SM5 token stream encodes structured control flow as a linear stream of opcodes
