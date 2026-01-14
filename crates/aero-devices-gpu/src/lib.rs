@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+pub mod device;
 pub mod executor;
 pub mod pci;
 pub mod pci_device;
