@@ -563,6 +563,31 @@ fn bench_hotness_profile(c: &mut Criterion) {
         });
     });
 
+    // Pathological case: the profile is fully occupied by requested keys (e.g. compilation jobs are
+    // in-flight for all entries). New RIPs cannot be inserted because we avoid evicting requested
+    // entries, so `record_hit` falls back to a full scan that finds no eviction victim.
+    const SATURATED_OPS_PER_ITER: usize = 256;
+    group.throughput(Throughput::Elements(SATURATED_OPS_PER_ITER as u64));
+    group.bench_function("record_hit_saturated_requested", |b| {
+        const CAPACITY: usize = 256;
+
+        let mut profile = HotnessProfile::new_with_capacity(u32::MAX, CAPACITY);
+        for i in 0..CAPACITY {
+            let rip = i as u64;
+            profile.record_hit(rip, false);
+            profile.mark_requested(rip);
+        }
+
+        let mut next_rip = CAPACITY as u64;
+        b.iter(|| {
+            for _ in 0..SATURATED_OPS_PER_ITER {
+                black_box(profile.record_hit(black_box(next_rip), false));
+                next_rip = next_rip.wrapping_add(1);
+            }
+            black_box(profile.counter(0));
+        });
+    });
+
     // Capacity pressure path: insert new RIPs once the internal counter table is full.
     //
     // This exercises the profile's eviction logic (victim selection + HashMap/HashSet removal) and
