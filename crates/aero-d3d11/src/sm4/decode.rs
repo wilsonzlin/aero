@@ -1195,14 +1195,7 @@ pub fn decode_instruction(
             Ok(Sm4Inst::EmitThenCut { stream: 0 })
         }
         OPCODE_EMITTHENCUT_STREAM => {
-            // Some SM4 blobs (including those produced by the legacy HLSL compiler) encode
-            // `emitthen_cut_stream` with *no* operand tokens when the stream index is 0.
-            // Accept that form by defaulting to stream 0 when the instruction has no payload.
-            let stream = if r.is_eof() {
-                0
-            } else {
-                decode_stream_index(&mut r)?
-            };
+            let stream = decode_stream_index(opcode_token, &mut r)?;
             r.expect_eof()?;
             Ok(Sm4Inst::EmitThenCut { stream })
         }
@@ -1235,22 +1228,12 @@ pub fn decode_instruction(
             Ok(Sm4Inst::Cut { stream: 0 })
         }
         OPCODE_EMIT_STREAM => {
-            // Some SM4 blobs omit the immediate operand for stream 0.
-            let stream = if r.is_eof() {
-                0
-            } else {
-                decode_stream_index(&mut r)?
-            };
+            let stream = decode_stream_index(opcode_token, &mut r)?;
             r.expect_eof()?;
             Ok(Sm4Inst::Emit { stream })
         }
         OPCODE_CUT_STREAM => {
-            // Some SM4 blobs omit the immediate operand for stream 0.
-            let stream = if r.is_eof() {
-                0
-            } else {
-                decode_stream_index(&mut r)?
-            };
+            let stream = decode_stream_index(opcode_token, &mut r)?;
             r.expect_eof()?;
             Ok(Sm4Inst::Cut { stream })
         }
@@ -1338,16 +1321,15 @@ fn decode_setp_cmp(opcode_token: u32) -> Option<Sm4CmpOp> {
     }
 }
 
-fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u8, Sm4DecodeError> {
-    // `emit_stream` / `cut_stream` / `emitthen_cut_stream` take a single immediate operand
-    // indicating the stream index (0..=3).
+fn decode_stream_index(opcode_token: u32, r: &mut InstrReader<'_>) -> Result<u8, Sm4DecodeError> {
+    // Stream instructions (`emit_stream` / `cut_stream` / `emitthen_cut_stream`) take a stream
+    // index in the range 0..=3.
     //
-    // The operand is encoded as an immediate32 scalar (replicated lanes).
-    //
-    // Some toolchains (and some test fixtures) omit the operand entirely for stream 0. Be
-    // permissive and treat the missing operand as `0`.
+    // The common encoding uses an immediate32 scalar operand (replicated lanes). Some SM4 blobs
+    // omit the operand entirely for stream 0; treat a missing operand as stream 0 by deriving the
+    // index from the opcode token's opcode-specific control field.
     if r.is_eof() {
-        return Ok(0);
+        return Ok(((opcode_token >> OPCODE_CONTROL_SHIFT) & 0x3) as u8);
     }
     let op = decode_raw_operand(r)?;
     let Some(imm) = op.imm32 else {
