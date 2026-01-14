@@ -12,16 +12,19 @@ filename alias INF (checked in disabled-by-default):
 Developers may locally enable the alias by renaming it to `virtio-input.inf`.
 
 Policy:
-  - The canonical INF (`aero_virtio_input.inf`) is SUBSYS-only (no strict generic
-    fallback model entry).
-  - The legacy alias INF is a *filename alias only*. It is allowed to diverge
-    from the canonical INF only in the models sections (`[Aero.NTx86]` /
-    `[Aero.NTamd64]`) to add an opt-in strict, revision-gated generic fallback
-    HWID (no SUBSYS): `PCI\\VEN_1AF4&DEV_1052&REV_01`.
-  - Outside those models sections, from the first section header (typically
-    `[Version]`) onward, the alias must remain byte-for-byte identical to the
-    canonical INF.
-  - Only the leading banner/comment block may differ.
+  - The canonical INF (`aero_virtio_input.inf`) is intentionally SUBSYS-only
+    (keyboard + mouse; no generic fallback).
+  - The legacy alias INF (`virtio-input.inf` / `virtio-input.inf.disabled`) is
+    an opt-in compatibility shim for workflows that reference the legacy
+    filename. It is allowed to diverge in the models sections (`[Aero.NTx86]` /
+    `[Aero.NTamd64]`) to add a strict, revision-gated generic fallback (no
+    SUBSYS).
+  - Outside those models sections, from the first section header (`[Version]`)
+    onward, the alias must remain byte-for-byte identical to the canonical INF.
+  - Only the leading comment/banner block (above `[Version]`) may differ.
+  - The CI guardrail `scripts/ci/check-windows7-virtio-contract-consistency.py`
+    validates the virtio-input HWID/model-line policy (SUBSYS-only canonical;
+    strict fallback in the alias; no tablet entry).
 
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
@@ -33,7 +36,11 @@ import difflib
 import sys
 from pathlib import Path
 
-STRICT_FALLBACK_HWID = r"PCI\VEN_1AF4&DEV_1052&REV_01"
+VIRTIO_VENDOR_ID = 0x1AF4
+VIRTIO_INPUT_DEVICE_ID = 0x1052
+STRICT_FALLBACK_HWID = (
+    f"PCI\\VEN_{VIRTIO_VENDOR_ID:04X}&DEV_{VIRTIO_INPUT_DEVICE_ID:04X}&REV_01"
+)
 MODELS_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
 
 
@@ -235,6 +242,15 @@ def main() -> int:
 
     errors: list[str] = []
 
+    # The canonical INF must not contain the strict fallback HWID *anywhere*, even in
+    # comments. This keeps it truly SUBSYS-only and prevents accidentally
+    # cargo-culting the fallback line back into the canonical file.
+    if STRICT_FALLBACK_HWID.lower() in canonical_text.lower():
+        errors.append(
+            f"{canonical.as_posix()}: canonical INF must not contain strict fallback HWID {STRICT_FALLBACK_HWID!r} "
+            "(fallback is alias-only)"
+        )
+
     # 1) Canonical must not include the strict fallback in models sections.
     for section in ("Aero.NTx86", "Aero.NTamd64"):
         lines = inf_section_text(text=canonical_text, section=section)
@@ -270,7 +286,7 @@ def main() -> int:
             lineterm="",
         )
         errors.append(
-            "virtio-input INF alias drift detected (expected byte-identical outside models sections):\n"
+            "virtio-input INF alias drift detected (expected byte-identical outside banner/comments + models sections):\n"
             + "".join(diff)
         )
 
@@ -279,7 +295,7 @@ def main() -> int:
         return 1
 
     print(
-        "virtio-input INF alias drift check: OK ({} stays in sync with {} outside models sections)".format(
+        "virtio-input INF alias drift check: OK ({} stays in sync with {} outside banner/comments + models sections)".format(
             alias.relative_to(repo_root), canonical.relative_to(repo_root)
         )
     )
