@@ -208,15 +208,19 @@ impl WebUsbUhciBridge {
         let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
         if path.len() == 1 {
             if path[0] as usize == ROOT_PORT_EXTERNAL_HUB {
-                return Err(js_sys::Error::new(
-                    "Cannot detach the external USB hub from root port 0",
-                )
-                .into());
+                return Err(
+                    js_sys::Error::new(&format!(
+                        "Cannot detach the external USB hub from root port {ROOT_PORT_EXTERNAL_HUB}",
+                    ))
+                    .into(),
+                );
             }
             if path[0] as usize == ROOT_PORT_WEBUSB {
                 return Err(
                     js_sys::Error::new(
-                        "Cannot detach the WebUSB passthrough device from root port 1; use set_connected(false)",
+                        &format!(
+                            "Cannot detach the WebUSB passthrough device from root port {ROOT_PORT_WEBUSB}; use set_connected(false)",
+                        ),
                     )
                     .into(),
                 );
@@ -393,10 +397,12 @@ fn validate_webhid_attach_path(path: &[u8]) -> Result<(), JsValue> {
         .into());
     }
     if path[0] as usize != ROOT_PORT_EXTERNAL_HUB {
-        return Err(js_sys::Error::new(
-            "WebHID devices must attach behind the external hub on root port 0",
-        )
-        .into());
+        return Err(
+            js_sys::Error::new(&format!(
+                "WebHID devices must attach behind the external hub on root port {ROOT_PORT_EXTERNAL_HUB}",
+            ))
+            .into(),
+        );
     }
     Ok(())
 }
