@@ -670,7 +670,7 @@ fn qcow2_with_backing_reads_fall_back_and_writes_are_copy_on_write() {
 
     let backing_disk = RawDisk::open(backing_backend).unwrap();
     let qcow2_backend = make_qcow2_empty_with_backing(virtual_size);
-    let mut disk = Qcow2Disk::open_with_backing(qcow2_backend, Box::new(backing_disk)).unwrap();
+    let mut disk = Qcow2Disk::open_with_parent(qcow2_backend, Box::new(backing_disk)).unwrap();
 
     // Unallocated clusters should read from the backing disk.
     let mut buf0 = [0u8; SECTOR_SIZE];
@@ -750,7 +750,7 @@ fn qcow2_backing_zero_cluster_flag_falls_back_to_parent() {
         .write_at(l2_table_offset, &QCOW2_OFLAG_ZERO.to_be_bytes())
         .unwrap();
 
-    let mut disk = Qcow2Disk::open_with_backing(qcow2_backend, Box::new(backing_disk)).unwrap();
+    let mut disk = Qcow2Disk::open_with_parent(qcow2_backend, Box::new(backing_disk)).unwrap();
 
     let mut read0 = [0u8; SECTOR_SIZE];
     disk.read_sectors(0, &mut read0).unwrap();
