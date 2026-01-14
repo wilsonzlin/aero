@@ -60,7 +60,7 @@ use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::reflection_bindings;
 use super::vertex_pulling::{
     VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
-    VERTEX_PULLING_UNIFORM_BINDING,
+    VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
 use super::scratch_allocator::GpuScratchAllocator;
 
@@ -2967,7 +2967,7 @@ impl AerogpuD3d11Executor {
                 Vec::with_capacity(buffers.len() + 3);
             for (slot, buf) in buffers.iter().enumerate() {
                 vp_bg_entries.push(wgpu::BindGroupEntry {
-                    binding: slot as u32,
+                    binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot as u32,
                     resource: buf.as_entire_binding(),
                 });
             }
@@ -3141,20 +3141,13 @@ impl AerogpuD3d11Executor {
         let (compute_layout_key, compute_pipeline_layout) = if let Some(vp_bgl) = &vertex_pulling_bgl
         {
             let key = PipelineLayoutKey {
-                // Vertex pulling uses a dedicated group so it can coexist with the D3D binding-model
-                // groups (VS/PS/CS/GS = groups 0..=3). Keep the unused intermediate groups as
-                // empty layouts so `@group(VERTEX_PULLING_GROUP)` matches the pipeline layout.
-                bind_group_layout_hashes: vec![
-                    compute_bgl.hash,
-                    empty_bgl.hash,
-                    empty_bgl.hash,
-                    empty_bgl.hash,
-                    vp_bgl.hash,
-                ],
+                // The compute prepass uses `@group(0)` for its output buffers, and the vertex
+                // pulling WGSL uses `@group(VERTEX_PULLING_GROUP)`. Keep intermediate groups as
+                // empty layouts so the bind group indices line up.
+                bind_group_layout_hashes: vec![compute_bgl.hash, empty_bgl.hash, empty_bgl.hash, vp_bgl.hash],
             };
             let layouts = [
                 compute_bgl.layout.as_ref(),
-                empty_bgl.layout.as_ref(),
                 empty_bgl.layout.as_ref(),
                 empty_bgl.layout.as_ref(),
                 vp_bgl.layout.as_ref(),
