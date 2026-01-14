@@ -205,6 +205,24 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe("hdd");
   });
 
+  it("clears the active boot device when the VM is stopped", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "machine", enableWorkers: true };
+
+    (coordinator as any).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as any).workers.cpu;
+
+    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, { type: "machineCpu.bootDeviceActive", bootDevice: "cdrom" });
+    expect(coordinator.getMachineCpuActiveBootDevice()).toBe("cdrom");
+
+    coordinator.stop();
+    expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
+  });
+
   it("preserves bootDevice when setBootDisks is called with unchanged disk IDs (machine runtime)", () => {
     const coordinator = new WorkerCoordinator();
 

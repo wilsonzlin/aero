@@ -1993,6 +1993,7 @@ export class WorkerCoordinator {
     this.workerConfigAckVersions = {};
     this.pendingAerogpuSubmissions = [];
     this.aerogpuInFlightFencesByRequestId.clear();
+    this.machineCpuActiveBootDevice = null;
 
     if (options.clearShared) {
       this.shared = undefined;
