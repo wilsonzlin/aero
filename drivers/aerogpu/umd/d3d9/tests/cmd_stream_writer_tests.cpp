@@ -2994,6 +2994,20 @@ bool TestLockInfersMipLevelPitchFromOffsetBytes() {
     return Check(hr == S_OK, "Unlock");
   };
 
+  auto lock_fail = [&](D3DDDI_HRESOURCE hResource,
+                       uint32_t offset_bytes,
+                       HRESULT expected_hr,
+                       const char* label) -> bool {
+    D3D9DDIARG_LOCK lock{};
+    lock.hResource = hResource;
+    lock.offset_bytes = offset_bytes;
+    lock.size_bytes = 0;
+    lock.flags = 0;
+    D3DDDI_LOCKEDBOX box{};
+    const HRESULT hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+    return Check(hr == expected_hr, label);
+  };
+
   // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
   constexpr uint32_t kD3dRTypeTexture = 3u;
 
@@ -3029,7 +3043,17 @@ bool TestLockInfersMipLevelPitchFromOffsetBytes() {
   if (!lock_check(create_rgba.hResource, /*offset_bytes=*/64, /*row=*/8, /*slice=*/16, "Lock(BGRA level1)")) {
     return false;
   }
+  // Offsets can point into a subresource, not just its base. Pitches must still
+  // correspond to the containing mip level.
+  if (!lock_check(create_rgba.hResource, /*offset_bytes=*/68, /*row=*/8, /*slice=*/16, "Lock(BGRA level1+4)")) {
+    return false;
+  }
   if (!lock_check(create_rgba.hResource, /*offset_bytes=*/80, /*row=*/4, /*slice=*/4, "Lock(BGRA level2)")) {
+    return false;
+  }
+  // Validate robust error handling: offsets outside the mip chain should be
+  // rejected rather than returning nonsense pitches.
+  if (!lock_fail(create_rgba.hResource, /*offset_bytes=*/84, E_INVALIDARG, "Lock(BGRA offset==size) rejects")) {
     return false;
   }
 
@@ -3063,6 +3087,12 @@ bool TestLockInfersMipLevelPitchFromOffsetBytes() {
     return false;
   }
   if (!lock_check(create_dxt1.hResource, /*offset_bytes=*/32, /*row=*/8, /*slice=*/8, "Lock(DXT1 level1)")) {
+    return false;
+  }
+  if (!lock_check(create_dxt1.hResource, /*offset_bytes=*/33, /*row=*/8, /*slice=*/8, "Lock(DXT1 level1+1)")) {
+    return false;
+  }
+  if (!lock_fail(create_dxt1.hResource, /*offset_bytes=*/48, E_INVALIDARG, "Lock(DXT1 offset==size) rejects")) {
     return false;
   }
   return lock_check(create_dxt1.hResource, /*offset_bytes=*/40, /*row=*/8, /*slice=*/8, "Lock(DXT1 level2)");
