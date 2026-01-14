@@ -18,7 +18,7 @@ struct Vertex {
 //   end
 static const DWORD kPsPassthroughColor[] = {
     0xFFFF0200u, // ps_2_0
-    0x02000001u, 0x000F0800u, 0x10E40000u, // mov oC0, v0
+    0x03000001u, 0x000F0800u, 0x10E40000u, // mov oC0, v0
     0x0000FFFFu, // end
 };
 
@@ -399,4 +399,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-

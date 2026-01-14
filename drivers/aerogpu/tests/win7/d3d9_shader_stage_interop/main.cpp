@@ -224,10 +224,10 @@ static int RunD3D9ShaderStageInterop(int argc, char** argv) {
   //   end
   static const DWORD kVsPosTex[] = {
       0xFFFE0200u, // vs_2_0
-      0x02000001u, // mov
+      0x03000001u, // mov
       0x400F0000u, // oPos.xyzw
       0x10E40000u, // v0.xyzw
-      0x02000001u, // mov
+      0x03000001u, // mov
       0x600F0000u, // oT0.xyzw
       0x10E40002u, // v2.xyzw (TEXCOORD0 when using XYZRHW|DIFFUSE|TEX1)
       0x0000FFFFu, // end
@@ -360,4 +360,3 @@ int main(int argc, char** argv) {
   aerogpu_test::FlushStdout();
   return rc;
 }
-

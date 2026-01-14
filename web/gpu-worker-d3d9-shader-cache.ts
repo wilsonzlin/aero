@@ -297,7 +297,7 @@ async function main(): Promise<void> {
   // These DWORDs match the helpers in `crates/aero-gpu/tests/aerogpu_d3d9_shader.rs`.
   const d3d9Vs20Words: number[] = [
     0xfffe0200, // vs_2_0
-    0x02000001, // mov, param_count=2
+    0x03000001, // mov (len=3 tokens: opcode + 2 params)
     0x400f0000, // dst oPos.xyzw
     0x10e40000, // src v0.xyzw
     0x0000ffff, // end

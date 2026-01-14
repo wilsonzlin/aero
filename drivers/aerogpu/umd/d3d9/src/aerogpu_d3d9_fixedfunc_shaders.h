@@ -22,13 +22,13 @@ namespace fixedfunc {
 //   end
 static constexpr uint32_t kVsPassthroughPosColor[] = {
     0xFFFE0200u, // vs_2_0
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x400F0000u, // oPos.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
@@ -41,13 +41,13 @@ static constexpr uint32_t kVsPassthroughPosColor[] = {
 //   end
 static constexpr uint32_t kVsPassthroughPosColorTex1[] = {
     0xFFFE0200u, // vs_2_0
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x400F0000u, // oPos.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40002u, // v2.xyzw
     0x0000FFFFu, // end
@@ -61,19 +61,19 @@ static constexpr uint32_t kVsPassthroughPosColorTex1[] = {
 //   end
 static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
     0xFFFE0200u, // vs_2_0
-    0x05000051u, // def (5 operands)
+    0x06000051u, // def (5 operands)
     0x200F0004u, // c4.xyzw
     0x3F800000u, // 1.0
     0x3F800000u, // 1.0
     0x3F800000u, // 1.0
     0x3F800000u, // 1.0
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x400F0000u, // oPos.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x20E40004u, // c4.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40001u, // v1.xyzw
     0x0000FFFFu, // end
@@ -96,31 +96,31 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
 static constexpr uint32_t kVsWvpPosColorTex0[] = {
     0xFFFE0200u, // vs_2_0
  
-    0x03000009u, // dp4 (3 operands)
+    0x04000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
     0x10E40000u, // v0.xyzw
     0x20E400F0u, // c240.xyzw
  
-    0x03000009u, // dp4
+    0x04000009u, // dp4
     0x40020000u, // oPos.y
     0x10E40000u, // v0.xyzw
     0x20E400F1u, // c241.xyzw
  
-    0x03000009u, // dp4
+    0x04000009u, // dp4
     0x40040000u, // oPos.z
     0x10E40000u, // v0.xyzw
     0x20E400F2u, // c242.xyzw
  
-    0x03000009u, // dp4
+    0x04000009u, // dp4
     0x40080000u, // oPos.w
     0x10E40000u, // v0.xyzw
     0x20E400F3u, // c243.xyzw
  
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
  
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40002u, // v2.xyzw
  
@@ -149,31 +149,31 @@ static constexpr uint32_t kVsWvpPosColorTex0[] = {
 static constexpr uint32_t kVsWvpPosColor[] = {
     0xFFFE0200u, // vs_2_0
 
-    0x03000009u, // dp4 (3 operands)
+    0x04000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
     0x10E40000u, // v0.xyzw
     0x20E400F0u, // c240.xyzw
 
-    0x03000009u, // dp4
+    0x04000009u, // dp4
     0x40020000u, // oPos.y
     0x10E40000u, // v0.xyzw
     0x20E400F1u, // c241.xyzw
 
-    0x03000009u, // dp4
+    0x04000009u, // dp4
     0x40040000u, // oPos.z
     0x10E40000u, // v0.xyzw
     0x20E400F2u, // c242.xyzw
 
-    0x03000009u, // dp4
+    0x04000009u, // dp4
     0x40080000u, // oPos.w
     0x10E40000u, // v0.xyzw
     0x20E400F3u, // c243.xyzw
 
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
 
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40000u, // v0.xyzw
 
@@ -197,33 +197,33 @@ static constexpr uint32_t kVsWvpPosColor[] = {
 // `dp4(v, cN)` row-vector multiplication).
 static constexpr uint32_t kVsTransformPosWhiteTex1[] = {
     0xFFFE0200u, // vs_2_0
-    0x05000051u, // def (5 operands)
+    0x06000051u, // def (5 operands)
     0x200F0004u, // c4.xyzw
     0x3F800000u, // 1.0
     0x3F800000u, // 1.0
     0x3F800000u, // 1.0
     0x3F800000u, // 1.0
 
-    0x03000009u, // dp4 (3 operands)
+    0x04000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
     0x10E40000u, // v0.xyzw
     0x20E400F0u, // c240.xyzw
-    0x03000009u, // dp4 (3 operands)
+    0x04000009u, // dp4 (3 operands)
     0x40020000u, // oPos.y
     0x10E40000u, // v0.xyzw
     0x20E400F1u, // c241.xyzw
-    0x03000009u, // dp4 (3 operands)
+    0x04000009u, // dp4 (3 operands)
     0x40040000u, // oPos.z
     0x10E40000u, // v0.xyzw
     0x20E400F2u, // c242.xyzw
-    0x03000009u, // dp4 (3 operands)
+    0x04000009u, // dp4 (3 operands)
     0x40080000u, // oPos.w
     0x10E40000u, // v0.xyzw
     0x20E400F3u, // c243.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x20E40004u, // c4.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40001u, // v1.xyzw
     0x0000FFFFu, // end
@@ -238,7 +238,7 @@ static constexpr uint32_t kVsTransformPosWhiteTex1[] = {
 //   end
 static constexpr uint32_t kPsPassthroughColor[] = {
     0xFFFF0200u, // ps_2_0
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x000F0800u, // oC0.xyzw
     0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
@@ -249,7 +249,7 @@ static constexpr uint32_t kPsPassthroughColor[] = {
 //   end
 static constexpr uint32_t kPsColorOnly[] = {
     0xFFFF0200u, // ps_2_0
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x000F0800u, // oC0.xyzw
     0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
@@ -261,11 +261,11 @@ static constexpr uint32_t kPsColorOnly[] = {
 //   end
 static constexpr uint32_t kPsTextureOnly[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld (3 operands)
+    0x04000042u, // texld (3 operands)
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -278,15 +278,15 @@ static constexpr uint32_t kPsTextureOnly[] = {
 //   end
 static constexpr uint32_t kPsModulateTexDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld (3 operands)
+    0x04000042u, // texld (3 operands)
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul (3 operands)
+    0x04000005u, // mul (3 operands)
     0x000F0000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -295,15 +295,15 @@ static constexpr uint32_t kPsModulateTexDiffuse[] = {
 // Legacy name used by earlier bring-up code.
 static constexpr uint32_t kPsTexturedModulateVertexColor[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld (3 operands)
+    0x04000042u, // texld (3 operands)
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul (3 operands)
+    0x04000005u, // mul (3 operands)
     0x000F0000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -329,11 +329,11 @@ static constexpr uint32_t kPsTexturedModulateVertexColor[] = {
 //   end
 static constexpr uint32_t kPsStage0TextureTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld (3 operands)
+    0x04000042u, // texld (3 operands)
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov (2 operands)
+    0x03000001u, // mov (2 operands)
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -346,14 +346,14 @@ static constexpr uint32_t kPsStage0TextureTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0DiffuseTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -367,18 +367,18 @@ static constexpr uint32_t kPsStage0DiffuseTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0DiffuseModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -391,14 +391,14 @@ static constexpr uint32_t kPsStage0DiffuseModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0TextureDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -411,15 +411,15 @@ static constexpr uint32_t kPsStage0TextureDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0TextureModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -433,18 +433,18 @@ static constexpr uint32_t kPsStage0TextureModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0ModulateDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -457,15 +457,15 @@ static constexpr uint32_t kPsStage0ModulateDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0ModulateTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -493,18 +493,18 @@ static constexpr uint32_t kPsStage0ModulateTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000002u, // add
+    0x04000002u, // add
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080001u, // r1.w
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40001u, // r1.xyzw
     0x0000FFFFu, // end
@@ -518,18 +518,18 @@ static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -543,19 +543,19 @@ static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -570,22 +570,22 @@ static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x000F0001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080001u, // r1.w
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40001u, // r1.xyzw
     0x0000FFFFu, // end
@@ -600,22 +600,22 @@ static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -629,19 +629,19 @@ static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070001u, // r1.xyz
     0x00E40001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40001u, // r1.xyzw
     0x0000FFFFu, // end
@@ -657,26 +657,26 @@ static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x000F0001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x000F0001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080001u, // r1.w
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40001u, // r1.xyzw
     0x0000FFFFu, // end
@@ -692,26 +692,26 @@ static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -726,23 +726,23 @@ static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070001u, // r1.xyz
     0x00E40001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070001u, // r1.xyz
     0x00E40001u, // r1.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40001u, // r1.xyzw
     0x0000FFFFu, // end
@@ -757,25 +757,25 @@ static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x10E40000u, // v0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -791,28 +791,28 @@ static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x10E40000u, // v0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -828,29 +828,29 @@ static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x10E40000u, // v0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x00E40001u, // r1.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -865,25 +865,25 @@ static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -899,28 +899,28 @@ static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -936,29 +936,29 @@ static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
     0x00E40001u, // r1.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -972,18 +972,18 @@ static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x20E40000u, // c0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080001u, // r1.w
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40001u, // r1.xyzw
     0x0000FFFFu, // end
@@ -997,18 +997,18 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x20E40000u, // c0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -1022,19 +1022,19 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaModulate[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00070000u, // r0.xyz
     0x00E40000u, // r0.xyzw
     0x20E40000u, // c0.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -1048,18 +1048,18 @@ static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaModulate[] = {
 //   end
 static constexpr uint32_t kPsStage0DiffuseAlphaAddTextureDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -1075,28 +1075,28 @@ static constexpr uint32_t kPsStage0DiffuseAlphaAddTextureDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0DiffuseAlphaSubtractTextureDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x10E40000u, // v0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -1112,28 +1112,28 @@ static constexpr uint32_t kPsStage0DiffuseAlphaSubtractTextureDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0DiffuseAlphaSubtractDiffuseTexture[] = {
     0xFFFF0200u, // ps_2_0
-    0x05000051u, // def
+    0x06000051u, // def
     0x200F0001u, // c1.xyzw
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
     0xBF800000u, // -1.0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x000F0001u, // r1.xyzw
     0x00E40000u, // r0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00080000u, // r0.w
     0x10E40000u, // v0.xyzw
     0x00E40001u, // r1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -1148,22 +1148,22 @@ static constexpr uint32_t kPsStage0DiffuseAlphaSubtractDiffuseTexture[] = {
 //   end
 static constexpr uint32_t kPsStage0DiffuseAlphaModulate2xTextureDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -1179,26 +1179,26 @@ static constexpr uint32_t kPsStage0DiffuseAlphaModulate2xTextureDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0DiffuseAlphaModulate4xTextureDiffuse[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, // texld
+    0x04000042u, // texld
     0x000F0000u, // r0.xyzw
     0x30E40000u, // t0.xyzw
     0x20E40800u, // s0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x00070000u, // r0.xyz
     0x10E40000u, // v0.xyzw
-    0x03000005u, // mul
+    0x04000005u, // mul
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x10E40000u, // v0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
-    0x03000002u, // add
+    0x04000002u, // add
     0x00080000u, // r0.w
     0x00E40000u, // r0.xyzw
     0x00E40000u, // r0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x00E40000u, // r0.xyzw
     0x0000FFFFu, // end
@@ -1209,7 +1209,7 @@ static constexpr uint32_t kPsStage0DiffuseAlphaModulate4xTextureDiffuse[] = {
 //   end
 static constexpr uint32_t kPsStage0TextureFactor[] = {
     0xFFFF0200u, // ps_2_0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x20E40000u, // c0.xyzw
     0x0000FFFFu, // end

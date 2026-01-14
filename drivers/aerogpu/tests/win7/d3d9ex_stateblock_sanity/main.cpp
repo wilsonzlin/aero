@@ -38,16 +38,16 @@ struct VertexPosTex {
 
 static const DWORD kVsCopyPosTex[] = {
     0xFFFE0200u, // vs_2_0
-    0x02000001u, 0x400F0000u, 0x10E40000u, // mov oPos, v0
-    0x02000001u, 0x600F0000u, 0x10E40001u, // mov oT0, v1
+    0x03000001u, 0x400F0000u, 0x10E40000u, // mov oPos, v0
+    0x03000001u, 0x600F0000u, 0x10E40001u, // mov oT0, v1
     0x0000FFFFu, // end
 };
 
 static const DWORD kPsCopyTexMulC0[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, 0x000F0000u, 0x30E40000u, 0x20E40800u, // texld r0, t0, s0
-    0x03000005u, 0x000F0000u, 0x00E40000u, 0x20E40000u, // mul r0, r0, c0
-    0x02000001u, 0x000F0800u, 0x00E40000u, // mov oC0, r0
+    0x04000042u, 0x000F0000u, 0x30E40000u, 0x20E40800u, // texld r0, t0, s0
+    0x04000005u, 0x000F0000u, 0x00E40000u, 0x20E40000u, // mul r0, r0, c0
+    0x03000001u, 0x000F0800u, 0x00E40000u, // mov oC0, r0
     0x0000FFFFu, // end
 };
 
@@ -60,8 +60,8 @@ static const DWORD kPsCopyTexMulC0[] = {
 // stateblock was created via Begin/End around an Apply() call (nested recording).
 static const DWORD kPsCopyTex[] = {
     0xFFFF0200u, // ps_2_0
-    0x03000042u, 0x000F0000u, 0x30E40000u, 0x20E40800u, // texld r0, t0, s0
-    0x02000001u, 0x000F0800u, 0x00E40000u, // mov oC0, r0
+    0x04000042u, 0x000F0000u, 0x30E40000u, 0x20E40800u, // texld r0, t0, s0
+    0x03000001u, 0x000F0800u, 0x00E40000u, // mov oC0, r0
     0x0000FFFFu, // end
 };
 

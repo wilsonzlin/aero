@@ -45,8 +45,8 @@ struct VertexXyzDiffuse {
 //   end
 static const uint32_t kVsPassthroughPosColor[] = {
     0xFFFE0200u,
-    0x02000001u, 0x400F0000u, 0x10E40000u,
-     0x02000001u, 0x500F0000u, 0x10E40001u,
+    0x03000001u, 0x400F0000u, 0x10E40000u,
+     0x03000001u, 0x500F0000u, 0x10E40001u,
      0x0000FFFFu,
 };
 
@@ -55,7 +55,7 @@ static const uint32_t kVsPassthroughPosColor[] = {
 //   end
 static const uint32_t kPsPassthroughColor[] = {
     0xFFFF0200u,
-     0x02000001u, 0x000F0800u, 0x10E40000u,
+     0x03000001u, 0x000F0800u, 0x10E40000u,
      0x0000FFFFu,
 };
 

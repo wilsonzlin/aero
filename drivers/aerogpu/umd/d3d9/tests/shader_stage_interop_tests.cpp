@@ -38,13 +38,13 @@ constexpr uint32_t kD3dTopDisable = 1u;
 //   end
 static constexpr uint32_t kUserVsPassthroughPosColor[] = {
     0xFFFE0200u, // vs_2_0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x400F0000u, // oPos.xyzw
     0x10E40000u, // v0.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x600F0000u, // oT0.xyzw
     0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
@@ -55,7 +55,7 @@ static constexpr uint32_t kUserVsPassthroughPosColor[] = {
 //   end
 static constexpr uint32_t kUserPsPassthroughColor[] = {
     0xFFFF0200u, // ps_2_0
-    0x02000001u, // mov
+    0x03000001u, // mov
     0x000F0800u, // oC0.xyzw
     0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
