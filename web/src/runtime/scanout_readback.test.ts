@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
+import { SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
 import { readScanoutRgba8FromGuestRam } from "./scanout_readback";
 
 describe("runtime/scanout_readback", () => {
@@ -71,6 +71,29 @@ describe("runtime/scanout_readback", () => {
     ]);
   });
 
+  it("converts BGRA->RGBA and preserves alpha", () => {
+    const width = 2;
+    const height = 1;
+    const pitchBytes = width * 4;
+
+    const guest = new Uint8Array([
+      // pixel0: B=1,G=2,R=3,A=4
+      1, 2, 3, 4,
+      // pixel1: B=5,G=6,R=7,A=8
+      5, 6, 7, 8,
+    ]);
+
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B8G8R8A8,
+    });
+
+    expect(Array.from(out.rgba8)).toEqual([3, 2, 1, 4, 7, 6, 5, 8]);
+  });
+
   it("throws for invalid pitchBytes (< width*4)", () => {
     const guest = new Uint8Array(64);
     expect(() =>
@@ -98,4 +121,3 @@ describe("runtime/scanout_readback", () => {
     ).toThrow(/out of bounds/i);
   });
 });
-

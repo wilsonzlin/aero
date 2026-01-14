@@ -1,5 +1,6 @@
-import { SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
+import { SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
+import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "../workers/scanout_swizzle.ts";
 
 export type ScanoutDescriptor = Readonly<{
   /**
@@ -62,13 +63,16 @@ const u64BigintToSafeNumber = (value: bigint, label: string): number => {
 };
 
 /**
- * Convert a guest BGRX scanout buffer (WDDM-style `B8G8R8X8`) into a packed RGBA8 buffer.
+ * Convert a guest scanout buffer into a packed RGBA8 buffer.
+ *
+ * Supported scanout formats:
+ * - `B8G8R8X8` -> RGBA8 (alpha forced to 255)
+ * - `B8G8R8A8` -> RGBA8 (alpha preserved)
  *
  * This is a pure helper intended for unit tests and screenshot/present paths.
  * It:
  * - Validates the scanout descriptor
  * - Handles padded row pitch (pitchBytes >= width*4)
- * - Forces alpha=255 (X8 -> opaque)
  * - Translates guest physical addresses (including the Q35 high-RAM remap)
  */
 export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: ScanoutDescriptor): ScanoutReadbackResult {
@@ -81,8 +85,15 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
   const pitchBytes = toU32(desc.pitchBytes, "pitchBytes");
   const format = toU32(desc.format, "format");
 
-  if (format !== SCANOUT_FORMAT_B8G8R8X8) {
-    throw new Error(`Unsupported scanout format ${format} (expected B8G8R8X8=${SCANOUT_FORMAT_B8G8R8X8})`);
+  let kind: ScanoutSwizzleKind;
+  if (format === SCANOUT_FORMAT_B8G8R8X8) {
+    kind = "bgrx";
+  } else if (format === SCANOUT_FORMAT_B8G8R8A8) {
+    kind = "bgra";
+  } else {
+    throw new Error(
+      `Unsupported scanout format ${format} (expected B8G8R8X8=${SCANOUT_FORMAT_B8G8R8X8} or B8G8R8A8=${SCANOUT_FORMAT_B8G8R8A8})`,
+    );
   }
 
   if (width === 0 || height === 0) {
@@ -110,6 +121,44 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
   const basePaddr = toU64Bigint(desc.basePaddr, "basePaddr");
   const pitchBig = BigInt(pitchBytes);
 
+  // Fast path: the whole scanout surface is backed by contiguous guest RAM (does not cross PCI holes).
+  //
+  // In this case we can translate `basePaddr` once and swizzle the full buffer without
+  // per-row address translation overhead.
+  const requiredSrcBytesBig = pitchBig * BigInt(height);
+  if (requiredSrcBytesBig > MAX_SAFE_U64_BIGINT) {
+    throw new RangeError(`scanout buffer size exceeds JS safe integer range: pitchBytes=${pitchBytes} height=${height}`);
+  }
+  const requiredSrcBytes = Number(requiredSrcBytesBig);
+  const basePaddrNum = u64BigintToSafeNumber(basePaddr, "basePaddr");
+
+  if (guestRangeInBounds(guestRam.byteLength, basePaddrNum, requiredSrcBytes)) {
+    const ramOffset = guestPaddrToRamOffset(guestRam.byteLength, basePaddrNum);
+    if (ramOffset === null) {
+      throw new RangeError(
+        `scanout base_paddr is not backed by RAM: 0x${basePaddr.toString(16)} (guest_size=0x${guestRam.byteLength.toString(16)})`,
+      );
+    }
+    const end = ramOffset + requiredSrcBytes;
+    if (end < ramOffset || end > guestRam.byteLength) {
+      throw new RangeError(
+        `scanout buffer is out of bounds: basePaddr=0x${basePaddr.toString(16)} bytes=0x${requiredSrcBytes.toString(16)} guest_size=0x${guestRam.byteLength.toString(16)}`,
+      );
+    }
+
+    const src = guestRam.subarray(ramOffset, end);
+    convertScanoutToRgba8({
+      src,
+      srcStrideBytes: pitchBytes,
+      dst: rgba8,
+      dstStrideBytes: rowBytes,
+      width,
+      height,
+      kind,
+    });
+    return { width, height, rgba8 };
+  }
+
   for (let y = 0; y < height; y += 1) {
     const rowPaddrBig = basePaddr + BigInt(y) * pitchBig;
     const rowPaddr = u64BigintToSafeNumber(rowPaddrBig, "scanout row paddr");
@@ -127,21 +176,17 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
       );
     }
 
-    const src = guestRam.subarray(rowOff, rowOff + rowBytes);
-    let srcOff = 0;
-    let dstOff = y * rowBytes;
-    for (let x = 0; x < width; x += 1) {
-      const b = src[srcOff + 0]!;
-      const g = src[srcOff + 1]!;
-      const r = src[srcOff + 2]!;
-      // src[srcOff+3] is X8 (ignored); force opaque alpha.
-      rgba8[dstOff + 0] = r;
-      rgba8[dstOff + 1] = g;
-      rgba8[dstOff + 2] = b;
-      rgba8[dstOff + 3] = 255;
-      srcOff += 4;
-      dstOff += 4;
-    }
+    const srcRow = guestRam.subarray(rowOff, rowOff + rowBytes);
+    const dstRow = rgba8.subarray(y * rowBytes, y * rowBytes + rowBytes);
+    convertScanoutToRgba8({
+      src: srcRow,
+      srcStrideBytes: rowBytes,
+      dst: dstRow,
+      dstStrideBytes: rowBytes,
+      width,
+      height: 1,
+      kind,
+    });
   }
 
   return { width, height, rgba8 };
