@@ -6,8 +6,9 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface, AerogpuCmdHdr,
     AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresentEx,
     AerogpuCmdReleaseSharedSurface, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
-    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture,
-    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
+    AerogpuCmdSetShaderConstantsB, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderConstantsI,
+    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdStreamHeader,
+    AerogpuCmdUploadResource, AerogpuCompareFunc,
     AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuFillMode,
     AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
     AerogpuVertexBufferBinding, BindShadersEx, AEROGPU_CMD_STREAM_MAGIC,
@@ -1935,4 +1936,146 @@ fn cmd_writer_emits_bind_shaders_ex_with_trailing_gs_hs_ds_handles() {
         u32::from_le_bytes(buf[ext_base + 8..ext_base + 12].try_into().unwrap()),
         6
     );
+}
+
+#[test]
+fn cmd_writer_emits_set_shader_constants_i_with_vec4_aligned_i32_payload() {
+    let data: [i32; 8] = [1, -2, 3, -4, 5, 6, -7, 8];
+
+    let mut w = AerogpuCmdWriter::new();
+    w.set_shader_constants_i(AerogpuShaderStage::Pixel, 5, &data);
+    let buf = w.finish();
+
+    let pkt_base = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let hdr = decode_cmd_hdr_le(&buf[pkt_base..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes as usize;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsI as u32);
+    assert_eq!(
+        size_bytes,
+        size_of::<AerogpuCmdSetShaderConstantsI>() + data.len() * 4
+    );
+
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, stage)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Pixel as u32
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, start_register)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, start_register) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        5
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, vec4_count)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, vec4_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, reserved0)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsI, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+
+    let payload_base = pkt_base + size_of::<AerogpuCmdSetShaderConstantsI>();
+    for (i, &expected) in data.iter().enumerate() {
+        let off = payload_base + i * 4;
+        let found = i32::from_le_bytes(buf[off..off + 4].try_into().unwrap());
+        assert_eq!(found, expected);
+    }
+}
+
+#[test]
+fn cmd_writer_emits_set_shader_constants_b_as_vec4_u32_per_register() {
+    let data: [u32; 2] = [0, 2];
+
+    let mut w = AerogpuCmdWriter::new();
+    w.set_shader_constants_b(AerogpuShaderStage::Vertex, 7, &data);
+    let buf = w.finish();
+
+    let pkt_base = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let hdr = decode_cmd_hdr_le(&buf[pkt_base..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes as usize;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsB as u32);
+    assert_eq!(
+        size_bytes,
+        size_of::<AerogpuCmdSetShaderConstantsB>() + data.len() * 16
+    );
+
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, stage)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, stage) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuShaderStage::Vertex as u32
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, start_register)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, start_register) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        7
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, bool_count)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, bool_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, reserved0)
+                ..pkt_base + offset_of!(AerogpuCmdSetShaderConstantsB, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+
+    // Payload is `bool_count` registers, each encoded as a vec4<u32> (16 bytes) with the scalar
+    // bool replicated across lanes.
+    let payload_base = pkt_base + size_of::<AerogpuCmdSetShaderConstantsB>();
+    for (i, expected) in [0u32, 1u32].into_iter().enumerate() {
+        let off = payload_base + i * 16;
+        assert_eq!(
+            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
+            expected
+        );
+        assert_eq!(
+            u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap()),
+            expected
+        );
+        assert_eq!(
+            u32::from_le_bytes(buf[off + 8..off + 12].try_into().unwrap()),
+            expected
+        );
+        assert_eq!(
+            u32::from_le_bytes(buf[off + 12..off + 16].try_into().unwrap()),
+            expected
+        );
+    }
 }

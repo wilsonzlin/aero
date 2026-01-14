@@ -25,6 +25,8 @@ import {
   AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE,
   AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE,
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE,
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE,
   AEROGPU_CMD_SET_TEXTURE_SIZE,
   AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE,
   AerogpuCmdOpcode,
@@ -234,6 +236,63 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
 
   const rastBase = depthBase + expected[5][1];
   assert.equal(view.getInt32(rastBase + 24, true), -1);
+});
+
+test("AerogpuCmdWriter.setShaderConstantsI emits vec4-aligned int32 payload", () => {
+  const w = new AerogpuCmdWriter();
+  const data = new Int32Array([1, -2, 3, -4, 5, 6, -7, 8]);
+  w.setShaderConstantsI(AerogpuShaderStage.Pixel, 5, data);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetShaderConstantsI);
+  assert.equal(
+    view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + data.length * 4,
+  );
+  assert.equal(view.getUint32(pkt0 + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(pkt0 + 12, true), 5);
+  assert.equal(view.getUint32(pkt0 + 16, true), 2);
+  assert.equal(view.getUint32(pkt0 + 20, true), 0);
+
+  for (let i = 0; i < data.length; i++) {
+    assert.equal(view.getInt32(pkt0 + AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + i * 4, true), data[i]);
+  }
+});
+
+test("AerogpuCmdWriter.setShaderConstantsB encodes bool regs as vec4<u32> (normalized 0/1)", () => {
+  const w = new AerogpuCmdWriter();
+  const data = [0, 2];
+  w.setShaderConstantsB(AerogpuShaderStage.Vertex, 7, data);
+  const boolCount = data.length;
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.SetShaderConstantsB);
+  assert.equal(
+    view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 16,
+  );
+  assert.equal(view.getUint32(pkt0 + 8, true), AerogpuShaderStage.Vertex);
+  assert.equal(view.getUint32(pkt0 + 12, true), 7);
+  assert.equal(view.getUint32(pkt0 + 16, true), boolCount);
+  assert.equal(view.getUint32(pkt0 + 20, true), 0);
+
+  // Register 0: false -> 0 replicated across lanes.
+  const payloadBase = pkt0 + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
+  for (let lane = 0; lane < 4; lane++) {
+    assert.equal(view.getUint32(payloadBase + lane * 4, true), 0);
+  }
+
+  // Register 1: non-zero -> 1 replicated across lanes.
+  const reg1 = payloadBase + 16;
+  for (let lane = 0; lane < 4; lane++) {
+    assert.equal(view.getUint32(reg1 + lane * 4, true), 1);
+  }
 });
 
 test("AerogpuCmdWriter emits copy packets", () => {
