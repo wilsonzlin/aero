@@ -405,6 +405,65 @@ fn xhci_msix_pending_bit_delivers_after_entry_is_programmed() {
 }
 
 #[test]
+fn xhci_msix_pending_delivers_after_entry_programmed_even_after_interrupt_cleared() {
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    enable_msix(&mut dev);
+
+    let (table_base, pba_base) = {
+        let msix = dev
+            .config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability");
+        (u64::from(msix.table_offset()), u64::from(msix.pba_offset()))
+    };
+
+    // Trigger before entry 0 is fully programmed (address/data are zero by default). This should
+    // set PBA[0] instead of delivering an interrupt.
+    dev.raise_event_interrupt();
+    assert_eq!(interrupts.borrow_mut().get_pending(), None);
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        1,
+        "unprogrammed MSI-X entry should set PBA pending bit"
+    );
+
+    // Clear the interrupt condition before completing MSI-X programming. Pending delivery should
+    // still occur once the entry becomes deliverable.
+    dev.clear_event_interrupt();
+
+    // Program the message data first. MMIO writes invoke `service_interrupts()`, so writing the
+    // address first could otherwise deliver an unintended vector (data defaults to 0).
+    MmioHandler::write(&mut dev, table_base + 0x8, 4, 0x45);
+    MmioHandler::write(&mut dev, table_base, 4, 0xfee0_0000);
+    MmioHandler::write(&mut dev, table_base + 0x4, 4, 0);
+    MmioHandler::write(&mut dev, table_base + 0xc, 4, 0); // unmasked
+
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(
+        ints.get_pending(),
+        Some(0x45),
+        "pending MSI-X should deliver once the entry is programmed even if interrupt condition is low"
+    );
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
+
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        0,
+        "PBA pending bit should clear after delivery"
+    );
+}
+
+#[test]
 fn xhci_msix_pba_mmio_write_is_ignored() {
     struct NoopMsiSink;
     impl aero_platform::interrupts::msi::MsiTrigger for NoopMsiSink {
