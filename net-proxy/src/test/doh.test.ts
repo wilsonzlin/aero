@@ -410,6 +410,19 @@ test("DoH endpoints support optional CORS allowlist (preflight + response header
     assert.ok((jsonResp.headers.get("access-control-expose-headers") ?? "").toLowerCase().includes("content-length"));
   });
 
+  await withProxyServer({ open: true, dohCorsAllowOrigins: ["null"] }, async (baseUrl) => {
+    const preflight = await fetch(`${baseUrl}/dns-query`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "null",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type"
+      }
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "null");
+  });
+
   await withProxyServer({ open: true, dohCorsAllowOrigins: ["http://localhost:5173"] }, async (baseUrl) => {
     const resp = await fetch(`${baseUrl}/dns-query`, {
       method: "POST",

@@ -58,6 +58,12 @@ function readEnvOriginAllowlist(name: string): string[] {
       out.push("*");
       continue;
     }
+    // Browsers use the literal string "null" for opaque origins such as file:// URLs
+    // and sandboxed iframes. Allow explicitly opting into that case for local dev.
+    if (part.toLowerCase() === "null") {
+      out.push("null");
+      continue;
+    }
     try {
       const url = new URL(part);
       out.push(url.origin);

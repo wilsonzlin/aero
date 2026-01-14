@@ -188,7 +188,7 @@ Environment variables:
 | `AERO_PROXY_DOH_ANSWER_TTL_SECONDS` | `60` | TTL seconds used for DoH answers (clamped to `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS`) |
 | `AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS` | `300` | Max TTL seconds allowed for DoH answers |
 | `AERO_PROXY_DOH_MAX_ANSWERS` | `16` | Max number of A/AAAA answers returned per DoH query |
-| `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS` | (empty) | Comma-separated CORS origin allowlist for `/dns-query` and `/dns-json` (e.g. `http://localhost:5173`). Use `*` only in trusted local dev. Includes basic Private Network Access (PNA) preflight support (`Access-Control-Allow-Private-Network`), preflight caching (`Access-Control-Max-Age`), and exposes `Content-Length` (`Access-Control-Expose-Headers`). |
+| `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS` | (empty) | Comma-separated CORS origin allowlist for `/dns-query` and `/dns-json` (e.g. `http://localhost:5173`). Use `*` only in trusted local dev. You can also explicitly allow opaque `Origin: null` contexts (e.g. `file://...`) by including `null`. Includes basic Private Network Access (PNA) preflight support (`Access-Control-Allow-Private-Network`), preflight caching (`Access-Control-Max-Age`), and exposes `Content-Length` (`Access-Control-Expose-Headers`). |
 | `AERO_PROXY_WS_MAX_PAYLOAD_BYTES` | `1048576` | Maximum incoming WebSocket message size |
 | `AERO_PROXY_WS_STREAM_HWM_BYTES` | `65536` | Backpressure tuning for the TCP WebSocket stream bridge |
 | `AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES` | `1048576` | Drop inbound UDP packets when WebSocket bufferedAmount exceeds this limit |
