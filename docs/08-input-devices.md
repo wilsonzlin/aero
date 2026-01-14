@@ -874,6 +874,9 @@ passthrough devices can coexist without fighting over port numbers:
 - **UHCI root ports (PIIX3 UHCI):**
   - root port **0**: external USB hub (synthetic HID devices + WebHID passthrough)
   - root port **1**: reserved for **WebUSB passthrough**
+- The EHCI/xHCI WASM controller bridges follow the same root-port convention (root port 0 reserved for
+  the external hub; root port 1 reserved for WebUSB) so high-speed WebUSB passthrough can coexist with
+  WebHID/synthetic devices even in WASM builds that omit UHCI.
 - **External hub on root port 0**:
   - default downstream port count: **16**
   - reserved synthetic devices:

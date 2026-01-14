@@ -42,6 +42,9 @@ the `USBDevice`, worker owns the UHCI + device model” split as WebHID:
   (`crates/aero-wasm/src/uhci_controller_bridge.rs`, re-exported from `crates/aero-wasm/src/lib.rs`)
   - the passthrough device is attached on **UHCI root port 1** (root port 0 is typically used for the
     WebHID external hub).
+  - EHCI/xHCI bridges follow the same convention (reserve root port 1 for WebUSB) so WebUSB passthrough
+    can coexist with the external hub / WebHID / synthetic HID topology in high-speed-controller-only
+    WASM builds.
 - **Worker-side proxy/runtime:** `web/src/usb/webusb_passthrough_runtime.ts` (`WebUsbPassthroughRuntime`)
   - proxies `UsbHostAction`/`UsbHostCompletion` traffic to the main thread broker
   - supports an optional SharedArrayBuffer ring fast path negotiated by `usb.ringAttach` when

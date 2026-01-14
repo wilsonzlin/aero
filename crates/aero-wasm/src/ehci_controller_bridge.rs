@@ -33,10 +33,11 @@ const EHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
 /// Reserve EHCI root port 1 for the WebUSB passthrough device.
 ///
-/// Keep this stable so host-side code can treat the port index as part of the public ABI.
+/// This matches the UHCI and xHCI WASM bridges:
+/// - root port 0 is available for an external hub / synthetic HID / WebHID passthrough, and
+/// - root port 1 is reserved for WebUSB passthrough.
 ///
-/// Note: root port 0 is used by the browser runtime as an "external hub" attachment point for
-/// WebHID + synthetic HID devices in EHCI-only WASM builds, so avoid clobbering it.
+/// Keep this stable so host-side code can treat the port index as part of the public ABI.
 const WEBUSB_ROOT_PORT: u8 = 1;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
@@ -160,9 +161,49 @@ fn find_webusb_passthrough_device(
     None
 }
 
-fn recover_webusb_passthrough_device(
-    ctrl: &mut EhciController,
-) -> Option<UsbWebUsbPassthroughDevice> {
+fn find_webusb_passthrough_path_in_device(
+    dev: &mut AttachedUsbDevice,
+    prefix: &mut Vec<u8>,
+) -> Option<Vec<u8>> {
+    let model_any = dev.model() as &dyn core::any::Any;
+    if model_any
+        .downcast_ref::<UsbWebUsbPassthroughDevice>()
+        .is_some()
+    {
+        return Some(prefix.clone());
+    }
+
+    if let Some(hub) = dev.as_hub_mut() {
+        for port in 0..hub.num_ports() {
+            if let Some(child) = hub.downstream_device_mut(port) {
+                // Hub ports are 1-based in the guest-visible topology path contract.
+                prefix.push((port + 1) as u8);
+                if let Some(found) = find_webusb_passthrough_path_in_device(child, prefix) {
+                    prefix.pop();
+                    return Some(found);
+                }
+                prefix.pop();
+            }
+        }
+    }
+
+    None
+}
+
+fn find_webusb_passthrough_device_path(ctrl: &mut EhciController) -> Option<Vec<u8>> {
+    let hub = ctrl.hub_mut();
+    for root_port in 0..hub.num_ports() {
+        if let Some(mut dev) = hub.port_device_mut(root_port) {
+            let mut prefix = vec![root_port as u8];
+            if let Some(found) = find_webusb_passthrough_path_in_device(&mut dev, &mut prefix) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn recover_webusb_passthrough_device(ctrl: &mut EhciController) -> Option<UsbWebUsbPassthroughDevice> {
     // Prefer the reserved root port.
     let hub = ctrl.hub_mut();
     let preferred = WEBUSB_ROOT_PORT as usize;
@@ -361,7 +402,14 @@ impl EhciControllerBridge {
                 self.webusb_connected = attached;
             }
             (true, false) => {
-                let _ = detach_device_at_path(&mut self.ctrl, &[WEBUSB_ROOT_PORT]);
+                // Detach using a topology scan so snapshot restores from older builds (which may
+                // have attached the passthrough device to a different root port) still disconnect
+                // cleanly.
+                let path =
+                    find_webusb_passthrough_device_path(&mut self.ctrl).unwrap_or_else(|| {
+                        vec![WEBUSB_ROOT_PORT]
+                    });
+                let _ = detach_device_at_path(&mut self.ctrl, &path);
                 self.webusb_connected = false;
                 // Preserve pre-existing semantics: disconnecting the device drops any queued actions
                 // and in-flight state, but we keep the handle alive so `UsbPassthroughDevice.next_id`
