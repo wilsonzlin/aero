@@ -18,6 +18,7 @@ See also:
 
 - [`05-storage-subsystem.md`](./05-storage-subsystem.md) (subsystem overview)
 - [`19-indexeddb-storage-story.md`](./19-indexeddb-storage-story.md) (the async-vs-sync browser constraint analysis)
+- [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md) (`crates/emulator` → canonical stack plan + deletion targets)
 
 ---
 
