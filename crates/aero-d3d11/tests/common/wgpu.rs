@@ -136,6 +136,86 @@ pub async fn create_device_queue_with_downlevel(
     Ok((device, queue, downlevel))
 }
 
+/// Creates a wgpu device/queue pair suitable for headless CI and additionally returns the adapter
+/// backend.
+///
+/// This is useful for tests that need to construct higher-level abstractions (like the Aero D3D11
+/// executor) that track the backend for policy decisions.
+pub async fn create_device_queue_with_downlevel_backend(
+    device_label: &str,
+) -> Result<(
+    wgpu::Device,
+    wgpu::Queue,
+    wgpu::DownlevelCapabilities,
+    wgpu::Backend,
+)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+
+        if needs_runtime_dir {
+            let dir =
+                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::PRIMARY
+        },
+        ..Default::default()
+    });
+
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+    {
+        Some(adapter) => Some(adapter),
+        None => {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+    }
+    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
+
+    let downlevel = adapter.get_downlevel_capabilities();
+    let backend = adapter.get_info().backend;
+
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some(device_label),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+
+    Ok((device, queue, downlevel, backend))
+}
+
 /// Creates a wgpu device/queue pair suitable for headless CI.
 ///
 /// This mirrors the logic used by existing wgpu-based integration tests:

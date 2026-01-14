@@ -6112,10 +6112,19 @@ impl AerogpuD3d11Executor {
             .checked_mul(expanded_vertex_count.max(1))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex buffer size overflow"))?;
 
-        let max_triangles_per_prim = gs_meta.max_output_vertices.saturating_sub(2) as u64;
-        let max_indices_per_prim = max_triangles_per_prim
-            .checked_mul(3)
-            .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?;
+        let max_indices_per_prim: u64 = match gs_meta.output_topology_kind {
+            GsOutputTopologyKind::PointList => u64::from(gs_meta.max_output_vertices),
+            GsOutputTopologyKind::LineStrip => {
+                u64::from(gs_meta.max_output_vertices.saturating_sub(1))
+                    .checked_mul(2)
+                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
+            }
+            GsOutputTopologyKind::TriangleStrip => {
+                u64::from(gs_meta.max_output_vertices.saturating_sub(2))
+                    .checked_mul(3)
+                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
+            }
+        };
         let expanded_index_count = u64::from(primitive_count)
             .checked_mul(u64::from(gs_instance_count))
             .and_then(|v| v.checked_mul(max_indices_per_prim))
@@ -7742,6 +7751,21 @@ impl AerogpuD3d11Executor {
                 }
             }
 
+            // --- Placeholder compute prepass resource-budget validation ---
+            //
+            // wgpu validation enforces `Limits::max_storage_buffers_per_shader_stage` across *all*
+            // bind groups used by a given stage. The placeholder GS/HS/DS compute prepass binds:
+            // - `@group(0)` output storage buffers (expanded verts/indices/indirect/counters)
+            // - optional `@group(3)` vertex/index pulling storage buffers
+            //
+            // On devices with downlevel limits (e.g. `Limits::downlevel_defaults()` where
+            // `max_storage_buffers_per_shader_stage = 4`), enabling vertex pulling can exceed the
+            // limit and trigger a wgpu validation panic during pipeline creation.
+            //
+            // Count storage-buffer bindings up-front and either:
+            // - fall back to a reduced-binding placeholder (disable pulling), or
+            // - return a normal `Err` with actionable diagnostics.
+
             // Bind group layout for compute prepass outputs + params (`@group(0)`).
             //
             // Keep this separate from vertex/index pulling (`@group(3)`) so we don't exceed
@@ -7810,7 +7834,7 @@ impl AerogpuD3d11Executor {
                 },
                 count: None,
             });
-            prepass_group3_bgl_entries.extend(prepass_group3_extra_bgl_entries);
+            prepass_group3_bgl_entries.extend(prepass_group3_extra_bgl_entries.iter().cloned());
             prepass_group3_bgl_entries.sort_by_key(|e| e.binding);
 
             // Even though the placeholder prepass output buffers (`@group(0)`) and the vertex/index
@@ -7847,6 +7871,7 @@ impl AerogpuD3d11Executor {
             let prepass_output_bgl = self
                 .bind_group_layout_cache
                 .get_or_create(&self.device, &prepass_output_bgl_entries);
+
             let prepass_group3_bgl = self
                 .bind_group_layout_cache
                 .get_or_create(&self.device, &prepass_group3_bgl_entries);
