@@ -108,6 +108,24 @@ bool TestMappingAndCapsStable() {
     return false;
   }
 
+  // Buffer-only formats used for raw/typed buffer views (SRV/UAV).
+  if (!Check((AerogpuDxgiFormatCapsMask(&abi12, kDxgiFormatR32Typeless) & kAerogpuDxgiFormatCapBuffer) != 0,
+             "R32_TYPELESS reports Buffer caps")) {
+    return false;
+  }
+  if (!Check(!AerogpuSupportsDxgiFormat(&abi12, kDxgiFormatR32Typeless, AerogpuFormatUsage::IaIndexBuffer),
+             "R32_TYPELESS is not an IA index-buffer format")) {
+    return false;
+  }
+  if (!Check((AerogpuDxgiFormatCapsMask(&abi12, kDxgiFormatR32Float) & kAerogpuDxgiFormatCapBuffer) != 0,
+             "R32_FLOAT reports Buffer caps")) {
+    return false;
+  }
+  if (!Check((AerogpuDxgiFormatCapsMask(&abi12, kDxgiFormatR32Sint) & kAerogpuDxgiFormatCapBuffer) != 0,
+             "R32_SINT reports Buffer caps")) {
+    return false;
+  }
+
   return true;
 }
 
