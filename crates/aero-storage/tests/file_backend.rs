@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_storage::{
-    DiskError, DiskFormat, DiskImage, StdFileBackend, StorageBackend as _, VirtualDisk, SECTOR_SIZE,
+    DiskError, DiskFormat, DiskImage, FileBackend, StorageBackend as _, VirtualDisk, SECTOR_SIZE,
 };
 use tempfile::tempdir;
 
@@ -12,7 +12,7 @@ fn file_backend_open_and_read_at() {
 
     std::fs::write(&path, b"abcdef").unwrap();
 
-    let mut backend = StdFileBackend::open_read_only(&path).unwrap();
+    let mut backend = FileBackend::open_read_only(&path).unwrap();
     assert_eq!(backend.len().unwrap(), 6);
 
     let mut buf = [0u8; 2];
@@ -25,7 +25,7 @@ fn file_backend_write_at_round_trip() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("disk.img");
 
-    let mut backend = StdFileBackend::create(&path, 16).unwrap();
+    let mut backend = FileBackend::create(&path, 16).unwrap();
     backend.write_at(0, b"hello world").unwrap();
     backend.write_at(6, b"WORLD").unwrap();
 
@@ -39,7 +39,7 @@ fn file_backend_set_len_grows_and_shrinks() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("disk.img");
 
-    let mut backend = StdFileBackend::create(&path, 8).unwrap();
+    let mut backend = FileBackend::create(&path, 8).unwrap();
     assert_eq!(backend.len().unwrap(), 8);
 
     backend.set_len(32).unwrap();
@@ -58,7 +58,7 @@ fn file_backend_read_beyond_eof_is_out_of_bounds() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("disk.img");
 
-    let mut backend = StdFileBackend::create(&path, 4).unwrap();
+    let mut backend = FileBackend::create(&path, 4).unwrap();
     backend.write_at(0, &[1, 2, 3, 4]).unwrap();
 
     let mut buf = [0u8; 2];
@@ -71,7 +71,7 @@ fn file_backend_can_open_disk_image_auto() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("disk.img");
 
-    let backend = StdFileBackend::create(&path, (SECTOR_SIZE * 8) as u64).unwrap();
+    let backend = FileBackend::create(&path, (SECTOR_SIZE * 8) as u64).unwrap();
     let mut disk = DiskImage::open_auto(backend).unwrap();
     assert_eq!(disk.format(), DiskFormat::Raw);
 
@@ -80,7 +80,7 @@ fn file_backend_can_open_disk_image_auto() {
     disk.flush().unwrap();
 
     // Ensure data persists after reopening.
-    let backend = StdFileBackend::open_rw(&path).unwrap();
+    let backend = FileBackend::open_rw(&path).unwrap();
     let mut disk = DiskImage::open_auto(backend).unwrap();
     let mut buf = vec![0u8; SECTOR_SIZE];
     disk.read_sectors(0, &mut buf).unwrap();
@@ -92,7 +92,7 @@ fn file_backend_write_extends_file_and_zero_fills_gap() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("disk.img");
 
-    let mut backend = StdFileBackend::create(&path, 4).unwrap();
+    let mut backend = FileBackend::create(&path, 4).unwrap();
     backend.write_at(6, &[0xAA, 0xBB]).unwrap();
     assert_eq!(backend.len().unwrap(), 8);
 
@@ -111,11 +111,11 @@ fn file_backend_read_only_rejects_writes() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("disk.img");
 
-    let mut backend = StdFileBackend::create(&path, 4).unwrap();
+    let mut backend = FileBackend::create(&path, 4).unwrap();
     backend.write_at(0, &[1, 2, 3, 4]).unwrap();
     backend.flush().unwrap();
 
-    let mut backend = StdFileBackend::open_read_only(&path).unwrap();
+    let mut backend = FileBackend::open_read_only(&path).unwrap();
     backend.flush().unwrap();
     let err = backend.write_at(0, &[9]).unwrap_err();
     assert!(matches!(
