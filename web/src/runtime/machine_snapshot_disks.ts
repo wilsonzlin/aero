@@ -111,11 +111,20 @@ export async function reattachMachineSnapshotDisks(opts: {
 
   const diskIdPrimary = opts.api.Machine.disk_id_primary_hdd?.();
   const diskIdInstall = opts.api.Machine.disk_id_install_media?.();
+  const diskIdIdeRaw = opts.api.Machine.disk_id_ide_primary_master?.();
   if (typeof diskIdPrimary !== "number" || typeof diskIdInstall !== "number") {
     throw new Error(
       "Machine snapshot restore produced DISKS overlay refs but Machine.disk_id_primary_hdd()/disk_id_install_media() are unavailable.",
     );
   }
+  // `disk_id_ide_primary_master` was added later than the other helpers. If it is unavailable,
+  // fall back to the stable contract value (2) when it does not conflict with the other IDs.
+  const diskIdIde =
+    typeof diskIdIdeRaw === "number"
+      ? diskIdIdeRaw
+      : (diskIdPrimary >>> 0) !== 2 && (diskIdInstall >>> 0) !== 2
+        ? 2
+        : null;
 
   const setPrimary =
     (machine as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow ??
@@ -145,6 +154,13 @@ export async function reattachMachineSnapshotDisks(opts: {
     (machine as unknown as { attachInstallMediaIsoOpfs?: unknown }).attachInstallMediaIsoOpfs ??
     (machine as unknown as { attach_install_media_opfs_iso?: unknown }).attach_install_media_opfs_iso ??
     (machine as unknown as { attachInstallMediaOpfsIso?: unknown }).attachInstallMediaOpfsIso;
+  const attachIdePrimaryMaster =
+    (machine as unknown as { attach_ide_primary_master_disk_opfs_existing?: unknown }).attach_ide_primary_master_disk_opfs_existing ??
+    (machine as unknown as { attachIdePrimaryMasterDiskOpfsExisting?: unknown }).attachIdePrimaryMasterDiskOpfsExisting ??
+    (machine as unknown as { attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref?: unknown })
+      .attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref ??
+    (machine as unknown as { attachIdePrimaryMasterDiskOpfsExistingAndSetOverlayRef?: unknown })
+      .attachIdePrimaryMasterDiskOpfsExistingAndSetOverlayRef;
 
   for (const entry of raw) {
     if (!isMachineSnapshotDiskOverlayRef(entry)) {
@@ -205,6 +221,24 @@ export async function reattachMachineSnapshotDisks(opts: {
         );
       }
       await callMaybeAsync(attachIso as (...args: unknown[]) => unknown, machine, [base]);
+      continue;
+    }
+
+    if (diskIdIde != null && diskId === (diskIdIde >>> 0)) {
+      if (typeof attachIdePrimaryMaster !== "function") {
+        throw new Error(
+          "Snapshot restore requires Machine.attach_ide_primary_master_disk_opfs_existing(path) to reattach the IDE primary master disk, but it is unavailable in this WASM build.",
+        );
+      }
+      if (overlay) {
+        // Unlike install-media (read-only ISO), IDE primary master overlays must be preserved for correctness.
+        // Older wasm builds without `reattach_restored_disks_from_opfs()` do not expose a JS attachment API for
+        // IDE primary master COW overlays, so fail loudly rather than silently dropping guest writes.
+        throw new Error(
+          `${prefix} Snapshot restore reported an IDE primary master overlay for disk_id=${diskId}, but this WASM build cannot reattach it (missing Machine.reattach_restored_disks_from_opfs).`,
+        );
+      }
+      await callMaybeAsync(attachIdePrimaryMaster as (...args: unknown[]) => unknown, machine, [base]);
       continue;
     }
 

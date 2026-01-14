@@ -134,6 +134,42 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(events).toEqual(["restore", "take", "primary"]);
   });
 
+  it("reattaches the IDE primary master disk (disk_id_ide_primary_master) when present", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 3, base_image: "aero/disks/ide.img", overlay_image: "" }];
+    });
+
+    const attach_ide_primary_master_disk_opfs_existing = vi.fn(async (_path: string) => {
+      events.push("ide");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      attach_ide_primary_master_disk_opfs_existing,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+        disk_id_ide_primary_master: () => 3,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(restore_snapshot_from_opfs).toHaveBeenCalledWith("state/test.snap");
+    expect(attach_ide_primary_master_disk_opfs_existing).toHaveBeenCalledWith("aero/disks/ide.img");
+    expect(events).toEqual(["restore", "take", "ide"]);
+  });
+
   it("supplies overlay block size when set_primary_hdd_opfs_cow requires it (legacy wasm signature)", async () => {
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {});
 
