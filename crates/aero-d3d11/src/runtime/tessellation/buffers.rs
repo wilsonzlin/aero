@@ -14,7 +14,8 @@ use crate::runtime::indirect_args::DrawIndexedIndirectArgs;
 const REGISTER_STRIDE_BYTES: u64 = 16;
 
 // Per-patch metadata layout is defined by `tessellation::TessellationLayoutPatchMeta` (written by
-// the GPU layout pass). Keep sizing helpers in sync with that layout.
+// the GPU layout pass). Keep sizing helpers in sync with that layout and the WGSL `PatchMeta`
+// struct in `tessellation/layout_pass.rs`.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TessellationSizingError {
@@ -322,7 +323,11 @@ mod tests {
         assert_eq!(sizes.vs_out_bytes, 192);
         assert_eq!(sizes.hs_out_bytes, 192);
         assert_eq!(sizes.hs_patch_constants_bytes, 64);
-        assert_eq!(sizes.tess_metadata_bytes, 40);
+        assert_eq!(
+            sizes.tess_metadata_bytes,
+            40,
+            "Patch meta is 5 u32s (tess_level + 4 offsets/counts)"
+        );
         assert_eq!(sizes.expanded_vertex_count_total, 50);
         assert_eq!(sizes.expanded_vertex_bytes, 1600);
         assert_eq!(sizes.expanded_index_count_total, 192);
