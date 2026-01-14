@@ -1531,6 +1531,11 @@ impl AeroGpuMmioDevice {
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
                 }
+                if !new_enable {
+                    // Clearing `SCANOUT0_ENABLE` releases WDDM scanout ownership so the machine can
+                    // fall back to legacy BIOS text/VBE presentation.
+                    self.wddm_scanout_active = false;
+                }
                 self.scanout0_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
