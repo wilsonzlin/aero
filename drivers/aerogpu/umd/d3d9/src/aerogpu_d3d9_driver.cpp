@@ -23681,8 +23681,9 @@ struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(*)(Args...)> {
 // The full Win7 D3D9 UMD exposes these entrypoints even for fixed-function apps.
 // Our host-side portable ABI historically omitted them (tests didn't need them),
 // but fixed-function XYZ pipelines require transform updates:
-// - `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` uses draw-time CPU transforms, and
-// - `D3DFVF_XYZ | D3DFVF_TEX1` uses an internal VS with WVP constants.
+// - Untransformed `D3DFVF_XYZ*` fixed-function draws use internal WVP vertex shader
+//   variants that read `WORLD0 * VIEW * PROJECTION` from reserved VS constants
+//   (`c240..c243`).
 //
 // Keep these outside the WDK-only DDI block so they are available in portable
 // builds (Linux/CI) and in Windows portable builds that do not use WDK headers.
