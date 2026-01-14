@@ -1305,6 +1305,7 @@ try {
     $mediaIntegrity = @{
         manifest_present = $false
         manifest_path = $manifestPath
+        manifest_sha256 = $null
         parse_ok = $false
         schema_version = $null
         package = $null
@@ -1331,6 +1332,7 @@ try {
         $mDetails += "Tip: If you obtained the media as a .zip/.iso, ensure the full directory contents were copied intact."
     } else {
         $mediaIntegrity.manifest_present = $true
+        $mediaIntegrity.manifest_sha256 = Get-FileSha256Hex $manifestPath
         # Use the encoding-aware reader for robustness (manifest.json is typically UTF-8).
         $raw = Read-TextFileWithEncodingDetection $manifestPath
         $parsed = Parse-JsonCompat $raw
@@ -1906,6 +1908,7 @@ try {
     }
     $installedMediaGtVersion = $null
     $installedMediaGtBuildId = $null
+    $installedMediaManifestSha256 = $null
     if ($installedMediaVars.ContainsKey("GT_VERSION")) {
         $installedMediaGtVersion = ("" + $installedMediaVars["GT_VERSION"]).Trim()
         if ($installedMediaGtVersion.Length -eq 0) { $installedMediaGtVersion = $null }
@@ -1913,6 +1916,10 @@ try {
     if ($installedMediaVars.ContainsKey("GT_BUILD_ID")) {
         $installedMediaGtBuildId = ("" + $installedMediaVars["GT_BUILD_ID"]).Trim()
         if ($installedMediaGtBuildId.Length -eq 0) { $installedMediaGtBuildId = $null }
+    }
+    if ($installedMediaVars.ContainsKey("manifest_sha256")) {
+        $installedMediaManifestSha256 = ("" + $installedMediaVars["manifest_sha256"]).Trim()
+        if ($installedMediaManifestSha256.Length -eq 0) { $installedMediaManifestSha256 = $null }
     }
 
     $st = "PASS"
@@ -1937,15 +1944,20 @@ try {
 
             $currentVersion = $null
             $currentBuildId = $null
+            $currentManifestSha256 = $null
             if ($report.media_integrity -and ($report.media_integrity -is [hashtable])) {
                 $pkg = $report.media_integrity.package
                 if ($pkg -and ($pkg -is [hashtable])) {
                     if ($pkg.ContainsKey("version")) { $currentVersion = $pkg["version"] }
                     if ($pkg.ContainsKey("build_id")) { $currentBuildId = $pkg["build_id"] }
                 }
+                if ($report.media_integrity.ContainsKey("manifest_sha256") -and $report.media_integrity.manifest_sha256) {
+                    $currentManifestSha256 = "" + $report.media_integrity.manifest_sha256
+                }
             }
             if ($currentVersion) { $currentVersion = ("" + $currentVersion).Trim() }
             if ($currentBuildId) { $currentBuildId = ("" + $currentBuildId).Trim() }
+            if ($currentManifestSha256) { $currentManifestSha256 = ("" + $currentManifestSha256).Trim() }
 
             $mismatch = $false
             if ($installedMediaGtVersion -and $currentVersion) {
@@ -1954,11 +1966,17 @@ try {
             if ($installedMediaGtBuildId -and $currentBuildId) {
                 if ($installedMediaGtBuildId.ToLower() -ne $currentBuildId.ToLower()) { $mismatch = $true }
             }
+            if ($installedMediaManifestSha256 -and $currentManifestSha256) {
+                if ($installedMediaManifestSha256.ToLower() -ne $currentManifestSha256.ToLower()) { $mismatch = $true }
+            }
 
             if ($mismatch) {
                 $st = Merge-Status $st "WARN"
                 $sum += "; WARN: installed media differs from current media"
                 $det += ("WARN: setup.cmd was run from Guest Tools media version=" + $installedMediaGtVersion + ", build_id=" + $installedMediaGtBuildId + ", but the current media manifest.json is version=" + $currentVersion + ", build_id=" + $currentBuildId + ".")
+                if ($installedMediaManifestSha256 -and $currentManifestSha256) {
+                    $det += ("WARN: installed-media manifest_sha256=" + $installedMediaManifestSha256 + " but current manifest_sha256=" + $currentManifestSha256 + ".")
+                }
                 $det += "Remediation: re-run setup.cmd from the current ISO."
             }
         }
