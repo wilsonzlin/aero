@@ -68,6 +68,17 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       throw new Error(`Timed out waiting for status[${idx}] == ${expected} after ${timeoutMs}ms.`);
     };
 
+    const waitForCounterGreaterThan = async (idx: number, prev: number, timeoutMs: number): Promise<number> => {
+      const start = typeof performance?.now === "function" ? performance.now() : Date.now();
+      while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
+        if (workerError) throw new Error(`IO worker error: ${JSON.stringify(workerError)}`);
+        const cur = Atomics.load(status, idx) >>> 0;
+        if (cur > prev) return cur;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for status[${idx}] to advance past ${prev} after ${timeoutMs}ms.`);
+    };
+
     const waitForInputBatchRecycle = async (timeoutMs: number): Promise<void> => {
       return await new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -114,20 +125,34 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
     };
 
     const sendValidInputBatch = async (): Promise<void> => {
-      const q = new InputEventQueue(8);
-      const nowUs = Math.round(performance.now() * 1000) >>> 0;
-      q.pushKeyHidUsage(nowUs, 0x04, true);
+      let lastError: Error | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
+        const q = new InputEventQueue(8);
+        const nowUs = Math.round(performance.now() * 1000) >>> 0;
+        // Send a press+release pair so the IO worker doesn't retain "held key" state across cases.
+        q.pushKeyHidUsage(nowUs, 0x04, true);
+        q.pushKeyHidUsage(nowUs, 0x04, false);
 
-      const recycle = waitForInputBatchRecycle(2000);
-      q.flush(
-        {
-          postMessage: (msg, transfer) => {
-            ioWorker.postMessage(msg, transfer);
+        const recycle = waitForInputBatchRecycle(2000);
+        q.flush(
+          {
+            postMessage: (msg, transfer) => {
+              ioWorker.postMessage(msg, transfer);
+            },
           },
-        },
-        { recycle: true },
-      );
-      await recycle;
+          { recycle: true },
+        );
+        await recycle;
+
+        try {
+          await waitForCounterGreaterThan(StatusIndex.IoInputBatchCounter, before, 750);
+          return;
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+        }
+      }
+      throw lastError ?? new Error("Failed to send a valid input batch");
     };
 
     const runCase = async (
@@ -158,6 +183,11 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       });
 
       await waitForAtomic(StatusIndex.IoReady, 1, 10_000);
+
+      // Preflight: ensure the worker has fully started and can process a valid batch before we
+      // inject malformed payloads (avoids flakiness if IoReady is observed slightly before the
+      // IO IPC server flips `started=true`).
+      await sendValidInputBatch();
 
       const countersBefore = {
         received: Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0,
