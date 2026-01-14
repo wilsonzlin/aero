@@ -331,6 +331,37 @@ fn ring_reset_dma_does_not_panic_on_overflowing_ring_gpa() {
 }
 
 #[test]
+fn ring_reset_records_oob_error_on_ring_gpa_that_wraps_u32_access() {
+    let mut mem = memory::Bus::new(0x1000);
+
+    let mut dev = new_test_device(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+
+    // Ensure the IRQ line reflects the newly-latched ERROR status bit.
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::ERROR as u64);
+
+    // Pick a ring GPA where `ring_gpa + RING_TAIL_OFFSET` is in-range but the implied 32-bit read
+    // would overflow `u64` (e.g. `tail_addr = u64::MAX`).
+    let ring_gpa = u64::MAX - RING_TAIL_OFFSET;
+    dev.write(mmio::RING_GPA_LO, 8, ring_gpa);
+
+    dev.write(
+        mmio::RING_CONTROL,
+        4,
+        (ring_control::ENABLE | ring_control::RESET) as u64,
+    );
+    dev.tick(&mut mem, 0);
+
+    assert_eq!(dev.regs.error_code, AerogpuErrorCode::Oob as u32);
+    assert_eq!(dev.regs.error_count, 1);
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
+}
+
+#[test]
 fn mmio_sub_dword_reads_and_writes_are_little_endian_and_merge_correctly() {
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
     dev.config_mut().set_command(1 << 1);

@@ -16,7 +16,7 @@ use crate::executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::regs::{
     irq_bits, mmio, ring_control, AeroGpuRegs, AerogpuErrorCode, AEROGPU_MMIO_MAGIC, FEATURE_VBLANK,
 };
-use crate::ring::{write_fence_page, AeroGpuRingHeader};
+use crate::ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
 use crate::scanout::AeroGpuFormat;
 use crate::vblank::{period_ns_from_hz, period_ns_to_reg};
 
@@ -312,6 +312,7 @@ impl AeroGpuPciDevice {
         if self.ring_reset_pending_dma && dma_enabled {
             self.reset_ring_dma(mem);
             self.ring_reset_pending_dma = false;
+            self.update_irq_level();
         }
 
         // If vblank pacing is disabled (by config or by disabling the scanout), do not allow any
@@ -437,9 +438,18 @@ impl AeroGpuPciDevice {
 
     fn reset_ring_dma(&mut self, mem: &mut dyn MemoryBus) {
         if self.regs.ring_gpa != 0 {
-            // Avoid wrapping physical address arithmetic on malformed GPAs.
-            let tail = AeroGpuRingHeader::read_tail(mem, self.regs.ring_gpa);
-            AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
+            match self.regs.ring_gpa.checked_add(RING_TAIL_OFFSET) {
+                Some(tail_addr) if tail_addr.checked_add(4).is_some() => {
+                    let tail = mem.read_u32(tail_addr);
+                    AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
+                }
+                _ => {
+                    // Treat arithmetic overflow as an out-of-bounds guest address. This is a
+                    // guest-controlled pointer; record an error rather than silently ignoring the
+                    // ring reset side-effect.
+                    self.regs.record_error(AerogpuErrorCode::Oob, 0);
+                }
+            }
         }
 
         if self.regs.fence_gpa != 0 {
