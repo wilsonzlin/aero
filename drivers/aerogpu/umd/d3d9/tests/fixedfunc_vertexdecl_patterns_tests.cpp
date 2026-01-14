@@ -247,6 +247,17 @@ bool TestFixedFuncVertexDeclPatternsNonCanonicalOrdering() {
   D3DDDI_HDEVICE hDevice{};
   hDevice.pDrvPrivate = &dev;
 
+  struct VertexDeclCleanup {
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HVERTEXDECL hDecl{};
+    ~VertexDeclCleanup() {
+      if (hDecl.pDrvPrivate) {
+        (void)aerogpu::device_destroy_vertex_decl(hDevice, hDecl);
+      }
+    }
+  } cleanup;
+  cleanup.hDevice = hDevice;
+
   dev.cmd.reset();
 
   // Non-canonical decl element ordering + an extra UNUSED placeholder element.
@@ -266,6 +277,7 @@ bool TestFixedFuncVertexDeclPatternsNonCanonicalOrdering() {
   if (!Check(hr == S_OK, "CreateVertexDecl returned S_OK")) {
     return false;
   }
+  cleanup.hDecl = hDecl;
 
   hr = aerogpu::device_set_vertex_decl(hDevice, hDecl);
   if (!Check(hr == S_OK, "SetVertexDecl returned S_OK")) {
@@ -396,6 +408,17 @@ bool TestFixedFuncVertexDeclPatternsNonCanonicalNormalTex1Ordering() {
   D3DDDI_HDEVICE hDevice{};
   hDevice.pDrvPrivate = &dev;
 
+  struct VertexDeclCleanup {
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HVERTEXDECL hDecl{};
+    ~VertexDeclCleanup() {
+      if (hDecl.pDrvPrivate) {
+        (void)aerogpu::device_destroy_vertex_decl(hDevice, hDecl);
+      }
+    }
+  } cleanup;
+  cleanup.hDevice = hDevice;
+
   dev.cmd.reset();
 
   // Non-canonical decl element ordering + an extra UNUSED placeholder element.
@@ -415,6 +438,7 @@ bool TestFixedFuncVertexDeclPatternsNonCanonicalNormalTex1Ordering() {
   if (!Check(hr == S_OK, "CreateVertexDecl returned S_OK (XYZ|NORMAL|TEX1)")) {
     return false;
   }
+  cleanup.hDecl = hDecl;
 
   hr = aerogpu::device_set_vertex_decl(hDevice, hDecl);
   if (!Check(hr == S_OK, "SetVertexDecl returned S_OK (XYZ|NORMAL|TEX1)")) {

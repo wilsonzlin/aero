@@ -10128,6 +10128,9 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
   wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
   dev->wddm_device = 0;
 #endif
+  // The explicit teardown above already destroyed all internal objects; make the
+  // `Device` destructor a no-op to avoid double-free.
+  dev->adapter = nullptr;
   delete dev;
   return trace.ret(S_OK);
 }

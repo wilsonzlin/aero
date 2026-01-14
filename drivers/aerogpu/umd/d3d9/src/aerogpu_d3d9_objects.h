@@ -1337,6 +1337,104 @@ struct Device {
 #endif
   }
 
+  // Device objects are typically owned/destroyed via the D3D9 runtime (see
+  // `device_destroy()`), but a number of host-side tests instantiate `Device`
+  // directly on the stack. Provide a destructor that frees internal UMD-owned
+  // objects (fixed-function shaders/input layouts, scratch buffers, etc) so
+  // AddressSanitizer builds remain leak-free.
+  //
+  // Note: `device_destroy()` performs an explicit teardown and then sets
+  // `adapter=nullptr` before deleting the device so this destructor becomes a
+  // no-op in the normal runtime path (avoids double-free).
+  ~Device() {
+    // If `adapter` is null, assume the device has already been torn down via the
+    // runtime DDI (`device_destroy()`), which sets this sentinel before `delete`.
+    if (!adapter) {
+      return;
+    }
+
+    // Device is being destroyed without the runtime entrypoint (e.g. stack
+    // allocation in host-side unit tests). Free internal objects that the
+    // runtime does not know about.
+    std::lock_guard<std::mutex> lock(mutex);
+
+    for (size_t i = 0; i < static_cast<size_t>(FixedFuncVariant::COUNT); ++i) {
+      auto& pipe = fixedfunc_pipelines[i];
+      delete pipe.vertex_decl;
+      pipe.vertex_decl = nullptr;
+      delete pipe.vs;
+      pipe.vs = nullptr;
+      delete pipe.vs_lit;
+      pipe.vs_lit = nullptr;
+      delete pipe.vs_fog;
+      pipe.vs_fog = nullptr;
+      delete pipe.vs_lit_fog;
+      pipe.vs_lit_fog = nullptr;
+      pipe.ps = nullptr;
+    }
+
+    for (auto& it : fvf_vertex_decl_cache) {
+      delete it.second;
+    }
+    fvf_vertex_decl_cache.clear();
+
+    Shader* destroyed_fixedfunc_ps[sizeof(fixedfunc_ps_variants) / sizeof(fixedfunc_ps_variants[0])] = {};
+    size_t destroyed_fixedfunc_ps_len = 0;
+    for (Shader*& ps : fixedfunc_ps_variants) {
+      if (!ps) {
+        continue;
+      }
+      bool already_destroyed = false;
+      for (size_t i = 0; i < destroyed_fixedfunc_ps_len; ++i) {
+        if (destroyed_fixedfunc_ps[i] == ps) {
+          already_destroyed = true;
+          break;
+        }
+      }
+      if (!already_destroyed) {
+        destroyed_fixedfunc_ps[destroyed_fixedfunc_ps_len++] = ps;
+        delete ps;
+      }
+      ps = nullptr;
+    }
+    fixedfunc_ps_variant_cache.clear();
+    fixedfunc_ps_interop = nullptr;
+
+    delete up_vertex_buffer;
+    up_vertex_buffer = nullptr;
+    for (uint32_t s = 0; s < 16; ++s) {
+      delete instancing_vertex_buffers[s];
+      instancing_vertex_buffers[s] = nullptr;
+    }
+    delete up_index_buffer;
+    up_index_buffer = nullptr;
+
+    for (SwapChain* sc : swapchains) {
+      if (!sc) {
+        continue;
+      }
+      for (Resource* bb : sc->backbuffers) {
+        delete bb;
+      }
+      delete sc;
+    }
+    swapchains.clear();
+    current_swapchain = nullptr;
+
+    delete builtin_copy_vs;
+    builtin_copy_vs = nullptr;
+    delete builtin_copy_ps;
+    builtin_copy_ps = nullptr;
+    delete builtin_copy_decl;
+    builtin_copy_decl = nullptr;
+    delete builtin_copy_vb;
+    builtin_copy_vb = nullptr;
+
+    // Ensure we don't attempt cleanup again if the object is somehow deleted via
+    // `device_destroy()` after stack destruction paths.
+    adapter = nullptr;
+  }
+
   Adapter* adapter = nullptr;
   std::mutex mutex;
 

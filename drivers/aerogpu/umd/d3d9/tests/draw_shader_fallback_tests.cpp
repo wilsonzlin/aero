@@ -231,13 +231,58 @@ struct D3d9Context {
   bool has_adapter = false;
   bool has_device = false;
 
+  // Test-owned handles. These tests bypass the real D3D9 runtime (and therefore
+  // do not get automatic refcount teardown). Track objects we create so ASAN
+  // builds remain leak-free even when tests early-return.
+  std::vector<D3DDDI_HRESOURCE> resources;
+  std::vector<D3D9DDI_HSHADER> shaders;
+
   // Callback tables must outlive the adapter/device; the UMD stores raw pointers.
   D3DDDI_ADAPTERCALLBACKS callbacks{};
   D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
 
+  void TrackResource(D3DDDI_HRESOURCE hRes) {
+    if (hRes.pDrvPrivate) {
+      resources.push_back(hRes);
+    }
+  }
+  void TrackShader(D3D9DDI_HSHADER hSh) {
+    if (hSh.pDrvPrivate) {
+      shaders.push_back(hSh);
+    }
+  }
+  void UntrackShader(D3D9DDI_HSHADER hSh) {
+    if (!hSh.pDrvPrivate) {
+      return;
+    }
+    for (auto& it : shaders) {
+      if (it.pDrvPrivate == hSh.pDrvPrivate) {
+        it.pDrvPrivate = nullptr;
+      }
+    }
+  }
+
   ~D3d9Context() {
-    if (has_device && device_funcs.pfnDestroyDevice) {
-      device_funcs.pfnDestroyDevice(hDevice);
+    if (has_device) {
+      if (device_funcs.pfnDestroyShader) {
+        for (auto& hSh : shaders) {
+          if (hSh.pDrvPrivate) {
+            device_funcs.pfnDestroyShader(hDevice, hSh);
+            hSh.pDrvPrivate = nullptr;
+          }
+        }
+      }
+      if (device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+            hRes.pDrvPrivate = nullptr;
+          }
+        }
+      }
+      if (device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
     }
     if (has_adapter && adapter_funcs.pfnCloseAdapter) {
       adapter_funcs.pfnCloseAdapter(hAdapter);
@@ -321,6 +366,7 @@ bool TestPsOnlyDrawBindsFallbackVs() {
   if (!Check(SUCCEEDED(hr) && hPs.pDrvPrivate != nullptr, "CreateShader(PS)")) {
     return false;
   }
+  ctx.TrackShader(hPs);
   // Bind only PS; leave VS unset.
   if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
     return false;
@@ -387,6 +433,7 @@ bool TestPsOnlyDrawBindsFallbackVsXyzDiffuse() {
   if (!Check(SUCCEEDED(hr) && hPs.pDrvPrivate != nullptr, "CreateShader(PS)")) {
     return false;
   }
+  ctx.TrackShader(hPs);
 
   if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
     return false;
@@ -445,6 +492,7 @@ bool TestVsOnlyDrawBindsFallbackPs() {
   if (!Check(SUCCEEDED(hr) && hVs.pDrvPrivate != nullptr, "CreateShader(VS)")) {
     return false;
   }
+  ctx.TrackShader(hVs);
   if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
     return false;
   }
@@ -510,6 +558,7 @@ bool TestVsOnlyStage0PsUpdateDoesNotRebindDestroyedShader() {
   if (!Check(SUCCEEDED(hr) && hVs.pDrvPrivate != nullptr, "CreateShader(VS)")) {
     return false;
   }
+  ctx.TrackShader(hVs);
   if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
     return false;
   }
@@ -547,6 +596,7 @@ bool TestVsOnlyStage0PsUpdateDoesNotRebindDestroyedShader() {
   if (!Check(SUCCEEDED(hr) && create_tex.hResource.pDrvPrivate != nullptr, "CreateResource(texture)")) {
     return false;
   }
+  ctx.TrackResource(create_tex.hResource);
   if (!Check(ctx.device_funcs.pfnSetTexture != nullptr, "pfnSetTexture")) {
     return false;
   }
@@ -644,6 +694,7 @@ bool TestDestroyShaderDoesNotBindAfterDestroy() {
   if (!Check(SUCCEEDED(hr) && hVs.pDrvPrivate != nullptr, "CreateShader(VS)")) {
     return false;
   }
+  ctx.TrackShader(hVs);
   D3D9DDI_HSHADER hPs1{};
   hr = ctx.device_funcs.pfnCreateShader(ctx.hDevice,
                                         kD3d9ShaderStagePs,
@@ -653,6 +704,7 @@ bool TestDestroyShaderDoesNotBindAfterDestroy() {
   if (!Check(SUCCEEDED(hr) && hPs1.pDrvPrivate != nullptr, "CreateShader(PS)")) {
     return false;
   }
+  ctx.TrackShader(hPs1);
 
   if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
     return false;
@@ -690,6 +742,7 @@ bool TestDestroyShaderDoesNotBindAfterDestroy() {
   if (!Check(SUCCEEDED(hr), "DestroyShader(PS)")) {
     return false;
   }
+  ctx.UntrackShader(hPs1);
 
   // Re-bind a new PS after destroying the previous one. This forces a BIND_SHADERS
   // packet after the DESTROY_SHADER, which our validator checks for stale handles.
@@ -702,6 +755,7 @@ bool TestDestroyShaderDoesNotBindAfterDestroy() {
   if (!Check(SUCCEEDED(hr) && hPs2.pDrvPrivate != nullptr, "CreateShader(PS2)")) {
     return false;
   }
+  ctx.TrackShader(hPs2);
   hr = ctx.device_funcs.pfnSetShader(ctx.hDevice, kD3d9ShaderStagePs, hPs2);
   if (!Check(SUCCEEDED(hr), "SetShader(PS2)")) {
     return false;
@@ -756,6 +810,7 @@ bool TestPsOnlyUnsupportedFvfFailsWithoutDraw() {
   if (!Check(SUCCEEDED(hr) && hPs.pDrvPrivate != nullptr, "CreateShader(PS)")) {
     return false;
   }
+  ctx.TrackShader(hPs);
   if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
     return false;
   }
