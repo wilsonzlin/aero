@@ -939,6 +939,7 @@ passthrough devices can coexist without fighting over port numbers:
 Source-of-truth constants live in:
 
 - `web/src/usb/uhci_external_hub.ts`
+- `crates/aero-machine/src/lib.rs` (`aero_machine::Machine::UHCI_*`)
 
 #### Does the canonical `aero_machine::Machine` auto-attach these devices?
 
