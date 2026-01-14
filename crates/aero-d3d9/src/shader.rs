@@ -8,11 +8,10 @@ use thiserror::Error;
 use crate::dxbc;
 use crate::shader_limits::{
     MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX, MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX,
-    MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
     MAX_D3D9_INPUT_REGISTER_INDEX, MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_BLOB_BYTES,
-    MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
-    MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX,
-    MAX_D3D9_TEXTURE_REGISTER_INDEX,
+    MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
+    MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT, MAX_D3D9_TEMP_REGISTER_INDEX,
+    MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX, MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
 use crate::sm3::decode::TextureType;
 use crate::vertex::{AdaptiveLocationMap, DeclUsage, LocationMapError, VertexLocationMap};
@@ -1529,16 +1528,38 @@ pub fn generate_wgsl_with_options(
             wgsl.push('\n');
 
             let mut indent = 1usize;
-            for inst in &ir.ops {
+            let mut i = 0usize;
+            while i < ir.ops.len() {
+                if i + 2 < ir.ops.len()
+                    && matches!(ir.ops[i].op, Op::If | Op::Ifc)
+                    && matches!(ir.ops[i + 2].op, Op::EndIf)
+                    && matches!(ir.ops[i + 1].op, Op::Texld | Op::Dsx | Op::Dsy)
+                {
+                    if try_emit_uniform_control_flow_if_single_op(
+                        &mut wgsl,
+                        indent,
+                        &ir.ops[i],
+                        &ir.ops[i + 1],
+                        &ir.ops[i + 2],
+                        &ir.const_defs_f32,
+                        const_base,
+                        ir.version.stage,
+                        &ir.sampler_texture_types,
+                    ) {
+                        i += 3;
+                        continue;
+                    }
+                }
                 emit_inst(
                     &mut wgsl,
                     &mut indent,
-                    inst,
+                    &ir.ops[i],
                     &ir.const_defs_f32,
                     const_base,
                     ir.version.stage,
                     &ir.sampler_texture_types,
                 );
+                i += 1;
             }
             debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
             wgsl.push_str("  var out: PsOutput;\n");
@@ -1610,6 +1631,149 @@ fn emit_assign(wgsl: &mut String, indent: usize, dst: Dst, value: &str) {
         wgsl.push_str(&format!("{dst_name}.{c} = _tmp.{c}; "));
     }
     wgsl.push_str("}\n");
+}
+
+fn texld_sample_expr(
+    inst: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> String {
+    let coord = inst.src[0];
+    let s = inst.sampler.unwrap_or(0);
+    let coord_expr = src_expr(&coord, const_defs_f32, const_base);
+    let project = inst.imm.unwrap_or(0) != 0;
+    let ty = sampler_texture_types
+        .get(&s)
+        .copied()
+        .unwrap_or(TextureType::Texture2D);
+    let coords = match ty {
+        TextureType::TextureCube | TextureType::Texture3D => {
+            if project {
+                format!("(({}).xyz / ({}).w)", coord_expr, coord_expr)
+            } else {
+                format!("({}).xyz", coord_expr)
+            }
+        }
+        TextureType::Texture2D => {
+            if project {
+                format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
+            } else {
+                format!("({}).xy", coord_expr)
+            }
+        }
+        TextureType::Texture1D => {
+            if project {
+                format!("(({}).x / ({}).w)", coord_expr, coord_expr)
+            } else {
+                format!("({}).x", coord_expr)
+            }
+        }
+        _ => {
+            unreachable!("unsupported sampler texture types are rejected during WGSL generation")
+        }
+    };
+
+    let sample = match stage {
+        // Vertex stage has no implicit derivatives, so use an explicit LOD.
+        ShaderStage::Vertex => format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, coords),
+        ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, coords),
+    };
+    apply_result_modifier(sample, inst.result_modifier)
+}
+
+fn derivative_expr(
+    inst: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    op: Op,
+) -> String {
+    let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
+    let expr = match op {
+        Op::Dsx => format!("dpdx({})", src0),
+        Op::Dsy => format!("dpdy({})", src0),
+        _ => unreachable!("derivative_expr called for non-derivative op"),
+    };
+    apply_result_modifier(expr, inst.result_modifier)
+}
+
+fn if_condition_expr(
+    inst: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+) -> Option<String> {
+    match inst.op {
+        Op::If => {
+            let cond = src_expr(&inst.src[0], const_defs_f32, const_base);
+            Some(format!("({}).x != 0.0", cond))
+        }
+        Op::Ifc => {
+            let a = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[1], const_defs_f32, const_base);
+            let op = match inst.imm.unwrap_or(0) {
+                0 => ">",
+                1 => "==",
+                2 => ">=",
+                3 => "<",
+                4 => "!=",
+                5 => "<=",
+                _ => "==",
+            };
+            Some(format!("({}).x {} ({}).x", a, op, b))
+        }
+        _ => None,
+    }
+}
+
+fn try_emit_uniform_control_flow_if_single_op(
+    wgsl: &mut String,
+    indent: usize,
+    if_inst: &Instruction,
+    body: &Instruction,
+    endif: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> bool {
+    // WGSL derivative ops (`dpdx`/`dpdy`) and implicit-derivative texture sampling (`textureSample`)
+    // must be in uniform control flow. A common D3D9 pattern is `if (cond) { <single op>; }`
+    // where `cond` depends on per-pixel values, which would produce invalid WGSL.
+    //
+    // For these ops, lower to unconditional evaluation + conditional assignment via `select`, which
+    // does not introduce control flow.
+    if stage != ShaderStage::Pixel {
+        return false;
+    }
+    if !matches!(endif.op, Op::EndIf) {
+        return false;
+    }
+    let cond = match if_condition_expr(if_inst, const_defs_f32, const_base) {
+        Some(cond) => cond,
+        None => return false,
+    };
+    let dst = match body.dst {
+        Some(dst) => dst,
+        None => return false,
+    };
+
+    let new_value = match body.op {
+        Op::Dsx | Op::Dsy => derivative_expr(body, const_defs_f32, const_base, body.op),
+        Op::Texld => texld_sample_expr(
+            body,
+            const_defs_f32,
+            const_base,
+            stage,
+            sampler_texture_types,
+        ),
+        _ => return false,
+    };
+
+    let dst_name = reg_var_name(dst.reg);
+    let expr = format!("select({dst_name}, {new_value}, {cond})");
+    emit_assign(wgsl, indent, dst, &expr);
+    true
 }
 
 fn emit_inst(
@@ -1735,50 +1899,13 @@ fn emit_inst(
         }
         Op::Texld => {
             let dst = inst.dst.unwrap();
-            let coord = inst.src[0];
-            let s = inst.sampler.unwrap();
-            let coord_expr = src_expr(&coord, const_defs_f32, const_base);
-            let project = inst.imm.unwrap_or(0) != 0;
-            let ty = sampler_texture_types
-                .get(&s)
-                .copied()
-                .unwrap_or(TextureType::Texture2D);
-            let coords = match ty {
-                TextureType::TextureCube | TextureType::Texture3D => {
-                    if project {
-                        format!("(({}).xyz / ({}).w)", coord_expr, coord_expr)
-                    } else {
-                        format!("({}).xyz", coord_expr)
-                    }
-                }
-                TextureType::Texture2D => {
-                    if project {
-                        format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
-                    } else {
-                        format!("({}).xy", coord_expr)
-                    }
-                }
-                TextureType::Texture1D => {
-                    if project {
-                        format!("(({}).x / ({}).w)", coord_expr, coord_expr)
-                    } else {
-                        format!("({}).x", coord_expr)
-                    }
-                }
-                _ => {
-                    unreachable!(
-                        "unsupported sampler texture types are rejected during WGSL generation"
-                    )
-                }
-            };
-            let mut sample = match stage {
-                // Vertex stage has no implicit derivatives, so use an explicit LOD.
-                ShaderStage::Vertex => {
-                    format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, coords)
-                }
-                ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, coords),
-            };
-            sample = apply_result_modifier(sample, inst.result_modifier);
+            let sample = texld_sample_expr(
+                inst,
+                const_defs_f32,
+                const_base,
+                stage,
+                sampler_texture_types,
+            );
             emit_assign(wgsl, *indent, dst, &sample);
         }
         Op::Rcp => {
@@ -1812,18 +1939,14 @@ fn emit_inst(
         Op::Dsx => {
             if stage == ShaderStage::Pixel {
                 let dst = inst.dst.unwrap();
-                let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
-                let mut expr = format!("dpdx({})", src0);
-                expr = apply_result_modifier(expr, inst.result_modifier);
+                let expr = derivative_expr(inst, const_defs_f32, const_base, Op::Dsx);
                 emit_assign(wgsl, *indent, dst, &expr);
             }
         }
         Op::Dsy => {
             if stage == ShaderStage::Pixel {
                 let dst = inst.dst.unwrap();
-                let src0 = src_expr(&inst.src[0], const_defs_f32, const_base);
-                let mut expr = format!("dpdy({})", src0);
-                expr = apply_result_modifier(expr, inst.result_modifier);
+                let expr = derivative_expr(inst, const_defs_f32, const_base, Op::Dsy);
                 emit_assign(wgsl, *indent, dst, &expr);
             }
         }

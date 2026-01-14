@@ -8,7 +8,8 @@ use aero_dxbc::{
 };
 
 use crate::shader_limits::{
-    MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
+    MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES,
+    MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
 };
 use crate::sm3::decode::TextureType;
 use crate::{dxbc, shader, shader_translate, sm3, software, state};
@@ -530,6 +531,49 @@ fn assemble_ps_with_unknown_opcode_and_derivatives() -> Vec<u32> {
     // Unknown opcode with 0 operands. The legacy translator skips this, while the SM3 decoder
     // errors out with "unsupported opcode".
     out.extend(enc_inst(0x1234, &[]));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_nonuniform_if_dsx() -> Vec<u32> {
+    // ps_3_0
+    //
+    // Uses a non-uniform branch condition (`v0`) around `dsx` to exercise the legacy translator's
+    // uniform-control-flow workaround for WGSL derivative ops.
+    let mut out = vec![0xFFFF0300];
+    // if v0
+    out.extend(enc_inst(0x0028, &[enc_src(1, 0, 0xE4)]));
+    // dsx r0, v0
+    out.extend(enc_inst(0x0056, &[enc_dst(0, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps2_nonuniform_if_texld() -> Vec<u32> {
+    // ps_2_0
+    //
+    // Uses a non-uniform branch condition (`v0`) around `texld` (implicit derivatives) to
+    // exercise the legacy translator's uniform-control-flow workaround for `textureSample`.
+    let mut out = vec![0xFFFF0200];
+    // if v0
+    out.extend(enc_inst(0x0028, &[enc_src(1, 0, 0xE4)]));
+    // texld r0, t0, s0
+    out.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),   // r0
+            enc_src(3, 0, 0xE4),  // t0
+            enc_src(10, 0, 0xE4), // s0
+        ],
+    ));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
     // mov oC0, r0
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
@@ -1279,16 +1323,10 @@ fn assemble_ps3_loop_relative_const() -> Vec<u32> {
     ));
 
     // defi i0, start=0, end=1, step=1, unused=0
-    out.extend(enc_inst(
-        0x0052,
-        &[enc_dst(7, 0, 0xF), 0, 1, 1, 0],
-    ));
+    out.extend(enc_inst(0x0052, &[enc_dst(7, 0, 0xF), 0, 1, 1, 0]));
 
     // mov r0, c2
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 0, 0xF), enc_src(2, 2, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 2, 0xE4)]));
 
     // loop aL, i0
     out.extend(enc_inst(
@@ -1316,10 +1354,7 @@ fn assemble_ps3_loop_relative_const() -> Vec<u32> {
     out.extend(enc_inst(0x001D, &[]));
 
     // mov oC0, r0
-    out.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
     out.push(0x0000FFFF);
     out
@@ -2406,10 +2441,7 @@ fn translate_entrypoint_rejects_invalid_src_modifier() {
     // mov r0, c0 with an invalid source modifier (15)
     words.extend(enc_inst(
         0x0001,
-        &[
-            enc_dst(0, 0, 0xF),
-            enc_src_mod(2, 0, 0xE4, 15),
-        ],
+        &[enc_dst(0, 0, 0xF), enc_src_mod(2, 0, 0xE4, 15)],
     ));
     words.push(0x0000_FFFF);
 
@@ -2529,6 +2561,46 @@ fn translates_simple_ps_to_wgsl() {
 
     assert!(wgsl.wgsl.contains("@fragment"));
     assert!(wgsl.wgsl.contains("textureSample"));
+}
+
+#[test]
+fn legacy_translator_nonuniform_if_dsx_avoids_invalid_control_flow() {
+    let ps_bytes = to_bytes(&assemble_ps3_nonuniform_if_dsx());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("dpdx("));
+    // Branch should be lowered to `select` so that `dpdx` is evaluated unconditionally.
+    assert!(!wgsl.wgsl.contains("if ("));
+}
+
+#[test]
+fn legacy_translator_nonuniform_if_texld_avoids_invalid_control_flow() {
+    let ps_bytes = to_bytes(&assemble_ps2_nonuniform_if_texld());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("textureSample("));
+    // Branch should be lowered to `select` so that `textureSample` is evaluated unconditionally.
+    assert!(!wgsl.wgsl.contains("if ("));
 }
 
 #[test]
@@ -3179,9 +3251,9 @@ fn sm3_texld_cube_samples_face_colors() {
     let decl = build_vertex_decl_pos_tex4_color();
 
     let cube = software::TextureCube::new([
-        software::Texture2D::from_rgba8(1, 1, &[255, 0, 0, 255]),   // +X red
-        software::Texture2D::from_rgba8(1, 1, &[0, 255, 0, 255]),   // -X green
-        software::Texture2D::from_rgba8(1, 1, &[0, 0, 255, 255]),   // +Y blue
+        software::Texture2D::from_rgba8(1, 1, &[255, 0, 0, 255]), // +X red
+        software::Texture2D::from_rgba8(1, 1, &[0, 255, 0, 255]), // -X green
+        software::Texture2D::from_rgba8(1, 1, &[0, 0, 255, 255]), // +Y blue
         software::Texture2D::from_rgba8(1, 1, &[255, 255, 0, 255]), // -Y yellow
         software::Texture2D::from_rgba8(1, 1, &[255, 0, 255, 255]), // +Z magenta
         software::Texture2D::from_rgba8(1, 1, &[0, 255, 255, 255]), // -Z cyan
@@ -3212,15 +3284,9 @@ fn sm3_texld_cube_samples_face_colors() {
         (software::Vec4::new(1.0, 0.0, 0.0, 1.0), [255, 0, 0, 255]),
         (software::Vec4::new(-1.0, 0.0, 0.0, 1.0), [0, 255, 0, 255]),
         (software::Vec4::new(0.0, 1.0, 0.0, 1.0), [0, 0, 255, 255]),
-        (
-            software::Vec4::new(0.0, -1.0, 0.0, 1.0),
-            [255, 255, 0, 255],
-        ),
+        (software::Vec4::new(0.0, -1.0, 0.0, 1.0), [255, 255, 0, 255]),
         (software::Vec4::new(0.0, 0.0, 1.0, 1.0), [255, 0, 255, 255]),
-        (
-            software::Vec4::new(0.0, 0.0, -1.0, 1.0),
-            [0, 255, 255, 255],
-        ),
+        (software::Vec4::new(0.0, 0.0, -1.0, 1.0), [0, 255, 255, 255]),
     ] {
         let mut vb = Vec::new();
         for pos in positions {
