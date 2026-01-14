@@ -4,6 +4,7 @@
 
 #include <ntddk.h>
 
+#include "virtiosnd_jack_ids.h"
 #include "virtio_snd_proto.h"
 
 /*
@@ -13,15 +14,13 @@
  * Map those onto two jack IDs so virtio-snd eventq JACK events can toggle
  * KSPROPERTY_JACK_DESCRIPTION::IsConnected at runtime.
  *
- * Note: Jack IDs are defined by `include/topology.h` (VIRTIOSND_JACK_ID_*). This
- * module intentionally does NOT define them to avoid macro redefinition issues
- * depending on include order. It simply tracks two jacks indexed by the same
- * IDs:
+ * Note: Jack IDs are defined by `include/virtiosnd_jack_ids.h` (VIRTIOSND_JACK_ID_*).
+ * This module simply tracks jacks indexed by those same IDs:
  *  - Jack 0: speaker/output
  *  - Jack 1: microphone/input
  */
- 
-#define VIRTIOSND_JACK_STATE_COUNT 2u
+  
+#define VIRTIOSND_JACK_STATE_COUNT VIRTIOSND_JACK_ID_COUNT
 
 typedef struct _VIRTIOSND_JACK_STATE {
     volatile LONG Connected[VIRTIOSND_JACK_STATE_COUNT];

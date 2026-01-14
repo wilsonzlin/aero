@@ -5,6 +5,7 @@
 #include <ntddk.h>
 
 #include "portcls_compat.h"
+#include "virtiosnd_jack_ids.h"
 
 /*
  * Topology jack state is updated best-effort from virtio-snd eventq JACK events.
@@ -16,9 +17,6 @@
  * If the device never sends jack events, the driver defaults both jacks to
  * "connected" to preserve existing behavior.
  */
-#define VIRTIOSND_JACK_ID_SPEAKER     0u
-#define VIRTIOSND_JACK_ID_MICROPHONE  1u
-#define VIRTIOSND_JACK_ID_COUNT       2u
 
 /*
  * Initialize global topology helper state (spinlocks, default jack state).
