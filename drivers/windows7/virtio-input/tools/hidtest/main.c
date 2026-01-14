@@ -126,6 +126,8 @@
 #define VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN 47
 #define VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN 9
 #define VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN 2
+// Consumer Control/media keys input report (ReportID=3) is 2 bytes: [id][bits].
+#define VIRTIO_INPUT_EXPECTED_CONSUMER_INPUT_LEN 2
 // Mouse input report (ReportID=2) is 6 bytes: [id][buttons][x][y][wheel][AC Pan].
 #define VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN 6
 // Tablet input report (ReportID=4) is 6 bytes: [id][buttons][x_lo][x_hi][y_lo][y_hi].
@@ -360,6 +362,7 @@ typedef struct OPTIONS {
     int quiet;
     int want_keyboard;
     int want_mouse;
+    int want_consumer;
     int want_tablet;
     USHORT vid;
     USHORT pid;
@@ -1825,7 +1828,7 @@ static void print_usage(void)
     wprintf(L"Usage:\n");
     wprintf(L"  hidtest.exe [--list [--json]]\n");
     wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse|--tablet] [--json]\n");
-    wprintf(L"  hidtest.exe [--keyboard|--mouse|--tablet] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
+    wprintf(L"  hidtest.exe [--keyboard|--mouse|--tablet|--consumer] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x1F | --led-hidd 0x1F | --led-ioctl-set-output 0x1F | --led-cycle | --led-spam N] [--dump-desc]\n");
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
@@ -1853,6 +1856,7 @@ static void print_usage(void)
     wprintf(L"  --quiet         Suppress enumeration / device summary output (keeps stdout clean for scraping)\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
     wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
+    wprintf(L"  --consumer      Prefer/select the Consumer Control collection (UsagePage=Consumer, Usage=Consumer Control)\n");
     wprintf(L"  --tablet        Prefer/select the virtio-input tablet interface (VID 0x1AF4, PID 0x0003)\n");
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
     wprintf(L"  --vid 0xVID     Filter by vendor ID (hex)\n");
@@ -3263,7 +3267,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
     iface_index = 0;
     have_hard_filters = opt->have_index || opt->have_vid || opt->have_pid;
-    have_usage_filter = opt->want_keyboard || opt->want_mouse || opt->want_tablet;
+    have_usage_filter = opt->want_keyboard || opt->want_mouse || opt->want_consumer || opt->want_tablet;
     usage_only = have_usage_filter && !have_hard_filters;
     for (;;) {
         DWORD required = 0;
@@ -3284,6 +3288,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         int is_virtio = 0;
         int is_keyboard = 0;
         int is_mouse = 0;
+        int is_consumer = 0;
         int is_tablet = 0;
 
         ZeroMemory(&iface, sizeof(iface));
@@ -3379,6 +3384,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         is_keyboard = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x06;
         is_mouse = caps_valid && caps.UsagePage == 0x01 && caps.Usage == 0x02;
+        is_consumer = caps_valid && caps.UsagePage == 0x0C && caps.Usage == 0x01;
         is_tablet = 0;
         if (is_virtio && attr_valid && attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
             is_tablet = 1;
@@ -3423,6 +3429,8 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             if (is_virtio) {
                 if (is_keyboard) {
                     wprintf(L"      Detected: virtio-input keyboard\n");
+                } else if (is_consumer) {
+                    wprintf(L"      Detected: virtio-input consumer control\n");
                 } else if (is_mouse && is_tablet) {
                     wprintf(L"      Detected: virtio-input tablet\n");
                 } else if (is_mouse) {
@@ -3517,6 +3525,9 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         }
         if (match && opt->want_mouse) {
             match = is_mouse;
+        }
+        if (match && opt->want_consumer) {
+            match = is_consumer;
         }
         if (match && opt->want_tablet) {
             match = is_tablet;
@@ -4229,20 +4240,34 @@ static void read_reports_loop(const SELECTED_DEVICE *dev, const OPTIONS *opt)
         // - For virtio-input, use ReportID (byte 0) since report IDs are stable.
         // - Otherwise fall back to top-level usage heuristics.
         if (is_virtio && n > 0) {
-            if (buf[0] == 1) {
+            // virtio-input reports are expected to include a Report ID byte, but some consumer-only HID devices
+            // (and some non-Aero/QEMU variants) omit Report IDs entirely. If the byte stream doesn't match a
+            // known virtio-input report ID+length pair, fall back to usage-based decoding.
+            if (buf[0] == 1 && n == VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN) {
                 dump_keyboard_report(buf, n);
-            } else if (buf[0] == 2) {
+            } else if (buf[0] == 2 && n == VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN) {
                 dump_mouse_report(buf, n, 1);
-            } else if (buf[0] == 3) {
+            } else if (buf[0] == 3 &&
+                       (n == VIRTIO_INPUT_EXPECTED_CONSUMER_INPUT_LEN || n == VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN)) {
                 dump_consumer_report(buf, n, 1);
-            } else if (buf[0] == 4) {
+            } else if (buf[0] == 4 && n == VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN) {
                 dump_tablet_report(buf, n, 1);
+            } else if (dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01) {
+                // Consumer Control (media keys). If the report begins with the expected virtio-input Report ID,
+                // decode it as such; otherwise treat the first byte as the data payload.
+                dump_consumer_report(buf, n, (n >= 2 && buf[0] == 3) ? 1 : 0);
+            } else if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06) {
+                dump_keyboard_report(buf, n);
+            } else if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02) {
+                dump_mouse_report(buf, n, 0);
             }
         } else {
             if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06) {
                 dump_keyboard_report(buf, n);
             } else if (dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02) {
                 dump_mouse_report(buf, n, 0);
+            } else if (dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01) {
+                dump_consumer_report(buf, n, 0);
             }
         }
 
@@ -5370,6 +5395,11 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--consumer") == 0) {
+            opt.want_consumer = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--tablet") == 0) {
             opt.want_tablet = 1;
             continue;
@@ -5662,8 +5692,8 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
 
-    if ((opt.want_keyboard + opt.want_mouse + opt.want_tablet) > 1) {
-        wprintf(L"--keyboard, --mouse, and --tablet are mutually exclusive.\n");
+    if ((opt.want_keyboard + opt.want_mouse + opt.want_consumer + opt.want_tablet) > 1) {
+        wprintf(L"--keyboard, --mouse, --consumer, and --tablet are mutually exclusive.\n");
         return 2;
     }
     if (opt.list_only &&

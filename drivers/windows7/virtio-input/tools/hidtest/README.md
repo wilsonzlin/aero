@@ -24,6 +24,8 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   (with optional `--duration`/`--count` auto-exit + summary at end):
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
+  - virtio-input Consumer Control/media keys report (`ReportID=3`)
+  - virtio-input tablet (absolute pointer) report (`ReportID=4`)
 - Can query/reset the virtio-input driver diagnostic counters (`--counters`, `--counters-json`, `--reset-counters`).
 - Can query a virtio-input interrupt diagnostics snapshot (MSI-X vs INTx, vector routing) via:
   - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO)`
@@ -48,6 +50,10 @@ The in-tree Aero virtio-input Win7 driver exposes **separate** HID devices:
 - Keyboard: VID:PID `1AF4:0001` (ReportID `1`)
 - Mouse: VID:PID `1AF4:0002` (ReportID `2`)
 - Tablet: VID:PID `1AF4:0003` (ReportID `4`)
+
+The keyboard device's report descriptor also includes a **Consumer Control** top-level collection
+(UsagePage `0x0C`, Usage `0x01`, ReportID `3`) for media keys. Depending on OS/HID stack behavior, this
+may show up as a separate HID interface; `hidtest.exe --consumer` prefers/selects it.
 
 `hidtest` uses these IDs to auto-prefer the virtio-input keyboard/mouse when multiple HID devices are present.
 
@@ -192,6 +198,12 @@ Force selecting the mouse collection:
 
 ```bat
 hidtest.exe --mouse
+```
+
+Force selecting the Consumer Control (media keys) collection:
+
+```bat
+hidtest.exe --consumer
 ```
 
 If multiple mice are present, `--mouse` prefers a virtio-input interface (VID `0x1AF4`, PID `0x0002`) when available.
