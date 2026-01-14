@@ -1494,21 +1494,11 @@ static bool AppendSetRenderTargetsCmdLocked(Device* dev,
                                             uint32_t rtv_count,
                                             const std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS>& rtvs,
                                             aerogpu_handle_t dsv) {
-  if (!dev) {
-    return false;
-  }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
-    return false;
-  }
-  const uint32_t count = std::min<uint32_t>(rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  cmd->color_count = count;
-  cmd->depth_stencil = dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    cmd->colors[i] = (i < count) ? rtvs[i] : 0;
-  }
-  return true;
+  return EmitSetRenderTargetsCmdLocked(dev,
+                                       rtv_count,
+                                       rtvs.data(),
+                                       dsv,
+                                       [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 static bool UnbindResourceFromRenderTargetsLocked(Device* dev, aerogpu_handle_t resource, const Resource* res) {
@@ -12284,8 +12274,11 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   }
 
   if (outputs_need_rebind) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-    if (!cmd) {
+    if (!EmitSetRenderTargetsCmdLocked(dev,
+                                       bound_rtv_count,
+                                       new_rtvs.data(),
+                                       new_dsv,
+                                       [](HRESULT) {})) {
       rollback_rotation(/*report_oom=*/true);
       return;
     }
@@ -12295,25 +12288,6 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     // must keep the previous handles intact.
     dev->current_rtvs = new_rtvs;
     dev->current_dsv = new_dsv;
- 
-    cmd->color_count = bound_rtv_count;
-    cmd->depth_stencil = new_dsv;
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      cmd->colors[i] = (i < bound_rtv_count) ? new_rtvs[i] : 0;
-    }
-
-    // Bring-up logging: swapchains may rebind RT state via RotateResourceIdentities.
-    AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS (rotate): color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
-                         static_cast<unsigned>(bound_rtv_count),
-                         static_cast<unsigned>(new_dsv),
-                         static_cast<unsigned>(cmd->colors[0]),
-                         static_cast<unsigned>(cmd->colors[1]),
-                         static_cast<unsigned>(cmd->colors[2]),
-                         static_cast<unsigned>(cmd->colors[3]),
-                         static_cast<unsigned>(cmd->colors[4]),
-                         static_cast<unsigned>(cmd->colors[5]),
-                         static_cast<unsigned>(cmd->colors[6]),
-                         static_cast<unsigned>(cmd->colors[7]));
   }
 
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {

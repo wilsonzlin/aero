@@ -9594,8 +9594,12 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
   }
 
   if (needs_rebind) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-    if (!cmd) {
+    if (!aerogpu::d3d10_11::EmitSetRenderTargetsCmdLocked(
+            dev,
+            bound_rtv_count,
+            new_rtvs.data(),
+            new_dsv,
+            [](HRESULT) {})) {
       rollback_rotation(/*report_oom=*/true);
       return;
     }
@@ -9607,24 +9611,6 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
       dev->current_rtvs[i] = new_rtvs[i];
     }
     dev->current_dsv = new_dsv;
-    cmd->color_count = bound_rtv_count;
-    cmd->depth_stencil = new_dsv;
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      cmd->colors[i] = (i < bound_rtv_count) ? new_rtvs[i] : 0;
-    }
-
-    // Bring-up logging: swapchains may rebind RT state via RotateResourceIdentities.
-    AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS (rotate): color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
-                         static_cast<unsigned>(cmd->color_count),
-                         static_cast<unsigned>(cmd->depth_stencil),
-                         static_cast<unsigned>(cmd->colors[0]),
-                         static_cast<unsigned>(cmd->colors[1]),
-                         static_cast<unsigned>(cmd->colors[2]),
-                         static_cast<unsigned>(cmd->colors[3]),
-                         static_cast<unsigned>(cmd->colors[4]),
-                         static_cast<unsigned>(cmd->colors[5]),
-                         static_cast<unsigned>(cmd->colors[6]),
-                         static_cast<unsigned>(cmd->colors[7]));
   }
 
   auto is_rotated = [&resources](const AeroGpuResource* res) -> bool {
