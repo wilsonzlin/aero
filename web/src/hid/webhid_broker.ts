@@ -723,6 +723,13 @@ export class WebHidBroker {
     try {
       await this.manager.attachKnownDevice(device);
 
+      // `attachKnownDevice()` can be followed by a concurrent detach/disconnect (user action or
+      // physical unplug) before we reach the worker handshake. Bail out early in that case so we
+      // don't attach a device the manager already considers detached.
+      if (this.#deviceIdByDevice.get(device) !== deviceId) {
+        throw new Error("HID device was detached while attaching.");
+      }
+
       const guestPathHint: GuestUsbPath | undefined = this.manager
         .getState()
         .attachedDevices.find((entry) => entry.device === device)?.guestPath;
@@ -756,6 +763,12 @@ export class WebHidBroker {
 
       if (this.#workerPort !== worker) {
         throw new Error("IO worker disconnected while attaching HID device.");
+      }
+
+      // The user might detach the HID device while we were preparing the attach message (descriptor
+      // normalization etc). Ensure we're still attaching the same session.
+      if (this.#deviceIdByDevice.get(device) !== deviceId) {
+        throw new Error("HID device was detached while attaching.");
       }
 
       const attachResult = this.#waitForAttachResult(worker, deviceId);
@@ -915,6 +928,16 @@ export class WebHidBroker {
     }
   }
 
+  #cancelPendingAttach(deviceId: number, err: Error): void {
+    const pending = this.#pendingAttachResults.get(deviceId);
+    if (!pending) return;
+    this.#pendingAttachResults.delete(deviceId);
+    if (pending.timeout) {
+      clearTimeout(pending.timeout);
+    }
+    pending.reject(err);
+  }
+
   #waitForAttachResult(worker: MessagePort | Worker, deviceId: number): Promise<void> {
     const existing = this.#pendingAttachResults.get(deviceId);
     if (existing) return existing.promise;
@@ -960,6 +983,7 @@ export class WebHidBroker {
   async detachDevice(device: HIDDevice): Promise<void> {
     const deviceId = this.#deviceIdByDevice.get(device);
     if (deviceId !== undefined) {
+      this.#cancelPendingAttach(deviceId, new Error("HID device was detached while waiting for hid.attachResult."));
       this.#unbridgeDevice(deviceId, { sendDetach: true });
       this.#attachedToWorker.delete(deviceId);
       // Fully forget this device so the HIDDevice object can be garbage-collected.
@@ -976,6 +1000,7 @@ export class WebHidBroker {
     const deviceId = this.#deviceIdByDevice.get(device);
     if (deviceId === undefined) return;
 
+    this.#cancelPendingAttach(deviceId, new Error("HID device disconnected while waiting for hid.attachResult."));
     const sendDetach = this.#attachedToWorker.has(deviceId);
     this.#unbridgeDevice(deviceId, { sendDetach });
     this.#attachedToWorker.delete(deviceId);
