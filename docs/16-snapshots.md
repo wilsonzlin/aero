@@ -179,6 +179,7 @@ Some platform devices are snapshotted as their own `DEVICES` entries and use ded
 - `DeviceId::VIRTIO_SND` (`22`) — guest-visible virtio-snd (virtio-pci) device state (web runtime: inner `VSND`)
 - `DeviceId::VIRTIO_NET` (`23`) — guest-visible virtio-net (virtio-pci) NIC transport state (inner `VPCI`)
 - `DeviceId::VIRTIO_INPUT` (`24`) — guest-visible virtio-input (virtio-pci) multi-function device state (keyboard + mouse) (canonical machine: wrapper inner `VINP`)
+- `DeviceId::AEROGPU` (`25`) — AeroGPU device state
 
 Note: `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES`. Since both `PciConfigPorts` and
 `PciIntxRouter` currently snapshot as `SnapshotVersion (1.0)`, they cannot both be stored as separate entries with the same outer
