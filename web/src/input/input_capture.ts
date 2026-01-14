@@ -544,8 +544,8 @@ export class InputCapture {
     event.preventDefault();
     event.stopPropagation();
 
-    this.wheelFrac += wheelDeltaToSteps((event as any).deltaY, (event as any).deltaMode, { invert: true });
-    this.wheelFracX += wheelDeltaToSteps((event as any).deltaX, (event as any).deltaMode, { invert: false });
+    this.wheelFrac += wheelDeltaToSteps(event.deltaY, event.deltaMode, { invert: true });
+    this.wheelFracX += wheelDeltaToSteps(event.deltaX, event.deltaMode, { invert: false });
 
     const dz = this.takeWholeWheelDelta();
     const dx = this.takeWholeWheelDeltaX();
@@ -1034,7 +1034,7 @@ export class InputCapture {
       // Pointer Events rely on CSS `touch-action` to control default panning/zooming behavior.
       // Set it to `none` while capture is active to ensure touch drag is delivered as pointer/touch
       // events and does not scroll the page.
-      const style = (this.canvas as any).style as Partial<CSSStyleDeclaration> | undefined;
+      const style = this.canvas.style as unknown as { touchAction?: unknown } | undefined;
       if (style && typeof style.touchAction === "string") {
         this.prevCanvasTouchAction = style.touchAction;
         style.touchAction = "none";
@@ -1042,7 +1042,7 @@ export class InputCapture {
 
       // Touch fallback. Prefer Pointer Events when available (better multi-touch semantics), but
       // fall back to Touch Events for older/restricted environments.
-      if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
+      if (typeof window !== "undefined" && typeof (window as unknown as { PointerEvent?: unknown }).PointerEvent !== "undefined") {
         this.canvas.addEventListener("pointerdown", this.handlePointerDown as EventListener, { passive: false });
         this.canvas.addEventListener("pointermove", this.handlePointerMove as EventListener, { passive: false });
         this.canvas.addEventListener("pointerup", this.handlePointerUp as EventListener, { passive: false });
@@ -1066,7 +1066,7 @@ export class InputCapture {
     }
 
     if (this.enableTouchFallback) {
-      const style = (this.canvas as any).style as Partial<CSSStyleDeclaration> | undefined;
+      const style = this.canvas.style as unknown as { touchAction?: unknown } | undefined;
       if (style && typeof style.touchAction === "string" && this.prevCanvasTouchAction !== null) {
         style.touchAction = this.prevCanvasTouchAction;
       }
@@ -1120,7 +1120,7 @@ export class InputCapture {
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
 
     if (this.enableTouchFallback) {
-      if (typeof window !== "undefined" && typeof (window as any).PointerEvent !== "undefined") {
+      if (typeof window !== "undefined" && typeof (window as unknown as { PointerEvent?: unknown }).PointerEvent !== "undefined") {
         this.canvas.removeEventListener("pointerdown", this.handlePointerDown as EventListener);
         this.canvas.removeEventListener("pointermove", this.handlePointerMove as EventListener);
         this.canvas.removeEventListener("pointerup", this.handlePointerUp as EventListener);

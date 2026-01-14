@@ -10,7 +10,7 @@ function canBlockAtomicsWait(): boolean {
   // Browser main thread disallows Atomics.wait; workers and Node allow it.
   // There's no perfect feature test; this is conservative and matches the
   // approach used by the other shared-memory IPC utilities.
-  return typeof Atomics.wait === "function" && (globalThis as any).document === undefined;
+  return typeof Atomics.wait === "function" && typeof document === "undefined";
 }
 
 function assertCanBlockAtomicsWait(): void {

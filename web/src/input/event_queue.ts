@@ -225,17 +225,13 @@ export class InputEventQueue {
     // Best-effort responsiveness telemetry hook. This avoids adding a hard perf
     // dependency to the input pipeline; the perf API is optional and may be
     // absent in minimal builds.
-    const maybePerf = (globalThis as any).aero?.perf as
-      | {
-          noteInputCaptured?: (id: number, tCaptureMs?: number) => void;
-          noteInputInjected?: (
-            id: number,
-            tInjectedMs?: number,
-            queueDepth?: number,
-            queueOldestCaptureMs?: number | null,
-          ) => void;
-        }
-      | undefined;
+    type PerfHooks = {
+      noteInputCaptured?: (id: number, tCaptureMs?: number) => void;
+      noteInputInjected?: (id: number, tInjectedMs?: number, queueDepth?: number, queueOldestCaptureMs?: number | null) => void;
+    };
+    const maybePerfRaw = (globalThis as unknown as { aero?: { perf?: unknown } }).aero?.perf;
+    const maybePerf =
+      maybePerfRaw && typeof maybePerfRaw === "object" ? (maybePerfRaw as PerfHooks) : undefined;
     if (maybePerf?.noteInputCaptured || maybePerf?.noteInputInjected) {
       const id = nextInputBatchId++;
       const tCaptureMs = (minTimestampUs >>> 0) / 1000;

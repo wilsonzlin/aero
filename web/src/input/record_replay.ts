@@ -192,13 +192,17 @@ export class InputRecordReplay {
 export const inputRecordReplay = new InputRecordReplay();
 
 function isWindowGlobal(): boolean {
-  return typeof (globalThis as any).document !== "undefined";
+  return typeof document !== "undefined";
 }
 
-function ensureAeroGlobal(): any {
-  const g = globalThis as any;
-  if (!g.aero || typeof g.aero !== "object") g.aero = {};
-  return g.aero;
+function ensureAeroGlobal(): Record<string, unknown> {
+  const existing = (globalThis as unknown as { aero?: unknown }).aero;
+  if (!existing || typeof existing !== "object") {
+    const fresh: Record<string, unknown> = {};
+    (globalThis as unknown as { aero: Record<string, unknown> }).aero = fresh;
+    return fresh;
+  }
+  return existing as Record<string, unknown>;
 }
 
 /**

@@ -530,7 +530,7 @@ export class WebHidBroker {
   #canUseSharedMemory(): boolean {
     // SharedArrayBuffer requires cross-origin isolation in browsers. Node/Vitest may still provide it,
     // but keep the check aligned with the browser contract so behaviour matches production.
-    if ((globalThis as any).crossOriginIsolated !== true) return false;
+    if ((globalThis as unknown as { crossOriginIsolated?: unknown }).crossOriginIsolated !== true) return false;
     if (typeof SharedArrayBuffer === "undefined") return false;
     if (typeof Atomics === "undefined") return false;
     return true;

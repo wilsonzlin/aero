@@ -280,18 +280,19 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
         return true;
       }
 
-      const complete = this.#uhci.webhid_complete_feature_report_request;
-      if (typeof complete === "function") {
-        // Unified API (ok flag), or a runtime that doesn't provide a separate `fail` entrypoint.
-        // Best-effort: attempt the unified call shape and fall back to legacy helpers if it throws.
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const res = (complete as any).call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
-          return typeof res === "boolean" ? res : true;
-        } catch {
-          // Fall through to legacy helpers (if any).
+        const complete = this.#uhci.webhid_complete_feature_report_request;
+        if (typeof complete === "function") {
+          // Unified API (ok flag), or a runtime that doesn't provide a separate `fail` entrypoint.
+          // Best-effort: attempt the unified call shape and fall back to legacy helpers if it throws.
+          try {
+            const res = (
+              complete as (deviceId: number, requestId: number, reportId: number, ok: boolean, data?: Uint8Array) => boolean
+            ).call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
+            return typeof res === "boolean" ? res : true;
+          } catch {
+            // Fall through to legacy helpers (if any).
+          }
         }
-      }
       const legacy = this.#uhci.webhid_push_feature_report_result;
       if (typeof legacy === "function") {
         legacy.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
