@@ -97,6 +97,15 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
     let _ = cmd::decode_stage_ex(cmd::AerogpuShaderStage::Compute as u32, 6); // None (unknown stage_ex)
     let _ = cmd::resolve_shader_stage_with_ex(cmd::AerogpuShaderStage::Compute as u32, 6); // Unknown stage_ex
     let _ = cmd::resolve_shader_stage_with_ex(u32::MAX, 0); // Unknown legacy stage
+    // Also exercise the Compute stage_ex alias (program type 5) which is accepted as legacy Compute.
+    let _ = cmd::decode_stage_ex(cmd::AerogpuShaderStage::Compute as u32, 5);
+    let _ = cmd::resolve_shader_stage_with_ex(cmd::AerogpuShaderStage::Compute as u32, 5);
+    let _ = cmd::resolve_stage(cmd::AerogpuShaderStage::Compute as u32, 5);
+    let _ = cmd::encode_stage_ex(cmd::AerogpuShaderStageEx::Compute);
+    let _ = cmd::encode_stage_ex_reserved0(
+        cmd::AerogpuShaderStage::Compute,
+        Some(cmd::AerogpuShaderStageEx::Compute),
+    );
 
     // Also exercise the canonical protocol-level command stream parser + typed packet decoders.
     //
