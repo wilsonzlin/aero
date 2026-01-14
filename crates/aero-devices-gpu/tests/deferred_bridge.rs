@@ -179,8 +179,8 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     assert_eq!(sub.cmd_stream.len(), cmd_size_bytes as usize);
     let u32_size = core::mem::size_of::<u32>();
     assert_eq!(
-        sub.cmd_stream[CMD_STREAM_MAGIC_OFFSET as usize
-            ..(CMD_STREAM_MAGIC_OFFSET as usize + u32_size)],
+        sub.cmd_stream
+            [CMD_STREAM_MAGIC_OFFSET as usize..(CMD_STREAM_MAGIC_OFFSET as usize + u32_size)],
         aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes()
     );
     assert_eq!(
