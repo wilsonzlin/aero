@@ -221,6 +221,51 @@ fn tri_index_to_vertex_indices(level: u32, local_triangle: u32) -> vec3<u32> {{
   let c = tri_vertex_index(l, i, j + 1u);
   return vec3<u32>(a, b, c);
 }}
+
+// ---- Integer partitioning helpers (aliases / extra outputs) ----
+//
+// These functions exist to keep names aligned with the Rust-side reference
+// implementation and to support compute shaders that want integer barycentric
+// coordinates or a fixed CW winding without additional swapping logic.
+
+fn tri_integer_vertex_count(level: u32) -> u32 {{
+  return tri_vertex_count(level);
+}}
+
+fn tri_integer_index_count(level: u32) -> u32 {{
+  return tri_index_count(level);
+}}
+
+fn tri_integer_vertex_ijk(level: u32, local_vertex: u32) -> vec3<u32> {{
+  let l = tri_clamp_level(level);
+  let vtx_count = tri_vertex_count(l);
+  let idx0 = min(local_vertex, vtx_count - 1u);
+
+  var idx = idx0;
+  var i: u32 = 0u;
+  loop {{
+    if (i > l) {{
+      break;
+    }}
+    let row_len = l - i + 1u;
+    if (idx < row_len) {{
+      break;
+    }}
+    idx = idx - row_len;
+    i = i + 1u;
+  }}
+
+  let j = idx;
+  let k = l - i - j;
+  return vec3<u32>(i, j, k);
+}}
+
+// CW variant of `tri_index_to_vertex_indices` in the canonical `(j,k)` lattice
+// coordinate system.
+fn tri_index_to_vertex_indices_cw(level: u32, local_triangle: u32) -> vec3<u32> {{
+  let v = tri_index_to_vertex_indices(level, local_triangle);
+  return vec3<u32>(v.x, v.z, v.y);
+}}
 "#
     )
 }
@@ -423,6 +468,10 @@ fn main() {{
   let _ic = tri_index_count(4u);
   let _loc = tri_vertex_domain_location(4u, 0u);
   let _tri = tri_index_to_vertex_indices(4u, 0u);
+  let _vc_i = tri_integer_vertex_count(4u);
+  let _ic_i = tri_integer_index_count(4u);
+  let _ijk = tri_integer_vertex_ijk(4u, 0u);
+  let _tri_cw = tri_index_to_vertex_indices_cw(4u, 0u);
 }}
 "#
         );
