@@ -1119,6 +1119,8 @@ test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, 
     AerogpuShaderStageEx.Domain,
   );
   w.setShaderConstantsF(AerogpuShaderStage.Vertex, 0, new Float32Array([1, 2, 3, 4]), AerogpuShaderStageEx.Compute);
+  w.setShaderConstantsI(AerogpuShaderStage.Pixel, 0, new Int32Array([1, 2, 3, 4]), AerogpuShaderStageEx.Hull);
+  w.setShaderConstantsB(AerogpuShaderStage.Vertex, 1, [true, false], AerogpuShaderStageEx.Domain);
 
   const bytes = w.finish();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -1155,6 +1157,16 @@ test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, 
   // Compute stage_ex is canonicalized to stage_ex=None (reserved0=0).
   assert.equal(view.getUint32(cursor + 20, true), 0);
   cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16;
+
+  // SET_SHADER_CONSTANTS_I
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Hull);
+  cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + 16;
+
+  // SET_SHADER_CONSTANTS_B
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
+  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Domain);
+  cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 2 * 16;
 
   assert.equal(cursor, bytes.byteLength);
 });

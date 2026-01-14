@@ -241,8 +241,8 @@ impl AerogpuShaderStageEx {
 ///
 /// The "stage_ex" ABI extension overloads the `reserved0` field of certain commands that already
 /// include a legacy `shader_stage`/`stage` field (e.g. `SET_TEXTURE`, `SET_SAMPLERS`,
-/// `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`, `SET_SHADER_RESOURCE_BUFFERS`,
-/// `SET_UNORDERED_ACCESS_BUFFERS`, `CREATE_SHADER_DXBC`).
+/// `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`, `SET_SHADER_CONSTANTS_I`, `SET_SHADER_CONSTANTS_B`,
+/// `SET_SHADER_RESOURCE_BUFFERS`, `SET_UNORDERED_ACCESS_BUFFERS`, `CREATE_SHADER_DXBC`).
 ///
 /// The overload is only active when `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
 pub fn decode_stage_ex(shader_stage: u32, reserved0: u32) -> Option<AerogpuShaderStageEx> {

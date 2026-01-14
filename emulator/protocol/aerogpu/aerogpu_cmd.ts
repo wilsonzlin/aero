@@ -341,8 +341,8 @@ export type AerogpuResolvedShaderStage = "vertex" | "pixel" | "geometry" | "hull
  *
  * The "stage_ex" ABI extension overloads the `reserved0` field of certain commands that already
  * include a legacy `shaderStage`/`stage` field (e.g. `SET_TEXTURE`, `SET_SAMPLERS`,
- * `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`, `SET_SHADER_RESOURCE_BUFFERS`,
- * `SET_UNORDERED_ACCESS_BUFFERS`, `CREATE_SHADER_DXBC`).
+ * `SET_CONSTANT_BUFFERS`, `SET_SHADER_CONSTANTS_F`, `SET_SHADER_CONSTANTS_I`, `SET_SHADER_CONSTANTS_B`,
+ * `SET_SHADER_RESOURCE_BUFFERS`, `SET_UNORDERED_ACCESS_BUFFERS`, `CREATE_SHADER_DXBC`).
  *
  * The overload is only active when `shaderStage == AEROGPU_SHADER_STAGE_COMPUTE`.
  */

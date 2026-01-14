@@ -727,10 +727,19 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_f) == 24);
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_shader_constants_i {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_CONSTANTS_I */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is treated
+   *   as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4 correspond to
+   *   GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t stage; /* enum aerogpu_shader_stage */
   uint32_t start_register;
   uint32_t vec4_count;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex (enum aerogpu_shader_stage_ex) when stage==AEROGPU_SHADER_STAGE_COMPUTE */
 };
 #pragma pack(pop)
 
@@ -753,10 +762,19 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_i) == 24);
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_shader_constants_b {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_SET_SHADER_CONSTANTS_B */
+  /*
+   * Shader stage selector (legacy enum).
+   *
+   * stage_ex extension:
+   * - If `stage == AEROGPU_SHADER_STAGE_COMPUTE` and `reserved0 != 0`, then `reserved0` is treated
+   *   as `enum aerogpu_shader_stage_ex` (DXBC program type numbering). Values 2/3/4 correspond to
+   *   GS/HS/DS.
+   * - `reserved0 == 0` means legacy compute (no override).
+   */
   uint32_t stage; /* enum aerogpu_shader_stage */
   uint32_t start_register;
   uint32_t bool_count;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex (enum aerogpu_shader_stage_ex) when stage==AEROGPU_SHADER_STAGE_COMPUTE */
 };
 #pragma pack(pop)
 
