@@ -344,8 +344,12 @@ inline uint32_t fixedfunc_implied_fvf_from_decl_blob(const void* blob, size_t si
   // Collect non-UNUSED elements up to the first D3DDECL_END terminator. Order is
   // not semantically meaningful; runtimes may reorder elements and insert UNUSED
   // placeholders.
-  std::vector<const D3DVERTEXELEMENT9_COMPAT*> elems;
-  elems.reserve(std::min<size_t>(raw_count, 16));
+  //
+  // Avoid std::vector allocations here: this helper is called on hot paths
+  // (SetFVF/CreateVertexDeclaration) and must not allow std::bad_alloc to escape
+  // driver code.
+  const D3DVERTEXELEMENT9_COMPAT* elems[16] = {};
+  size_t elems_len = 0;
   bool saw_end = false;
   for (size_t i = 0; i < raw_count; ++i) {
     const auto& e = raw[i];
@@ -356,7 +360,12 @@ inline uint32_t fixedfunc_implied_fvf_from_decl_blob(const void* blob, size_t si
     if (e.Type == kD3dDeclTypeUnused) {
       continue;
     }
-    elems.push_back(&e);
+    if (elems_len >= (sizeof(elems) / sizeof(elems[0]))) {
+      // Too many non-UNUSED elements for the fixed-function decl patterns we
+      // support (this function only matches a small bring-up subset).
+      return 0;
+    }
+    elems[elems_len++] = &e;
   }
   if (!saw_end) {
     return 0;
@@ -426,11 +435,11 @@ inline uint32_t fixedfunc_implied_fvf_from_decl_blob(const void* blob, size_t si
 
     // Exclude the D3DDECL_END terminator from the signature element count.
     const size_t sig_count = desc.elem_count - 1;
-    if (elems.size() != sig_count) {
+    if (elems_len != sig_count) {
       continue;
     }
 
-    std::vector<uint8_t> used(elems.size(), 0);
+    uint8_t used[sizeof(elems) / sizeof(elems[0])] = {};
     uint32_t tex_dim = 0;
     bool ok = true;
 
@@ -442,7 +451,7 @@ inline uint32_t fixedfunc_implied_fvf_from_decl_blob(const void* blob, size_t si
 
       size_t match_idx = static_cast<size_t>(-1);
       uint32_t match_tex_dim = 0;
-      for (size_t k = 0; k < elems.size(); ++k) {
+      for (size_t k = 0; k < elems_len; ++k) {
         if (used[k]) {
           continue;
         }
@@ -486,7 +495,7 @@ inline uint32_t fixedfunc_implied_fvf_from_decl_blob(const void* blob, size_t si
   }
 
   // Position-only decls (used by ProcessVertices bring-up).
-  if (elems.size() == 1) {
+  if (elems_len == 1) {
     const auto& e = *elems[0];
     if (e.Stream == 0 && e.Offset == 0 && e.Method == kD3dDeclMethodDefault && e.UsageIndex == 0 &&
         usage_ok_for_position(e.Usage)) {
