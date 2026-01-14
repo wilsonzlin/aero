@@ -840,6 +840,18 @@ the compute pass:
 - `line_strip` → line list
 - `triangle_strip` → triangle list
 
+This means the **final render pipeline topology** is derived from the *GS output declaration* (after
+conversion), not from the input-assembler topology:
+
+| GS declared output | Final render topology |
+|---|---|
+| `point` | `PointList` |
+| `line_strip` | `LineList` |
+| `triangle_strip` | `TriangleList` |
+
+Implementations must ensure the pipeline cache / `PipelineKey` uses this final topology so the
+passthrough draw uses the correct WebGPU `PrimitiveTopology`.
+
 There are two valid implementation strategies:
 
 1. **Non-indexed list emission (simplest):** write vertices into `gs_out_vertices` in list order
