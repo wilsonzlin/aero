@@ -1,5 +1,5 @@
 use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_machine::{Machine, MachineConfig};
+use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use pretty_assertions::assert_eq;
 
@@ -110,14 +110,33 @@ fn aerogpu_bar0_mmio_magic_and_vblank_irq() {
     let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
     let interrupts = m.platform_interrupts().expect("pc platform enabled");
 
+    // Ensure the CPU reaches the HLT loop so `run_slice(1)` advances time deterministically via
+    // `idle_tick_platform_1ms`.
+    for _ in 0..200 {
+        match m.run_slice(50_000) {
+            RunExit::Halted { .. } => break,
+            RunExit::Completed { .. } => continue,
+            other => panic!("unexpected exit while waiting for HLT: {other:?}"),
+        }
+    }
+
     // Advance time deterministically via the machine's HLT idle tick path until a vblank edge
-    // arrives.
-    for _ in 0..64 {
-        let _ = m.run_slice(1_000);
+    // arrives. Derive the required duration from the guest-visible vblank period register so this
+    // test remains correct if the default vblank rate changes.
+    let period_ns = u64::from(m.read_physical_u32(
+        bar0 + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
+    ));
+    assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
+    let ticks_needed = period_ns.div_ceil(1_000_000) as usize;
+
+    for _ in 0..ticks_needed {
+        let _ = m.run_slice(1);
         if interrupts.borrow().gsi_level(gsi) {
             return;
         }
     }
 
-    panic!("AeroGPU vblank IRQ never asserted (GSI={gsi})");
+    panic!(
+        "AeroGPU vblank IRQ never asserted (GSI={gsi}, period_ns={period_ns}, ticks={ticks_needed})"
+    );
 }
