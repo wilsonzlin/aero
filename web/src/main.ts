@@ -6417,12 +6417,31 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   let snapshot: WebUsbUhciHarnessRuntimeSnapshot | null = null;
 
   const refreshUi = (): void => {
-    const workerReady = !!attachedIoWorker;
+    const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+    const supported = vmRuntime !== "machine";
+    const workerReady = !!attachedIoWorker && supported;
     const enabled = snapshot?.enabled ?? false;
     const blocked = snapshot?.blocked ?? true;
     const available = snapshot?.available ?? false;
 
+    if (!supported) {
+      status.textContent =
+        `vmRuntime=${vmRuntime}\n` +
+        `ioWorker=unsupported\n` +
+        `harnessAvailable=false\n` +
+        `status=unavailable`;
+      deviceDesc.textContent = "(unavailable)";
+      configDesc.textContent = "(unavailable)";
+      lastActionLine.textContent = "Last action: (unavailable)";
+      lastCompletionLine.textContent = "Last completion: (unavailable)";
+      errorLine.textContent = "UHCI passthrough harness is unavailable in vmRuntime=machine.";
+      startButton.disabled = true;
+      stopButton.disabled = true;
+      return;
+    }
+
     status.textContent =
+      `vmRuntime=${vmRuntime}\n` +
       `ioWorker=${workerReady ? "ready" : "stopped"}\n` +
       `harnessAvailable=${available}\n` +
       `status=${enabled ? "running" : "stopped"}\n` +
@@ -6456,6 +6475,11 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   const startButton = el("button", {
     text: "Start harness (IO worker)",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "UHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.harness.start" });
     },
@@ -6464,6 +6488,11 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   const stopButton = el("button", {
     text: "Stop/Reset",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "UHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.harness.stop" });
     },
@@ -6476,6 +6505,17 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   };
 
   const ensureAttached = (): void => {
+    const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+    if (vmRuntime === "machine") {
+      if (attachedIoWorker) {
+        attachedIoWorker.removeEventListener("message", onMessage);
+      }
+      attachedIoWorker = null;
+      snapshot = null;
+      refreshUi();
+      return;
+    }
+
     const ioWorker = workerCoordinator.getIoWorker();
     if (ioWorker === attachedIoWorker) return;
 
@@ -6563,13 +6603,39 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   let snapshot: WebUsbEhciHarnessRuntimeSnapshot | null = null;
 
   const refreshUi = (): void => {
-    const workerReady = !!attachedIoWorker;
+    const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+    const supported = vmRuntime !== "machine";
+    const workerReady = !!attachedIoWorker && supported;
     const available = snapshot?.available ?? false;
     const blocked = snapshot?.blocked ?? true;
     const controllerAttached = snapshot?.controllerAttached ?? false;
     const deviceAttached = snapshot?.deviceAttached ?? false;
 
+    if (!supported) {
+      status.textContent =
+        `vmRuntime=${vmRuntime}\n` +
+        `ioWorker=unsupported\n` +
+        `harnessAvailable=false\n` +
+        `status=unavailable`;
+      irqLine.textContent = "";
+      usbStsLine.textContent = "";
+      lastActionLine.textContent = "Last action: (unavailable)";
+      lastCompletionLine.textContent = "Last completion: (unavailable)";
+      deviceDesc.textContent = "(unavailable)";
+      configDesc.textContent = "(unavailable)";
+      errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+      attachControllerButton.disabled = true;
+      detachControllerButton.disabled = true;
+      attachDeviceButton.disabled = true;
+      detachDeviceButton.disabled = true;
+      getDeviceDescButton.disabled = true;
+      getConfigDescButton.disabled = true;
+      clearUsbStsButton.disabled = true;
+      return;
+    }
+
     status.textContent =
+      `vmRuntime=${vmRuntime}\n` +
       `ioWorker=${workerReady ? "ready" : "stopped"}\n` +
       `harnessAvailable=${available}\n` +
       `blocked=${blocked}\n` +
@@ -6616,6 +6682,11 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   const attachControllerButton = el("button", {
     text: "Attach EHCI controller",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.ehciHarness.attachController" });
     },
@@ -6624,6 +6695,11 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   const detachControllerButton = el("button", {
     text: "Detach controller",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.ehciHarness.detachController" });
     },
@@ -6632,6 +6708,11 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   const attachDeviceButton = el("button", {
     text: "Attach passthrough device",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.ehciHarness.attachDevice" });
     },
@@ -6640,6 +6721,11 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   const detachDeviceButton = el("button", {
     text: "Detach device",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.ehciHarness.detachDevice" });
     },
@@ -6648,6 +6734,11 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   const getDeviceDescButton = el("button", {
     text: "GET_DESCRIPTOR(Device)",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.ehciHarness.getDeviceDescriptor" });
     },
@@ -6656,6 +6747,11 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   const getConfigDescButton = el("button", {
     text: "GET_DESCRIPTOR(Config)",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       worker?.postMessage({ type: "usb.ehciHarness.getConfigDescriptor" });
     },
@@ -6664,6 +6760,11 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   const clearUsbStsButton = el("button", {
     text: "Clear USBSTS",
     onclick: () => {
+      if ((configManager.getState().effective.vmRuntime ?? "legacy") === "machine") {
+        errorLine.textContent = "EHCI passthrough harness is unavailable in vmRuntime=machine.";
+        refreshUi();
+        return;
+      }
       const worker = workerCoordinator.getIoWorker();
       // Clear USBINT | USBERRINT | PCD (bits 0..2).
       worker?.postMessage({ type: "usb.ehciHarness.clearUsbSts", bits: 0x7 });
@@ -6677,6 +6778,15 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
   };
 
   const ensureAttached = (): void => {
+    const vmRuntime = configManager.getState().effective.vmRuntime ?? "legacy";
+    if (vmRuntime === "machine") {
+      if (attachedIoWorker) attachedIoWorker.removeEventListener("message", onMessage);
+      attachedIoWorker = null;
+      snapshot = null;
+      refreshUi();
+      return;
+    }
+
     const ioWorker = workerCoordinator.getIoWorker();
     if (ioWorker === attachedIoWorker) return;
     if (attachedIoWorker) attachedIoWorker.removeEventListener("message", onMessage);
