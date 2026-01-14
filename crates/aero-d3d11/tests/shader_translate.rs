@@ -2179,48 +2179,47 @@ fn translates_udiv_and_idiv_to_integer_division_and_modulo() {
     ]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
-
-    let udiv_a = SrcOperand {
-        kind: SrcKind::ImmediateF32([7, 7, 7, 7]),
-        swizzle: Swizzle::XYZW,
-        modifier: OperandModifier::None,
-    };
-    let udiv_b = SrcOperand {
-        kind: SrcKind::ImmediateF32([3, 3, 3, 3]),
-        swizzle: Swizzle::XYZW,
-        modifier: OperandModifier::None,
-    };
-    let idiv_a = SrcOperand {
-        kind: SrcKind::ImmediateF32([0xfffffff9, 0xfffffff9, 0xfffffff9, 0xfffffff9]), // -7
-        swizzle: Swizzle::XYZW,
-        modifier: OperandModifier::None,
-    };
-    let idiv_b = SrcOperand {
-        kind: SrcKind::ImmediateF32([2, 2, 2, 2]),
-        swizzle: Swizzle::XYZW,
-        modifier: OperandModifier::None,
-    };
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
         model: ShaderModel { major: 5, minor: 0 },
         decls: Vec::new(),
         instructions: vec![
+            // Seed temp regs with float values that look like exact integers (e.g. 1.0).
+            //
+            // Integer ops must still consume the *raw bits* (0x3f800000, 0x40000000, ...), not
+            // numeric f32->i32/u32 conversions.
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 1.0, 1.0, 1.0]),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                src: src_imm([2.0, 2.0, 2.0, 2.0]),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 2, WriteMask::XYZW),
+                src: src_imm([-1.0, -1.0, -1.0, -1.0]),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 3, WriteMask::XYZW),
+                src: src_imm([2.0, 2.0, 2.0, 2.0]),
+            },
             Sm4Inst::UDiv {
-                dst_quot: dst(RegFile::Temp, 0, WriteMask::XYZW),
-                dst_rem: dst(RegFile::Temp, 1, WriteMask::XYZW),
-                a: udiv_a,
-                b: udiv_b,
+                dst_quot: dst(RegFile::Temp, 4, WriteMask::XYZW),
+                dst_rem: dst(RegFile::Temp, 5, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 1),
             },
             Sm4Inst::IDiv {
-                dst_quot: dst(RegFile::Temp, 2, WriteMask::XYZW),
-                dst_rem: dst(RegFile::Temp, 3, WriteMask::XYZW),
-                a: idiv_a,
-                b: idiv_b,
+                dst_quot: dst(RegFile::Temp, 6, WriteMask::XYZW),
+                dst_rem: dst(RegFile::Temp, 7, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 2),
+                b: src_reg(RegFile::Temp, 3),
             },
             // Ensure at least one result flows to the output.
             Sm4Inst::Mov {
                 dst: dst(RegFile::Output, 0, WriteMask::XYZW),
-                src: src_reg(RegFile::Temp, 0),
+                src: src_reg(RegFile::Temp, 4),
             },
             Sm4Inst::Ret,
         ],
@@ -2248,6 +2247,54 @@ fn translates_udiv_and_idiv_to_integer_division_and_modulo() {
     assert!(
         translated.wgsl.contains(" % "),
         "expected integer modulo operator in WGSL:\n{}",
+        translated.wgsl
+    );
+
+    // Integer sources should be derived purely via bitcasts from the untyped register file, with
+    // no float->int heuristics.
+    let udiv_a_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("let udiv_a"))
+        .expect("expected udiv_a line");
+    assert!(
+        udiv_a_line.contains("bitcast<vec4<u32>>(r0)"),
+        "expected udiv_a to come from raw bits of r0:\n{udiv_a_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    let udiv_b_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("let udiv_b"))
+        .expect("expected udiv_b line");
+    assert!(
+        udiv_b_line.contains("bitcast<vec4<u32>>(r1)"),
+        "expected udiv_b to come from raw bits of r1:\n{udiv_b_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    let idiv_a_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("let idiv_a"))
+        .expect("expected idiv_a line");
+    assert!(
+        idiv_a_line.contains("bitcast<vec4<i32>>(r2)"),
+        "expected idiv_a to come from raw bits of r2:\n{idiv_a_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    let idiv_b_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("let idiv_b"))
+        .expect("expected idiv_b line");
+    assert!(
+        idiv_b_line.contains("bitcast<vec4<i32>>(r3)"),
+        "expected idiv_b to come from raw bits of r3:\n{idiv_b_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("floor(") && !translated.wgsl.contains("select("),
+        "udiv/idiv lowering should not use float-vs-bitcast heuristics:\n{}",
         translated.wgsl
     );
 }

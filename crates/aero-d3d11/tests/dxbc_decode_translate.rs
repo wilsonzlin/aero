@@ -675,7 +675,23 @@ fn decodes_and_translates_switch_shader_from_dxbc() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
 
-    assert!(translated.wgsl.contains("switch("));
+    let switch_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("switch("))
+        .expect("expected a switch statement");
+    assert!(
+        switch_line.contains("bitcast<vec4<i32>>"),
+        "expected switch selector to be derived from raw integer bits:\n{switch_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !switch_line.contains("floor(")
+            && !switch_line.contains("select(")
+            && !switch_line.contains("i32("),
+        "switch lowering should not use float-vs-bitcast heuristics:\n{switch_line}\n\nWGSL:\n{}",
+        translated.wgsl
+    );
     assert!(translated.wgsl.contains("case 0i"));
     assert!(translated.wgsl.contains("default:"));
 }
