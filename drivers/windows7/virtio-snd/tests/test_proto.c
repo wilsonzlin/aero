@@ -91,6 +91,28 @@ static void test_pcm_format_bytes_per_sample_mapping(void)
     assert(bytes == 0u);
 }
 
+static void test_pcm_format_bits_per_sample_mapping(void)
+{
+    USHORT bits;
+
+    bits = 0;
+    assert(VirtioSndPcmFormatToBitsPerSample(VIRTIO_SND_PCM_FMT_S16, &bits));
+    assert(bits == 16u);
+
+    /* S24/U24 are 24-bit in a 32-bit container => 32 bits per sample. */
+    bits = 0;
+    assert(VirtioSndPcmFormatToBitsPerSample(VIRTIO_SND_PCM_FMT_S24, &bits));
+    assert(bits == 32u);
+
+    bits = 0;
+    assert(VirtioSndPcmFormatToBitsPerSample(VIRTIO_SND_PCM_FMT_U24, &bits));
+    assert(bits == 32u);
+
+    bits = 123;
+    assert(!VirtioSndPcmFormatToBitsPerSample(0xFFu, &bits));
+    assert(bits == 0u);
+}
+
 static void test_tx_builds_hdr_pcm_status_chain(void)
 {
     VIRTIO_TEST_QUEUE q;
@@ -820,6 +842,7 @@ static void test_control_capture_state_machine(void)
 int main(void)
 {
     test_pcm_format_bytes_per_sample_mapping();
+    test_pcm_format_bits_per_sample_mapping();
     test_tx_rejects_misaligned_pcm_bytes();
     test_tx_builds_hdr_pcm_status_chain();
     test_tx_split_payload_and_silence_fill();
