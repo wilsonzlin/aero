@@ -350,6 +350,83 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
     )
 
 
+def strip_inf_sections_bytes(data: bytes, *, drop_sections: set[str]) -> bytes:
+    """Remove entire INF sections (including their headers) by name (case-insensitive).
+
+    This is a byte-preserving transform: it does not normalize whitespace or line
+    endings. It is used to allow controlled divergence in specific sections
+    (e.g. virtio-input models sections) while still enforcing byte-for-byte
+    identity everywhere else.
+    """
+
+    drop = {s.lower() for s in drop_sections}
+    out: list[bytes] = []
+    skipping = False
+
+    for line in data.splitlines(keepends=True):
+        # Support UTF-16LE/BE INFs by stripping NUL bytes for detection only.
+        line_ascii = line.replace(b"\x00", b"")
+        stripped = line_ascii.lstrip(b" \t")
+        if stripped.startswith(b"[") and b"]" in stripped:
+            end = stripped.find(b"]")
+            name = stripped[1:end].strip().decode("utf-8", errors="replace").lower()
+            skipping = name in drop
+        if skipping:
+            continue
+        out.append(line)
+
+    return b"".join(out)
+
+
+def check_inf_alias_drift_excluding_sections_bytes(
+    *, canonical: Path, alias: Path, repo_root: Path, label: str, drop_sections: set[str]
+) -> str | None:
+    """
+    Compare the canonical INF against its legacy filename alias while excluding specific sections.
+
+    Policy: from the first section header onward, the alias must be byte-for-byte
+    identical to the canonical INF outside the excluded sections. Only the
+    leading banner/comment block may differ.
+    """
+
+    try:
+        canonical_body = strip_inf_sections_bytes(inf_functional_bytes(canonical), drop_sections=drop_sections)
+        alias_body = strip_inf_sections_bytes(inf_functional_bytes(alias), drop_sections=drop_sections)
+    except Exception as e:
+        return f"{label}: failed to read INF functional bytes: {e}"
+
+    if canonical_body == alias_body:
+        return None
+
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+
+    def _decode_lines_for_diff(data: bytes) -> list[str]:
+        if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+            text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
+        elif data.startswith(b"\xef\xbb\xbf"):
+            text = data.decode("utf-8-sig", errors="replace")
+        else:
+            text = data.decode("utf-8", errors="replace")
+            # If this was UTF-16 without a BOM, it will look like NUL-padded UTF-8.
+            if "\x00" in text:
+                text = text.replace("\x00", "")
+        return text.splitlines(keepends=True)
+
+    ignored = sorted(drop_sections)
+    ignored_line = f"Ignored sections: {ignored}\n\n" if ignored else ""
+
+    diff = difflib.unified_diff(
+        _decode_lines_for_diff(canonical_body),
+        _decode_lines_for_diff(alias_body),
+        fromfile=canonical_label,
+        tofile=alias_label,
+        lineterm="\n",
+    )
+
+    return f"{label}: INF alias drift detected outside ignored sections:\n" + ignored_line + "".join(diff)
+
+
 def parse_contract_major_version(md: str) -> int:
     m = re.search(r"^\*\*Contract version:\*\*\s*`(?P<major>\d+)\.", md, flags=re.M)
     if not m:
@@ -4573,17 +4650,19 @@ def main() -> None:
         # DeviceDesc strings for each function so they appear separately in Device Manager.
         #
         # Policy note:
-        # - The canonical virtio-input INF binds to SUBSYS-qualified keyboard/mouse HWIDs
-        #   for distinct naming and includes a strict revision-gated generic fallback
-        #   HWID (no SUBSYS) for environments where subsystem IDs are not exposed/recognized.
-        # - The legacy filename alias INF is a filename alias only and must remain
-        #   byte-identical to the canonical INF from the first section header onward.
+        # - The canonical virtio-input INF is intentionally SUBSYS-only: it binds to
+        #   SUBSYS-qualified keyboard/mouse HWIDs for distinct naming, and does *not*
+        #   include a strict generic fallback HWID.
+        # - A legacy filename alias INF exists for compatibility with older tooling.
+        #   That alias may add an opt-in strict generic fallback in the models sections,
+        #   but must otherwise remain byte-identical to the canonical INF from the
+        #   first section header onward.
         if device_name == "virtio-input":
             validate_virtio_input_model_lines(
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=True,
+                require_fallback=False,
                 errors=errors,
             )
 
@@ -4600,7 +4679,9 @@ def main() -> None:
         )
 
     # Policy: `virtio-input.inf.disabled` is a legacy basename alias kept for compatibility.
-    # It is a filename alias only: from the first section header (`[Version]`) onward,
+    # It is allowed to diverge from the canonical INF only in the models sections
+    # (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in strict generic fallback HWID.
+    # Outside those models sections, from the first section header (`[Version]`) onward,
     # it must remain byte-for-byte identical to the canonical INF (only the leading
     # banner/comments may differ).
     if not virtio_input_alias_disabled.exists():
@@ -4615,8 +4696,9 @@ def main() -> None:
 
         # The legacy alias INF is kept for compatibility with workflows/tools that reference the
         # legacy `virtio-input.inf` name.
-        # Policy: it is a filename alias only. From the first section header (`[Version]`)
-        # onward, it must remain byte-for-byte identical to the canonical INF.
+        # Policy: it may add a strict generic fallback model line in its models sections, but
+        # otherwise must remain byte-for-byte identical to the canonical INF from the first
+        # section header (`[Version]`) onward.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -4625,11 +4707,12 @@ def main() -> None:
             errors=errors,
         )
 
-        drift = check_inf_alias_drift(
+        drift = check_inf_alias_drift_excluding_sections_bytes(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
+            drop_sections={"aero.ntx86", "aero.ntamd64"},
         )
         if drift:
             errors.append(drift)
