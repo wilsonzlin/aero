@@ -521,10 +521,17 @@ mod tests {
         let src_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cmd_input.rs");
         let src =
             fs::read_to_string(&src_path).unwrap_or_else(|err| panic!("read {src_path:?}: {err}"));
-        let occurrences = src.matches(INPUT_BATCH_MALFORMED_SPEC).count();
+
+        // Derive the file name from the curated spec path so we don't introduce a second literal
+        // occurrence of the spec's basename in this source file.
+        let spec_basename = INPUT_BATCH_MALFORMED_SPEC
+            .rsplit('/')
+            .next()
+            .expect("spec path should have at least one segment");
+        let occurrences = src.matches(spec_basename).count();
         assert_eq!(
             occurrences, 1,
-            "expected {INPUT_BATCH_MALFORMED_SPEC} to appear exactly once in {src_path:?}"
+            "expected {spec_basename} to appear exactly once in {src_path:?}"
         );
     }
 
