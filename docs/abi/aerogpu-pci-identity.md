@@ -23,13 +23,16 @@ The canonical machine supports **two mutually-exclusive** display configurations
   - **WDDM memory model:** the in-tree Win7 AeroGPU driver treats the adapter as
     system-memory-backed (no dedicated VRAM segment). BAR1 exists for VGA/VBE compatibility and is
     outside the WDDM ABI (see `docs/graphics/win7-wddm11-aerogpu-driver.md`).
-  - **BAR0 regs:** a **minimal** implementation of the versioned MMIO + ring/fence transport (enough
-    for the in-tree Win7 KMD to initialize and advance fences), plus BAR0 scanout/vblank register
-    storage/pacing and host-facing scanout presentation. It still does **not** execute real command
-    streams (AEROGPU_CMD) in `aero_machine`.
+  - **BAR0 regs:** a minimal implementation of the versioned AeroGPU MMIO surface:
+    - ring/fence transport with a *no-op* executor (submissions are consumed and fences complete, but
+      the command stream is not executed), and
+    - scanout0 register storage + vblank timing/IRQ semantics (per `drivers/aerogpu/protocol/vblank.md`;
+      vblank time is a monotonic “nanoseconds since boot” value) so `Machine::display_present` can
+      present the WDDM scanout framebuffer by reading its guest physical address from guest memory.
 
-  The reference/full versioned-AeroGPU device model (command execution + full protocol surface)
-  still lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
+  The reference/full versioned-AeroGPU device model with real **command execution** (GPU worker
+  backends, transfer/render operations, etc) still lives in `crates/emulator` and is not yet wired
+  into `aero_machine::Machine`.
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000` (see

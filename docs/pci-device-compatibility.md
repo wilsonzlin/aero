@@ -18,8 +18,10 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
   - Note: the in-tree Win7 AeroGPU driver treats the adapter as system-memory-backed (no dedicated
     WDDM VRAM segment). BAR1 is outside the WDDM memory model (see
     `docs/graphics/win7-wddm11-aerogpu-driver.md`).
-  - BAR0 implements a minimal MMIO + ring/fence transport stub (enough for the Win7 KMD to
-    initialize and advance fences), but does **not** yet execute commands or drive WDDM scanout/vblank.
+  - BAR0 implements a minimal MMIO surface sufficient for the in-tree Win7 KMD to initialize:
+    - ring/fence transport (no-op command execution; fences complete), and
+    - scanout0 register storage + vblank counters/IRQ semantics for `WaitForVerticalBlankEvent`
+      pacing (see `drivers/aerogpu/protocol/vblank.md`).
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation
   (`aero_gpu_vga`) plus a **transitional** PCI VGA stub at `00:0c.0` (`1234:1111`) used only for
   boot display / VBE LFB routing. This stub is not part of the long-term Windows paravirtual device

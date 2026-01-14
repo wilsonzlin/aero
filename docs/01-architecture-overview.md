@@ -247,10 +247,12 @@ Note on boot display vs AeroGPU:
   and implements permissive legacy VGA decode (VGA port I/O + VRAM-backed `0xA0000..0xBFFFF`
   window; see `docs/16-aerogpu-vga-vesa-compat.md`). Note: the in-tree Win7 AeroGPU driver treats
   the adapter as system-memory-backed (no dedicated WDDM VRAM segment); BAR1 exists for VGA/VBE
-  compatibility and is outside the WDDM memory model. BAR0 implements only a minimal
-  MMIO + ring/fence transport stub (no-op command execution; enough for the Win7 KMD to initialize
-  and advance fences). The full versioned-AeroGPU device model (command execution + scanout + vblank
-  pacing) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
+  compatibility and is outside the WDDM memory model. BAR0 implements a minimal MMIO surface
+  (ring/fence transport with a no-op executor + scanout0/vblank register storage/pacing and
+  host-facing scanout presentation).
+
+  The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
+  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 - The long-term plan is for the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) to also provide
   VGA/VBE compatibility; see:
   - [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)

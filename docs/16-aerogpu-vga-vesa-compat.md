@@ -22,15 +22,16 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   VRAM aperture). In `aero_machine` today this wires the **BAR1 VRAM aperture** to a dedicated
   host-backed VRAM buffer and implements minimal **legacy VGA decode** (permissive VGA port I/O +
   a VRAM-backed `0xA0000..0xBFFFF` window). An MVP BAR0 device model is also present (ring/fence
-  transport + scanout/cursor regs + vblank pacing), and `Machine::display_present()` will prefer
-  the WDDM-programmed scanout framebuffer once scanout0 is enabled.
+  transport with a no-op executor + scanout/cursor regs + vblank pacing), and `Machine::display_present()`
+  will prefer the WDDM-programmed scanout framebuffer once scanout0 is enabled.
 
   Concretely:
 
   - VRAM backing + legacy decode: `crates/aero-machine/src/lib.rs` (`AeroGpuDevice`,
     `AeroGpuLegacyVgaMmio`, `AeroGpuVgaPortWindow`)
-  - BAR0 MMIO + ring/fence transport (no-op command execution): `crates/aero-machine/src/aerogpu.rs`
-    (`AeroGpuMmioDevice`)
+  - BAR0 MMIO + ring/fence + scanout/vblank register storage: `crates/aero-machine/src/aerogpu.rs`
+    (`AeroGpuMmioDevice`) + host presentation in `crates/aero-machine/src/lib.rs`
+    (`Machine::display_present_aerogpu_scanout`)
 
   The BIOS VBE implementation uses a linear framebuffer inside BAR1. `aero_machine` sets the VBE
   `PhysBasePtr` to `BAR1_BASE + 0x40000` (see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`) so

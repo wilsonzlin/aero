@@ -23,11 +23,14 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
   permissive legacy VGA decode (VGA port I/O + VRAM-backed `0xA0000..0xBFFFF` window; see
   `docs/16-aerogpu-vga-vesa-compat.md`). Note: the in-tree Win7 AeroGPU driver treats the adapter
   as system-memory-backed (no dedicated WDDM VRAM segment); BAR1 is outside the WDDM memory model.
-  BAR0 implements only a minimal MMIO + ring/fence transport stub (no-op command execution; enough
-  for the Win7 KMD to initialize and advance fences).
+  BAR0 implements a minimal MMIO surface:
+  - ring/fence transport with a no-op executor (fences complete without executing the command
+    stream), and
+  - scanout0/vblank register storage so the host can present a guest-programmed scanout framebuffer
+    and the Win7 stack can use vblank pacing primitives (see `drivers/aerogpu/protocol/vblank.md`).
 
-  The full versioned-AeroGPU device model (command execution + scanout + vblank pacing) lives in
-  `crates/emulator` and is not yet wired into `aero_machine::Machine`.
+  The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
+  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
   `aero_gpu_vga` (VGA + Bochs VBE), plus a minimal Bochs/QEMU “Standard VGA”-like PCI stub at
   `00:0c.0` (`1234:1111`) used only for VBE LFB MMIO routing.
