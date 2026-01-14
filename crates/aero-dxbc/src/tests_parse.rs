@@ -118,6 +118,31 @@ fn parse_ignores_trailing_bytes_beyond_total_size() {
 }
 
 #[test]
+fn parse_allows_zero_sized_chunk_at_eof() {
+    // A container with a single chunk whose header ends exactly at EOF and whose
+    // payload length is 0. This exercises the boundary case data_start==total_size.
+    let total_size = 44u32;
+    let chunk_offset = 36u32;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    bytes.extend_from_slice(&total_size.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    bytes.extend_from_slice(&chunk_offset.to_le_bytes());
+
+    bytes.extend_from_slice(b"JUNK");
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // size=0
+
+    assert_eq!(bytes.len(), total_size as usize);
+
+    let file = DxbcFile::parse(&bytes).expect("parse should succeed");
+    let chunk = file.get_chunk(FourCC(*b"JUNK")).expect("missing JUNK");
+    assert!(chunk.data.is_empty());
+}
+
+#[test]
 fn malformed_bad_magic_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     bytes[0..4].copy_from_slice(b"NOPE");
