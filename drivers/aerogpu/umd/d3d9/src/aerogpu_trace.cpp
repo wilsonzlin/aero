@@ -493,6 +493,8 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetPriority";
     case D3d9TraceFunc::TraceTestStub:
       return "Trace::TestStub (stub)";
+    case D3d9TraceFunc::TraceTestStub2:
+      return "Trace::TestStub2 (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }

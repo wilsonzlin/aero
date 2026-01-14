@@ -184,6 +184,10 @@ enum class D3d9TraceFunc : uint16_t {
   // Trace-only entrypoint used by host tests to exercise "(stub)" tagging and
   // dump-on-stub behavior without mislabeling real DDIs.
   TraceTestStub,
+  // Second trace-only stub entrypoint used by host tests to ensure dump-on-stub
+  // behavior is driven by the "(stub)" marker in the trace name rather than
+  // a single hard-coded trace ID.
+  TraceTestStub2,
 
   kCount,
 };
