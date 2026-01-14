@@ -9,15 +9,18 @@
 //! - raw D3D9 token streams (no `DXBC` header)
 //!
 //! This module provides:
-//! - payload format detection + DXBC extraction
-//! - translation to WGSL using `aero-d3d9`
+//! - payload format detection (DXBC container vs raw D3D9 token stream)
+//! - translation to WGSL using the canonical `aero-d3d9` SM3-first translator (with legacy
+//!   fallback)
 //! - caching of WGSL + compiled `wgpu::ShaderModule`s keyed by a strong hash of the original bytes
 
 use std::collections::HashMap;
 
-use aero_d3d9::sm3::wgsl::{BindGroupLayout, Sm3WgslError};
+use aero_d3d9::shader;
+use aero_d3d9::shader_translate::{self, ShaderTranslateError};
+use aero_d3d9::sm3::decode::TextureType;
+use aero_d3d9::sm3::wgsl::BindGroupLayout;
 use aero_d3d9::sm3::{ShaderStage, ShaderVersion};
-use aero_dxbc::{DxbcError, DxbcFile};
 use tracing::debug;
 
 /// Maximum accepted D3D9 shader payload size in bytes.
@@ -50,14 +53,10 @@ impl ShaderPayloadFormat {
 
 #[derive(Debug, thiserror::Error)]
 pub enum D3d9ShaderCacheError {
-    #[error("DXBC container missing SHDR/SHEX shader chunk")]
-    DxbcMissingShaderChunk,
     #[error("shader payload length {len} exceeds maximum {max} bytes")]
     PayloadTooLarge { len: usize, max: usize },
-    #[error("dxbc error: {0}")]
-    Dxbc(#[from] DxbcError),
-    #[error("sm3 translation error: {0}")]
-    Sm3(#[from] Sm3WgslError),
+    #[error("shader translation error: {0}")]
+    Translate(#[from] ShaderTranslateError),
     #[error("shader handle {0} already exists")]
     HandleAlreadyExists(u32),
     #[error("shader stage mismatch: expected {expected:?}, found {found:?}")]
@@ -130,24 +129,25 @@ impl D3d9ShaderCache {
         let hash = match self.by_hash.entry(hash) {
             std::collections::hash_map::Entry::Occupied(entry) => *entry.key(),
             std::collections::hash_map::Entry::Vacant(entry) => {
-                let token_stream = extract_token_stream(payload_format, bytes)?;
-                let translated = aero_d3d9::sm3::wgsl::translate_to_wgsl(token_stream)?;
+                let translated = shader_translate::translate_d3d9_shader_to_wgsl(
+                    bytes,
+                    shader::WgslOptions::default(),
+                )?;
+
+                let bind_group_layout = derive_bind_group_layout(&translated);
+                let version = translate_version(&translated.version);
 
                 let hash = *entry.key();
                 debug!(
                     shader_hash = %hash.to_hex(),
                     format = ?payload_format,
-                    stage = ?translated.version.stage,
-                    sm_major = translated.version.major,
-                    sm_minor = translated.version.minor,
+                    stage = ?version.stage,
+                    sm_major = version.major,
+                    sm_minor = version.minor,
                     "aerogpu d3d9 shader payload"
                 );
 
-                let label = format!(
-                    "aerogpu-d3d9-shader-{:?}-{}",
-                    translated.version.stage,
-                    hash.to_hex()
-                );
+                let label = format!("aerogpu-d3d9-shader-{:?}-{}", version.stage, hash.to_hex());
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(&label),
                     source: wgpu::ShaderSource::Wgsl(translated.wgsl.clone().into()),
@@ -156,10 +156,10 @@ impl D3d9ShaderCache {
                 entry.insert(CachedD3d9Shader {
                     hash,
                     payload_format,
-                    version: translated.version,
+                    version,
                     wgsl: translated.wgsl,
                     entry_point: translated.entry_point,
-                    bind_group_layout: translated.bind_group_layout,
+                    bind_group_layout,
                     module,
                 });
                 hash
@@ -185,17 +185,42 @@ impl D3d9ShaderCache {
     }
 }
 
-fn extract_token_stream(
-    format: ShaderPayloadFormat,
-    bytes: &[u8],
-) -> Result<&[u8], D3d9ShaderCacheError> {
-    match format {
-        ShaderPayloadFormat::D3d9TokenStream => Ok(bytes),
-        ShaderPayloadFormat::Dxbc => {
-            let dxbc = DxbcFile::parse(bytes)?;
-            dxbc.find_first_shader_chunk()
-                .map(|chunk| chunk.data)
-                .ok_or(D3d9ShaderCacheError::DxbcMissingShaderChunk)
-        }
+fn translate_version(version: &shader::ShaderVersion) -> ShaderVersion {
+    let stage = match version.stage {
+        shader::ShaderStage::Vertex => ShaderStage::Vertex,
+        shader::ShaderStage::Pixel => ShaderStage::Pixel,
+    };
+    ShaderVersion {
+        stage,
+        major: version.model.major,
+        minor: version.model.minor,
+    }
+}
+
+fn derive_bind_group_layout(translated: &shader_translate::ShaderTranslation) -> BindGroupLayout {
+    let sampler_group = match translated.version.stage {
+        shader::ShaderStage::Vertex => 1,
+        shader::ShaderStage::Pixel => 2,
+    };
+
+    let mut sampler_bindings = HashMap::new();
+    let mut sampler_texture_types = HashMap::new();
+    for &s in &translated.used_samplers {
+        let s_u32 = u32::from(s);
+        sampler_bindings.insert(s_u32, (2 * s_u32, 2 * s_u32 + 1));
+        sampler_texture_types.insert(
+            s_u32,
+            translated
+                .sampler_texture_types
+                .get(&s)
+                .copied()
+                .unwrap_or(TextureType::Texture2D),
+        );
+    }
+
+    BindGroupLayout {
+        sampler_group,
+        sampler_bindings,
+        sampler_texture_types,
     }
 }

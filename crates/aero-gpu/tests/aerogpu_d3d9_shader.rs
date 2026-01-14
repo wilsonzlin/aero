@@ -135,6 +135,19 @@ fn assemble_ps_tex_mad() -> Vec<u8> {
     to_bytes(&out)
 }
 
+fn assemble_ps_unknown_opcode_fallback() -> Vec<u8> {
+    // ps_2_0
+    let mut out = vec![0xFFFF0200];
+    // Unknown opcode that is rejected by the strict SM3 pipeline but skipped by the legacy
+    // translator.
+    out.extend(enc_inst(0x1234, &[]));
+    // mov oC0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // end
+    out.push(0x0000FFFF);
+    to_bytes(&out)
+}
+
 #[test]
 fn d3d9_shader_cache_rejects_oversized_payloads() {
     let Some((device, _queue)) = create_test_device() else {
@@ -493,4 +506,20 @@ fn dxbc_prefixed_payload_is_detected_and_translated() {
     assert_eq!(shader.payload_format, ShaderPayloadFormat::Dxbc);
     assert_eq!(shader.version.major, 2);
     assert!(shader.wgsl.contains("textureSample"));
+}
+
+#[test]
+fn d3d9_shader_cache_legacy_fallback_allows_unknown_opcode() {
+    let Some((device, _queue)) = create_test_device() else {
+        common::skip_or_panic(module_path!(), "no wgpu adapter available");
+        return;
+    };
+
+    let ps_bytes = assemble_ps_unknown_opcode_fallback();
+    let mut cache = D3d9ShaderCache::new();
+
+    // Should succeed via `aero_d3d9::shader_translate`'s legacy fallback path.
+    cache
+        .create_shader(&device, 1, ShaderStage::Pixel, &ps_bytes)
+        .unwrap();
 }
