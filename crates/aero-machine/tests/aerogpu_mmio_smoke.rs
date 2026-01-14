@@ -242,6 +242,46 @@ fn aerogpu_mmio_scanout_and_cursor_present() {
         m.display_framebuffer(),
         &[0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00]
     );
+
+    // Fully transparent cursor pixel should not affect the underlying scanout.
+    let cursor3_gpa = 0x203000u64;
+    let cursor3_bytes: [u8; 4] = [0xFF, 0x00, 0x00, 0x00]; // red @ alpha=0
+    m.write_physical(cursor3_gpa, &cursor3_bytes);
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_WIDTH), 1);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT),
+        1,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FORMAT),
+        pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES),
+        4,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO),
+        cursor3_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI),
+        (cursor3_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_X), 0);
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_Y), 0);
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HOT_X), 0);
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y), 0);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_CURSOR_ENABLE),
+        1,
+    );
+    m.display_present();
+    assert_eq!(m.display_resolution(), (2, 2));
+    assert_eq!(
+        m.display_framebuffer(),
+        &[0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00, 0xFF00_FF00]
+    );
 }
 
 #[test]
