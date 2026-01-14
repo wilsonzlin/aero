@@ -251,6 +251,12 @@ import {
   AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
 } from "../aerogpu/aerogpu_wddm_alloc.ts";
 
+// This constant is part of the stable Windows device contract; we intentionally lock its numeric
+// value so it cannot drift due to coordinated edits across the C/Rust/TS mirrors.
+test("AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES is 0x40_000 (stable device contract)", () => {
+  assert.equal(AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES, 0x40_000);
+});
+
 type AbiDump = {
   sizes: Map<string, number>;
   offsets: Map<string, number>;
