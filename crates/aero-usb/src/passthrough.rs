@@ -1296,6 +1296,109 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_control_in_action_with_host_to_device_setup() {
+        // ControlIn actions must encode a device-to-host setup packet.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            .u8(1) // ControlIn
+            .u32(1) // action id
+            // SetupPacket (host-to-device, invalid for ControlIn)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_out_action_with_device_to_host_setup() {
+        // ControlOut actions must encode a host-to-device setup packet.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            .u8(2) // ControlOut
+            .u32(1) // action id
+            // SetupPacket (device-to-host, invalid for ControlOut)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_out_action_with_data_length_mismatch() {
+        // ControlOut data length must match wLength.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            .u8(2) // ControlOut
+            .u32(1) // action id
+            // SetupPacket (host-to-device, wLength=2)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(2)
+            // data length (1) + data bytes
+            .u32(1)
+            .u8(0xaa)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_in_action_with_out_endpoint() {
+        // BulkIn endpoint must be an IN endpoint address.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1)
+            .u8(3) // BulkIn
+            .u32(1)
+            .u8(0x01) // OUT endpoint address
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_out_action_with_in_endpoint() {
+        // BulkOut endpoint must be an OUT endpoint address.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1)
+            .u8(4) // BulkOut
+            .u32(1)
+            .u8(0x81) // IN endpoint address
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_in_length_over_limit() {
+        const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(1)
+            .u8(3) // BulkIn
+            .u32(1)
+            .u8(0x81)
+            .u32(MAX_DATA_BYTES + 1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
     fn snapshot_load_rejects_action_payload_over_limit_before_reading_bytes() {
         // Intentionally truncate the snapshot after the oversized action payload length.
         // If the implementation tried to read the payload, we'd get UnexpectedEof instead of an
@@ -1365,6 +1468,21 @@ mod tests {
             .u32(1)
             .u32(1) // completion id
             .u8(1) // OkIn
+            .u32(MAX_DATA_BYTES + 1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_completion_ok_out_bytes_written_over_limit() {
+        const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(2) // OkOut
             .u32(MAX_DATA_BYTES + 1)
             .finish();
         let err = snapshot_load_err(bytes);
@@ -1571,6 +1689,59 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_invalid_inflight_endpoint_address() {
+        // endpoint address must have endpoint number 1..=15, reserved bits clear.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(1) // ep_count
+            .u8(0x80) // invalid endpoint number 0
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_inflight_endpoint_length_over_limit() {
+        const MAX_DATA_BYTES: u32 = 4 * 1024 * 1024;
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(1) // ep_count
+            .u8(0x81)
+            .u32(1) // inflight id
+            .u32(MAX_DATA_BYTES + 1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_inflight_id_collision_between_endpoints() {
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(2) // ep_count
+            // endpoint 0x81, inflight id=1
+            .u8(0x81)
+            .u32(1)
+            .u32(8)
+            // endpoint 0x82, same inflight id=1 (collision)
+            .u8(0x82)
+            .u32(1)
+            .u32(8)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
     fn snapshot_load_rejects_inflight_id_collision_between_control_and_endpoint() {
         let bytes = Encoder::new()
             .u32(1)
@@ -1619,6 +1790,94 @@ mod tests {
             .u16(0)
             // has_data bool (invalid)
             .u8(2)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_inflight_device_to_host_with_data_stage() {
+        // Device-to-host (IN) control transfers must not include an OUT DATA stage.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (device-to-host, wLength=0)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .bool(true) // has_data (invalid for device-to-host)
+            .u32(0) // data length
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_inflight_wlength_zero_with_data_stage() {
+        // Host-to-device (OUT) control transfers with wLength=0 must not include a DATA stage.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (host-to-device, wLength=0)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .bool(true) // has_data (invalid when wLength=0)
+            .u32(0)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_inflight_missing_data_stage() {
+        // Host-to-device control transfers with wLength>0 must include a DATA stage.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (host-to-device, wLength=1)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(1)
+            .bool(false) // has_data (missing)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_inflight_data_stage_length_mismatch() {
+        // Host-to-device control transfers must have DATA stage length == wLength.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (host-to-device, wLength=2)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(2)
+            .bool(true) // has_data
+            .u32(1) // data length (mismatch)
+            .u8(0xaa)
             .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
