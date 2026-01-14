@@ -485,8 +485,10 @@ impl XhciControllerBridge {
 
     /// Attach a USB hub device to a root port.
     ///
-    /// `port_count` is the number of downstream ports on the hub (1..=15). This is capped to 15 to
-    /// preserve xHCI route-string constraints (hub port numbers are encoded as 4-bit nibbles).
+    /// `port_count` is the number of downstream ports on the hub.
+    ///
+    /// This is clamped to `1..=15` to preserve xHCI route-string constraints (hub port numbers are
+    /// encoded as 4-bit nibbles).
     pub fn attach_hub(&mut self, root_port: u32, port_count: u32) -> Result<(), JsValue> {
         let ctrl_ports = self.ctrl.port_count();
         let reserved_port = self.webusb_root_port();
@@ -501,14 +503,9 @@ impl XhciControllerBridge {
                 "xHCI root port out of range (expected 0..={max})"
             )));
         }
-        if !(1..=XHCI_MAX_ROUTE_PORT).contains(&port_count) {
-            return Err(js_error(format!(
-                "xHCI hub port count must be in 1..={XHCI_MAX_ROUTE_PORT}"
-            )));
-        }
 
         let root_port = root_port as u8;
-        let port_count = port_count as u8;
+        let port_count = port_count.clamp(1, XHCI_MAX_ROUTE_PORT) as u8;
 
         // Replace semantics: detach any existing device at the root port first.
         let _ = self.ctrl.detach_at_path(&[root_port]);
