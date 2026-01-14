@@ -15,7 +15,7 @@ This repo supports input in two different (but related) integration styles:
 - **Browser worker runtime (production)**
   - A main-thread coordinator plus a **CPU worker** (executes guest CPU in WASM) and an **I/O worker** (owns device models + routing).
   - Browser input is captured + batched in `web/src/input/*` and delivered to the I/O worker (`web/src/workers/io.worker.ts`) as `in:input-batch` messages.
-  - The I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind UHCI** (when enabled).
+  - The I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind the guest-visible USB controller** (when enabled; UHCI by default, with EHCI/xHCI fallbacks in some WASM builds).
 
 When editing the browser runtime input pipeline, treat `web/src/input/*` + `web/src/workers/io.worker.ts` as canonical; the `aero-wasm::Machine` injection API is an ergonomic/testing surface.
 
@@ -27,7 +27,7 @@ The WASM-facing `Machine` wrapper exposes **explicit** input injection methods f
 
 - **PS/2 via i8042** (legacy; always works)
 - **virtio-input** (paravirtualized; requires the Aero Win7 virtio-input driver; opt-in at construction time)
-- **synthetic USB HID devices behind UHCI** (keyboard + mouse + gamepad + consumer-control; opt-in at construction time)
+- **synthetic USB HID devices behind the guest-visible USB controller** (keyboard + mouse + gamepad + consumer-control; opt-in at construction time; UHCI by default)
 
 To opt into the additional backends from JS, construct the machine via:
 
@@ -84,10 +84,10 @@ Driver status helpers exist for routing decisions:
 
 These calls are only meaningful once the guest driver has finished initialization (i.e. after the guest sets `DRIVER_OK`).
 
-#### USB HID (synthetic devices behind UHCI)
+#### USB HID (synthetic devices behind the external hub)
 
 In the production browser runtime, browser keyboard/mouse/gamepad input (including consumer-control
-“media keys”) can be exposed to the guest as **synthetic USB HID devices behind the UHCI external
+“media keys”) can be exposed to the guest as **synthetic USB HID devices behind the external
 hub** (inbox Win7 drivers).
 
 For the full-system `Machine` wrapper, synthetic USB HID injection is available via:
@@ -836,7 +836,7 @@ The worker decodes the `InputEventType` stream and routes each event into the cu
 
 - **PS/2 fallback**: i8042 + PS/2 keyboard/mouse (`crates/aero-devices-input` is the canonical model; the browser runtime uses an equivalent bridge/model).
 - **virtio-input fast path**: routed to the virtio-input PCI functions (once the guest sets `DRIVER_OK`).
-- **USB HID**: routed to synthetic USB HID devices behind the UHCI external hub (or to passthrough devices when enabled).
+- **USB HID**: routed to synthetic USB HID devices behind the external hub on root port 0 (or to passthrough devices when enabled).
 
 #### Scancode Translation
 

@@ -37,7 +37,7 @@ Aero supports input through two different integration styles:
   - Main thread captures browser events and batches them in `web/src/input/*`.
   - The **I/O worker** (`web/src/workers/io.worker.ts`) receives batches (`in:input-batch`) and routes them to:
     - **virtio-input** (fast path, once the guest driver sets `DRIVER_OK`)
-    - **synthetic USB HID devices behind UHCI** (when enabled/available)
+    - **synthetic USB HID devices behind the guest-visible USB controller** (when enabled/available; UHCI by default, with EHCI/xHCI fallbacks in some WASM builds)
     - **PS/2 i8042** fallback (via the `aero-devices-input` model / equivalents)
 
 ---
@@ -110,7 +110,7 @@ Browser DOM events
   → `web/src/input/*` capture + batching
   → `postMessage({ type: "in:input-batch", buffer })`
   → `web/src/workers/io.worker.ts` (route + inject)
-     → virtio-input (fast path) OR USB HID (UHCI) OR PS/2 i8042 (fallback)
+     → virtio-input (fast path) OR USB HID (guest-visible USB controller; UHCI by default) OR PS/2 i8042 (fallback)
   → Windows 7 guest input stacks
 ```
 
@@ -120,17 +120,17 @@ Routing policy (high level):
 - **Mouse:** virtio-input (when `DRIVER_OK`) → PS/2 until the synthetic USB mouse is configured → synthetic USB mouse (once configured; or if PS/2 is unavailable)
 - **Gamepad:** synthetic USB gamepad (no PS/2 fallback)
 
-### USB HID devices behind UHCI (synthetic + passthrough)
+### USB HID devices behind the external hub (synthetic + passthrough)
 
 The browser runtime can expose input as guest-visible USB HID devices in two ways:
 
-- **Synthetic HID devices** (keyboard/mouse/gamepad/consumer-control) attached behind the UHCI external hub (see `web/src/usb/uhci_external_hub.ts` and the attachment logic in `web/src/workers/io.worker.ts`).
-- **Physical device passthrough** via WebHID/WebUSB, bridged into UHCI (see `docs/webhid-webusb-passthrough.md`).
+- **Synthetic HID devices** (keyboard/mouse/gamepad/consumer-control) attached behind the external hub on root port 0 (see `web/src/usb/uhci_external_hub.ts` and the attachment logic in `web/src/workers/io.worker.ts`).
+- **Physical device passthrough** via WebHID/WebUSB, bridged into the guest-visible USB controller topology (see `docs/webhid-webusb-passthrough.md`).
 
-Guest-visible topology (UHCI external hub):
+Guest-visible topology (UHCI-style external hub):
 
-- UHCI root port 0: external hub (synthetic HID devices + WebHID passthrough)
-- UHCI root port 1: reserved for WebUSB passthrough
+- root port 0: external hub (synthetic HID devices + WebHID passthrough)
+- root port 1: reserved for WebUSB passthrough
 - External hub ports:
   - ports 1..4 reserved for synthetic keyboard/mouse/gamepad/consumer-control
   - dynamic passthrough ports start at 5 (`UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT`)
