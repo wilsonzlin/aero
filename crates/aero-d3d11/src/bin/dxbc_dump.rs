@@ -5,8 +5,8 @@ use std::process;
 
 use aero_d3d11::sm4::decode::{decode_decl, decode_instruction};
 use aero_d3d11::sm4::opcode::{
-    OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
-    OPCODE_NOP,
+    CUSTOMDATA_CLASS_COMMENT, CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER, OPCODE_CUSTOMDATA,
+    OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_NOP,
 };
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
 use aero_d3d11::{DxbcFile, Sm4Decl, Sm4Program};
@@ -15,7 +15,6 @@ use anyhow::{bail, Context};
 const DEFAULT_HEAD_DWORDS: usize = 32;
 const DEFAULT_MAX_TOKEN_DWORDS_PER_OP: usize = 16;
 const DECLARATION_OPCODE_MIN: u32 = 0x100;
-const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
 
 fn usage() -> &'static str {
     "\
@@ -203,9 +202,15 @@ fn real_main() -> anyhow::Result<()> {
                 .get(class_pos)
                 .copied()
                 .unwrap_or(CUSTOMDATA_CLASS_COMMENT);
-            let decl = Sm4Decl::CustomData {
-                class,
-                len_dwords: len as u32,
+            let decl = if class == CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER {
+                Sm4Decl::ImmediateConstantBuffer {
+                    dwords: inst_toks.get(class_pos + 1..).unwrap_or(&[]).to_vec(),
+                }
+            } else {
+                Sm4Decl::CustomData {
+                    class,
+                    len_dwords: len as u32,
+                }
             };
             println!("  => decl {decl:?}");
         } else if opcode == OPCODE_NOP {
