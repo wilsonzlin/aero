@@ -38,25 +38,25 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`)
       - Pair these with host-side QMP injection flags (so the harness injects events and requires the corresponding
         markers to PASS):
-        - keyboard/mouse: PowerShell `-WithInputEvents` (aliases: `-WithVirtioInputEvents`, `-RequireVirtioInputEvents`, `-EnableVirtioInputEvents`) / Python `--with-input-events`
+        - keyboard/mouse: PowerShell `-WithInputEvents` / Python `--with-input-events`
           (aliases: `--with-virtio-input-events`, `--require-virtio-input-events`, `--enable-virtio-input-events`)
-        - wheel: PowerShell `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-RequireVirtioInputWheel`, `-EnableVirtioInputWheel`) / Python `--with-input-wheel`
+        - wheel: PowerShell `-WithInputWheel` / Python `--with-input-wheel`
           (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
         - extended events: PowerShell `-WithInputEventsExtended` / Python `--with-input-events-extended`
-          (alias: PowerShell `-WithInputEventsExtra`; Python `--with-input-events-extra`)
-        - media keys: PowerShell `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-RequireVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`) / Python `--with-input-media-keys`
+          (alias: `--with-input-events-extra`)
+        - media keys: PowerShell `-WithInputMediaKeys` / Python `--with-input-media-keys`
           (aliases: `--with-virtio-input-media-keys`, `--require-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
-        - LED/statusq: PowerShell `-WithInputLed` (aliases: `-WithVirtioInputLed`, `-RequireVirtioInputLed`, `-EnableVirtioInputLed`) / Python `--with-input-led`
+        - LED/statusq: PowerShell `-WithInputLed` / Python `--with-input-led`
           (aliases: `--with-virtio-input-led`, `--require-virtio-input-led`, `--enable-virtio-input-led`; compat:
-          PowerShell `-WithInputLeds` (aliases: `-WithVirtioInputLeds`, `-RequireVirtioInputLeds`, `-EnableVirtioInputLeds`) / Python `--with-input-leds`; compat aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`,
+          `-WithInputLeds` / `--with-input-leds`; compat aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`,
           `--enable-virtio-input-leds`; no QMP injection required)
-        - tablet: PowerShell `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-RequireVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`, `-WithTabletEvents`, `-EnableTabletEvents`) / Python `--with-input-tablet-events`
+        - tablet: PowerShell `-WithInputTabletEvents` / Python `--with-input-tablet-events`
           (aliases: `--with-tablet-events`, `--with-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`, `--enable-virtio-input-tablet-events`)
     - To enable the optional end-to-end virtio-net link flap regression test (QMP `set_link` + guest link state polling),
       the guest selftest must be provisioned with:
       - `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`)
       - Pair this with the host flag:
-        - PowerShell: `-WithNetLinkFlap` (aliases: `-WithVirtioNetLinkFlap`, `-RequireVirtioNetLinkFlap`, `-EnableVirtioNetLinkFlap`)
+        - PowerShell: `-WithNetLinkFlap`
         - Python: `--with-net-link-flap` (aliases: `--with-virtio-net-link-flap`, `--require-virtio-net-link-flap`, `--enable-virtio-net-link-flap`)
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
@@ -66,11 +66,11 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
       (`virtio-snd-duplex`) that runs render + capture concurrently
     - the guest selftest also includes an optional WASAPI buffer sizing stress test (`virtio-snd-buffer-limits`) that can be
       enabled via `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`) and required by the
-      host harness with `-WithSndBufferLimits` (aliases: `-WithVirtioSndBufferLimits`, `-RequireVirtioSndBufferLimits`, `-EnableSndBufferLimits`, `-EnableVirtioSndBufferLimits`) / `--with-snd-buffer-limits`
+      host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`
       (aliases: `--with-virtio-snd-buffer-limits`, `--require-virtio-snd-buffer-limits`, `--enable-snd-buffer-limits`, `--enable-virtio-snd-buffer-limits`)
     - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
     - use `--disable-snd-capture` to skip capture-only checks (playback still runs when the device is present);
-      do not use this when running the harness with `-WithVirtioSnd` (aliases: `-RequireVirtioSnd`, `-EnableVirtioSnd`) / `--with-virtio-snd` (aliases: `--require-virtio-snd`, `--enable-virtio-snd`) (capture is required)
+      do not use this when running the harness with `-WithVirtioSnd` / `--with-virtio-snd` (aliases: `--require-virtio-snd`, `--enable-virtio-snd`) (capture is required)
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
@@ -208,7 +208,7 @@ Provisioning:
 
 Running (requires QMP; enabled automatically by the flag):
 
-- PowerShell harness: `-WithNetLinkFlap` (aliases: `-WithVirtioNetLinkFlap`, `-RequireVirtioNetLinkFlap`, `-EnableVirtioNetLinkFlap`)
+- PowerShell harness: `-WithNetLinkFlap`
 - Python harness: `--with-net-link-flap` (aliases: `--with-virtio-net-link-flap`, `--require-virtio-net-link-flap`, `--enable-virtio-net-link-flap`)
 
 Behavior:
@@ -243,15 +243,15 @@ Global (applies to all virtio devices created by the harness):
 Per-device overrides (take precedence over the global value):
 
 - PowerShell:
-  - `-VirtioNetVectors N` (alias: `-VirtioNetMsixVectors`)
-  - `-VirtioBlkVectors N` (alias: `-VirtioBlkMsixVectors`)
-  - `-VirtioInputVectors N` (alias: `-VirtioInputMsixVectors`)
-  - `-VirtioSndVectors N` (alias: `-VirtioSndMsixVectors`; only relevant when `-WithVirtioSnd` is enabled)
+  - `-VirtioNetVectors N`
+  - `-VirtioBlkVectors N`
+  - `-VirtioInputVectors N`
+  - `-VirtioSndVectors N` (only relevant when `-WithVirtioSnd` is enabled)
 - Python:
-  - `--virtio-net-vectors N` (alias: `--virtio-net-msix-vectors`)
-  - `--virtio-blk-vectors N` (alias: `--virtio-blk-msix-vectors`)
-  - `--virtio-input-vectors N` (alias: `--virtio-input-msix-vectors`)
-  - `--virtio-snd-vectors N` (alias: `--virtio-snd-msix-vectors`; only relevant when `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd` is enabled)
+  - `--virtio-net-vectors N`
+  - `--virtio-blk-vectors N`
+  - `--virtio-input-vectors N`
+  - `--virtio-snd-vectors N` (only relevant when `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd` is enabled)
 
 Notes:
 
@@ -565,7 +565,7 @@ To enable end-to-end testing:
 
 1. Provision the guest image so the scheduled selftest runs with `--test-input-events`
    (for example via `New-AeroWin7TestImage.ps1 -TestInputEvents`).
-2. Run the host harness with `-WithInputEvents` (aliases: `-WithVirtioInputEvents`, `-RequireVirtioInputEvents`, `-EnableVirtioInputEvents`) / `--with-input-events`
+2. Run the host harness with `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events`
    (aliases: `--with-virtio-input-events`, `--require-virtio-input-events`, `--enable-virtio-input-events`) so it injects keyboard/mouse events via QMP and requires the guest marker:
    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
@@ -630,7 +630,7 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 To also regression-test **mouse scrolling** end-to-end (including **horizontal scrolling** via `REL_HWHEEL` /
 HID Consumer `AC Pan`), run the harness with:
 
-- PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-RequireVirtioInputWheel`, `-EnableVirtioInputWheel`)
+- PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-EnableVirtioInputWheel`)
 - Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
 
 This:
@@ -691,7 +691,7 @@ the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INP
 To regression-test **Consumer Control / media keys** end-to-end (virtio-input event → KMDF HID → user-mode HID report read),
 run the harness with:
 
-- PowerShell: `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-RequireVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`)
+- PowerShell: `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`)
 - Python: `--with-input-media-keys` (aliases: `--with-virtio-input-media-keys`, `--require-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
 
 Guest image requirement:
@@ -783,12 +783,12 @@ To enable the check:
 1. Provision the guest image so the scheduled selftest runs with `--test-input-led`
    (for example via `New-AeroWin7TestImage.ps1 -TestInputLed`, or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`).
    - Compatibility: `--test-input-leds` / `-TestInputLeds` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`.
-2. Run the host harness with `-WithInputLed` (aliases: `-WithVirtioInputLed`, `-RequireVirtioInputLed`, `-EnableVirtioInputLed`) / `--with-input-led`
+2. Run the host harness with `-WithInputLed` / `--with-input-led`
    (aliases: `--with-virtio-input-led`, `--require-virtio-input-led`, `--enable-virtio-input-led`) so it requires the guest marker:
    `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS`.
-   - Compatibility: `-WithInputLeds` (aliases: `-WithVirtioInputLeds`, `-RequireVirtioInputLeds`, `-EnableVirtioInputLeds`) / `--with-input-leds`
-      (aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`, `--enable-virtio-input-leds`) instead requires
-      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
+   - Compatibility: `-WithInputLeds` / `--with-input-leds`
+     (aliases: `--with-virtio-input-leds`, `--require-virtio-input-leds`, `--enable-virtio-input-leds`) instead requires
+     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
 
 When enabled, a guest `virtio-input-led|SKIP|flag_not_set` / `virtio-input-leds|SKIP|flag_not_set` causes a hard failure:
 
@@ -813,39 +813,38 @@ pointer** report delivery end-to-end (virtio queues → KMDF HID → user-mode `
 To enable end-to-end testing:
 
 1. Provision the guest image so the scheduled selftest runs with `--test-input-tablet-events`
-    (alias: `--test-tablet-events`; for example via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents` / `-TestTabletEvents`,
-    or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
+   (alias: `--test-tablet-events`; for example via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents` / `-TestTabletEvents`,
+   or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
     - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
       HID interface.
       - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
         `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-      - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a more
-        specific match than the strict generic fallback below).
-      - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
-        - `aero_virtio_tablet.inf` will not match (it matches only the tablet subsystem-qualified HWID).
-        - The canonical `aero_virtio_input.inf` is also SUBSYS-only (keyboard+mouse only), so it will not match either.
-        - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
-          `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
-        - To opt into a strict revision-gated generic fallback match (no `SUBSYS`):
-          - Enable the legacy virtio-input INF filename alias (the `*.inf.disabled` file under
-            `drivers/windows7/virtio-input/inf/`; drop the `.disabled` suffix).
-          - This adds the fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01` and can bind the tablet as the generic
-            **Aero VirtIO Input Device**.
-          - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
-          - Do **not** install both `aero_virtio_input.inf` and the enabled alias INF at the same time.
-          - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
-        - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
-          CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
-          the `*.inf.disabled` file.
+      - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a
+        more specific match than the strict generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`)).
+      - If your QEMU/device does **not** expose the Aero contract tablet subsystem ID (`SUBSYS_0012`), `aero_virtio_tablet.inf`
+        will not match (tablet-SUBSYS-only).
+        - In that case, the device can still bind via the strict revision-gated generic fallback HWID
+          (`PCI\VEN_1AF4&DEV_1052&REV_01`) included in `aero_virtio_input.inf`, as long as the device reports `REV_01`
+          (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
+        - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device**
+          name.
+      - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
+        `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
+      - If you want to exercise the contract tablet binding specifically, ensure the device exposes the tablet subsystem ID
+        (`...&SUBSYS_00121AF4&REV_01`) so `aero_virtio_tablet.inf` can win over the generic fallback match.
+      - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is an optional legacy filename alias for
+        compatibility with workflows/tools that still reference the legacy virtio-input INF basename. It is expected to be a filename-only
+        alias and remain byte-identical to `aero_virtio_input.inf` from the first section header (`[Version]`) onward (banner/comments may differ).
+        Because it is identical, enabling it does **not** change HWID matching behavior.
       - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
-        - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
-          an explicit `-InfAllowList`, ensure it includes the virtio-input INF you intend to bind (either the canonical
-          `aero_virtio_input.inf` or the enabled `*.inf.disabled` filename alias under `drivers/windows7/virtio-input/inf/`),
-          plus `aero_virtio_tablet.inf` if you want to exercise the contract tablet binding specifically / validate
-          tablet-specific INF matching.
-        - Do **not** install both `aero_virtio_input.inf` and the enabled alias INF at the same time.
-2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-RequireVirtioInputTabletEvents`,
-         `-EnableVirtioInputTabletEvents`, `-WithTabletEvents`, `-EnableTabletEvents`) /
+    - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
+      an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
+        to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
+      - If you are intentionally using the legacy alias filename (for compatibility with tooling that looks for it), include
+        the enabled alias INF (drop the `.disabled` suffix) instead of `aero_virtio_input.inf` (they are equivalent; the alias
+        is a filename-only shim and is expected to be byte-identical from `[Version]` onward).
+2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
+         `-WithTabletEvents`, `-EnableTabletEvents`) /
          `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
         `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
     - attaches `virtio-tablet-pci`
@@ -855,7 +854,7 @@ To enable end-to-end testing:
 To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
 enumeration), use:
  
-- PowerShell: `-WithVirtioTablet` (alias: `-EnableVirtioTablet`)
+- PowerShell: `-WithVirtioTablet`
 - Python: `--with-virtio-tablet`
 
 The injected sequence is:
@@ -911,7 +910,7 @@ To enable end-to-end testing:
    - When generating provisioning media with `New-AeroWin7TestImage.ps1`, you can bake this in via:
      `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
 2. Run the host harness with blk-resize enabled so it:
-    - PowerShell: `-WithBlkResize` (aliases: `-WithVirtioBlkResize`, `-RequireVirtioBlkResize`, `-EnableVirtioBlkResize`)
+    - PowerShell: `-WithBlkResize`
     - Python: `--with-blk-resize` (aliases: `--with-virtio-blk-resize`, `--require-virtio-blk-resize`, `--enable-virtio-blk-resize`)
     - waits for `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`
     - computes `new_bytes = old_bytes + delta` (default delta: 64 MiB)
@@ -967,7 +966,7 @@ To enable end-to-end testing:
       `-TestBlkReset` (adds `--test-blk-reset` to the scheduled task).
 2. Run the host harness with blk-reset gating enabled so it requires the guest marker to PASS
    (and treats SKIP/FAIL/missing as failure):
-   - PowerShell: `-WithBlkReset` (aliases: `-WithVirtioBlkReset`, `-RequireVirtioBlkReset`, `-EnableVirtioBlkReset`)
+   - PowerShell: `-WithBlkReset`
    - Python: `--with-blk-reset` (aliases: `--with-virtio-blk-reset`, `--require-virtio-blk-reset`, `--enable-virtio-blk-reset`)
 
 The guest emits one of:
@@ -1086,7 +1085,6 @@ To enable it end-to-end:
    for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
 2. Run the host harness with:
    - PowerShell: `-WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd -WithSndBufferLimits`
-     (aliases for `-WithSndBufferLimits`: `-WithVirtioSndBufferLimits`, `-RequireVirtioSndBufferLimits`, `-EnableSndBufferLimits`, `-EnableVirtioSndBufferLimits`)
    - Python: `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd --with-snd-buffer-limits`
      (aliases for `--with-snd-buffer-limits`: `--with-virtio-snd-buffer-limits`, `--require-virtio-snd-buffer-limits`,
      `--enable-snd-buffer-limits`, `--enable-virtio-snd-buffer-limits`)
@@ -1385,13 +1383,10 @@ in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver
 
 - Preferred/contract binding: `aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01` (wins when it matches).
 - If the device does not expose the Aero contract tablet subsystem ID (`SUBSYS_0012`), `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only).
-  In that case:
-  - The canonical `aero_virtio_input.inf` is also SUBSYS-only, so it will not match either.
-  - To opt into a strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`, no `SUBSYS`; Device Manager name:
-    **Aero VirtIO Input Device**), enable the virtio-input INF filename alias (the `*.inf.disabled` file under
-    `drivers/windows7/virtio-input/inf/`; drop the `.disabled` suffix to enable). Ensure the device reports `REV_01` (for QEMU,
-     ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
-  - Or, emulate the subsystem IDs to the contract values so it binds to `aero_virtio_tablet.inf` (preferred/contract path).
+  In that case, it can still bind via the opt-in strict fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`, no `SUBSYS`) if you
+  enable the optional legacy alias INF (the `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/`). It will appear as
+  the generic **Aero VirtIO Input Device**.
+  Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
@@ -1670,8 +1665,8 @@ These counters are queried from the driver via the `\\.\AeroVirtioNetDiag` diagn
 By default this marker is informational and does not affect PASS/FAIL. This marker may be present even when checksum
 offload is not actually exercised (for example `tx_csum=0`).
 
-- PowerShell: `-RequireNetCsumOffload` (alias: `-RequireVirtioNetCsumOffload`)
-- PowerShell: `-RequireNetUdpCsumOffload` (alias: `-RequireVirtioNetUdpCsumOffload`) (UDP TX only)
+- PowerShell: `-RequireNetCsumOffload`
+- PowerShell: `-RequireNetUdpCsumOffload` (UDP TX only)
 - Python: `--require-net-csum-offload` (alias: `--require-virtio-net-csum-offload`)
 - Python: `--require-net-udp-csum-offload` (alias: `--require-virtio-net-udp-csum-offload`) (UDP TX only)
  
@@ -1823,20 +1818,20 @@ Canonical in-tree driver packages:
 - virtio-blk: `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` (binds `DEV_1042&REV_01`)
 - virtio-net: `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` (binds `DEV_1041&REV_01`)
 - virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds
-  `DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse); SUBSYS-only)
-  - Optional strict generic fallback: the repo also contains a legacy alias INF (the `*.inf.disabled` file under
-    `drivers/windows7/virtio-input/inf/`; drop the `.disabled` suffix to enable). It adds an opt-in strict, revision-gated generic
-    fallback HWID (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (shown as **Aero VirtIO Input Device**).
-    - Alias drift policy: the alias INF is allowed to diverge from `aero_virtio_input.inf` only in the models sections
-      (`[Aero.NTx86]` / `[Aero.NTamd64]`) where it adds the fallback entry. Outside those models sections, from the first section
-      header (`[Version]`) onward, it is expected to remain byte-identical (banner/comments may differ).
+  `DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse), plus the strict generic fallback
+  `PCI\VEN_1AF4&DEV_1052&REV_01` (shown as **Aero VirtIO Input Device**).
+  - Optional legacy filename alias INF: the repo also contains the `*.inf.disabled` virtio-input alias INF under
+    `drivers/windows7/virtio-input/inf/` (drop the `.disabled` suffix to enable) for workflows/tools that still reference the
+    legacy virtio-input INF basename.
+    - Policy: filename-only alias; from the first section header (`[Version]`) onward it is expected to remain byte-identical to
+      `aero_virtio_input.inf` (banner/comments may differ).
+    - Because it is identical, enabling it does **not** change HWID matching behavior.
     - Do **not** install both basenames at the same time: they have overlapping bindings and can cause confusing/non-deterministic
       device selection.
 - virtio-input (tablet): `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (binds `DEV_1052&SUBSYS_00121AF4&REV_01`; preferred
   binding for contract tablets and wins when it matches)
-  - If a tablet device does **not** expose `SUBSYS_0012`, it will not match `aero_virtio_tablet.inf`. It can still bind via the
-    opt-in strict fallback HWID above when the legacy alias INF is enabled locally, and it will appear as the generic
-    **Aero VirtIO Input Device**.
+  - If a tablet device does **not** expose `SUBSYS_0012`, it can still bind via the strict generic fallback HWID above and will
+    appear as the generic **Aero VirtIO Input Device**.
 - virtio-snd: `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (binds `DEV_1059&REV_01`)
 
 If QEMU cannot expose modern-only virtio-snd (no `disable-legacy` property on the device), virtio-snd may enumerate as

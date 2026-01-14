@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
-  Statically validates aero_virtio_input.inf against Aero contract expectations.
+  Statically validates the virtio-input keyboard/mouse INF against Aero contract expectations.
 
 .DESCRIPTION
   This is a lightweight (regex/string based) validator intended to catch accidental INF
@@ -11,14 +11,9 @@
   - Must reference the expected catalog filename
   - Must target KMDF 1.9 (in-box on Win7 SP1)
   - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01)
-  - Canonical INF policy: `aero_virtio_input.inf` is intentionally SUBSYS-only (no strict generic fallback model line).
-  - Opt-in fallback: the strict, REV-qualified generic fallback HWID (no SUBSYS) is provided only via the legacy filename
-    alias INF (`virtio-input.inf{,.disabled}`):
-      `PCI\VEN_1AF4&DEV_1052&REV_01`
-  - Legacy alias drift policy: from the first section header (`[Version]`) onward, the legacy filename alias
-    (`virtio-input.inf{,.disabled}`, when present) may diverge only in the models sections (`[Aero.NTx86]` /
-    `[Aero.NTamd64]`) to add the fallback model line, but must otherwise remain byte-for-byte identical to the canonical INF
-    (only the leading banner/comments may differ). See `check-inf-alias.py`.
+  - Must include the strict, REV-qualified generic fallback HWID (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`
+  - Legacy filename aliases (`virtio-input.inf` / `virtio-input.inf.disabled`) are expected to remain in sync with the canonical INF
+    (filename alias only; see `check-inf-alias.py`).
   - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
@@ -198,65 +193,6 @@ function Inf-BytesFromFirstSection([string]$Path) {
   throw ("INF {0}: could not find a section header line (e.g. [Version])" -f $Path)
 }
 
-function Strip-InfSectionsBytes([byte[]]$Data, [string[]]$DropSections) {
-  # Remove entire INF sections (including their headers) by name (case-insensitive).
-  #
-  # Note: this helper can be used by INF drift checks that want to ignore specific
-  # sections when comparing two INFs.
-  $drop = @{}
-  foreach ($s in $DropSections) {
-    if ($null -ne $s) { $drop[$s.ToLowerInvariant()] = $true }
-  }
-
-  $out = New-Object System.Collections.Generic.List[byte]
-  $skipping = $false
-
-  $lineStart = 0
-  while ($lineStart -lt $Data.Length) {
-    # Find end-of-line (including the newline byte, if present).
-    $i = $lineStart
-    while ($i -lt $Data.Length -and $Data[$i] -ne 0x0A) { $i++ }
-    $nextStart = if ($i -lt $Data.Length -and $Data[$i] -eq 0x0A) { $i + 1 } else { $i }
-
-    $len = $nextStart - $lineStart
-    $line = New-Object byte[] $len
-    [System.Array]::Copy($Data, $lineStart, $line, 0, $len)
-
-    # Detection-only ASCII view (strip NULs).
-    #
-    # Note: cast to [byte[]] so Array.Copy into $nameBytes works (PowerShell otherwise
-    # materializes an object[]).
-    $lineAscii = [byte[]]($line | Where-Object { $_ -ne 0x00 })
-
-    # Trim leading ASCII whitespace for header detection.
-    $j = 0
-    while ($j -lt $lineAscii.Length -and ($lineAscii[$j] -eq 0x20 -or $lineAscii[$j] -eq 0x09 -or $lineAscii[$j] -eq 0x0D -or $lineAscii[$j] -eq 0x0A)) {
-      $j++
-    }
-
-    if ($j -lt $lineAscii.Length -and $lineAscii[$j] -eq 0x5B) { # '['
-      $end = -1
-      for ($k = $j + 1; $k -lt $lineAscii.Length; $k++) {
-        if ($lineAscii[$k] -eq 0x5D) { $end = $k; break } # ']'
-      }
-      if ($end -gt ($j + 1)) {
-        $nameBytes = New-Object byte[] ($end - ($j + 1))
-        [System.Array]::Copy($lineAscii, $j + 1, $nameBytes, 0, $nameBytes.Length)
-        $name = [System.Text.Encoding]::UTF8.GetString($nameBytes).Trim()
-        $skipping = $drop.ContainsKey($name.ToLowerInvariant())
-      }
-    }
-
-    if (-not $skipping) {
-      $out.AddRange($line)
-    }
-
-    $lineStart = $nextStart
-  }
-
-  return $out.ToArray()
-}
-
 function Strip-InfComments([string]$Line) {
   # INF comments begin with ';' outside of quoted strings.
   $inQuote = $false
@@ -308,9 +244,10 @@ function Add-Failure([System.Collections.Generic.List[string]]$Failures, [string
   }
 }
 
-$exitCode = 0
-try {
+  $exitCode = 0
+  try {
   $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
+
   $rawLines = Read-InfLines -Path $infPathResolved
   $lines = New-Object System.Collections.Generic.List[string]
   $sections = @{}
@@ -346,10 +283,8 @@ try {
   # Legacy filename alias drift guardrail (optional)
   #------------------------------------------------------------------------------
   # The repo may contain an optional legacy filename alias INF (`virtio-input.inf{,.disabled}`).
-  # Policy: it is allowed to diverge from the canonical INF only in the models sections
-  # (`[Aero.NTx86]` / `[Aero.NTamd64]`) where it adds the strict generic fallback model line.
-  # Outside those models sections, from the first section header (`[Version]`) onward, it must remain byte-for-byte
-  # identical to the canonical INF (only the leading banner/comments may differ).
+  # If present alongside the canonical INF, it must be a filename alias only and remain byte-for-byte
+  # identical from the first section header (`[Version]`) onward.
   $infDir = Split-Path -Parent $infPathResolved
   $canonicalInf = Join-Path $infDir 'aero_virtio_input.inf'
   $aliasEnabled = Join-Path $infDir 'virtio-input.inf'
@@ -363,9 +298,8 @@ try {
   }
   elseif ($aliasCandidates.Count -eq 1 -and (Test-Path -LiteralPath $canonicalInf -PathType Leaf)) {
     try {
-      $dropSections = @('Aero.NTx86', 'Aero.NTamd64')
-      $canonicalBytes = Strip-InfSectionsBytes -Data (Inf-BytesFromFirstSection -Path $canonicalInf) -DropSections $dropSections
-      $aliasBytes = Strip-InfSectionsBytes -Data (Inf-BytesFromFirstSection -Path $aliasCandidates[0]) -DropSections $dropSections
+      $canonicalBytes = Inf-BytesFromFirstSection -Path $canonicalInf
+      $aliasBytes = Inf-BytesFromFirstSection -Path $aliasCandidates[0]
 
       $equal = $true
       if ($canonicalBytes.Length -ne $aliasBytes.Length) {
@@ -381,7 +315,7 @@ try {
       }
 
       if (-not $equal) {
-        Add-Failure -Failures $failures -Message ("virtio-input INF alias drift detected: {0} vs {1}. Outside the models sections ([Aero.NTx86] / [Aero.NTamd64]) from the first section header ([Version]) onward, the alias must be byte-for-byte identical to the canonical INF (only the leading banner/comments may differ). Tip: run python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py" -f $canonicalInf, $aliasCandidates[0])
+        Add-Failure -Failures $failures -Message ("virtio-input INF alias drift detected: {0} vs {1}. The alias must be byte-for-byte identical to the canonical INF from the first section header ([Version]) onward (only the leading banner/comments may differ). Tip: run python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py" -f $canonicalInf, $aliasCandidates[0])
       }
     }
     catch {
@@ -475,24 +409,24 @@ foreach ($installSect in $installWdfSections) {
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
 # Hardware ID policy:
-# - Canonical keyboard/mouse INF (`aero_virtio_input.inf`) is SUBSYS-only:
-#     PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01  (keyboard)
-#     PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01  (mouse)
-# - Legacy filename alias INF (`virtio-input.inf{,.disabled}`) adds an opt-in strict generic fallback:
-#     PCI\VEN_1AF4&DEV_1052&REV_01                  (strict generic fallback; no SUBSYS)
+# - All virtio-input INFs must include the SUBSYS-qualified Aero contract v1 keyboard/mouse IDs
+#   (distinct keyboard/mouse naming):
+#     PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+#     PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+# - It must also include the strict, REV-qualified generic fallback HWID (no SUBSYS) so driver binding remains
+#   revision-gated even if subsystem IDs are absent/ignored:
+#     PCI\VEN_1AF4&DEV_1052&REV_01
+# - Legacy alias `virtio-input.inf{,.disabled}` (if present) is a filename alias only and must remain byte-for-byte identical
+#   to `aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may differ).
 $fallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
-$infBaseName = (Split-Path -Leaf $infPathResolved).ToLowerInvariant()
-$isAliasInf = ($infBaseName -eq 'virtio-input.inf' -or $infBaseName -eq 'virtio-input.inf.disabled')
 $requiredHwids = @(
   # Aero contract v1 keyboard (SUBSYS_0010)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
   # Aero contract v1 mouse (SUBSYS_0011)
-  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01'
+  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
+  # Strict revision-gated generic fallback (no SUBSYS)
+  $fallbackHwid
 )
-if ($isAliasInf) {
-  # Strict generic fallback (no SUBSYS) is opt-in via the legacy alias INF.
-  $requiredHwids += @($fallbackHwid)
-}
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
 foreach ($sect in $modelSections) {
@@ -513,27 +447,13 @@ foreach ($sect in $modelSections) {
   }
 }
 
-# Enforce that the canonical INF does not contain the strict generic fallback HWID string anywhere
-# (including in comments) to match the CI/contract guardrail.
-if (-not $isAliasInf) {
-  $hits = New-Object System.Collections.Generic.List[string]
-  foreach ($raw in $rawLines) {
-    if ($raw -match [regex]::Escape($fallbackHwid)) {
-      $hits.Add($raw) | Out-Null
-    }
-  }
-  if ($hits.Count -gt 0) {
-    Add-Failure -Failures $failures -Message ("Canonical aero_virtio_input.inf must not contain the strict generic fallback HWID ({0}) anywhere; fallback is provided only via virtio-input.inf.disabled." -f $fallbackHwid)
-  }
-}
-
 #------------------------------------------------------------------------------
 # Device descriptions (distinct keyboard vs mouse in Device Manager)
 #------------------------------------------------------------------------------
 # The INF is expected to bind both PCI functions (keyboard + mouse) to the same
 # install sections, but with distinct DeviceDesc strings so they appear as
 # separate named devices in Device Manager.
-$requiredModelMappings = @(
+  $requiredModelMappings = @(
   @{
     Name = 'NTx86 keyboard mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioKeyboard.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01') + '$')
@@ -553,24 +473,18 @@ $requiredModelMappings = @(
     Name = 'NTamd64 mouse mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
     Message = 'Missing x64 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00111AF4... ).'
+  },
+  @{
+    Name = 'NTx86 fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
+    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01).'
+  },
+  @{
+    Name = 'NTamd64 fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
+    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01).'
   }
- )
-
-if ($isAliasInf) {
-  $requiredModelMappings += @(
-    @{
-      Name = 'NTx86 fallback mapping'
-      Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
-      Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\\VEN_1AF4&DEV_1052&REV_01).'
-    },
-    @{
-      Name = 'NTamd64 fallback mapping'
-      Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
-      Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\\VEN_1AF4&DEV_1052&REV_01).'
-    }
   )
-}
-
 foreach ($m in $requiredModelMappings) {
   if ((Get-MatchingLines -Lines $lines -Regex $m.Regex).Count -eq 0) {
     Add-Failure -Failures $failures -Message $m.Message

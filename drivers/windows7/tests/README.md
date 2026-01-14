@@ -80,30 +80,22 @@ drivers/windows7/tests/
       `aero_virtio_input.inf` and wins when both are installed and it matches.
     - If your QEMU/device does **not** expose the Aero contract tablet subsystem ID (`SUBSYS_0012`):
       - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only).
-      - The canonical `aero_virtio_input.inf` is also SUBSYS-only and will not match either.
-      - To opt into a strict revision-gated generic fallback match (no `SUBSYS`):
-        - Enable the legacy virtio-input INF filename alias (the `*.inf.disabled` file under
-          `drivers/windows7/virtio-input/inf/`; drop the `.disabled` suffix).
-        - This adds the fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01` and can bind the tablet as the generic
-          **Aero VirtIO Input Device**.
-        - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
-        - Do **not** install both `aero_virtio_input.inf` and the enabled alias INF at the same time.
-      - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values so it binds to
-        `aero_virtio_tablet.inf`.
-      - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` exists for legacy compatibility and opt-in
-        fallback binding:
-        - It is allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`)
-          where it adds the strict generic fallback model line `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`).
-        - Outside those models sections, from the first section header onward it is expected to remain byte-identical
-          (banner/comments may differ).
-        - Enabling it does **change** HWID matching behavior (it enables strict generic fallback binding).
-      - Do **not** install or ship both the canonical INF and the enabled alias INF at the same time: they have overlapping
-        bindings and can cause confusing/non-deterministic device selection.
+      - The device can still bind via the strict generic fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01` (included in
+        `aero_virtio_input.inf`). It will appear as the generic **Aero VirtIO Input Device**.
+      - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
+      - Preferred/contract path: emulate the contract tablet subsystem ID (`SUBSYS_00121AF4`) so the device binds via
+        `aero_virtio_tablet.inf` and appears with the tablet device name.
+      - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` exists for legacy basename compatibility
+        (workflows/tools that still reference the legacy virtio-input INF basename):
+        - It is a filename-only alias; from the first section header (`[Version]`) onward it is expected to remain byte-identical
+          to `aero_virtio_input.inf` (banner/comments may differ).
+        - Because it is identical, enabling it does **not** change HWID matching behavior.
+      - Do **not** install or ship both the canonical INF and the alias INF at the same time: they have overlapping bindings and
+        can cause confusing/non-deterministic device selection.
       - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
         CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
         the `*.inf.disabled` file.
-      - Caveat: avoid installing additional/third-party virtio-input INFs that can match the same HWIDs and steal
-        device binding.
+      - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
