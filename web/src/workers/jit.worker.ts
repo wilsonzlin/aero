@@ -120,8 +120,8 @@ function isCspBlockedError(err: unknown): boolean {
 function isDataCloneError(err: unknown): boolean {
   const domException = (globalThis as unknown as { DOMException?: unknown }).DOMException;
   if (typeof domException === "function") {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (err instanceof (domException as any) && (err as { name?: unknown }).name === "DataCloneError") return true;
+    const DomException = domException as unknown as { new (...args: unknown[]): unknown };
+    if (err instanceof DomException && (err as { name?: unknown }).name === "DataCloneError") return true;
   }
   if (err && typeof err === "object") {
     const name = (err as { name?: unknown }).name;

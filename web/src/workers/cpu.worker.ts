@@ -575,7 +575,8 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
     console.warn("Failed to init single-threaded WASM for HDA demo; falling back to auto:", err);
     ({ api } = await initWasmForContext());
   }
-  if (typeof api.HdaPlaybackDemo !== "function") {
+  const DemoCtor = api.HdaPlaybackDemo;
+  if (!DemoCtor || typeof (DemoCtor as unknown) !== "function") {
     // Graceful degrade: nothing to do if the WASM build doesn't include the demo wrapper.
     const message = "HdaPlaybackDemo wasm export is unavailable; skipping HDA audio demo.";
     console.warn(message);
@@ -583,15 +584,11 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
     return;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const DemoCtor = api.HdaPlaybackDemo as any;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   const demo = new DemoCtor(msg.ringBuffer, capacityFrames, channelCount, sampleRate);
 
   const freqHz = typeof msg.freqHz === "number" ? msg.freqHz : 440;
   const gain = typeof msg.gain === "number" ? msg.gain : 0.1;
   if (typeof demo.init_sine_dma === "function") {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     demo.init_sine_dma(freqHz, gain);
   }
 
@@ -608,7 +605,6 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   const level = getAudioRingBufferLevelFrames(header, capacityFrames);
   const prime = Math.max(0, targetFrames - level);
   if (prime > 0 && typeof demo.tick === "function") {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     demo.tick(prime);
   }
   maybePostHdaDemoStats();
@@ -701,22 +697,19 @@ async function startVirtioSndDemo(msg: AudioOutputVirtioSndDemoStartMessage): Pr
     ({ api } = await initWasmForContext());
   }
 
-  if (typeof api.VirtioSndPlaybackDemo !== "function") {
+  const DemoCtor = api.VirtioSndPlaybackDemo;
+  if (!DemoCtor || typeof (DemoCtor as unknown) !== "function") {
     const message = "VirtioSndPlaybackDemo wasm export is unavailable; skipping virtio-snd audio demo.";
     console.warn(message);
     ctx.postMessage({ type: "audioOutputVirtioSndDemo.error", message } satisfies AudioOutputVirtioSndDemoErrorMessage);
     return;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const DemoCtor = api.VirtioSndPlaybackDemo as any;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   const demo = new DemoCtor(msg.ringBuffer, capacityFrames, channelCount, sampleRate);
 
   const freqHz = typeof msg.freqHz === "number" ? msg.freqHz : 440;
   const gain = typeof msg.gain === "number" ? msg.gain : 0.1;
   if (typeof demo.set_sine_wave === "function") {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     demo.set_sine_wave(freqHz, gain);
   }
 
@@ -733,7 +726,6 @@ async function startVirtioSndDemo(msg: AudioOutputVirtioSndDemoStartMessage): Pr
   const level = getAudioRingBufferLevelFrames(header, capacityFrames);
   const prime = Math.max(0, targetFrames - level);
   if (prime > 0 && typeof demo.tick === "function") {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     demo.tick(prime);
   }
   maybePostVirtioSndDemoStats();
@@ -1221,15 +1213,14 @@ function maybeInitMicBridge(): void {
 
   try {
     if (typeof apiAny.attach_mic_bridge === "function") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      wasmMicBridge = (apiAny.attach_mic_bridge as any)(mic.sab) as WasmMicBridgeHandle;
+      const attach = apiAny.attach_mic_bridge as (sab: SharedArrayBuffer) => WasmMicBridgeHandle;
+      wasmMicBridge = attach(mic.sab);
       return;
     }
 
-    const MicBridge = apiAny.MicBridge as { fromSharedBuffer?: unknown } | undefined;
-    if (MicBridge && typeof MicBridge.fromSharedBuffer === "function") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      wasmMicBridge = (MicBridge.fromSharedBuffer as any)(mic.sab) as WasmMicBridgeHandle;
+    const fromSharedBuffer = (apiAny.MicBridge as { fromSharedBuffer?: unknown } | undefined)?.fromSharedBuffer;
+    if (typeof fromSharedBuffer === "function") {
+      wasmMicBridge = (fromSharedBuffer as (sab: SharedArrayBuffer) => WasmMicBridgeHandle)(mic.sab);
     }
   } catch (err) {
     console.warn("Failed to attach WASM mic bridge:", err);
@@ -1583,12 +1574,11 @@ function maybeInitAudioOutput(): void {
   // Prefer the WASM-side bridge + sine generator if available; otherwise fall back
   // to a tiny JS implementation so worker-driven audio works even when the WASM
   // packages are absent (e.g. in CI or fresh checkouts).
-  if (wasmApi?.attach_worklet_bridge && wasmApi?.SineTone) {
+  const api = wasmApi;
+  if (api && api.attach_worklet_bridge && api.SineTone) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      workletBridge = (wasmApi.attach_worklet_bridge as any)(audioRingBuffer, audioCapacityFrames, audioChannelCount);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      sineTone = new (wasmApi.SineTone as any)() as SineToneHandle;
+      workletBridge = api.attach_worklet_bridge(audioRingBuffer, audioCapacityFrames, audioChannelCount);
+      sineTone = new api.SineTone();
       nextAudioFillDeadlineMs = performance.now();
       return;
     } catch (err) {

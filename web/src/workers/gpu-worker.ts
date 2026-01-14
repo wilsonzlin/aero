@@ -1877,12 +1877,12 @@ function sanitizeForPostMessage(value: unknown): unknown {
     };
   }
   if (value instanceof Error) {
-    const err = value as any;
+    const cause = (value as unknown as { cause?: unknown }).cause;
     return {
       name: value.name,
       message: value.message,
       stack: value.stack,
-      ...(err?.cause === undefined ? {} : { cause: sanitizeForPostMessage(err.cause) }),
+      ...(cause === undefined ? {} : { cause: sanitizeForPostMessage(cause) }),
     };
   }
 
@@ -2385,7 +2385,10 @@ function installContextLossHandlers(canvas: OffscreenCanvas): void {
   canvasWithContextLossHandlers = canvas;
   onWebglContextLost = (ev: Event) => {
     // Allow restoration when supported.
-    (ev as any).preventDefault?.();
+    const preventDefault = (ev as unknown as { preventDefault?: unknown }).preventDefault;
+    if (typeof preventDefault === "function") {
+      (preventDefault as () => void).call(ev);
+    }
     handleDeviceLost("WebGL context lost", { source: "webglcontextlost" }, false);
   };
   onWebglContextRestored = () => {
@@ -2394,8 +2397,20 @@ function installContextLossHandlers(canvas: OffscreenCanvas): void {
   };
 
   try {
-    (canvas as any).addEventListener("webglcontextlost", onWebglContextLost, { passive: false } as any);
-    (canvas as any).addEventListener("webglcontextrestored", onWebglContextRestored);
+    const addEventListener = (canvas as unknown as { addEventListener?: unknown }).addEventListener;
+    if (typeof addEventListener === "function") {
+      (addEventListener as (type: string, listener: unknown, options?: unknown) => void).call(
+        canvas,
+        "webglcontextlost",
+        onWebglContextLost,
+        { passive: false },
+      );
+      (addEventListener as (type: string, listener: unknown, options?: unknown) => void).call(
+        canvas,
+        "webglcontextrestored",
+        onWebglContextRestored,
+      );
+    }
   } catch {
     // Best-effort: some OffscreenCanvas implementations do not expose these events.
   }
@@ -2405,8 +2420,23 @@ function uninstallContextLossHandlers(): void {
   const canvas = canvasWithContextLossHandlers;
   if (!canvas) return;
   try {
-    if (onWebglContextLost) (canvas as any).removeEventListener("webglcontextlost", onWebglContextLost);
-    if (onWebglContextRestored) (canvas as any).removeEventListener("webglcontextrestored", onWebglContextRestored);
+    const removeEventListener = (canvas as unknown as { removeEventListener?: unknown }).removeEventListener;
+    if (typeof removeEventListener === "function") {
+      if (onWebglContextLost) {
+        (removeEventListener as (type: string, listener: unknown, options?: unknown) => void).call(
+          canvas,
+          "webglcontextlost",
+          onWebglContextLost,
+        );
+      }
+      if (onWebglContextRestored) {
+        (removeEventListener as (type: string, listener: unknown, options?: unknown) => void).call(
+          canvas,
+          "webglcontextrestored",
+          onWebglContextRestored,
+        );
+      }
+    }
   } catch {
     // Ignore.
   }
@@ -4266,7 +4296,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     case "debug_context_loss": {
       // Dev-only harness hook: simulate context loss/restoration for the raw WebGL2 backend.
       // Production builds may ignore this message.
-      if (!(import.meta as any).env?.DEV) break;
+      const env = (import.meta as unknown as { env?: unknown }).env;
+      const isDev = typeof env === "object" && env !== null && (env as Record<string, unknown>).DEV === true;
+      if (!isDev) break;
       const action = (msg as { action?: unknown }).action;
       if (action !== "lose" && action !== "restore") break;
       if (presenter?.backend !== "webgl2_raw") break;

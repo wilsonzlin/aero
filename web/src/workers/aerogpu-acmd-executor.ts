@@ -418,7 +418,7 @@ const importSharedSurface = (state: AerogpuCpuExecutorState, outHandle: number, 
     return;
   }
 
-  // Underlying handles remain reserved as long as any aliases still reference them. If an original
+  // Underlying handles remain reserved while aliases still reference them. If an original
   // handle was destroyed, it must not be reused as a new alias handle until the underlying
   // resource is fully released.
   if (state.sharedSurfaces.refcounts.has(outHandle)) {

@@ -1862,11 +1862,10 @@ ctx.onmessage = (ev) => {
     const payload = msg as Partial<{ virtioKeyboardOk: unknown; virtioMouseOk: unknown }>;
     const virtioKeyboardOk = payload.virtioKeyboardOk === true;
     const virtioMouseOk = payload.virtioMouseOk === true;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     machine = {
       virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
       virtio_input_mouse_driver_ok: () => virtioMouseOk,
-    } as any;
+    } as unknown as InstanceType<WasmApi["Machine"]>;
     return;
   }
 

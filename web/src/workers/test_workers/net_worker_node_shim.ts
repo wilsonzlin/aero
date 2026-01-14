@@ -177,8 +177,9 @@ type FakeFetchCalledMessage = { type: "fetch.called"; url: string; init?: unknow
 function normalizeFetchUrl(input: unknown): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
-  if (typeof input === "object" && input !== null && "url" in input && typeof (input as any).url === "string") {
-    return (input as any).url;
+  if (typeof input === "object" && input !== null && "url" in input) {
+    const url = (input as { url?: unknown }).url;
+    if (typeof url === "string") return url;
   }
   return String(input);
 }
