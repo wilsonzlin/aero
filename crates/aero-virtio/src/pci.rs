@@ -5,6 +5,7 @@ use aero_devices::pci::profile::{self, PciCapabilityProfile};
 use aero_devices::pci::{
     MsixCapability, PciBarDefinition, PciConfigSpace, PciInterruptPin, PciSubsystemIds,
 };
+use aero_devices::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_platform::interrupts::msi::MsiMessage;
 use core::any::Any;
 
@@ -61,6 +62,110 @@ pub const VIRTIO_STATUS_DRIVER: u8 = 2;
 pub const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
 pub const VIRTIO_STATUS_FEATURES_OK: u8 = 8;
 pub const VIRTIO_STATUS_FAILED: u8 = 0x80;
+
+const PCI_BAR_OFF_START: u16 = 0x10;
+const PCI_BAR_OFF_END: u16 = 0x27;
+
+#[inline]
+fn is_pci_bar_offset(offset: u16) -> bool {
+    (PCI_BAR_OFF_START..=PCI_BAR_OFF_END).contains(&offset)
+}
+
+#[inline]
+fn access_overlaps_pci_bar(offset: u16, len: usize) -> bool {
+    if len == 0 {
+        return false;
+    }
+    let start = usize::from(offset);
+    let end = start.saturating_add(len);
+    start <= usize::from(PCI_BAR_OFF_END) && end > usize::from(PCI_BAR_OFF_START)
+}
+
+#[inline]
+fn align_pci_dword(offset: u16) -> u16 {
+    offset & !0x3
+}
+
+#[inline]
+fn pci_bar_index(aligned_offset: u16) -> Option<u8> {
+    if !is_pci_bar_offset(aligned_offset) || (aligned_offset & 0x3) != 0 {
+        return None;
+    }
+    Some(((aligned_offset - PCI_BAR_OFF_START) / 4) as u8)
+}
+
+fn read_bar_dword_programmed(cfg: &mut PciConfigSpace, aligned_offset: u16) -> u32 {
+    let Some(bar_index) = pci_bar_index(aligned_offset) else {
+        return 0;
+    };
+
+    // When a BAR is being probed, canonical `PciConfigSpace::read` returns the probe mask rather
+    // than the programmed base. For subword BAR writes we want to merge against the programmed
+    // base, matching real hardware.
+    if let Some(def) = cfg.bar_definition(bar_index) {
+        let base = cfg.bar_range(bar_index).map(|r| r.base).unwrap_or(0);
+        return match def {
+            PciBarDefinition::Io { .. } => (base as u32 & 0xFFFF_FFFC) | 0x1,
+            PciBarDefinition::Mmio32 { prefetchable, .. } => {
+                let mut val = base as u32 & 0xFFFF_FFF0;
+                if prefetchable {
+                    val |= 1 << 3;
+                }
+                val
+            }
+            PciBarDefinition::Mmio64 { prefetchable, .. } => {
+                let mut val = base as u32 & 0xFFFF_FFF0;
+                val |= 0b10 << 1;
+                if prefetchable {
+                    val |= 1 << 3;
+                }
+                val
+            }
+        };
+    }
+
+    // High dword of a 64-bit BAR.
+    if bar_index > 0
+        && matches!(
+            cfg.bar_definition(bar_index - 1),
+            Some(PciBarDefinition::Mmio64 { .. })
+        )
+    {
+        let base = cfg.bar_range(bar_index - 1).map(|r| r.base).unwrap_or(0);
+        return (base >> 32) as u32;
+    }
+
+    // Unknown BAR definition: defer to the canonical config bytes (not affected by BAR probe).
+    cfg.read(aligned_offset, 4)
+}
+
+#[inline]
+fn sanitize_bar_register_write_value(cfg: &PciConfigSpace, aligned_offset: u16, value: u32) -> u32 {
+    let Some(bar_index) = pci_bar_index(aligned_offset) else {
+        return value;
+    };
+
+    match cfg.bar_definition(bar_index) {
+        Some(PciBarDefinition::Io { .. }) => {
+            // IO BARs have bit0=1, bit1=0; preserve base bits in 31:2.
+            (value & !0b11) | 0b01
+        }
+        Some(PciBarDefinition::Mmio32 { prefetchable, .. }) => {
+            // MMIO32 BARs have bits2:0=0 and bit3=Prefetchable (if configured).
+            let flags = if prefetchable { 1 << 3 } else { 0 };
+            (value & !0xF) | flags
+        }
+        Some(PciBarDefinition::Mmio64 { prefetchable, .. }) => {
+            // MMIO64 BARs have bits2:1=0b10, bit0=0, and bit3=Prefetchable (if configured).
+            let mut flags = 0b10 << 1;
+            if prefetchable {
+                flags |= 1 << 3;
+            }
+            (value & !0xF) | flags
+        }
+        None => value,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransportMode {
@@ -346,8 +451,20 @@ impl VirtioPciDevice {
         if data.is_empty() {
             return;
         }
+
         for (i, b) in data.iter_mut().enumerate() {
-            let off = offset.wrapping_add(i as u16);
+            let Ok(i_u16) = u16::try_from(i) else {
+                *b = 0;
+                continue;
+            };
+            let Some(off) = offset.checked_add(i_u16) else {
+                *b = 0;
+                continue;
+            };
+            if usize::from(off) >= PCI_CONFIG_SPACE_SIZE {
+                *b = 0;
+                continue;
+            }
             *b = self.config.read(off, 1) as u8;
         }
     }
@@ -359,20 +476,80 @@ impl VirtioPciDevice {
             .config
             .capability::<MsixCapability>()
             .map(|msix| (msix.enabled(), msix.function_masked()));
-        match data.len() {
-            0 => {}
-            1 => self.config.write(offset, 1, u32::from(data[0])),
-            2 => self
-                .config
-                .write(offset, 2, u32::from(u16::from_le_bytes([data[0], data[1]]))),
-            4 => self
-                .config
-                .write(offset, 4, u32::from_le_bytes(data.try_into().unwrap())),
-            _ => {
-                // Byte-split any odd writes; this is not performance-critical for our unit tests.
-                for (i, b) in data.iter().enumerate() {
-                    let off = offset.wrapping_add(i as u16);
-                    self.config.write(off, 1, u32::from(*b));
+        let len = data.len();
+
+        let is_canonical_bar_dword = len == 4 && is_pci_bar_offset(offset) && (offset & 0x3) == 0;
+        let in_bounds =
+            usize::from(offset).checked_add(len).is_some_and(|end| end <= PCI_CONFIG_SPACE_SIZE);
+
+        if is_canonical_bar_dword && in_bounds {
+            // BAR size probing uses aligned 32-bit writes; preserve the canonical probe semantics.
+            self.config
+                .write(offset, 4, u32::from_le_bytes(data.try_into().unwrap()));
+        } else if matches!(len, 1 | 2 | 4) && in_bounds && !access_overlaps_pci_bar(offset, len) {
+            // Fast path: delegate to the canonical config-space implementation for non-BAR writes.
+            match len {
+                1 => self.config.write(offset, 1, u32::from(data[0])),
+                2 => self.config.write(
+                    offset,
+                    2,
+                    u32::from(u16::from_le_bytes([data[0], data[1]])),
+                ),
+                4 => self
+                    .config
+                    .write(offset, 4, u32::from_le_bytes(data.try_into().unwrap())),
+                _ => unreachable!(),
+            }
+        } else {
+            // Defensive slow path:
+            // - Handles unaligned or subword BAR writes without panicking the canonical config-space.
+            // - Splits any accesses that partially overlap BAR registers, so BAR state stays in sync.
+            //
+            // This is not performance-critical for our unit tests and fuzz resistance.
+            for (i, byte) in data.iter().enumerate() {
+                let Ok(i_u16) = u16::try_from(i) else {
+                    break;
+                };
+                let Some(off) = offset.checked_add(i_u16) else {
+                    break;
+                };
+                if usize::from(off) >= PCI_CONFIG_SPACE_SIZE {
+                    continue;
+                }
+
+                if is_pci_bar_offset(off) {
+                    let aligned = align_pci_dword(off);
+                    let old = read_bar_dword_programmed(&mut self.config, aligned);
+                    let shift = u32::from(off - aligned) * 8;
+                    let merged =
+                        (old & !(0xFF << shift)) | (u32::from(*byte) << shift);
+                    let merged = sanitize_bar_register_write_value(&self.config, aligned, merged);
+
+                    // Subword writes should not synthesize an all-ones dword probe (real hardware
+                    // uses byte enables). Avoid triggering the canonical BAR probe assertions for
+                    // the high dword of a 64-bit BAR.
+                    if merged == 0xFFFF_FFFF {
+                        if let Some(bar_index) = pci_bar_index(aligned) {
+                            if bar_index > 0
+                                && self.config.bar_definition(bar_index).is_none()
+                                && matches!(
+                                    self.config.bar_definition(bar_index - 1),
+                                    Some(PciBarDefinition::Mmio64 { .. })
+                                )
+                            {
+                                if let Some(range) = self.config.bar_range(bar_index - 1) {
+                                    let new_base = (range.base & 0x0000_0000_FFFF_FFFF)
+                                        | (u64::from(merged) << 32);
+                                    self.config.set_bar_base(bar_index - 1, new_base);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    self.config.write(aligned, 4, merged);
+                } else {
+                    self.config.write(off, 1, u32::from(*byte));
                 }
             }
         }

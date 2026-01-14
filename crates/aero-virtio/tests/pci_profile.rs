@@ -258,3 +258,37 @@ fn virtio_pci_bar0_size_probe_reports_contract_len() {
     let size = (!mask).wrapping_add(1);
     assert_eq!(size, 0x4000);
 }
+
+#[test]
+fn virtio_pci_bar_subword_write_updates_bar0_base_without_triggering_probe() {
+    let mut dev = VirtioPciDevice::new(
+        Box::new(VirtioNet::new(
+            LoopbackNet::default(),
+            [0x52, 0x54, 0x00, 0, 0, 5],
+        )),
+        Box::new(InterruptLog::default()),
+    );
+
+    // Program BAR0 (64-bit MMIO) via a 16-bit write. This should not panic, and should update the
+    // base after clamping to BAR alignment (0x4000).
+    dev.config_write(0x10, &0xc000u16.to_le_bytes());
+    assert_eq!(read_u32(&mut dev, 0x10), 0x0000_c004);
+    assert_eq!(read_u32(&mut dev, 0x14), 0);
+}
+
+#[test]
+fn virtio_pci_legacy_io_bar_subword_write_updates_base() {
+    let mut dev = VirtioPciDevice::new_transitional(
+        Box::new(VirtioNet::new(
+            LoopbackNet::default(),
+            [0x52, 0x54, 0x00, 0, 0, 6],
+        )),
+        Box::new(InterruptLog::default()),
+    );
+
+    // Program BAR2 (legacy I/O register block) via a 16-bit write. The base should be clamped to
+    // the 0x100-byte BAR size and keep the I/O BAR flag bit.
+    dev.config_write(0x18, &0x1235u16.to_le_bytes());
+    assert_eq!(read_u32(&mut dev, 0x18), 0x0000_1201);
+    assert_eq!(dev.legacy_io_base(), 0x0000_1200);
+}
