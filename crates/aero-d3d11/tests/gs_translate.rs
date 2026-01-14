@@ -2157,3 +2157,372 @@ fn gs_translate_supports_setp_and_predicated_emit_cut() {
 
     assert_wgsl_validates(&wgsl);
 }
+
+#[test]
+fn sm4_gs_integer_bitwise_ops_translate_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // iadd r0.xyzw, r1.xyzw, r2.xyzw
+    let mut iadd = vec![opcode_token(OPCODE_IADD, 0)];
+    iadd.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    iadd.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    iadd.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    iadd[0] = opcode_token(OPCODE_IADD, iadd.len() as u32);
+    tokens.extend_from_slice(&iadd);
+
+    // isub r3.xyzw, r0.xyzw, r2.xyzw
+    let mut isub = vec![opcode_token(OPCODE_ISUB, 0)];
+    isub.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    isub.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    isub.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    isub[0] = opcode_token(OPCODE_ISUB, isub.len() as u32);
+    tokens.extend_from_slice(&isub);
+
+    // or r4.xyzw, r0.xyzw, r2.xyzw
+    let mut or_inst = vec![opcode_token(OPCODE_OR, 0)];
+    or_inst.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    or_inst.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    or_inst.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    or_inst[0] = opcode_token(OPCODE_OR, or_inst.len() as u32);
+    tokens.extend_from_slice(&or_inst);
+
+    // xor r5.xyzw, r4.xyzw, r2.xyzw
+    let mut xor_inst = vec![opcode_token(OPCODE_XOR, 0)];
+    xor_inst.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    xor_inst.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 4));
+    xor_inst.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    xor_inst[0] = opcode_token(OPCODE_XOR, xor_inst.len() as u32);
+    tokens.extend_from_slice(&xor_inst);
+
+    // not r6.xyzw, r5.xyzw
+    let mut not_inst = vec![opcode_token(OPCODE_NOT, 0)];
+    not_inst.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    not_inst.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 5));
+    not_inst[0] = opcode_token(OPCODE_NOT, not_inst.len() as u32);
+    tokens.extend_from_slice(&not_inst);
+
+    // emit; ret
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("bitcast<vec4<i32>>"),
+        "expected integer ops to bitcast sources through vec4<i32>:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(" | "),
+        "expected OR lowering to use the bitwise | operator:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(" ^ "),
+        "expected XOR lowering to use the bitwise ^ operator:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("~("),
+        "expected NOT lowering to use the bitwise ~ operator:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_shift_ops_translate_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // ishl r0.xyzw, r1.xyzw, r2.xyzw
+    let mut ishl = vec![opcode_token(OPCODE_ISHL, 0)];
+    ishl.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ishl.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    ishl.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    ishl[0] = opcode_token(OPCODE_ISHL, ishl.len() as u32);
+    tokens.extend_from_slice(&ishl);
+
+    // ishr r3.xyzw, r0.xyzw, r2.xyzw
+    let mut ishr = vec![opcode_token(OPCODE_ISHR, 0)];
+    ishr.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    ishr.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    ishr.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    ishr[0] = opcode_token(OPCODE_ISHR, ishr.len() as u32);
+    tokens.extend_from_slice(&ishr);
+
+    // ushr r4.xyzw, r0.xyzw, r2.xyzw
+    let mut ushr = vec![opcode_token(OPCODE_USHR, 0)];
+    ushr.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    ushr.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    ushr.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    ushr[0] = opcode_token(OPCODE_USHR, ushr.len() as u32);
+    tokens.extend_from_slice(&ushr);
+
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains(" << ("),
+        "expected shift-left lowering to use the << operator:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(" >> ("),
+        "expected shift-right lowering to use the >> operator:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("vec4<u32>(31u)"),
+        "expected DXBC shift mask (31u) to be applied:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_integer_min_max_abs_neg_translate_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // imin r0.xyzw, r1.xyzw, r2.xyzw
+    let mut imin = vec![opcode_token(OPCODE_IMIN, 0)];
+    imin.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    imin.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    imin.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    imin[0] = opcode_token(OPCODE_IMIN, imin.len() as u32);
+    tokens.extend_from_slice(&imin);
+
+    // imax r1.xyzw, r0.xyzw, r2.xyzw
+    let mut imax = vec![opcode_token(OPCODE_IMAX, 0)];
+    imax.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    imax.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    imax.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    imax[0] = opcode_token(OPCODE_IMAX, imax.len() as u32);
+    tokens.extend_from_slice(&imax);
+
+    // umin r2.xyzw, r0.xyzw, r1.xyzw
+    let mut umin = vec![opcode_token(OPCODE_UMIN, 0)];
+    umin.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    umin.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    umin.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    umin[0] = opcode_token(OPCODE_UMIN, umin.len() as u32);
+    tokens.extend_from_slice(&umin);
+
+    // umax r3.xyzw, r0.xyzw, r1.xyzw
+    let mut umax = vec![opcode_token(OPCODE_UMAX, 0)];
+    umax.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    umax.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    umax.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    umax[0] = opcode_token(OPCODE_UMAX, umax.len() as u32);
+    tokens.extend_from_slice(&umax);
+
+    // iabs r4.xyzw, r0.xyzw
+    let mut iabs = vec![opcode_token(OPCODE_IABS, 0)];
+    iabs.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    iabs.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    iabs[0] = opcode_token(OPCODE_IABS, iabs.len() as u32);
+    tokens.extend_from_slice(&iabs);
+
+    // ineg r5.xyzw, r0.xyzw
+    let mut ineg = vec![opcode_token(OPCODE_INEG, 0)];
+    ineg.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    ineg.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+    ineg[0] = opcode_token(OPCODE_INEG, ineg.len() as u32);
+    tokens.extend_from_slice(&ineg);
+
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("vec4<u32>(min(("),
+        "expected imin lowering to use vec4<u32>(min(...)):\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("vec4<u32>(max(("),
+        "expected imax lowering to use vec4<u32>(max(...)):\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("vec4<u32>(abs("),
+        "expected iabs lowering to use vec4<u32>(abs(...)):\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("vec4<u32>(-("),
+        "expected ineg lowering to use vec4<u32>(-(...)):\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_cmp_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // lt r0.xyzw, r1.xyzw, r2.xyzw  (float compare -> predicate mask bits)
+    let mut lt = vec![opcode_token(OPCODE_LT, 0)];
+    lt.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    lt.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    lt.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    lt[0] = opcode_token(OPCODE_LT, lt.len() as u32);
+    tokens.extend_from_slice(&lt);
+
+    // ilt r1.xyzw, r1.xyzw, r2.xyzw (signed int compare)
+    let mut ilt = vec![opcode_token(OPCODE_ILT, 0)];
+    ilt.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    ilt.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    ilt.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    ilt[0] = opcode_token(OPCODE_ILT, ilt.len() as u32);
+    tokens.extend_from_slice(&ilt);
+
+    // ult r2.xyzw, r1.xyzw, r2.xyzw (unsigned int compare)
+    let mut ult = vec![opcode_token(OPCODE_ULT, 0)];
+    ult.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    ult.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    ult.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    ult[0] = opcode_token(OPCODE_ULT, ult.len() as u32);
+    tokens.extend_from_slice(&ult);
+
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("0xffffffffu"),
+        "expected cmp lowering to use 0xffffffffu predicate mask values:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"),
+        "expected cmp lowering to use select() to build predicate masks:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_udiv_idiv_translate_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // udiv r0.xyzw, r1.xyzw, r2.xyzw, r3.xyzw
+    let mut udiv = vec![opcode_token(OPCODE_UDIV, 0)];
+    udiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    udiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    udiv.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    udiv.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    udiv[0] = opcode_token(OPCODE_UDIV, udiv.len() as u32);
+    tokens.extend_from_slice(&udiv);
+
+    // idiv r4.xyzw, r5.xyzw, r2.xyzw, r3.xyzw
+    let mut idiv = vec![opcode_token(OPCODE_IDIV, 0)];
+    idiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    idiv.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    idiv.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    idiv.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    idiv[0] = opcode_token(OPCODE_IDIV, idiv.len() as u32);
+    tokens.extend_from_slice(&idiv);
+
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("let udiv_q"),
+        "expected udiv lowering to introduce quotient temporaries:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(" % "),
+        "expected div lowering to compute a remainder with %:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("let idiv_q"),
+        "expected idiv lowering to introduce quotient temporaries:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_bitfield_ops_translate_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // bfi r0.xyzw, r1.xyzw, r2.xyzw, r3.xyzw, r4.xyzw
+    let mut bfi = vec![opcode_token(OPCODE_BFI, 0)];
+    bfi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    bfi.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    bfi.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    bfi.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    bfi.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 4));
+    bfi[0] = opcode_token(OPCODE_BFI, bfi.len() as u32);
+    tokens.extend_from_slice(&bfi);
+
+    // ubfe r5.xyzw, r1.xyzw, r2.xyzw, r3.xyzw
+    let mut ubfe = vec![opcode_token(OPCODE_UBFE, 0)];
+    ubfe.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 5, WriteMask::XYZW));
+    ubfe.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    ubfe.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    ubfe.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    ubfe[0] = opcode_token(OPCODE_UBFE, ubfe.len() as u32);
+    tokens.extend_from_slice(&ubfe);
+
+    // ibfe r6.xyzw, r1.xyzw, r2.xyzw, r3.xyzw
+    let mut ibfe = vec![opcode_token(OPCODE_IBFE, 0)];
+    ibfe.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    ibfe.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+    ibfe.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 2));
+    ibfe.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    ibfe[0] = opcode_token(OPCODE_IBFE, ibfe.len() as u32);
+    tokens.extend_from_slice(&ibfe);
+
+    // bfrev r7.xyzw, r3.xyzw
+    let mut bfrev = vec![opcode_token(OPCODE_BFREV, 0)];
+    bfrev.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 7, WriteMask::XYZW));
+    bfrev.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    bfrev[0] = opcode_token(OPCODE_BFREV, bfrev.len() as u32);
+    tokens.extend_from_slice(&bfrev);
+
+    // countbits r8.xyzw, r3.xyzw
+    let mut countbits = vec![opcode_token(OPCODE_COUNTBITS, 0)];
+    countbits.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 8, WriteMask::XYZW));
+    countbits.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    countbits[0] = opcode_token(OPCODE_COUNTBITS, countbits.len() as u32);
+    tokens.extend_from_slice(&countbits);
+
+    // firstbit_hi r9.xyzw, r3.xyzw
+    let mut firstbit_hi = vec![opcode_token(OPCODE_FIRSTBIT_HI, 0)];
+    firstbit_hi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 9, WriteMask::XYZW));
+    firstbit_hi.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    firstbit_hi[0] = opcode_token(OPCODE_FIRSTBIT_HI, firstbit_hi.len() as u32);
+    tokens.extend_from_slice(&firstbit_hi);
+
+    // firstbit_lo r10.xyzw, r3.xyzw
+    let mut firstbit_lo = vec![opcode_token(OPCODE_FIRSTBIT_LO, 0)];
+    firstbit_lo.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 10, WriteMask::XYZW));
+    firstbit_lo.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    firstbit_lo[0] = opcode_token(OPCODE_FIRSTBIT_LO, firstbit_lo.len() as u32);
+    tokens.extend_from_slice(&firstbit_lo);
+
+    // firstbit_shi r11.xyzw, r3.xyzw
+    let mut firstbit_shi = vec![opcode_token(OPCODE_FIRSTBIT_SHI, 0)];
+    firstbit_shi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 11, WriteMask::XYZW));
+    firstbit_shi.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 3));
+    firstbit_shi[0] = opcode_token(OPCODE_FIRSTBIT_SHI, firstbit_shi.len() as u32);
+    tokens.extend_from_slice(&firstbit_shi);
+
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("insertBits("),
+        "expected bfi lowering to use insertBits():\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("extractBits("),
+        "expected bfe lowering to use extractBits():\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("reverseBits("),
+        "expected bfrev lowering to use reverseBits():\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("countOneBits("),
+        "expected countbits lowering to use countOneBits():\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("firstLeadingBit("),
+        "expected firstbit lowering to use firstLeadingBit():\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("firstTrailingBit("),
+        "expected firstbit_lo lowering to use firstTrailingBit():\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}

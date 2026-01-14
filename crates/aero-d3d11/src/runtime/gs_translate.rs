@@ -31,14 +31,17 @@
 //! - Predicate registers + predication: `setp` and DXBC instruction predication for non-control-flow
 //!   instructions
 //! - A small ALU subset (`mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`/`min`/`max`, plus `rcp`/`rsq`,
-//!   bitwise `and`, and a handful of pack/unpack + int/float conversion ops)
+//!   integer/bitwise ops (`iadd`/`isub`/`udiv`/`idiv`, `and`/`or`/`xor`/`not`, shifts, min/max/abs/neg,
+//!   predicate-mask compares, and bitfield/bitcount helpers), and a handful of pack/unpack +
+//!   int/float conversion ops)
 //! - Structured control flow (`if`/`else`/`loop`/`switch` with `break`/`continue`)
 //!
 //! Resource support is also intentionally limited:
 //! - Read-only Texture2D ops (`sample`, `sample_l`, `ld`)
 //! - Read-only SRV buffer ops (`ld_raw`, `ld_structured`)
 //!
-//! Resource writes/stores/UAVs and barrier/synchronization instructions are not supported, and any
+//! Resource writes/stores/UAVs/atomics and barrier/synchronization instructions are not supported,
+//! and any
 //! unsupported instruction or operand shape is rejected by translation.
 
 use core::fmt;
@@ -50,9 +53,9 @@ use crate::binding_model::{
 };
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    BufferKind, GsInputPrimitive, GsOutputTopology, OperandModifier, PredicateDstOperand,
-    PredicateOperand, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool,
-    SrcKind, Swizzle, WriteMask,
+    BufferKind, CmpOp, CmpType, GsInputPrimitive, GsOutputTopology, OperandModifier,
+    PredicateDstOperand, PredicateOperand, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl, Sm4Inst,
+    Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
 };
 
 // D3D system-value IDs used by `Sm4Decl::InputSiv`.
@@ -202,6 +205,14 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::F16ToF32 { .. } => "f16tof32",
         Sm4Inst::And { .. } => "and",
         Sm4Inst::Add { .. } => "add",
+        Sm4Inst::IAdd { .. } => "iadd",
+        Sm4Inst::ISub { .. } => "isub",
+        Sm4Inst::Or { .. } => "or",
+        Sm4Inst::Xor { .. } => "xor",
+        Sm4Inst::Not { .. } => "not",
+        Sm4Inst::IShl { .. } => "ishl",
+        Sm4Inst::IShr { .. } => "ishr",
+        Sm4Inst::UShr { .. } => "ushr",
         Sm4Inst::IAddC { .. } => "iaddc",
         Sm4Inst::UAddC { .. } => "uaddc",
         Sm4Inst::ISubC { .. } => "isubc",
@@ -228,6 +239,9 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::Cmp { .. } => "cmp",
         Sm4Inst::Bfrev { .. } => "bfrev",
         Sm4Inst::CountBits { .. } => "countbits",
+        Sm4Inst::FirstbitHi { .. } => "firstbit_hi",
+        Sm4Inst::FirstbitLo { .. } => "firstbit_lo",
+        Sm4Inst::FirstbitShi { .. } => "firstbit_shi",
         Sm4Inst::Sample { .. } => "sample",
         Sm4Inst::SampleL { .. } => "sample_l",
         Sm4Inst::Ld { .. } => "ld",
@@ -740,6 +754,136 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                         verts_per_primitive,
                         inst_index,
                         "and",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+            }
+            Sm4Inst::IAdd { dst, a, b }
+            | Sm4Inst::ISub { dst, a, b }
+            | Sm4Inst::Or { dst, a, b }
+            | Sm4Inst::Xor { dst, a, b }
+            | Sm4Inst::IShl { dst, a, b }
+            | Sm4Inst::IShr { dst, a, b }
+            | Sm4Inst::UShr { dst, a, b }
+            | Sm4Inst::IMin { dst, a, b }
+            | Sm4Inst::IMax { dst, a, b }
+            | Sm4Inst::UMin { dst, a, b }
+            | Sm4Inst::UMax { dst, a, b }
+            | Sm4Inst::Cmp { dst, a, b, .. } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [a, b] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        opcode_name(inst),
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+            }
+            Sm4Inst::Not { dst, src }
+            | Sm4Inst::IAbs { dst, src }
+            | Sm4Inst::INeg { dst, src }
+            | Sm4Inst::Bfrev { dst, src }
+            | Sm4Inst::CountBits { dst, src }
+            | Sm4Inst::FirstbitHi { dst, src }
+            | Sm4Inst::FirstbitLo { dst, src }
+            | Sm4Inst::FirstbitShi { dst, src } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    src,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    opcode_name(inst),
+                    &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
+                )?;
+            }
+            Sm4Inst::UDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            }
+            | Sm4Inst::IDiv {
+                dst_quot,
+                dst_rem,
+                a,
+                b,
+            } => {
+                bump_reg_max(dst_quot.reg, &mut max_temp_reg, &mut max_output_reg);
+                bump_reg_max(dst_rem.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [a, b] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        opcode_name(inst),
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+            }
+            Sm4Inst::Bfi {
+                dst,
+                width,
+                offset,
+                insert,
+                base,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [width, offset, insert, base] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        "bfi",
+                        &input_sivs,
+                        &cbuffer_decls,
+                        &mut used_cbuffers,
+                    )?;
+                }
+            }
+            Sm4Inst::Ubfe {
+                dst,
+                width,
+                offset,
+                src: src_op,
+            }
+            | Sm4Inst::Ibfe {
+                dst,
+                width,
+                offset,
+                src: src_op,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                for src in [width, offset, src_op] {
+                    scan_src_operand(
+                        src,
+                        &mut max_temp_reg,
+                        &mut max_output_reg,
+                        &mut max_gs_input_reg,
+                        verts_per_primitive,
+                        inst_index,
+                        opcode_name(inst),
                         &input_sivs,
                         &cbuffer_decls,
                         &mut used_cbuffers,
@@ -2112,6 +2256,314 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     let b = emit_src_vec4_u32(inst_index, "and", b, &input_sivs)?;
                     let rhs = format!("bitcast<vec4<f32>>(({a}) & ({b}))");
                     emit_write_masked(&mut w, inst_index, "and", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::IAdd { dst, a, b } => {
+                    let a = emit_src_vec4_i32(inst_index, "iadd", a, &input_sivs)?;
+                    let b = emit_src_vec4_i32(inst_index, "iadd", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) + ({b}))");
+                    emit_write_masked(&mut w, inst_index, "iadd", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::ISub { dst, a, b } => {
+                    let a = emit_src_vec4_i32(inst_index, "isub", a, &input_sivs)?;
+                    let b = emit_src_vec4_i32(inst_index, "isub", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) - ({b}))");
+                    emit_write_masked(&mut w, inst_index, "isub", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Or { dst, a, b } => {
+                    let a = emit_src_vec4_u32(inst_index, "or", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "or", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) | ({b}))");
+                    emit_write_masked(&mut w, inst_index, "or", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Xor { dst, a, b } => {
+                    let a = emit_src_vec4_u32(inst_index, "xor", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "xor", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) ^ ({b}))");
+                    emit_write_masked(&mut w, inst_index, "xor", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Not { dst, src } => {
+                    let src = emit_src_vec4_u32(inst_index, "not", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(~({src}))");
+                    emit_write_masked(&mut w, inst_index, "not", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::IShl { dst, a, b } => {
+                    let a = emit_src_vec4_u32(inst_index, "ishl", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "ishl", b, &input_sivs)?;
+                    // DXBC shift ops mask the shift amount to 0..31 (lower 5 bits).
+                    let sh = format!("({b}) & vec4<u32>(31u)");
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) << ({sh}))");
+                    emit_write_masked(&mut w, inst_index, "ishl", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::IShr { dst, a, b } => {
+                    let a = emit_src_vec4_i32(inst_index, "ishr", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "ishr", b, &input_sivs)?;
+                    // DXBC shift ops mask the shift amount to 0..31 (lower 5 bits).
+                    let sh = format!("({b}) & vec4<u32>(31u)");
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) >> ({sh}))");
+                    emit_write_masked(&mut w, inst_index, "ishr", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::UShr { dst, a, b } => {
+                    let a = emit_src_vec4_u32(inst_index, "ushr", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "ushr", b, &input_sivs)?;
+                    // DXBC shift ops mask the shift amount to 0..31 (lower 5 bits).
+                    let sh = format!("({b}) & vec4<u32>(31u)");
+                    let rhs = format!("bitcast<vec4<f32>>(({a}) >> ({sh}))");
+                    emit_write_masked(&mut w, inst_index, "ushr", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::IMin { dst, a, b } => {
+                    let a = emit_src_vec4_i32(inst_index, "imin", a, &input_sivs)?;
+                    let b = emit_src_vec4_i32(inst_index, "imin", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<u32>(min(({a}), ({b}))))");
+                    emit_write_masked(&mut w, inst_index, "imin", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::IMax { dst, a, b } => {
+                    let a = emit_src_vec4_i32(inst_index, "imax", a, &input_sivs)?;
+                    let b = emit_src_vec4_i32(inst_index, "imax", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<u32>(max(({a}), ({b}))))");
+                    emit_write_masked(&mut w, inst_index, "imax", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::UMin { dst, a, b } => {
+                    let a = emit_src_vec4_u32(inst_index, "umin", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "umin", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(min(({a}), ({b})))");
+                    emit_write_masked(&mut w, inst_index, "umin", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::UMax { dst, a, b } => {
+                    let a = emit_src_vec4_u32(inst_index, "umax", a, &input_sivs)?;
+                    let b = emit_src_vec4_u32(inst_index, "umax", b, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(max(({a}), ({b})))");
+                    emit_write_masked(&mut w, inst_index, "umax", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::IAbs { dst, src } => {
+                    let src = emit_src_vec4_i32(inst_index, "iabs", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<u32>(abs({src})))");
+                    emit_write_masked(&mut w, inst_index, "iabs", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::INeg { dst, src } => {
+                    let src = emit_src_vec4_i32(inst_index, "ineg", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<u32>(-({src})))");
+                    emit_write_masked(&mut w, inst_index, "ineg", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Cmp { dst, a, b, op, ty } => {
+                    let opcode = "cmp";
+                    let cmp_expr = |a: &str, b: &str| match op {
+                        CmpOp::Eq => format!("({a}) == ({b})"),
+                        CmpOp::Ne => format!("({a}) != ({b})"),
+                        CmpOp::Lt => format!("({a}) < ({b})"),
+                        CmpOp::Le => format!("({a}) <= ({b})"),
+                        CmpOp::Gt => format!("({a}) > ({b})"),
+                        CmpOp::Ge => format!("({a}) >= ({b})"),
+                    };
+
+                    let cmp = match ty {
+                        CmpType::F32 => {
+                            let a = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
+                            let b = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
+                            cmp_expr(&a, &b)
+                        }
+                        CmpType::I32 => {
+                            let a = emit_src_vec4_i32(inst_index, opcode, a, &input_sivs)?;
+                            let b = emit_src_vec4_i32(inst_index, opcode, b, &input_sivs)?;
+                            cmp_expr(&a, &b)
+                        }
+                        CmpType::U32 => {
+                            let a = emit_src_vec4_u32(inst_index, opcode, a, &input_sivs)?;
+                            let b = emit_src_vec4_u32(inst_index, opcode, b, &input_sivs)?;
+                            cmp_expr(&a, &b)
+                        }
+                    };
+
+                    // Convert the bool vector result into D3D-style predicate mask bits.
+                    let mask = format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
+                    let rhs = format!("bitcast<vec4<f32>>({mask})");
+                    emit_write_masked(&mut w, inst_index, opcode, dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::UDiv {
+                    dst_quot,
+                    dst_rem,
+                    a,
+                    b,
+                } => {
+                    // DXBC integer ops write raw bits into the untyped register file. Model that by
+                    // bitcasting through `u32`, performing the arithmetic, then bitcasting back to
+                    // `f32` before writing.
+                    let a_u = emit_src_vec4_u32(inst_index, "udiv", a, &input_sivs)?;
+                    let b_u = emit_src_vec4_u32(inst_index, "udiv", b, &input_sivs)?;
+                    let a_name = format!("udiv_a{inst_index}");
+                    let b_name = format!("udiv_b{inst_index}");
+                    let q_name = format!("udiv_q{inst_index}");
+                    let r_name = format!("udiv_r{inst_index}");
+                    let q_f_name = format!("udiv_qf{inst_index}");
+                    let r_f_name = format!("udiv_rf{inst_index}");
+                    w.line(&format!("let {a_name}: vec4<u32> = {a_u};"));
+                    w.line(&format!("let {b_name}: vec4<u32> = {b_u};"));
+                    w.line(&format!("let {q_name}: vec4<u32> = ({a_name}) / ({b_name});"));
+                    w.line(&format!("let {r_name}: vec4<u32> = ({a_name}) % ({b_name});"));
+                    w.line(&format!(
+                        "let {q_f_name}: vec4<f32> = bitcast<vec4<f32>>({q_name});"
+                    ));
+                    w.line(&format!(
+                        "let {r_f_name}: vec4<f32> = bitcast<vec4<f32>>({r_name});"
+                    ));
+                    emit_write_masked(
+                        &mut w,
+                        inst_index,
+                        "udiv",
+                        dst_quot.reg,
+                        dst_quot.mask,
+                        q_f_name,
+                    )?;
+                    emit_write_masked(
+                        &mut w,
+                        inst_index,
+                        "udiv",
+                        dst_rem.reg,
+                        dst_rem.mask,
+                        r_f_name,
+                    )?;
+                }
+                Sm4Inst::IDiv {
+                    dst_quot,
+                    dst_rem,
+                    a,
+                    b,
+                } => {
+                    // Same idea as `udiv`, but operate on signed integers.
+                    let a_i = emit_src_vec4_i32(inst_index, "idiv", a, &input_sivs)?;
+                    let b_i = emit_src_vec4_i32(inst_index, "idiv", b, &input_sivs)?;
+                    let a_name = format!("idiv_a{inst_index}");
+                    let b_name = format!("idiv_b{inst_index}");
+                    let q_name = format!("idiv_q{inst_index}");
+                    let r_name = format!("idiv_r{inst_index}");
+                    let q_f_name = format!("idiv_qf{inst_index}");
+                    let r_f_name = format!("idiv_rf{inst_index}");
+                    w.line(&format!("let {a_name}: vec4<i32> = {a_i};"));
+                    w.line(&format!("let {b_name}: vec4<i32> = {b_i};"));
+                    w.line(&format!("let {q_name}: vec4<i32> = ({a_name}) / ({b_name});"));
+                    w.line(&format!("let {r_name}: vec4<i32> = ({a_name}) % ({b_name});"));
+                    w.line(&format!(
+                        "let {q_f_name}: vec4<f32> = bitcast<vec4<f32>>({q_name});"
+                    ));
+                    w.line(&format!(
+                        "let {r_f_name}: vec4<f32> = bitcast<vec4<f32>>({r_name});"
+                    ));
+                    emit_write_masked(
+                        &mut w,
+                        inst_index,
+                        "idiv",
+                        dst_quot.reg,
+                        dst_quot.mask,
+                        q_f_name,
+                    )?;
+                    emit_write_masked(
+                        &mut w,
+                        inst_index,
+                        "idiv",
+                        dst_rem.reg,
+                        dst_rem.mask,
+                        r_f_name,
+                    )?;
+                }
+                Sm4Inst::Bfi {
+                    dst,
+                    width,
+                    offset,
+                    insert,
+                    base,
+                } => {
+                    let width_i = emit_src_vec4_i32(inst_index, "bfi", width, &input_sivs)?;
+                    let offset_i = emit_src_vec4_i32(inst_index, "bfi", offset, &input_sivs)?;
+                    let insert_i = emit_src_vec4_i32(inst_index, "bfi", insert, &input_sivs)?;
+                    let base_i = emit_src_vec4_i32(inst_index, "bfi", base, &input_sivs)?;
+
+                    // WGSL `insertBits` takes scalar `offset`/`count`, but DXBC operands are vectors.
+                    // Emit per-lane inserts so swizzles (common in pack/unpack patterns) behave like
+                    // DXBC.
+                    let lanes = ['x', 'y', 'z', 'w'];
+                    let mut out = Vec::with_capacity(4);
+                    for lane in lanes {
+                        let offset_u = format!("u32(({offset_i}).{lane})");
+                        let count_u = format!("u32(({width_i}).{lane})");
+                        let insert_u = format!("bitcast<u32>(({insert_i}).{lane})");
+                        let base_u = format!("bitcast<u32>(({base_i}).{lane})");
+                        out.push(format!(
+                            "bitcast<f32>(insertBits({base_u}, {insert_u}, {offset_u}, {count_u}))"
+                        ));
+                    }
+                    let rhs = format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3]);
+                    emit_write_masked(&mut w, inst_index, "bfi", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Ubfe {
+                    dst,
+                    width,
+                    offset,
+                    src,
+                } => {
+                    let width_i = emit_src_vec4_i32(inst_index, "ubfe", width, &input_sivs)?;
+                    let offset_i = emit_src_vec4_i32(inst_index, "ubfe", offset, &input_sivs)?;
+                    let src_i = emit_src_vec4_i32(inst_index, "ubfe", src, &input_sivs)?;
+
+                    let lanes = ['x', 'y', 'z', 'w'];
+                    let mut out = Vec::with_capacity(4);
+                    for lane in lanes {
+                        let offset_u = format!("u32(({offset_i}).{lane})");
+                        let count_u = format!("u32(({width_i}).{lane})");
+                        let src_u = format!("bitcast<u32>(({src_i}).{lane})");
+                        out.push(format!(
+                            "bitcast<f32>(extractBits({src_u}, {offset_u}, {count_u}))"
+                        ));
+                    }
+                    let rhs = format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3]);
+                    emit_write_masked(&mut w, inst_index, "ubfe", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Ibfe {
+                    dst,
+                    width,
+                    offset,
+                    src,
+                } => {
+                    let width_i = emit_src_vec4_i32(inst_index, "ibfe", width, &input_sivs)?;
+                    let offset_i = emit_src_vec4_i32(inst_index, "ibfe", offset, &input_sivs)?;
+                    let src_i = emit_src_vec4_i32(inst_index, "ibfe", src, &input_sivs)?;
+
+                    // `extractBits(i32, ...)` sign-extends in WGSL, matching D3D's `ibfe`.
+                    let lanes = ['x', 'y', 'z', 'w'];
+                    let mut out = Vec::with_capacity(4);
+                    for lane in lanes {
+                        let offset_u = format!("u32(({offset_i}).{lane})");
+                        let count_u = format!("u32(({width_i}).{lane})");
+                        let src_s = format!("({src_i}).{lane}");
+                        out.push(format!(
+                            "bitcast<f32>(extractBits({src_s}, {offset_u}, {count_u}))"
+                        ));
+                    }
+                    let rhs = format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3]);
+                    emit_write_masked(&mut w, inst_index, "ibfe", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::Bfrev { dst, src } => {
+                    let src_u = emit_src_vec4_u32(inst_index, "bfrev", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(reverseBits({src_u}))");
+                    emit_write_masked(&mut w, inst_index, "bfrev", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::CountBits { dst, src } => {
+                    let src_u = emit_src_vec4_u32(inst_index, "countbits", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(countOneBits({src_u}))");
+                    emit_write_masked(&mut w, inst_index, "countbits", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::FirstbitHi { dst, src } => {
+                    let src_u = emit_src_vec4_u32(inst_index, "firstbit_hi", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(firstLeadingBit({src_u}))");
+                    emit_write_masked(&mut w, inst_index, "firstbit_hi", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::FirstbitLo { dst, src } => {
+                    let src_u = emit_src_vec4_u32(inst_index, "firstbit_lo", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(firstTrailingBit({src_u}))");
+                    emit_write_masked(&mut w, inst_index, "firstbit_lo", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::FirstbitShi { dst, src } => {
+                    let src_i = emit_src_vec4_i32(inst_index, "firstbit_shi", src, &input_sivs)?;
+                    let rhs = format!("bitcast<vec4<f32>>(firstLeadingBit({src_i}))");
+                    emit_write_masked(&mut w, inst_index, "firstbit_shi", dst.reg, dst.mask, rhs)?;
                 }
                 Sm4Inst::Mul { dst, a, b } => {
                     let a = emit_src_vec4(inst_index, "mul", a, &input_sivs)?;
