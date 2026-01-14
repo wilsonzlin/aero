@@ -1259,11 +1259,13 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         // Prefer a combined wheel2 API when available so diagonal scroll events can be represented
         // as a single HID report (matching `InputEventType.MouseWheel`, which carries both axes).
         const wheel2 = (m as unknown as { inject_usb_hid_mouse_wheel2?: unknown }).inject_usb_hid_mouse_wheel2;
-        if (dz !== 0 && dx !== 0 && typeof wheel2 === "function") {
-          try {
-            (wheel2 as (wheel: number, hwheel: number) => void).call(m, dz | 0, dx | 0);
-          } catch {
-            // ignore
+        if (typeof wheel2 === "function") {
+          if (dz !== 0 || dx !== 0) {
+            try {
+              (wheel2 as (wheel: number, hwheel: number) => void).call(m, dz | 0, dx | 0);
+            } catch {
+              // ignore
+            }
           }
         } else {
           const wheel = (m as unknown as { inject_usb_hid_mouse_wheel?: unknown }).inject_usb_hid_mouse_wheel;
