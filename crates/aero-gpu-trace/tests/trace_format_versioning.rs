@@ -113,6 +113,61 @@ fn reject_trace_with_toc_entry_out_of_bounds() {
 }
 
 #[test]
+fn reject_trace_with_meta_len_out_of_bounds() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    // TraceHeader layout (little-endian):
+    // [0..8]   magic
+    // [8..12]  header_size
+    // [12..16] container_version
+    // [16..20] command_abi_version
+    // [20..24] flags
+    // [24..28] meta_len
+    bytes[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::RecordOutOfBounds));
+}
+
+#[test]
+fn reject_trace_with_toc_len_mismatch() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+
+    // Patch footer.toc_len to something too small to contain even the TOC header.
+    bytes[footer_start + 24..footer_start + 32].copy_from_slice(&0u64.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
+fn reject_trace_with_toc_offset_len_overflow() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+
+    // Set toc_offset and toc_len such that toc_offset + toc_len overflows u64.
+    bytes[footer_start + 16..footer_start + 24].copy_from_slice(&u64::MAX.to_le_bytes());
+    bytes[footer_start + 24..footer_start + 32].copy_from_slice(&1u64.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
 fn reject_trace_with_unsupported_header_size() {
     let mut bytes = minimal_trace_bytes(0);
 
