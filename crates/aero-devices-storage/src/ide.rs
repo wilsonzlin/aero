@@ -256,7 +256,7 @@ impl IdeChannel {
             1 => (1u8, 0u8), // slave (device 1) selected
             _ => (1u8, 1u8),
         };
-        0xC0 | ((!head) & 0x0F) | (n_ds0 << 4) | (n_ds1 << 5)
+        0xC0 | (n_ds1 << 5) | (n_ds0 << 4) | ((!head) & 0x0F)
     }
     fn write_device_control(&mut self, val: u8, irq: &dyn IrqLine) {
         let prev = self.dev_ctl;
