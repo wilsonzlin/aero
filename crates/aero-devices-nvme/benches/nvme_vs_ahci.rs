@@ -264,7 +264,6 @@ fn bench_device_read_4k(c: &mut Criterion) {
         const HBA_GHC: u64 = 0x04;
         const HBA_IS: u64 = 0x08;
         const HBA_PORTS_BASE: u64 = 0x100;
-        const HBA_PORT_STRIDE: u64 = 0x80;
 
         const PX_CLB: u64 = 0x00;
         const PX_CLBU: u64 = 0x04;
@@ -302,7 +301,7 @@ fn bench_device_read_4k(c: &mut Criterion) {
         let ctba = 0x12_000u64;
         let dst = 0x13_000u64;
 
-        let port0 = HBA_PORTS_BASE + (0 * HBA_PORT_STRIDE);
+        let port0 = HBA_PORTS_BASE;
         ahci.write_u32(HBA_GHC, GHC_AE | GHC_IE);
         ahci.write_u32(port0 + PX_CLB, clb as u32);
         ahci.write_u32(port0 + PX_CLBU, (clb >> 32) as u32);

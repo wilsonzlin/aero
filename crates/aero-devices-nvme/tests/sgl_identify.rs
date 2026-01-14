@@ -101,7 +101,7 @@ fn identify_controller_supports_sgl_data_pointer() {
     set_cid(&mut cmd, 0x1234);
     set_prp1(&mut cmd, id_buf);
     // DPTR2: length (low 32) + type (high byte). Type=0x00 (Data Block, subtype=0).
-    set_prp2(&mut cmd, 4096u64 | ((0x00u64) << 56));
+    set_prp2(&mut cmd, 4096u64);
     set_cdw10(&mut cmd, 0x01);
 
     mem.write_physical(asq, &cmd);

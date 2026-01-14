@@ -79,12 +79,12 @@ fn bar0_mmio_routes_msix_table_and_pba() {
     };
 
     // MSI-X table entry 0 is 16 bytes: addr_lo, addr_hi, data, vector_control.
-    dev.write(table_base + 0x0, 4, 0xfee0_0000);
+    dev.write(table_base, 4, 0xfee0_0000);
     dev.write(table_base + 0x4, 4, 0);
     dev.write(table_base + 0x8, 4, 0x0045);
     dev.write(table_base + 0xc, 4, 0); // unmasked
 
-    assert_eq!(dev.read(table_base + 0x0, 4) as u32, 0xfee0_0000);
+    assert_eq!(dev.read(table_base, 4) as u32, 0xfee0_0000);
     assert_eq!(dev.read(table_base + 0x4, 4) as u32, 0);
     assert_eq!(dev.read(table_base + 0x8, 4) as u32, 0x0045);
     assert_eq!(dev.read(table_base + 0xc, 4) as u32, 0);
