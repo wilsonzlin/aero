@@ -117,6 +117,11 @@ function wakeRunLoop(): void {
   });
 }
 
+// Boot disk selection (shared protocol with the legacy IO worker).
+//
+// In `vmRuntime="machine"` mode the coordinator sends boot disks to this CPU worker so it can
+// attach them to the synchronous Rust storage controllers (OPFS-only). Validate selections early
+// so unsupported configs (IDB backend, remote streaming, unsupported formats) fail fast.
 let pendingBootDisks: SetBootDisksMessage | null = null;
 
 // Canonical machine BIOS boot device policy for the next reset.
