@@ -214,6 +214,35 @@ fetch_headers() {
   curl -kfsS "$@" -D- -o /dev/null "$url" | tr -d '\r'
 }
 
+fetch_headers_allow_error() {
+  # Like fetch_headers, but doesn't treat 4xx/5xx responses as fatal. Useful for
+  # asserting expected error status codes/headers (e.g. auth failures).
+  local url="$1"
+  shift
+  curl -ksS "$@" -D- -o /dev/null "$url" | tr -d '\r'
+}
+
+assert_status_code() {
+  local expected="$1"
+  local headers="$2"
+  local status_line
+  status_line="$(echo "$headers" | grep -E '^HTTP/' | head -n1 || true)"
+  if [[ -z "$status_line" ]]; then
+    echo "deploy smoke: missing HTTP status line" >&2
+    echo "--- headers ---" >&2
+    echo "$headers" >&2
+    exit 1
+  fi
+  local got
+  got="$(echo "$status_line" | awk '{print $2}')"
+  if [[ "$got" != "$expected" ]]; then
+    echo "deploy smoke: expected HTTP status $expected, got: $status_line" >&2
+    echo "--- headers ---" >&2
+    echo "$headers" >&2
+    exit 1
+  fi
+}
+
 assert_header_exact() {
   local header="$1"
   local value="$2"
@@ -240,6 +269,7 @@ assert_header_exact() {
 root_headers="$(fetch_headers https://localhost/)"
 health_headers="$(fetch_headers https://localhost/healthz)"
 webrtc_headers="$(fetch_headers https://localhost/webrtc/ice -H "X-API-Key: $SMOKE_WEBRTC_API_KEY")"
+webrtc_unauth_headers="$(fetch_headers_allow_error https://localhost/webrtc/ice)"
 wasm_headers="$(fetch_headers "https://localhost/assets/$SMOKE_WASM_NAME")"
 
 assert_header_exact "Cache-Control" "no-cache" "$root_headers"
@@ -288,6 +318,13 @@ assert_header_exact "Content-Type" "application/json" "$webrtc_headers"
 assert_header_exact "Cache-Control" "no-store" "$webrtc_headers"
 assert_header_exact "Pragma" "no-cache" "$webrtc_headers"
 assert_header_exact "Expires" "0" "$webrtc_headers"
+
+# Ensure auth failures are also non-cacheable (avoid leaking credentials through
+# shared caches and avoid stale caching behaviors).
+assert_status_code "401" "$webrtc_unauth_headers"
+assert_header_exact "Cache-Control" "no-store" "$webrtc_unauth_headers"
+assert_header_exact "Pragma" "no-cache" "$webrtc_unauth_headers"
+assert_header_exact "Expires" "0" "$webrtc_unauth_headers"
 
 # /tcp WebSocket upgrade check (requires session cookie).
 #
