@@ -39,24 +39,26 @@ What exists today (bring-up stage):
 - Root hub ports are implemented with **deterministic timers** (reset/resume) and change-bit latching.
 - `FRINDEX` advances in 1ms ticks (adds 8 microframes per tick) when the controller is running.
 - IRQ line level is derived from `USBSTS`/`USBINTR` (notably `PCD` for port changes).
+- A minimal **asynchronous schedule** engine (QH/qTD) is implemented for control + bulk transfers.
+- A minimal **periodic schedule** engine (frame list + interrupt QH/qTD) is implemented for interrupt polling.
+- Snapshot/restore is implemented for EHCI controller state and attached USB topology.
+- Companion routing semantics (`CONFIGFLAG` / `PORT_OWNER`) are implemented (no companion controller models yet).
 
 What is *not* implemented yet (still MVP-relevant):
 
-- Async/periodic schedule walking (QH/qTD) is currently a stub.
-- Snapshot/restore for EHCI controller state + attached USB topology.
-- Companion routing (`CONFIGFLAG` / `PORT_OWNER`) and any split/TT behavior.
+- Isochronous periodic descriptors (`iTD` / `siTD`) and split/TT behavior.
+- MSI/MSI-X (Aero uses PCI INTx for EHCI).
+- Full UHCI/OHCI companion controller integration (ports can be marked as companion-owned, but the companions themselves are not yet modeled).
 
 Current code locations:
 
-- Rust EHCI controller core: `crates/aero-usb/src/ehci/{mod.rs, regs.rs, hub.rs}`
-- Rust EHCI smoke tests: `crates/aero-usb/tests/ehci.rs`
+- Rust EHCI controller core: `crates/aero-usb/src/ehci/{mod.rs, regs.rs, hub.rs, schedule_async.rs, schedule_periodic.rs}`
+- Rust EHCI tests: `crates/aero-usb/tests/ehci*.rs`
 - Browser PCI device wrapper (worker runtime): `web/src/io/devices/ehci.ts` (+ `ehci.test.ts`)
 - Native PCI identity stub (not a full controller yet): `crates/devices/src/usb/ehci.rs`
 
-Important: as of this staged bring-up, the **schedule engine is not implemented yet** in
-`aero-usb` (see the `process_schedules` stub in `crates/aero-usb/src/ehci/mod.rs`). The sections
-below still document the *intended* async/periodic schedule contracts because they are part of the
-EHCI MVP design.
+Important: the async + periodic schedule engines now exist in `aero-usb`. The sections below document
+the intended contracts and call out remaining limitations (e.g. no iTD/siTD, no split/TT).
 
 ### Planned for Aero’s EHCI MVP (target scope)
 
@@ -156,9 +158,8 @@ The EHCI operational register block includes:
   bits are masked out.
 - `USBSTS.HCHALTED` is derived from `USBCMD.RunStop` and reset state; it is not directly writable.
 - The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) are part of the EHCI spec, but are not
-  currently modeled in Aero’s bring-up implementation (the schedule engine is still a stub). When
-  schedule walking lands, these bits should reflect whether the periodic/asynchronous schedules are
-  active.
+  currently modeled in Aero’s bring-up implementation. If/when we model them, these bits should
+  reflect whether the periodic/asynchronous schedules are active.
 - `USBCMD.HCRESET` resets controller-local state (registers and scheduler bookkeeping) but should
   not implicitly detach devices from the root hub; device topology is modeled separately.
 
@@ -178,7 +179,7 @@ Each port tracks:
 - **Reset** (PR) and a **reset timer** (real-time delay before reset completes)
 - **Suspend/Resume** (SUSP/FPR) and a **resume timer** (if modeled)
 - **Port power** (`PP`) (Aero currently models ports as powered-on by default, but honors writes)
-- **Port owner** (`PORT_OWNER`) when companion routing is enabled (planned; not modeled yet)
+- **Port owner** (`PORT_OWNER`) for companion routing (modeled; companion controllers are not yet implemented)
 
 Implementation note:
 
@@ -240,9 +241,7 @@ EHCI is defined in terms of **frames (1 ms)** subdivided into **microframes (125
 
 ## Asynchronous schedule (QH / qTD) — control + bulk
 
-> Status: the EHCI schedule engine is not implemented yet in `crates/aero-usb` (bring-up currently
-> covers regs + root hub). This section documents the planned contract for the future schedule
-> walker.
+> Status: implemented (QH/qTD) in `crates/aero-usb/src/ehci/schedule_async.rs`.
 
 ### Structures (guest memory)
 
@@ -288,9 +287,7 @@ For MVP, error modeling focuses on being deterministic and unblocking the guest:
 
 ## Periodic schedule — interrupt polling
 
-> Status: the EHCI schedule engine is not implemented yet in `crates/aero-usb` (bring-up currently
-> covers regs + root hub). This section documents the planned contract for the future periodic
-> walker.
+> Status: implemented (periodic frame list + interrupt QH/qTD) in `crates/aero-usb/src/ehci/schedule_periodic.rs`.
 
 The periodic schedule is driven by:
 
@@ -464,12 +461,13 @@ layered:
 
 ### 1) Rust unit tests (synthetic schedules, memory-bus)
 
-Current bring-up tests already cover basic register/port behavior:
+Current bring-up tests cover basic register/port behavior, schedule traversal, and snapshot/restore:
 
 - `crates/aero-usb/tests/ehci.rs` (capability regs stability, port reset timer, `HCHALTED` tracking)
-
-As schedule walking is implemented, extend the Rust test suite to build synthetic QH/qTD schedules
-in a fake `MemoryBus` and assert on detailed qTD/QH behavior.
+- `crates/aero-usb/tests/ehci_async.rs` (async schedule QH/qTD traversal)
+- `crates/aero-usb/tests/ehci_periodic.rs` (periodic frame list + interrupt QH/qTD polling)
+- `crates/aero-usb/tests/ehci_snapshot_roundtrip.rs` (snapshot/restore)
+- `crates/aero-usb/tests/ehci_legacy_handoff.rs` (legacy BIOS handoff)
 
 In `crates/aero-usb`, write unit tests that:
 
@@ -528,7 +526,7 @@ The panel can:
 
 #### Future: full EHCI controller introspection panel
 
-Once EHCI schedule walking (async/periodic) is implemented, expand the dev harness/panel to show
+Now that EHCI schedule walking (async/periodic) exists, expand the dev harness/panel to show
 controller-level state (e.g. `USBCMD/USBSTS/FRINDEX/PORTSC`) and schedule traversal (QH/qTD overlay
 state, IOC behavior, periodic polling cadence).
 
