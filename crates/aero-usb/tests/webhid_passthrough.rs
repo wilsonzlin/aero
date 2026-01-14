@@ -18,6 +18,20 @@ fn fixture_mouse_collections() -> Vec<HidCollectionInfo> {
     )))
 }
 
+fn fixture_keyboard_collections() -> Vec<HidCollectionInfo> {
+    parse_fixture_collections(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/hid/webhid_normalized_keyboard.json"
+    )))
+}
+
+fn fixture_gamepad_collections() -> Vec<HidCollectionInfo> {
+    parse_fixture_collections(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/hid/webhid_normalized_gamepad.json"
+    )))
+}
+
 fn make_minimal_item(usage_page: u32, usage: u32) -> HidReportItem {
     HidReportItem {
         usage_page,
@@ -129,6 +143,21 @@ fn webhid_infers_boot_mouse_from_fixture() {
 }
 
 #[test]
+fn webhid_infers_boot_keyboard_from_fixture() {
+    let collections = fixture_keyboard_collections();
+    assert_eq!(
+        infer_boot_interface_subclass_protocol(&collections),
+        Some((0x01, 0x01))
+    );
+}
+
+#[test]
+fn webhid_does_not_infer_boot_protocol_for_gamepad_fixture() {
+    let collections = fixture_gamepad_collections();
+    assert_eq!(infer_boot_interface_subclass_protocol(&collections), None);
+}
+
+#[test]
 fn webhid_infers_boot_keyboard_from_simple_collections() {
     let collections = keyboard_collections();
     assert_eq!(
@@ -161,6 +190,47 @@ fn parse_interface_descriptor_fields(bytes: &[u8]) -> Option<(u8, u8)> {
 #[test]
 fn hid_passthrough_config_descriptor_reflects_inferred_boot_keyboard() {
     let collections = keyboard_collections();
+    let report_descriptor = synthesize_report_descriptor(&collections).unwrap();
+    let (interface_subclass, interface_protocol) =
+        infer_boot_interface_subclass_protocol(&collections)
+            .map(|(s, p)| (Some(s), Some(p)))
+            .unwrap_or((None, None));
+
+    let mut dev = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "WebHID".to_string(),
+        "Keyboard".to_string(),
+        None,
+        report_descriptor,
+        false,
+        None,
+        interface_subclass,
+        interface_protocol,
+    );
+
+    let resp = dev.handle_control_request(
+        SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0200,
+            w_index: 0,
+            w_length: 256,
+        },
+        None,
+    );
+    let ControlResponse::Data(bytes) = resp else {
+        panic!("expected config descriptor bytes, got {resp:?}");
+    };
+    assert_eq!(
+        parse_interface_descriptor_fields(&bytes),
+        Some((0x01, 0x01))
+    );
+}
+
+#[test]
+fn hid_passthrough_config_descriptor_reflects_inferred_boot_keyboard_fixture() {
+    let collections = fixture_keyboard_collections();
     let report_descriptor = synthesize_report_descriptor(&collections).unwrap();
     let (interface_subclass, interface_protocol) =
         infer_boot_interface_subclass_protocol(&collections)
