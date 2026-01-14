@@ -463,42 +463,56 @@ function Get-DeterministicZipEntriesFromFolder {
     $folderFull = [System.IO.Path]::GetFullPath($Folder)
     $entries = New-Object "System.Collections.Generic.List[object]"
 
-    $dirs = @(Get-ChildItem -LiteralPath $folderFull -Recurse -Directory -Force -ErrorAction SilentlyContinue)
-    foreach ($d in $dirs) {
-        if (Test-IsReparsePoint -Item $d) {
-            throw "Refusing to package reparse-point/symlink directory (nondeterministic/unsafe): $($d.FullName)"
-        }
-        $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $d.FullName
-        if (Test-IsExcludedArtifactRelPath -RelPath $rel -IsDirectory) {
-            continue
-        }
-        if ([string]::IsNullOrWhiteSpace($rel)) {
-            continue
-        }
-        $entries.Add([pscustomobject]@{
-            EntryName = ($rel.TrimEnd("/") + "/")
-            FullPath = $d.FullName
-            IsDirectory = $true
-        }) | Out-Null
+    # Avoid `Get-ChildItem -Recurse` because (depending on host/PowerShell version) recursion can
+    # traverse symlinks/reparse points before we get a chance to detect them.
+    $rootItem = Get-Item -LiteralPath $folderFull -ErrorAction SilentlyContinue
+    if (-not $rootItem -or -not $rootItem.PSIsContainer) {
+        throw "Expected a directory to exist at: '$folderFull'."
+    }
+    if (Test-IsReparsePoint -Item $rootItem) {
+        throw "Refusing to package reparse-point/symlink directory (nondeterministic/unsafe): $($rootItem.FullName)"
     }
 
-    $files = @(Get-ChildItem -LiteralPath $folderFull -Recurse -File -Force -ErrorAction SilentlyContinue)
-    foreach ($f in $files) {
-        if (Test-IsReparsePoint -Item $f) {
-            throw "Refusing to package reparse-point/symlink file (nondeterministic/unsafe): $($f.FullName)"
+    $stack = New-Object "System.Collections.Generic.Stack[string]"
+    $stack.Push($rootItem.FullName)
+
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        $children = @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop)
+        foreach ($c in $children) {
+            if (Test-IsReparsePoint -Item $c) {
+                throw "Refusing to package reparse-point/symlink item (nondeterministic/unsafe): $($c.FullName)"
+            }
+
+            $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $c.FullName
+            if ([string]::IsNullOrWhiteSpace($rel)) {
+                continue
+            }
+
+            if ($c.PSIsContainer) {
+                if (Test-IsExcludedArtifactRelPath -RelPath $rel -IsDirectory) {
+                    continue
+                }
+
+                $entries.Add([pscustomobject]@{
+                    EntryName   = ($rel.TrimEnd("/") + "/")
+                    FullPath    = $c.FullName
+                    IsDirectory = $true
+                }) | Out-Null
+
+                $stack.Push($c.FullName)
+            } else {
+                if (Test-IsExcludedArtifactRelPath -RelPath $rel) {
+                    continue
+                }
+
+                $entries.Add([pscustomobject]@{
+                    EntryName   = $rel
+                    FullPath    = $c.FullName
+                    IsDirectory = $false
+                }) | Out-Null
+            }
         }
-        $rel = Get-RelativePathForZipEntry -Root $folderFull -Path $f.FullName
-        if (Test-IsExcludedArtifactRelPath -RelPath $rel) {
-            continue
-        }
-        if ([string]::IsNullOrWhiteSpace($rel)) {
-            continue
-        }
-        $entries.Add([pscustomobject]@{
-            EntryName = $rel
-            FullPath = $f.FullName
-            IsDirectory = $false
-        }) | Out-Null
     }
 
     # Stable ordering: sort by full relative path (case-insensitive), then by path (case-sensitive).
