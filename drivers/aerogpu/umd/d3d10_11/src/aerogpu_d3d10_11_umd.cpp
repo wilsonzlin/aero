@@ -5338,15 +5338,11 @@ void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hV
   aerogpu_handle_t vs = hVs.pDrvPrivate ? FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hVs)->handle : 0;
   aerogpu_handle_t ps = hPs.pDrvPrivate ? FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hPs)->handle : 0;
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  auto* cmd = dev->cmd.bind_shaders(vs, ps, /*cs=*/0);
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
   }
-  cmd->vs = vs;
-  cmd->ps = ps;
-  cmd->cs = 0;
-  cmd->reserved0 = 0;
   dev->current_vs = vs;
   dev->current_ps = ps;
 }
