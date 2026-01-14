@@ -2638,7 +2638,6 @@ fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
 mod tests {
     use super::*;
     use aero_gpu::protocol_d3d11::{CmdWriter, RenderPipelineDesc};
-    use std::borrow::Cow;
 
     #[test]
     fn take_bytes_extracts_prefix() {
