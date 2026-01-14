@@ -924,3 +924,70 @@ fn xhci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() 
         mfindex_snapshot.wrapping_add(8) & 0x3fff
     );
 }
+
+#[test]
+fn xhci_tick_remainder_roundtrips_through_snapshot_restore() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep the machine minimal/deterministic for this timer test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    src.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+    // Ensure MMIO decode is enabled so MFINDEX reads are valid.
+    let cmd = cfg_read(&mut src, bdf, 0x04, 2) as u16;
+    cfg_write(&mut src, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    let bar0_base = src
+        .pci_bar_base(bdf, 0)
+        .expect("xHCI BAR0 should exist");
+    assert_ne!(
+        bar0_base, 0,
+        "xHCI BAR0 base should be assigned by BIOS POST"
+    );
+
+    let before = src.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
+
+    // Advance by half a millisecond; the machine should not tick the controller yet.
+    src.tick_platform(500_000);
+    let mid = src.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(mid, before);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+    restored.io_write(A20_GATE_PORT, 1, 0x02);
+
+    // Ensure MMIO decode is enabled so MFINDEX reads are valid.
+    let cmd = cfg_read(&mut restored, bdf, 0x04, 2) as u16;
+    cfg_write(&mut restored, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    let bar0_base_restored = restored.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(
+        bar0_base_restored, 0,
+        "xHCI BAR0 base should be assigned by BIOS POST"
+    );
+
+    let after_restore =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(after_restore, before);
+
+    // Advance by the remaining half-millisecond; if the machine's xHCI tick remainder is included
+    // in snapshots, this should now advance MFINDEX by 8 microframes.
+    restored.tick_platform(500_000);
+    let after_tick =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(after_tick, before.wrapping_add(8) & 0x3fff);
+}
