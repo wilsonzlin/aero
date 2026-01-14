@@ -35,5 +35,22 @@ describe("xhci_webusb_bridge", () => {
     const resetOrder = (bridge.reset as unknown as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0];
     expect(connectOrder).toBeLessThan(resetOrder);
   });
-});
 
+  it("accepts camelCase setConnected() (backwards compatibility)", () => {
+    const bridge = {
+      setConnected: vi.fn<[boolean], void>(),
+      reset: vi.fn<[], void>(),
+    };
+
+    const msg: UsbSelectedMessage = { type: "usb.selected", ok: false, error: "no device" };
+    applyUsbSelectedToWebUsbXhciBridge(bridge as unknown as WebUsbXhciHotplugBridgeLike, msg);
+
+    expect(bridge.setConnected).toHaveBeenCalledTimes(1);
+    expect(bridge.setConnected).toHaveBeenCalledWith(false);
+    expect(bridge.reset).toHaveBeenCalledTimes(1);
+
+    const connectOrder = (bridge.setConnected as unknown as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0];
+    const resetOrder = (bridge.reset as unknown as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0];
+    expect(connectOrder).toBeLessThan(resetOrder);
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { UhciWebUsbPciDevice } from "./uhci_webusb";
-import { applyUsbSelectedToWebUsbUhciBridge } from "../../usb/uhci_webusb_bridge";
+import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } from "../../usb/uhci_webusb_bridge";
 import type { WebUsbUhciBridgeLike } from "./uhci_webusb";
 
 describe("UhciWebUsbPciDevice", () => {
@@ -228,6 +228,32 @@ describe("applyUsbSelectedToWebUsbUhciBridge", () => {
 
     applyUsbSelectedToWebUsbUhciBridge(bridge, { type: "usb.selected", ok: false, error: "no device" });
     expect(bridge.set_connected).toHaveBeenCalledWith(false);
+    expect(bridge.reset).toHaveBeenCalled();
+  });
+
+  it("accepts camelCase setConnected() (backwards compatibility)", () => {
+    const bridge = {
+      setConnected: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    applyUsbSelectedToWebUsbUhciBridge(bridge as unknown as WebUsbUhciHotplugBridgeLike, {
+      type: "usb.selected",
+      ok: true,
+      info: { vendorId: 0x1234, productId: 0x5678 },
+    });
+    expect(bridge.setConnected).toHaveBeenCalledWith(true);
+    expect(bridge.reset).not.toHaveBeenCalled();
+
+    bridge.setConnected.mockClear();
+    bridge.reset.mockClear();
+
+    applyUsbSelectedToWebUsbUhciBridge(bridge as unknown as WebUsbUhciHotplugBridgeLike, {
+      type: "usb.selected",
+      ok: false,
+      error: "no device",
+    });
+    expect(bridge.setConnected).toHaveBeenCalledWith(false);
     expect(bridge.reset).toHaveBeenCalled();
   });
 });

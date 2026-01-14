@@ -84,6 +84,45 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     await p;
   });
 
+  it("accepts camelCase UsbPassthroughBridge exports (backwards compatibility)", async () => {
+    const port = new FakePort();
+
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
+    const pushCompletion = vi.fn();
+    const pendingSummary = vi.fn(() => ({ pending: 0 }));
+
+    const bridge = {
+      drainActions: vi.fn(() => [action]),
+      pushCompletion,
+      pendingSummary,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({
+      bridge: bridge as unknown as UsbPassthroughBridgeLike,
+      port: port as unknown as MessagePort,
+      pollIntervalMs: 0,
+    });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p = runtime.pollOnce();
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }, { type: "usb.action", action }]);
+
+    const completion: UsbHostCompletion = { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(9) };
+    port.emit({ type: "usb.completion", completion } satisfies { type: "usb.completion"; completion: UsbHostCompletion });
+
+    await p;
+    expect(pushCompletion).toHaveBeenCalledTimes(1);
+    expect(pushCompletion).toHaveBeenCalledWith(completion);
+
+    expect(runtime.pendingSummary()).toEqual({ pending: 0 });
+    expect(pendingSummary).toHaveBeenCalledTimes(1);
+
+    runtime.destroy();
+    expect(bridge.free).toHaveBeenCalledTimes(1);
+  });
+
   it("respects initiallyBlocked and waits for usb.selected ok:true before forwarding actions", async () => {
     const port = new FakePort();
 

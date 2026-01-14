@@ -188,6 +188,11 @@ type PendingItem = {
  */
 export class WebUsbPassthroughRuntime {
   readonly #bridge: UsbPassthroughBridgeLike;
+  readonly #drainActionsFn: () => unknown;
+  readonly #pushCompletionFn: (completion: UsbHostCompletion) => void;
+  readonly #resetFn: () => void;
+  readonly #freeFn: () => void;
+  readonly #pendingSummaryFn: (() => unknown) | null;
   readonly #port: UsbBrokerPortLike;
   readonly #pollIntervalMs: number;
   readonly #maxActionsPerPoll: number;
@@ -260,6 +265,35 @@ export class WebUsbPassthroughRuntime {
   }) {
     this.#bridge = options.bridge;
     this.#port = options.port;
+
+    // Backwards compatibility: accept both snake_case and camelCase exports from wasm-bindgen and
+    // always invoke extracted methods via `.call(bridge, ...)` to avoid `this` binding pitfalls.
+    const bridgeAny = options.bridge as unknown as Record<string, unknown>;
+    const drainActions = bridgeAny.drain_actions ?? bridgeAny.drainActions;
+    const pushCompletion = bridgeAny.push_completion ?? bridgeAny.pushCompletion;
+    const reset = bridgeAny.reset;
+    const free = bridgeAny.free;
+    const pendingSummary = bridgeAny.pending_summary ?? bridgeAny.pendingSummary;
+
+    if (typeof drainActions !== "function") {
+      throw new Error("UsbPassthroughBridge missing drain_actions/drainActions export.");
+    }
+    if (typeof pushCompletion !== "function") {
+      throw new Error("UsbPassthroughBridge missing push_completion/pushCompletion export.");
+    }
+    if (typeof reset !== "function") {
+      throw new Error("UsbPassthroughBridge missing reset() export.");
+    }
+    if (typeof free !== "function") {
+      throw new Error("UsbPassthroughBridge missing free() export.");
+    }
+
+    this.#drainActionsFn = drainActions as () => unknown;
+    this.#pushCompletionFn = pushCompletion as (completion: UsbHostCompletion) => void;
+    this.#resetFn = reset as () => void;
+    this.#freeFn = free as () => void;
+    this.#pendingSummaryFn = typeof pendingSummary === "function" ? (pendingSummary as () => unknown) : null;
+
     this.#pollIntervalMs = options.pollIntervalMs ?? 8;
     const max = options.maxActionsPerPoll ?? 64;
     this.#maxActionsPerPoll = Number.isFinite(max) && max > 0 ? Math.floor(max) : Number.POSITIVE_INFINITY;
@@ -306,7 +340,7 @@ export class WebUsbPassthroughRuntime {
 
         this.#lastError = "Invalid UsbHostCompletion received from broker (missing id/kind).";
         try {
-          this.#bridge.reset();
+          this.#resetFn.call(this.#bridge);
         } catch (resetErr) {
           this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
         }
@@ -364,7 +398,7 @@ export class WebUsbPassthroughRuntime {
     this.detachRings();
     this.#port.removeEventListener("message", this.#onMessage);
     try {
-      this.#bridge.free();
+      this.#freeFn.call(this.#bridge);
     } catch (err) {
       this.#lastError = formatError(err);
     }
@@ -381,7 +415,7 @@ export class WebUsbPassthroughRuntime {
 
   pendingSummary(): unknown {
     try {
-      return this.#bridge.pending_summary?.();
+      return this.#pendingSummaryFn?.call(this.#bridge);
     } catch (err) {
       this.#lastError = formatError(err);
       return null;
@@ -400,7 +434,7 @@ export class WebUsbPassthroughRuntime {
       } else {
         let raw: unknown;
         try {
-          raw = this.#bridge.drain_actions();
+          raw = this.#drainActionsFn.call(this.#bridge);
         } catch (err) {
           this.#lastError = formatError(err);
           return;
@@ -439,7 +473,7 @@ export class WebUsbPassthroughRuntime {
           // avoid deadlocking the Rust-side queue on an action we can never complete.
           this.#lastError = formatError(err);
           try {
-            this.#bridge.reset();
+            this.#resetFn.call(this.#bridge);
           } catch (resetErr) {
             this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
           } finally {
@@ -455,7 +489,7 @@ export class WebUsbPassthroughRuntime {
         } catch (err) {
           this.#lastError = formatError(err);
           try {
-            this.#bridge.reset();
+            this.#resetFn.call(this.#bridge);
           } catch (resetErr) {
             this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
           } finally {
@@ -469,7 +503,10 @@ export class WebUsbPassthroughRuntime {
           // Avoid deadlocking the Rust-side queue: send an error completion back if we can find an id/kind.
           if (extractedId !== null && extractedKind !== null) {
             try {
-              this.#bridge.push_completion(usbErrorCompletion(extractedKind, extractedId, "Invalid UsbHostAction received from WASM."));
+              this.#pushCompletionFn.call(
+                this.#bridge,
+                usbErrorCompletion(extractedKind, extractedId, "Invalid UsbHostAction received from WASM."),
+              );
               this.#completionsApplied++;
             } catch (err) {
               this.#lastError = formatError(err);
@@ -486,7 +523,7 @@ export class WebUsbPassthroughRuntime {
             }
             this.#lastError = `Invalid UsbHostAction received from WASM (${problems.join(", ")}).`;
             try {
-              this.#bridge.reset();
+              this.#resetFn.call(this.#bridge);
             } catch (resetErr) {
               this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
             } finally {
@@ -503,7 +540,8 @@ export class WebUsbPassthroughRuntime {
         if (this.#pending.has(actionId)) {
           this.#lastError = `Duplicate UsbHostAction id received from WASM: ${actionId}`;
           try {
-            this.#bridge.push_completion(
+            this.#pushCompletionFn.call(
+              this.#bridge,
               usbErrorCompletion(action.kind, actionId, `Duplicate UsbHostAction id received from WASM: ${actionId}`),
             );
             this.#completionsApplied++;
@@ -549,7 +587,8 @@ export class WebUsbPassthroughRuntime {
         } catch (err) {
           this.#pending.delete(actionId);
           try {
-            this.#bridge.push_completion(
+            this.#pushCompletionFn.call(
+              this.#bridge,
               usbErrorCompletion(action.kind, actionId, `Failed to post usb.action to broker: ${formatError(err)}`),
             );
             this.#completionsApplied++;
@@ -584,7 +623,7 @@ export class WebUsbPassthroughRuntime {
     this.#pending.delete(completion.id);
 
     try {
-      this.#bridge.push_completion(completion);
+      this.#pushCompletionFn.call(this.#bridge, completion);
       this.#completionsApplied++;
     } catch (err) {
       this.#lastError = formatError(err);
@@ -607,7 +646,7 @@ export class WebUsbPassthroughRuntime {
     this.#backlogIndex = 0;
 
     try {
-      this.#bridge.reset();
+      this.#resetFn.call(this.#bridge);
     } catch (err) {
       this.#lastError = formatError(err);
     }
@@ -705,7 +744,7 @@ export class WebUsbPassthroughRuntime {
     this.#backlog = [];
     this.#backlogIndex = 0;
     try {
-      this.#bridge.reset();
+      this.#resetFn.call(this.#bridge);
     } catch (err) {
       this.#lastError = `${this.#lastError}; reset failed: ${formatError(err)}`;
     }
