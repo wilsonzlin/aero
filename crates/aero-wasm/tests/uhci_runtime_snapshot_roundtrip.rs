@@ -179,16 +179,6 @@ fn snapshot_diff_message(a: &[u8], b: &[u8], context: &str) -> String {
     )
 }
 
-fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
-    let addr = addr as usize;
-    mem[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-fn write_bytes(mem: &mut [u8], addr: u32, bytes: &[u8]) {
-    let addr = addr as usize;
-    mem[addr..addr + bytes.len()].copy_from_slice(bytes);
-}
-
 fn td_token(pid: u8, addr: u8, ep: u8, toggle: bool, max_len: usize) -> u32 {
     let max_len_field = if max_len == 0 {
         0x7FFu32
@@ -213,7 +203,7 @@ fn td_ctrl(active: bool, ioc: bool) -> u32 {
     v
 }
 
-fn setup_webusb_control_in_frame_list(mem: &mut [u8]) -> u32 {
+fn setup_webusb_control_in_frame_list(guest: &common::GuestRegion) -> u32 {
     // Layout (all 16-byte aligned).
     let fl_base = 0x1000;
     let qh_addr = 0x2000;
@@ -224,12 +214,12 @@ fn setup_webusb_control_in_frame_list(mem: &mut [u8]) -> u32 {
     let _data_buf = setup_buf + 0x10;
 
     for i in 0..1024u32 {
-        write_u32(mem, fl_base + i * 4, qh_addr | LINK_PTR_Q);
+        guest.write_u32(fl_base + i * 4, qh_addr | LINK_PTR_Q);
     }
 
     // QH: head=terminate, element=SETUP TD.
-    write_u32(mem, qh_addr + 0x00, LINK_PTR_T);
-    write_u32(mem, qh_addr + 0x04, setup_td);
+    guest.write_u32(qh_addr + 0x00, LINK_PTR_T);
+    guest.write_u32(qh_addr + 0x04, setup_td);
 
     // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
     let setup_packet = [
@@ -239,30 +229,33 @@ fn setup_webusb_control_in_frame_list(mem: &mut [u8]) -> u32 {
         0x00, 0x00, // wIndex
         0x08, 0x00, // wLength: 8
     ];
-    write_bytes(mem, setup_buf, &setup_packet);
+    guest.write_bytes(setup_buf, &setup_packet);
 
     // SETUP TD.
-    write_u32(mem, setup_td + 0x00, data_td);
-    write_u32(mem, setup_td + 0x04, td_ctrl(true, false));
-    write_u32(mem, setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
-    write_u32(mem, setup_td + 0x0C, setup_buf);
+    guest.write_u32(setup_td + 0x00, data_td);
+    guest.write_u32(setup_td + 0x04, td_ctrl(true, false));
+    guest.write_u32(setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
+    guest.write_u32(setup_td + 0x0C, setup_buf);
 
     // DATA IN TD (will NAK until host completion is pushed).
-    write_u32(mem, data_td + 0x00, status_td);
-    write_u32(mem, data_td + 0x04, td_ctrl(true, false));
-    write_u32(mem, data_td + 0x08, td_token(0x69, 0, 0, true, 8));
-    write_u32(mem, data_td + 0x0C, setup_buf + 0x10);
+    guest.write_u32(data_td + 0x00, status_td);
+    guest.write_u32(data_td + 0x04, td_ctrl(true, false));
+    guest.write_u32(data_td + 0x08, td_token(0x69, 0, 0, true, 8));
+    guest.write_u32(data_td + 0x0C, setup_buf + 0x10);
 
     // STATUS OUT TD (0-length, IOC).
-    write_u32(mem, status_td + 0x00, LINK_PTR_T);
-    write_u32(mem, status_td + 0x04, td_ctrl(true, true));
-    write_u32(mem, status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
-    write_u32(mem, status_td + 0x0C, 0);
+    guest.write_u32(status_td + 0x00, LINK_PTR_T);
+    guest.write_u32(status_td + 0x04, td_ctrl(true, true));
+    guest.write_u32(status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
+    guest.write_u32(status_td + 0x0C, 0);
 
     fl_base
 }
 
-fn setup_webhid_set_report_control_out_frame_list(mem: &mut [u8], payload: &[u8]) -> u32 {
+fn setup_webhid_set_report_control_out_frame_list(
+    guest: &common::GuestRegion,
+    payload: &[u8],
+) -> u32 {
     let fl_base = 0x1000;
     let qh_addr = 0x2000;
     let setup_td = qh_addr + 0x20;
@@ -272,11 +265,11 @@ fn setup_webhid_set_report_control_out_frame_list(mem: &mut [u8], payload: &[u8]
     let data_buf = setup_buf + 0x10;
 
     for i in 0..1024u32 {
-        write_u32(mem, fl_base + i * 4, qh_addr | LINK_PTR_Q);
+        guest.write_u32(fl_base + i * 4, qh_addr | LINK_PTR_Q);
     }
 
-    write_u32(mem, qh_addr + 0x00, LINK_PTR_T);
-    write_u32(mem, qh_addr + 0x04, setup_td);
+    guest.write_u32(qh_addr + 0x00, LINK_PTR_T);
+    guest.write_u32(qh_addr + 0x04, setup_td);
 
     // HID SET_REPORT(Output, reportId=0), wLength = payload length.
     let w_length = u16::try_from(payload.len()).expect("payload len fits in u16");
@@ -290,30 +283,29 @@ fn setup_webhid_set_report_control_out_frame_list(mem: &mut [u8], payload: &[u8]
         (w_length & 0xff) as u8,
         (w_length >> 8) as u8,
     ];
-    write_bytes(mem, setup_buf, &setup_packet);
-    write_bytes(mem, data_buf, payload);
+    guest.write_bytes(setup_buf, &setup_packet);
+    guest.write_bytes(data_buf, payload);
 
     // SETUP TD.
-    write_u32(mem, setup_td + 0x00, data_td);
-    write_u32(mem, setup_td + 0x04, td_ctrl(true, false));
-    write_u32(mem, setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
-    write_u32(mem, setup_td + 0x0C, setup_buf);
+    guest.write_u32(setup_td + 0x00, data_td);
+    guest.write_u32(setup_td + 0x04, td_ctrl(true, false));
+    guest.write_u32(setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
+    guest.write_u32(setup_td + 0x0C, setup_buf);
 
     // DATA OUT TD.
-    write_u32(mem, data_td + 0x00, status_td);
-    write_u32(mem, data_td + 0x04, td_ctrl(true, false));
-    write_u32(
-        mem,
+    guest.write_u32(data_td + 0x00, status_td);
+    guest.write_u32(data_td + 0x04, td_ctrl(true, false));
+    guest.write_u32(
         data_td + 0x08,
         td_token(0xE1, 0, 0, true, payload.len()),
     );
-    write_u32(mem, data_td + 0x0C, data_buf);
+    guest.write_u32(data_td + 0x0C, data_buf);
 
     // STATUS IN TD (ZLP, IOC).
-    write_u32(mem, status_td + 0x00, LINK_PTR_T);
-    write_u32(mem, status_td + 0x04, td_ctrl(true, true));
-    write_u32(mem, status_td + 0x08, td_token(0x69, 0, 0, true, 0));
-    write_u32(mem, status_td + 0x0C, 0);
+    guest.write_u32(status_td + 0x00, LINK_PTR_T);
+    guest.write_u32(status_td + 0x04, td_ctrl(true, true));
+    guest.write_u32(status_td + 0x08, td_token(0x69, 0, 0, true, 0));
+    guest.write_u32(status_td + 0x0C, 0);
 
     fl_base
 }
@@ -438,13 +430,11 @@ fn uhci_runtime_snapshot_truncates_webhid_product_string() {
 #[wasm_bindgen_test]
 fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x50_000);
-    let fl_base = {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base`.
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-        setup_webusb_control_in_frame_list(guest)
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
     };
+    let fl_base = setup_webusb_control_in_frame_list(&guest);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
     rt.webusb_attach(Some(1)).expect("attach WebUSB");
@@ -524,13 +514,11 @@ fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
 #[wasm_bindgen_test]
 fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x50_000);
-    let fl_base = {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base`.
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-        setup_webusb_control_in_frame_list(guest)
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
     };
+    let fl_base = setup_webusb_control_in_frame_list(&guest);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
     rt.webusb_attach(Some(1)).expect("attach WebUSB");
@@ -602,13 +590,11 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
 #[wasm_bindgen_test]
 fn uhci_runtime_webusb_action_ids_are_monotonic_across_disconnect_reconnect() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x50_000);
-    let fl_base = {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base`.
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-        setup_webusb_control_in_frame_list(guest)
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
     };
+    let fl_base = setup_webusb_control_in_frame_list(&guest);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
     rt.webusb_attach(Some(1)).expect("attach WebUSB");
@@ -641,13 +627,7 @@ fn uhci_runtime_webusb_action_ids_are_monotonic_across_disconnect_reconnect() {
     rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
 
     // The previous run mutated the guest frame list and TD/QH state; reinstall a fresh schedule.
-    let _ = {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base`.
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-        setup_webusb_control_in_frame_list(guest)
-    };
+    let _ = setup_webusb_control_in_frame_list(&guest);
 
     rt.port_write(REG_FRBASEADD, 4, fl_base);
     rt.port_write(REG_USBCMD, 2, USBCMD_RUN as u32);
@@ -759,13 +739,11 @@ fn uhci_runtime_restore_preserves_webhid_device_and_allows_set_report() {
     }
 
     let payload = [0x11u8, 0x22, 0x33];
-    let fl_base = {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base`.
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-        setup_webhid_set_report_control_out_frame_list(guest, &payload)
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
     };
+    let fl_base = setup_webhid_set_report_control_out_frame_list(&guest, &payload);
 
     rt2.port_write(REG_FRBASEADD, 4, fl_base);
     rt2.port_write(REG_PORTSC1, 2, PORTSC_PED as u32);

@@ -54,18 +54,12 @@ fn save_state_v2_is_deterministic_without_execution() {
     installAeroIoShims();
 
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x1000);
-    {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base` and the region is private to this test.
-        //
-        // Keep the slice short-lived so we do not hold a `&mut [u8]` across VM execution (the VM
-        // dereferences guest memory via raw pointers).
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-
-        // Simple real-mode program: `mov ax, 0x1234; nop`.
-        guest[0..4].copy_from_slice(&[0xB8, 0x34, 0x12, 0x90]);
-    }
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+    // Simple real-mode program: `mov ax, 0x1234; nop`.
+    guest.write_bytes(0, &[0xB8, 0x34, 0x12, 0x90]);
 
     let mut vm = WasmVm::new(guest_base, guest_size).expect("new WasmVm");
     vm.reset_real_mode(0);
@@ -82,18 +76,12 @@ fn save_load_state_v2_roundtrips() {
     installAeroIoShims();
 
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x1000);
-    {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base` and the region is private to this test.
-        //
-        // Keep the slice short-lived so we do not hold a `&mut [u8]` across VM execution (the VM
-        // dereferences guest memory via raw pointers).
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-
-        // Simple real-mode program: `mov ax, 0x1234; nop`.
-        guest[0..4].copy_from_slice(&[0xB8, 0x34, 0x12, 0x90]);
-    }
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+    // Simple real-mode program: `mov ax, 0x1234; nop`.
+    guest.write_bytes(0, &[0xB8, 0x34, 0x12, 0x90]);
 
     let mut vm = WasmVm::new(guest_base, guest_size).expect("new WasmVm");
     vm.reset_real_mode(0);
@@ -126,21 +114,15 @@ fn save_state_v2_roundtrips_interrupt_shadow_via_cpu_internal() {
     installAeroIoShims();
 
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x1000);
-    {
-        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
-        // at `guest_base` and the region is private to this test.
-        //
-        // Keep the slice short-lived so we do not hold a `&mut [u8]` across VM execution (the VM
-        // dereferences guest memory via raw pointers).
-        let guest =
-            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
-
-        // Real-mode program:
-        //   sti
-        //   nop
-        //   hlt
-        guest[0..3].copy_from_slice(&[0xFB, 0x90, 0xF4]);
-    }
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+    // Real-mode program:
+    //   sti
+    //   nop
+    //   hlt
+    guest.write_bytes(0, &[0xFB, 0x90, 0xF4]);
 
     let mut vm = WasmVm::new(guest_base, guest_size).expect("new WasmVm");
     vm.reset_real_mode(0);

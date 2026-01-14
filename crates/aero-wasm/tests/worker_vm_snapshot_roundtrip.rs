@@ -14,11 +14,11 @@ fn pattern_byte(i: usize) -> u8 {
 #[wasm_bindgen_test]
 fn worker_vm_snapshot_is_deterministic() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(256 * 1024);
-
     unsafe {
-        let mem = core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize);
-        for (i, b) in mem.iter_mut().enumerate() {
-            *b = pattern_byte(i);
+        let base = guest_base as *mut u8;
+        let len = guest_size as usize;
+        for i in 0..len {
+            core::ptr::write(base.add(i), pattern_byte(i));
         }
     }
 
@@ -73,11 +73,11 @@ fn worker_vm_snapshot_is_deterministic() {
 #[wasm_bindgen_test]
 fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
     let (src_base, src_size) = common::alloc_guest_region_bytes(128 * 1024);
-
     unsafe {
-        let mem = core::slice::from_raw_parts_mut(src_base as *mut u8, src_size as usize);
-        for (i, b) in mem.iter_mut().enumerate() {
-            *b = pattern_byte(i);
+        let base = src_base as *mut u8;
+        let len = src_size as usize;
+        for i in 0..len {
+            core::ptr::write(base.add(i), pattern_byte(i));
         }
     }
 
@@ -114,10 +114,11 @@ fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
 
     let (dst_base, dst_size) = common::alloc_guest_region_bytes(src_size);
     assert_eq!(dst_size, src_size);
-    unsafe {
-        let mem = core::slice::from_raw_parts_mut(dst_base as *mut u8, dst_size as usize);
-        mem.fill(0xFF);
-    }
+    let dst_guest = common::GuestRegion {
+        base: dst_base,
+        size: dst_size,
+    };
+    dst_guest.fill(0, dst_size, 0xFF);
 
     let mut vm2 = WorkerVmSnapshot::new(dst_base, dst_size).expect("new WorkerVmSnapshot #2");
     let restored = vm2.restore_snapshot(&snapshot).expect("restore_snapshot");

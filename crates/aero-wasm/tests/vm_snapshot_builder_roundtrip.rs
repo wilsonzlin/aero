@@ -91,14 +91,13 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
         .expect("guest_size fits in usize");
     assert!(guest_size > 0, "guest_size should be non-zero");
 
-    {
-        // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
-        //
-        // Keep the borrow short-lived so we do not hold a `&mut [u8]` across snapshot builder calls
-        // that read guest RAM via raw pointers.
-        let guest = unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size) };
-        for (i, b) in guest.iter_mut().enumerate() {
-            *b = ram_pattern_byte(i);
+    // Fill guest RAM with a deterministic pattern.
+    //
+    // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
+    unsafe {
+        let base = guest_base as *mut u8;
+        for i in 0..guest_size {
+            core::ptr::write(base.add(i), ram_pattern_byte(i));
         }
     }
 
@@ -266,13 +265,11 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     );
 
     // Clear RAM and restore via the wasm export.
-    {
-        // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
-        //
-        // Keep the borrow short-lived so we do not hold a `&mut [u8]` across snapshot restore,
-        // which writes guest RAM via raw pointers.
-        let guest = unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size) };
-        guest.fill(0);
+    // Clear RAM and restore via the wasm export.
+    //
+    // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
+    unsafe {
+        core::ptr::write_bytes(guest_base as *mut u8, 0, guest_size);
     }
 
     let restored =
