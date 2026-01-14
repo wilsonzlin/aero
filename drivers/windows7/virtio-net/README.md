@@ -132,6 +132,9 @@ In **Device Manager** (`devmgmt.msc`) → device **Properties** → **Resources*
 You can also use `aero-virtio-selftest.exe`:
 
 - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net|...` markers on stdout/COM1.
+- The virtio-net per-test marker includes best-effort interrupt allocation fields:
+  - `msi=...|msi_messages=...` (whether Windows assigned message-signaled interrupts and how many)
+  - `irq_mode=...|irq_message_count=...|irq_reason=...` (generic IRQ fields; mirrored by the host harness into `VIRTIO_NET_IRQ`)
 - The selftest also emits a `virtio-net-irq|INFO|...` line indicating which interrupt mode Windows assigned:
   - `virtio-net-irq|INFO|mode=intx`
   - `virtio-net-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
