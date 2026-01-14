@@ -1,6 +1,6 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
-use aero_usb::xhci::{regs, XhciController};
-use aero_usb::MemoryBus;
+use aero_usb::xhci::{context::SlotContext, regs, CommandCompletion, XhciController};
+use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
 #[derive(Default)]
 struct PanicMem;
@@ -347,6 +347,69 @@ fn xhci_doorbell_does_not_process_command_ring_without_dma() {
 
     assert_eq!(nodma.reads, 0);
     assert_eq!(nodma.writes, 0);
+}
+
+#[test]
+fn xhci_endpoint_doorbell_does_not_process_transfers_without_dma() {
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mut ctrl = XhciController::new();
+    ctrl.attach_device(0, Box::new(DummyDevice));
+
+    // Use a small in-memory bus while configuring the slot/endpoint state. We later swap in a
+    // dma-disabled bus to validate that doorbells do not touch guest memory when DMA is gated.
+    let mut mem = CountingMem::new(0x4000);
+
+    // Enable slot 1 so endpoint doorbells have a valid target.
+    ctrl.set_dcbaap(0x1000);
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion, CommandCompletion::success(1));
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    assert_eq!(ctrl.address_device(completion.slot_id, slot_ctx), completion);
+
+    // Configure a plausible endpoint ring cursor for EP1 IN (device context index 3). Leave DCBAAP
+    // cleared so the endpoint-state gating logic falls back to controller-local cursor state.
+    ctrl.set_endpoint_ring(completion.slot_id, 3, 0x1800, true);
+    ctrl.set_dcbaap(0);
+
+    // Start the controller so future run/stop gating changes don't invalidate this test.
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    let doorbell = u64::from(regs::DBOFF_VALUE)
+        + u64::from(completion.slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+
+    // With DMA enabled, ringing an endpoint doorbell should cause the controller to fetch transfer
+    // ring state from guest memory.
+    let reads_before = mem.reads;
+    ctrl.mmio_write(&mut mem, doorbell, 4, 3);
+    assert!(
+        mem.reads > reads_before,
+        "endpoint doorbell should DMA-read transfer ring state when dma_enabled() is true"
+    );
+
+    // With DMA disabled, the doorbell handler still kicks `tick()`, but all DMA must be gated.
+    let mut nodma = NoDmaCountingMem::default();
+    ctrl.mmio_write(&mut nodma, doorbell, 4, 3);
+    assert_eq!(
+        nodma.reads, 0,
+        "endpoint doorbell must not DMA-read when dma_enabled() is false"
+    );
+    assert_eq!(
+        nodma.writes, 0,
+        "endpoint doorbell must not DMA-write when dma_enabled() is false"
+    );
 }
 
 #[test]
