@@ -219,6 +219,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_ehci_periodic"
+path = "fuzz_targets/fuzz_ehci_periodic.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_hid_report_descriptor"
 path = "fuzz_targets/fuzz_hid_report_descriptor.rs"
 test = false
