@@ -80,8 +80,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         cmd.args([
             "tests/e2e/input_capture.spec.ts",
             "tests/e2e/input_capture_io_worker.spec.ts",
+            "tests/e2e/scancodes.spec.ts",
+            "tests/e2e/usb_hid_bridge.spec.ts",
             "tests/e2e/virtio_input_backend_switch_keyboard.spec.ts",
+            "tests/e2e/virtio_input_backend_switch_keyboard_held.spec.ts",
             "tests/e2e/virtio_input_backend_switch_mouse.spec.ts",
+            "tests/e2e/virtio_input_backend_switch_mouse_held.spec.ts",
         ]);
         cmd.args(&opts.pw_extra_args);
 
@@ -125,4 +129,3 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
 
     Ok(Some(opts))
 }
-
