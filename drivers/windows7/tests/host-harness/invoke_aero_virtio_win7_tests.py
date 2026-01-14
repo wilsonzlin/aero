@@ -6618,12 +6618,15 @@ def _parse_virtio_irq_markers(tail: bytes) -> dict[str, dict[str, str]]:
 
     The guest selftest may emit interrupt mode diagnostics for each virtio device:
 
-      virtio-<dev>-irq|INFO|mode=msix|vectors=...|...
-      virtio-<dev>-irq|WARN|mode=intx|reason=...|...
+      virtio-<dev>-irq|INFO|mode=intx
+      virtio-<dev>-irq|INFO|mode=msi|messages=<n>             # message interrupts (MSI or MSI-X)
+      virtio-<dev>-irq|INFO|mode=msix|messages=<n>|...         # richer MSI-X diagnostics when available (e.g. virtio-snd)
+      virtio-<dev>-irq|INFO|mode=none|...                      # polling-only (virtio-snd)
+      virtio-<dev>-irq|WARN|reason=...|...
 
     Returns a mapping from device name (e.g. "virtio-net") to a dict of parsed fields.
     The dict always includes a "level" key ("INFO" or "WARN") and may include additional
-    key/value fields (e.g. "mode", "vectors", ...).
+    key/value fields (e.g. "mode", "messages", ...).
 
     These markers are informational by default and do not affect overall harness PASS/FAIL.
     """

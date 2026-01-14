@@ -3083,8 +3083,11 @@ function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   )
 
   # Guest selftest may emit interrupt mode diagnostics markers:
-  #   virtio-<dev>-irq|INFO|mode=msix|vectors=...
-  #   virtio-<dev>-irq|WARN|mode=intx|reason=...
+  #   virtio-<dev>-irq|INFO|mode=intx
+  #   virtio-<dev>-irq|INFO|mode=msi|messages=<n>      # message interrupts (MSI or MSI-X)
+  #   virtio-<dev>-irq|INFO|mode=msix|messages=<n>|...  # richer MSI-X diagnostics when available (e.g. virtio-snd)
+  #   virtio-<dev>-irq|INFO|mode=none|...               # polling-only (virtio-snd)
+  #   virtio-<dev>-irq|WARN|reason=...|...
   #
   # These are informational by default and do not affect PASS/FAIL; the harness
   # re-emits them as host-side markers for log scraping/diagnostics.
