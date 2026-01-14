@@ -97,9 +97,6 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_query_scanout_out", aerogpu_escape_query_scanout_out);
   PRINT_SIZE("aerogpu_escape_query_scanout_out_v2", aerogpu_escape_query_scanout_out_v2);
   PRINT_SIZE("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out);
-  PRINT_SIZE("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in);
-  PRINT_SIZE("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in);
-  PRINT_SIZE("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in);
   PRINT_SIZE("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out);
   PRINT_SIZE("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in);
   PRINT_SIZE("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in);
