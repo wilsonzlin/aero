@@ -151,7 +151,7 @@ fn exec_instr(
             let val = eval_operand(src, values);
             stats.mem_stores += 1;
             bus.write(addr, width, val);
-            env.page_versions.bump_write(addr, width.bytes() as usize);
+            env.page_versions.bump_write(addr, width.bytes());
         }
         Instr::Guard {
             cond,

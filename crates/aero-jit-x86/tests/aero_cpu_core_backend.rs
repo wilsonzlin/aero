@@ -709,7 +709,7 @@ fn wasmtime_backend_cross_page_inline_store_bumps_both_pages() {
     let entry = 0x1000u64;
 
     // Cross-page store/load: address 0xFFF spans pages 0 and 1 for a 64-bit access.
-    let addr_u64 = (aero_jit_x86::PAGE_SIZE - 1) as u64;
+    let addr_u64 = aero_jit_x86::PAGE_SIZE - 1;
     let value_u64 = 0x1122_3344_5566_7788u64;
 
     let mut builder = IrBuilder::new(entry);
@@ -753,8 +753,8 @@ fn wasmtime_backend_cross_page_inline_store_bumps_both_pages() {
         "table_len should cover at least pages 0 and 1 for this test"
     );
 
-    let entry0_off = table_ptr + 0 * 4;
-    let entry1_off = table_ptr + 1 * 4;
+    let entry0_off = table_ptr;
+    let entry1_off = table_ptr + 4;
     assert_eq!(read_u32_le(&backend, entry0_off), 0);
     assert_eq!(read_u32_le(&backend, entry1_off), 0);
 
@@ -803,7 +803,7 @@ fn wasmtime_backend_cross_page_inline_store_rolls_back_code_version_bumps_on_mmi
 
     // Cross-page store at 0xFFF (spans pages 0 and 1), then trigger an MMIO load to force the
     // backend to roll back.
-    let addr_u64 = (aero_jit_x86::PAGE_SIZE - 1) as u64;
+    let addr_u64 = aero_jit_x86::PAGE_SIZE - 1;
     let value_u64 = 0x1122_3344_5566_7788u64;
 
     let mut builder = IrBuilder::new(entry);
@@ -844,8 +844,8 @@ fn wasmtime_backend_cross_page_inline_store_rolls_back_code_version_bumps_on_mmi
         cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
     ) as u64;
     assert!(table_len >= 2);
-    let entry0_off = table_ptr + 0 * 4;
-    let entry1_off = table_ptr + 1 * 4;
+    let entry0_off = table_ptr;
+    let entry1_off = table_ptr + 4;
     assert_eq!(read_u32_le(&backend, entry0_off), 0);
     assert_eq!(read_u32_le(&backend, entry1_off), 0);
 
@@ -888,7 +888,7 @@ fn wasmtime_backend_cross_page_slow_path_store_rolls_back_code_version_bumps_on_
 
     // Cross-page slow-path store at 0xFFF (spans pages 0 and 1), then trigger an MMIO load to
     // force rollback.
-    let addr_u64 = (aero_jit_x86::PAGE_SIZE - 1) as u64;
+    let addr_u64 = aero_jit_x86::PAGE_SIZE - 1;
     let value_u64 = 0x1122_3344_5566_7788u64;
 
     let mut builder = IrBuilder::new(entry);
@@ -929,8 +929,8 @@ fn wasmtime_backend_cross_page_slow_path_store_rolls_back_code_version_bumps_on_
         cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
     ) as u64;
     assert!(table_len >= 2);
-    let entry0_off = table_ptr + 0 * 4;
-    let entry1_off = table_ptr + 1 * 4;
+    let entry0_off = table_ptr;
+    let entry1_off = table_ptr + 4;
     assert_eq!(read_u32_le(&backend, entry0_off), 0);
     assert_eq!(read_u32_le(&backend, entry1_off), 0);
 
