@@ -167,6 +167,13 @@ pub trait DiskBackend: Send {
     fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()>;
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()>;
     fn flush(&mut self) -> DiskResult<()>;
+
+    /// Best-effort deallocation (discard/TRIM) of the given LBA range.
+    ///
+    /// Backends that cannot reclaim storage may implement this as a no-op success.
+    fn discard_sectors(&mut self, _lba: u64, _sectors: u64) -> DiskResult<()> {
+        Ok(())
+    }
 }
 
 /// wasm32 build: disk backends do not need to be `Send`.
@@ -181,6 +188,10 @@ pub trait DiskBackend {
     fn read_sectors(&mut self, lba: u64, buffer: &mut [u8]) -> DiskResult<()>;
     fn write_sectors(&mut self, lba: u64, buffer: &[u8]) -> DiskResult<()>;
     fn flush(&mut self) -> DiskResult<()>;
+
+    fn discard_sectors(&mut self, _lba: u64, _sectors: u64) -> DiskResult<()> {
+        Ok(())
+    }
 }
 
 fn map_storage_error_to_nvme(err: StorageDiskError) -> DiskError {
@@ -283,6 +294,34 @@ impl DiskBackend for AeroStorageDiskAdapter {
 
     fn flush(&mut self) -> DiskResult<()> {
         self.disk_mut().flush().map_err(map_storage_error_to_nvme)
+    }
+
+    fn discard_sectors(&mut self, lba: u64, sectors: u64) -> DiskResult<()> {
+        if sectors == 0 {
+            return Ok(());
+        }
+
+        let end_lba = lba.checked_add(sectors).ok_or(DiskError::OutOfRange {
+            lba,
+            sectors,
+            capacity_sectors: self.total_sectors(),
+        })?;
+        let capacity = self.total_sectors();
+        if end_lba > capacity {
+            return Err(DiskError::OutOfRange {
+                lba,
+                sectors,
+                capacity_sectors: capacity,
+            });
+        }
+
+        let sector_size = u64::from(self.sector_size());
+        let offset = lba.checked_mul(sector_size).ok_or(DiskError::Io)?;
+        let len = sectors.checked_mul(sector_size).ok_or(DiskError::Io)?;
+
+        self.disk_mut()
+            .discard_range(offset, len)
+            .map_err(map_storage_error_to_nvme)
     }
 }
 
@@ -1527,6 +1566,8 @@ impl NvmeController {
         }
 
         let capacity = self.disk.total_sectors();
+        let mut parsed = Vec::<(u64, u64)>::new();
+        parsed.reserve_exact(ranges as usize);
         for i in 0..ranges {
             let off = (i as usize) * 16;
             let nlb = u32::from_le_bytes(ranges_buf[off + 4..off + 8].try_into().unwrap());
@@ -1541,6 +1582,13 @@ impl NvmeController {
             {
                 return (NvmeStatus::LBA_OUT_OF_RANGE, 0);
             }
+            parsed.push((slba, sectors));
+        }
+
+        // Best-effort: attempt to discard/deallocate on backends that support it, but ignore
+        // failures (NVMe deallocate is advisory).
+        for (slba, sectors) in parsed {
+            let _ = self.disk.discard_sectors(slba, sectors);
         }
 
         (NvmeStatus::SUCCESS, 0)
@@ -3401,6 +3449,119 @@ mod tests {
         let mut out2 = vec![0u8; sector_size];
         mem.read_physical(read_buf, &mut out2);
         assert_eq!(out2, sector2);
+    }
+
+    #[test]
+    fn dataset_management_deallocate_reclaims_sparse_blocks_and_reads_zero() {
+        // Use a real AeroSparseDisk so DSM deallocate can reclaim storage by clearing allocation
+        // table entries (reads of deallocated blocks return zeros).
+        let sectors = 4096u64; // 2 MiB
+        let capacity_bytes = sectors * SECTOR_SIZE as u64;
+        let disk = AeroSparseDisk::create(
+            MemBackend::new(),
+            AeroSparseConfig {
+                disk_size_bytes: capacity_bytes,
+                block_size_bytes: 1024 * 1024,
+            },
+        )
+        .unwrap();
+
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+        let mut mem = TestMem::new(2 * 1024 * 1024);
+        let sector_size = 512usize;
+
+        let asq = 0x10000;
+        let acq = 0x20000;
+        let io_cq = 0x40000;
+        let io_sq = 0x50000;
+        let write_buf = 0x60000;
+        let read_buf = 0x61000;
+        let dsm_ranges = 0x62000;
+
+        ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+        ctrl.mmio_write(0x0028, 8, asq);
+        ctrl.mmio_write(0x0030, 8, acq);
+        ctrl.mmio_write(0x0014, 4, 1);
+
+        // Create IO CQ (qid=1, size=16, PC+IEN).
+        let mut cmd = build_command(0x05);
+        set_cid(&mut cmd, 1);
+        set_prp1(&mut cmd, io_cq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 0x3);
+        mem.write_physical(asq, &cmd);
+        ctrl.mmio_write(0x1000, 4, 1);
+        ctrl.process(&mut mem);
+
+        // Create IO SQ (qid=1, size=16, CQID=1).
+        let mut cmd = build_command(0x01);
+        set_cid(&mut cmd, 2);
+        set_prp1(&mut cmd, io_sq);
+        set_cdw10(&mut cmd, (15u32 << 16) | 1);
+        set_cdw11(&mut cmd, 1);
+        mem.write_physical(asq + 64, &cmd);
+        ctrl.mmio_write(0x1000, 4, 2);
+        ctrl.process(&mut mem);
+
+        // Write non-zero data at LBA 0 so we can observe it being discarded.
+        let payload = vec![0x5A; sector_size];
+        mem.write_physical(write_buf, &payload);
+
+        let mut cmd = build_command(0x01); // WRITE
+        set_cid(&mut cmd, 0x10);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, write_buf);
+        set_cdw10(&mut cmd, 0);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, 0);
+        mem.write_physical(io_sq, &cmd);
+        ctrl.mmio_write(0x1008, 4, 1);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq);
+        assert_eq!(cqe.cid, 0x10);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        // Discard the entire first sparse allocation block (1 MiB / 512B = 2048 sectors).
+        let nlb = 2048u32 - 1;
+        let mut range = [0u8; 16];
+        range[4..8].copy_from_slice(&nlb.to_le_bytes());
+        range[8..16].copy_from_slice(&0u64.to_le_bytes()); // slba=0
+        mem.write_physical(dsm_ranges, &range);
+
+        let mut cmd = build_command(0x09); // DSM
+        set_cid(&mut cmd, 0x11);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, dsm_ranges);
+        set_cdw10(&mut cmd, 0); // NR=0 => 1 range
+        set_cdw11(&mut cmd, 1 << 2); // Deallocate
+        mem.write_physical(io_sq + 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 2);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq + 16);
+        assert_eq!(cqe.cid, 0x11);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        // Read the sector back and ensure it is now zero-filled (block deallocated).
+        let mut cmd = build_command(0x02); // READ
+        set_cid(&mut cmd, 0x12);
+        set_nsid(&mut cmd, 1);
+        set_prp1(&mut cmd, read_buf);
+        set_cdw10(&mut cmd, 0);
+        set_cdw11(&mut cmd, 0);
+        set_cdw12(&mut cmd, 0);
+        mem.write_physical(io_sq + 2 * 64, &cmd);
+        ctrl.mmio_write(0x1008, 4, 3);
+        ctrl.process(&mut mem);
+
+        let cqe = read_cqe(&mut mem, io_cq + 2 * 16);
+        assert_eq!(cqe.cid, 0x12);
+        assert_eq!(cqe.status & !0x1, 0);
+
+        let mut out = vec![0u8; sector_size];
+        mem.read_physical(read_buf, &mut out);
+        assert_eq!(out, vec![0u8; sector_size]);
     }
 
     #[test]

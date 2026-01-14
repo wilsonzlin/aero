@@ -62,6 +62,19 @@ impl<D: VirtualDisk + Send> DiskBackend for NvmeDiskFromAeroStorage<D> {
         // variants require an explicit decision here.
         self.disk.flush().map_err(crate::map_storage_error_to_nvme)
     }
+
+    fn discard_sectors(&mut self, lba: u64, sectors: u64) -> DiskResult<()> {
+        if sectors == 0 {
+            return Ok(());
+        }
+
+        let offset = lba.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
+        let len_u64 = sectors.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
+        let len_usize = usize::try_from(len_u64).unwrap_or(usize::MAX);
+        self.disk
+            .discard_range(offset, len_u64)
+            .map_err(|e| map_storage_error(e, lba, len_usize, self.total_sectors))
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -88,6 +101,19 @@ impl<D: VirtualDisk> DiskBackend for NvmeDiskFromAeroStorage<D> {
 
     fn flush(&mut self) -> DiskResult<()> {
         self.disk.flush().map_err(crate::map_storage_error_to_nvme)
+    }
+
+    fn discard_sectors(&mut self, lba: u64, sectors: u64) -> DiskResult<()> {
+        if sectors == 0 {
+            return Ok(());
+        }
+
+        let offset = lba.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
+        let len_u64 = sectors.checked_mul(SECTOR_SIZE as u64).ok_or(DiskError::Io)?;
+        let len_usize = usize::try_from(len_u64).unwrap_or(usize::MAX);
+        self.disk
+            .discard_range(offset, len_u64)
+            .map_err(|e| map_storage_error(e, lba, len_usize, self.total_sectors))
     }
 }
 

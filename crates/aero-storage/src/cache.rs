@@ -185,4 +185,68 @@ impl<D: VirtualDisk> VirtualDisk for BlockCachedDisk<D> {
 
         self.inner.flush()
     }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
+        if len == 0 {
+            if offset > self.capacity_bytes() {
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: 0,
+                    capacity: self.capacity_bytes(),
+                });
+            }
+            return Ok(());
+        }
+
+        let end = offset.checked_add(len).ok_or(DiskError::OffsetOverflow)?;
+        if end > self.capacity_bytes() {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: usize::try_from(len).unwrap_or(usize::MAX),
+                capacity: self.capacity_bytes(),
+            });
+        }
+
+        let block_size_u64 = self.block_size as u64;
+        let start_block = offset / block_size_u64;
+        let end_block = (end - 1) / block_size_u64;
+
+        // Flush any dirty cached blocks that overlap the discard range so we don't lose
+        // modifications outside the discarded region.
+        let keys: Vec<u64> = self
+            .cache
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| *k >= start_block && *k <= end_block)
+            .collect();
+
+        for key in &keys {
+            let start = key
+                .checked_mul(block_size_u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            if start >= self.inner.capacity_bytes() {
+                continue;
+            }
+            let max_len = (self.inner.capacity_bytes() - start).min(block_size_u64) as usize;
+
+            let entry = self.cache.get_mut(key).ok_or(DiskError::Io(
+                "cache missing block during discard_range".into(),
+            ))?;
+            if !entry.dirty {
+                continue;
+            }
+
+            self.stats.writebacks += 1;
+            self.inner.write_at(start, &entry.data[..max_len])?;
+            entry.dirty = false;
+        }
+
+        // Propagate to the underlying disk and invalidate overlapping cached blocks so subsequent
+        // reads observe the post-discard state (e.g. unallocated sparse blocks reading as zero).
+        self.inner.discard_range(offset, len)?;
+        for key in keys {
+            self.cache.pop(&key);
+        }
+        Ok(())
+    }
 }

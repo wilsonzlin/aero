@@ -18,6 +18,37 @@ pub trait VirtualDisk {
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()>;
     fn flush(&mut self) -> Result<()>;
 
+    /// Best-effort deallocation (discard/TRIM) of the given byte range.
+    ///
+    /// The default implementation validates that the range is in-bounds and then performs no
+    /// operation. Sparse disk formats may override this to actually reclaim storage; callers should
+    /// treat failures as non-fatal unless they need strict guarantees.
+    ///
+    /// Implementations are permitted to deallocate only full allocation units (e.g. discard only
+    /// fully covered sparse blocks).
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
+        if len == 0 {
+            if offset > self.capacity_bytes() {
+                return Err(DiskError::OutOfBounds {
+                    offset,
+                    len: 0,
+                    capacity: self.capacity_bytes(),
+                });
+            }
+            return Ok(());
+        }
+
+        let end = offset.checked_add(len).ok_or(DiskError::OffsetOverflow)?;
+        if end > self.capacity_bytes() {
+            return Err(DiskError::OutOfBounds {
+                offset,
+                len: usize::try_from(len).unwrap_or(usize::MAX),
+                capacity: self.capacity_bytes(),
+            });
+        }
+        Ok(())
+    }
+
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> Result<()> {
         if !buf.len().is_multiple_of(SECTOR_SIZE) {
             return Err(DiskError::UnalignedLength {
@@ -62,6 +93,10 @@ impl<T: VirtualDisk + ?Sized> VirtualDisk for Box<T> {
 
     fn flush(&mut self) -> Result<()> {
         (**self).flush()
+    }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
+        (**self).discard_range(offset, len)
     }
 
     fn read_sectors(&mut self, lba: u64, buf: &mut [u8]) -> Result<()> {

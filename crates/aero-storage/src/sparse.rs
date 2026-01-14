@@ -933,4 +933,8 @@ impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
     fn flush(&mut self) -> Result<()> {
         self.backend.flush()
     }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
+        AeroSparseDisk::discard_range(self, offset, len)
+    }
 }
