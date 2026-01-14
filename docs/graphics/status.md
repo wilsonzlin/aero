@@ -342,13 +342,16 @@ Representative test pointers:
 
 Known gaps / limitations (enforced by code/tests):
 
-- Geometry shaders are **emulated via compute** (WebGPU has no GS stage), but the current “compute prepass” is still a **placeholder** and does not execute guest GS/HS/DS DXBC yet.
+- Geometry shaders are **emulated via compute** (WebGPU has no GS stage), but the current “compute prepass” is still a **placeholder**:
+  - it emits fixed triangles (see `GEOMETRY_PREPASS_CS_WGSL`), and
+  - it does **not** execute guest GS/HS/DS DXBC yet.
   - Design/notes: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md) (“Current limitation” section)
-  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (see `state.gs` and “geometry prepass” paths)
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
   - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs)
-- DXBC payloads that *parse as* Geometry/Hull/Domain are currently accepted but the DXBC program is ignored at `CREATE_SHADER_DXBC` time.
-  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, early return for `program.stage == Geometry|Hull|Domain`)
-- Tessellation (Hull/Domain) execution is not implemented; patchlist topologies are rejected.
+- GS/HS/DS shader objects are accepted via the `stage_ex` ABI extension, but are currently stored as **stub WGSL modules** (no guest GS/HS/DS DXBC execution yet). Legacy `AerogpuShaderStage::Geometry` (non-`stage_ex`) is still ignored.
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, `from_aerogpu_u32_with_stage_ex`)
+  - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs)
+- Tessellation (Hull/Domain) execution is not implemented; patchlist topologies currently require the GS/HS/DS compute-prepass path (and do not execute HS/DS DXBC yet).
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`patchlist topology requires tessellation emulation`)
 
 Roadmap/plan docs:
