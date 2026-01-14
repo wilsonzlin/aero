@@ -2307,6 +2307,7 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_DCL_UAV_STRUCTURED, 0x208);
     assert_eq!(OPCODE_LD_RAW, 0x53);
     assert_eq!(OPCODE_LD_STRUCTURED, 0x54);
+    assert_eq!(OPCODE_LD_UAV_RAW, 0x6f);
     assert_eq!(OPCODE_STORE_RAW, 0x56);
     assert_eq!(OPCODE_STORE_STRUCTURED, 0x57);
 }

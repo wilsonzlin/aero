@@ -68,7 +68,11 @@ fn compute_store_raw_writes_u32_word() {
             // Depending on constant folding, we either see the runtime `floor()` conversion or a
             // precomputed `16u` literal for the byte address.
             wgsl.contains("floor(") || wgsl.contains("16u"),
-            "expected float->u32 address heuristic in WGSL:\n{wgsl}"
+            "expected float->u32 address heuristic (or constant-folded immediate) in WGSL:\n{wgsl}"
+        );
+        assert!(
+            !wgsl.contains("0x41800000u") && !wgsl.contains("1098907648u"),
+            "float immediate address must not be treated as raw u32 bits:\n{wgsl}"
         );
         assert!(
             !wgsl.contains("0x41800000u"),
