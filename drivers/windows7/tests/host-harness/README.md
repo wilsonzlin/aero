@@ -754,16 +754,14 @@ To enable end-to-end testing:
       HID interface.
        - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
          `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-       - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
-         to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) provided by the optional legacy
-         virtio-input INF filename alias under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the
-         `.disabled` suffix to enable).
-         (The canonical keyboard/mouse INF `aero_virtio_input.inf` is SUBSYS-only and will not bind stock QEMU tablet
-         devices.) When binding via the fallback entry, the driver classifies it as a tablet via `EV_BITS`
-         (`EV_ABS` + `ABS_X`/`ABS_Y`).
+        - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
+         to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) provided by
+         `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (or the legacy filename alias under
+         `drivers/windows7/virtio-input/inf/`, checked in as `*.inf.disabled`; drop the `.disabled` suffix to enable), and
+         the driver classifies it as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
        - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
-         an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and the enabled legacy alias INF if you want
-         to rely on the fallback match), and `aero_virtio_tablet.inf` if you want to exercise the contract tablet binding.
+         an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
+         to exercise the contract tablet binding specifically).
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
     `-WithTabletEvents`, `-EnableTabletEvents`) /
    `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,

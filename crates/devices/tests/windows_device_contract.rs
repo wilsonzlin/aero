@@ -423,6 +423,10 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             mouse_desc.to_ascii_lowercase(),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
+
+        // The canonical INF includes a strict revision-gated generic fallback HWID (no SUBSYS)
+        // so binding remains stable when subsystem IDs are not exposed/recognized. The tablet
+        // INF uses a more specific SUBSYS-qualified HWID, so it will win when it matches.
         assert_ne!(
             fallback_desc.to_ascii_lowercase(),
             kbd_desc.to_ascii_lowercase(),
