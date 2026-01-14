@@ -656,9 +656,12 @@ export async function idbResizeDisk(
       req.onsuccess = () => {
         const cursor = req.result;
         if (!cursor) return resolve(undefined);
-        const value = cursor.value as { id: string; index: number; data: ArrayBuffer };
-        if (value.index >= keepChunks) {
-          cursor.delete();
+        const value = cursor.value as unknown;
+        if (isRecord(value) && hasOwn(value, "index")) {
+          const idx = value.index;
+          if (typeof idx === "number" && Number.isInteger(idx) && idx >= keepChunks) {
+            cursor.delete();
+          }
         }
         cursor.continue();
       };

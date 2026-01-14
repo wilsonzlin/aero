@@ -2,6 +2,14 @@ import { assertSectorAligned, checkedOffset, type AsyncSectorDisk } from "./disk
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { idbTxDone, openDiskManagerDb } from "./metadata";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 async function loadAllocatedChunks(diskId: string): Promise<Set<number>> {
   const db = await openDiskManagerDb();
   try {
@@ -20,10 +28,19 @@ async function loadAllocatedChunks(diskId: string): Promise<Set<number>> {
           resolve();
           return;
         }
-        const value = cursor.value as { index?: unknown } | undefined;
-        const idx = value?.index;
-        if (typeof idx === "number" && Number.isInteger(idx) && idx >= 0) {
-          allocated.add(idx);
+        const value = cursor.value as unknown;
+        if (isRecord(value)) {
+          // Defensive: IndexedDB contents are untrusted/can be corrupt. Never observe inherited
+          // fields (prototype pollution) and only treat chunks as "allocated" when the record is
+          // well-typed (matching `IdbChunkDisk`'s acceptance rules).
+          const id = hasOwn(value, "id") ? value.id : undefined;
+          const idx = hasOwn(value, "index") ? value.index : undefined;
+          const dataRaw = hasOwn(value, "data") ? value.data : undefined;
+          const dataAny = dataRaw as any;
+          const okData = dataAny instanceof ArrayBuffer || dataAny instanceof Uint8Array;
+          if (id === diskId && typeof idx === "number" && Number.isInteger(idx) && idx >= 0 && okData) {
+            allocated.add(idx);
+          }
         }
         cursor.continue();
       };

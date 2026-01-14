@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { IdbCowDisk } from "./idb_cow";
-import { clearIdb } from "./metadata";
+import { clearIdb, openDiskManagerDb, idbTxDone } from "./metadata";
 
 class MemoryReadOnlyDisk implements AsyncSectorDisk {
   readonly sectorSize = SECTOR_SIZE;
@@ -88,5 +88,47 @@ describe("IdbCowDisk", () => {
     await cow2.readSectors(0, readBack2);
     expect(readBack2).toEqual(expected);
     await cow2.close();
+  });
+
+  it("ignores IDB chunk records with inherited index (prototype pollution)", async () => {
+    const capacityBytes = 8 * 1024 * 1024;
+    const baseBytes = buildPatternBytes(capacityBytes);
+
+    const indexExisting = Object.getOwnPropertyDescriptor(Object.prototype, "index");
+    if (indexExisting && indexExisting.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      // Pollute Object.prototype so keyPath extraction and later reads can observe an inherited
+      // `index` even when the stored record lacks an own `index` field.
+      Object.defineProperty(Object.prototype, "index", { value: 0, configurable: true, writable: true });
+
+      // Insert a corrupt chunk record that omits `index` (it will be satisfied via prototype).
+      const db = await openDiskManagerDb();
+      try {
+        const tx = db.transaction(["chunks"], "readwrite");
+        tx.objectStore("chunks").put({ id: "overlay_proto", data: new ArrayBuffer(512) } as any);
+        await idbTxDone(tx);
+      } finally {
+        db.close();
+      }
+
+      const base = new MemoryReadOnlyDisk(baseBytes);
+      const cow = await IdbCowDisk.open(base, "overlay_proto", capacityBytes);
+
+      const read = new Uint8Array(SECTOR_SIZE);
+      await cow.readSectors(0, read);
+
+      // If `loadAllocatedChunks` mistakenly treats the corrupt record as allocated, the COW disk
+      // will read from the overlay (which ignores the record) and return zeros instead of base data.
+      expect(read).toEqual(baseBytes.slice(0, SECTOR_SIZE));
+
+      await cow.close();
+    } finally {
+      if (indexExisting) Object.defineProperty(Object.prototype, "index", indexExisting);
+      else delete (Object.prototype as any).index;
+    }
   });
 });

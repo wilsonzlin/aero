@@ -388,7 +388,10 @@ export async function openDiskManagerDb(): Promise<IDBDatabase> {
         const cursor = cursorReq.result;
         if (!cursor) return;
         const upgraded = upgradeDiskMetadata(cursor.value);
-        if (upgraded && (cursor.value as { source?: unknown }).source !== (upgraded as { source?: unknown }).source) {
+        // Treat stored records as untrusted: never observe inherited `source` (prototype pollution).
+        const prev = cursor.value;
+        const prevSource = prev && typeof prev === "object" && hasOwnProp(prev as object, "source") ? (prev as { source?: unknown }).source : undefined;
+        if (upgraded && prevSource !== (upgraded as { source?: unknown }).source) {
           cursor.update(upgraded);
         }
         cursor.continue();
