@@ -48,10 +48,11 @@ fallback entry, Device Manager will show **Aero VirtIO Input Device**.
 Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed (its `SUBSYS_0012...` HWID is more specific than the generic fallback, so it wins).
 
 The repo also carries a legacy filename alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable)
-for workflows/tools that still reference `virtio-input.inf`. Policy: it is a filename alias only and must remain byte-for-byte
-identical to `inf/aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may
-differ; see `../scripts/check-inf-alias.py`). Do not ship/install it alongside `aero_virtio_input.inf` (it is intended as a
-compatibility alias, not a second distinct driver package).
+for workflows/tools that still reference `virtio-input.inf`.
+Policy: it is a filename alias only (does **not** change HWID matching behavior) and must remain byte-for-byte identical to
+`inf/aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may differ; see
+`../scripts/check-inf-alias.py`). Do not ship/install it alongside `aero_virtio_input.inf` (it is intended as a compatibility alias, not a
+second distinct driver package).
 
 This avoids “driver installs but won’t start” confusion: the driver enforces the
 contract major version at runtime, so binding to a non-contract `REV_00` device
