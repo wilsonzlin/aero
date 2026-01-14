@@ -125,7 +125,8 @@ struct Options {
   // Without this flag the selftest still emits an informational virtio-input-msix marker.
   bool require_input_msix = false;
 
-  // If set, run a virtio-net link flap regression test coordinated by the host harness via QMP `set_link`.
+  // If set, run an end-to-end virtio-net link flap regression test coordinated by the host harness via QMP `set_link`.
+  // This validates link DOWN/UP state transitions and datapath recovery.
   bool test_net_link_flap = false;
 
   DWORD net_timeout_sec = 120;
@@ -7577,6 +7578,7 @@ struct VirtioNetLinkFlapTestResult {
   double down_sec = 0.0;
   double up_sec = 0.0;
   std::optional<IN_ADDR> ip_after;
+  int http_attempts = 0;
 };
 
 static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Options& opt,
@@ -7587,7 +7589,8 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
     return out;
   }
 
-  log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY");
+  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY|adapter=%s|guid=%s",
+           WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str());
 
   // Wait for link to go down (host harness toggles QMP set_link down/up).
   const DWORD down_start = GetTickCount();
@@ -7614,9 +7617,12 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   out.down_sec = (GetTickCount() - down_start) / 1000.0;
   if (!saw_down) {
     out.reason = "timeout_waiting_link_down";
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s", out.reason.c_str());
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f",
+             out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+             out.down_sec);
     return out;
   }
+  log.Logf("virtio-net-link-flap: observed link DOWN down_sec=%.2f", out.down_sec);
 
   // Wait for link to come back up with a valid non-APIPA IPv4.
   const DWORD up_start = GetTickCount();
@@ -7638,15 +7644,34 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   out.up_sec = (GetTickCount() - up_start) / 1000.0;
   if (!saw_up) {
     out.reason = "timeout_waiting_link_up";
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s", out.reason.c_str());
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f",
+        out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+        out.down_sec, out.up_sec);
     return out;
   }
+  log.Logf("virtio-net-link-flap: observed link UP up_sec=%.2f", out.up_sec);
 
   // Confirm datapath after recovery.
-  if (!HttpGet(log, opt.http_url)) {
-    out.reason = "http_get_failed";
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s", out.reason.c_str());
-    return out;
+  {
+    constexpr int kMaxAttempts = 3;
+    bool ok = false;
+    for (int attempt = 1; attempt <= kMaxAttempts; attempt++) {
+      out.http_attempts = attempt;
+      if (HttpGet(log, opt.http_url)) {
+        ok = true;
+        break;
+      }
+      Sleep(500);
+    }
+    if (!ok) {
+      out.reason = "http_get_failed";
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|http_attempts=%d",
+          out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+          out.down_sec, out.up_sec, out.http_attempts);
+      return out;
+    }
   }
 
   const uint32_t host = ntohl(ip_after.S_un.S_addr);
@@ -7658,8 +7683,9 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   out.ok = true;
   out.reason.clear();
   log.Logf(
-      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|down_sec=%.2f|up_sec=%.2f|ipv4=%u.%u.%u.%u",
-      out.down_sec, out.up_sec, a, b, c, d);
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|ipv4=%u.%u.%u.%u|http_attempts=%d",
+      WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(), out.down_sec, out.up_sec, a,
+      b, c, d, out.http_attempts);
   return out;
 }
 
@@ -10716,6 +10742,8 @@ static void PrintUsage() {
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1)\n"
       "  --http-url <url>          HTTP URL for TCP connectivity test (also expects <url>-large)\n"
       "  --udp-port <port>         UDP echo server port for virtio-net UDP smoke test (host is 10.0.2.2)\n"
+      "  --test-net-link-flap      Run virtio-net link flap test (requires host QMP `set_link`)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1)\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
@@ -10734,20 +10762,18 @@ static void PrintUsage() {
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_BUTTONS=1)\n"
       "  --test-input-events-wheel      Enable virtio-input-events-wheel subtest\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_WHEEL=1)\n"
-      "  --test-input-tablet-events Run virtio-input tablet (absolute pointer) HID input report test (optional)\n"
-      "                           (alias: --test-tablet-events)\n"
-      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
-      "  --test-input-media-keys   Run virtio-input Consumer Control (media keys) HID input report test (optional)\n"
-      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1)\n"
-      "  --test-input-led          Run virtio-input keyboard LED/statusq smoke test (optional)\n"
-      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1)\n"
-      "  --test-net-link-flap      Run virtio-net link flap regression test (optional)\n"
-      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1)\n"
-      "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
-      "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
-      "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
-      "  --require-non-silence     Fail capture smoke test if only silence is captured\n"
-      "  --allow-virtio-snd-transitional  Also accept legacy PCI\\VEN_1AF4&DEV_1018\n"
+       "  --test-input-tablet-events Run virtio-input tablet (absolute pointer) HID input report test (optional)\n"
+       "                           (alias: --test-tablet-events)\n"
+       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
+       "  --test-input-media-keys   Run virtio-input Consumer Control (media keys) HID input report test (optional)\n"
+       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1)\n"
+       "  --test-input-led          Run virtio-input keyboard LED/statusq smoke test (optional)\n"
+       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1)\n"
+       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
+       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
+       "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
+       "  --require-non-silence     Fail capture smoke test if only silence is captured\n"
+       "  --allow-virtio-snd-transitional  Also accept legacy PCI\\VEN_1AF4&DEV_1018\n"
       "  --require-net-msix        Fail if virtio-net is not using MSI-X (default: allow INTx)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
@@ -10806,6 +10832,8 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
       }
       opt.udp_port = static_cast<USHORT>(*parsed);
+    } else if (arg == L"--test-net-link-flap") {
+      opt.test_net_link_flap = true;
     } else if (arg == L"--blk-root") {
       const wchar_t* v = next();
       if (!v) {
@@ -10863,8 +10891,6 @@ int wmain(int argc, wchar_t** argv) {
       opt.test_input_led = true;
     } else if (arg == L"--require-input-msix") {
       opt.require_input_msix = true;
-    } else if (arg == L"--test-net-link-flap") {
-      opt.test_net_link_flap = true;
     } else if (arg == L"--require-snd-capture") {
       opt.require_snd_capture = true;
     } else if (arg == L"--test-snd-capture") {

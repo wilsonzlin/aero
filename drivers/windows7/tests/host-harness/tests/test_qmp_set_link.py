@@ -29,11 +29,12 @@ class QmpSetLinkTests(unittest.TestCase):
 
     def test_builds_set_link_command(self) -> None:
         h = self.harness
-        cmd = h._qmp_set_link_command("aero_virtio_net0", up=False)
+        cmd = h._qmp_set_link_command(name="aero_virtio_net0", up=False)
         self.assertEqual(cmd["execute"], "set_link")
         self.assertIn("arguments", cmd)
-        self.assertEqual(cmd["arguments"]["name"], "aero_virtio_net0")
-        self.assertIs(cmd["arguments"]["up"], False)
+        args = cmd["arguments"]
+        self.assertEqual(args["name"], "aero_virtio_net0")
+        self.assertIs(args["up"], False)
 
         # Ensure it is JSON-serializable (QMP wire format).
         data = json.dumps(cmd)
@@ -42,4 +43,3 @@ class QmpSetLinkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -44,6 +44,12 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
         - media keys: PowerShell `-WithInputMediaKeys` / Python `--with-input-media-keys`
         - LED/statusq: PowerShell `-WithInputLed` / Python `--with-input-led` (no QMP injection required)
         - tablet: PowerShell `-WithInputTabletEvents` / Python `--with-input-tablet-events`
+    - To enable the optional end-to-end virtio-net link flap regression test (QMP `set_link` + guest link state polling),
+      the guest selftest must be provisioned with:
+      - `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`)
+      - Pair this with the host flag:
+        - PowerShell: `-WithNetLinkFlap`
+        - Python: `--with-net-link-flap`
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
       a capture endpoint is registered
@@ -1155,6 +1161,10 @@ To require the virtio-snd buffer limits stress test (`virtio-snd-buffer-limits`)
 `with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`,
 for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
 
+To exercise the end-to-end virtio-net link flap regression test (QMP `set_link`), set the workflow input
+`with_net_link_flap=true`. This requires a guest image provisioned with `--test-net-link-flap` (or env var
+`AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`) and a QEMU build that supports QMP `set_link`.
+
 ### Invoking the workflow
 
 1. Place your prepared Windows 7 image somewhere on the runner (example: `/var/lib/aero/win7/win7-aero-tests.qcow2`).
@@ -1184,7 +1194,8 @@ only if you explicitly want the base image to be mutated.
     port, provision the guest scheduled task with the same value (for example via `New-AeroWin7TestImage.ps1 -UdpPort <port>`).
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
-  - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041&REV_01`)
+  - `virtio-net-pci,id=aero_virtio_net0,disable-legacy=on,x-pci-revision=0x01` with `-netdev user`
+    (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041&REV_01`; stable `id=` enables QMP `set_link`)
   - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1052&REV_01`)
   - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042&REV_01`)
   - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (`disable-legacy=on,x-pci-revision=0x01`; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1059&REV_01`)
@@ -1219,6 +1230,7 @@ only if you explicitly want the base image to be mutated.
       `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...` (and `tx_csum > 0`)
     - (only when link flap is enabled via `-WithNetLinkFlap` / `--with-net-link-flap`) `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS`
+    - (only when `-WithNetLinkFlap` / `--with-net-link-flap` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
 
 The Python/PowerShell harnesses may also emit additional host-side markers after the run for log scraping/diagnostics:
 
