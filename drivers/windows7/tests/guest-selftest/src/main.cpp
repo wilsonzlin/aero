@@ -905,8 +905,9 @@ static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, S
 // Some Windows 7 SDK environments are missing newer interrupt flag definitions (e.g. message-signaled interrupts).
 // Define the subset we need for resource list parsing so the guest selftest can be built with a plain Win7 SDK.
 #ifndef CM_RESOURCE_INTERRUPT_MESSAGE
-// In `wdm.h` this is defined as 0x0002 (alongside CM_RESOURCE_INTERRUPT_LATCHED=0x0001).
-#define CM_RESOURCE_INTERRUPT_MESSAGE 0x0002
+// In WDK headers this is defined as 0x0004 (alongside CM_RESOURCE_INTERRUPT_LATCHED=0x0001).
+// This flag indicates the interrupt resource is message-signaled (MSI/MSI-X).
+#define CM_RESOURCE_INTERRUPT_MESSAGE 0x0004
 #endif
 
 struct IrqModeInfo {
