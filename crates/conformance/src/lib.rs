@@ -250,7 +250,7 @@ fn templates_for_run(templates: Vec<InstructionTemplate>) -> Result<Vec<Instruct
 
     let filtered: Vec<InstructionTemplate> = templates
         .into_iter()
-        .filter(|t| template_matches_filter(t, &terms))
+        .filter(|t| template_matches_filter(t, &terms, &coverage_keys))
         .collect();
 
     if filtered.is_empty() {
@@ -258,8 +258,9 @@ fn templates_for_run(templates: Vec<InstructionTemplate>) -> Result<Vec<Instruct
         return Err(format!(
             "AERO_CONFORMANCE_FILTER={filter:?} matched 0 templates.\n\
 known coverage_key values:\n  - {keys}\n\
-hint: filter terms match substrings in template name or coverage_key.\n\
-      use `key:<coverage_key>` to match a coverage_key exactly, or `name:<substring>` to match template names only."
+hint: if a term matches a `coverage_key`, it selects that `coverage_key` exactly.\n\
+      otherwise, it matches substrings in the template name.\n\
+      use `key:<coverage_key>` or `name:<substring>` to disambiguate explicitly."
         ));
     }
 
@@ -275,10 +276,16 @@ fn parse_filter_terms(filter: &str) -> Vec<String> {
         .collect()
 }
 
-fn template_matches_filter(template: &InstructionTemplate, terms: &[String]) -> bool {
+fn template_matches_filter(
+    template: &InstructionTemplate,
+    terms: &[String],
+    coverage_keys: &std::collections::BTreeSet<String>,
+) -> bool {
     let name = template.name.to_ascii_lowercase();
     let coverage_key = template.coverage_key.to_ascii_lowercase();
-    // Default behaviour: substring match against template name or coverage_key (case-insensitive).
+    // Default behaviour:
+    // - if a term matches a known `coverage_key`, select that `coverage_key` exactly
+    // - otherwise match substrings in the template name (case-insensitive)
     //
     // Use `key:<coverage_key>` or `name:<substring>` to disambiguate explicitly.
     terms.iter().any(|term| {
@@ -301,7 +308,13 @@ fn template_matches_filter(template: &InstructionTemplate, terms: &[String]) -> 
         match mode {
             "key" => coverage_key == term,
             "name" => name.contains(term),
-            _ => name.contains(term) || coverage_key.contains(term),
+            _ => {
+                if coverage_keys.contains(term) {
+                    coverage_key == term
+                } else {
+                    name.contains(term)
+                }
+            }
         }
     })
 }
@@ -363,6 +376,8 @@ fn compare_outcomes(
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct EnvGuard {
         key: &'static str,
         prev: Option<std::ffi::OsString>,
@@ -388,6 +403,7 @@ mod tests {
 
     #[test]
     fn template_filter_reduces_set() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let all = crate::corpus::templates();
         let _guard = EnvGuard::set("AERO_CONFORMANCE_FILTER", "add");
 
@@ -402,10 +418,8 @@ mod tests {
         );
         assert!(!filtered.is_empty());
         for template in filtered {
-            let name = template.name.to_ascii_lowercase();
-            let coverage_key = template.coverage_key.to_ascii_lowercase();
             assert!(
-                name.contains("add") || coverage_key.contains("add"),
+                template.coverage_key.eq_ignore_ascii_case("add"),
                 "template unexpectedly matched filter: {:?} (coverage_key={})",
                 template.name,
                 template.coverage_key
@@ -415,6 +429,7 @@ mod tests {
 
     #[test]
     fn template_filter_can_force_name_substring() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let _guard = EnvGuard::set("AERO_CONFORMANCE_FILTER", "name:add");
         let filtered =
             templates_for_run(crate::corpus::templates()).expect("name:add should match at least one template");
@@ -438,6 +453,7 @@ mod tests {
             return;
         }
 
+        let _lock = ENV_LOCK.lock().unwrap();
         let all_expected = ConformanceReport::new(1).coverage.expected;
 
         let _isolate = EnvGuard::set("AERO_CONFORMANCE_REFERENCE_ISOLATE", "1");
@@ -467,6 +483,7 @@ mod tests {
             return;
         }
 
+        let _lock = ENV_LOCK.lock().unwrap();
         // Fault templates must always run with reference isolation enabled so signals don't take
         // down the test runner.
         let _isolate = EnvGuard::set("AERO_CONFORMANCE_REFERENCE_ISOLATE", "1");
@@ -549,6 +566,7 @@ mod tests {
     fn tier0_single_case_matches_reference() {
         use crate::corpus::TemplateKind;
 
+        let _lock = ENV_LOCK.lock().unwrap();
         let mut reference = ReferenceBackend::new().expect("reference backend unavailable");
         let mut aero = aero::AeroBackend::new(libc::SIGSEGV);
 
