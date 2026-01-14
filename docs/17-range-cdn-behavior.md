@@ -121,7 +121,7 @@ For a disk image or chunk object that never changes once published:
   - Avoid including headers/cookies in the cache key.
   - Do **not** include `Range` in the cache key.
 - **TTL:** set for long-lived caching:
-  - Prefer `Cache-Control: public, max-age=31536000, immutable`
+  - Prefer `Cache-Control: public, max-age=31536000, immutable, no-transform`
   - Ensure CloudFront cache policy **Maximum TTL** is >= your origin’s `max-age` or CloudFront will cap it.
 
 **Why this matters for Aero:** random-access reads cause many repeated small Range reads. Any extra cache-key variance (cookies, headers) will cause near-0% hit ratio.

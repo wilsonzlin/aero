@@ -74,7 +74,7 @@ Primary threats and required mitigations:
 4. **COOP/COEP violations breaking `SharedArrayBuffer`**
    *All disk fetches used by a crossOriginIsolated app MUST be COEP-compatible (same-origin or explicitly allowed by CORS/CORP).*
 5. **Caching private data incorrectly**
-   *Private images MUST default to `Cache-Control: no-store` unless authorization is enforced at the edge (signed URL/cookie) and cache behavior is intentionally configured.*
+   *Private images MUST default to `Cache-Control: no-store, no-transform` unless authorization is enforced at the edge (signed URL/cookie) and cache behavior is intentionally configured.*
 
 ---
 
@@ -392,14 +392,14 @@ For defence-in-depth and clarity, disk byte responses SHOULD also include:
 
 For publicly readable images (no per-user authorization), prefer long-lived immutable caching:
 
-* `Cache-Control: public, max-age=31536000, immutable`
+* `Cache-Control: public, max-age=31536000, immutable, no-transform`
 * Stable `ETag` (content hash or generation ID)
 
 ### Private images (safe defaults)
 
 Default safe posture for private images:
 
-* `Cache-Control: no-store`
+* `Cache-Control: no-store, no-transform`
 
 This prevents browsers and intermediary caches from storing private bytes where authorization is not enforced.
 
@@ -412,7 +412,7 @@ If authorization is validated at the edge (CDN) and the cached object is identic
 
 In these cases, you can often use the same caching headers as public content **at the CDN layer**. Be explicit about where caching happens:
 
-* At the **browser**: it is usually fine to keep `Cache-Control: no-store` for private disks to avoid local persistence surprises.
+* At the **browser**: it is usually fine to keep `Cache-Control: no-store, no-transform` for private disks to avoid local persistence surprises.
 * At the **CDN**: configure edge caching policies, and use origin headers appropriately for your CDN/provider.
 
 ### Range caching and chunk alignment

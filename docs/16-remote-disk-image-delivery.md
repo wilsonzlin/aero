@@ -96,7 +96,7 @@ Goals:
 Recommended characteristics:
 
 - Immutable, versioned key (e.g. `/images/win7-sp1-x64/2026-01-10/disk.img`)
-- `Cache-Control: public, max-age=31536000, immutable`
+- `Cache-Control: public, max-age=31536000, immutable, no-transform`
 - No authorization required (or optional “soft gating” on the app side; see below)
 
 ### Mode B: Private per-user images (user uploads)
@@ -121,7 +121,7 @@ Recommended characteristics:
 > Note: “Private” does not necessarily mean “uncacheable”.
 >
 > If the CDN enforces access (e.g., CloudFront signed cookies), it is still safe to use
-> `Cache-Control: public` on a private object. The CDN will store bytes, but only serve them
+> `Cache-Control: public` (ideally with `no-transform`) on a private object. The CDN will store bytes, but only serve them
 > to authorized viewers. This is useful for **private-but-shared** images (e.g., paid tier),
 > and can still be acceptable for per-user images if your threat model allows it.
 
@@ -210,7 +210,7 @@ Content-Length: 21474836480
 Accept-Ranges: bytes
 ETag: "2f8c3f2a0a4d9b0b0f..."
 Last-Modified: Fri, 10 Jan 2026 00:00:00 GMT
-Cache-Control: public, max-age=31536000, immutable
+Cache-Control: public, max-age=31536000, immutable, no-transform
 ```
 
 How Aero should use it (conceptually):
@@ -244,7 +244,7 @@ Content-Type: application/octet-stream
 Accept-Ranges: bytes
 Content-Range: bytes 1048576-2097151/21474836480
 Content-Length: 1048576
-Cache-Control: public, max-age=31536000, immutable
+Cache-Control: public, max-age=31536000, immutable, no-transform
 ETag: "2f8c3f2a0a4d9b0b0f..."
 Last-Modified: Fri, 10 Jan 2026 00:00:00 GMT
 ```
@@ -557,10 +557,10 @@ Set these on the disk image object (or inject at the CDN):
 - `Content-Type: application/octet-stream`
 - `Cache-Control`:
   - Immutable versioned objects:
-    - `Cache-Control: public, max-age=31536000, immutable`
+    - `Cache-Control: public, max-age=31536000, immutable, no-transform`
   - Mutable paths (not recommended for disk images):
-    - `Cache-Control: no-cache` (forces revalidation)
-    - or a short TTL (`max-age=60`) if you must
+    - `Cache-Control: no-cache, no-transform` (forces revalidation)
+    - or a short TTL (`max-age=60, no-transform`) if you must
 
 Strong warning:
 
