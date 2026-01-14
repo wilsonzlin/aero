@@ -1,0 +1,190 @@
+import { describe, expect, it } from "vitest";
+
+import { Worker, type WorkerOptions } from "node:worker_threads";
+
+import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
+import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+import {
+  FRAME_PRESENTED,
+  FRAME_SEQ_INDEX,
+  FRAME_STATUS_INDEX,
+  GPU_PROTOCOL_NAME,
+  GPU_PROTOCOL_VERSION,
+} from "../ipc/gpu-protocol";
+import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
+
+async function waitForWorkerMessage(
+  worker: Worker,
+  predicate: (msg: unknown) => boolean,
+  timeoutMs: number,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
+    }, timeoutMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+
+    const onMessage = (msg: unknown) => {
+      // Surface runtime worker errors eagerly.
+      const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
+      if (maybeProtocol?.type === MessageType.ERROR) {
+        cleanup();
+        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
+        return;
+      }
+      try {
+        if (!predicate(msg)) return;
+      } catch (err) {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      cleanup();
+      resolve(msg);
+    };
+
+    const onError = (err: unknown) => {
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    const onExit = (code: number) => {
+      cleanup();
+      reject(new Error(`worker exited before emitting the expected message (code=${code})`));
+    };
+
+    function cleanup(): void {
+      clearTimeout(timer);
+      worker.off("message", onMessage);
+      worker.off("error", onError);
+      worker.off("exit", onExit);
+    }
+
+    worker.on("message", onMessage);
+    worker.on("error", onError);
+    worker.on("exit", onExit);
+  });
+}
+
+describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
+  it("emits a structured Validation event but does not send a fatal worker ERROR (no restart)", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const views = createSharedMemoryViews(segments);
+
+    // Ensure the frame scheduler tick path runs a present pass even if the legacy shared framebuffer
+    // is idle, by setting scanout source to WDDM (with a placeholder base_paddr=0).
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: 0,
+      basePaddrHi: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    const observedMessages: unknown[] = [];
+    worker.on("message", (msg) => observedMessages.push(msg));
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        10_000,
+      );
+
+      const wasmModuleUrl = new URL("./test_workers/gpu_mock_presenter_uncaptured_error_module.ts", import.meta.url).href;
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        options: { wasmModuleUrl },
+      });
+
+      // Wait until the mock module is imported (so `presentFn` is installed).
+      await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_presenter_loaded", 10_000);
+
+      const firstPresentCall = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "mock_present_call" && (msg as { callCount?: unknown }).callCount === 1,
+        10_000,
+      );
+
+      const eventsPromise = waitForWorkerMessage(
+        worker,
+        (msg) => {
+          const m = msg as { protocol?: unknown; type?: unknown; events?: unknown[] } | undefined;
+          if (m?.protocol !== GPU_PROTOCOL_NAME || m.type !== "events") return false;
+          const events = Array.isArray(m.events) ? m.events : [];
+          return events.some(
+            (ev) => (ev as { category?: unknown; message?: unknown })?.category === "Validation" && String((ev as any).message).includes("simulated uncaptured error"),
+          );
+        },
+        10_000,
+      );
+
+      // Tick #1: should attempt a present even though FRAME_STATUS=PRESENTED, because scanout is WDDM.
+      // The mock presenter throws webgpu_uncaptured_error on the first call, which should only
+      // produce an `events` message (not a fatal worker ERROR).
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
+
+      await firstPresentCall;
+      const eventsMsg = (await eventsPromise) as { events?: unknown[] };
+      const validationEvent = (eventsMsg.events ?? []).find((ev) => (ev as any)?.category === "Validation") as any;
+      expect(validationEvent).toBeTruthy();
+      expect(String(validationEvent.message)).toContain("simulated uncaptured error");
+
+      // Tick #2: mock presenter should continue presenting successfully after the uncaptured error.
+      const secondPresent = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "mock_present" && (msg as { ok?: unknown }).ok === true,
+        10_000,
+      );
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
+      await secondPresent;
+
+      // Ensure the GPU worker did not forward the uncaptured error as a legacy `type:"error"` message.
+      expect(
+        observedMessages.some(
+          (msg) => (msg as any)?.protocol === GPU_PROTOCOL_NAME && (msg as any)?.type === "error",
+        ),
+      ).toBe(false);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+});
+
