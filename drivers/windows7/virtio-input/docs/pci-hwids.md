@@ -81,6 +81,9 @@ Keyboard: PCI device 1af4:1052
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
   This avoids binding to non-contract virtio-input devices and keeps keyboard/mouse
   vs tablet selection deterministic.
+  For an opt-in generic fallback match (when subsystem IDs are not exposed), use
+  the legacy alias `inf/virtio-input.inf.disabled` (rename to `virtio-input.inf`
+  to enable it).
 * Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
   ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
   for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.
