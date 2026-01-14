@@ -3545,6 +3545,116 @@ bool TestCaptureStateBlockUsesEffectiveScissorRectFromRenderTarget() {
   return true;
 }
 
+bool TestApplyStateBlockRenderStateCapturesRedundantSet() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // D3DRS_CULLMODE (numeric value from d3d9types.h).
+  constexpr uint32_t kD3dRsCullMode = 22u;
+  constexpr uint32_t kCullNone = 1u;
+  constexpr uint32_t kCullCw = 2u;
+
+  // Seed the render state to a known value.
+  HRESULT hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsCullMode, kCullNone);
+  if (!Check(hr == S_OK, "SetRenderState(CULLMODE=NONE) seed")) {
+    return false;
+  }
+
+  // Record a redundant SetRenderState(CULLMODE=NONE). D3D9 state blocks must
+  // still capture it even if the UMD skips redundant command emission.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(redundant render state)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsCullMode, kCullNone);
+  if (!Check(hr == S_OK, "SetRenderState(CULLMODE=NONE) redundant recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(redundant render state)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Change the render state so applying the state block must restore it.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsCullMode, kCullCw);
+  if (!Check(hr == S_OK, "SetRenderState(CULLMODE=CW) change-to-B")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(redundant render state)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->render_states[kD3dRsCullMode] == kCullNone, "ApplyStateBlock restores CULLMODE=NONE")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock redundant render state)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_rs = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_STATE)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_state)) {
+      continue;
+    }
+    const auto* rs = reinterpret_cast<const aerogpu_cmd_set_render_state*>(hdr);
+    if (rs->state == kD3dRsCullMode && rs->value == kCullNone) {
+      saw_rs = true;
+      break;
+    }
+  }
+  if (!Check(saw_rs, "ApplyStateBlock emits SET_RENDER_STATE(CULLMODE=NONE)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -23134,6 +23244,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestCaptureStateBlockUsesEffectiveScissorRectFromRenderTarget()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockRenderStateCapturesRedundantSet()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
