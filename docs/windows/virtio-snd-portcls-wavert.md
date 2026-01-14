@@ -842,7 +842,12 @@ HKR,Parameters,AllowPollingOnly,0x00010001,0
 Notes:
 
 * `MessageNumberLimit` is a request; Windows may allocate fewer messages.
-* When message interrupts are used, drivers must still program virtio MSI-X routing (`msix_config`, `queue_msix_vector`) and fall back to INTx if vector programming fails.
+* When message interrupts are used, drivers must still program virtio MSI-X routing (`msix_config`, `queue_msix_vector`).
+  - On Aero contract devices, if MSI-X is enabled at the PCI layer but a virtio MSI-X selector remains
+    `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are
+    **suppressed** (no MSI-X message and no INTx fallback).
+  - Therefore, if virtio vector programming fails, drivers must not “wait for INTx”; they must either disable MSI-X and
+    use INTx (if the platform/resources allow it) or treat the failure as fatal.
 
 ---
 

@@ -273,8 +273,11 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
   - Works with PCI **INTx** (contract v1 baseline requires INTx; ISR status is read-to-ack to deassert the line).
   - Supports **MSI/MSI-X** (message-signaled interrupts). The in-tree Windows 7 driver package opts in via INF
     (`MSISupported=1`), prefers message interrupts when Windows grants them, programs virtio MSI-X routing
-    (`msix_config`, `queue_msix_vector`), and falls back to INTx if message interrupts cannot be connected or vector
-    programming fails.
+    (`msix_config`, `queue_msix_vector`), and verifies read-back.
+    - On Aero contract devices, MSI-X is **exclusive** when enabled: if a virtio MSI-X selector is
+      `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are
+      **suppressed** (no MSI-X message and no INTx fallback). Drivers must not rely on “INTx fallback” unless MSI-X is
+      actually disabled and INTx resources are in use.
   - Optional bring-up: if neither MSI/MSI-X nor INTx can be connected, the driver can run in polling-only mode when
     `AllowPollingOnly=1` is set under the device instance registry key (intended for early device-model bring-up).
 - Distribute as **test-signed**:
