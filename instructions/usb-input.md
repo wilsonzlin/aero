@@ -53,6 +53,7 @@ Aero supports input through two different integration styles:
 | `crates/aero-usb/` | Canonical USB stack (ADR 0015) |
 | `crates/aero-devices-input/` | PS/2 controller (i8042), keyboard, mouse |
 | `web/src/workers/io.worker.ts` | I/O worker routing (PS/2 vs USB HID vs virtio-input) |
+| `web/src/workers/machine_cpu.worker.ts` | Machine runtime input injection/routing (PS/2 vs USB HID vs virtio-input) |
 | `web/src/io/devices/` | Browser-side device models (i8042, UHCI, virtio-input, …) |
 | `web/src/usb/` | TypeScript USB broker and passthrough |
 | `web/src/input/` | Browser input event capture |
@@ -105,13 +106,16 @@ Aero supports input through two different integration styles:
 
 ## Input Architecture
 
-### Canonical browser runtime input pipeline (main thread → I/O worker)
+### Canonical browser runtime input pipeline (main thread → input injector worker)
 
 ```
 Browser DOM events
   → `web/src/input/*` capture + batching
   → `postMessage({ type: "in:input-batch", buffer })`
-  → `web/src/workers/io.worker.ts` (route + inject)
+  → input injector worker:
+     - `vmRuntime=legacy`: `web/src/workers/io.worker.ts`
+     - `vmRuntime=machine`: `web/src/workers/machine_cpu.worker.ts`
+     (route + inject)
      → virtio-input (fast path) OR USB HID (guest-visible USB controller; UHCI by default) OR PS/2 i8042 (fallback)
   → Windows 7 guest input stacks
 ```
