@@ -742,7 +742,7 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 		idleTimeout:  s.signalingWSIdleTimeout(),
 		pingInterval: s.signalingWSPingInterval(),
 		limiter: ratelimit.NewTokenBucket(
-			ratelimit.RealClock{},
+			nil,
 			int64(s.maxSignalingMessagesPerSecond()),
 			int64(s.maxSignalingMessagesPerSecond()),
 		),
@@ -875,7 +875,7 @@ type wsSession struct {
 	idleTimeout     time.Duration
 	pingInterval    time.Duration
 	maxMessageBytes int64
-	limiter         *ratelimit.TokenBucket
+	limiter         messageLimiter
 
 	session      *webrtcpeer.Session
 	relaySession *relay.Session
@@ -893,6 +893,10 @@ type wsSession struct {
 
 	keepaliveOnce sync.Once
 	keepaliveDone chan struct{}
+}
+
+type messageLimiter interface {
+	Allow(tokens int64) bool
 }
 
 func (wss *wsSession) installPeerHandlers() {

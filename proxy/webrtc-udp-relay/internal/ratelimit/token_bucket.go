@@ -9,13 +9,13 @@ const nanoTokensPerToken int64 = int64(time.Second) // 1e9
 
 const maxInt64 = int64(^uint64(0) >> 1)
 
-// TokenBucket is a deterministic token bucket that refills at an integer
+// tokenBucket is a deterministic token bucket that refills at an integer
 // rate (tokens/sec) using a provided Clock.
 //
 // The implementation uses fixed-point "nano-tokens" to avoid float rounding.
 // One token is represented as 1e9 nano-tokens, so a rate of X tokens/sec adds
 // X nano-tokens per nanosecond elapsed.
-type TokenBucket struct {
+type tokenBucket struct {
 	mu sync.Mutex
 
 	clock Clock
@@ -27,7 +27,7 @@ type TokenBucket struct {
 	last                time.Time
 }
 
-func NewTokenBucket(clock Clock, capacityTokens, fillRate int64) *TokenBucket {
+func NewTokenBucket(clock Clock, capacityTokens, fillRate int64) *tokenBucket {
 	if clock == nil {
 		clock = RealClock{}
 	}
@@ -40,7 +40,7 @@ func NewTokenBucket(clock Clock, capacityTokens, fillRate int64) *TokenBucket {
 
 	now := clock.Now()
 	capacityNano := mulTokenToNano(capacityTokens)
-	return &TokenBucket{
+	return &tokenBucket{
 		clock:               clock,
 		capacityTokens:      capacityTokens,
 		fillRate:            fillRate,
@@ -52,7 +52,7 @@ func NewTokenBucket(clock Clock, capacityTokens, fillRate int64) *TokenBucket {
 // Allow consumes the provided number of tokens if available.
 //
 // tokens <= 0 always succeeds.
-func (b *TokenBucket) Allow(tokens int64) bool {
+func (b *tokenBucket) Allow(tokens int64) bool {
 	if tokens <= 0 {
 		return true
 	}
@@ -72,7 +72,7 @@ func (b *TokenBucket) Allow(tokens int64) bool {
 	return true
 }
 
-func (b *TokenBucket) refillLocked() {
+func (b *tokenBucket) refillLocked() {
 	now := b.clock.Now()
 	if now.Before(b.last) {
 		// Time went backwards. Avoid refilling and move the reference point.

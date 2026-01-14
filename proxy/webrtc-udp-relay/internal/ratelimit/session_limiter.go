@@ -38,9 +38,9 @@ type SessionConfig struct {
 type SessionLimiter struct {
 	clock Clock
 
-	udpPackets *TokenBucket
-	udpBytes   *TokenBucket
-	dcBytes    *TokenBucket
+	udpPackets *tokenBucket
+	udpBytes   *tokenBucket
+	dcBytes    *tokenBucket
 
 	maxUniqueDestinations int
 
@@ -57,22 +57,22 @@ type SessionLimiter struct {
 }
 
 type destBucketEntry struct {
-	bucket *TokenBucket
+	bucket *tokenBucket
 	elem   *list.Element
 }
 
 func NewSessionLimiter(clock Clock, cfg SessionConfig) *SessionLimiter {
-	var udpPackets *TokenBucket
+	var udpPackets *tokenBucket
 	if cfg.UDPPacketsPerSecond > 0 {
 		udpPackets = NewTokenBucket(clock, int64(cfg.UDPPacketsPerSecond), int64(cfg.UDPPacketsPerSecond))
 	}
 
-	var udpBytes *TokenBucket
+	var udpBytes *tokenBucket
 	if cfg.UDPBytesPerSecond > 0 {
 		udpBytes = NewTokenBucket(clock, int64(cfg.UDPBytesPerSecond), int64(cfg.UDPBytesPerSecond))
 	}
 
-	var dcBytes *TokenBucket
+	var dcBytes *tokenBucket
 	if cfg.DataChannelBytesPerSecond > 0 {
 		dcBytes = NewTokenBucket(clock, int64(cfg.DataChannelBytesPerSecond), int64(cfg.DataChannelBytesPerSecond))
 	}
@@ -159,9 +159,9 @@ func (l *SessionLimiter) trackDestination(destKey string) bool {
 	return true
 }
 
-func (l *SessionLimiter) getOrCreateDestBucket(destKey string) *TokenBucket {
+func (l *SessionLimiter) getOrCreateDestBucket(destKey string) *tokenBucket {
 	var (
-		bucket  *TokenBucket
+		bucket  *tokenBucket
 		onEvict func()
 	)
 
