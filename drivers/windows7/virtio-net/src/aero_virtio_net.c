@@ -2004,6 +2004,7 @@ static VOID AerovNetCtrlCollectUsedLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _In
 static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ UCHAR Class, _In_ UCHAR Command,
                                           _In_reads_bytes_opt_(DataBytes) const VOID* Data, _In_ USHORT DataBytes, _Out_opt_ UCHAR* AckOut) {
   NDIS_STATUS Status;
+  NTSTATUS WaitStatus;
   AEROVNET_CTRL_REQUEST* Req;
   ULONG CmdBytes;
   ULONG TotalBytes;
@@ -2038,12 +2039,21 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
     return NDIS_STATUS_INVALID_DATA;
   }
 
+  // Serialize synchronous control commands. AerovNetCtrlSendCommand drains and
+  // frees completed requests; concurrent callers could free each other's
+  // requests, resulting in spurious timeouts and use-after-free.
+  WaitStatus = KeWaitForSingleObject(&Adapter->CtrlCmdEvent, Executive, KernelMode, FALSE, NULL);
+  if (WaitStatus != STATUS_SUCCESS) {
+    return NDIS_STATUS_FAILURE;
+  }
+
   CmdBytes = sizeof(VIRTIO_NET_CTRL_HDR) + (ULONG)DataBytes;
   TotalBytes = CmdBytes + sizeof(UCHAR); // ack
 
   Req = (AEROVNET_CTRL_REQUEST*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*Req), AEROVNET_TAG);
   if (!Req) {
-    return NDIS_STATUS_RESOURCES;
+    Status = NDIS_STATUS_RESOURCES;
+    goto Exit;
   }
   RtlZeroMemory(Req, sizeof(*Req));
   Req->Link.Flink = NULL;
@@ -2062,7 +2072,8 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
   Req->BufferVa = MmAllocateContiguousMemorySpecifyCache(Req->BufferBytes, Low, High, Skip, MmCached);
   if (!Req->BufferVa) {
     AerovNetCtrlFreeRequest(Req);
-    return NDIS_STATUS_RESOURCES;
+    Status = NDIS_STATUS_RESOURCES;
+    goto Exit;
   }
   Req->BufferPa = MmGetPhysicalAddress(Req->BufferVa);
   RtlZeroMemory(Req->BufferVa, Req->BufferBytes);
@@ -2135,7 +2146,7 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
   if (Status != NDIS_STATUS_SUCCESS) {
     AerovNetCtrlFreeRequest(Req);
     AerovNetCtrlVqRegistryUpdate(Adapter);
-    return Status;
+    goto Exit;
   }
 
   // Poll for completion (interrupts may be suppressed during init while Adapter->State is Stopped).
@@ -2166,7 +2177,7 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
       }
       Status = (FinalAck == VIRTIO_NET_OK) ? NDIS_STATUS_SUCCESS : NDIS_STATUS_FAILURE;
       AerovNetCtrlVqRegistryUpdate(Adapter);
-      return Status;
+      goto Exit;
     }
 
     if (KeQueryInterruptTime() >= Deadline100ns) {
@@ -2174,7 +2185,8 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
       Adapter->StatCtrlVqCmdTimeout++;
       NdisReleaseSpinLock(&Adapter->Lock);
       AerovNetCtrlVqRegistryUpdate(Adapter);
-      return NDIS_STATUS_FAILURE;
+      Status = NDIS_STATUS_FAILURE;
+      goto Exit;
     }
 
     {
@@ -2183,6 +2195,10 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
       (VOID)KeDelayExecutionThread(KernelMode, FALSE, &Interval);
     }
   }
+
+Exit:
+  KeSetEvent(&Adapter->CtrlCmdEvent, IO_NO_INCREMENT, FALSE);
+  return Status;
 }
 
 static NDIS_STATUS AerovNetCtrlSetMac(_Inout_ AEROVNET_ADAPTER* Adapter, _In_reads_(ETH_LENGTH_OF_ADDRESS) const UCHAR* Mac) {
@@ -4541,6 +4557,7 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   NdisAllocateSpinLock(&Adapter->Lock);
   KeInitializeEvent(&Adapter->OutstandingSgEvent, NotificationEvent, TRUE);
   KeInitializeEvent(&Adapter->DiagRefEvent, NotificationEvent, TRUE);
+  KeInitializeEvent(&Adapter->CtrlCmdEvent, SynchronizationEvent, TRUE);
 
   InitializeListHead(&Adapter->RxFreeList);
   InitializeListHead(&Adapter->TxFreeList);

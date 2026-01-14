@@ -195,6 +195,11 @@ typedef struct _AEROVNET_ADAPTER {
   USHORT MsixTxVector;
 
   NDIS_SPIN_LOCK Lock;
+  // Serialize synchronous ctrl_vq commands. AerovNetCtrlSendCommand polls for
+  // completion and frees requests; allowing concurrent callers can lead to one
+  // caller freeing another caller's request. Keep a single in-flight command to
+  // avoid spurious timeouts and use-after-free.
+  KEVENT CtrlCmdEvent;
 
   AEROVNET_ADAPTER_STATE State;
   volatile BOOLEAN SurpriseRemoved;
