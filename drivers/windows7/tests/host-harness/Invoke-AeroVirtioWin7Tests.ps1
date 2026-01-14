@@ -551,6 +551,9 @@ if ($HttpPort -le 0 -or $HttpPort -gt 65535) {
 if ([string]::IsNullOrEmpty($HttpPath) -or (-not $HttpPath.StartsWith("/"))) {
   throw "-HttpPath must start with '/'."
 }
+if ($HttpPath -match "\s") {
+  throw "-HttpPath must not contain whitespace."
+}
 
 if ($MemoryMB -le 0) {
   throw "-MemoryMB must be a positive integer."
