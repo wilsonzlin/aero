@@ -6101,6 +6101,196 @@ bool TestGenerateMipSubLevelsBoxFilter2d() {
   return true;
 }
 
+bool TestGenerateMipSubLevelsBoxFilter2dA8R8G8B8PreservesAlpha() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  // Create a 2x2 texture with 2 mip levels (2x2, 1x1).
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 21u; // D3DFMT_A8R8G8B8
+  create_res.width = 2;
+  create_res.height = 2;
+  create_res.depth = 1;
+  create_res.mip_levels = 2;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(2x2 A8R8G8B8 texture mips)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(res->mip_levels == 2, "resource mip_levels==2")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == 0, "resource is host-allocated (alloc_id==0)")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= res->size_bytes, "resource storage sized")) {
+    return false;
+  }
+
+  // Fill mip0 with a known pattern:
+  // BGRA = (0,0,R,A).
+  // Expected mip1 is box-filter average in 8-bit space (rounded) and should
+  // preserve/average alpha (A8 formats do not force it to opaque).
+  const uint32_t row_pitch = res->row_pitch;
+  if (!Check(row_pitch == 8u, "mip0 row_pitch==8")) {
+    return false;
+  }
+  uint8_t* base = res->storage.data();
+  struct Px {
+    uint8_t r;
+    uint8_t a;
+  };
+  const Px px[4] = {
+      {0, 0},    // (0,0)
+      {10, 20},  // (1,0)
+      {30, 40},  // (0,1)
+      {50, 60},  // (1,1)
+  };
+  for (uint32_t y = 0; y < 2; ++y) {
+    for (uint32_t x = 0; x < 2; ++x) {
+      const Px p = px[y * 2u + x];
+      const size_t off = static_cast<size_t>(y) * row_pitch + static_cast<size_t>(x) * 4u;
+      base[off + 0] = 0;   // B
+      base[off + 1] = 0;   // G
+      base[off + 2] = p.r; // R
+      base[off + 3] = p.a; // A
+    }
+  }
+
+  // Clear command buffer so we only observe visibility packets from mip generation.
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == S_OK, "GenerateMipSubLevels")) {
+    return false;
+  }
+
+  Texture2dMipLevelLayout mip1{};
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 1, &mip1),
+             "mip1 layout")) {
+    return false;
+  }
+  if (!Check(mip1.width == 1 && mip1.height == 1, "mip1 dims 1x1")) {
+    return false;
+  }
+
+  // Average R: (0+10+30+50)/4 = 22.5 -> 23 (sum+2)/4 rounding.
+  // Average A: (0+20+40+60)/4 = 30.
+  const uint8_t expected_mip1[4] = {0, 0, 23, 30};
+  if (!Check(mip1.slice_pitch_bytes == sizeof(expected_mip1), "mip1 slice_pitch==4")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip1.offset_bytes), expected_mip1, sizeof(expected_mip1)) == 0,
+             "mip1 bytes match")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1, "GenerateMipSubLevels emits exactly one UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
+    return false;
+  }
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
+    return false;
+  }
+  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips")) {
+    return false;
+  }
+  const auto* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  return Check(std::memcmp(payload, expected_mip1, sizeof(expected_mip1)) == 0, "UPLOAD_RESOURCE payload matches mip bytes");
+}
+
 bool TestGenerateMipSubLevelsBoxFilter2dArrayTexture() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -31627,6 +31817,7 @@ int main() {
   RUN_TEST(TestUnlockX1R5G5B5ForcesAlphaBitAndUploadsFixedBytes);
   RUN_TEST(TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2d);
+  RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dA8R8G8B8PreservesAlpha);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dArrayTexture);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dR5G6B5);
