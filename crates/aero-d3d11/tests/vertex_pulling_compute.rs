@@ -604,3 +604,189 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         }
     });
 }
+
+#[test]
+fn compute_can_vertex_pull_unorm8x2_and_unorm10_10_10_2_formats() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::compute_can_vertex_pull_unorm8x2_and_unorm10_10_10_2_formats"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
+        const VB: u32 = 1;
+        const META: u32 = 2;
+        const OUT: u32 = 3;
+        const SHADER: u32 = 4;
+        const PIPELINE: u32 = 5;
+
+        // Two vertices packed into one vertex buffer with an intentionally unaligned base offset.
+        //
+        // Vertex layout (stride=8 bytes):
+        // - offset 0: DXGI_FORMAT_R8G8_UNORM (2 bytes)
+        // - offset 2: padding (2 bytes)
+        // - offset 4: DXGI_FORMAT_R10G10B10A2_UNORM (4 bytes)
+        //
+        // Base offset = 1 byte so both attributes exercise the unaligned byte-address stitching in
+        // `ia_load_u32`.
+        let mut vb = Vec::<u8>::new();
+        vb.push(0u8); // base offset padding
+
+        // v0 R8G8 = (128, 64)
+        vb.push(128u8);
+        vb.push(64u8);
+        vb.push(0u8);
+        vb.push(0u8);
+        // v0 R10G10B10A2 = (r=1023, g=0, b=512, a=3)
+        push_u32(&mut vb, 0xE000_03FF);
+
+        // v1 R8G8 = (0, 255)
+        vb.push(0u8);
+        vb.push(255u8);
+        vb.push(0u8);
+        vb.push(0u8);
+        // v1 R10G10B10A2 = (r=0, g=1023, b=1023, a=0)
+        push_u32(&mut vb, 0x3FFF_FC00);
+
+        // Pad to a 4-byte multiple; the WGSL views the storage buffer as `array<u32>`.
+        while vb.len() % 4 != 0 {
+            vb.push(0u8);
+        }
+
+        let mut meta = IaMeta::default();
+        meta.vb[0].base_offset_bytes = 1;
+        meta.vb[0].stride_bytes = 8;
+
+        let output_vec4s = 2u32 * 2u32; // (r8g8, r10g10b10a2) per vertex
+        let output_size = output_vec4s as u64 * 16;
+
+        let wgsl = format!(
+            r#"
+{VERTEX_PULLING_WGSL}
+
+struct OutBuf {{
+  data: array<vec4<f32>>,
+}};
+
+@group(2) @binding({out_binding}) var<storage, read_write> out_buf: OutBuf;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  let idx = gid.x;
+  let base = idx * 2u;
+
+  let rg = ia_load_r8g8_unorm(0u, idx, 0u);
+  let p = ia_load_r10g10b10a2_unorm(0u, idx, 4u);
+
+  out_buf.data[base + 0u] = vec4<f32>(rg.x, rg.y, 0.0, 1.0);
+  out_buf.data[base + 1u] = p;
+}}
+"#,
+            out_binding = IA_BINDING_VERTEX_BUFFER_END
+        );
+
+        let mut bindings: Vec<BindingDesc> = Vec::new();
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_META,
+            ty: BindingType::UniformBuffer,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            bindings.push(BindingDesc {
+                binding: IA_BINDING_VERTEX_BUFFER_BASE + i,
+                ty: BindingType::StorageBufferReadOnly,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
+            });
+        }
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_VERTEX_BUFFER_END,
+            ty: BindingType::StorageBufferReadWrite,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+
+        let mut writer = CmdWriter::new();
+        writer.create_buffer(VB, vb.len() as u64, BufferUsage::VERTEX);
+        writer.create_buffer(META, meta.as_bytes().len() as u64, BufferUsage::UNIFORM);
+        writer.create_buffer(
+            OUT,
+            output_size,
+            BufferUsage::STORAGE | BufferUsage::MAP_READ,
+        );
+
+        writer.update_buffer(VB, 0, &vb);
+        writer.update_buffer(META, 0, meta.as_bytes());
+
+        writer.create_shader_module_wgsl(SHADER, &wgsl);
+        writer.create_compute_pipeline(PIPELINE, SHADER, &bindings);
+
+        writer.begin_compute_pass();
+        writer.set_pipeline(PipelineKind::Compute, PIPELINE);
+        writer.set_bind_buffer(IA_BINDING_META, META, 0, 0);
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + i, VB, 0, 0);
+        }
+        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_END, OUT, 0, 0);
+        writer.dispatch(2, 1, 1);
+        writer.end_compute_pass();
+
+        rt.execute(&writer.finish())
+            .expect("compute dispatch with vertex pulling should succeed");
+
+        let bytes = rt
+            .read_buffer(OUT, 0, output_size)
+            .await
+            .expect("read output buffer");
+        assert_eq!(
+            bytes.len(),
+            output_size as usize,
+            "unexpected output buffer size"
+        );
+
+        let mut floats = Vec::<f32>::with_capacity(bytes.len() / 4);
+        for chunk in bytes.chunks_exact(4) {
+            floats.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        assert_eq!(floats.len(), (output_vec4s * 4) as usize);
+
+        let vec4 = |idx: usize| -> [f32; 4] {
+            let base = idx * 4;
+            [
+                floats[base],
+                floats[base + 1],
+                floats[base + 2],
+                floats[base + 3],
+            ]
+        };
+
+        let expected = [
+            // v0 r8g8
+            [128.0 / 255.0, 64.0 / 255.0, 0.0, 1.0],
+            // v0 r10g10b10a2
+            [1.0, 0.0, 512.0 / 1023.0, 1.0],
+            // v1 r8g8
+            [0.0, 1.0, 0.0, 1.0],
+            // v1 r10g10b10a2
+            [0.0, 1.0, 1.0, 0.0],
+        ];
+
+        for (i, exp) in expected.iter().enumerate() {
+            let got = vec4(i);
+            for lane in 0..4 {
+                assert_f32_near(got[lane], exp[lane], &format!("vec4[{i}].{lane}"));
+            }
+        }
+    });
+}
