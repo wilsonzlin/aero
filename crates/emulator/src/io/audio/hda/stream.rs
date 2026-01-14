@@ -177,6 +177,22 @@ impl StreamFormat {
         }
     }
 
+    /// Bytes per PCM sample as transported over the HDA link.
+    ///
+    /// Note that 20/24-bit HDA formats are carried in 32-bit containers.
+    pub fn bytes_per_sample(&self) -> u32 {
+        match self.bits_per_sample {
+            8 => 1,
+            16 => 2,
+            20 | 24 | 32 => 4,
+            _ => 0,
+        }
+    }
+
+    pub fn bytes_per_frame(&self) -> u32 {
+        self.bytes_per_sample().saturating_mul(u32::from(self.channels))
+    }
+
     /// Convert this HDA stream format into a DSP [`PcmSpec`].
     ///
     /// HDA encodes integer PCM formats only; floating-point formats are not
@@ -485,17 +501,8 @@ impl HdaStream {
             }
 
             let format = StreamFormat::from_hda_fmt(self.fmt);
-            // Use the *container* width implied by our DSP mapping (e.g. 20/24-bit in 32-bit
-            // little-endian words), not the nominal bit depth. This keeps tick sizing aligned
-            // with the downstream PCM decode pipeline.
-            let bytes_per_sample = format
-                .to_pcm_spec()
-                .map(|spec| spec.format.bytes_per_sample() as u32)
-                .unwrap_or_else(|| (u32::from(format.bits_per_sample).div_ceil(8)).max(1));
-            let bytes_per_frame = bytes_per_sample
-                .saturating_mul(format.channels as u32)
-                .max(1);
-            let bytes_per_tick = bytes_per_frame.saturating_mul(128);
+            let bytes_per_frame = format.bytes_per_frame();
+            let bytes_per_tick = bytes_per_frame.saturating_mul(128).max(1);
             let take = remaining.min(bytes_per_tick);
 
             let bytes = take as usize;
@@ -559,14 +566,8 @@ impl HdaStream {
             }
 
             let format = StreamFormat::from_hda_fmt(self.fmt);
-            let bytes_per_sample = format
-                .to_pcm_spec()
-                .map(|spec| spec.format.bytes_per_sample() as u32)
-                .unwrap_or_else(|| (u32::from(format.bits_per_sample).div_ceil(8)).max(1));
-            let bytes_per_frame = bytes_per_sample
-                .saturating_mul(format.channels as u32)
-                .max(1);
-            let bytes_per_tick = bytes_per_frame.saturating_mul(128);
+            let bytes_per_frame = format.bytes_per_frame();
+            let bytes_per_tick = bytes_per_frame.saturating_mul(128).max(1);
             let take = remaining.min(bytes_per_tick);
 
             let bytes = take as usize;
@@ -813,6 +814,95 @@ mod tests {
         assert_eq!(spec.format, PcmSampleFormat::I16);
         assert_eq!(spec.channels, 2);
         assert_eq!(spec.sample_rate, 48_000);
+    }
+
+    #[test]
+    fn stream_process_tick_size_uses_32bit_containers_for_20bit_samples() {
+        const BDL_BASE: u64 = 0x1000;
+        const BUF0: u64 = 0x2000;
+        const ENTRY_LEN: u32 = 4096;
+        const EXPECTED_TICK_BYTES: usize = 4 * 2 * 128; // 20-bit stereo in 32-bit containers.
+
+        let mut stream = HdaStream::new(StreamId::Out0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = ENTRY_LEN;
+        stream.lvi = 0;
+        stream.fmt = 0x0021; // 48kHz, 20-bit, stereo.
+        stream.bdpl = BDL_BASE as u32;
+        stream.bdpu = 0;
+
+        let mut mem = CountingMem::new(0x6000, 32);
+        // BDL entry 0 points at BUF0.
+        mem.data[BDL_BASE as usize..BDL_BASE as usize + 8].copy_from_slice(&BUF0.to_le_bytes());
+        mem.data[BDL_BASE as usize + 8..BDL_BASE as usize + 12]
+            .copy_from_slice(&ENTRY_LEN.to_le_bytes());
+        mem.data[BDL_BASE as usize + 12..BDL_BASE as usize + 16]
+            .copy_from_slice(&0u32.to_le_bytes());
+
+        for i in 0..ENTRY_LEN as usize {
+            mem.data[BUF0 as usize + i] = (i & 0xff) as u8;
+        }
+
+        let mut audio = AudioRingBuffer::new(ENTRY_LEN as usize);
+        let mut intsts = 0u32;
+
+        stream.process(&mut mem, &mut audio, &mut intsts);
+
+        let drained = audio.drain_all();
+        assert_eq!(drained.len(), EXPECTED_TICK_BYTES);
+        assert_eq!(
+            drained,
+            mem.data[BUF0 as usize..BUF0 as usize + EXPECTED_TICK_BYTES]
+        );
+    }
+
+    #[test]
+    fn stream_process_capture_tick_size_uses_32bit_containers_for_20bit_samples() {
+        const BDL_BASE: u64 = 0x1000;
+        const BUF0: u64 = 0x3000;
+        const ENTRY_LEN: u32 = 4096;
+        const EXPECTED_TICK_BYTES: usize = 4 * 2 * 128;
+
+        let mut stream = HdaStream::new(StreamId::In0);
+        stream.ctl = SD_CTL_SRST | SD_CTL_RUN;
+        stream.cbl = ENTRY_LEN;
+        stream.lvi = 0;
+        stream.fmt = 0x0021; // 48kHz, 20-bit, stereo.
+        stream.bdpl = BDL_BASE as u32;
+        stream.bdpu = 0;
+
+        let mut mem = CountingMem::new(0x8000, 32);
+        mem.data[BDL_BASE as usize..BDL_BASE as usize + 8].copy_from_slice(&BUF0.to_le_bytes());
+        mem.data[BDL_BASE as usize + 8..BDL_BASE as usize + 12]
+            .copy_from_slice(&ENTRY_LEN.to_le_bytes());
+        mem.data[BDL_BASE as usize + 12..BDL_BASE as usize + 16]
+            .copy_from_slice(&0u32.to_le_bytes());
+
+        // Prefill the buffer with a sentinel so we can check that only the first tick is written.
+        for b in &mut mem.data[BUF0 as usize..BUF0 as usize + ENTRY_LEN as usize] {
+            *b = 0xaa;
+        }
+
+        let input: Vec<u8> = (0..(EXPECTED_TICK_BYTES + 100))
+            .map(|i| (i & 0xff) as u8)
+            .collect();
+        let mut capture = AudioRingBuffer::new(ENTRY_LEN as usize);
+        capture.push(&input);
+        let before = capture.len();
+
+        let mut intsts = 0u32;
+        stream.process_capture(&mut mem, &mut capture, &mut intsts);
+
+        assert_eq!(before - capture.len(), EXPECTED_TICK_BYTES);
+        assert_eq!(
+            mem.data[BUF0 as usize..BUF0 as usize + EXPECTED_TICK_BYTES],
+            input[..EXPECTED_TICK_BYTES]
+        );
+        assert!(
+            mem.data[BUF0 as usize + EXPECTED_TICK_BYTES..BUF0 as usize + EXPECTED_TICK_BYTES + 16]
+                .iter()
+                .all(|&b| b == 0xaa)
+        );
     }
 
     #[test]
