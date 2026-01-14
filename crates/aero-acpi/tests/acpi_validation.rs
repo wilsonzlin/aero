@@ -405,6 +405,19 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     assert_eq!(fadt[52], cfg.acpi_enable_cmd);
     assert_eq!(fadt[53], cfg.acpi_disable_cmd);
 
+    // FADT flags should advertise the fixed-feature PWRBTN/SLPBTN events (PM1_STS/PM1_EN),
+    // matching the `AcpiPmIo` device model.
+    let flags = read_u32_le(fadt, 112);
+    const FADT_FLAG_PWR_BUTTON: u32 = 1 << 4; // PWR_BUTTON
+    const FADT_FLAG_SLP_BUTTON: u32 = 1 << 5; // SLP_BUTTON
+    const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10; // RESET_REG_SUP
+    let expected = FADT_FLAG_PWR_BUTTON | FADT_FLAG_SLP_BUTTON | FADT_FLAG_RESET_REG_SUP;
+    assert_eq!(
+        flags & expected,
+        expected,
+        "FADT Flags missing expected PWR/SLP/RESET bits (flags=0x{flags:08x})"
+    );
+
     // DSDT header + checksum.
     let dsdt_hdr_raw = mem.read(tables.addresses.dsdt, 36);
     let dsdt_hdr = parse_sdt_header(dsdt_hdr_raw);

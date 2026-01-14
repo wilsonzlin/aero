@@ -27,6 +27,9 @@ pub const PM1_CNT_SCI_EN: u16 = 1 << 0;
 /// `PM1_STS.PWRBTN_STS` (ACPI spec).
 pub const PM1_STS_PWRBTN: u16 = 1 << 8;
 
+/// `PM1_STS.SLPBTN_STS` (ACPI spec).
+pub const PM1_STS_SLPBTN: u16 = 1 << 9;
+
 /// DSDT `_S5` typically encodes `{ 0x05, 0x05 }` for `SLP_TYP`.
 pub const SLP_TYP_S5: u8 = 0x05;
 
@@ -229,6 +232,10 @@ impl<C: Clock> AcpiPmIo<C> {
 
     pub fn trigger_power_button(&mut self) {
         self.trigger_pm1_event(PM1_STS_PWRBTN);
+    }
+
+    pub fn trigger_sleep_button(&mut self) {
+        self.trigger_pm1_event(PM1_STS_SLPBTN);
     }
 
     /// Inject bits into a GPE0 status byte and refresh SCI.

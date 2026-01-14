@@ -10,9 +10,11 @@ pub const DEFAULT_ACPI_NVS_SIZE: u64 = 0x1000;
 // Windows 7 uses these flags to decide whether to use fixed-feature PM1 status
 // bits (e.g. `PM1_STS.PWRBTN_STS`) versus looking for control-method devices in
 // the DSDT.
-pub const FADT_FLAG_PWR_BUTTON: u32 = 1 << 4;
-pub const FADT_FLAG_SLP_BUTTON: u32 = 1 << 5;
-pub const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10;
+//
+// Bit positions are defined by the ACPI specification (FADT "Flags" field).
+pub const FADT_FLAG_PWR_BUTTON: u32 = 1 << 4; // bit 4: PWR_BUTTON (fixed-feature power button)
+pub const FADT_FLAG_SLP_BUTTON: u32 = 1 << 5; // bit 5: SLP_BUTTON (fixed-feature sleep button)
+pub const FADT_FLAG_RESET_REG_SUP: u32 = 1 << 10; // bit 10: RESET_REG_SUP (ResetReg/ResetValue supported)
 
 /// Physical memory writing abstraction used by firmware to place tables in
 /// guest RAM.
@@ -568,10 +570,9 @@ fn build_fadt(cfg: &AcpiConfig, dsdt_addr: u64, facs_addr: u64) -> Vec<u8> {
     out.extend_from_slice(&(0x0003u16).to_le_bytes()); // IAPC_BOOT_ARCH (legacy devices + 8042)
     out.push(0); // reserved
 
-    // Advertise the fixed-feature power button (`PM1_STS.PWRBTN_STS`) so OSes
-    // like Windows 7 will consume that status bit and raise the corresponding
-    // input event.
-    let flags = FADT_FLAG_RESET_REG_SUP | FADT_FLAG_PWR_BUTTON;
+    // Advertise fixed-feature power/sleep buttons so OSes (notably Windows 7)
+    // use the PM1 event bits (`PWRBTN_STS` / `SLPBTN_STS`) as button input.
+    let flags = FADT_FLAG_RESET_REG_SUP | FADT_FLAG_PWR_BUTTON | FADT_FLAG_SLP_BUTTON;
     out.extend_from_slice(&flags.to_le_bytes());
 
     // RESET_REG + RESET_VALUE (use standard PCI reset port 0xCF9).
