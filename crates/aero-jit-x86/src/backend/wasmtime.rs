@@ -144,6 +144,9 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         // (and Tier-2 inline code-version guards) can bump/read page versions without importing a
         // host callback.
         //
+        // Versions are treated as modulo-2^32 counters (`u32::MAX + 1 == 0`), matching the
+        // wrapping semantics of WASM `i32.add` / `i32.atomic.rmw.add` and JS `Atomics.add`.
+        //
         // The table is indexed by 4KiB physical page number: `paddr >> PAGE_SHIFT`.
         //
         // Layout:

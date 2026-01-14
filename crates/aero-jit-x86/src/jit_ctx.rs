@@ -103,6 +103,9 @@ pub const TRACE_EXIT_REASON_NONE: u32 = 0;
 pub const TRACE_EXIT_REASON_CODE_INVALIDATION: u32 = 1;
 
 /// Offset of a pointer (`u32`, byte offset) to the page-version table.
+///
+/// The table is a dense `u32[]` indexed by 4KiB physical page number (`paddr >> 12`), and entries
+/// are treated as modulo-2^32 counters (wrapping on overflow).
 pub const CODE_VERSION_TABLE_PTR_OFFSET: u32 = TIER2_CTX_OFFSET + 4;
 
 /// Offset of the length (`u32`, number of `u32` entries) of the page-version table.

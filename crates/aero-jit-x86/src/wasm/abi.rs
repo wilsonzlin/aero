@@ -27,6 +27,8 @@ pub const IMPORT_MEM_WRITE_U64: &str = "mem_write_u64";
 ///
 /// Signature: `env.code_page_version(cpu_ptr: i32, page: i64) -> i64`, returning a
 /// `u32`-encoded-as-`i64`.
+///
+/// Versions are treated as modulo-2^32 counters (wrapping on overflow).
 pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
 
 /// Page-fault helper for the baseline ABI.

@@ -161,6 +161,10 @@ pub(crate) fn emit_bump_code_version_fastpath(
 
             // table[page] += 1
             //
+            // This is wrapping arithmetic: both `i32.add` and `i32.atomic.rmw.add` wrap on
+            // overflow (`0xffff_ffff + 1 == 0`), matching the runtime and JS `Atomics.add`
+            // semantics.
+            //
             // Note: when the module imports a shared memory, we must use atomic operations for
             // correctness under concurrency. Non-atomic `i32.load`/`i32.store` sequences can lose
             // increments when multiple agents bump the same entry concurrently.
