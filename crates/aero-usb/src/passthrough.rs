@@ -1270,12 +1270,58 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_truncated_control_out_action_payload_bytes() {
+        // Truncate the snapshot immediately after the ControlOut data length; decoding should fail
+        // while attempting to read the payload bytes.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            .u8(2) // ControlOut
+            .u32(1) // action id
+            // SetupPacket (host-to-device, wLength=1)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(1)
+            // data length (missing bytes)
+            .u32(1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_bulk_out_action_payload_bytes() {
+        // Truncate the snapshot immediately after the BulkOut data length; decoding should fail
+        // while attempting to read the payload bytes.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            .u8(4) // BulkOut
+            .u32(1) // action id
+            .u8(0x01) // endpoint
+            .u32(1) // data length (missing bytes)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
     fn snapshot_load_rejects_completion_count_over_limit() {
         // Intentionally truncate the snapshot after `completion_count`. Without the guard, this
         // would attempt to decode 1025 completions and hit UnexpectedEof.
         let bytes = Encoder::new().u32(1).u32(0).u32(1025).finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_after_completion_count() {
+        // Declare one completion but omit the body; should report UnexpectedEof.
+        let bytes = Encoder::new().u32(1).u32(0).u32(1).finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
     }
 
     #[test]
@@ -1525,6 +1571,36 @@ mod tests {
             .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_completion_ok_in_payload_bytes() {
+        // Truncate after the OkIn payload length so decoding fails while reading the bytes.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(1) // OkIn
+            .u32(1) // payload length (missing bytes)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_completion_error_message_bytes() {
+        // Truncate after the Error message length so decoding fails while reading the bytes.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(4) // Error
+            .u32(1) // message length (missing bytes)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
     }
 
     #[test]
@@ -1993,6 +2069,29 @@ mod tests {
             .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_control_inflight_data_payload_bytes() {
+        // Truncate the snapshot immediately after the inflight control data length; decoding should
+        // fail while attempting to read the payload bytes.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(0) // completion_count
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (host-to-device, wLength=1)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(1)
+            .bool(true) // has_data
+            .u32(1) // data length (missing bytes)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
     }
 
     #[test]
