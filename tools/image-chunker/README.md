@@ -374,7 +374,9 @@ curl -fSs "<presigned-url>"
 - `chunkSize`: the chosen chunk size in bytes
 - `chunkCount`: total number of chunk objects
 - `chunkIndexWidth`: decimal zero-padding width (8)
-- `chunks[i].sha256`: per-chunk checksum (present when `--checksum sha256` **(default)**, omitted when `--checksum none`)
+- `chunks`: optional per-chunk metadata array (length must equal `chunkCount` if present)
+  - `chunks[i].size`: optional per-chunk size in bytes (recommended; otherwise derived from `chunkSize`/`totalSize`)
+  - `chunks[i].sha256`: optional per-chunk checksum (present when `--checksum sha256` **(default)**, omitted when `--checksum none`)
 
 Example (abridged):
 
