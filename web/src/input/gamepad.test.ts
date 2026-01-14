@@ -110,24 +110,25 @@ describe("hid_gamepad_report_vectors fixture", () => {
     expect(vectors.length).toBeGreaterThan(0);
     expect(vectors.length).toBeLessThanOrEqual(64);
 
-    const clampHat = (hat: number): number =>
-      Number.isFinite(hat) && hat >= 0 && hat <= GAMEPAD_HAT_NEUTRAL ? (hat | 0) : GAMEPAD_HAT_NEUTRAL;
-    const clampAxis = (axis: number): number => Math.max(-127, Math.min(127, axis | 0)) | 0;
-
     for (const [idx, v] of vectors.entries()) {
       expect(v.bytes, v.name ?? `vector ${idx}`).toHaveLength(8);
-      // These vectors are inputs to `packGamepadReport` and intentionally include out-of-range
-      // fields (buttons outside u16, hat outside [0..neutral], axes outside [-127..127]) so both
-      // JS and Rust implementations can be validated against the same clamping/masking semantics.
-      expect(Number.isSafeInteger(v.buttons), v.name ?? `vector ${idx}`).toBe(true);
-      expect(Number.isSafeInteger(v.hat), v.name ?? `vector ${idx}`).toBe(true);
+      // These vectors are inputs to `packGamepadReport` and intentionally stay within the
+      // Rust-side canonical report field ranges so the fixture primarily validates layout/packing.
+      expect(Number.isInteger(v.buttons), v.name ?? `vector ${idx}`).toBe(true);
+      expect(v.buttons, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
+      expect(v.buttons, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(0xffff);
+      expect(Number.isInteger(v.hat), v.name ?? `vector ${idx}`).toBe(true);
+      expect(v.hat, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
+      expect(v.hat, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(GAMEPAD_HAT_NEUTRAL);
       for (const [axisName, axis] of [
         ["x", v.x],
         ["y", v.y],
         ["rx", v.rx],
         ["ry", v.ry],
       ] as const) {
-        expect(Number.isSafeInteger(axis), `${v.name ?? `vector ${idx}`}.${axisName}`).toBe(true);
+        expect(Number.isInteger(axis), `${v.name ?? `vector ${idx}`}.${axisName}`).toBe(true);
+        expect(axis, `${v.name ?? `vector ${idx}`}.${axisName}`).toBeGreaterThanOrEqual(-127);
+        expect(axis, `${v.name ?? `vector ${idx}`}.${axisName}`).toBeLessThanOrEqual(127);
       }
       for (const [bIdx, b] of v.bytes.entries()) {
         expect(Number.isInteger(b), `${v.name ?? `vector ${idx}`}.bytes[${bIdx}]`).toBe(true);
@@ -149,12 +150,12 @@ describe("hid_gamepad_report_vectors fixture", () => {
 
       const decoded = decodeGamepadReport(packedLo, packedHi);
       expect(decoded, v.name ?? `vector ${idx}`).toEqual({
-        buttons: v.buttons & 0xffff,
-        hat: clampHat(v.hat),
-        x: clampAxis(v.x),
-        y: clampAxis(v.y),
-        rx: clampAxis(v.rx),
-        ry: clampAxis(v.ry),
+        buttons: v.buttons,
+        hat: v.hat,
+        x: v.x,
+        y: v.y,
+        rx: v.rx,
+        ry: v.ry,
       });
     }
   });

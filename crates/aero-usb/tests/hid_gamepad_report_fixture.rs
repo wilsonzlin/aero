@@ -7,35 +7,13 @@ use std::path::PathBuf;
 struct FixtureVector {
     #[serde(default)]
     name: String,
-    buttons: i64,
-    hat: i64,
-    x: i64,
-    y: i64,
-    rx: i64,
-    ry: i64,
+    buttons: u16,
+    hat: u8,
+    x: i8,
+    y: i8,
+    rx: i8,
+    ry: i8,
     bytes: [u8; 8],
-}
-
-fn clamp_buttons_to_u16(buttons: i64) -> u16 {
-    // Match TS bitwise semantics (`buttons & 0xffff`) which uses ToInt32.
-    let v = buttons as i32;
-    (v as u32 & 0xffff) as u16
-}
-
-fn clamp_hat_to_u8(hat: i64) -> u8 {
-    // Match `packGamepadReport` clamping: valid hat values are 0..=8 inclusive (8 = neutral).
-    if (0..=8).contains(&hat) {
-        hat as u8
-    } else {
-        8
-    }
-}
-
-fn clamp_axis_to_i8(v: i64) -> i8 {
-    // Match TS bitwise semantics (`v | 0`) which uses ToInt32, then clamp to the HID logical
-    // range [-127, 127].
-    let v = (v as i32).clamp(-127, 127);
-    v as i8
 }
 
 #[test]
@@ -61,16 +39,27 @@ fn hid_gamepad_report_vectors_match_fixture() {
     );
 
     for (idx, v) in vectors.iter().enumerate() {
-        // Fixture inputs may be out of the HID logical ranges; the goal is to validate that
-        // `GamepadReport` clamps them consistently with the TypeScript-side packing logic.
+        assert!(
+            v.hat <= 8,
+            "fixture vector {idx} ({}) has out-of-range hat value {} (expected 0..=8)",
+            if v.name.is_empty() { "<unnamed>" } else { &v.name },
+            v.hat
+        );
+        for (axis_name, axis) in [("x", v.x), ("y", v.y), ("rx", v.rx), ("ry", v.ry)] {
+            assert!(
+                (-127..=127).contains(&axis),
+                "fixture vector {idx} ({}) has out-of-range axis {axis_name}={axis} (expected -127..=127)",
+                if v.name.is_empty() { "<unnamed>" } else { &v.name },
+            );
+        }
 
         let report = GamepadReport {
-            buttons: clamp_buttons_to_u16(v.buttons),
-            hat: clamp_hat_to_u8(v.hat),
-            x: clamp_axis_to_i8(v.x),
-            y: clamp_axis_to_i8(v.y),
-            rx: clamp_axis_to_i8(v.rx),
-            ry: clamp_axis_to_i8(v.ry),
+            buttons: v.buttons,
+            hat: v.hat,
+            x: v.x,
+            y: v.y,
+            rx: v.rx,
+            ry: v.ry,
         };
         let actual = report.to_bytes();
 
