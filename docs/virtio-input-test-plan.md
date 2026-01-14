@@ -346,6 +346,7 @@ Optional self-hosted CI wrapper:
 
 - [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml) (`workflow_dispatch`)
   - Use workflow inputs:
+    - `qemu_preflight_pci=true` to enable the optional QMP `query-pci` PCI ID preflight (fail fast on missing `REV_01`/wrong IDs)
     - `with_virtio_input_events=true`
     - `with_virtio_input_wheel=true`
     - `with_virtio_input_media_keys=true`

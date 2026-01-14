@@ -893,6 +893,9 @@ On the self-hosted runner you need:
 > `concurrency.group: win7-virtio-harness` to prevent concurrent runs from fighting over ports/images.
 > If `18080` is already in use on your runner, override it via the workflow input `http_port`.
 
+To enable the optional host-side QEMU PCI ID preflight (`query-pci` via QMP), set the workflow input
+`qemu_preflight_pci=true`. This helps catch missing/ignored `x-pci-revision=0x01` (REV_01) configuration early.
+
 The workflow can also optionally exercise the end-to-end virtio-input event delivery path (guest HID report verification +
 host-side input injection via QMP/HMP) by setting the workflow input `with_virtio_input_events=true`.
 This requires a guest image provisioned with `--test-input-events` (for example via
@@ -951,6 +954,8 @@ only if you explicitly want the base image to be mutated.
   - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1052&REV_01`)
   - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042&REV_01`)
   - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (`disable-legacy=on,x-pci-revision=0x01`; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1059&REV_01`)
+- (optional) If `-QemuPreflightPci` / `--qemu-preflight-pci` is enabled, connects to QEMU via QMP and runs `query-pci` to
+  validate that the expected virtio devices are present with the expected Vendor/Device/Revision IDs (particularly `REV_01`).
 - Watches the serial log for:
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
