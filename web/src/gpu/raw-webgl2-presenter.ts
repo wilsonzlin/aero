@@ -214,6 +214,36 @@ export class RawWebGL2Presenter {
     // interpreted as-is and compensate via UV convention.
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
 
+    // Deterministic presentation: disable sources of browser/driver variability.
+    gl.disable(gl.DITHER);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.BLEND);
+
+    // Deterministic presentation: we do manual sRGB encoding in the blit shader, so ensure
+    // fixed-function framebuffer sRGB conversion (when present) is disabled to avoid double-gamma.
+    //
+    // Note: WebGL2 sRGB write control is optional and exposed via:
+    // - `EXT_sRGB_write_control` (FRAMEBUFFER_SRGB_EXT)
+    // - some environments expose `gl.FRAMEBUFFER_SRGB` directly.
+    const srgbWriteControl = gl.getExtension("EXT_sRGB_write_control") as { FRAMEBUFFER_SRGB_EXT?: number } | null;
+    const framebufferSrgb = (gl as unknown as { FRAMEBUFFER_SRGB?: unknown }).FRAMEBUFFER_SRGB;
+    const framebufferSrgbCap =
+      typeof framebufferSrgb === "number"
+        ? framebufferSrgb
+        : typeof srgbWriteControl?.FRAMEBUFFER_SRGB_EXT === "number"
+          ? srgbWriteControl.FRAMEBUFFER_SRGB_EXT
+          : null;
+    if (typeof framebufferSrgbCap === "number") {
+      gl.disable(framebufferSrgbCap);
+      const err = gl.getError();
+      // Some environments do not expose sRGB framebuffer write control; avoid failing init
+      // on a best-effort disable attempt.
+      if (err !== gl.NO_ERROR && err !== gl.INVALID_ENUM) {
+        throw new Error(`disable FRAMEBUFFER_SRGB: WebGL error ${err}`);
+      }
+    }
+
     this.program = createProgram(gl, VERT_SRC, FRAG_SRC);
 
     const tex = gl.createTexture();
