@@ -297,6 +297,11 @@ pub struct XhciController {
     // Runtime registers: interrupter 0 + guest event ring delivery.
     interrupter0: InterrupterRegs,
     event_ring: EventRingProducer,
+    /// Microframe index (MFINDEX).
+    ///
+    /// The xHCI spec counts in 125µs microframes. The web/native integrations tick the controller
+    /// in 1ms frames, so we advance by 8 microframes per `tick_1ms`.
+    mfindex: u32,
 
     // Host-side event buffering.
     pending_events: VecDeque<Trb>,
@@ -367,6 +372,7 @@ impl XhciController {
             command_ring: None,
             interrupter0: InterrupterRegs::default(),
             event_ring: EventRingProducer::default(),
+            mfindex: 0,
             pending_events: VecDeque::new(),
             dropped_event_trbs: 0,
             active_endpoints: Vec::new(),
@@ -1312,6 +1318,8 @@ impl XhciController {
 
     /// Advances controller internal time by 1ms.
     pub fn tick_1ms(&mut self) {
+        self.mfindex = self.mfindex.wrapping_add(8) & 0x3fff;
+
         let mut ports_with_events = Vec::new();
         for (i, port) in self.ports.iter_mut().enumerate() {
             if port.tick_1ms() {
@@ -1528,6 +1536,9 @@ impl XhciController {
             regs::REG_CRCR_HI => (self.crcr >> 32) as u32,
             regs::REG_DCBAAP_LO => (self.dcbaap & 0xffff_ffff) as u32,
             regs::REG_DCBAAP_HI => (self.dcbaap >> 32) as u32,
+
+            // Runtime registers.
+            regs::REG_MFINDEX => self.mfindex & 0x3fff,
 
             // Runtime interrupter 0 registers.
             regs::REG_INTR0_IMAN => self.interrupter0.iman_raw(),
@@ -1752,6 +1763,7 @@ impl XhciController {
         self.dcbaap = 0;
         self.command_ring = None;
         self.cmd_kick = false;
+        self.mfindex = 0;
 
         for slot in self.slots.iter_mut() {
             *slot = SlotState::default();
@@ -2132,7 +2144,7 @@ impl IoSnapshot for XhciController {
     fn save_state(&self) -> Vec<u8> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
-        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
@@ -2168,7 +2180,7 @@ impl IoSnapshot for XhciController {
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
-        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;

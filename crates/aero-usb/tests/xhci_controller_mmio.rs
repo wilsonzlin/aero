@@ -129,6 +129,23 @@ fn xhci_controller_pagesize_supports_4k_pages() {
 }
 
 #[test]
+fn xhci_mfindex_advances_on_tick_1ms_and_wraps() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 0);
+
+    ctrl.tick_1ms();
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 8);
+
+    // MFINDEX is 14 bits and counts microframes; 2048ms == 16384 microframes wraps to 0.
+    for _ in 0..2047 {
+        ctrl.tick_1ms();
+    }
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 0);
+}
+
+#[test]
 fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x4000);

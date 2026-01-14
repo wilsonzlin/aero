@@ -55,7 +55,6 @@ pub const USBSTS_EINT: u32 = 1 << 3;
 /// The Aero xHCI model uses this bit to report malformed guest Event Ring configuration
 /// (e.g. ERST/ERDP values that cannot be mapped safely).
 pub const USBSTS_HCE: u32 = 1 << 12;
-
 /// HCCPARAMS1 Context Size (CSZ) bit.
 ///
 /// When set (`1`), contexts are 64 bytes. When clear (`0`), contexts are 32 bytes.
