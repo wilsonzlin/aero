@@ -146,7 +146,7 @@ import {
 } from "../hid/hid_proxy_protocol";
 import { InMemoryHidGuestBridge } from "../hid/in_memory_hid_guest_bridge";
 import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
-import { XhciHidTopologyManager } from "../hid/xhci_hid_topology";
+import { XhciHidTopologyManager, type XhciTopologyBridge } from "../hid/xhci_hid_topology";
 import { WasmHidGuestBridge, type HidGuestBridge, type HidHostSink } from "../hid/wasm_hid_guest_bridge";
 import { WasmUhciHidGuestBridge } from "../hid/wasm_uhci_hid_guest_bridge";
 import {
@@ -191,6 +191,7 @@ import {
   UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
 } from "../usb/uhci_external_hub";
 import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
+import { createXhciTopologyBridgeShim, IoWorkerHidTopologyMux } from "./io_hid_topology_mux";
 import { drainIoHidInputRing } from "./io_hid_input_ring";
 import { forwardHidSendReportToMainThread } from "./io_hid_output_report_forwarding";
 import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs } from "./io_worker_vm_snapshot";
@@ -1317,6 +1318,13 @@ function emitWebUsbGuestStatus(): void {
 
 const uhciHidTopology = new UhciHidTopologyManager();
 const xhciHidTopology = new XhciHidTopologyManager();
+let xhciHidTopologyBridge: XhciTopologyBridge | null = null;
+let xhciHidTopologyBridgeSource: unknown | null = null;
+const hidTopologyMux = new IoWorkerHidTopologyMux({
+  xhci: xhciHidTopology,
+  uhci: uhciHidTopology,
+  useXhci: () => xhciHidTopologyBridge !== null,
+});
 
 function maybeSendWasmReady(): void {
   if (wasmReadySent) return;
@@ -1906,6 +1914,24 @@ function maybeInitUhciDevice(): void {
   }
 }
 
+function wireXhciHidTopologyBridge(): void {
+  const bridge = xhciControllerBridge as unknown;
+  if (!bridge) {
+    xhciHidTopologyBridgeSource = null;
+    if (xhciHidTopologyBridge !== null) {
+      xhciHidTopologyBridge = null;
+      xhciHidTopology.setXhciBridge(null);
+    }
+    return;
+  }
+
+  if (bridge === xhciHidTopologyBridgeSource) return;
+  xhciHidTopologyBridgeSource = bridge;
+  const shim = createXhciTopologyBridgeShim(bridge);
+  xhciHidTopologyBridge = shim;
+  xhciHidTopology.setXhciBridge(shim);
+}
+
 function maybeInitXhciDevice(): void {
   if (xhciDevice) return;
   const api = wasmApi;
@@ -1918,7 +1944,9 @@ function maybeInitXhciDevice(): void {
 
   xhciControllerBridge = res.bridge;
   xhciDevice = res.device;
-  xhciHidTopology.setXhciBridge(res.bridge);
+
+  // Wire HID topology management if the xHCI bridge exports the required APIs.
+  wireXhciHidTopologyBridge();
 
   // Synthetic USB HID devices (keyboard/mouse/gamepad) may be attached behind xHCI in WASM builds
   // that omit UHCI.
@@ -2671,21 +2699,13 @@ function findFirstSendableReport(
 }
 
 function handleHidPassthroughAttachHub(msg: Extract<HidPassthroughMessage, { type: "hid:attachHub" }>): void {
-  // Prefer attaching the external hub behind UHCI when the guest exposes it. Only fall back to
-  // xHCI when UHCI is unavailable (some WASM builds omit UHCI entirely).
-  const api = wasmApi;
-  const preferUhci = !api || !!api.UhciRuntime || !!api.UhciControllerBridge || !!uhciRuntime || !!uhciControllerBridge;
-  if (preferUhci) {
-    uhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
-    maybeInitUhciDevice();
-    uhciRuntimeHubConfig.setPending(msg.guestPath, msg.portCount);
-    uhciRuntimeHubConfig.apply(uhciRuntime, {
-      warn: (message, err) => console.warn(`[io.worker] ${message}`, err),
-    });
-  } else {
-    xhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
-    maybeInitXhciDevice();
-  }
+  xhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
+  uhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
+  maybeInitUhciDevice();
+  uhciRuntimeHubConfig.setPending(msg.guestPath, msg.portCount);
+  uhciRuntimeHubConfig.apply(uhciRuntime, {
+    warn: (message, err) => console.warn(`[io.worker] ${message}`, err),
+  });
   if (import.meta.env.DEV) {
     const hint = msg.portCount !== undefined ? ` ports=${msg.portCount}` : "";
     console.info(`[hid] attachHub path=${msg.guestPath.join(".")}${hint}`);
@@ -2784,27 +2804,36 @@ function maybeInitWasmHidGuestBridge(): void {
   // guest OS (PCI hotplug isn't modeled yet).
   maybeInitUhciDevice();
   maybeInitXhciDevice();
+  wireXhciHidTopologyBridge();
+  const hasXhciTopology = xhciHidTopologyBridge !== null;
   if (wasmHidGuest) {
     maybeSendWasmReady();
     return;
   }
-  if (!uhciRuntime && api.UhciControllerBridge && !uhciControllerBridge) return;
-  if (!api.UhciControllerBridge && api.XhciControllerBridge && !xhciControllerBridge) return;
+  if (!hasXhciTopology) {
+    // xHCI topology isn't available; fall back to the UHCI guest bridge when possible.
+    if (uhciRuntime) {
+      // ok: UHCI runtime WebHID bridge does not require UhciControllerBridge
+    } else if (api.UhciControllerBridge) {
+      if (!uhciControllerBridge) return;
+    } else if (api.XhciControllerBridge) {
+      // xHCI is present but does not expose the HID topology management exports.
+      // Wait for the controller to initialize if needed; otherwise there's no supported backend.
+      if (!xhciControllerBridge) return;
+      return;
+    } else {
+      return;
+    }
+  }
 
   try {
-    if (uhciRuntime) {
+    if (hasXhciTopology) {
+      wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, hidTopologyMux);
+    } else if (uhciRuntime) {
       uhciRuntimeHidGuest = new WasmUhciHidGuestBridge({ uhci: uhciRuntime, host: hidHostSink });
       wasmHidGuest = uhciRuntimeHidGuest;
     } else {
-      if (api.UhciControllerBridge) {
-        if (!uhciControllerBridge) return;
-        wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, uhciHidTopology);
-      } else if (api.XhciControllerBridge) {
-        if (!xhciControllerBridge) return;
-        wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, xhciHidTopology);
-      } else {
-        return;
-      }
+      wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, hidTopologyMux);
     }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
@@ -5835,6 +5864,8 @@ function shutdown(): void {
       virtioInputMouse?.destroy();
       virtioInputMouse = null;
       uhciHidTopology.setUhciBridge(null);
+      xhciHidTopologyBridge = null;
+      xhciHidTopologyBridgeSource = null;
       xhciHidTopology.setXhciBridge(null);
       hdaDevice?.destroy();
       hdaDevice = null;
