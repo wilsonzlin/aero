@@ -1294,9 +1294,9 @@ mod random_traces {
             }
         }
 
-        // Add an extra code-version guard near the end sometimes, so we cover both:
+        // Add an extra code-version guard sometimes, so we cover both:
         // - success path (fallthrough to return/side-exit)
-        // - invalidation path after executing non-trivial prefixes.
+        // - invalidation path (guard mismatch).
         if rng.gen_bool(0.2) {
             let table_len = code_versions.len() as u64;
             let page = if table_len != 0 {

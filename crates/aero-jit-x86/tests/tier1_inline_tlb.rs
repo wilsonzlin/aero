@@ -386,7 +386,11 @@ fn run_wasm_inner(
     let wasm = Tier1WasmCodegen::new().compile_block_with_options(block, options);
     validate_wasm(&wasm);
 
-    let ram_base = (JIT_CTX_PTR as u64) + (JitContext::TOTAL_BYTE_SIZE as u64);
+    // Match the real runtime layout: reserve the Tier-2 ctx region (which contains the code-version
+    // table pointer/length) between the Tier-1 `JitContext` and the guest RAM backing store.
+    let ram_base = (JIT_CTX_PTR as u64)
+        + (JitContext::TOTAL_BYTE_SIZE as u64)
+        + u64::from(jit_ctx::TIER2_CTX_SIZE);
     let total_len = ram_base as usize + ram.len();
 
     let mut mem = vec![0u8; total_len];
@@ -1027,11 +1031,7 @@ fn tier1_inline_tlb_cross_page_store_fastpath_handles_all_offsets() {
             ..Default::default()
         };
 
-        // Keep the code-version table disabled in this test. In the simple `run_wasm_inner` memory
-        // layout, the Tier-2 context region overlaps the start of guest RAM, so the inline store
-        // bump logic would interpret non-zero RAM bytes as a configured table and may trap.
-        let mut ram = vec![0xccu8; 0x2000];
-        ram[8..12].fill(0);
+        let ram = vec![0xccu8; 0x2000];
         let mut expected_ram = ram.clone();
         expected_ram[addr as usize..addr as usize + 8]
             .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
