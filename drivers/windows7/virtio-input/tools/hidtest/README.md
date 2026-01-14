@@ -271,9 +271,14 @@ machine-readable JSON object on stdout:
 - `StatusQActive` — whether the driver is currently sending LED events on statusq
 
 The JSON output (for `--state-json`, `--interrupt-info-json`, and `--counters-json`) also includes the selected HID
-interface metadata (`index`, `path`, `vid`/`pid`/`ver`, `usagePage`/`usage`, and report byte lengths/descriptor lengths), plus
-`manufacturer`/`product`/`serial` strings when available. It also includes `desiredAccess` / `writeAccess` to show whether
-the tool managed to open the HID interface read/write.
+interface metadata:
+
+- `index`, `path`
+- `vid`/`pid`/`ver`, `isVirtio`
+- `usagePage`/`usage`, `kind`
+- `manufacturer`/`product`/`serial` strings (when available)
+- report byte lengths/descriptor lengths
+- `desiredAccess` / `writeAccess` (whether the tool opened the HID interface read/write)
 
 ### Counters interpretation
 

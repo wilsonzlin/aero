@@ -1071,6 +1071,8 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
     ULONG mask;
     size_t i;
     int first;
+    int is_virtio = 0;
+    const WCHAR *kind = NULL;
     WCHAR manufacturer[256];
     WCHAR product[256];
     WCHAR serial[256];
@@ -1101,6 +1103,43 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
         }
     }
     have_version = (avail >= sizeof(ULONG) * 2);
+
+    if (dev && dev->attr_valid) {
+        is_virtio = is_virtio_input_device(&dev->attr);
+    }
+    if (dev && dev->caps_valid) {
+        const int is_keyboard = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06;
+        int is_mouse = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02;
+        const int is_consumer = dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01;
+        int is_tablet = 0;
+
+        if (is_virtio && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic: tablet shares the mouse top-level usage, so distinguish by report descriptor length.
+            if (dev->report_desc_valid && dev->report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (dev->hid_report_desc_valid &&
+                       dev->hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
+        if (is_tablet) {
+            is_mouse = 0;
+        }
+
+        if (is_tablet) {
+            kind = L"tablet";
+        } else if (is_keyboard) {
+            kind = L"keyboard";
+        } else if (is_mouse) {
+            kind = L"mouse";
+        } else if (is_consumer) {
+            kind = L"consumer";
+        } else {
+            kind = L"other";
+        }
+    }
 
     if (dev && dev->handle != INVALID_HANDLE_VALUE && dev->handle != NULL) {
         if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
@@ -1140,6 +1179,20 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
     wprintf(L"  \"pid\": ");
     if (dev && dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"isVirtio\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(is_virtio ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"kind\": ");
+    if (kind != NULL) {
+        json_print_string_w(kind);
     } else {
         wprintf(L"null");
     }
@@ -1447,6 +1500,8 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
     DWORD avail;
     int have_size;
     int have_version;
+    int is_virtio = 0;
+    const WCHAR *kind = NULL;
     WCHAR manufacturer[256];
     WCHAR product[256];
     WCHAR serial[256];
@@ -1467,6 +1522,43 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
         }
     }
     have_version = (avail >= sizeof(ULONG) * 2);
+
+    if (dev && dev->attr_valid) {
+        is_virtio = is_virtio_input_device(&dev->attr);
+    }
+    if (dev && dev->caps_valid) {
+        const int is_keyboard = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06;
+        int is_mouse = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02;
+        const int is_consumer = dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01;
+        int is_tablet = 0;
+
+        if (is_virtio && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic: tablet shares the mouse top-level usage, so distinguish by report descriptor length.
+            if (dev->report_desc_valid && dev->report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (dev->hid_report_desc_valid &&
+                       dev->hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
+        if (is_tablet) {
+            is_mouse = 0;
+        }
+
+        if (is_tablet) {
+            kind = L"tablet";
+        } else if (is_keyboard) {
+            kind = L"keyboard";
+        } else if (is_mouse) {
+            kind = L"mouse";
+        } else if (is_consumer) {
+            kind = L"consumer";
+        } else {
+            kind = L"other";
+        }
+    }
 
     if (dev && dev->handle != INVALID_HANDLE_VALUE && dev->handle != NULL) {
         if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
@@ -1506,6 +1598,20 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
     wprintf(L"  \"pid\": ");
     if (dev && dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"isVirtio\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(is_virtio ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"kind\": ");
+    if (kind != NULL) {
+        json_print_string_w(kind);
     } else {
         wprintf(L"null");
     }
@@ -2148,6 +2254,8 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
 
     int have_size = 0;
     int have_version = 0;
+    int is_virtio = 0;
+    const WCHAR *kind = NULL;
     WCHAR manufacturer[256];
     WCHAR product[256];
     WCHAR serial[256];
@@ -2158,6 +2266,43 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         fwprintf(stderr, L"Invalid device handle\n");
         return 1;
+    }
+
+    if (dev->attr_valid) {
+        is_virtio = is_virtio_input_device(&dev->attr);
+    }
+    if (dev->caps_valid) {
+        const int is_keyboard = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06;
+        int is_mouse = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02;
+        const int is_consumer = dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01;
+        int is_tablet = 0;
+
+        if (is_virtio && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic: tablet shares the mouse top-level usage, so distinguish by report descriptor length.
+            if (dev->report_desc_valid && dev->report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (dev->hid_report_desc_valid &&
+                       dev->hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
+        if (is_tablet) {
+            is_mouse = 0;
+        }
+
+        if (is_tablet) {
+            kind = L"tablet";
+        } else if (is_keyboard) {
+            kind = L"keyboard";
+        } else if (is_mouse) {
+            kind = L"mouse";
+        } else if (is_consumer) {
+            kind = L"consumer";
+        } else {
+            kind = L"other";
+        }
     }
 
     if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
@@ -2241,6 +2386,20 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     wprintf(L"  \"pid\": ");
     if (dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"isVirtio\": ");
+    if (dev->attr_valid) {
+        wprintf(is_virtio ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"kind\": ");
+    if (kind != NULL) {
+        json_print_string_w(kind);
     } else {
         wprintf(L"null");
     }
