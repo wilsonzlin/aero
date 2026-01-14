@@ -1278,8 +1278,10 @@ typedef struct _D3DDDIARG_DRAWINDEXEDPRIMITIVE2 {
 //
 // Portable ABI note:
 // - The Win7 WDK defines this struct in `d3dumddi.h`.
-// - Some header vintages may not include `DestStride`; when absent the UMD
-//   implementation falls back to the currently-bound stream 0 stride.
+// - Some header vintages may not include `DestStride`. When `DestStride` is
+//   absent (or is present but set to 0), the AeroGPU UMD attempts to infer the
+//   effective destination stride from `hVertexDecl` when possible, falling back
+//   to the currently-bound stream 0 stride.
 typedef struct _D3DDDIARG_PROCESSVERTICES {
   uint32_t SrcStartIndex;
   uint32_t DestIndex;
@@ -1287,7 +1289,9 @@ typedef struct _D3DDDIARG_PROCESSVERTICES {
   D3DDDI_HRESOURCE hDestBuffer;
   D3D9DDI_HVERTEXDECL hVertexDecl;
   uint32_t Flags;
-  uint32_t DestStride; // optional; 0 means "use stream 0 stride"
+  // Optional; some header vintages omit this field. When present, 0 means “infer
+  // stride (prefer dest vertex decl, else stream 0 stride)”.
+  uint32_t DestStride;
 } D3DDDIARG_PROCESSVERTICES;
 
 typedef struct _D3D9DDIARG_GETDISPLAYMODEEX {
