@@ -394,15 +394,17 @@ mod tests {
             (ctrl & (1 << 8)) != 0,
             "test requires per-vector masking support"
         );
-        assert!(
-            (ctrl & (1 << 7)) != 0,
-            "test assumes 64-bit MSI capability layout"
-        );
+        let is_64bit = (ctrl & (1 << 7)) != 0;
+        let mask_off = if is_64bit {
+            cap_offset + 0x10
+        } else {
+            cap_offset + 0x0c
+        };
 
         // Attempt to set all bits in the mask register; only bit 0 is valid for this
         // single-vector MSI capability implementation.
-        config.write(cap_offset + 0x10, 4, 0xFFFF_FFFF);
-        assert_eq!(config.read(cap_offset + 0x10, 4), 1);
+        config.write(mask_off, 4, 0xFFFF_FFFF);
+        assert_eq!(config.read(mask_off, 4), 1);
         assert_eq!(config.capability::<MsiCapability>().unwrap().mask_bits(), 1);
     }
 
