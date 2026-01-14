@@ -7,7 +7,9 @@ use aero_dxbc::{
     FourCC as DxbcFourCC,
 };
 
-use crate::shader_limits::{MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES};
+use crate::shader_limits::{
+    MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
+};
 use crate::sm3::decode::TextureType;
 use crate::{dxbc, shader, shader_translate, sm3, software, state};
 
@@ -3788,6 +3790,31 @@ fn rejects_missing_end_token_legacy_translator() {
     let bytes = to_bytes(&[0xFFFE0200]);
     let err = shader::parse(&bytes).unwrap_err();
     assert!(matches!(err, shader::ShaderError::UnexpectedEof), "{err:?}");
+}
+
+#[test]
+fn rejects_excessive_control_flow_nesting_legacy_translator() {
+    // Craft a ps_3_0 shader with >MAX_D3D9_SHADER_CONTROL_FLOW_NESTING nested `if` blocks.
+    let mut words = vec![0xFFFF0300];
+
+    // Nest one past the limit.
+    for _ in 0..=MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+        // if b0
+        words.extend(enc_inst(0x0028, &[enc_src(14, 0, 0x00)]));
+    }
+    for _ in 0..=MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+        // endif
+        words.extend(enc_inst(0x002B, &[]));
+    }
+    words.push(0x0000FFFF);
+
+    let err = shader::parse(&to_bytes(&words)).unwrap_err();
+    match err {
+        shader::ShaderError::InvalidControlFlow(msg) => {
+            assert_eq!(msg, "control flow nesting exceeds maximum");
+        }
+        other => panic!("expected InvalidControlFlow, got {other:?}"),
+    }
 }
 
 #[test]

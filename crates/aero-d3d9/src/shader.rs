@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::dxbc;
 use crate::shader_limits::{
     MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX, MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX,
+    MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
     MAX_D3D9_INPUT_REGISTER_INDEX, MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_BLOB_BYTES,
     MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
     MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX,
@@ -750,6 +751,11 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 if params.len() != 1 {
                     return Err(ShaderError::UnexpectedEof);
                 }
+                if if_stack.len() >= MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+                    return Err(ShaderError::InvalidControlFlow(
+                        "control flow nesting exceeds maximum",
+                    ));
+                }
                 if_stack.push(false);
                 Instruction {
                     op,
@@ -767,6 +773,11 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 let cmp_code = ((token >> 16) & 0x7) as u8;
                 if cmp_code > 5 {
                     return Err(ShaderError::UnsupportedCompareOp(cmp_code));
+                }
+                if if_stack.len() >= MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+                    return Err(ShaderError::InvalidControlFlow(
+                        "control flow nesting exceeds maximum",
+                    ));
                 }
                 if_stack.push(false);
                 Instruction {
