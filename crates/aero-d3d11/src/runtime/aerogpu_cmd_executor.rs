@@ -40,12 +40,14 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::binding_model::{
     BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
+    BINDING_GS_EMUL_VERTEX_OUTPUTS,
     BINDING_INTERNAL_EXPANDED_VERTICES, BIND_GROUP_INTERNAL_EMULATION,
     D3D11_MAX_CONSTANT_BUFFER_SLOTS, EXPANDED_VERTEX_MAX_VARYINGS, MAX_SAMPLER_SLOTS,
     MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::input_layout::{
-    fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
+    fnv1a_32, map_layout_to_shader_locations_compact,
+    AEROGPU_INPUT_LAYOUT_BLOB_FLAG_GS_EMULATION_OUTPUT, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
 use crate::sm4::opcode as sm4_opcode;
@@ -5386,36 +5388,48 @@ impl AerogpuD3d11Executor {
                 tex.guest_backing_is_current = false;
             }
         }
-        let vs_handle = self
-            .state
-            .vs
-            .ok_or_else(|| anyhow!("render draw without bound VS"))?;
+        let emulation_active = self.state.emulated_expanded_vertex_buffer.is_some();
+        let gs_output_info =
+            gs_emulation_output_vertex_pulling_info(&self.device, &self.resources, &self.state)?;
+        let gs_output_active = gs_output_info.is_some();
+        let passthrough_active = emulation_active || gs_output_active;
+
         let ps_handle = self
             .state
             .ps
             .ok_or_else(|| anyhow!("render draw without bound PS"))?;
+
         // Clone shader metadata out of `self.resources` to avoid holding immutable borrows across
         // the rest of the render-pass recording path.
-        let vs = self
-            .resources
-            .shaders
-            .get(&vs_handle)
-            .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?
-            .clone();
         let ps = self
             .resources
             .shaders
             .get(&ps_handle)
             .ok_or_else(|| anyhow!("unknown PS shader {ps_handle}"))?
             .clone();
-        if vs.stage != ShaderStage::Vertex {
-            bail!("shader {vs_handle} is not a vertex shader");
-        }
         if ps.stage != ShaderStage::Pixel {
             bail!("shader {ps_handle} is not a pixel shader");
         }
 
-        let emulation_active = self.state.emulated_expanded_vertex_buffer.is_some();
+        // GS-emulation-output and expanded-geometry passthrough draws use a generated vertex shader
+        // and can run without a bound guest VS (the VS binding is ignored).
+        let vs_handle = if gs_output_active {
+            None
+        } else {
+            Some(
+                self.state
+                    .vs
+                    .ok_or_else(|| anyhow!("render draw without bound VS"))?,
+            )
+        };
+        let vs = vs_handle
+            .and_then(|vs_handle| self.resources.shaders.get(&vs_handle).map(|s| (vs_handle, s)))
+            .map(|(vs_handle, shader)| (vs_handle, shader.clone()));
+        if let Some((vs_handle, vs)) = vs.as_ref() {
+            if vs.stage != ShaderStage::Vertex {
+                bail!("shader {vs_handle} is not a vertex shader");
+            }
+        }
 
         self.validate_shader_storage_capabilities(
             "DRAW",
@@ -5423,19 +5437,23 @@ impl AerogpuD3d11Executor {
             ShaderStage::Pixel,
             ps.reflection.bindings.as_slice(),
         )?;
-        if !emulation_active {
+        if !passthrough_active {
+            let (vs_handle, vs) = vs
+                .as_ref()
+                .expect("vs is required when passthrough_active is false");
             self.validate_shader_storage_capabilities(
                 "DRAW",
-                vs_handle,
+                *vs_handle,
                 ShaderStage::Vertex,
                 vs.reflection.bindings.as_slice(),
             )?;
         }
 
-        let mut pipeline_bindings = if emulation_active {
+        let mut pipeline_bindings = if passthrough_active {
             // The emulated rasterization pass uses a generated passthrough VS that only consumes
-            // internal emulation resources (expanded vertex buffer). It does not use any translated
-            // D3D vertex-stage bindings, so omit the original VS bindings from the pipeline layout.
+            // internal emulation resources (expanded vertex buffer / post-GS output buffer). It does
+            // not use any translated D3D vertex-stage bindings, so omit the original VS bindings
+            // from the pipeline layout.
             reflection_bindings::build_pipeline_bindings_info(
                 &self.device,
                 &mut self.bind_group_layout_cache,
@@ -5445,6 +5463,9 @@ impl AerogpuD3d11Executor {
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )?
         } else {
+            let (_vs_handle, vs) = vs
+                .as_ref()
+                .expect("vs is required when passthrough_active is false");
             reflection_bindings::build_pipeline_bindings_info(
                 &self.device,
                 &mut self.bind_group_layout_cache,
@@ -5455,7 +5476,7 @@ impl AerogpuD3d11Executor {
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )?
         };
-        if emulation_active {
+        if passthrough_active {
             extend_pipeline_bindings_for_passthrough_vs(
                 &self.device,
                 &mut self.bind_group_layout_cache,
@@ -5767,7 +5788,10 @@ impl AerogpuD3d11Executor {
             vec![None; pipeline_bindings.group_layouts.len()];
         let mut bound_bind_groups: Vec<Option<*const wgpu::BindGroup>> =
             vec![None; pipeline_bindings.group_layouts.len()];
-        let mut emulation_bound_vertex_buffer: Option<u32> = None;
+        // Tracks which buffer is currently bound as the passthrough VS storage source in
+        // `@group(BIND_GROUP_INTERNAL_EMULATION)`, along with the bound byte offset. When either
+        // changes we must rebuild the bind group.
+        let mut passthrough_bound_storage_buffer: Option<(u32, u64)> = None;
 
         let mut d3d_slot_to_wgpu_slot: Vec<Option<u32>> = vec![None; DEFAULT_MAX_VERTEX_SLOTS];
         let mut used_vertex_slots = [false; DEFAULT_MAX_VERTEX_SLOTS];
@@ -5777,6 +5801,15 @@ impl AerogpuD3d11Executor {
                 .map_err(|_| anyhow!("wgpu vertex slot out of range"))?;
             if slot_usize < d3d_slot_to_wgpu_slot.len() {
                 d3d_slot_to_wgpu_slot[slot_usize] = Some(wgpu_slot as u32);
+                used_vertex_slots[slot_usize] = true;
+            }
+        }
+        if let Some(info) = gs_output_info {
+            let slot_usize: usize = info
+                .d3d_slot
+                .try_into()
+                .map_err(|_| anyhow!("GS emulation output slot out of range"))?;
+            if slot_usize < used_vertex_slots.len() {
                 used_vertex_slots[slot_usize] = true;
             }
         }
@@ -6701,17 +6734,10 @@ impl AerogpuD3d11Executor {
                     break;
                 }
 
-                let current_vs_hash = if self.state.depth_clip_enabled {
-                    vs.wgsl_hash
-                } else {
-                    vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
-                };
-                let next_vs_hash = if next_depth_clip_enabled {
-                    vs.wgsl_hash
-                } else {
-                    vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
-                };
-                if current_vs_hash != next_vs_hash {
+                // `DepthClipEnable=FALSE` is emulated by generating a depth-clamped VS variant
+                // (see `wgsl_depth_clamp_variant`), so toggling depth clip always requires pipeline
+                // recreation (even for passthrough VS paths).
+                if next_depth_clip_enabled != self.state.depth_clip_enabled {
                     break;
                 }
             }
@@ -6983,25 +7009,45 @@ impl AerogpuD3d11Executor {
                     } else if (self.state.sample_mask & 1) != 0 {
                         for group_index in 0..pipeline_bindings.group_layouts.len() {
                             let group_u32 = group_index as u32;
-                            if emulation_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
-                                let Some(buf_handle) = self.state.emulated_expanded_vertex_buffer
-                                else {
-                                    bail!("emulated draw requires an expanded vertex buffer");
+                            if passthrough_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                                let (buf_handle, offset_bytes, binding) = if emulation_active {
+                                    let Some(buf_handle) = self.state.emulated_expanded_vertex_buffer
+                                    else {
+                                        bail!("emulated draw requires an expanded vertex buffer");
+                                    };
+                                    let buf_handle = self.shared_surfaces.resolve_handle(buf_handle);
+                                    (
+                                        buf_handle,
+                                        0u64,
+                                        BINDING_INTERNAL_EXPANDED_VERTICES,
+                                    )
+                                } else {
+                                    let info = gs_emulation_output_vertex_pulling_info(
+                                        &self.device,
+                                        &self.resources,
+                                        &self.state,
+                                    )?
+                                    .ok_or_else(|| {
+                                        anyhow!(
+                                            "render pass expected GS-emulation-output vertex pulling info, but current state does not provide it"
+                                        )
+                                    })?;
+                                    let buf_handle = self.shared_surfaces.resolve_handle(info.buffer);
+                                    (buf_handle, info.offset_bytes, BINDING_GS_EMUL_VERTEX_OUTPUTS)
                                 };
-                                let buf_handle = self.shared_surfaces.resolve_handle(buf_handle);
 
-                                if emulation_bound_vertex_buffer != Some(buf_handle)
+                                if passthrough_bound_storage_buffer != Some((buf_handle, offset_bytes))
                                     || current_bind_groups[group_index].is_none()
                                 {
                                     let buf = self.resources.buffers.get(&buf_handle).ok_or_else(
-                                        || anyhow!("unknown expanded vertex buffer {buf_handle}"),
+                                        || anyhow!("unknown passthrough vertex buffer {buf_handle}"),
                                     )?;
                                     let entries = [BindGroupCacheEntry {
-                                        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                                        binding,
                                         resource: BindGroupCacheResource::Buffer {
                                             id: buf.id,
                                             buffer: &buf.buffer,
-                                            offset: 0,
+                                            offset: offset_bytes,
                                             size: None,
                                         },
                                     }];
@@ -7013,7 +7059,7 @@ impl AerogpuD3d11Executor {
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
                                     current_bind_groups[group_index] = Some(ptr);
-                                    emulation_bound_vertex_buffer = Some(buf_handle);
+                                    passthrough_bound_storage_buffer = Some((buf_handle, offset_bytes));
                                 }
 
                                 let ptr = current_bind_groups[group_index]
@@ -7145,6 +7191,20 @@ impl AerogpuD3d11Executor {
                             self.encoder_used_buffers
                                 .insert(self.shared_surfaces.resolve_handle(buf));
                         }
+                        if gs_output_active {
+                            let info = gs_emulation_output_vertex_pulling_info(
+                                &self.device,
+                                &self.resources,
+                                &self.state,
+                            )?
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "gs_output_active is true but gs_emulation_output_vertex_pulling_info returned None"
+                                )
+                            })?;
+                            self.encoder_used_buffers
+                                .insert(self.shared_surfaces.resolve_handle(info.buffer));
+                        }
 
                         for (group_index, group_bindings) in
                             pipeline_bindings.group_bindings.iter().enumerate()
@@ -7231,25 +7291,45 @@ impl AerogpuD3d11Executor {
                     } else if (self.state.sample_mask & 1) != 0 {
                         for group_index in 0..pipeline_bindings.group_layouts.len() {
                             let group_u32 = group_index as u32;
-                            if emulation_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
-                                let Some(buf_handle) = self.state.emulated_expanded_vertex_buffer
-                                else {
-                                    bail!("emulated draw requires an expanded vertex buffer");
+                            if passthrough_active && group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                                let (buf_handle, offset_bytes, binding) = if emulation_active {
+                                    let Some(buf_handle) = self.state.emulated_expanded_vertex_buffer
+                                    else {
+                                        bail!("emulated draw requires an expanded vertex buffer");
+                                    };
+                                    let buf_handle = self.shared_surfaces.resolve_handle(buf_handle);
+                                    (
+                                        buf_handle,
+                                        0u64,
+                                        BINDING_INTERNAL_EXPANDED_VERTICES,
+                                    )
+                                } else {
+                                    let info = gs_emulation_output_vertex_pulling_info(
+                                        &self.device,
+                                        &self.resources,
+                                        &self.state,
+                                    )?
+                                    .ok_or_else(|| {
+                                        anyhow!(
+                                            "render pass expected GS-emulation-output vertex pulling info, but current state does not provide it"
+                                        )
+                                    })?;
+                                    let buf_handle = self.shared_surfaces.resolve_handle(info.buffer);
+                                    (buf_handle, info.offset_bytes, BINDING_GS_EMUL_VERTEX_OUTPUTS)
                                 };
-                                let buf_handle = self.shared_surfaces.resolve_handle(buf_handle);
 
-                                if emulation_bound_vertex_buffer != Some(buf_handle)
+                                if passthrough_bound_storage_buffer != Some((buf_handle, offset_bytes))
                                     || current_bind_groups[group_index].is_none()
                                 {
                                     let buf = self.resources.buffers.get(&buf_handle).ok_or_else(
-                                        || anyhow!("unknown expanded vertex buffer {buf_handle}"),
+                                        || anyhow!("unknown passthrough vertex buffer {buf_handle}"),
                                     )?;
                                     let entries = [BindGroupCacheEntry {
-                                        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                                        binding,
                                         resource: BindGroupCacheResource::Buffer {
                                             id: buf.id,
                                             buffer: &buf.buffer,
-                                            offset: 0,
+                                            offset: offset_bytes,
                                             size: None,
                                         },
                                     }];
@@ -7261,7 +7341,7 @@ impl AerogpuD3d11Executor {
                                     let ptr = Arc::as_ptr(&bg);
                                     bind_group_arena.push(bg);
                                     current_bind_groups[group_index] = Some(ptr);
-                                    emulation_bound_vertex_buffer = Some(buf_handle);
+                                    passthrough_bound_storage_buffer = Some((buf_handle, offset_bytes));
                                 }
 
                                 let ptr = current_bind_groups[group_index]
@@ -7395,6 +7475,20 @@ impl AerogpuD3d11Executor {
                         if let Some(buf) = self.state.emulated_expanded_vertex_buffer {
                             self.encoder_used_buffers
                                 .insert(self.shared_surfaces.resolve_handle(buf));
+                        }
+                        if gs_output_active {
+                            let info = gs_emulation_output_vertex_pulling_info(
+                                &self.device,
+                                &self.resources,
+                                &self.state,
+                            )?
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "gs_output_active is true but gs_emulation_output_vertex_pulling_info returned None"
+                                )
+                            })?;
+                            self.encoder_used_buffers
+                                .insert(self.shared_surfaces.resolve_handle(info.buffer));
                         }
 
                         for (group_index, group_bindings) in
@@ -13778,6 +13872,126 @@ struct BuiltVertexState {
     wgpu_slot_to_d3d_slot: Vec<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GsEmulationOutputInfo {
+    d3d_slot: u32,
+    buffer: u32,
+    stride_bytes: u32,
+    offset_bytes: u64,
+    reg_count: u32,
+}
+
+fn gs_emulation_output_vertex_pulling_info(
+    device: &wgpu::Device,
+    resources: &AerogpuD3d11Resources,
+    state: &AerogpuD3d11State,
+) -> Result<Option<GsEmulationOutputInfo>> {
+    // Expanded-geometry passthrough draws are driven by an explicit buffer handle rather than an
+    // ILAY flag; do not treat them as GS-emulation-output.
+    if state.emulated_expanded_vertex_buffer.is_some() {
+        return Ok(None);
+    }
+
+    let Some(layout_handle) = state.input_layout else {
+        return Ok(None);
+    };
+    let layout = resources
+        .input_layouts
+        .get(&layout_handle)
+        .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
+    if (layout.layout.header.flags & AEROGPU_INPUT_LAYOUT_BLOB_FLAG_GS_EMULATION_OUTPUT) == 0 {
+        return Ok(None);
+    }
+
+    // Storage-buffer vertex pulling is only available on backends that support storage buffers
+    // (mirrors `runtime::aerogpu_resources::device_supports_storage_buffers`).
+    let limits = device.limits();
+    if limits.max_storage_buffers_per_shader_stage == 0 || limits.max_compute_workgroups_per_dimension == 0
+    {
+        bail!(
+            "GS emulation output requires storage buffers, but this device/backend does not support them (max_storage_buffers_per_shader_stage={}, max_compute_workgroups_per_dimension={})",
+            limits.max_storage_buffers_per_shader_stage,
+            limits.max_compute_workgroups_per_dimension
+        );
+    }
+
+    if layout.used_slots.len() != 1 {
+        bail!(
+            "GS emulation output input layout {layout_handle} must reference exactly one vertex buffer slot (found {:?})",
+            layout.used_slots
+        );
+    }
+    let d3d_slot = layout.used_slots[0];
+    let slot_usize: usize = d3d_slot
+        .try_into()
+        .map_err(|_| anyhow!("GS emulation output slot out of range"))?;
+    let Some(vb) = state.vertex_buffers.get(slot_usize).and_then(|v| *v) else {
+        bail!("GS emulation output draw requires vertex buffer slot {d3d_slot}");
+    };
+
+    if vb.stride_bytes == 0 {
+        bail!("GS emulation output vertex buffer stride must be non-zero");
+    }
+    if vb.stride_bytes % 16 != 0 {
+        bail!(
+            "GS emulation output vertex buffer stride {} is not a multiple of 16 bytes",
+            vb.stride_bytes
+        );
+    }
+    let reg_count = vb.stride_bytes / 16;
+    if reg_count == 0 {
+        bail!("GS emulation output vertex buffer stride implies reg_count=0");
+    }
+
+    // The ILAY blob's `element_count` is treated as a lower bound for the register count (it can
+    // contain dummy elements purely to tag the draw as GS-emulation-output).
+    if layout.layout.header.element_count != 0 && reg_count < layout.layout.header.element_count {
+        bail!(
+            "GS emulation output vertex buffer stride {} ({} regs) is smaller than input layout element_count {}",
+            vb.stride_bytes,
+            reg_count,
+            layout.layout.header.element_count
+        );
+    }
+
+    let buf = resources
+        .buffers
+        .get(&vb.buffer)
+        .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+    if vb.offset_bytes > buf.size {
+        bail!(
+            "vertex buffer {} offset {} out of bounds (size={})",
+            vb.buffer,
+            vb.offset_bytes,
+            buf.size
+        );
+    }
+
+    // wgpu requires storage buffer binding offsets to match `min_storage_buffer_offset_alignment`.
+    let storage_align = (device.limits().min_storage_buffer_offset_alignment as u64).max(1);
+    if vb.offset_bytes % storage_align != 0 {
+        bail!(
+            "GS emulation output vertex buffer offset {} is not aligned to min_storage_buffer_offset_alignment {}",
+            vb.offset_bytes,
+            storage_align
+        );
+    }
+    if vb.offset_bytes % 16 != 0 {
+        bail!(
+            "GS emulation output vertex buffer offset {} is not aligned to 16 bytes",
+            vb.offset_bytes
+        );
+    }
+
+    Ok(Some(GsEmulationOutputInfo {
+        d3d_slot,
+        buffer: vb.buffer,
+        stride_bytes: vb.stride_bytes,
+        offset_bytes: vb.offset_bytes,
+        reg_count,
+    }))
+}
+
 #[allow(dead_code)]
 fn wgsl_gs_passthrough_vertex_shader(varying_locations: &BTreeSet<u32>) -> Result<String> {
     // Pick a vertex attribute location for the clip-space position that does not collide with the
@@ -14047,12 +14261,14 @@ fn get_or_create_render_pipeline_for_state<'a>(
     state: &AerogpuD3d11State,
     layout_key: PipelineLayoutKey,
 ) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline, Vec<u32>)> {
-    let vs_handle = state
-        .vs
-        .ok_or_else(|| anyhow!("render draw without bound VS"))?;
     let ps_handle = state
         .ps
         .ok_or_else(|| anyhow!("render draw without bound PS"))?;
+
+    let emulation_active = state.emulated_expanded_vertex_buffer.is_some();
+    let gs_output_info = gs_emulation_output_vertex_pulling_info(device, resources, state)?;
+    let gs_output_active = gs_output_info.is_some();
+    let passthrough_active = emulation_active || gs_output_active;
     let (
         vertex_shader,
         ps_wgsl_hash,
@@ -14061,14 +14277,21 @@ fn get_or_create_render_pipeline_for_state<'a>(
         vs_input_signature,
         fs_entry_point,
     ) = {
-        let emulation_active = state.emulated_expanded_vertex_buffer.is_some();
-        let vs = resources
-            .shaders
-            .get(&vs_handle)
-            .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
-        if vs.stage != ShaderStage::Vertex {
-            bail!("shader {vs_handle} is not a vertex shader");
-        }
+        let vs = if gs_output_active {
+            None
+        } else {
+            let vs_handle = state
+                .vs
+                .ok_or_else(|| anyhow!("render draw without bound VS"))?;
+            let vs = resources
+                .shaders
+                .get(&vs_handle)
+                .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?;
+            if vs.stage != ShaderStage::Vertex {
+                bail!("shader {vs_handle} is not a vertex shader");
+            }
+            Some(vs)
+        };
 
         let ps = resources
             .shaders
@@ -14083,6 +14306,28 @@ fn get_or_create_render_pipeline_for_state<'a>(
             let keep = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl_source);
             let passthrough =
                 super::wgsl_link::generate_passthrough_vs_wgsl(&keep).context("passthrough VS")?;
+            let base_vs_wgsl: std::borrow::Cow<'_, str> = if state.depth_clip_enabled {
+                std::borrow::Cow::Owned(passthrough)
+            } else {
+                std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&passthrough))
+            };
+            let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+                device,
+                map_pipeline_cache_stage(ShaderStage::Vertex),
+                base_vs_wgsl.as_ref(),
+                Some("aerogpu_cmd passthrough vertex shader"),
+            );
+            (base_vs_wgsl, hash, Vec::new())
+        } else if gs_output_active {
+            // Autogenerated passthrough VS that performs storage-buffer vertex pulling from a
+            // post-GS output vertex buffer.
+            let info = gs_output_info.expect("gs_output_active implies gs_output_info.is_some()");
+            let keep = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl_source);
+            let passthrough = super::wgsl_link::generate_gs_emulation_output_passthrough_vs_wgsl(
+                &keep,
+                info.reg_count,
+            )
+            .context("gs output passthrough VS")?;
 
             let base_vs_wgsl: std::borrow::Cow<'_, str> = if state.depth_clip_enabled {
                 std::borrow::Cow::Owned(passthrough)
@@ -14094,11 +14339,12 @@ fn get_or_create_render_pipeline_for_state<'a>(
                 device,
                 map_pipeline_cache_stage(ShaderStage::Vertex),
                 base_vs_wgsl.as_ref(),
-                Some("aerogpu_cmd passthrough vertex shader"),
+                Some("aerogpu_cmd gs output passthrough vertex shader"),
             );
 
             (base_vs_wgsl, hash, Vec::new())
         } else {
+            let vs = vs.expect("gs_output_active is false, so VS must be present");
             let base_vs_wgsl: std::borrow::Cow<'_, str> = if state.depth_clip_enabled {
                 std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
             } else {
@@ -14207,16 +14453,17 @@ fn get_or_create_render_pipeline_for_state<'a>(
             hash
         };
 
-        let vs_entry_point = if emulation_active {
+        let vs_entry_point = if passthrough_active {
             "vs_main"
         } else {
+            let vs = vs.expect("passthrough_active is false, so VS must be present");
             vs.entry_point
         };
 
         (
             vertex_shader,
             fragment_shader,
-            vs.dxbc_hash_fnv1a64,
+            vs.map(|vs| vs.dxbc_hash_fnv1a64).unwrap_or(0),
             vs_entry_point,
             vs_input_signature,
             ps.entry_point,
@@ -14781,6 +15028,23 @@ fn build_vertex_buffers_for_pipeline(
     if state.emulated_expanded_vertex_buffer.is_some() {
         // Emulated draws use vertex pulling from the expanded vertex buffer, so they do not
         // consume any input-layout state or vertex buffers.
+        return Ok(BuiltVertexState {
+            vertex_buffers: Vec::new(),
+            vertex_buffer_keys: Vec::new(),
+            wgpu_slot_to_d3d_slot: Vec::new(),
+        });
+    }
+
+    // GS-emulation-output draws use a generated passthrough VS that performs vertex pulling from a
+    // storage buffer (the post-GS output vertex buffer). This bypasses the conventional input
+    // layout mapping and does not bind any vertex buffers via WebGPU vertex attributes.
+    let gs_output_layout = state
+        .input_layout
+        .and_then(|layout_handle| resources.input_layouts.get(&layout_handle))
+        .is_some_and(|layout| {
+            (layout.layout.header.flags & AEROGPU_INPUT_LAYOUT_BLOB_FLAG_GS_EMULATION_OUTPUT) != 0
+        });
+    if gs_output_layout {
         return Ok(BuiltVertexState {
             vertex_buffers: Vec::new(),
             vertex_buffer_keys: Vec::new(),

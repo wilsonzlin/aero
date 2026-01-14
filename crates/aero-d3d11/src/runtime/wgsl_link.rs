@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use anyhow::{bail, Result};
 
 use crate::binding_model::{
-    BINDING_INTERNAL_EXPANDED_VERTICES, BIND_GROUP_INTERNAL_EMULATION, EXPANDED_VERTEX_MAX_VARYINGS,
+    BINDING_GS_EMUL_VERTEX_OUTPUTS, BINDING_INTERNAL_EXPANDED_VERTICES, BIND_GROUP_INTERNAL_EMULATION,
+    EXPANDED_VERTEX_MAX_VARYINGS,
 };
 
 fn parse_location_attr(line: &str) -> Option<u32> {
@@ -613,6 +614,69 @@ pub(crate) fn generate_passthrough_vs_wgsl(keep_locations: &BTreeSet<u32>) -> Re
     }
     out.push_str("    return out;\n");
     out.push_str("}\n");
+    Ok(out)
+}
+
+/// Generate WGSL for a GS-emulation-output passthrough vertex shader.
+///
+/// This variant is used when the guest binds an input layout with
+/// [`crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_FLAG_GS_EMULATION_OUTPUT`]. In that mode the
+/// vertex data is not a conventional D3D11 input-assembler layout; instead, the bound vertex buffer
+/// contains a packed "register file" per vertex (`regs[0]` = clip-space position, `regs[N]` =
+/// interpolator register `vN`).
+///
+/// The shader performs **vertex pulling** from the bound post-GS output buffer via a read-only
+/// storage binding (avoiding WebGPU's vertex-attribute limits) and only outputs the subset of
+/// `@location(N)` varyings that the bound pixel shader actually reads.
+///
+/// The output is deterministic: the same `(keep_locations, reg_count)` pair produces
+/// byte-identical WGSL, which means `aero_gpu::pipeline_key::hash_wgsl` (and therefore pipeline
+/// caching) is stable.
+pub(crate) fn generate_gs_emulation_output_passthrough_vs_wgsl(
+    keep_locations: &BTreeSet<u32>,
+    reg_count: u32,
+) -> Result<String> {
+    if reg_count == 0 {
+        bail!("gs-emulation-output passthrough VS requires reg_count > 0");
+    }
+    for &loc in keep_locations {
+        if loc >= reg_count {
+            bail!(
+                "gs-emulation-output passthrough VS requested @location({loc}), but vertex record stores only 0..{}",
+                reg_count.saturating_sub(1)
+            );
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str("struct GsOutputVertex {\n");
+    out.push_str(&format!("    regs: array<vec4<u32>, {reg_count}>,\n"));
+    out.push_str("};\n\n");
+    out.push_str(&format!(
+        "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({BINDING_GS_EMUL_VERTEX_OUTPUTS})\n"
+    ));
+    out.push_str("var<storage, read> gs_vertices: array<GsOutputVertex>;\n\n");
+
+    out.push_str("struct VsOut {\n");
+    out.push_str("    @builtin(position) pos: vec4<f32>,\n");
+    for &loc in keep_locations {
+        out.push_str(&format!("    @location({loc}) o{loc}: vec4<f32>,\n"));
+    }
+    out.push_str("};\n\n");
+
+    out.push_str("@vertex\n");
+    out.push_str("fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {\n");
+    out.push_str("    let v = gs_vertices[vertex_index];\n");
+    out.push_str("    var out: VsOut;\n");
+    out.push_str("    out.pos = bitcast<vec4<f32>>(v.regs[0u]);\n");
+    for &loc in keep_locations {
+        out.push_str(&format!(
+            "    out.o{loc} = bitcast<vec4<f32>>(v.regs[{loc}u]);\n"
+        ));
+    }
+    out.push_str("    return out;\n");
+    out.push_str("}\n");
+
     Ok(out)
 }
 
