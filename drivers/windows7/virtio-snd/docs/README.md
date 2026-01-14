@@ -152,7 +152,8 @@ If Windows grants fewer than `1 + numQueues` messages, or if the device rejects 
 
 - **All sources on vector/message 0** (config + all queues)
 
-If MSI/MSI-X connection or vector programming fails, the driver falls back to INTx (if available).
+If MSI/MSI-X connection fails, the driver falls back to INTx (if available).
+If MSI-X is enabled but virtio vector programming fails (read-back `VIRTIO_PCI_MSI_NO_VECTOR`), interrupts are suppressed on Aero contract devices (no INTx fallback), so the driver treats this as fatal unless it can switch to INTx or polling-only mode.
 
 #### Troubleshooting / verifying MSI is active
 
@@ -825,6 +826,7 @@ For additional safety in environments that expose multiple virtio-snd devices, y
 Notes:
 
 - The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
-- This driver package opts into **MSI/MSI-X** in `inf/aero_virtio_snd.inf` and prefers message interrupts when granted, but still supports **INTx** fallback (contract v1 requirement). Windows may grant fewer messages than requested; the driver will fall back to “all sources on vector 0” mapping when needed, and will fall back to INTx if message interrupts cannot be connected or MSI-X vector programming fails.
+- This driver package opts into **MSI/MSI-X** in `inf/aero_virtio_snd.inf` and prefers message interrupts when granted, but still supports **INTx** when message interrupts are unavailable/cannot be connected (contract v1 baseline). Windows may grant fewer messages than requested; the driver will fall back to “all sources on vector 0” mapping when needed.
+  - If MSI-X is enabled but virtio vector programming fails (read-back `VIRTIO_PCI_MSI_NO_VECTOR`), interrupts are suppressed (no INTx fallback), so this is treated as fatal unless the driver can switch to INTx or polling-only mode.
 
 If this README or the INF disagrees with `AERO-W7-VIRTIO`, treat the contract as authoritative.

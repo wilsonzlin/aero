@@ -97,7 +97,8 @@ The `virtio-snd` device provides:
 - Contract v1 summary (virtio-snd):
   - Transport: virtio-pci modern-only (PCI vendor-specific caps + BAR0 MMIO) with PCI Revision ID `0x01` (`REV_01`)
   - Features: `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only
-  - Interrupts: INTx baseline (read-to-ack ISR). MSI/MSI-X may be used when Windows grants message interrupts (INF opt-in); in that case the driver programs virtio MSI-X routing (`msix_config`, `queue_msix_vector`) and falls back to INTx if message interrupts cannot be connected or vectors cannot be programmed.
+  - Interrupts: INTx baseline (read-to-ack ISR). MSI/MSI-X may be used when Windows grants message interrupts (INF opt-in); in that case the driver programs virtio MSI-X routing (`msix_config`, `queue_msix_vector`) and verifies read-back.
+    - On Aero contract devices, MSI-X is **exclusive** when enabled: if a virtio MSI-X selector is `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are **suppressed** (no MSI-X message and no INTx fallback). Therefore vector-programming failures must be treated as fatal unless the driver can switch to INTx or polling-only mode.
   - Queues: `controlq=64`, `eventq=64`, `txq=256`, `rxq=64`
   - Streams: stream 0 output stereo S16_LE 48 kHz; stream 1 input mono S16_LE 48 kHz
 
