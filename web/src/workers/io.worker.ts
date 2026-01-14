@@ -8,6 +8,7 @@ import { RingBuffer } from "../ipc/ring_buffer";
 import { InputEventType } from "../input/event_queue";
 import { chooseKeyboardInputBackend, chooseMouseInputBackend, type InputBackend } from "../input/input_backend_selection";
 import { encodeInputBackendStatus } from "../input/input_backend_status";
+import { u32Delta } from "../utils/u32";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
@@ -485,6 +486,25 @@ let pressedKeyboardHidUsageCount = 0;
 let mouseInputBackend: InputBackend = "ps2";
 const warnedForcedMouseBackendUnavailable = new Set<string>();
 let mouseButtonsMask = 0;
+
+// End-to-end input latency telemetry (main thread capture -> IO worker processing).
+//
+// We use wrapping u32 microsecond timestamps (`performance.now() * 1000`) carried in the input
+// batch format. To keep overhead minimal, we track a small set of rolling statistics:
+// - last batch send->worker latency
+// - EWMA of batch send->worker latency
+// - max batch send->worker latency since worker start
+// - last per-event latency (avg + max across events in the batch)
+// - EWMA of per-event average latency
+// - max per-event latency since worker start
+const INPUT_LATENCY_EWMA_ALPHA = 0.125; // 1/8 smoothing factor
+const INPUT_LATENCY_MAX_WINDOW_MS = 1000;
+let ioInputLatencyMaxWindowStartMs = 0;
+let ioInputBatchSendLatencyEwmaUs = 0;
+let ioInputBatchSendLatencyMaxUs = 0;
+let ioInputEventLatencyEwmaUs = 0;
+let ioInputEventLatencyMaxUs = 0;
+
 let wasmApi: WasmApi | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
@@ -5436,6 +5456,7 @@ function safeSyntheticUsbHidConfigured(dev: UsbHidPassthroughBridge | null): boo
 
 function handleInputBatch(buffer: ArrayBuffer): void {
   const t0 = performance.now();
+  const nowUs = Math.round(t0 * 1000) >>> 0;
   const decoded = validateInputBatchBuffer(buffer);
   if (!decoded.ok) {
     invalidInputBatchCount += 1;
@@ -5451,6 +5472,21 @@ function handleInputBatch(buffer: ArrayBuffer): void {
 
   // `buffer` is transferred from the main thread, so it is uniquely owned here.
   const { words, count } = decoded;
+  const batchSendTimestampUs = words[1] >>> 0;
+  const batchSendLatencyUs = u32Delta(nowUs, batchSendTimestampUs);
+
+  if (ioInputLatencyMaxWindowStartMs === 0 || t0 - ioInputLatencyMaxWindowStartMs > INPUT_LATENCY_MAX_WINDOW_MS) {
+    ioInputLatencyMaxWindowStartMs = t0;
+    ioInputBatchSendLatencyMaxUs = 0;
+    ioInputEventLatencyMaxUs = 0;
+  }
+  ioInputBatchSendLatencyEwmaUs =
+    ioInputBatchSendLatencyEwmaUs === 0
+      ? batchSendLatencyUs
+      : Math.round(ioInputBatchSendLatencyEwmaUs + (batchSendLatencyUs - ioInputBatchSendLatencyEwmaUs) * INPUT_LATENCY_EWMA_ALPHA) >>> 0;
+  if (batchSendLatencyUs > ioInputBatchSendLatencyMaxUs) {
+    ioInputBatchSendLatencyMaxUs = batchSendLatencyUs;
+  }
 
   Atomics.add(status, StatusIndex.IoInputBatchCounter, 1);
   Atomics.add(status, StatusIndex.IoInputEventCounter, count);
@@ -5467,9 +5503,17 @@ function handleInputBatch(buffer: ArrayBuffer): void {
   maybeUpdateMouseInputBackend({ virtioMouseOk });
 
   const base = INPUT_BATCH_HEADER_WORDS;
+  let eventLatencySumUs = 0;
+  let eventLatencyMaxUsBatch = 0;
   for (let i = 0; i < count; i++) {
     const off = base + i * INPUT_BATCH_WORDS_PER_EVENT;
     const type = words[off] >>> 0;
+    const eventTimestampUs = words[off + 1] >>> 0;
+    const eventLatencyUs = u32Delta(nowUs, eventTimestampUs);
+    eventLatencySumUs += eventLatencyUs;
+    if (eventLatencyUs > eventLatencyMaxUsBatch) {
+      eventLatencyMaxUsBatch = eventLatencyUs;
+    }
     switch (type) {
       case InputEventType.KeyHidUsage: {
         const packed = words[off + 2] >>> 0;
@@ -5572,6 +5616,22 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         break;
     }
   }
+
+  const eventLatencyAvgUs = count > 0 ? (Math.round(eventLatencySumUs / count) >>> 0) : 0;
+  ioInputEventLatencyEwmaUs =
+    ioInputEventLatencyEwmaUs === 0
+      ? eventLatencyAvgUs
+      : Math.round(ioInputEventLatencyEwmaUs + (eventLatencyAvgUs - ioInputEventLatencyEwmaUs) * INPUT_LATENCY_EWMA_ALPHA) >>> 0;
+  if (eventLatencyMaxUsBatch > ioInputEventLatencyMaxUs) {
+    ioInputEventLatencyMaxUs = eventLatencyMaxUsBatch;
+  }
+
+  Atomics.store(status, StatusIndex.IoInputBatchSendLatencyUs, batchSendLatencyUs | 0);
+  Atomics.store(status, StatusIndex.IoInputBatchSendLatencyEwmaUs, ioInputBatchSendLatencyEwmaUs | 0);
+  Atomics.store(status, StatusIndex.IoInputBatchSendLatencyMaxUs, ioInputBatchSendLatencyMaxUs | 0);
+  Atomics.store(status, StatusIndex.IoInputEventLatencyAvgUs, eventLatencyAvgUs | 0);
+  Atomics.store(status, StatusIndex.IoInputEventLatencyEwmaUs, ioInputEventLatencyEwmaUs | 0);
+  Atomics.store(status, StatusIndex.IoInputEventLatencyMaxUs, ioInputEventLatencyMaxUs | 0);
 
   // Re-evaluate backend selection after processing this batch; key-up events can make it safe to
   // transition away from PS/2 scancode injection.

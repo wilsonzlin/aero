@@ -754,6 +754,36 @@ export class WorkerCoordinator {
     return Atomics.load(this.shared.status, StatusIndex.IoInputEventCounter);
   }
 
+  getIoInputBatchSendLatencyUs(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputBatchSendLatencyUs) >>> 0;
+  }
+
+  getIoInputBatchSendLatencyEwmaUs(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputBatchSendLatencyEwmaUs) >>> 0;
+  }
+
+  getIoInputBatchSendLatencyMaxUs(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputBatchSendLatencyMaxUs) >>> 0;
+  }
+
+  getIoInputEventLatencyAvgUs(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputEventLatencyAvgUs) >>> 0;
+  }
+
+  getIoInputEventLatencyEwmaUs(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputEventLatencyEwmaUs) >>> 0;
+  }
+
+  getIoInputEventLatencyMaxUs(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.IoInputEventLatencyMaxUs) >>> 0;
+  }
+
   getAudioProducerBufferLevelFrames(): number {
     if (!this.shared) return 0;
     return Atomics.load(this.shared.status, StatusIndex.AudioBufferLevelFrames) >>> 0;

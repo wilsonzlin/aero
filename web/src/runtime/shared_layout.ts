@@ -44,13 +44,6 @@ export const StatusIndex = {
   // I/O worker input telemetry (optional; used by tests and perf instrumentation).
   IoInputBatchCounter: 2,
   IoInputEventCounter: 3,
-  // Total input batches received by the I/O worker (including queued/dropped while snapshot-paused).
-  IoInputBatchReceivedCounter: 28,
-  // Total input batches dropped by the I/O worker (e.g. when snapshot-paused queue is full, or when a malformed batch is received).
-  IoInputBatchDropCounter: 29,
-  // Total backend switches (ps2↔usb↔virtio) observed by the I/O worker input pipeline.
-  IoKeyboardBackendSwitchCounter: 30,
-  IoMouseBackendSwitchCounter: 31,
 
   // I/O worker input backend selection status (debug HUD / tests).
   //
@@ -69,6 +62,26 @@ export const StatusIndex = {
   IoInputUsbMouseOk: 25,
   IoInputKeyboardHeldCount: 26,
   IoInputMouseButtonsHeldMask: 27,
+
+  // Total input batches received by the I/O worker (including queued/dropped while snapshot-paused).
+  IoInputBatchReceivedCounter: 28,
+  // Total input batches dropped by the I/O worker (e.g. when snapshot-paused queue is full, or when a malformed batch is received).
+  IoInputBatchDropCounter: 29,
+  // Total backend switches (ps2↔usb↔virtio) observed by the I/O worker input pipeline.
+  IoKeyboardBackendSwitchCounter: 30,
+  IoMouseBackendSwitchCounter: 31,
+
+  // Input `performance.now()`-derived u32 microsecond latencies.
+  // All values wrap as u32; consumers should use unsigned arithmetic (`>>> 0`).
+  //
+  // - batch_send_latency_us: (io_now_us - batchSendTimestampUs) for the most recent batch
+  // - event_latency_*: based on (io_now_us - eventTimestampUs) for events in the most recent batch
+  IoInputBatchSendLatencyUs: 40,
+  IoInputBatchSendLatencyEwmaUs: 41,
+  IoInputBatchSendLatencyMaxUs: 42,
+  IoInputEventLatencyAvgUs: 43,
+  IoInputEventLatencyEwmaUs: 44,
+  IoInputEventLatencyMaxUs: 45,
 
   // Audio telemetry (producer-side). Owned by the active audio producer:
   // - CPU worker (demo tone / mic loopback)
