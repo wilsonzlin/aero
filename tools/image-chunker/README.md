@@ -374,8 +374,10 @@ curl -fSs "<presigned-url>"
   - `totalSize` must be **> 0** and a multiple of 512 bytes (disk images are sector-addressed)
 - `chunkSize`: the chosen chunk size in bytes
   - `chunkSize` must be **> 0** and a multiple of 512 bytes
+  - for safety, clients should also impose reasonable upper bounds (Aero’s reference implementations currently enforce `chunkSize <= 64 MiB`; see the format spec)
 - `chunkCount`: total number of chunk objects
   - `chunkCount` must be **> 0** and equal `ceil(totalSize / chunkSize)`
+  - for safety, clients should also impose reasonable upper bounds (Aero’s reference implementations currently enforce `chunkCount <= 500,000`; see the format spec)
 - `chunkIndexWidth`: decimal zero-padding width (this tool uses **8**)
   - `chunkIndexWidth` must be **> 0** and at least `len(str(chunkCount - 1))`
   - for safety, clients should also impose reasonable upper bounds (Aero’s reference implementations currently enforce `chunkIndexWidth <= 32`; see the format spec)
