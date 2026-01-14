@@ -1591,6 +1591,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 )
 
             found: dict[str, str] = {}
+            found_interrupt_key: str | None = None
             for ref in addreg_refs:
                 ref_key = ref.lower()
                 for line_no, line in sections.get(ref_key, []):
@@ -1600,6 +1601,11 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                     if not parts or parts[0].strip().upper() != "HKR":
                         continue
                     subkey = _normalize_inf_reg_subkey(parts[1] if len(parts) > 1 else "")
+                    if subkey == "interrupt management":
+                        value_name = _normalize_inf_reg_value_name(parts[2] if len(parts) > 2 else "")
+                        flags = _try_parse_inf_int(parts[3] if len(parts) > 3 else "")
+                        if value_name or (flags is not None and (flags & 0x10)):
+                            found_interrupt_key = f"{inf_path.as_posix()}:{line_no}: {line}"
                     if subkey != "interrupt management\\messagesignaledinterruptproperties":
                         continue
                     value_name = _normalize_inf_reg_value_name(parts[2] if len(parts) > 2 else "")
@@ -1607,8 +1613,11 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                         found[value_name] = f"{inf_path.as_posix()}:{line_no}: {line}"
 
             missing_keys = [k for k in ("msisupported", "messagenumberlimit") if k not in found]
+            if found_interrupt_key is None:
+                missing_keys.append("interrupt_management_key")
             if missing_keys:
                 key_display = {
+                    "interrupt_management_key": 'HKR, "Interrupt Management",,0x00000010',
                     "msisupported": "MSISupported",
                     "messagenumberlimit": "MessageNumberLimit",
                 }
@@ -1619,6 +1628,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                             *[f"missing key: {key_display.get(k, k)}" for k in missing_keys],
                             "expected to set both under:",
                             'HKR, "Interrupt Management\\MessageSignaledInterruptProperties", <Key>, ...',
+                            'and create/touch the parent key (typically): HKR, "Interrupt Management",,0x00000010',
                             "referenced AddReg sections:",
                             *[f"- [{r}]" for r in addreg_refs],
                             "AddReg directive(s):",
