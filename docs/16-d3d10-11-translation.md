@@ -1505,6 +1505,16 @@ Add DXBC fixtures alongside existing ones in `crates/aero-d3d11/tests/fixtures/`
 - `hs_*.dxbc` – minimal hull shaders (constant tess factors, pass-through control points).
 - `ds_*.dxbc` – minimal domain shaders (simple interpolation to position).
 
+For GS opcode discovery / fixture authoring, use the in-repo DXBC token dump tool:
+
+```bash
+# Compile an SM4 geometry shader (example using fxc from the Windows SDK).
+fxc /T gs_4_0 /E main /Fo shader.dxbc shader.hlsl
+
+# Dump the DXBC container + SM4 token stream (opcode IDs, lengths, best-effort decode).
+cargo run -p aero-d3d11 --bin dxbc_dump -- shader.dxbc
+```
+
 **Pixel-compare tests (Rust):**
 
 Add new `aero-d3d11` executor tests that render to an offscreen RT and compare readback pixels:
