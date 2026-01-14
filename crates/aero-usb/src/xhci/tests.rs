@@ -4,6 +4,7 @@ use super::{
     regs, RingCursor, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR,
     PORTSC_PRC,
 };
+use super::context;
 use crate::hub::UsbHubDevice;
 use crate::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -175,6 +176,53 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
         super::CommandCompletionCode::Success
     );
     assert_eq!(read_u32(&mut mem, ep_ctx) & 0x7, 1);
+}
+
+#[test]
+fn write_endpoint_state_to_context_updates_controller_shadow_context() {
+    let mut mem = TestMem::new(0x20_000);
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+
+    let slot_id = 1u8;
+    let endpoint_id = 2u8; // EP1 OUT
+    let ep_ctx_addr = dev_ctx + u64::from(endpoint_id) * 32;
+
+    let mut ctrl = super::XhciController::new();
+    ctrl.set_dcbaap(dcbaa);
+
+    // Enable slot 1, then populate its DCBAA entry with a device context pointer.
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(
+        completion.completion_code,
+        super::CommandCompletionCode::Success
+    );
+    assert_eq!(completion.slot_id, slot_id);
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
+    // Seed endpoint context state.
+    mem.write_u32(ep_ctx_addr + 0, context::EndpointState::Running.raw().into());
+
+    assert!(
+        ctrl.write_endpoint_state_to_context(
+            &mut mem,
+            slot_id,
+            endpoint_id,
+            context::EndpointState::Halted
+        ),
+        "expected endpoint context state write to succeed"
+    );
+    assert_eq!(
+        read_u32(&mut mem, ep_ctx_addr + 0) & 0x7,
+        u32::from(context::EndpointState::Halted.raw())
+    );
+
+    let slot = ctrl.slot_state(slot_id).expect("slot must exist after enable_slot");
+    assert_eq!(slot.device_context_ptr(), dev_ctx);
+    let shadow = slot
+        .endpoint_context(usize::from(endpoint_id - 1))
+        .expect("shadow endpoint context must exist");
+    assert_eq!(shadow.endpoint_state_enum(), context::EndpointState::Halted);
 }
 
 #[test]
