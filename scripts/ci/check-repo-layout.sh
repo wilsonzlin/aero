@@ -662,12 +662,27 @@ for test in manifest_tests:
             )
 
 mentioned_lines = {}
+in_expected_results = False
+found_expected_results = False
 for line_no, raw in enumerate(readme_path.read_text(encoding="utf-8").splitlines(), start=1):
-    # Only consider top-level bullets (`* ...`), not nested bullets.
-    m = re.match(r"^\* `([a-z0-9_]+)`", raw)
-    if m:
-        name = m.group(1)
-        mentioned_lines.setdefault(name, []).append(line_no)
+    if raw.strip().lower() == "## expected results":
+        found_expected_results = True
+        in_expected_results = True
+        continue
+    if in_expected_results:
+        if raw.startswith("## "):
+            break
+        # Only consider top-level bullets (`* ...`), not nested bullets.
+        m = re.match(r"^\* `([a-z0-9_]+)`", raw)
+        if m:
+            name = m.group(1)
+            mentioned_lines.setdefault(name, []).append(line_no)
+
+if not found_expected_results:
+    raise SystemExit(
+        f"{readme_path}: missing expected '## Expected results' section\n"
+        "Tip: the Win7 test suite README should include a '## Expected results' section listing each manifest test as a top-level bullet"
+    )
 
 duplicates = sorted([name for name, lines in mentioned_lines.items() if len(lines) > 1])
 if duplicates:
@@ -682,6 +697,17 @@ if missing:
     raise SystemExit(
         f"{readme_path}: missing Expected results bullets for manifest test(s): {', '.join(missing)}\n"
         "Tip: add a bullet for each manifest test under '## Expected results'"
+    )
+
+# Additionally fail on stale entries in the Expected results section. This keeps the
+# docs symmetric with the manifest: the bullet list should be an exact match, not
+# just a superset.
+extra = sorted([name for name in mentioned_lines if name not in manifest_set])
+if extra:
+    details = ", ".join(f"{name} (lines {', '.join(str(n) for n in mentioned_lines[name])})" for name in extra)
+    raise SystemExit(
+        f"{readme_path}: Expected results bullet(s) not present in tests_manifest.txt: {details}\n"
+        "Tip: remove stale bullets or add the missing test(s) to tests_manifest.txt"
     )
 
 cmake_targets = set(
