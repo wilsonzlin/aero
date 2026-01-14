@@ -1401,7 +1401,7 @@ pub struct BindGroupLayout {
     /// Bind group index used for texture/sampler bindings in this shader stage.
     ///
     /// Contract:
-    /// - group(0): constants shared by VS/PS (bindings 0/1/2 for float/int/bool constants)
+    /// - group(0): constants shared by VS/PS (binding 0, see `Constants` in WGSL output)
     /// - group(1): VS texture/sampler bindings
     /// - group(2): PS texture/sampler bindings
     /// - group(3): optional half-pixel-center uniform buffer (VS only)
@@ -1420,18 +1420,16 @@ pub fn generate_wgsl_with_options(
 ) -> Result<WgslOutput, ShaderError> {
     let mut wgsl = String::new();
 
-    // Shader constants: D3D9 has separate per-stage constant register files (VS=0..255, PS=256..511).
+    // Shader constants: pack per-stage register files into a single uniform buffer to keep
+    // bindings stable across shader stages (VS=0..255, PS=256..511).
     //
-    // Pack each register file into a stable per-type uniform buffer:
-    // - binding(0): float4 constants (`c#`)
-    // - binding(1): int4 constants (`i#`)
-    // - binding(2): bool constants (`b#`, represented as `vec4<u32>` per register)
-    wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
-    wgsl.push_str("struct ConstantsI { i: array<vec4<i32>, 512>, };\n");
-    wgsl.push_str("struct ConstantsB { b: array<vec4<u32>, 512>, };\n");
-    wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
-    wgsl.push_str("@group(0) @binding(1) var<uniform> constants_i: ConstantsI;\n");
-    wgsl.push_str("@group(0) @binding(2) var<uniform> constants_b: ConstantsB;\n\n");
+    // Uniform buffers use std140-like layout rules: arrays have a minimum 16-byte stride even for
+    // scalar elements. Store the bool bank as `vec4<u32>` (4 bools per element) to keep a tight
+    // 2048-byte layout (512 u32 values) while remaining WGSL-valid.
+    wgsl.push_str(
+        "struct Constants { c: array<vec4<f32>, 512>, i: array<vec4<i32>, 512>, b: array<vec4<u32>, 128>, };\n",
+    );
+    wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n\n");
 
     let sampler_group = match ir.version.stage {
         ShaderStage::Vertex => 1u32,
@@ -1569,9 +1567,17 @@ pub fn generate_wgsl_with_options(
                     let v = if v { "1.0" } else { "0.0" };
                     wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
                 } else {
+                    let b_u32 = u32::from(*b);
+                    let vec_idx = (const_base / 4) + (b_u32 / 4);
+                    let comp = match b_u32 % 4 {
+                        0 => "x",
+                        1 => "y",
+                        2 => "z",
+                        _ => "w",
+                    };
                     wgsl.push_str(&format!(
-                        "  let b{}: vec4<f32> = vec4<f32>(select(0.0, 1.0, constants_b.b[{}u + {}u].x != 0u));\n",
-                        b, const_base, b
+                        "  let b{}: vec4<f32> = vec4<f32>(select(0.0, 1.0, constants.b[{}u].{} != 0u));\n",
+                        b, vec_idx, comp
                     ));
                 }
             }
@@ -1715,9 +1721,17 @@ pub fn generate_wgsl_with_options(
                     let v = if v { "1.0" } else { "0.0" };
                     wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
                 } else {
+                    let b_u32 = u32::from(*b);
+                    let vec_idx = (const_base / 4) + (b_u32 / 4);
+                    let comp = match b_u32 % 4 {
+                        0 => "x",
+                        1 => "y",
+                        2 => "z",
+                        _ => "w",
+                    };
                     wgsl.push_str(&format!(
-                        "  let b{}: vec4<f32> = vec4<f32>(select(0.0, 1.0, constants_b.b[{}u + {}u].x != 0u));\n",
-                        b, const_base, b
+                        "  let b{}: vec4<f32> = vec4<f32>(select(0.0, 1.0, constants.b[{}u].{} != 0u));\n",
+                        b, vec_idx, comp
                     ));
                 }
             }
