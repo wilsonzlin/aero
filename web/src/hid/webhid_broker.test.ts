@@ -1719,7 +1719,7 @@ describe("hid/WebHidBroker", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const manager = new WebHidPassthroughManager({ hid: null });
-      const broker = new WebHidBroker({ manager, maxPendingSendsPerDevice: 4 });
+      const broker = new WebHidBroker({ manager, maxPendingDeviceSends: 4 });
       const port = new FakePort();
       broker.attachWorkerPort(port as unknown as MessagePort);
 
@@ -1732,7 +1732,7 @@ describe("hid/WebHidBroker", () => {
       await new Promise((r) => setTimeout(r, 0));
       expect(device.sendReport).toHaveBeenCalledTimes(1);
 
-      // Flood the broker with sends; only `maxPendingSendsPerDevice` should be buffered.
+      // Flood the broker with sends; only `maxPendingDeviceSends` should be buffered.
       const flood = 20;
       for (let i = 0; i < flood; i += 1) {
         port.emit({
