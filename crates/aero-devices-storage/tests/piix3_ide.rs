@@ -3643,6 +3643,97 @@ fn atapi_read_10_dma_via_bus_master() {
 }
 
 #[test]
+fn atapi_bus_master_dma_scatter_gather_with_odd_prd_lengths() {
+    // Exercise a PRD scatter/gather list where the first segment length is odd.
+    let mut iso = MemIso::new(1);
+    let expected: Vec<u8> = (0..2048u32)
+        .map(|i| (i as u8).wrapping_mul(7).wrapping_add(0x11))
+        .collect();
+    iso.data[..2048].copy_from_slice(&expected);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let buf0 = 0x4000u64;
+    let buf1 = 0x5000u64;
+
+    let len0: u16 = 17;
+    let len1: u16 = 2048 - len0;
+
+    // Two-entry PRD table that splits the 2048-byte transfer across an odd-sized prefix and the
+    // remainder.
+    mem.write_u32(prd_addr, buf0 as u32);
+    mem.write_u16(prd_addr + 4, len0);
+    mem.write_u16(prd_addr + 6, 0x0000);
+    mem.write_u32(prd_addr + 8, buf1 as u32);
+    mem.write_u16(prd_addr + 12, len1);
+    mem.write_u16(prd_addr + 14, 0x8000); // EOT
+
+    ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // Seed destination buffers.
+    mem.write_physical(buf0, &vec![0xFFu8; len0 as usize]);
+    mem.write_physical(buf1, &vec![0xFFu8; len1 as usize]);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // ACK packet-phase IRQ.
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Start DMA.
+    ioports.write(bm_base + 8, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_ne!(bm_st & 0x04, 0);
+    assert_eq!(bm_st & 0x02, 0, "BMIDE ERR bit should be clear");
+    assert!(ide.borrow().controller.secondary_irq_pending());
+
+    let mut out0 = vec![0u8; len0 as usize];
+    let mut out1 = vec![0u8; len1 as usize];
+    mem.read_physical(buf0, &mut out0);
+    mem.read_physical(buf1, &mut out1);
+    assert_eq!(out0, expected[..len0 as usize].to_vec());
+    assert_eq!(out1, expected[len0 as usize..].to_vec());
+
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+}
+
+#[test]
 fn atapi_alt_status_does_not_clear_irq_latch_on_dma_completion() {
     let mut iso = MemIso::new(1);
     let expected: Vec<u8> = (0..2048u32)
