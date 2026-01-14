@@ -33,7 +33,7 @@ describe("InputRecordReplay", () => {
     queue.pushKeyScancode(10, 0xaa, 1);
     queue.pushKeyHidUsage(11, 0x04, true);
     queue.pushMouseMove(12, 5, -3);
-    queue.pushMouseWheel(13, 1);
+    queue.pushMouseWheel(13, 1, -2);
 
     const recorder = new InputRecordReplay();
     recorder.startRecording();
@@ -78,7 +78,7 @@ describe("InputRecordReplay", () => {
 
     // Batch 2
     queue.pushMouseMove(12, 3, -2);
-    queue.pushMouseWheel(13, -1);
+    queue.pushMouseWheel(13, -1, 3);
     queue.flush(target, { recycle: false, onBeforeSend: recorder.captureHook });
 
     const expectedStream = postedBuffers.flatMap((buf) => decodeEventStream(buf));
@@ -94,4 +94,3 @@ describe("InputRecordReplay", () => {
     expect(replayedStream).toEqual(expectedStream);
   });
 });
-
