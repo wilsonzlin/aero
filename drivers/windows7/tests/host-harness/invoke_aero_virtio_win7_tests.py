@@ -1073,9 +1073,11 @@ def _try_qmp_input_inject_virtio_input_events(
                 mouse_device = send(s, alt_events, device=mouse_device)
             except Exception as e2:
                 raise RuntimeError(
-                    "QEMU does not support QMP input-send-event horizontal scroll axis "
-                    f"('{_QMP_TEST_MOUSE_HSCROLL_AXIS}'/'{_QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK}') "
-                    "required by --with-input-wheel. Upgrade QEMU or omit --with-input-wheel."
+                    "QMP input-send-event failed while injecting horizontal scroll for --with-input-wheel "
+                    f"(tried axis='{_QMP_TEST_MOUSE_HSCROLL_AXIS}' then axis='{_QMP_TEST_MOUSE_HWHEEL_AXIS_FALLBACK}'). "
+                    "This likely means the running QEMU build does not support horizontal scroll injection; "
+                    "upgrade QEMU or omit --with-input-wheel. "
+                    f"hscroll_error={e!s}; hwheel_error={e2!s}"
                 ) from e2
         time.sleep(0.05)
         mouse_device = send(s, [mouse_btn_events[0]], device=mouse_device)

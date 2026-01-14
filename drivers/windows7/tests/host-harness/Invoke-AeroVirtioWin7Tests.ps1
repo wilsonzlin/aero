@@ -1688,6 +1688,8 @@ function Try-AeroQmpInjectVirtioInputEvents {
         $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $mouseRelEvents
       } catch {
         if (-not $WithWheel) { throw }
+        $errHscroll = ""
+        try { $errHscroll = [string]$_.Exception.Message } catch { }
 
         # Some QEMU builds expose horizontal scroll as `hwheel` instead of `hscroll`.
         $mouseRelEventsAlt = @()
@@ -1702,7 +1704,9 @@ function Try-AeroQmpInjectVirtioInputEvents {
         try {
           $mouseDevice = Invoke-AeroQmpInputSendEvent -Writer $writer -Reader $reader -Device $mouseDevice -Events $mouseRelEventsAlt
         } catch {
-          throw "QEMU does not support QMP input-send-event horizontal scroll axis ('hscroll'/'hwheel') required by -WithInputWheel. Upgrade QEMU or omit -WithInputWheel."
+          $errHwheel = ""
+          try { $errHwheel = [string]$_.Exception.Message } catch { }
+          throw "QMP input-send-event failed while injecting horizontal scroll for -WithInputWheel (tried axis='hscroll' then axis='hwheel'). This likely means the running QEMU build does not support horizontal scroll injection; upgrade QEMU or omit -WithInputWheel. hscroll_error=$errHscroll; hwheel_error=$errHwheel"
         }
       }
 
