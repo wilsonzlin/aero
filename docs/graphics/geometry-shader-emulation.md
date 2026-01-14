@@ -128,7 +128,7 @@ There are currently three compute-prepass “modes”:
 - **Real GS execution (supported subset):** translate the guest’s GS DXBC into a WGSL compute shader
   and run it to generate expanded vertices/indices + indirect args.
 - **Fallback synthetic expansion (scaffolding):** run `GEOMETRY_PREPASS_CS_WGSL`, which emits synthetic primitives. This
-  mode remains useful for patchlist scaffolding and for tests that force the compute-prepass
+  mode remains useful for adjacency/patchlist scaffolding and for tests that force the compute-prepass
   path without a real GS.
 
 ### Synthetic expansion vs translated GS prepass (current behavior)
@@ -151,7 +151,7 @@ The executor currently uses **two distinct** compute prepass implementations for
   - `@group(3)` provides the GS stage resource table (`cb#/t#/s#`) and (optionally) internal IA vertex pulling
     bindings.
 - **Used for:**
-  - patchlist scaffolding,
+  - adjacency/patchlist scaffolding (when no translated-GS prepass is selected),
   - tessellation bring-up before real HS/DS execution exists, and
   - tests that validate compute-prepass+indirect plumbing without requiring a translated GS (many such
     tests force the emulation path by using an adjacency topology that WebGPU cannot draw directly).
