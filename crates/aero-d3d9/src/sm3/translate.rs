@@ -63,6 +63,7 @@ impl std::ops::Deref for ShaderCacheLookup<'_> {
     }
 }
 
+#[derive(Default)]
 pub struct ShaderCache {
     map: HashMap<Hash, CachedShader>,
 }
@@ -88,14 +89,6 @@ impl ShaderCache {
                     shader: e.insert(CachedShader { hash, translated }),
                 })
             }
-        }
-    }
-}
-
-impl Default for ShaderCache {
-    fn default() -> Self {
-        Self {
-            map: HashMap::new(),
         }
     }
 }
@@ -135,7 +128,7 @@ pub fn translate_dxbc_to_wgsl(bytes: &[u8]) -> Result<TranslatedShader, Translat
 
     // Build a compact used-samplers bitmask for the executor.
     let mut used_samplers_mask = 0u16;
-    for (&s, _) in &wgsl_out.bind_group_layout.sampler_bindings {
+    for &s in wgsl_out.bind_group_layout.sampler_bindings.keys() {
         if s < 16 {
             used_samplers_mask |= 1u16 << s;
         }
