@@ -13,6 +13,13 @@ struct Vertex {
   DWORD color;
 };
 
+struct VertexXyzDiffuse {
+  float x;
+  float y;
+  float z;
+  DWORD color;
+};
+
 static void FillTriangle(Vertex* v,
                          float x0, float y0,
                          float x1, float y1,
@@ -431,6 +438,213 @@ static int RunD3D9DynamicVbLockSemantics(int argc, char** argv) {
                          (unsigned long)px0, (unsigned long)exp0,
                          (unsigned long)px1, (unsigned long)exp1,
                          (unsigned long)px2, (unsigned long)exp2);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 3: dynamic index buffer DISCARD + NOOVERWRITE overlap must not corrupt
+  // previously-recorded draws.
+  // ---------------------------------------------------------------------------
+  //
+  // This uses the fixed-function XYZ|DIFFUSE path (non-pretransformed vertices)
+  // because AeroGPU's fixed-function XYZRHW indexed draws expand indices into a
+  // temporary vertex stream and do not exercise the GPU index-buffer binding.
+  {
+    const DWORD kFvfXyzDiffuse = D3DFVF_XYZ | D3DFVF_DIFFUSE;
+    hr = dev->SetFVF(kFvfXyzDiffuse);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF(XYZ|DIFFUSE) (phase3)", hr);
+    }
+
+    // Vertex buffer contains two identical clip-space triangles (red/green) plus
+    // an offscreen sentinel triangle that forces the fixed-function CPU transform
+    // path to upload the full vertex range regardless of which test triangle is
+    // selected by indices.
+    ComPtr<IDirect3DVertexBuffer9> vb_xyz;
+    const UINT kVtxCount = 9;
+    hr = dev->CreateVertexBuffer(sizeof(VertexXyzDiffuse) * kVtxCount,
+                                 D3DUSAGE_WRITEONLY,
+                                 kFvfXyzDiffuse,
+                                 D3DPOOL_DEFAULT,
+                                 vb_xyz.put(),
+                                 NULL);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreateVertexBuffer (phase3)", hr);
+    }
+
+    VertexXyzDiffuse* v = NULL;
+    hr = vb_xyz->Lock(0, 0, (void**)&v, 0);
+    if (FAILED(hr) || !v) {
+      return reporter.FailHresult("vb_xyz->Lock (phase3)", hr);
+    }
+
+    // Sentinel vertices (fully outside clip space: x>1 and y>1).
+    v[0].x = 2.0f;
+    v[0].y = 2.0f;
+    v[0].z = 0.5f;
+    v[0].color = D3DCOLOR_XRGB(0, 0, 0);
+    v[7].x = 2.5f;
+    v[7].y = 2.0f;
+    v[7].z = 0.5f;
+    v[7].color = D3DCOLOR_XRGB(0, 0, 0);
+    v[8].x = 2.0f;
+    v[8].y = 2.5f;
+    v[8].z = 0.5f;
+    v[8].color = D3DCOLOR_XRGB(0, 0, 0);
+
+    // Red triangle at indices 1..3 (clip-space, covers screen center).
+    v[1].x = -1.0f;
+    v[1].y = -1.0f;
+    v[1].z = 0.5f;
+    v[1].color = D3DCOLOR_XRGB(255, 0, 0);
+    v[2].x = 1.0f;
+    v[2].y = -1.0f;
+    v[2].z = 0.5f;
+    v[2].color = D3DCOLOR_XRGB(255, 0, 0);
+    v[3].x = 0.0f;
+    v[3].y = 1.0f;
+    v[3].z = 0.5f;
+    v[3].color = D3DCOLOR_XRGB(255, 0, 0);
+
+    // Green triangle at indices 4..6 (same shape, different color).
+    v[4].x = -1.0f;
+    v[4].y = -1.0f;
+    v[4].z = 0.5f;
+    v[4].color = D3DCOLOR_XRGB(0, 255, 0);
+    v[5].x = 1.0f;
+    v[5].y = -1.0f;
+    v[5].z = 0.5f;
+    v[5].color = D3DCOLOR_XRGB(0, 255, 0);
+    v[6].x = 0.0f;
+    v[6].y = 1.0f;
+    v[6].z = 0.5f;
+    v[6].color = D3DCOLOR_XRGB(0, 255, 0);
+
+    hr = vb_xyz->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("vb_xyz->Unlock (phase3)", hr);
+    }
+
+    ComPtr<IDirect3DIndexBuffer9> ib;
+    const UINT kIndexCount = 6; // 2 triangles
+    hr = dev->CreateIndexBuffer(sizeof(WORD) * kIndexCount,
+                                D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                                D3DFMT_INDEX16,
+                                D3DPOOL_DEFAULT,
+                                ib.put(),
+                                NULL);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreateIndexBuffer (phase3)", hr);
+    }
+
+    hr = dev->SetStreamSource(0, vb_xyz.get(), 0, sizeof(VertexXyzDiffuse));
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(vb_xyz) (phase3)", hr);
+    }
+    hr = dev->SetIndices(ib.get());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetIndices (phase3)", hr);
+    }
+
+    ComPtr<IDirect3DSurface9> ib_rts[2];
+    for (int i = 0; i < 2; ++i) {
+      hr = dev->CreateRenderTarget(kWidth,
+                                   kHeight,
+                                   D3DFMT_X8R8G8B8,
+                                   D3DMULTISAMPLE_NONE,
+                                   0,
+                                   FALSE,
+                                   ib_rts[i].put(),
+                                   NULL);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("CreateRenderTarget (phase3)", hr);
+      }
+    }
+
+    hr = dev->BeginScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("BeginScene (phase3)", hr);
+    }
+
+    // First draw uses DISCARD; second draw uses NOOVERWRITE on the same bytes.
+    // Correct behavior requires the NOOVERWRITE lock to fall back to DISCARD
+    // (rename) so the first draw's indices remain intact.
+    for (int iter = 0; iter < 2; ++iter) {
+      hr = dev->SetRenderTarget(0, ib_rts[iter].get());
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("SetRenderTarget (phase3)", hr);
+      }
+      hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 0, 0), 1.0f, 0);
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("Clear (phase3)", hr);
+      }
+
+      WORD* idx = NULL;
+      const DWORD flags = (iter == 0) ? D3DLOCK_DISCARD : D3DLOCK_NOOVERWRITE;
+      hr = ib->Lock(0, sizeof(WORD) * kIndexCount, (void**)&idx, flags);
+      if (FAILED(hr) || !idx) {
+        dev->EndScene();
+        return reporter.FailHresult("IDirect3DIndexBuffer9::Lock (phase3)", hr);
+      }
+
+      // Sentinel triangle: (0,7,8) (offscreen, clipped).
+      idx[0] = 0;
+      idx[1] = 7;
+      idx[2] = 8;
+      // Test triangle: either red (1,2,3) or green (4,5,6).
+      const WORD base = (iter == 0) ? 1 : 4;
+      idx[3] = base;
+      idx[4] = base + 1;
+      idx[5] = base + 2;
+
+      hr = ib->Unlock();
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("IDirect3DIndexBuffer9::Unlock (phase3)", hr);
+      }
+
+      hr = dev->DrawIndexedPrimitive(D3DPT_TRIANGLELIST,
+                                     0,           // BaseVertexIndex
+                                     0,           // MinVertexIndex
+                                     kVtxCount,   // NumVertices
+                                     0,           // StartIndex
+                                     2);          // PrimitiveCount
+      if (FAILED(hr)) {
+        dev->EndScene();
+        return reporter.FailHresult("DrawIndexedPrimitive (phase3)", hr);
+      }
+    }
+
+    hr = dev->EndScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("EndScene (phase3)", hr);
+    }
+
+    dev->SetRenderTarget(0, backbuffer.get());
+
+    for (int iter = 0; iter < 2; ++iter) {
+      hr = dev->GetRenderTargetData(ib_rts[iter].get(), sysmem.get());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("GetRenderTargetData (phase3)", hr);
+      }
+      D3DLOCKED_RECT lr;
+      ZeroMemory(&lr, sizeof(lr));
+      hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("LockRect (phase3)", hr);
+      }
+      const uint32_t pixel = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, kWidth / 2, kHeight / 2);
+      sysmem->UnlockRect();
+
+      const uint32_t expected = (uint32_t)((iter == 0) ? D3DCOLOR_XRGB(255, 0, 0) : D3DCOLOR_XRGB(0, 255, 0));
+      if ((pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+        return reporter.Fail("phase3 pixel mismatch at iter=%d: got=0x%08lX expected=0x%08lX",
+                             iter,
+                             (unsigned long)pixel,
+                             (unsigned long)expected);
+      }
+    }
   }
 
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
