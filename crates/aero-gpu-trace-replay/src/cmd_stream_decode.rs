@@ -407,6 +407,7 @@ fn decode_known_fields(
                 out.insert("stage".into(), json!(stage));
                 if stage == 2 && stage_ex != 0 {
                     out.insert("stage_ex".into(), json!(stage_ex));
+                    out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                 }
                 out.insert("dxbc_size_bytes".into(), json!(dxbc_size_bytes));
                 out.insert("dxbc_len".into(), json!(dxbc.len()));
@@ -504,6 +505,7 @@ fn decode_known_fields(
                 out.insert("texture".into(), json!(texture));
                 if shader_stage == 2 && stage_ex != 0 {
                     out.insert("stage_ex".into(), json!(stage_ex));
+                    out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                 }
             } else {
                 out.insert("decode_error".into(), json!("truncated payload"));
@@ -520,6 +522,7 @@ fn decode_known_fields(
                 out.insert("sampler_count".into(), json!(sampler_count));
                 if shader_stage == 2 && stage_ex != 0 {
                     out.insert("stage_ex".into(), json!(stage_ex));
+                    out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                 }
                 if let Some(first) = handles.first() {
                     out.insert("sampler0".into(), json!(*first));
@@ -551,6 +554,7 @@ fn decode_known_fields(
             out.insert("vec4_count".into(), json!(vec4_count));
             if stage == 2 && stage_ex != 0 {
                 out.insert("stage_ex".into(), json!(stage_ex));
+                out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
             }
             if let Some(float_count) = vec4_count.checked_mul(4) {
                 out.insert("float_count".into(), json!(float_count));
@@ -588,6 +592,7 @@ fn decode_known_fields(
                     out.insert("buffer_count".into(), json!(buffer_count));
                     if shader_stage == 2 && stage_ex != 0 {
                         out.insert("stage_ex".into(), json!(stage_ex));
+                        out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                     }
                     if let Some(first) = bindings.first() {
                         let cb0_buffer = first.buffer;
@@ -615,6 +620,7 @@ fn decode_known_fields(
                     out.insert("buffer_count".into(), json!(buffer_count));
                     if shader_stage == 2 && stage_ex != 0 {
                         out.insert("stage_ex".into(), json!(stage_ex));
+                        out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                     }
                     if let Some(first) = bindings.first() {
                         let srv0_buffer = first.buffer;
@@ -642,6 +648,7 @@ fn decode_known_fields(
                     out.insert("uav_count".into(), json!(uav_count));
                     if shader_stage == 2 && stage_ex != 0 {
                         out.insert("stage_ex".into(), json!(stage_ex));
+                        out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
                     }
                     if let Some(first) = bindings.first() {
                         let uav0_buffer = first.buffer;
@@ -813,6 +820,18 @@ fn hex_prefix(bytes: &[u8], max_len: usize) -> String {
         out.push_str("..");
     }
     out
+}
+
+fn stage_ex_name(stage_ex: u32) -> &'static str {
+    // Mirrors `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    match stage_ex {
+        1 => "Vertex",
+        2 => "Geometry",
+        3 => "Hull",
+        4 => "Domain",
+        5 => "Compute",
+        _ => "Unknown",
+    }
 }
 
 fn cmd_decode_error_kind(err: &AerogpuCmdDecodeError) -> &'static str {

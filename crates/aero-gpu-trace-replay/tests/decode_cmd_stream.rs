@@ -285,19 +285,23 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     // CREATE_SHADER_DXBC should surface its `stage_ex` tag when present.
     assert!(listing.contains("CreateShaderDxbc"));
     assert!(listing.contains("stage_ex=3"));
+    assert!(listing.contains("stage_ex_name=Hull"));
 
     // stage_ex-capable binding packets should also surface stage_ex tags.
     assert!(listing.contains("SetTexture"));
     assert!(listing.contains("texture=8738")); // 0x2222
     assert!(listing.contains("stage_ex=2")); // Geometry
+    assert!(listing.contains("stage_ex_name=Geometry"));
 
     assert!(listing.contains("SetSamplers"));
     assert!(listing.contains("sampler0=13107")); // 0x3333
     assert!(listing.contains("stage_ex=3")); // Hull
+    assert!(listing.contains("stage_ex_name=Hull"));
 
     assert!(listing.contains("SetShaderConstantsF"));
     assert!(listing.contains("vec4_count=1"));
     assert!(listing.contains("stage_ex=4")); // Domain
+    assert!(listing.contains("stage_ex_name=Domain"));
     assert!(listing.contains("data_len=16"));
     assert!(listing.contains("data_prefix=0000803f000000400000404000008040"));
 
@@ -383,22 +387,26 @@ fn json_listing_decodes_new_opcodes() {
     let create_shader = find_packet("CreateShaderDxbc");
     assert_eq!(create_shader["decoded"]["stage"], 2);
     assert_eq!(create_shader["decoded"]["stage_ex"], 3);
+    assert_eq!(create_shader["decoded"]["stage_ex_name"], "Hull");
 
     let set_texture = find_packet("SetTexture");
     assert_eq!(set_texture["decoded"]["shader_stage"], 2);
     assert_eq!(set_texture["decoded"]["texture"], 0x2222);
     assert_eq!(set_texture["decoded"]["stage_ex"], 2);
+    assert_eq!(set_texture["decoded"]["stage_ex_name"], "Geometry");
 
     let set_samplers = find_packet("SetSamplers");
     assert_eq!(set_samplers["decoded"]["shader_stage"], 2);
     assert_eq!(set_samplers["decoded"]["sampler_count"], 1);
     assert_eq!(set_samplers["decoded"]["sampler0"], 0x3333);
     assert_eq!(set_samplers["decoded"]["stage_ex"], 3);
+    assert_eq!(set_samplers["decoded"]["stage_ex_name"], "Hull");
 
     let set_consts = find_packet("SetShaderConstantsF");
     assert_eq!(set_consts["decoded"]["stage"], 2);
     assert_eq!(set_consts["decoded"]["vec4_count"], 1);
     assert_eq!(set_consts["decoded"]["stage_ex"], 4);
+    assert_eq!(set_consts["decoded"]["stage_ex_name"], "Domain");
     assert_eq!(set_consts["decoded"]["data_len"], 16);
     assert_eq!(
         set_consts["decoded"]["data_prefix"],

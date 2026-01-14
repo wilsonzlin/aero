@@ -859,6 +859,18 @@ fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
     }
 }
 
+fn stage_ex_name(stage_ex: u32) -> &'static str {
+    // Mirrors `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    match stage_ex {
+        1 => "Vertex",
+        2 => "Geometry",
+        3 => "Hull",
+        4 => "Domain",
+        5 => "Compute",
+        _ => "Unknown",
+    }
+}
+
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
 /// stable, grep-friendly opcode listing.
 ///
@@ -1212,7 +1224,11 @@ pub fn decode_cmd_stream_listing(
                         if stage == 2 && stage_ex != 0 {
                             // `CREATE_SHADER_DXBC` uses `reserved0` as a `stage_ex` tag when
                             // `stage == COMPUTE` (see `docs/16-gpu-command-abi.md`).
-                            let _ = write!(line, " stage_ex={stage_ex}");
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
                         }
                     }
                     AerogpuCmdOpcode::CreateInputLayout => {
@@ -1433,7 +1449,11 @@ pub fn decode_cmd_stream_listing(
                             " shader_stage={shader_stage} slot={slot} texture={texture}"
                         );
                         if shader_stage == 2 && stage_ex != 0 {
-                            let _ = write!(line, " stage_ex={stage_ex}");
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
                         }
                     }
                     AerogpuCmdOpcode::SetSamplers => {
@@ -1455,7 +1475,11 @@ pub fn decode_cmd_stream_listing(
                             " shader_stage={shader_stage} start_slot={start_slot} sampler_count={sampler_count}"
                         );
                         if shader_stage == 2 && stage_ex != 0 {
-                            let _ = write!(line, " stage_ex={stage_ex}");
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
                         }
                         if let Some(first) = handles.first() {
                             let sampler0 = *first;
@@ -1506,7 +1530,11 @@ pub fn decode_cmd_stream_listing(
                             " stage={stage} start_register={start_register} vec4_count={vec4_count}"
                         );
                         if stage == 2 && stage_ex != 0 {
-                            let _ = write!(line, " stage_ex={stage_ex}");
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
                         }
                         let data = &pkt.payload[16..payload_len];
                         let _ = write!(
@@ -1535,7 +1563,11 @@ pub fn decode_cmd_stream_listing(
                             " shader_stage={shader_stage} start_slot={start_slot} buffer_count={buffer_count}"
                         );
                         if shader_stage == 2 && stage_ex != 0 {
-                            let _ = write!(line, " stage_ex={stage_ex}");
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
                         }
 
                         if let Some(b0) = bindings.first() {
@@ -1568,7 +1600,11 @@ pub fn decode_cmd_stream_listing(
                             " shader_stage={shader_stage} start_slot={start_slot} buffer_count={buffer_count}"
                         );
                         if shader_stage == 2 && stage_ex != 0 {
-                            let _ = write!(line, " stage_ex={stage_ex}");
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
                         }
 
                         if let Some(b0) = bindings.first() {
@@ -1601,7 +1637,11 @@ pub fn decode_cmd_stream_listing(
                             " shader_stage={shader_stage} start_slot={start_slot} uav_count={uav_count}"
                         );
                         if shader_stage == 2 && stage_ex != 0 {
-                            let _ = write!(line, " stage_ex={stage_ex}");
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
                         }
 
                         if let Some(b0) = bindings.first() {
