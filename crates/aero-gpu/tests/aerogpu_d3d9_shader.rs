@@ -78,8 +78,7 @@ fn enc_dst(reg_type: u8, reg_num: u16, mask: u8) -> u32 {
 }
 
 fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
-    // D3D9 SM2/SM3 encodes the *total* instruction length in DWORD tokens (including the opcode
-    // token) in bits 24..27.
+    // The minimal translator only consumes opcode + "length" in bits 24..27.
     let token = (opcode as u32) | (((params.len() as u32) + 1) << 24);
     let mut v = vec![token];
     v.extend_from_slice(params);
@@ -236,15 +235,16 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
         ..Default::default()
     });
 
-    // Match `aero-d3d9::sm3::wgsl` binding contract:
-    // - group(0): constants buffer shared by VS/PS
-    //   - binding(0): constants buffer
-    // - group(1): VS texture/sampler bindings (unused in this test)
+    // Match `aero-d3d9` token stream shader translation binding contract:
+    // - group(0): constants buffer
+    // - group(1): VS texture/sampler bindings
     // - group(2): PS texture/sampler bindings
-    //   - binding(2*s): texture for sampler s#
-    //   - binding(2*s + 1): sampler for sampler s#
+    //
+    // Binding numbers are derived from sampler register index:
+    //   texture binding = 2*s
+    //   sampler binding = 2*s + 1
     let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("d3d9 sm3 shader constants bgl"),
+        label: Some("d3d9 constants bgl"),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -256,29 +256,12 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
             count: None,
         }],
     });
-    let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("d3d9 sm3 shader constants bg"),
-        layout: &constants_bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: constants.as_entire_binding(),
-        }],
-    });
-
-    // Empty VS sampler group (group(1)).
     let vs_samplers_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("d3d9 sm3 shader vs samplers bgl"),
+        label: Some("d3d9 vs samplers bgl (empty)"),
         entries: &[],
     });
-    let vs_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("d3d9 sm3 shader vs samplers bg"),
-        layout: &vs_samplers_bgl,
-        entries: &[],
-    });
-
-    // PS sampler group (group(2)) for s0.
     let ps_samplers_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("d3d9 sm3 shader ps samplers bgl"),
+        label: Some("d3d9 ps samplers bgl"),
         entries: &[
             // s0 texture.
             wgpu::BindGroupLayoutEntry {
@@ -300,8 +283,22 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
             },
         ],
     });
+
+    let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("d3d9 constants bg"),
+        layout: &constants_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: constants.as_entire_binding(),
+        }],
+    });
+    let vs_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("d3d9 vs samplers bg (empty)"),
+        layout: &vs_samplers_bgl,
+        entries: &[],
+    });
     let ps_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("d3d9 sm3 shader ps samplers bg"),
+        label: Some("d3d9 ps samplers bg"),
         layout: &ps_samplers_bgl,
         entries: &[
             wgpu::BindGroupEntry {

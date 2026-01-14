@@ -320,7 +320,7 @@ fn run(exec: &mut AerogpuD3d9Executor, viewport: Option<(f32, f32)>) -> Vec<u8> 
             push_u32(out, VB_HANDLE);
             push_u32(out, 16); // stride_bytes
             push_u32(out, 0); // offset_bytes
-            push_u32(out, 0); // reserved1
+            push_u32(out, 0); // reserved0
         });
 
         emit_packet(out, OPC_SET_PRIMITIVE_TOPOLOGY, |out| {

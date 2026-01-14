@@ -971,21 +971,39 @@ fn build_alpha_test_wgsl_variant(
     alpha_test_func: u32,
     alpha_test_ref: u8,
 ) -> Result<String, AerogpuD3d9Error> {
-    const FS_SIG_WITH_INPUT: &str = "@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n";
-    const FS_SIG_NO_INPUT: &str = "@fragment\nfn fs_main() -> PsOutput {\n";
+    // Match both the legacy SM1/2 WGSL names (PsInput/PsOutput) and the newer SM3 translator
+    // output (FsIn/FsOut).
+    const FS_SIG_WITH_INPUT_PS: &str = "@fragment\nfn fs_main(input: PsInput) -> PsOutput {\n";
+    const FS_SIG_NO_INPUT_PS: &str = "@fragment\nfn fs_main() -> PsOutput {\n";
+    const FS_SIG_WITH_INPUT_FS: &str = "@fragment\nfn fs_main(input: FsIn) -> FsOut {\n";
+    const FS_SIG_NO_INPUT_FS: &str = "@fragment\nfn fs_main() -> FsOut {\n";
 
-    let (old_sig, new_sig, wrapper_sig, call_expr) = if base.contains(FS_SIG_WITH_INPUT) {
+    let (old_sig, new_sig, wrapper_sig, call_expr) = if base.contains(FS_SIG_WITH_INPUT_PS) {
         (
-            FS_SIG_WITH_INPUT,
+            FS_SIG_WITH_INPUT_PS,
             "fn fs_main_inner(input: PsInput) -> PsOutput {\n",
             "fn fs_main(input: PsInput) -> PsOutput {\n",
             "fs_main_inner(input)",
         )
-    } else if base.contains(FS_SIG_NO_INPUT) {
+    } else if base.contains(FS_SIG_NO_INPUT_PS) {
         (
-            FS_SIG_NO_INPUT,
+            FS_SIG_NO_INPUT_PS,
             "fn fs_main_inner() -> PsOutput {\n",
             "fn fs_main() -> PsOutput {\n",
+            "fs_main_inner()",
+        )
+    } else if base.contains(FS_SIG_WITH_INPUT_FS) {
+        (
+            FS_SIG_WITH_INPUT_FS,
+            "fn fs_main_inner(input: FsIn) -> FsOut {\n",
+            "fn fs_main(input: FsIn) -> FsOut {\n",
+            "fs_main_inner(input)",
+        )
+    } else if base.contains(FS_SIG_NO_INPUT_FS) {
+        (
+            FS_SIG_NO_INPUT_FS,
+            "fn fs_main_inner() -> FsOut {\n",
+            "fn fs_main() -> FsOut {\n",
             "fs_main_inner()",
         )
     } else {
@@ -2567,9 +2585,17 @@ impl AerogpuD3d9Executor {
             });
         }
 
+        // Shader translation can surface sampler texture types via SM3 `dcl_*` declarations.
+        //
+        // The executor currently only supports binding 2D/cube textures from the command stream,
+        // but it can still compile shaders that declare 1D/3D samplers by providing dummy textures
+        // of the correct view dimension.
         for (&sampler, &ty) in &cached.sampler_texture_types {
             match ty {
-                TextureType::Texture2D | TextureType::TextureCube => {}
+                TextureType::Texture1D
+                | TextureType::Texture2D
+                | TextureType::Texture3D
+                | TextureType::TextureCube => {}
                 other => {
                     return Err(AerogpuD3d9Error::ShaderTranslation(format!(
                         "unsupported sampler texture type {other:?} (s{sampler})"
@@ -2656,7 +2682,10 @@ impl AerogpuD3d9Executor {
 
                     for (&sampler, &ty) in &translated.sampler_texture_types {
                         match ty {
-                            TextureType::Texture2D | TextureType::TextureCube => {}
+                            TextureType::Texture1D
+                            | TextureType::Texture2D
+                            | TextureType::Texture3D
+                            | TextureType::TextureCube => {}
                             other => {
                                 return Err(format!(
                                     "unsupported sampler texture type {other:?} (s{sampler})"
