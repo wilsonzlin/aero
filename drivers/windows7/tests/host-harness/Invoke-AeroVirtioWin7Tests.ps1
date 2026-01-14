@@ -4563,7 +4563,7 @@ try {
     }
     "VIRTIO_SND_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "virtio-snd: skipped \\(enable with --test-snd\\)") {
+      if ($result.Tail -match "virtio-snd: skipped \(enable with --test-snd\)") {
         $reason = "guest_not_configured_with_--test-snd"
       } elseif ($result.Tail -match "virtio-snd: .*device not detected") {
         $reason = "device_missing"
@@ -4580,7 +4580,7 @@ try {
     }
     "VIRTIO_SND_CAPTURE_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-capture\|SKIP\|([^|\r\n]+)") {
         $reason = $Matches[1]
       }
 
@@ -4593,7 +4593,7 @@ try {
     }
     "VIRTIO_SND_DUPLEX_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-duplex\\|SKIP\\|([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-duplex\|SKIP\|([^|\r\n]+)") {
         $reason = $Matches[1]
       }
 
@@ -4606,7 +4606,7 @@ try {
     }
     "VIRTIO_SND_BUFFER_LIMITS_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-buffer-limits\\|SKIP\\|([^\\|\\r\\n]+)") {
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-buffer-limits\|SKIP\|([^|\r\n]+)") {
         $reason = $Matches[1]
       }
 
