@@ -1005,6 +1005,33 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const id = newDiskId();
       const baseName = id;
 
+      // If the input is already an aerosparse disk, treat import_convert as a no-op import.
+      // Converting an aerosparse file as if it were raw would incorrectly use the sparse file
+      // *physical length* as the logical disk size.
+      const aerosparDiskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
+      if (typeof aerosparDiskSizeBytes === "number") {
+        const fileName = `${id}.aerospar`;
+        const progressCb = (p: ImportProgress) => postProgress(requestId, p);
+        const res = await opfsImportFile(fileName, file, progressCb);
+        const meta: DiskImageMetadata = {
+          source: "local",
+          id,
+          name,
+          backend,
+          kind: "hdd",
+          format: "aerospar",
+          fileName,
+          sizeBytes: aerosparDiskSizeBytes,
+          createdAtMs: Date.now(),
+          lastUsedAtMs: undefined,
+          checksum: res.checksumCrc32 ? { algorithm: "crc32", value: res.checksumCrc32 } : undefined,
+          sourceFileName: file.name,
+        };
+        await store.putDisk(meta);
+        postOk(requestId, meta);
+        return;
+      }
+
       const destDir = await opfsGetDisksDir();
 
       const manifest = await importConvertToOpfs({ kind: "file", file }, destDir, baseName, {
