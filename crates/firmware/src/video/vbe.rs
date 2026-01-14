@@ -292,8 +292,8 @@ impl VbeDevice {
         // The Windows boot stack (bootmgr/winload/bootvid) is sensitive to these flags; in
         // particular it expects the LFB-available bit when `PhysBasePtr` is non-zero.
         //
-        // Bit meanings used here follow the project-wide convention in the emulator VBE
-        // implementation (`crates/emulator/src/devices/vga/vbe.rs`):
+        // Bit meanings used here follow the VBE 2.0+ "ModeAttributes" layout as used throughout
+        // the project (and in the canonical `aero-gpu-vga` device model):
         // - bit 0: mode supported
         // - bit 2: color mode
         // - bit 3: graphics mode
