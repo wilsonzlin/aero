@@ -26,6 +26,14 @@ Status:
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
+Related docs:
+
+- USB HID device/report details: [`docs/usb-hid.md`](./usb-hid.md)
+- EHCI (USB 2.0) controller bring-up + contract: [`docs/usb-ehci.md`](./usb-ehci.md)
+- WebUSB passthrough (currently UHCI-focused, but the async “pending → NAK” pattern applies to any controller): [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
+- Canonical PCI layout + INTx routing: [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md)
+- IRQ line semantics in the web runtime: [`docs/irq-semantics.md`](./irq-semantics.md)
+
 ---
 
 ## PCI identity and wiring
