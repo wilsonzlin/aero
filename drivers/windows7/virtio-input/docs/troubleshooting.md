@@ -201,6 +201,8 @@ hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
 
+If `--reset-counters` fails, rerun elevated; it requires opening the HID interface with write access.
+
 Watch `StatusQFull` and (when enabled) `VirtioStatusDrops` / `LedWritesDropped`.
 
 ## No input events (likely still using PS/2)
