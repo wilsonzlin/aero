@@ -105,8 +105,10 @@ $toolchainJson = $toolchain | ConvertTo-Json -Depth 6
 # NOTE: Avoid `Set-Content -Encoding UTF8` here: Windows PowerShell 5.1 writes a UTF-8 BOM
 # while PowerShell 7+ does not. The resulting cross-shell difference can subtly break
 # downstream scripts and CI caching keyed on file contents. Use an explicit UTF-8 (no BOM)
-# encoding and ensure the file ends with a single newline (matching Set-Content behavior).
-$toolchainJson = $toolchainJson.TrimEnd("`r", "`n") + [System.Environment]::NewLine
+# encoding and normalize newlines to keep output stable across PowerShell runtimes.
+$toolchainJson = $toolchainJson.Replace("`r`n", "`n").Replace("`r", "`n")
+$toolchainJson = $toolchainJson.TrimEnd("`n") + "`n"
+$toolchainJson = $toolchainJson.Replace("`n", [System.Environment]::NewLine)
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($outFile, $toolchainJson, $utf8NoBom)
 Write-ToolchainLog -Message "Wrote toolchain manifest: $outFile"
