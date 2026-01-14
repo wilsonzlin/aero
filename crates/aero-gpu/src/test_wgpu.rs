@@ -6,10 +6,7 @@
 //! To keep the test harness robust, we lazily create (and intentionally keep alive) a small set of
 //! headless `wgpu` devices keyed by the requested feature bits.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
-use crate::GpuError;
+use std::sync::OnceLock;
 
 pub(crate) struct TestWgpuDevice {
     pub(crate) device: wgpu::Device,
@@ -114,94 +111,4 @@ pub(crate) async fn create_device_exact(
         downlevel_flags,
         backend,
     })
-}
-
-pub(crate) async fn create_device_negotiated() -> Option<(wgpu::Features, TestWgpuDevice)> {
-    let adapter = select_adapter().await?;
-
-    let required_features = crate::wgpu_features::negotiated_features(&adapter);
-    let downlevel_flags = adapter.get_downlevel_capabilities().flags;
-    let backend = adapter.get_info().backend;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-gpu unit-test negotiated device"),
-                required_features,
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .ok()?;
-
-    Some((
-        required_features,
-        TestWgpuDevice {
-            device,
-            queue,
-            downlevel_flags,
-            backend,
-        },
-    ))
-}
-
-fn devices_map() -> &'static Mutex<HashMap<u64, &'static TestWgpuDevice>> {
-    static DEVICES: OnceLock<Mutex<HashMap<u64, &'static TestWgpuDevice>>> = OnceLock::new();
-    DEVICES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-pub(crate) fn device_with_features(
-    required_features: wgpu::Features,
-) -> Option<&'static TestWgpuDevice> {
-    let key = required_features.bits();
-
-    if let Some(existing) = devices_map().lock().ok()?.get(&key).copied() {
-        return Some(existing);
-    }
-
-    let created = pollster::block_on(create_device_exact(required_features))?;
-    let leaked = Box::leak(Box::new(created));
-    let mut map = devices_map().lock().ok()?;
-    map.entry(key).or_insert(leaked);
-    map.get(&key).copied()
-}
-
-pub(crate) fn negotiated_device() -> Result<&'static TestWgpuDevice, GpuError> {
-    // Cache the negotiated device by its feature bits so other tests can also request the exact
-    // feature set (e.g. `TEXTURE_COMPRESSION_BC`) without duplicating device creation.
-    static NEGOTIATED_KEY: OnceLock<u64> = OnceLock::new();
-
-    if let Some(&key) = NEGOTIATED_KEY.get() {
-        if let Some(existing) = devices_map()
-            .lock()
-            .ok()
-            .and_then(|map| map.get(&key).copied())
-        {
-            return Ok(existing);
-        }
-    }
-
-    let (features, created) = pollster::block_on(create_device_negotiated())
-        .ok_or_else(|| GpuError::Backend("no suitable wgpu adapter found".into()))?;
-    let key = features.bits();
-    let _ = NEGOTIATED_KEY.set(key);
-
-    if let Some(existing) = devices_map()
-        .lock()
-        .ok()
-        .and_then(|map| map.get(&key).copied())
-    {
-        return Ok(existing);
-    }
-
-    let leaked = Box::leak(Box::new(created));
-    let mut map = devices_map()
-        .lock()
-        .map_err(|_| GpuError::Backend("failed to lock test wgpu device cache".into()))?;
-    map.entry(key).or_insert(leaked);
-    Ok(map
-        .get(&key)
-        .copied()
-        .expect("negotiated device must exist in cache"))
 }

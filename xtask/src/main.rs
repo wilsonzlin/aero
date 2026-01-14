@@ -235,34 +235,6 @@ Run `cargo xtask <command> --help` for command-specific help.
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::strip_global_noop_flags;
-
-    #[test]
-    fn strip_global_noop_flags_removes_locked_before_double_dash() {
-        let out = strip_global_noop_flags(vec![
-            "wasm".to_string(),
-            "--locked".to_string(),
-            "single".to_string(),
-        ]);
-        assert_eq!(out, vec!["wasm".to_string(), "single".to_string()]);
-    }
-
-    #[test]
-    fn strip_global_noop_flags_preserves_locked_after_double_dash() {
-        let out = strip_global_noop_flags(vec![
-            "--".to_string(),
-            "--locked".to_string(),
-            "foo".to_string(),
-        ]);
-        assert_eq!(
-            out,
-            vec!["--".to_string(), "--locked".to_string(), "foo".to_string()]
-        );
-    }
-}
-
 fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     let mut check = false;
     for arg in args {
@@ -447,5 +419,33 @@ impl FixtureWriter {
             "fixtures are out of date:\n{}\n\nrun `cargo xtask fixtures` to regenerate",
             self.failures.join("\n")
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_global_noop_flags;
+
+    #[test]
+    fn strip_global_noop_flags_removes_locked_before_double_dash() {
+        let out = strip_global_noop_flags(vec![
+            "wasm".to_string(),
+            "--locked".to_string(),
+            "single".to_string(),
+        ]);
+        assert_eq!(out, vec!["wasm".to_string(), "single".to_string()]);
+    }
+
+    #[test]
+    fn strip_global_noop_flags_preserves_locked_after_double_dash() {
+        let out = strip_global_noop_flags(vec![
+            "--".to_string(),
+            "--locked".to_string(),
+            "foo".to_string(),
+        ]);
+        assert_eq!(
+            out,
+            vec!["--".to_string(), "--locked".to_string(), "foo".to_string()]
+        );
     }
 }
