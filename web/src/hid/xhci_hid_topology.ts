@@ -8,8 +8,20 @@ export type XhciHidPassthroughDeviceKind = "webhid" | "usb-hid-passthrough";
  * Real xHCI implementations encode the hub route string using 4-bit port numbers
  * (1..15). Keeping hub port counts <=15 avoids creating guest-visible USB
  * topologies that cannot be represented with valid xHCI route strings.
+ *
+ * Reference: xHCI 1.2 §6.2.2 "Slot Context" (Route String field).
  */
 export const XHCI_MAX_HUB_PORT_COUNT = 15;
+
+/**
+ * Maximum number of downstream hub tiers representable by the Slot Context Route String.
+ *
+ * The Route String is 20 bits wide (5 nibbles), so it can encode up to 5 hub hops
+ * downstream from the root port.
+ *
+ * Reference: xHCI 1.2 §6.2.2 "Slot Context" (Route String field).
+ */
+export const XHCI_MAX_ROUTE_TIER_COUNT = 5;
 
 function clampHubPortCount(value: number): number {
   if (!Number.isFinite(value)) return 1;
@@ -23,6 +35,8 @@ function isValidDownstreamPortNumber(value: number): boolean {
 
 function isValidDevicePath(path: GuestUsbPath): boolean {
   if (!Array.isArray(path) || path.length === 0) return false;
+  // Root port + up to 5 downstream hub ports (Route String).
+  if (path.length > XHCI_MAX_ROUTE_TIER_COUNT + 1) return false;
   const root = path[0];
   if (typeof root !== "number" || !Number.isFinite(root) || !Number.isInteger(root) || root < 0) return false;
   for (let i = 1; i < path.length; i += 1) {

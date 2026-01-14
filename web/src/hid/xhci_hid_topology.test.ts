@@ -103,4 +103,22 @@ describe("hid/xhci_hid_topology", () => {
     expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
     expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
   });
+
+  it("ignores device attachments with too-deep paths (>5 downstream hub tiers)", () => {
+    const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 8 });
+    const xhci = createFakeXhci();
+    const dev1 = { kind: "device-1" };
+    const dev2 = { kind: "device-2" };
+
+    mgr.setXhciBridge(xhci);
+    mgr.attachDevice(1, [0, 1], "webhid", dev1);
+    expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
+
+    // Route String is 20 bits (5 nibbles), so only 5 downstream ports are representable.
+    mgr.attachDevice(2, [0, 1, 1, 1, 1, 1, 1], "webhid", dev2);
+
+    expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
+  });
 });
