@@ -5889,7 +5889,9 @@ impl AerogpuD3d11Executor {
             // However, several compute-prepass smoke tests intentionally use patchlist topologies
             // as a sentinel to force the emulation path (without binding HS/DS). Only enforce
             // strict HS/DS+patchlist validation when a tessellation stage is actually bound.
-            if let CmdPrimitiveTopology::PatchList { control_points } = self.state.primitive_topology {
+            if let CmdPrimitiveTopology::PatchList { control_points } =
+                self.state.primitive_topology
+            {
                 let actual = u32::from(control_points);
                 let hs_handle = self.state.hs.ok_or_else(|| {
                     anyhow!(
@@ -24337,12 +24339,14 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                    buffer: VB,
-                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                    offset_bytes: 0,
-                    reserved0: 0,
-                }],
+                &[
+                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                        buffer: VB,
+                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                        offset_bytes: 0,
+                        reserved0: 0,
+                    },
+                ],
             );
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
             writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
@@ -24474,12 +24478,14 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                    buffer: VB,
-                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                    offset_bytes: 0,
-                    reserved0: 0,
-                }],
+                &[
+                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                        buffer: VB,
+                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                        offset_bytes: 0,
+                        reserved0: 0,
+                    },
+                ],
             );
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
             writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
@@ -24506,12 +24512,14 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                    buffer: VB,
-                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                    offset_bytes: 0,
-                    reserved0: 0,
-                }],
+                &[
+                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                        buffer: VB,
+                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                        offset_bytes: 0,
+                        reserved0: 0,
+                    },
+                ],
             );
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
             writer.draw(6, 1, 0, 0);

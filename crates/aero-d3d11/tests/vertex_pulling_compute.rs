@@ -642,9 +642,7 @@ fn compute_can_vertex_pull_unorm8x2_and_unorm10_10_10_2_formats() {
         let mut vb = vec![
             0u8,   // base offset padding
             128u8, // v0 R8G8 = (128, 64)
-            64u8,
-            0u8,
-            0u8,
+            64u8, 0u8, 0u8,
         ];
         // v0 R10G10B10A2 = (r=1023, g=0, b=512, a=3)
         push_u32(&mut vb, 0xE000_03FF);
