@@ -2000,8 +2000,13 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
         StorPortReleaseSpinLock(devExt, &lock);
       } else if (pnp->PnPAction == StorStartDevice) {
         BOOLEAN allocateResources;
+        STOR_LOCK_HANDLE lock;
 
+        /* Clear removed under lock so StartIo/queue path sees consistent state. */
+        StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
         devExt->Removed = FALSE;
+        StorPortReleaseSpinLock(devExt, &lock);
+
         allocateResources = (devExt->Vq.queue_size == 0 || devExt->RequestContexts == NULL) ? TRUE : FALSE;
         if (!AerovblkDeviceBringUp(devExt, allocateResources)) {
           AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
