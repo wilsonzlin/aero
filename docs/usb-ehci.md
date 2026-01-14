@@ -243,7 +243,8 @@ Each port tracks:
 - **Reset** (PR) and a **reset timer** (real-time delay before reset completes)
 - **Suspend/Resume** (SUSP/FPR) and a **resume timer** (if modeled)
 - **Port power** (`PP`) (Aero currently models ports as powered-on by default, but honors writes)
-- **Port owner** (`PORT_OWNER`) for companion routing (modeled; companion controllers are not yet implemented)
+- **Port owner** (`PORT_OWNER`) for companion routing (modeled; `PORT_OWNER=1` makes the port
+  unreachable from EHCI; full shared-port wiring to UHCI companions is still being integrated)
 
 Implementation note:
 
@@ -331,8 +332,7 @@ controller simply leaves the qTD **Active** and retries on later microframes.
 
 - When a transaction completes successfully:
   - qTD `Active` is cleared.
-  - qTD `Total Bytes` is updated to reflect bytes remaining (or bytes transferred, depending on the
-    chosen interpretation; the implementation must match what Windows’ EHCI driver expects).
+  - qTD `Total Bytes` is decremented to reflect **bytes remaining** (EHCI semantics).
   - The QH overlay is advanced to the next qTD.
 - When a transaction is “pending” because it requires async host work (e.g. WebUSB/WebHID
   passthrough completion that hasn’t arrived yet), the qTD is left **Active** with no error bits set.
@@ -438,6 +438,8 @@ The EHCI snapshot must include:
   - `CTRLDSSEGMENT` (if supported)
   - `PERIODICLISTBASE`, `ASYNCLISTADDR`
   - `CONFIGFLAG`
+- USB Legacy Support extended capability registers (BIOS handoff semaphores / legacy control bits):
+  - `USBLEGSUP`, `USBLEGCTLSTS`
 - Root hub port state for each `PORTSC[n]`, including:
   - connect/enable/change bits
   - reset/suspend state
