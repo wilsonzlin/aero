@@ -710,7 +710,7 @@ Event types are defined in `web/src/input/event_queue.ts` (`InputEventType`):
 - `KeyHidUsage (6)`: `a=(usage & 0xFF) | ((pressed ? 1 : 0) << 8)`, `b=unused` (USB HID keyboard usage events on Usage Page 0x07). Emitted in addition to `KeyScancode` so the runtime can drive both PS/2 and USB HID paths from the same captured input.
 - `MouseMove (2)`: `a=dx`, `b=dy` (PS/2 coords: `dx` right, `dy` up)
 - `MouseButtons (3)`: `a=buttons` (bit0..bit7 = buttons 1..8; DOM mapping typically uses bit0..bit4 for left/right/middle/back/forward, with bit5+ as additional buttons)
-- `MouseWheel (4)`: `a=dz` (positive=wheel up)
+- `MouseWheel (4)`: `a=dz` (positive=wheel up), `b=dx` (positive=wheel right / horizontal scroll; used as `REL_HWHEEL` on virtio-input)
 - `GamepadReport (5)`: `a=packedBytes0to3LE`, `b=packedBytes4to7LE` (8-byte USB HID gamepad input report; see `web/src/input/gamepad.ts` for packing and `crates/aero-usb/src/hid/gamepad.rs::GamepadReport` for the canonical report layout)
 
 This keeps the hot path allocation-free and allows the worker to convert to
