@@ -164,6 +164,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 
 **How to run (focused):**
 ```bash
+# CPU-only unit tests for the shared-surface bookkeeping:
+bash ./scripts/safe-run.sh cargo test -p aero-gpu --lib shared_surface::tests --locked
+
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test shared_surface_aliasing --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_shared_surface --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_cmd_stream_shared_surface --locked
