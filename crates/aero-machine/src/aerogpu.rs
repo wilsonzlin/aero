@@ -1725,14 +1725,17 @@ impl AeroGpuMmioDevice {
 
                 if self.pending_submissions.len() == MAX_PENDING_AEROGPU_SUBMISSIONS {
                     if let Some(dropped) = self.pending_submissions.pop_front() {
-                        // Avoid deadlocking a submission-bridge guest if the host fails to drain
-                        // submissions fast enough: once dropped, the host will never see the fence.
-                        //
-                        // Only applies when the bridge is enabled; otherwise fences are completed
-                        // immediately (legacy bring-up behaviour).
-                        if self.submission_bridge_enabled && dropped.signal_fence != 0 {
-                            self.record_error(pci::AerogpuErrorCode::Backend, dropped.signal_fence);
-                            self.backend_completed_fences.insert(dropped.signal_fence);
+                        let fence = dropped.signal_fence;
+                        if self.submission_bridge_enabled
+                            && fence != 0
+                            && fence > self.completed_fence
+                            && self
+                                .pending_fence_completions
+                                .iter()
+                                .any(|pending| pending.fence_value == fence)
+                        {
+                            self.record_error(pci::AerogpuErrorCode::Backend, fence);
+                            self.backend_completed_fences.insert(fence);
                         }
                     }
                 }
