@@ -56,13 +56,6 @@ function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: num
   return out;
 }
 
-function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
-  // `BlobPart` types only accept ArrayBuffer-backed views; `Uint8Array` is generic over
-  // `ArrayBufferLike` and may be backed by `SharedArrayBuffer`. Copy when needed so TypeScript
-  // (and spec compliance) are happy.
-  return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
-}
-
 async function sendImportFile(payload: any, backend: "opfs" | "idb" = "opfs"): Promise<any> {
   vi.resetModules();
 
