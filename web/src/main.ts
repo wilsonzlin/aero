@@ -5256,9 +5256,14 @@ function renderAudioPanel(): HTMLElement {
           const MAX_CHARS = 200_000;
           const truncated = serialText.length > MAX_CHARS;
           const tail = truncated ? serialText.slice(-MAX_CHARS) : serialText;
-          const header = truncated
-            ? `# NOTE: serial output truncated (chars=${serialText.length.toLocaleString()} bytes=${serialBytes.toLocaleString()})\n\n`
-            : `# serial output (bytes=${serialBytes.toLocaleString()})\n\n`;
+          const build = getBuildInfoForExport();
+          const baseHeader = truncated
+            ? `# NOTE: serial output truncated (chars=${serialText.length.toLocaleString()} bytes=${serialBytes.toLocaleString()})\n`
+            : `# serial output (bytes=${serialBytes.toLocaleString()})\n`;
+          const header =
+            baseHeader +
+            `# timeIso: ${timeIso}\n` +
+            `# build: version=${build.version} gitSha=${build.gitSha} builtAt=${build.builtAt}\n\n`;
           entries.push({ path: `${dir}/serial.txt`, data: encoder.encode(header + tail) });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -5268,7 +5273,12 @@ function renderAudioPanel(): HTMLElement {
         // Buffered ring audio snapshots (best-effort). This is *not* a long recording: it captures
         // the currently-buffered samples in the AudioWorklet ring(s) (usually a few hundred ms).
         try {
-          const summaryLines: string[] = [];
+          const build = getBuildInfoForExport();
+          const summaryLines: string[] = [
+            `# timeIso: ${timeIso}`,
+            `# build: version=${build.version} gitSha=${build.gitSha} builtAt=${build.builtAt}`,
+            ``,
+          ];
           const captureSeconds = 3;
 
           const outputsToCapture: Array<{ name: string; out: unknown }> = [
