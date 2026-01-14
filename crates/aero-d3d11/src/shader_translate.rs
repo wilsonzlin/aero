@@ -3628,8 +3628,15 @@ fn emit_instructions(
             Sm4Inst::BufInfoRaw { dst, buffer } => {
                 let dwords = format!("arrayLength(&t{}.data)", buffer.slot);
                 let bytes = format!("({dwords}) * 4u");
-                let expr = format!("vec4<f32>(f32({bytes}), 0.0, 0.0, 0.0)");
-                let expr = maybe_saturate(dst, expr);
+                // `bufinfo` produces integer values. DXBC register files are untyped, so store the
+                // raw `u32` bits into our `vec4<f32>` register model by bitcasting.
+                //
+                // Output packing:
+                // - x = total byte size
+                // - yzw = 0
+                let expr = format!(
+                    "bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))"
+                );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::BufInfoStructured {
@@ -3641,8 +3648,13 @@ fn emit_instructions(
                 let byte_size = format!("({dwords}) * 4u");
                 let stride = format!("{}u", stride_bytes);
                 let elem_count = format!("({byte_size}) / ({stride})");
-                let expr = format!("vec4<f32>(f32({elem_count}), f32({stride}), 0.0, 0.0)");
-                let expr = maybe_saturate(dst, expr);
+                // Output packing:
+                // - x = element count
+                // - y = stride (bytes)
+                // - zw = 0
+                let expr = format!(
+                    "bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))"
+                );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bufinfo", ctx)?;
             }
             Sm4Inst::Unknown { opcode } => {

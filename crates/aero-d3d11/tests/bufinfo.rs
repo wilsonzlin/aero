@@ -129,6 +129,11 @@ fn decodes_and_translates_bufinfo_raw_to_array_length() {
         "expected bufinfo to convert dwords to bytes:\n{}",
         translated.wgsl
     );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<f32>>"),
+        "expected bufinfo to store integer bits via bitcast:\n{}",
+        translated.wgsl
+    );
     assert_wgsl_validates(&translated.wgsl);
 
 }
@@ -171,9 +176,10 @@ fn decodes_and_translates_bufinfo_structured_uses_decl_stride() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
         .expect("translate");
+    assert!(translated.wgsl.contains("16u"), "expected stride literal in WGSL:\n{}", translated.wgsl);
     assert!(
-        translated.wgsl.contains("f32(16u)"),
-        "expected structured bufinfo to include stride:\n{}",
+        translated.wgsl.contains("bitcast<vec4<f32>>"),
+        "expected structured bufinfo to store integer bits via bitcast:\n{}",
         translated.wgsl
     );
     assert_wgsl_validates(&translated.wgsl);
