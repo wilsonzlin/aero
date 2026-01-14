@@ -8263,7 +8263,7 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
   // otherwise write 0.
   uint32_t count = 0;
   for (uint32_t slot = 0; slot < kMaxUavSlots; ++slot) {
-    if (dev->current_cs_uavs[slot] != src->resource) {
+    if (!ResourcesAlias(dev->current_cs_uavs[slot], src->resource)) {
       continue;
     }
     const uint32_t init = dev->cs_uavs[slot].initial_count;
