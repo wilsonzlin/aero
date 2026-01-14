@@ -1072,3 +1072,71 @@ fn wgsl_missing_dcl_uses_v0_writes_oc0_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn wgsl_ps3_vpos_misctype_builtin_compiles() {
+    // ps_3_0:
+    //   mov oC0, misc0  (vPos)
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // mov oC0, misc0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(17, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(
+        wgsl.contains("@builtin(position) frag_pos: vec4<f32>"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_ps3_vface_misctype_builtin_compiles() {
+    // ps_3_0:
+    //   mov oC0, misc1  (vFace)
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // mov oC0, misc1
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(17, 1, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(
+        wgsl.contains("@builtin(front_facing) front_facing: bool"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}

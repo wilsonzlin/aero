@@ -595,14 +595,14 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage, access: RegAccess) 
         RegFile::Input | RegFile::Texture => {
             usage.inputs.insert((reg.file, reg.index));
         }
+        RegFile::MiscType => {
+            usage.misc_inputs.insert(reg.index);
+        }
         RegFile::Sampler => {
             usage.samplers.insert(reg.index);
         }
         RegFile::Predicate => {
             usage.predicates.insert(reg.index);
-        }
-        RegFile::MiscType => {
-            usage.misc_inputs.insert(reg.index);
         }
         RegFile::ColorOut
         | RegFile::DepthOut
@@ -1627,6 +1627,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         .chain(&usage.float_consts)
         .chain(&usage.int_consts)
         .chain(&usage.bool_consts)
+        .chain(&usage.misc_inputs)
         .copied()
         .max()
         .unwrap_or(0)
@@ -1650,6 +1651,12 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 "sampler index s{max_samp} exceeds maximum s{MAX_D3D9_SAMPLER_REGISTER_INDEX}"
             )));
         }
+    }
+
+    if ir.version.stage == ShaderStage::Vertex && !usage.misc_inputs.is_empty() {
+        return Err(err(
+            "MISCTYPE (misc#) registers are not supported in vertex shader WGSL lowering",
+        ));
     }
 
     let mut f32_defs: BTreeMap<u32, [f32; 4]> = BTreeMap::new();
@@ -2006,7 +2013,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     match *idx {
                         // D3D9 vPos (pixel position).
                         0 => {
-                            wgsl.push_str("  @builtin(position) frag_coord: vec4<f32>,\n");
+                            wgsl.push_str("  @builtin(position) frag_pos: vec4<f32>,\n");
                         }
                         // D3D9 vFace (front-facing sign).
                         1 => {
@@ -2072,20 +2079,14 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 }
 
                 // Builtin inputs (misc register file).
-                for idx in &usage.misc_inputs {
-                    match *idx {
-                        0 => {
-                            wgsl.push_str("  let misc0: vec4<f32> = input.frag_coord;\n");
-                        }
-                        1 => {
-                            // D3D9 vFace is a float sign (+1 or -1). WGSL exposes front-facing as a
-                            // boolean, so map it to the legacy sign convention and splat to vec4.
-                            wgsl.push_str(
-                                "  let misc1: vec4<f32> = vec4<f32>(select(-1.0, 1.0, input.front_facing));\n",
-                            );
-                        }
-                        _ => {}
-                    }
+                if usage.misc_inputs.contains(&0) {
+                    wgsl.push_str("  let misc0: vec4<f32> = input.frag_pos;\n");
+                }
+                if usage.misc_inputs.contains(&1) {
+                    // D3D9 vFace is a float sign (+1 or -1). WGSL exposes front-facing as a
+                    // boolean, so map it to the legacy sign convention and splat to vec4.
+                    wgsl.push_str("  let face: f32 = select(-1.0, 1.0, input.front_facing);\n");
+                    wgsl.push_str("  let misc1: vec4<f32> = vec4<f32>(face, face, face, face);\n");
                 }
             }
 
