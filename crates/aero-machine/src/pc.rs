@@ -394,6 +394,10 @@ impl PcMachine {
             match ev {
                 ResetEvent::System => return Some(ResetKind::System),
                 ResetEvent::Cpu => saw_cpu = true,
+                ResetEvent::PowerOff => {
+                    // Power-off requests are surfaced through the platform event queue but are not
+                    // interpreted as resets by this helper.
+                }
             }
         }
         if saw_cpu {

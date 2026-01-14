@@ -85,6 +85,8 @@ pub const PCIE_ECAM_CONFIG: PciEcamConfig = PciEcamConfig {
 pub enum ResetEvent {
     Cpu,
     System,
+    /// The guest requested S5 (soft-off) via ACPI PM1a_CNT.
+    PowerOff,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1503,7 +1505,10 @@ impl PcPlatform {
             AcpiPmConfig::default(),
             AcpiPmCallbacks {
                 sci_irq: Box::new(sci_irq),
-                request_power_off: None,
+                request_power_off: Some(Box::new({
+                    let reset_events = reset_events.clone();
+                    move || reset_events.borrow_mut().push(ResetEvent::PowerOff)
+                })),
             },
             clock.clone(),
         )));
