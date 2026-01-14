@@ -498,6 +498,32 @@ if [ -f "$INF_IOPORT" ]; then
     'AeroVirtioSndIoPort_Parameters_AddReg' \
     'hkr,parameters,forcenullbackend,0x00010001,0' \
     "inf/aero-virtio-snd-ioport.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
+
+  note "checking ioport legacy INF does not opt into MSI/MSI-X..."
+  # The I/O-port legacy driver uses only line-based INTx (IoConnectInterrupt) and
+  # does not support message interrupts. Guard against accidentally adding the
+  # standard INF opt-in keys.
+  if awk '
+    {
+      sub(/\r$/, "")
+      line = $0
+      # Skip full-line comments.
+      if (line ~ /^[[:space:]]*;/) next
+      # Strip inline comments.
+      sub(/[[:space:]]*;.*$/, "", line)
+      if (line ~ /^[[:space:]]*$/) next
+      low = tolower(line)
+      if (index(low, "messagesignaledinterruptproperties") != 0 ||
+          index(low, "msisupported") != 0 ||
+          index(low, "messagenumberlimit") != 0) {
+        print line
+        exit 0
+      }
+    }
+    END { exit 1 }
+  ' "$INF_IOPORT" >/dev/null; then
+    fail "inf/aero-virtio-snd-ioport.inf must not opt into MSI/MSI-X (driver is INTx-only)"
+  fi
 fi
 
 section_contains_norm \
