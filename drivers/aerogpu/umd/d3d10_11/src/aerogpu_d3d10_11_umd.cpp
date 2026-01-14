@@ -5516,7 +5516,8 @@ void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
     count = kMaxConstantBufferSlots - start_slot;
   }
 
-  std::vector<aerogpu_constant_buffer_binding> bindings(count);
+  // Avoid std::vector allocations (can throw std::bad_alloc). The slot count is small and bounded.
+  aerogpu_constant_buffer_binding bindings[kMaxConstantBufferSlots] = {};
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_constant_buffer_binding b{};
     b.buffer = 0;
@@ -5537,7 +5538,7 @@ void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings, static_cast<size_t>(count) * sizeof(bindings[0]));
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
@@ -5576,7 +5577,7 @@ void AEROGPU_APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
     count = kMaxConstantBufferSlots - start_slot;
   }
 
-  std::vector<aerogpu_constant_buffer_binding> bindings(count);
+  aerogpu_constant_buffer_binding bindings[kMaxConstantBufferSlots] = {};
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_constant_buffer_binding b{};
     b.buffer = 0;
@@ -5597,7 +5598,7 @@ void AEROGPU_APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings, static_cast<size_t>(count) * sizeof(bindings[0]));
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
@@ -5762,7 +5763,8 @@ void AEROGPU_APIENTRY VsSetSamplers(D3D10DDI_HDEVICE hDevice,
     count = kMaxSamplerSlots - start_slot;
   }
 
-  std::vector<aerogpu_handle_t> handles(count);
+  // Avoid std::vector allocations (can throw std::bad_alloc). Sampler slots are small and bounded.
+  aerogpu_handle_t handles[kMaxSamplerSlots] = {};
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_handle_t h = 0;
     if (pSamplers && pSamplers[i].pDrvPrivate) {
@@ -5773,7 +5775,7 @@ void AEROGPU_APIENTRY VsSetSamplers(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+      AEROGPU_CMD_SET_SAMPLERS, handles, static_cast<size_t>(count) * sizeof(handles[0]));
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
@@ -5812,7 +5814,7 @@ void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
     count = kMaxSamplerSlots - start_slot;
   }
 
-  std::vector<aerogpu_handle_t> handles(count);
+  aerogpu_handle_t handles[kMaxSamplerSlots] = {};
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_handle_t h = 0;
     if (pSamplers && pSamplers[i].pDrvPrivate) {
@@ -5823,7 +5825,7 @@ void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+      AEROGPU_CMD_SET_SAMPLERS, handles, static_cast<size_t>(count) * sizeof(handles[0]));
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
