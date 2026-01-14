@@ -1044,7 +1044,7 @@ Responsibilities of the virtio-input driver at a conceptual level:
 Virtio-input uses two virtqueues:
 
 - **eventq**: host/device publishes input events (key presses, relative motion).
-- **statusq**: guest/driver publishes output events back to the host (primarily keyboard LED state like Caps Lock / Num Lock).
+- **statusq**: guest/driver publishes output events back to the host (primarily keyboard LED state like Num Lock / Caps Lock / Scroll Lock, plus optional Compose/Kana).
 
 For Aero, we should handle LED output events even if we don’t initially surface them to the browser UI. Keeping the round-trip correct avoids subtle guest driver behavior differences (e.g., toggling Caps Lock producing output reports that must be acknowledged).
 
