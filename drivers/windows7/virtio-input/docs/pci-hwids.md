@@ -119,7 +119,7 @@ The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) intentionally doe
 `PCI\VEN_1AF4&DEV_1052&REV_01` fallback entry. The legacy alias INF (`inf/virtio-input.inf.disabled`, rename to
 `virtio-input.inf` to enable) includes the fallback, and will appear as **Aero VirtIO Input Device** when subsystem
 IDs are not exposed.
-Outside the models sections, the alias INF is expected to stay in sync with the canonical INF (see `scripts/check-inf-alias.py`).
+Outside the models sections, the alias INF is expected to stay in sync with the canonical INF (see `../scripts/check-inf-alias.py`).
 
 Topology notes:
 

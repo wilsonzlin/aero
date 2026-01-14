@@ -48,7 +48,7 @@ Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed 
 
 The repo also carries a legacy filename alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable)
 for workflows/tools that still reference `virtio-input.inf`. Outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`),
-it is expected to stay in sync with `aero_virtio_input.inf` (see `scripts/check-inf-alias.py`). Do not ship/install it
+it is expected to stay in sync with `aero_virtio_input.inf` (see `../scripts/check-inf-alias.py`). Do not ship/install it
 alongside `aero_virtio_input.inf` (overlapping INFs can lead to confusing binding/upgrade behavior).
 
 This avoids “driver installs but won’t start” confusion: the driver enforces the

@@ -462,11 +462,8 @@ pub const VIRTIO_BAR0_SIZE: u64 = 0x4000;
 
 // NOTE: Keep VIRTIO_BARS in a simple literal array initializer form so CI guardrails can parse it
 // deterministically (see scripts/ci/check-windows-virtio-contract.py).
-pub const VIRTIO_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(
-    VIRTIO_BAR0_INDEX,
-    VIRTIO_BAR0_SIZE,
-    false,
-)];
+pub const VIRTIO_BARS: [PciBarProfile; 1] =
+    [PciBarProfile::mem64(VIRTIO_BAR0_INDEX, VIRTIO_BAR0_SIZE, false)];
 
 /// AeroGPU BAR0 index (MMIO control registers).
 pub const AEROGPU_BAR0_INDEX: u8 = 0;
