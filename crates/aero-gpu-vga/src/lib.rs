@@ -9,7 +9,8 @@
 //! - A Bochs-compatible VBE ("VBE_DISPI") interface for linear framebuffer
 //!   modes commonly used by boot loaders/Windows boot splash.
 //! - VRAM access helpers for mapping the legacy regions (0xA0000 etc) and the
-//!   SVGA linear framebuffer base (0xE0000000 by default).
+//!   SVGA VRAM MMIO aperture (0xE0000000 by default), with the VBE LFB starting
+//!   at an offset within that aperture (see [`SVGA_LFB_BASE`]).
 //!
 //! The `u32` framebuffer format is RGBA8888 in native-endian `u32`, where the
 //! least significant byte is **R** (i.e. `0xAABBGGRR` on big-endian, but the
@@ -2422,7 +2423,33 @@ mod tests {
 
         dev.present();
         assert_eq!(dev.get_resolution(), (320, 200));
-        assert_eq!(framebuffer_hash(&dev), 0xf54b1d9c21a2a115);
+        let hash_before = framebuffer_hash(&dev);
+        assert_eq!(hash_before, 0xf54b1d9c21a2a115);
+
+        // Now enable a VBE LFB mode and write a pixel into the LFB. This must not clobber VGA plane
+        // storage; if the LFB overlaps a VGA plane, switching back to mode 13h would change the
+        // rendered output (and thus the golden hash).
+        dev.port_write(0x01CE, 2, 0x0001);
+        dev.port_write(0x01CF, 2, 64);
+        dev.port_write(0x01CE, 2, 0x0002);
+        dev.port_write(0x01CF, 2, 64);
+        dev.port_write(0x01CE, 2, 0x0003);
+        dev.port_write(0x01CF, 2, 32);
+        dev.port_write(0x01CE, 2, 0x0004);
+        dev.port_write(0x01CF, 2, 0x0041);
+
+        dev.mem_write_u8(SVGA_LFB_BASE + 0, 0x12);
+        dev.mem_write_u8(SVGA_LFB_BASE + 1, 0x34);
+        dev.mem_write_u8(SVGA_LFB_BASE + 2, 0x56);
+        dev.mem_write_u8(SVGA_LFB_BASE + 3, 0x78);
+
+        // Disable VBE again and ensure the VGA output is unchanged.
+        dev.port_write(0x01CE, 2, 0x0004);
+        dev.port_write(0x01CF, 2, 0x0000);
+
+        dev.present();
+        assert_eq!(dev.get_resolution(), (320, 200));
+        assert_eq!(framebuffer_hash(&dev), hash_before);
     }
 
     #[test]
@@ -2548,6 +2575,9 @@ mod tests {
         // for address translation.
         dev.set_svga_lfb_base(0xD000_0000);
 
+        // Guard against accidental overlap between the VBE LFB region and VGA planes.
+        dev.vram[2 * VGA_PLANE_SIZE] = 0xA5;
+
         // 64x64x32bpp, LFB enabled.
         dev.port_write(VBE_DISPI_INDEX_PORT, 2, 0x0001);
         dev.port_write(VBE_DISPI_DATA_PORT, 2, 64);
@@ -2565,6 +2595,17 @@ mod tests {
         dev.mem_write_u8(base + 1, 0x00); // G
         dev.mem_write_u8(base + 2, 0xFF); // R
         dev.mem_write_u8(base + 3, 0x00); // X
+
+        assert_eq!(
+            &dev.vram[VBE_FRAMEBUFFER_OFFSET..VBE_FRAMEBUFFER_OFFSET + 4],
+            &[0x00, 0x00, 0xFF, 0x00],
+            "LFB write should land in the LFB region (not VGA planes)"
+        );
+        assert_eq!(
+            dev.vram[2 * VGA_PLANE_SIZE],
+            0xA5,
+            "LFB write overlapped legacy VGA plane storage"
+        );
 
         dev.present();
         assert_eq!(dev.get_resolution(), (64, 64));
@@ -2696,8 +2737,40 @@ mod tests {
     }
 
     #[test]
+    fn vbe_banked_window_and_lfb_target_same_memory() {
+        let mut dev = VgaDevice::new();
+
+        // 64x64x32bpp, LFB enabled.
+        dev.port_write(0x01CE, 2, 0x0001);
+        dev.port_write(0x01CF, 2, 64);
+        dev.port_write(0x01CE, 2, 0x0002);
+        dev.port_write(0x01CF, 2, 64);
+        dev.port_write(0x01CE, 2, 0x0003);
+        dev.port_write(0x01CF, 2, 32);
+        dev.port_write(0x01CE, 2, 0x0004);
+        dev.port_write(0x01CF, 2, 0x0041);
+
+        // Write through the banked aperture (A0000) and observe it via the LFB.
+        dev.mem_write_u8(0xA0000, 0x5A);
+        assert_eq!(dev.mem_read_u8(SVGA_LFB_BASE), 0x5A);
+
+        // Switch to bank 1 and ensure it aliases `LFB + 64KiB`.
+        dev.port_write(0x01CE, 2, 0x0005);
+        dev.port_write(0x01CF, 2, 1);
+        dev.mem_write_u8(0xA0000, 0xA5);
+        assert_eq!(dev.mem_read_u8(SVGA_LFB_BASE + 64 * 1024), 0xA5);
+    }
+
+    #[test]
     fn planar_write_mode0_set_reset_writes_selected_planes() {
         let mut dev = VgaDevice::new();
+
+        // Seed a byte at the start of the VBE framebuffer region. Planar writes must never clobber
+        // it.
+        dev.vram[VBE_FRAMEBUFFER_OFFSET] = 0xCC;
+        // The last byte of the 64KiB A0000 window is adjacent to the start of the VBE framebuffer
+        // region in VRAM (plane 3 ends at `VBE_FRAMEBUFFER_OFFSET - 1`).
+        let probe_off = ((VBE_FRAMEBUFFER_OFFSET - 1) & (VGA_PLANE_SIZE - 1)) as u32;
 
         // Configure a basic planar graphics window at A0000.
         dev.sequencer[4] = 0x00; // chain4 disabled, odd/even disabled
@@ -2711,11 +2784,24 @@ mod tests {
         dev.graphics[1] = 0x0F; // enable set/reset for all planes
 
         dev.mem_write_u8(0xA0000, 0xAA);
+        dev.mem_write_u8(0xA0000 + probe_off, 0xAA);
 
         assert_eq!(dev.vram[0], 0xFF);
         assert_eq!(dev.vram[VGA_PLANE_SIZE], 0x00);
         assert_eq!(dev.vram[2 * VGA_PLANE_SIZE], 0xFF);
         assert_eq!(dev.vram[3 * VGA_PLANE_SIZE], 0x00);
+
+        let probe = probe_off as usize;
+        assert_eq!(dev.vram[probe], 0xFF);
+        assert_eq!(dev.vram[VGA_PLANE_SIZE + probe], 0x00);
+        assert_eq!(dev.vram[2 * VGA_PLANE_SIZE + probe], 0xFF);
+        assert_eq!(dev.vram[3 * VGA_PLANE_SIZE + probe], 0x00);
+
+        assert_eq!(
+            dev.vram[VBE_FRAMEBUFFER_OFFSET],
+            0xCC,
+            "planar writes overlapped VBE framebuffer region"
+        );
     }
 
     #[test]
