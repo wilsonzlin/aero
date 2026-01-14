@@ -215,17 +215,23 @@ impl IndexedDbBackend {
     /// deleting the entire database. Work is chunked across multiple bounded
     /// transactions with event-loop yields between chunks.
     ///
-    /// On success, this also clears the in-memory block cache and dirty tracking so
-    /// subsequent reads observe an all-zero disk.
+    /// This also clears the in-memory block cache and dirty tracking so subsequent
+    /// reads observe an all-zero disk.
     pub async fn clear_blocks(&mut self) -> Result<()> {
-        // Keep transactions bounded so we don't monopolize the browser with a
-        // single long-running IndexedDB transaction.
-        const CHUNK_KEYS: u32 = 512;
+        // Drop all cached/dirty blocks so reads don't return stale data and
+        // future flushes don't resurrect deleted blocks.
+        self.cache.clear();
+        self.dirty.clear();
+
+        // Use the same bounded chunking knob as `flush()` so callers can tune
+        // how much work is done per IndexedDB transaction.
+        let limit = self.flush_chunk_blocks.max(1);
+        let limit = limit.min(u32::MAX as usize) as u32;
 
         loop {
             // Fetch a limited set of keys in a *separate* transaction so we don't
             // need to await mid-transaction while also issuing delete requests.
-            let keys = idb::get_all_keys_limited(&self.db, BLOCKS_STORE, CHUNK_KEYS).await?;
+            let keys = idb::get_all_keys_limited(&self.db, BLOCKS_STORE, limit).await?;
             if keys.is_empty() {
                 break;
             }
@@ -240,10 +246,6 @@ impl IndexedDbBackend {
             idb::yield_to_event_loop().await;
         }
 
-        // Drop all cached/dirty blocks so reads don't return stale data and
-        // future flushes don't resurrect deleted blocks.
-        self.cache.clear();
-        self.dirty.clear();
         Ok(())
     }
 

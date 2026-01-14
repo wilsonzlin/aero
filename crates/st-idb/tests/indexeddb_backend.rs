@@ -268,12 +268,26 @@ async fn clear_blocks_resets_persisted_data_and_cache() {
     let _ = IndexedDbBackend::delete_database(&db_name).await;
 
     let capacity = 8 * 1024 * 1024;
-    let mut backend =
-        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
-            .await
-            .unwrap();
+    let mut backend = IndexedDbBackend::open(
+        &db_name,
+        capacity,
+        IndexedDbBackendOptions {
+            // Use a small chunk size so `clear_blocks()` is forced to iterate.
+            flush_chunk_blocks: 2,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
 
     backend.write_at(0, b"hello world").await.unwrap();
+    let block_size = backend.block_size();
+    for i in 1..5u64 {
+        backend
+            .write_at(i * block_size as u64, &[0xA0u8.wrapping_add(i as u8); 4])
+            .await
+            .unwrap();
+    }
     backend.flush().await.unwrap();
 
     // Sanity: read back the data (may hit cache).
@@ -287,16 +301,32 @@ async fn clear_blocks_resets_persisted_data_and_cache() {
     let mut cleared = vec![0xAA; 11];
     backend.read_at(0, &mut cleared).await.unwrap();
     assert_eq!(cleared, vec![0u8; 11]);
+    for i in 1..5u64 {
+        let mut block_buf = vec![0xAA; 4];
+        backend
+            .read_at(i * block_size as u64, &mut block_buf)
+            .await
+            .unwrap();
+        assert_eq!(block_buf, vec![0u8; 4]);
+    }
 
     // And the clearing should persist across re-open.
     drop(backend);
-    let mut backend2 =
-        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
-            .await
-            .unwrap();
+    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .unwrap();
     let mut cleared2 = vec![0xAA; 11];
     backend2.read_at(0, &mut cleared2).await.unwrap();
     assert_eq!(cleared2, vec![0u8; 11]);
+    for i in 1..5u64 {
+        let mut block_buf = vec![0xAA; 4];
+        backend2
+            .read_at(i * block_size as u64, &mut block_buf)
+            .await
+            .unwrap();
+        assert_eq!(block_buf, vec![0u8; 4]);
+    }
+
     IndexedDbBackend::delete_database(&db_name).await.unwrap();
 }
 
