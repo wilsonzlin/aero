@@ -1,11 +1,11 @@
-use aero_devices::pci::PciBdf;
+use aero_devices::pci::profile;
 use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
 
 fn vga_pci_lfb_base(m: &Machine) -> u32 {
-    m.pci_bar_base(PciBdf::new(0, 0x0c, 0), 0)
+    m.pci_bar_base(profile::VGA_TRANSITIONAL_STUB.bdf, 0)
         .and_then(|base| u32::try_from(base).ok())
         .unwrap_or(0)
 }
