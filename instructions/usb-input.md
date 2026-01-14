@@ -222,6 +222,15 @@ The I/O worker consumes the batches in `web/src/workers/io.worker.ts` (`type: "i
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
 cargo xtask input
 
+# Targeted WASM USB bridge regression test (runs in Node).
+wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
+
+# Canonical machine library tests (covers snapshot + USB container wiring).
+cargo test -p aero-machine --lib
+
+# Canonical USB stack tests (catches UHCI/EHCI/xHCI regressions).
+cargo test -p aero-usb --lib
+
 # Optional: also run a small input-focused Playwright subset.
 cargo xtask input --e2e
 
