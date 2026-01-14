@@ -1362,6 +1362,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (meta.kind !== "hdd") {
         throw new Error("Only HDD images can be resized");
       }
+      // Resizing is currently only implemented for raw byte-addressable images. Formats that
+      // include internal metadata (e.g. aerospar/qcow2/vhd) require format-aware resizing to
+      // preserve headers and allocation tables.
+      if (meta.format !== "raw" && meta.format !== "unknown") {
+        throw new Error(`Only raw HDD images can be resized (format=${meta.format})`);
+      }
       if (meta.remote) {
         throw new Error("Remote disks cannot be resized.");
       }
