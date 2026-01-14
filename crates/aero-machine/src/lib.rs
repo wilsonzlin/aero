@@ -4710,20 +4710,6 @@ Track progress: docs/21-smp.md\n\
         Ok(())
     }
 
-    /// wasm32 variant of [`Machine::attach_ide_secondary_master_iso`].
-    ///
-    /// The browser build supports non-`Send` ISO backends (e.g. OPFS handles) that cannot safely
-    /// cross threads when wasm threads are enabled, so we avoid imposing a `Send` bound on the disk
-    /// trait object in wasm builds.
-    #[cfg(target_arch = "wasm32")]
-    pub fn attach_ide_secondary_master_iso(
-        &mut self,
-        disk: Box<dyn aero_storage::VirtualDisk>,
-    ) -> std::io::Result<()> {
-        self.attach_ide_secondary_master_atapi(AtapiCdrom::new_from_virtual_disk(disk)?);
-        Ok(())
-    }
-
     /// Convenience: attach the canonical install media ISO (`disk_id=1`) and record its snapshot
     /// overlay ref.
     ///
@@ -4733,7 +4719,7 @@ Track progress: docs/21-smp.md\n\
     /// - `base_image = base_image` (typically the OPFS path, e.g. `/state/win7.iso`)
     /// - `overlay_image = ""` (empty string indicates "no writable overlay")
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_install_media_iso(
+    pub fn attach_install_media_iso_and_set_overlay_ref(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
         base_image: impl Into<String>,
@@ -4743,10 +4729,10 @@ Track progress: docs/21-smp.md\n\
         Ok(())
     }
 
-    /// wasm32 variant of [`Machine::attach_install_media_iso`]; does not require `Send` on the ISO
-    /// backend.
+    /// wasm32 variant of [`Machine::attach_install_media_iso_and_set_overlay_ref`]; does not
+    /// require `Send` on the ISO backend.
     #[cfg(target_arch = "wasm32")]
-    pub fn attach_install_media_iso(
+    pub fn attach_install_media_iso_and_set_overlay_ref(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
         base_image: impl Into<String>,
@@ -10361,7 +10347,7 @@ mod tests {
 
         let iso_bytes = vec![0u8; 2048 * 16];
         let disk = RawDisk::open(MemBackend::from_vec(iso_bytes)).unwrap();
-        m.attach_install_media_iso(Box::new(disk), "/state/win7.iso")
+        m.attach_install_media_iso_and_set_overlay_ref(Box::new(disk), "/state/win7.iso")
             .unwrap();
 
         let overlay = m

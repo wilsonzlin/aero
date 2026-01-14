@@ -4294,7 +4294,7 @@ impl Machine {
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.inner
-            .attach_install_media_iso(Box::new(backend), path)
+            .attach_install_media_iso_and_set_overlay_ref(Box::new(backend), path)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
