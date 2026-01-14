@@ -210,16 +210,35 @@ fn sgl_segment_descriptor_requires_alignment() {
 }
 
 #[test]
-fn sgl_rejects_segment_descriptor_not_last_in_segment_list() {
+fn sgl_allows_segment_descriptor_not_last_in_segment_list() {
     let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
 
     let list1 = 0x70000u64;
     let list2 = 0x71000u64;
-    let buf = 0x60000u64;
+    let buf1 = 0x60000u64;
+    let buf2 = 0x61000u64;
 
-    // First descriptor is a Segment descriptor but it is NOT the last entry -> must be rejected.
-    write_sgl_desc(&mut mem, list1, list2, 16, 0x02);
-    write_sgl_desc(&mut mem, list1 + 16, buf, 512, 0x00);
+    let sector_size = 512usize;
+    let split = 200usize;
+    let payload: Vec<u8> = (0..sector_size as u32).map(|v| (v & 0xff) as u8).collect();
+    mem.write_physical(buf1, &payload[..split]);
+    mem.write_physical(buf2, &payload[split..]);
+
+    // Root points to list1 (2 descriptors).
+    // List1: [ Segment -> list2, Data Block (second half) ]
+    // List2: [ Data Block (first half) ]
+    //
+    // This is a valid SGL layout per spec and ensures segment lists can contain Segment
+    // descriptors in the middle (not only as the last entry) without reordering bytes.
+    write_sgl_desc(&mut mem, list2, buf1, split as u32, 0x00);
+    write_sgl_desc(&mut mem, list1, list2, 16, 0x02); // Segment
+    write_sgl_desc(
+        &mut mem,
+        list1 + 16,
+        buf2,
+        (sector_size - split) as u32,
+        0x00,
+    );
 
     let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
     set_cid(&mut cmd, 0x22);
@@ -235,7 +254,30 @@ fn sgl_rejects_segment_descriptor_not_last_in_segment_list() {
 
     let cqe = read_cqe(&mut mem, io_cq);
     assert_eq!(cqe.cid, 0x22);
-    assert_eq!(cqe.status & !0x1, 0x4004);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    // Read back with PRP to verify ordering is preserved.
+    let read_buf = 0x62000u64;
+    mem.write_physical(read_buf, &vec![0u8; sector_size]);
+
+    let mut cmd = build_command(0x02, 0); // READ, PSDT=PRP
+    set_cid(&mut cmd, 0x23);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, read_buf);
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq + 64, &cmd);
+    ctrl.mmio_write(0x1008, 4, 2);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq + 16);
+    assert_eq!(cqe.cid, 0x23);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut out = vec![0u8; sector_size];
+    mem.read_physical(read_buf, &mut out);
+    assert_eq!(out, payload);
 }
 
 #[test]

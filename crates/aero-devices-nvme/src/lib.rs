@@ -2181,12 +2181,15 @@ fn sgl_segments(
     let mut segs = Vec::new();
     let mut remaining = len;
 
-    // Total SGL descriptors "seen" (including those queued but not yet processed).
+    // Total SGL descriptors "seen" (including those already pushed onto the work stack).
     let mut descriptors_seen: usize = 1;
-    let mut queue = std::collections::VecDeque::new();
-    queue.push_back(root);
+    // Use a stack so that when we expand a Segment descriptor, the newly pushed child descriptors
+    // are processed before any already-enqueued sibling descriptors (preserves in-order traversal
+    // even when a Segment descriptor is not the last entry of a segment list).
+    let mut stack = Vec::new();
+    stack.push(root);
 
-    while let Some(desc) = queue.pop_front() {
+    while let Some(desc) = stack.pop() {
         if remaining == 0 {
             break;
         }
@@ -2232,8 +2235,11 @@ fn sgl_segments(
                 }
                 descriptors_seen += count;
 
-                // Read the segment descriptor list and enqueue its entries in order.
-                for idx in 0..count {
+                // Read the segment descriptor list and push its entries so that descriptor index 0
+                // is processed next.
+                //
+                // Use a stack (LIFO) and therefore iterate in reverse order.
+                for idx in (0..count).rev() {
                     let offset = (idx as u64) * 16;
                     let addr = desc
                         .addr
@@ -2242,17 +2248,7 @@ fn sgl_segments(
                     let mut buf = [0u8; 16];
                     memory.read_physical(addr, &mut buf);
                     let child = SglDescriptor::parse(buf)?;
-
-                    // Segment chaining descriptors are only supported as the final entry of a
-                    // segment list (matches typical OS usage and keeps parsing bounded).
-                    if matches!(
-                        child.dtype,
-                        SglDescriptorType::Segment | SglDescriptorType::LastSegment
-                    ) && idx + 1 != count
-                    {
-                        return Err(NvmeStatus::INVALID_FIELD);
-                    }
-                    queue.push_back(child);
+                    stack.push(child);
                 }
             }
         }
