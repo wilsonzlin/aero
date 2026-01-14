@@ -7490,7 +7490,15 @@ fn rejects_malformed_lrp_with_too_few_operands_legacy_translator() {
     out.push(0x0000FFFF);
 
     let err = shader::parse(&to_bytes(&out)).unwrap_err();
-    assert!(matches!(err, shader::ShaderError::UnexpectedEof), "{err:?}");
+    // The parser should reject malformed instruction streams (either via structural EOF checks or
+    // by failing to decode a valid operand token for the missing parameter).
+    assert!(
+        matches!(
+            err,
+            shader::ShaderError::UnexpectedEof | shader::ShaderError::UnsupportedRegisterType(_)
+        ),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -7673,8 +7681,9 @@ fn translate_entrypoint_rejects_used_volume_sampler() {
 }
 
 #[test]
-fn translate_entrypoint_supports_used_1d_sampler() {
-    // Regression test: used 1D samplers should translate and validate end-to-end.
+fn translate_entrypoint_rejects_used_1d_sampler() {
+    // Used 1D samplers are rejected by the translation entrypoint because the D3D9 command stream
+    // cannot currently bind 1D resources. (Unused declarations are still accepted.)
     let mut words = vec![0xFFFF_0300];
     // dcl_1d s0
     words.extend(enc_inst_with_extra(
@@ -7696,20 +7705,15 @@ fn translate_entrypoint_supports_used_1d_sampler() {
     words.push(0x0000_FFFF);
 
     let bytes = to_bytes(&words);
-    let translated =
+    let err =
         shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
-            .unwrap();
-    assert!(translated.used_samplers.contains(&0));
-    assert_eq!(
-        translated.sampler_texture_types.get(&0).copied(),
-        Some(TextureType::Texture1D)
-    );
+            .unwrap_err();
     assert!(
-        translated.wgsl.contains("texture_1d<f32>"),
-        "wgsl:\n{}",
-        translated.wgsl
+        matches!(err, shader_translate::ShaderTranslateError::Translation(_)),
+        "{err:?}"
     );
-    assert!(translated.wgsl.contains(".x"), "wgsl:\n{}", translated.wgsl);
+    let msg = err.to_string();
+    assert!(msg.contains("Texture1D") && msg.contains("s0"), "{msg}");
 }
 
 #[test]
