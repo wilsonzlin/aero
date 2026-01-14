@@ -10522,6 +10522,12 @@ impl AerogpuD3d11Executor {
         let shader_handle = cmd.shader_handle;
         let stage_raw = cmd.stage;
         let stage_ex = cmd.reserved0;
+        if shader_handle == 0 {
+            bail!("CREATE_SHADER_DXBC: invalid shader_handle 0");
+        }
+        if dxbc_bytes.is_empty() {
+            bail!("CREATE_SHADER_DXBC: empty DXBC payload");
+        }
         let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
 
@@ -10551,7 +10557,9 @@ impl AerogpuD3d11Executor {
         let stage =
             self.decode_shader_stage_for_packet(stage_raw, stage_ex, "CREATE_SHADER_DXBC")?;
         if parsed_stage != stage {
-            bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
+            bail!(
+                "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?}, stage_ex={stage_ex})"
+            );
         }
 
         let gs_instance_count = (stage == ShaderStage::Geometry)
@@ -10753,6 +10761,12 @@ impl AerogpuD3d11Executor {
         let shader_handle = cmd.shader_handle;
         let stage_raw = cmd.stage;
         let stage_ex = cmd.reserved0;
+        if shader_handle == 0 {
+            bail!("CREATE_SHADER_DXBC: invalid shader_handle 0");
+        }
+        if dxbc_bytes.is_empty() {
+            bail!("CREATE_SHADER_DXBC: empty DXBC payload");
+        }
 
         // Geometry/tessellation shaders are carried through the `stage_ex` ABI extension (or the
         // legacy `stage=Geometry` encoding) on the WebGPU-backed executor.
