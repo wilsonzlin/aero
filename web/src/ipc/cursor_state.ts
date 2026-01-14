@@ -15,6 +15,14 @@
 import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 // Cursor format values use the AeroGPU `AerogpuFormat` numeric (`u32`) discriminants.
+//
+// Semantics (from the AeroGPU protocol):
+// - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. When converting to RGBA
+//   (e.g. for cursor blending), treat alpha as fully opaque (`0xff`) and ignore the stored
+//   `X` byte.
+// - `*_SRGB` variants are layout-identical to their UNORM counterparts; only the color space
+//   interpretation differs. Presenters must avoid double-applying gamma when handling sRGB
+//   cursor formats.
 export const CURSOR_FORMAT_B8G8R8A8 = AerogpuFormat.B8G8R8A8Unorm;
 export const CURSOR_FORMAT_B8G8R8X8 = AerogpuFormat.B8G8R8X8Unorm;
 export const CURSOR_FORMAT_R8G8B8A8 = AerogpuFormat.R8G8B8A8Unorm;

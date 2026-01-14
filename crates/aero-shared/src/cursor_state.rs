@@ -22,6 +22,14 @@ use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 
 /// Cursor format values use the AeroGPU `AerogpuFormat` (`u32`) discriminants.
 ///
+/// Semantics (from the AeroGPU protocol):
+/// - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. When converting
+///   to RGBA (e.g. for cursor blending), treat alpha as fully opaque (`0xFF`) and
+///   ignore the stored `X` byte.
+/// - `*_SRGB` variants are layout-identical to their UNORM counterparts; only
+///   the color space interpretation differs. Presenters must avoid
+///   double-applying gamma when handling sRGB cursor formats.
+///
 /// This must stay in sync with `aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat`.
 pub const CURSOR_FORMAT_B8G8R8A8: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
 pub const CURSOR_FORMAT_B8G8R8X8: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
