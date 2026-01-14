@@ -1144,13 +1144,18 @@ fn vs_main(input: VsIn) -> VsOut {
         ));
         let layout = InputLayoutDesc::parse(layout_bytes).expect("fixture ILAY should parse");
 
-        let signature = [VsInputSignatureElement {
-            semantic_name_hash: layout.elements[0].semantic_name_hash,
-            semantic_index: layout.elements[0].semantic_index,
-            input_register: 0,
-            mask: 0xF,
-            shader_location: 0,
-        }];
+        let signature: Vec<VsInputSignatureElement> = layout
+            .elements
+            .iter()
+            .enumerate()
+            .map(|(i, el)| VsInputSignatureElement {
+                semantic_name_hash: el.semantic_name_hash,
+                semantic_index: el.semantic_index,
+                input_register: i as u32,
+                mask: 0xF,
+                shader_location: i as u32,
+            })
+            .collect();
 
         let stride = 28u32;
         let slot_strides = [stride];
