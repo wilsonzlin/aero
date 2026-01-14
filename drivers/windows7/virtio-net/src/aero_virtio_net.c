@@ -1147,7 +1147,8 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   AEROVNET_TX_OFFLOAD_INTENT Intent;
   AEROVNET_OFFLOAD_PARSE_INFO Info;
   ULONG FrameLen;
-  UCHAR FrameBytes[2048];
+  UCHAR HeaderBytes[256];
+  UCHAR FullFrameBytes[2048];
   ULONG CopyLen;
   PVOID FramePtr;
   AEROVNET_OFFLOAD_RESULT OffRes;
@@ -1200,11 +1201,20 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 
   FrameLen = NET_BUFFER_DATA_LENGTH(TxReq->Nb);
   // Copy the start of the frame into a contiguous buffer so header parsing is
-  // robust even when the NET_BUFFER spans multiple MDLs. For checksum-only
-  // requests the full frame always fits (<= 1522 bytes). For TSO packets, only
-  // the headers are required; cap the copy to a small constant.
-  CopyLen = (FrameLen < sizeof(FrameBytes)) ? FrameLen : (ULONG)sizeof(FrameBytes);
-  FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, FrameBytes, 1, 0);
+  // robust even when the NET_BUFFER spans multiple MDLs.
+  //
+  // - Checksum-only packets are always small (<= 1522 bytes): copy the full
+  //   frame so checksum fallback can access the whole packet.
+  // - TSO packets can be large: start with a small copy window and retry with a
+  //   larger one if header parsing indicates truncation (e.g. long IPv6
+  //   extension header chains).
+  if (Intent.WantTso) {
+    CopyLen = (FrameLen < sizeof(HeaderBytes)) ? FrameLen : (ULONG)sizeof(HeaderBytes);
+    FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, HeaderBytes, 1, 0);
+  } else {
+    CopyLen = (FrameLen < sizeof(FullFrameBytes)) ? FrameLen : (ULONG)sizeof(FullFrameBytes);
+    FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, FullFrameBytes, 1, 0);
+  }
   if (!FramePtr) {
     return NDIS_STATUS_INVALID_PACKET;
   }
