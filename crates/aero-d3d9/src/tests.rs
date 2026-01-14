@@ -900,6 +900,17 @@ fn assemble_ps3_predicated_lrp_operand_count_len() -> Vec<u32> {
     out
 }
 
+fn assemble_vs2_passthrough_operand_count_len() -> Vec<u32> {
+    // vs_2_0: mov oPos, v0; end (operand-count length encoding).
+    let mut out = vec![0xFFFE0200];
+    out.extend(enc_inst_operand_count_len(
+        0x0001,
+        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_lrp() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -2164,6 +2175,31 @@ fn translate_entrypoint_accepts_operand_count_length_encoding() {
     .expect("wgsl validate");
     assert!(translated.wgsl.contains("@fragment"));
     assert_eq!(translated.entry_point, "fs_main");
+}
+
+#[test]
+fn translate_entrypoint_accepts_operand_count_length_encoding_in_dxbc_container() {
+    // Ensure operand-count-encoded raw token streams remain supported when wrapped in a DXBC
+    // container (the runtime commonly receives DXBC blobs from D3DCompile).
+    let vs_bytes = to_bytes(&assemble_vs2_passthrough_operand_count_len());
+    let dxbc = dxbc_test_utils::build_container(&[(DxbcFourCC(*b"SHDR"), &vs_bytes)]);
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&dxbc, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+    assert!(translated.wgsl.contains("@vertex"));
+    assert_eq!(translated.entry_point, "vs_main");
 }
 
 #[test]
