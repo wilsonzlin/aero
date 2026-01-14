@@ -166,6 +166,9 @@ fn xhci_tick_does_not_dma_after_host_controller_error_even_with_active_endpoint(
         "address device"
     );
 
+    // Transfer-ring execution is gated by RUN in the controller tick path.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     // Queue an active bulk/interrupt endpoint with a single runnable TRB so `tick()` would normally
     // DMA.
     let ring_addr = 0x4000u64;
