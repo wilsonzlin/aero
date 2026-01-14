@@ -48,12 +48,12 @@ func TestSession_RejectsOversizedUDPDataChannelMessage_Metrics(t *testing.T) {
 
 	ordered := false
 	maxRetransmits := uint16(0)
-	clientDC, err := clientPC.CreateDataChannel(DataChannelLabelUDP, &webrtc.DataChannelInit{
+	clientDC, err := clientPC.CreateDataChannel(dataChannelLabelUDP, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
 		MaxRetransmits: &maxRetransmits,
 	})
 	if err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelUDP, err)
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelUDP, err)
 	}
 
 	connectPeerConnections(t, clientPC, serverSession.PeerConnection())

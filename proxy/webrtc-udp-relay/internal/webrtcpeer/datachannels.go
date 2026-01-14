@@ -9,18 +9,18 @@ import (
 )
 
 const (
-	// DataChannelLabelUDP is the DataChannel label used for the UDP relay framing
+	// dataChannelLabelUDP is the DataChannel label used for the UDP relay framing
 	// protocol described in `proxy/webrtc-udp-relay/PROTOCOL.md`.
-	DataChannelLabelUDP = "udp"
+	dataChannelLabelUDP = "udp"
 
-	// DataChannelLabelL2 is the DataChannel label used for the Option C L2 tunnel
+	// dataChannelLabelL2 is the DataChannel label used for the Option C L2 tunnel
 	// (raw Ethernet frames). See `docs/l2-tunnel-protocol.md`.
-	DataChannelLabelL2 = l2tunnel.DataChannelLabel
+	dataChannelLabelL2 = l2tunnel.DataChannelLabel
 )
 
 func validateUDPDataChannel(dc *webrtc.DataChannel) error {
-	if dc.Label() != DataChannelLabelUDP {
-		return fmt.Errorf("expected label=%q (got %q)", DataChannelLabelUDP, dc.Label())
+	if dc.Label() != dataChannelLabelUDP {
+		return fmt.Errorf("expected label=%q (got %q)", dataChannelLabelUDP, dc.Label())
 	}
 	// UDP relay aims to emulate UDP: unordered + unreliable.
 	if dc.Ordered() {
@@ -37,8 +37,8 @@ func validateUDPDataChannel(dc *webrtc.DataChannel) error {
 }
 
 func validateL2DataChannel(dc *webrtc.DataChannel) error {
-	if dc.Label() != DataChannelLabelL2 {
-		return fmt.Errorf("expected label=%q (got %q)", DataChannelLabelL2, dc.Label())
+	if dc.Label() != dataChannelLabelL2 {
+		return fmt.Errorf("expected label=%q (got %q)", dataChannelLabelL2, dc.Label())
 	}
 	// L2 is a raw Ethernet tunnel that carries TCP segments to a user-space stack.
 	// The tunnel MUST be reliable (no partial reliability) and ordered. The

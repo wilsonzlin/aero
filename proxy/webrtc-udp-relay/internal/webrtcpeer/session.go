@@ -147,7 +147,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		installSCTPHandlers()
 		switch dc.Label() {
-		case DataChannelLabelUDP:
+		case dataChannelLabelUDP:
 			if err := validateUDPDataChannel(dc); err != nil {
 				_ = dc.Close()
 				return
@@ -244,7 +244,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			if dc.ReadyState() == webrtc.DataChannelStateClosed {
 				cleanup()
 			}
-		case DataChannelLabelL2:
+		case dataChannelLabelL2:
 			if err := validateL2DataChannel(dc); err != nil {
 				reason := "invalid_datachannel"
 

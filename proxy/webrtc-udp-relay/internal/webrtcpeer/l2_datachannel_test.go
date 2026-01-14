@@ -71,7 +71,7 @@ func TestL2DataChannelSemantics_ReliableOrdered(t *testing.T) {
 	gotCh := make(chan result, 1)
 
 	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != DataChannelLabelL2 {
+		if dc.Label() != dataChannelLabelL2 {
 			return
 		}
 		gotCh <- result{
@@ -83,8 +83,8 @@ func TestL2DataChannelSemantics_ReliableOrdered(t *testing.T) {
 	})
 
 	ordered := true
-	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+	if _, err := clientPC.CreateDataChannel(dataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelL2, err)
 	}
 
 	connectPeerConnections(t, clientPC, serverPC)
@@ -125,15 +125,15 @@ func TestL2DataChannelSemantics_RejectsUnordered(t *testing.T) {
 
 	gotCh := make(chan error, 1)
 	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != DataChannelLabelL2 {
+		if dc.Label() != dataChannelLabelL2 {
 			return
 		}
 		gotCh <- validateL2DataChannel(dc)
 	})
 
 	ordered := false
-	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+	if _, err := clientPC.CreateDataChannel(dataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelL2, err)
 	}
 
 	connectPeerConnections(t, clientPC, serverPC)
@@ -194,15 +194,15 @@ func TestL2DataChannelSemantics_RejectsPartialReliability(t *testing.T) {
 
 			gotCh := make(chan error, 1)
 			serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
-				if dc.Label() != DataChannelLabelL2 {
+				if dc.Label() != dataChannelLabelL2 {
 					return
 				}
 				gotCh <- validateL2DataChannel(dc)
 			})
 
 			ordered := false
-			if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, tt.init(ordered)); err != nil {
-				t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+			if _, err := clientPC.CreateDataChannel(dataChannelLabelL2, tt.init(ordered)); err != nil {
+				t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelL2, err)
 			}
 
 			connectPeerConnections(t, clientPC, serverPC)

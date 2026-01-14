@@ -47,7 +47,7 @@ func TestWebRTCDataChannel_OversizeMessageNotDelivered(t *testing.T) {
 	serverOpen := make(chan struct{})
 
 	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != DataChannelLabelUDP {
+		if dc.Label() != dataChannelLabelUDP {
 			return
 		}
 		dc.OnOpen(func() {
@@ -70,12 +70,12 @@ func TestWebRTCDataChannel_OversizeMessageNotDelivered(t *testing.T) {
 
 	ordered := false
 	maxRetransmits := uint16(0)
-	clientDC, err := clientPC.CreateDataChannel(DataChannelLabelUDP, &webrtc.DataChannelInit{
+	clientDC, err := clientPC.CreateDataChannel(dataChannelLabelUDP, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
 		MaxRetransmits: &maxRetransmits,
 	})
 	if err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelUDP, err)
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelUDP, err)
 	}
 	clientOpen := make(chan struct{})
 	clientDC.OnOpen(func() { close(clientOpen) })

@@ -111,20 +111,20 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 	// SCTP association is negotiated.
 	ordered := false
 	maxRetransmits := uint16(0)
-	udp1, err := clientPC.CreateDataChannel(DataChannelLabelUDP, &webrtc.DataChannelInit{
+	udp1, err := clientPC.CreateDataChannel(dataChannelLabelUDP, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
 		MaxRetransmits: &maxRetransmits,
 	})
 	if err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelUDP, err)
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelUDP, err)
 	}
 
 	l2Ordered := true
-	l2c1, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{
+	l2c1, err := clientPC.CreateDataChannel(dataChannelLabelL2, &webrtc.DataChannelInit{
 		Ordered: &l2Ordered,
 	})
 	if err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelL2, err)
 	}
 
 	connectPeerConnections(t, clientPC, serverSession.PeerConnection())
@@ -139,12 +139,12 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 	}
 
 	// Duplicate "udp" must be rejected/closed.
-	udp2, err := clientPC.CreateDataChannel(DataChannelLabelUDP, &webrtc.DataChannelInit{
+	udp2, err := clientPC.CreateDataChannel(dataChannelLabelUDP, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
 		MaxRetransmits: &maxRetransmits,
 	})
 	if err != nil {
-		t.Fatalf("CreateDataChannel(%q) duplicate: %v", DataChannelLabelUDP, err)
+		t.Fatalf("CreateDataChannel(%q) duplicate: %v", dataChannelLabelUDP, err)
 	}
 	waitForDataChannelState(t, udp2, webrtc.DataChannelStateClosed, 5*time.Second)
 
@@ -159,11 +159,11 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 	waitForDataChannelState(t, unknown, webrtc.DataChannelStateClosed, 5*time.Second)
 
 	// Duplicate "l2" must be rejected/closed.
-	l2c2, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{
+	l2c2, err := clientPC.CreateDataChannel(dataChannelLabelL2, &webrtc.DataChannelInit{
 		Ordered: &l2Ordered,
 	})
 	if err != nil {
-		t.Fatalf("CreateDataChannel(%q) duplicate: %v", DataChannelLabelL2, err)
+		t.Fatalf("CreateDataChannel(%q) duplicate: %v", dataChannelLabelL2, err)
 	}
 	waitForDataChannelState(t, l2c2, webrtc.DataChannelStateClosed, 5*time.Second)
 

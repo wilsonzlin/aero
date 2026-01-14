@@ -61,12 +61,12 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 
 	ordered := false
 	maxRetransmits := uint16(0)
-	clientDC, err := clientPC.CreateDataChannel(DataChannelLabelUDP, &webrtc.DataChannelInit{
+	clientDC, err := clientPC.CreateDataChannel(dataChannelLabelUDP, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
 		MaxRetransmits: &maxRetransmits,
 	})
 	if err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelUDP, err)
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelUDP, err)
 	}
 
 	connectPeerConnectionsWithAnswerSDPTransform(t, clientPC, serverPC, func(sdp string) string {

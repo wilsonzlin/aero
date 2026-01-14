@@ -12,7 +12,7 @@ import (
 	"github.com/pion/transport/v3/vnet"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/l2tunnel"
 )
 
 func TestL2DataChannel_ReliableDeliveryUnderLoss(t *testing.T) {
@@ -93,7 +93,7 @@ func TestL2DataChannel_ReliableDeliveryUnderLoss(t *testing.T) {
 
 	remoteDCCh := make(chan *webrtc.DataChannel, 1)
 	pcB.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != webrtcpeer.DataChannelLabelL2 {
+		if dc.Label() != l2tunnel.DataChannelLabel {
 			return
 		}
 		select {
@@ -103,7 +103,7 @@ func TestL2DataChannel_ReliableDeliveryUnderLoss(t *testing.T) {
 	})
 
 	ordered := true
-	localDC, err := pcA.CreateDataChannel(webrtcpeer.DataChannelLabelL2, &webrtc.DataChannelInit{
+	localDC, err := pcA.CreateDataChannel(l2tunnel.DataChannelLabel, &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
