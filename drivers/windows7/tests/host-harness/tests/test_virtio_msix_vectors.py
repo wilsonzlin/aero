@@ -65,6 +65,20 @@ class VirtioMsixVectorsTests(unittest.TestCase):
             "virtio-net-pci,netdev=net0,vectors=8",
         )
 
+    def test_does_not_duplicate_vectors_key(self) -> None:
+        f = self.harness._qemu_device_arg_add_vectors
+        self.assertEqual(
+            f("virtio-net-pci,netdev=net0,vectors=2,", 4),
+            "virtio-net-pci,netdev=net0,vectors=2",
+        )
+
+    def test_rejects_non_positive_vectors(self) -> None:
+        f = self.harness._qemu_device_arg_add_vectors
+        with self.assertRaises(ValueError):
+            f("virtio-net-pci,netdev=net0", 0)
+        with self.assertRaises(ValueError):
+            f("virtio-net-pci,netdev=net0", -1)
+
 
 if __name__ == "__main__":
     unittest.main()
