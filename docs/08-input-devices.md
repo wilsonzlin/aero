@@ -257,8 +257,8 @@ Input snapshots must preserve any **pending bytes** that the guest has not yet c
 
 ### What must be captured
 
- - **USB (UHCI/EHCI + HID devices)**
-   - UHCI/EHCI controller register state and per-port timers/flags
+ - **USB (UHCI/EHCI/xHCI + hub/HID devices)**
+   - controller register state and per-port timers/flags (per-controller)
    - USB hub device state (per-port status/change bits and reset timers)
    - USB HID device state (address/config, endpoint halt bits, protocol/idle state)
    - For passthrough HID devices: pending **input report** queue (so restoring mid-session doesn’t drop buffered input)
