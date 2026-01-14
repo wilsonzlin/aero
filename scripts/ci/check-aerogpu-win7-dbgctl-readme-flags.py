@@ -160,7 +160,7 @@ def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     #
     # NOTE: do *not* include `--wait-` here; the Win7 test suite has unrelated
     # flags like `--wait-timeout-ms`.
-    dbgctl_context_re = re.compile(r"--(?:dump|watch|read|map|list)-")
+    dbgctl_context_re = re.compile(r"--(?:dump|watch|read|map|list|query)-")
     out: list[tuple[int, str]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         if "--dbgctl" in line:
