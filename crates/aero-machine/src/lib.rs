@@ -4880,8 +4880,9 @@ impl Machine {
         }
 
         if self.cfg.enable_aerogpu {
-            // Once the guest WDDM driver claims AeroGPU scanout (by writing SCANOUT0_ENABLE), prefer
-            // presenting that framebuffer over the VBE/text fallbacks.
+            // While the guest WDDM driver has claimed scanout (valid `SCANOUT0_*` + `ENABLE=1`),
+            // prefer presenting that framebuffer over the VBE/text fallbacks. Disabling scanout
+            // releases the claim and allows falling back to legacy VBE/text.
             if self.display_present_aerogpu_scanout() {
                 return;
             }

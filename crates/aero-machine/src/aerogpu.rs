@@ -1679,6 +1679,15 @@ impl AeroGpuMmioDevice {
                     self.scanout0_fb_gpa_lo_pending = false;
                 }
                 self.scanout0_enable = new_enable;
+                if !new_enable {
+                    // Explicit disable releases the "WDDM owns scanout" claim so hosts may fall back
+                    // to legacy VGA/VBE presentation.
+                    //
+                    // This is separate from reset: the guest can toggle scanout without resetting
+                    // the device/VM, and the host should be able to resume presenting the legacy
+                    // boot display if WDDM disables scanout.
+                    self.wddm_scanout_active = false;
+                }
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
                     self.scanout0_dirty = true;
