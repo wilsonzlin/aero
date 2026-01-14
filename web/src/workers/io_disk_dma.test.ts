@@ -78,6 +78,50 @@ describe("workers/io_disk_dma", () => {
     expect(Array.from(guest)).toEqual(Array.from(diskData.subarray(1, 1 + guest.byteLength)));
   });
 
+  it("does not use readInto() for unaligned disk offsets even when guest memory is SharedArrayBuffer", async () => {
+    const sectorSize = 512;
+    const diskData = new Uint8Array(sectorSize * 10);
+    for (let i = 0; i < diskData.length; i++) diskData[i] = (0x33 + i) & 0xff;
+
+    const calls: Array<{ op: "read"; lba: number; byteLength: number }> = [];
+    const client: RuntimeDiskClientLike = {
+      async read(_handle, lba, byteLength) {
+        calls.push({ op: "read", lba, byteLength });
+        const start = lba * sectorSize;
+        const end = start + byteLength;
+        return diskData.slice(start, end);
+      },
+      async readInto() {
+        throw new Error("unexpected readInto()");
+      },
+      async write() {
+        throw new Error("unexpected write()");
+      },
+    };
+
+    const guestLen = 2000;
+    const sab = new SharedArrayBuffer(guestLen);
+    const guest = new Uint8Array(sab);
+    const range = computeAlignedDiskIoRange(1n, guestLen, sectorSize);
+    expect(range).toEqual({ lba: 0, byteLength: 2048, offset: 1 });
+
+    await diskReadIntoGuest({
+      client,
+      handle: 1,
+      range: range!,
+      sectorSize,
+      guestView: guest,
+      maxIoBytes: sectorSize * 2,
+    });
+
+    // Still uses read() because disk offset is unaligned.
+    expect(calls).toEqual([
+      { op: "read", lba: 0, byteLength: 1024 },
+      { op: "read", lba: 2, byteLength: 1024 },
+    ]);
+    expect(Array.from(guest)).toEqual(Array.from(diskData.subarray(1, 1 + guestLen)));
+  });
+
   it("chunks aligned reads via readInto() when guest memory is SharedArrayBuffer", async () => {
     const sectorSize = 512;
     const diskData = new Uint8Array(sectorSize * 5);
@@ -141,6 +185,51 @@ describe("workers/io_disk_dma", () => {
       maxIoBytes: sectorSize * 2,
     });
 
+    expect(calls).toEqual([
+      { op: "write", lba: 0, byteLength: 1024 },
+      { op: "write", lba: 2, byteLength: 1024 },
+      { op: "write", lba: 4, byteLength: 512 },
+    ]);
+    expect(Array.from(diskData.subarray(0, guest.byteLength))).toEqual(Array.from(guest));
+  });
+
+  it("does not use writeFrom() when guest memory is not SharedArrayBuffer", async () => {
+    const sectorSize = 512;
+    const diskData = new Uint8Array(sectorSize * 10);
+
+    const calls: Array<{ op: "write"; lba: number; byteLength: number }> = [];
+    const client: RuntimeDiskClientLike = {
+      async read() {
+        throw new Error("unexpected read()");
+      },
+      async readInto() {
+        throw new Error("unexpected readInto()");
+      },
+      async write(_handle, lba, data) {
+        calls.push({ op: "write", lba, byteLength: data.byteLength });
+        diskData.set(data, lba * sectorSize);
+      },
+      async writeFrom() {
+        throw new Error("unexpected writeFrom()");
+      },
+    };
+
+    const guest = new Uint8Array(sectorSize * 5);
+    for (let i = 0; i < guest.length; i++) guest[i] = (0x6f + i) & 0xff;
+
+    const range = computeAlignedDiskIoRange(0n, guest.byteLength, sectorSize);
+    expect(range).toEqual({ lba: 0, byteLength: guest.byteLength, offset: 0 });
+
+    await diskWriteFromGuest({
+      client,
+      handle: 1,
+      range: range!,
+      sectorSize,
+      guestView: guest,
+      maxIoBytes: sectorSize * 2,
+    });
+
+    // writeFrom() requires SharedArrayBuffer; fall back to write().
     expect(calls).toEqual([
       { op: "write", lba: 0, byteLength: 1024 },
       { op: "write", lba: 2, byteLength: 1024 },

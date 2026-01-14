@@ -416,14 +416,14 @@ export type XhciControllerBridgeHandle = {
     attach_webhid_device?: (path: number[], device: unknown) => void;
     attach_usb_hid_passthrough_device?: (path: number[], device: unknown) => void;
     /**
-      * Optional WebUSB passthrough device helpers.
-      *
-      * The passthrough device emits `UsbHostAction`s that must be executed by the browser, and the
-      * results pushed back to the device via {@link push_completion}.
-      *
-      * Optional for older WASM builds. When present, these match the UHCI passthrough contract
-      * (`UsbPassthroughBridgeLike`).
-      */
+     * Optional WebUSB passthrough device helpers.
+     *
+     * The passthrough device emits `UsbHostAction`s that must be executed by the browser, and the
+     * results pushed back to the device via {@link push_completion}.
+     *
+     * Optional for older WASM builds. When present, these match the UHCI passthrough contract
+     * (`UsbPassthroughBridgeLike`).
+     */
     set_connected?: (connected: boolean) => void;
     drain_actions?: () => UsbHostAction[] | null;
     push_completion?: (completion: UsbHostCompletion) => void;
