@@ -1049,3 +1049,87 @@ fn fence_wrap_completion_requires_extended_64bit_fences() {
     assert!(regs.completed_fence > u64::from(u32::MAX));
     assert_eq!(regs.stats.malformed_submissions, 0);
 }
+
+#[test]
+fn fence_wrap_deferred_completion_requires_extended_64bit_fences() {
+    /*
+     * The AeroGPU v1 ring protocol requires monotonically increasing 64-bit fences.
+     *
+     * This mirrors `fence_wrap_completion_requires_extended_64bit_fences`, but exercises the
+     * executor's Deferred completion path (in-flight tracking) which also assumes monotonic 64-bit
+     * fences.
+     */
+    #[derive(Default)]
+    struct OutOfOrderBackend {
+        completed: Vec<AeroGpuBackendCompletion>,
+    }
+
+    impl AeroGpuCommandBackend for OutOfOrderBackend {
+        fn reset(&mut self) {
+            self.completed.clear();
+        }
+
+        fn submit(
+            &mut self,
+            _mem: &mut dyn MemoryBus,
+            submission: AeroGpuBackendSubmission,
+        ) -> Result<(), String> {
+            self.completed.push(AeroGpuBackendCompletion {
+                fence: submission.signal_fence,
+                error: None,
+            });
+            Ok(())
+        }
+
+        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+            // Return completions in reverse order to validate out-of-order completion support.
+            let mut out = Vec::with_capacity(self.completed.len());
+            while let Some(entry) = self.completed.pop() {
+                out.push(entry);
+            }
+            out
+        }
+
+        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+            None
+        }
+    }
+
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::<OutOfOrderBackend>::default());
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+
+    // Simulate a 32-bit wrap: 0xFFFF_FFFF -> 0x0000_0000, extended into a 64-bit epoch domain.
+    let fence0 = 0x0000_0000_FFFF_FFFFu64;
+    let fence1 = 0x0000_0001_0000_0000u64;
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc1_gpa = desc0_gpa + u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    write_submit_desc(&mut mem, desc0_gpa, 0, 0, 0, 0, fence0);
+    write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, fence1);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.fence_gpa = 0x2000u64;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 2);
+    assert_eq!(regs.completed_fence, fence1);
+    assert_eq!(
+        mem.read_u64(regs.fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        regs.completed_fence
+    );
+    assert!(regs.completed_fence > u64::from(u32::MAX));
+    assert_eq!(regs.stats.malformed_submissions, 0);
+}
