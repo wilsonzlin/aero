@@ -1,6 +1,6 @@
 use aero_devices::pci::{
-    msix::PCI_CAP_ID_MSIX, MsixCapability, PciBdf, PciDevice, PciInterruptPin, PciIntxRouter,
-    PciIntxRouterConfig,
+    msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability, PciBdf, PciDevice,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
 use aero_devices::usb::xhci::XhciPciDevice;
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -83,6 +83,76 @@ fn xhci_msi_interrupt_reaches_guest_idt_vector() {
 
     cpu.service_next_interrupt(&mut interrupts.borrow_mut());
     assert_eq!(cpu.handled_vectors, vec![0x45]);
+}
+
+#[test]
+fn xhci_msi_pending_delivers_on_unmask_even_after_interrupt_cleared() {
+    let mut dev = XhciPciDevice::default();
+
+    // Platform interrupt controller used as an MSI sink.
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    let mut cpu = GuestCpu::new();
+    cpu.install_isr(0x45);
+
+    // Program MSI config space.
+    let cap_offset = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSI)
+        .unwrap() as u16;
+    dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
+    dev.config_mut().write(cap_offset + 0x08, 4, 0);
+    dev.config_mut().write(cap_offset + 0x0c, 2, 0x0045);
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, (ctrl | 0x0001) as u32);
+
+    // Mask the vector (per-vector masking is always enabled for our MSI capability, but keep the
+    // test defensive in case profiles change).
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(per_vector_masking, "test requires per-vector masking support");
+    let mask_off = if is_64bit {
+        cap_offset + 0x10
+    } else {
+        cap_offset + 0x0c
+    };
+    dev.config_mut().write(mask_off, 4, 1);
+
+    // Raise an interrupt while masked. The MSI capability should latch the pending bit instead of
+    // delivering an interrupt.
+    dev.raise_event_interrupt();
+    assert_eq!(interrupts.borrow_mut().get_pending(), None);
+
+    // Clear the interrupt condition before unmasking, so delivery relies solely on the pending bit.
+    dev.clear_event_interrupt();
+    assert_eq!(
+        dev.config()
+            .capability::<MsiCapability>()
+            .unwrap()
+            .pending_bits()
+            & 1,
+        1
+    );
+
+    // Unmask the vector and service interrupts again without reasserting the interrupt condition.
+    dev.config_mut().write(mask_off, 4, 0);
+    dev.clear_event_interrupt();
+
+    cpu.service_next_interrupt(&mut interrupts.borrow_mut());
+    assert_eq!(cpu.handled_vectors, vec![0x45]);
+    assert_eq!(
+        dev.config()
+            .capability::<MsiCapability>()
+            .unwrap()
+            .pending_bits()
+            & 1,
+        0
+    );
 }
 
 #[test]

@@ -207,16 +207,23 @@ impl XhciPciDevice {
                 }
             }
 
-            if level {
-                if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
-                    if msi.enabled() {
-                        let pending = msi.pending_bits() != 0;
-                        if !self.last_irq_level || pending {
-                            // Ignore the return value: if the guest masked the vector, the
-                            // capability will set its pending bit and we should not fall back to
-                            // INTx while MSI is enabled.
-                            let _ = msi.trigger(&mut **target);
-                        }
+            if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
+                if msi.enabled() {
+                    let pending = msi.pending_bits() != 0;
+
+                    // MSI delivery is edge-triggered when injected into the platform. Use the
+                    // INTx-derived `level` as an internal "interrupt requested" signal and trigger
+                    // on the rising edge.
+                    //
+                    // When the optional per-vector mask/pending registers are in use, model the
+                    // pending bit similarly to MSI-X: if the device attempted to raise an interrupt
+                    // while masked, the pending bit remains latched and should be deliverable once
+                    // unmasked, even if the original interrupt condition has since been cleared.
+                    if (level && !self.last_irq_level) || pending {
+                        // Ignore the return value: if the guest masked the vector, the
+                        // capability will set its pending bit and we should not fall back to
+                        // INTx while MSI is enabled.
+                        let _ = msi.trigger(&mut **target);
                     }
                 }
             }

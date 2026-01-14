@@ -147,13 +147,14 @@ impl AhciPciDevice {
             .capability::<MsiCapability>()
             .is_some_and(|msi| msi.pending_bits() != 0);
 
-        // MSI delivery is edge-triggered; fire only on a rising edge of the internal interrupt
+        // MSI delivery is edge-triggered; fire on a rising edge of the internal interrupt
         // condition. (INTx remains level-triggered via `intx_level()`.)
         //
-        // For masked MSI vectors, `MsiCapability::trigger()` records a pending bit but does not
-        // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
-        // guests can observe delivery after unmask.
-        if level && (!self.last_irq_level || pending) {
+        // For the optional MSI per-vector mask/pending registers, model pending delivery similarly
+        // to MSI-X: if the device attempted to raise an interrupt while masked, the pending bit
+        // remains latched and should be deliverable once unmasked, even if the original interrupt
+        // condition has since been cleared.
+        if (level && !self.last_irq_level) || pending {
             if let (Some(target), Some(msi)) = (
                 self.msi_target.as_mut(),
                 self.config.capability_mut::<MsiCapability>(),

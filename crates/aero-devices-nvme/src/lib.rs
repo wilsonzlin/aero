@@ -2247,12 +2247,11 @@ impl NvmePciDevice {
         // INTx-derived level (`NvmeController::intx_level`) as an internal "interrupt requested"
         // signal and trigger MSI/MSI-X on a rising edge (empty -> non-empty completion queue).
         //
-        // For masked MSI/MSI-X vectors, the PCI capability logic latches a pending bit but does not
-        // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
-        // guests can observe delivery after unmask.
-        if !self.controller.intx_level {
-            return;
-        }
+        // For the optional MSI per-vector mask/pending registers, model pending delivery similarly
+        // to MSI-X: if the device attempted to raise an interrupt while masked, the pending bit
+        // remains latched and should be deliverable once unmasked, even if the original interrupt
+        // condition has since been cleared.
+        let level = self.controller.intx_level;
 
         let Some(target) = self.msi_target.as_mut() else {
             return;
@@ -2266,7 +2265,7 @@ impl NvmePciDevice {
                     .snapshot_pba()
                     .first()
                     .is_some_and(|word| (word & 1) != 0);
-                if !prev_intx || pending {
+                if level && (!prev_intx || pending) {
                     if let Some(msg) = msix.trigger(0) {
                         target.as_mut().trigger_msi(msg);
                     }
@@ -2278,7 +2277,7 @@ impl NvmePciDevice {
         if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
             if msi.enabled() {
                 let pending = msi.pending_bits() != 0;
-                if !prev_intx || pending {
+                if (level && !prev_intx) || pending {
                     let _ = msi.trigger(target.as_mut());
                 }
             }
