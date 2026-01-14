@@ -59,6 +59,10 @@ fn ap_rdtsc_is_nonzero_and_in_sync_after_sipi() {
     let icr_sipi_low = (0b110u32 << 8) | (1u32 << 14) | 0x08u32;
     m.write_lapic_u32(0, ICR_HIGH_OFF, icr_high);
     m.write_lapic_u32(0, ICR_LOW_OFF, icr_sipi_low);
+    assert!(
+        !m.cpu_by_index(1).halted,
+        "expected AP to become runnable after SIPI"
+    );
 
     // Run slices until the AP has executed and stored its TSC.
     let mut ap_tsc_low32 = 0u32;
