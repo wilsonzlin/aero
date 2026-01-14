@@ -7,18 +7,11 @@
 
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_test_entrypoints.h"
 
 #include "aerogpu_cmd.h"
 
 #include "../include/aerogpu_d3d9_umd.h"
-
-// aerogpu_d3d9_driver.cpp helpers (not part of the public UMD header).
-namespace aerogpu {
-HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(D3DDDI_HDEVICE hDevice,
-                                                         uint32_t stage,
-                                                         uint32_t state,
-                                                         uint32_t value);
-} // namespace aerogpu
 
 namespace {
 

@@ -24,57 +24,13 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_pci.h"
 #include "aerogpu_wddm_alloc.h"
+#include "aerogpu_d3d9_test_entrypoints.h"
 #include "fixedfunc_test_constants.h"
 
 namespace aerogpu {
 
 // aerogpu_d3d9_driver.cpp helpers (not part of the public UMD header).
 uint32_t d3d9_format_to_aerogpu(uint32_t d3d9_format);
-
-// Host-test entrypoints (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side
-// test entrypoints").
-HRESULT AEROGPU_D3D9_CALL device_set_material(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMaterial);
-HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t index, const D3DLIGHT9* pLight);
-HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t index, BOOL enabled);
-HRESULT AEROGPU_D3D9_CALL device_test_enable_wddm_context(D3DDDI_HDEVICE hDevice);
-HRESULT AEROGPU_D3D9_CALL device_test_rebind_alloc_list_tracker(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDI_ALLOCATIONLIST* pAllocationList,
-    uint32_t allocation_list_capacity,
-    uint32_t max_allocation_list_slot_id);
-HRESULT AEROGPU_D3D9_CALL device_test_reset_alloc_list_tracker(D3DDDI_HDEVICE hDevice);
-AllocRef AEROGPU_D3D9_CALL device_test_track_buffer_read(
-    D3DDDI_HDEVICE hDevice,
-    WddmAllocationHandle hAllocation,
-    uint32_t alloc_id,
-    uint64_t share_token);
-AllocRef AEROGPU_D3D9_CALL device_test_track_texture_read(
-    D3DDDI_HDEVICE hDevice,
-    WddmAllocationHandle hAllocation,
-    uint32_t alloc_id,
-    uint64_t share_token);
-AllocRef AEROGPU_D3D9_CALL device_test_track_render_target_write(
-    D3DDDI_HDEVICE hDevice,
-    WddmAllocationHandle hAllocation,
-    uint32_t alloc_id,
-    uint64_t share_token);
-HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features);
-HRESULT AEROGPU_D3D9_CALL adapter_test_set_completed_fence(D3DDDI_HADAPTER hAdapter, uint64_t completed_fence);
-HRESULT AEROGPU_D3D9_CALL device_test_set_resource_backing(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDI_HRESOURCE hResource,
-    uint32_t backing_alloc_id,
-    uint32_t backing_offset_bytes,
-    WddmAllocationHandle wddm_hAllocation);
-HRESULT AEROGPU_D3D9_CALL device_test_set_resource_shared_private_driver_data(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDI_HRESOURCE hResource,
-    const void* data,
-    uint32_t data_size);
-HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
-    D3DDDI_HDEVICE hDevice,
-    uint32_t src_index,
-    uint32_t dst_index);
 
 // Best-effort context string used by `Check()` to include the current test name
 // in failure output (helps when the binary continues after failures).

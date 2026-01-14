@@ -7,11 +7,7 @@
 
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_objects.h"
-
-namespace aerogpu {
-// External-linkage wrapper provided by aerogpu_d3d9_driver.cpp for host-side tests.
-HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf);
-} // namespace aerogpu
+#include "aerogpu_d3d9_test_entrypoints.h"
 
 namespace {
 

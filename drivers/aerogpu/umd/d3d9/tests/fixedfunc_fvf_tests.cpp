@@ -10,24 +10,10 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_test_entrypoints.h"
 #include "fixedfunc_test_constants.h"
 
 namespace aerogpu {
-
-// Host-test helper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side
-// test entrypoints"). Unit tests may call this directly when the device vtable
-// does not expose SetTextureStageState in a given build configuration.
-HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
-    D3DDDI_HDEVICE hDevice,
-    uint32_t stage,
-    uint32_t state,
-    uint32_t value);
-
-HRESULT AEROGPU_D3D9_CALL device_set_material(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMaterial);
-
-HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t index, const D3DLIGHT9* pLight);
-
-HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t index, BOOL enabled);
 
 namespace {
 

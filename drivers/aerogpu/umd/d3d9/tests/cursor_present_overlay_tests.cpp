@@ -8,10 +8,7 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_umd.h"
-
-namespace aerogpu {
-HRESULT AEROGPU_D3D9_CALL device_test_set_cursor_hw_active(D3DDDI_HDEVICE hDevice, BOOL active);
-}
+#include "aerogpu_d3d9_test_entrypoints.h"
 
 namespace {
 

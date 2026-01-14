@@ -8,25 +8,7 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
-
-namespace aerogpu {
-// Host-test wrappers provided by `src/aerogpu_d3d9_driver.cpp` (under "Host-side
-// test entrypoints").
-HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
-    D3DDDI_HDEVICE hDevice,
-    const void* pDecl,
-    uint32_t decl_size,
-    D3D9DDI_HVERTEXDECL* phDecl);
-HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
-    D3DDDI_HDEVICE hDevice,
-    D3D9DDI_HVERTEXDECL hDecl);
-HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDIPRIMITIVETYPE type,
-    uint32_t primitive_count,
-    const void* pVertexData,
-    uint32_t stride_bytes);
-} // namespace aerogpu
+#include "aerogpu_d3d9_test_entrypoints.h"
 
 namespace {
 

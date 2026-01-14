@@ -3,10 +3,9 @@
 #include <cstring>
  
 #include "aerogpu_d3d9_objects.h"
-  
+#include "aerogpu_d3d9_test_entrypoints.h"
+   
 namespace aerogpu {
-
-HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr);
 
 namespace {
  

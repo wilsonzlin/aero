@@ -8,29 +8,13 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_test_entrypoints.h"
 #include "fixedfunc_test_constants.h"
 
 namespace aerogpu {
 
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
-
-// Host-test helper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side test
-// entrypoints") used to simulate a user-visible shader state without requiring
-// a DDI call sequence.
-HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
-    D3DDDI_HDEVICE hDevice,
-    D3D9DDI_HSHADER user_vs,
-    D3D9DDI_HSHADER user_ps);
-
-// Host-test helper for SetTextureStageState. Portable host-side test builds may
-// compile a minimal D3D9DDI_DEVICEFUNCS table without `pfnSetTextureStageState`,
-// so tests should call this directly instead of relying on the vtable member.
-HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
-    D3DDDI_HDEVICE hDevice,
-    uint32_t stage,
-    uint32_t state,
-    uint32_t value);
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;

@@ -9,34 +9,9 @@
 #include <vector>
 
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_test_entrypoints.h"
 
 namespace aerogpu {
-
-// DDI entrypoint under test (implemented in aerogpu_d3d9_driver.cpp).
-HRESULT AEROGPU_D3D9_CALL device_process_vertices(
-    D3DDDI_HDEVICE hDevice,
-    const D3DDDIARG_PROCESSVERTICES* pProcessVertices);
-
-// Portable host-test wrappers (implemented in aerogpu_d3d9_driver.cpp under
-// "Host-side test entrypoints"). These allow tests to drive cached device state
-// via the same code paths used by the DDI function tables.
-HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf);
-HRESULT AEROGPU_D3D9_CALL device_set_viewport(D3DDDI_HDEVICE hDevice, const D3DDDIVIEWPORTINFO* pViewport);
-HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
-    D3DDDI_HDEVICE hDevice,
-    uint32_t stream,
-    D3DDDI_HRESOURCE hVb,
-    uint32_t offset_bytes,
-    uint32_t stride_bytes);
-HRESULT AEROGPU_D3D9_CALL device_set_transform(
-    D3DDDI_HDEVICE hDevice,
-    D3DTRANSFORMSTATETYPE state,
-    const D3DMATRIX* pMatrix);
-HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
-    D3DDDI_HDEVICE hDevice,
-    D3D9DDI_HSHADER user_vs,
-    D3D9DDI_HSHADER user_ps);
-HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr);
 
 namespace {
 

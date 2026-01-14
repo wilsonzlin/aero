@@ -5,23 +5,10 @@
 
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_trace.h"
+#include "aerogpu_d3d9_test_entrypoints.h"
 #include "trace_test_utils.h"
 
 namespace aerogpu {
-
-// DDI entrypoint under test (implemented in aerogpu_d3d9_driver.cpp).
-HRESULT AEROGPU_D3D9_CALL device_process_vertices(
-    D3DDDI_HDEVICE hDevice,
-    const D3DDDIARG_PROCESSVERTICES* pProcessVertices);
-
-// Portable host-test wrapper: allows unit tests that instantiate `Device`
-// directly to drive the cached stream bindings via the normal DDI path.
-HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
-    D3DDDI_HDEVICE hDevice,
-    uint32_t stream,
-    D3DDDI_HRESOURCE hVb,
-    uint32_t offset_bytes,
-    uint32_t stride_bytes);
 
 namespace {
 

@@ -5,63 +5,7 @@
 #include <vector>
 
 #include "aerogpu_d3d9_objects.h"
-
-namespace aerogpu {
-
-HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf);
-HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
-    D3DDDI_HDEVICE hDevice,
-    uint32_t stream,
-    D3DDDI_HRESOURCE hVb,
-    uint32_t offset_bytes,
-    uint32_t stride_bytes);
-HRESULT AEROGPU_D3D9_CALL device_set_indices(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDI_HRESOURCE hIb,
-    D3DDDIFORMAT fmt,
-    uint32_t offset_bytes);
-HRESULT AEROGPU_D3D9_CALL device_set_stream_source_freq(D3DDDI_HDEVICE hDevice, uint32_t stream, uint32_t value);
-HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(D3DDDI_HDEVICE hDevice, D3D9DDI_HVERTEXDECL hDecl);
-HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
-    D3DDDI_HDEVICE hDevice,
-    D3D9DDI_HSHADER user_vs,
-    D3D9DDI_HSHADER user_ps);
-
-// Forward declarations for the draw entrypoints under test.
-HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDIPRIMITIVETYPE type,
-    uint32_t start_vertex,
-    uint32_t primitive_count);
-
-HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDIPRIMITIVETYPE type,
-    uint32_t primitive_count,
-    const void* pVertexData,
-    uint32_t stride_bytes);
-
-HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDIPRIMITIVETYPE type,
-    int32_t base_vertex,
-    uint32_t min_index,
-    uint32_t num_vertices,
-    uint32_t start_index,
-    uint32_t primitive_count);
-
-HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive_up(
-    D3DDDI_HDEVICE hDevice,
-    D3DDDIPRIMITIVETYPE type,
-    uint32_t min_vertex_index,
-    uint32_t num_vertices,
-    uint32_t primitive_count,
-    const void* pIndexData,
-    D3DDDIFORMAT index_data_format,
-    const void* pVertexData,
-    uint32_t stride_bytes);
-
-} // namespace aerogpu
+#include "aerogpu_d3d9_test_entrypoints.h"
 
 namespace {
 
