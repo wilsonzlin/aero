@@ -2,6 +2,8 @@
 ///
 /// This module intentionally re-exports the canonical implementation from
 /// `aero_shared` so the Rust<->JS ABI is single-sourced.
-pub mod framebuffer {
-    pub use aero_shared::shared_framebuffer::*;
-}
+///
+/// The canonical module is also re-exported as `emulator::display::framebuffer`
+/// to keep older module paths working.
+pub use aero_shared::shared_framebuffer::*;
+pub use aero_shared::shared_framebuffer as framebuffer;
