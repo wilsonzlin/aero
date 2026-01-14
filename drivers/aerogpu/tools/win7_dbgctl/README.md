@@ -424,6 +424,7 @@ This tool currently supports JSON output for snapshot-style commands and other b
 - `--help` (also `-h`, `/?`)
 - `--status` (aliases: `--query-version`, `--query-device`)
 - `--query-fence`
+- `--query-error`
 - `--watch-fence`
 - `--query-perf`
 - `--query-umd-private`
