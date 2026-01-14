@@ -212,27 +212,6 @@ async function sendRangeNotSatisfiable(params: {
   params.reply.status(416).headers(headers).send();
 }
 
-function sendIfRangePreconditionFailed(
-  reply: FastifyReply,
-  params: { etag: string; crossOriginResourcePolicy: Config["crossOriginResourcePolicy"] }
-): void {
-  reply
-    .status(412)
-    .headers(
-      buildRangeProxyHeaders({
-        contentType: "application/json",
-        crossOriginResourcePolicy: params.crossOriginResourcePolicy,
-      })
-    )
-    .header("etag", normalizeEtag(params.etag))
-    .send({
-      error: {
-        code: "PRECONDITION_FAILED",
-        message: "If-Range does not match current ETag",
-      },
-    });
-}
-
 function sendNotModified(params: {
   reply: FastifyReply;
   etag?: string;
