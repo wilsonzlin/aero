@@ -25149,7 +25149,7 @@ bool TestUpdateSurface16BitToHostBackedResourceEmitsUpload() {
 
   // Create system-memory source surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = kD3dFmtR5G6B5;
   create_src.width = 4;
   create_src.height = 4;
@@ -25623,7 +25623,7 @@ bool TestGuestBackedUpdateTexture16BitEmitsDirtyRangeNotUpload() {
 
   // Source: system-memory pool surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
-  create_src.type = 0;
+  create_src.type = kD3dRTypeSurface;
   create_src.format = kD3dFmtR5G6B5;
   create_src.width = 4;
   create_src.height = 4;
