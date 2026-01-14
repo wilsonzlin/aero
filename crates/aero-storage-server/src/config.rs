@@ -235,13 +235,105 @@ fn parse_env_bool(var: &str) -> bool {
     let value = match env::var(var) {
         Ok(v) => v,
         Err(env::VarError::NotPresent) => return false,
-        Err(env::VarError::NotUnicode(_)) => panic!("{var} must be valid UTF-8"),
+        Err(env::VarError::NotUnicode(_)) => {
+            eprintln!("warning: {var} must be valid UTF-8; treating as false");
+            return false;
+        }
     };
 
     match value.trim().to_ascii_lowercase().as_str() {
         "" => false,
         "1" | "true" | "t" | "yes" | "y" | "on" => true,
         "0" | "false" | "f" | "no" | "n" | "off" => false,
-        other => panic!("{var} must be a boolean (got {other:?})"),
+        other => {
+            eprintln!(
+                "warning: invalid {var} value: {other:?} (expected boolean); treating as false"
+            );
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_env_bool;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn parse_env_bool_missing_is_false() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_BOOL_MISSING";
+        std::env::remove_var(VAR);
+        assert!(!parse_env_bool(VAR));
+    }
+
+    #[test]
+    fn parse_env_bool_accepts_true_values() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_BOOL_TRUE";
+        let prev = std::env::var_os(VAR);
+
+        for v in ["1", "true", "t", "yes", "y", "on", " TRUE ", "On"] {
+            std::env::set_var(VAR, v);
+            assert!(parse_env_bool(VAR), "expected {v:?} to parse as true");
+        }
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[test]
+    fn parse_env_bool_accepts_false_values() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_BOOL_FALSE";
+        let prev = std::env::var_os(VAR);
+
+        for v in ["0", "false", "f", "no", "n", "off", " False ", "OFF"] {
+            std::env::set_var(VAR, v);
+            assert!(!parse_env_bool(VAR), "expected {v:?} to parse as false");
+        }
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[test]
+    fn parse_env_bool_invalid_value_is_false_and_does_not_panic() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_BOOL_INVALID";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "maybe");
+        assert!(!parse_env_bool(VAR));
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_env_bool_invalid_utf8_is_false_and_does_not_panic() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_BOOL_INVALID_UTF8";
+        let prev = std::env::var_os(VAR);
+
+        // Invalid UTF-8 bytes should not panic; we treat the value as false.
+        std::env::set_var(VAR, OsString::from_vec(vec![0xFF, 0xFE, 0xFD]));
+        assert!(!parse_env_bool(VAR));
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
     }
 }
