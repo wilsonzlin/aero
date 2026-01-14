@@ -230,6 +230,163 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 }
 
 #[test]
+fn compute_can_vertex_pull_b8g8r8a8_unorm_formats() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::compute_can_vertex_pull_b8g8r8a8_unorm_formats"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
+        const VB: u32 = 1;
+        const META: u32 = 2;
+        const OUT: u32 = 3;
+        const SHADER: u32 = 4;
+        const PIPELINE: u32 = 5;
+
+        // Two vertices:
+        // - vb0 (slot 0): DXGI_FORMAT_B8G8R8A8_UNORM
+        //
+        // Packed bytes are stored BGRA, but D3D semantics are RGBA when consumed in the shader, so
+        // the loader must swap R/B.
+        let mut vb = Vec::<u8>::new();
+        // v0: B=10, G=20, R=30, A=40
+        push_u32(&mut vb, 0x28_1E_14_0A);
+        // v1: B=255, G=0, R=128, A=64
+        push_u32(&mut vb, 0x40_80_00_FF);
+        assert_eq!(vb.len(), 8);
+
+        let mut meta = IaMeta::default();
+        meta.vb[0].base_offset_bytes = 0;
+        meta.vb[0].stride_bytes = 4;
+
+        let output_vec4s = 2u32;
+        let output_size = output_vec4s as u64 * 16;
+
+        let wgsl = format!(
+            r#"
+{VERTEX_PULLING_WGSL}
+
+struct OutBuf {{
+  data: array<vec4<f32>>,
+}};
+
+@group(2) @binding({out_binding}) var<storage, read_write> out_buf: OutBuf;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  let idx = gid.x;
+  if (idx >= 2u) {{ return; }}
+  let c = ia_load_b8g8r8a8_unorm(0u, idx, 0u);
+  out_buf.data[idx] = c;
+}}
+"#,
+            out_binding = IA_BINDING_VERTEX_BUFFER_END
+        );
+
+        let mut bindings: Vec<BindingDesc> = Vec::new();
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_META,
+            ty: BindingType::UniformBuffer,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            bindings.push(BindingDesc {
+                binding: IA_BINDING_VERTEX_BUFFER_BASE + i,
+                ty: BindingType::StorageBufferReadOnly,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
+            });
+        }
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_VERTEX_BUFFER_END,
+            ty: BindingType::StorageBufferReadWrite,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+
+        let mut writer = CmdWriter::new();
+        writer.create_buffer(VB, vb.len() as u64, BufferUsage::VERTEX);
+        writer.create_buffer(META, meta.as_bytes().len() as u64, BufferUsage::UNIFORM);
+        writer.create_buffer(
+            OUT,
+            output_size,
+            BufferUsage::STORAGE | BufferUsage::MAP_READ,
+        );
+
+        writer.update_buffer(VB, 0, &vb);
+        writer.update_buffer(META, 0, meta.as_bytes());
+
+        writer.create_shader_module_wgsl(SHADER, &wgsl);
+        writer.create_compute_pipeline(PIPELINE, SHADER, &bindings);
+
+        writer.begin_compute_pass();
+        writer.set_pipeline(PipelineKind::Compute, PIPELINE);
+        writer.set_bind_buffer(IA_BINDING_META, META, 0, 0);
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + i, VB, 0, 0);
+        }
+        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_END, OUT, 0, 0);
+        writer.dispatch(2, 1, 1);
+        writer.end_compute_pass();
+
+        rt.execute(&writer.finish())
+            .expect("compute dispatch with vertex pulling should succeed");
+
+        let bytes = rt
+            .read_buffer(OUT, 0, output_size)
+            .await
+            .expect("read output buffer");
+        assert_eq!(
+            bytes.len(),
+            output_size as usize,
+            "unexpected output buffer size"
+        );
+
+        let mut floats = Vec::<f32>::with_capacity(bytes.len() / 4);
+        for chunk in bytes.chunks_exact(4) {
+            floats.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        assert_eq!(floats.len(), (output_vec4s * 4) as usize);
+
+        let vec4 = |idx: usize| -> [f32; 4] {
+            let base = idx * 4;
+            [
+                floats[base],
+                floats[base + 1],
+                floats[base + 2],
+                floats[base + 3],
+            ]
+        };
+
+        let expected = [
+            // v0 (RGBA): (30, 20, 10, 40) / 255
+            [30.0 / 255.0, 20.0 / 255.0, 10.0 / 255.0, 40.0 / 255.0],
+            // v1 (RGBA): (128, 0, 255, 64) / 255
+            [128.0 / 255.0, 0.0, 1.0, 64.0 / 255.0],
+        ];
+
+        for (i, exp) in expected.iter().enumerate() {
+            let got = vec4(i);
+            for lane in 0..4 {
+                assert_f32_near(got[lane], exp[lane], &format!("vec4[{i}].{lane}"));
+            }
+        }
+    });
+}
+
+#[test]
 fn compute_vertex_pulling_supports_unaligned_byte_addresses() {
     pollster::block_on(async {
         let test_name = concat!(

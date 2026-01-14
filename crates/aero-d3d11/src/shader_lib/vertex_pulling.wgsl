@@ -133,6 +133,20 @@ fn ia_load_r8g8b8a8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u3
   return vec4<f32>(r, g, b, a);
 }
 
+// DXGI_FORMAT_B8G8R8A8_UNORM
+fn ia_load_b8g8r8a8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
+  // `B8G8R8A8` describes storage order; D3D shader semantics still treat the components as RGBA.
+  // Swizzle to match D3D's channel mapping.
+  let v = ia_load_r8g8b8a8_unorm(slot, vertex_index, element_offset_bytes);
+  return vec4<f32>(v.z, v.y, v.x, v.w);
+}
+
+// DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+fn ia_load_b8g8r8a8_unorm_srgb(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
+  // Vertex fetch does not apply sRGB conversion; treat as UNORM.
+  return ia_load_b8g8r8a8_unorm(slot, vertex_index, element_offset_bytes);
+}
+
 // DXGI_FORMAT_R8G8B8A8_SNORM
 fn ia_load_r8g8b8a8_snorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
   let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
