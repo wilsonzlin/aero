@@ -82,7 +82,8 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
 
     let gen0 = scanout.snapshot().generation;
 
-    // Program scanout0 registers with a format that the shared scanout descriptor cannot represent.
+    // Program scanout0 registers with a format that the shared scanout descriptor cannot represent
+    // (non-32bpp).
     let fb_gpa: u64 = 0x1234_5678_9abc_def0;
     dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 800);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 600);
@@ -91,7 +92,7 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
         &mut mem,
         mmio::SCANOUT0_FORMAT,
         4,
-        AeroGpuFormat::R8G8B8A8Unorm as u32,
+        AeroGpuFormat::B5G6R5Unorm as u32,
     );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);

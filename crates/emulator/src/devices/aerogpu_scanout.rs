@@ -98,7 +98,7 @@ impl AeroGpuFormat {
     }
 
     /// Map an AeroGPU pixel format (`enum aerogpu_format`) to the shared scanout descriptor format
-    /// enum (`aero_shared::scanout_state::SCANOUT_FORMAT_*`).
+    /// field (`ScanoutStateUpdate::format`).
     ///
     /// The scanout descriptor stores AeroGPU format discriminants (`u32`) directly, but scanout
     /// consumers (e.g. web presenters) only support a small subset of formats today.
@@ -108,6 +108,10 @@ impl AeroGpuFormat {
             Self::B8G8R8A8Unorm => Some(SCANOUT_FORMAT_B8G8R8A8),
             Self::B8G8R8X8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8X8_SRGB),
             Self::B8G8R8A8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8A8_SRGB),
+            Self::R8G8B8X8Unorm
+            | Self::R8G8B8A8Unorm
+            | Self::R8G8B8X8UnormSrgb
+            | Self::R8G8B8A8UnormSrgb => Some(self as u32),
             _ => None,
         }
     }
@@ -683,10 +687,37 @@ mod tests {
         };
         let update = bgra_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
         assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8);
+
+        // sRGB discriminants should be preserved.
+        let bgrx_srgb = AeroGpuScanoutConfig {
+            format: AeroGpuFormat::B8G8R8X8UnormSrgb,
+            ..cfg
+        };
+        let update = bgrx_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8_SRGB);
+
+        let bgra_srgb = AeroGpuScanoutConfig {
+            format: AeroGpuFormat::B8G8R8A8UnormSrgb,
+            ..cfg
+        };
+        let update = bgra_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
+
+        // RGBA is representable and preserved.
+        let rgba = AeroGpuScanoutConfig {
+            format: AeroGpuFormat::R8G8B8A8Unorm,
+            ..cfg
+        };
+        let update = rgba.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.width, 640);
+        assert_eq!(update.height, 480);
+        assert_eq!(update.pitch_bytes, 640 * 4);
+        assert_eq!(update.format, AeroGpuFormat::R8G8B8A8Unorm as u32);
 
         // Unsupported format must not panic and must publish a disabled descriptor.
         let unsupported = AeroGpuScanoutConfig {
-            format: AeroGpuFormat::R8G8B8A8Unorm,
+            format: AeroGpuFormat::B5G6R5Unorm,
             ..cfg
         };
         let update0 = unsupported.to_scanout_state_update(SCANOUT_SOURCE_WDDM);

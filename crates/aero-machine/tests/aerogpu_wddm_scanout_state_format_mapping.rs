@@ -111,11 +111,29 @@ fn wddm_scanout_state_format_mapping_rejects_unsupported_formats_deterministical
     let snap = scanout_state.snapshot();
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
 
+    // Program RGBA/RGBX scanout formats; these should publish the corresponding protocol
+    // discriminants in the shared state.
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+        pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+    );
+    m.process_aerogpu();
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.format, pci::AerogpuFormat::R8G8B8A8Unorm as u32);
+
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+        pci::AerogpuFormat::R8G8B8X8Unorm as u32,
+    );
+    m.process_aerogpu();
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.format, pci::AerogpuFormat::R8G8B8X8Unorm as u32);
+
     // Program an unsupported scanout format; this must not panic and must publish a deterministic
     // disabled descriptor rather than leaking an unsupported format value to the shared state.
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
-        pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+        pci::AerogpuFormat::B5G6R5Unorm as u32,
     );
     m.process_aerogpu();
 
