@@ -364,7 +364,7 @@ def check_track_allocation_return_value_checked(errors: list[str]) -> None:
 
     text = read_text(kmd_path)
     for idx, line in enumerate(text.splitlines(), start=1):
-        if re.match(r"^\s*AeroGpuTrackAllocation\s*\(", line):
+        if re.match(r"^\s*(?:\(\s*void\s*\)\s*)?AeroGpuTrackAllocation\s*\(", line):
             errors.append(
                 f"{kmd_path.relative_to(ROOT)}:{idx}: AeroGpuTrackAllocation return value must be checked (do not ignore it)"
             )
