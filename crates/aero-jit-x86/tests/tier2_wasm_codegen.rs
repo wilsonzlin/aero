@@ -1776,6 +1776,156 @@ fn tier2_loop_trace_invalidates_when_storemem_bumps_code_version_interpreter_mat
 }
 
 #[test]
+fn tier2_loop_trace_code_version_wraparound_on_storemem_interpreter_matches_wasm() {
+    // Same as `tier2_loop_trace_invalidates_when_storemem_bumps_code_version_interpreter_matches_wasm`,
+    // but start from `u32::MAX` so we test wraparound semantics (`0xffff_ffff + 1 == 0`).
+    let entry_rip = 0x1000u64;
+    let side_exit_rip = 0x2000u64;
+    let store_addr = 0x100u64;
+    let page = store_addr >> aero_jit_x86::PAGE_SHIFT;
+    let initial_version: u32 = u32::MAX;
+
+    let trace = TraceIr {
+        prologue: vec![
+            Instr::Const {
+                dst: v(0),
+                value: store_addr,
+            },
+            Instr::Const {
+                dst: v(1),
+                value: 0xAA,
+            },
+            // Loop termination threshold for the regression "no invalidation" path.
+            Instr::Const {
+                dst: v(2),
+                value: 3,
+            },
+        ],
+        body: vec![
+            Instr::GuardCodeVersion {
+                page,
+                expected: initial_version,
+                exit_rip: entry_rip,
+            },
+            // Increment a counter in RAX.
+            Instr::LoadReg {
+                dst: v(3),
+                reg: Gpr::Rax,
+            },
+            Instr::Const {
+                dst: v(4),
+                value: 1,
+            },
+            Instr::BinOp {
+                dst: v(5),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(3)),
+                rhs: Operand::Value(v(4)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(5)),
+            },
+            // Bump the guarded code page (wraparound to 0).
+            Instr::StoreMem {
+                addr: Operand::Value(v(0)),
+                src: Operand::Value(v(1)),
+                width: Width::W8,
+            },
+            // If counter < 3, keep looping. Otherwise, side-exit so we don't spin forever in
+            // regressions where invalidation doesn't happen.
+            Instr::BinOp {
+                dst: v(6),
+                op: BinOp::LtU,
+                lhs: Operand::Value(v(5)),
+                rhs: Operand::Value(v(2)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::Guard {
+                cond: Operand::Value(v(6)),
+                expected: true,
+                exit_rip: side_exit_rip,
+            },
+        ],
+        kind: TraceKind::Loop,
+    };
+
+    // ---- Tier-2 interpreter (reference) ---------------------------------------------------------
+    let env = RuntimeEnv::default();
+    env.page_versions.set_version(page, initial_version);
+
+    let mut init_state = T2State::default();
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+    init_state.cpu.rip = entry_rip;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+
+    let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+    let expected = aero_jit_x86::tier2::interp::run_trace(&trace, &env, &mut bus, &mut interp_state, 5);
+    assert_eq!(
+        expected.exit,
+        RunExit::Invalidate { next_rip: entry_rip },
+        "loop should invalidate after StoreMem wraps the guarded page version"
+    );
+    assert_eq!(
+        env.page_versions.version(page),
+        0,
+        "StoreMem should bump the guarded page version with wrapping arithmetic"
+    );
+
+    // ---- Optimize + compile to WASM ------------------------------------------------------------
+    let mut optimized = trace.clone();
+    let opt = optimize_trace(&mut optimized, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&optimized, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    // ---- Execute the WASM trace via wasmi ------------------------------------------------------
+    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let table_ptr = install_code_version_table(&memory, &mut store, &[initial_version]);
+
+    let got_next_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_next_rip, entry_rip);
+
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION);
+
+    let bumped = read_u32_from_memory(&memory, &store, table_ptr as usize);
+    assert_eq!(
+        bumped, 0,
+        "StoreMem should bump the guarded page version with wrapping arithmetic in the WASM harness code-version table"
+    );
+
+    // Guest memory.
+    let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
+    memory.read(&store, 0, &mut got_guest_mem).unwrap();
+    assert_eq!(got_guest_mem.as_slice(), bus.mem());
+
+    // CPU state.
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
+#[test]
 fn tier2_loop_trace_cross_page_store_bumps_both_pages_interpreter_matches_wasm() {
     // Cross-page StoreMem should bump *all* spanned 4KiB pages.
     //
