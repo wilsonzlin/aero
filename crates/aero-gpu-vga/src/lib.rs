@@ -450,7 +450,8 @@ impl VgaDevice {
     /// as a B8G8R8X8 scanout in guest memory.
     pub fn active_scanout_update(&self) -> ScanoutStateUpdate {
         // VBE scanout is only describable via `ScanoutState` when the guest has enabled the linear
-        // framebuffer and the pixel format matches our single supported scanout format.
+        // framebuffer and the pixel format matches the VBE scanout pixel format we currently
+        // support (`B8G8R8X8`).
         if self.vbe.enabled() && self.vbe.lfb_enabled() && self.vbe.bpp == 32 {
             let disabled = ScanoutStateUpdate {
                 source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
