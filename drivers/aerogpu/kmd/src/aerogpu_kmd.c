@@ -2352,10 +2352,6 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     *NumberOfVideoPresentSources = 1;
     *NumberOfChildren = 1;
 
-    /* Reset post-display ownership bookkeeping on each (re)start. */
-    adapter->PostDisplayOwnershipReleased = FALSE;
-    adapter->PostDisplayVblankWasEnabled = FALSE;
-
     PCM_RESOURCE_LIST resList = DxgkStartInfo->TranslatedResourceList;
     if (!resList || resList->Count < 1) {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
