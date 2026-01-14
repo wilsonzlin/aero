@@ -1,5 +1,4 @@
 import {
-  FRAME_DIRTY,
   FRAME_PRESENTED,
   FRAME_SEQ_INDEX,
   FRAME_STATUS_INDEX,
@@ -313,11 +312,11 @@ async function main(): Promise<void> {
     const backend = backendKind ?? "unknown";
     if (backendEl) backendEl.textContent = backend;
 
-    // Mark a frame dirty and trigger a few ticks.
-    const nextSeq = (Atomics.load(frameState, FRAME_SEQ_INDEX) + 1) | 0;
-    Atomics.store(frameState, FRAME_SEQ_INDEX, nextSeq);
-    Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
-    Atomics.notify(frameState, FRAME_STATUS_INDEX);
+    // Trigger a few ticks without ever marking the legacy shared framebuffer DIRTY.
+    //
+    // This validates that WDDM scanout presentation is not gated on the legacy
+    // shared-framebuffer pacing state (FRAME_STATUS=DIRTY), matching the behavior
+    // required by the main-thread frame scheduler once scanout is WDDM-owned.
 
     for (let i = 0; i < 3; i += 1) {
       worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
