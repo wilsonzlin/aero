@@ -269,19 +269,9 @@ export type AerogpuShaderStage = (typeof AerogpuShaderStage)[keyof typeof Aerogp
 // Numeric values intentionally match DXBC program type values for non-zero types:
 //   1=vs, 2=gs, 3=hs, 4=ds, 5=cs.
 //
-// Pixel shaders are intentionally not representable via the `reserved0` stage_ex encoding because
-// `0` is reserved for legacy compute packets. For convenience, the TS `AerogpuShaderStageEx` enum
-// includes a `Pixel` sentinel value which `encodeStageEx()` maps back to the legacy
-// `(shaderStage=Pixel, reserved0=0)` form.
+// Pixel shaders are intentionally not representable here because `0` is reserved for legacy compute
+// packets. Pixel shaders must use the legacy `shaderStage=Pixel` encoding.
 export const AerogpuShaderStageEx = {
-  /**
-   * Convenience sentinel for callers that want to use the stage-ex aware writer APIs with Pixel.
-   *
-   * Pixel shaders are **not** representable via the `stage_ex` reserved0 encoding (because
-   * `reserved0==0` is reserved for legacy Compute). When encoded via {@link encodeStageEx},
-   * this value maps to the legacy `(shaderStage=Pixel, reserved0=0)` form.
-   */
-  Pixel: 0xffff_ffff,
   Vertex: 1,
   Geometry: 2,
   Hull: 3,
@@ -309,10 +299,6 @@ export function decodeStageEx(shaderStage: number, reserved0: number): AerogpuSh
 
 /** Encode the extended shader stage ("stage_ex") into `(shaderStage, reserved0)`. */
 export function encodeStageEx(stageEx: AerogpuShaderStageEx): [shaderStage: number, reserved0: number] {
-  // Pixel is not representable via `reserved0` and must use the legacy stage field.
-  if ((stageEx as unknown) === AerogpuShaderStageEx.Pixel) {
-    return [AerogpuShaderStage.Pixel, 0];
-  }
   const v = stageEx >>> 0;
   if (v === 0) {
     // Should be impossible since `AerogpuShaderStageEx` does not include a zero value.
@@ -333,9 +319,6 @@ export function encodeStageExReserved0(
     return 0;
   }
   if (ex === undefined) return 0;
-  if ((ex as unknown) === AerogpuShaderStageEx.Pixel) {
-    throw new Error("stageEx=Pixel cannot be encoded via reserved0; use shaderStage=Pixel instead");
-  }
   const v = ex >>> 0;
   if (v === 0) {
     throw new Error("stageEx must be non-zero; 0 is reserved for legacy compute");
