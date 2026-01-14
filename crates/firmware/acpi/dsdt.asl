@@ -22,8 +22,6 @@
  *     iasl -d crates/firmware/acpi/dsdt.aml
  */
 
-#pragma disable 3168 /* Legacy Processor() keyword detected */
-
 DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 {
     Name (PICM, Zero)
