@@ -58,12 +58,11 @@ use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciBarMmioHandler, PciBarMmioRouter,
-    PciBdf, PciConfigPorts, PciConfigSyncedMmioBar, PciCoreSnapshot, PciDevice, PciEcamConfig,
-    PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
-    PciResourceAllocatorConfig, SharedPciConfigPorts,
+    bios_post, msix::PCI_CAP_ID_MSIX, MsixCapability, register_pci_config_ports, PciBarDefinition,
+    PciBarMmioHandler, PciBarMmioRouter, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar,
+    PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter,
+    PciIntxRouterConfig, PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
-use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
@@ -1546,6 +1545,26 @@ impl VirtioInterruptSink for VirtioMsixInterruptSink {
     }
 }
 
+fn sync_virtio_msix_from_platform(dev: &mut VirtioPciDevice, enabled: bool, function_masked: bool) {
+    let Some(off) = dev.config_mut().find_capability(PCI_CAP_ID_MSIX) else {
+        return;
+    };
+
+    // Preserve the read-only table size bits and only synchronize the guest-writable enable/mask
+    // bits.
+    let ctrl = dev.config_mut().read(u16::from(off) + 0x02, 2) as u16;
+    let mut new_ctrl = ctrl & !((1 << 15) | (1 << 14));
+    if enabled {
+        new_ctrl |= 1 << 15;
+    }
+    if function_masked {
+        new_ctrl |= 1 << 14;
+    }
+    if new_ctrl != ctrl {
+        dev.config_mut().write(u16::from(off) + 0x02, 2, u32::from(new_ctrl));
+    }
+}
+
 struct VirtioPciBar0Mmio {
     pci_cfg: SharedPciConfigPorts,
     bdf: PciBdf,
@@ -1558,16 +1577,24 @@ impl VirtioPciBar0Mmio {
     }
 
     fn sync_pci_command(&mut self) {
-        let command = {
+        let (command, msix_enabled, msix_masked) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(self.bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
+            match pci_cfg.bus_mut().device_config(self.bdf) {
+                Some(cfg) => {
+                    let msix = cfg.capability::<MsixCapability>();
+                    (
+                        cfg.command(),
+                        msix.is_some_and(|msix| msix.enabled()),
+                        msix.is_some_and(|msix| msix.function_masked()),
+                    )
+                }
+                None => (0, false, false),
+            }
         };
 
-        self.dev.borrow_mut().set_pci_command(command);
+        let mut dev = self.dev.borrow_mut();
+        dev.set_pci_command(command);
+        sync_virtio_msix_from_platform(&mut dev, msix_enabled, msix_masked);
     }
 
     fn all_ones(size: usize) -> u64 {
@@ -6053,6 +6080,12 @@ Track progress: docs/21-smp.md\n\
                     .bus_mut()
                     .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
             }
+            if self.cfg.enable_aerogpu {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
+            }
 
             // PCI INTx router.
             let pci_intx: Rc<RefCell<PciIntxRouter>> = match &self.pci_intx {
@@ -7104,18 +7137,25 @@ Track progress: docs/21-smp.md\n\
         };
 
         let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
-        let command = {
+        let (command, msix_enabled, msix_masked) = {
             let mut pci_cfg = pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
+            match pci_cfg.bus_mut().device_config(bdf) {
+                Some(cfg) => {
+                    let msix = cfg.capability::<MsixCapability>();
+                    (
+                        cfg.command(),
+                        msix.is_some_and(|msix| msix.enabled()),
+                        msix.is_some_and(|msix| msix.function_masked()),
+                    )
+                }
+                None => (0, false, false),
+            }
         };
 
         {
             let mut virtio_blk = virtio_blk.borrow_mut();
             virtio_blk.set_pci_command(command);
+            sync_virtio_msix_from_platform(&mut virtio_blk, msix_enabled, msix_masked);
         }
 
         // Respect PCI Bus Master Enable (bit 2). Virtio DMA is undefined without it.
@@ -7189,17 +7229,24 @@ Track progress: docs/21-smp.md\n\
 
         // Respect PCI Bus Master Enable (bit 2). Virtio DMA is undefined without it.
         let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
-        let command = self
+        let (command, msix_enabled, msix_masked) = self
             .pci_cfg
             .as_ref()
             .and_then(|pci_cfg| {
                 let mut pci_cfg = pci_cfg.borrow_mut();
-                pci_cfg
-                    .bus_mut()
-                    .device_config(bdf)
-                    .map(|cfg| cfg.command())
+                match pci_cfg.bus_mut().device_config(bdf) {
+                    Some(cfg) => {
+                        let msix = cfg.capability::<MsixCapability>();
+                        Some((
+                            cfg.command(),
+                            msix.is_some_and(|msix| msix.enabled()),
+                            msix.is_some_and(|msix| msix.function_masked()),
+                        ))
+                    }
+                    None => None,
+                }
             })
-            .unwrap_or(0);
+            .unwrap_or((0, false, false));
 
         // Keep the virtio transport's internal PCI command register in sync with the canonical PCI
         // config space owned by the machine.
@@ -7209,6 +7256,7 @@ Track progress: docs/21-smp.md\n\
         // progress even after the guest enables bus mastering via PCI config ports.
         let mut virtio = virtio.borrow_mut();
         virtio.set_pci_command(command);
+        sync_virtio_msix_from_platform(&mut virtio, msix_enabled, msix_masked);
 
         if (command & (1 << 2)) == 0 {
             return;
