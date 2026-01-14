@@ -72,6 +72,37 @@ fn bind_shaders_decodes_extended_packet() {
 }
 
 #[test]
+fn bind_shaders_decodes_extended_packet_with_legacy_reserved0_mismatch() {
+    // Forward-compat / mixed encodings: some emitters may mirror a legacy GS handle in `reserved0`
+    // even when using the append-only `{gs,hs,ds}` tail (or may leave `reserved0` non-zero for
+    // unrelated reasons). The decoder must still treat the appended handles as authoritative.
+    let mut payload = Vec::new();
+    push_u32(&mut payload, 1); // vs
+    push_u32(&mut payload, 2); // ps
+    push_u32(&mut payload, 3); // cs
+    push_u32(&mut payload, 0xAABB_CCDD); // reserved0 (legacy field; ignored when tail present)
+    push_u32(&mut payload, 4); // gs
+    push_u32(&mut payload, 5); // hs
+    push_u32(&mut payload, 6); // ds
+
+    let packet = build_packet(AerogpuCmdOpcode::BindShaders as u32, payload);
+
+    let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&packet).unwrap();
+    let size_bytes = cmd.hdr.size_bytes;
+    let reserved0 = cmd.reserved0;
+    assert_eq!(size_bytes, 36);
+    assert_eq!(reserved0, 0xAABB_CCDD);
+    assert_eq!(
+        ex,
+        Some(BindShadersEx {
+            gs: 4,
+            hs: 5,
+            ds: 6
+        })
+    );
+}
+
+#[test]
 fn bind_shaders_extended_packet_allows_trailing_bytes() {
     let mut payload = Vec::new();
     push_u32(&mut payload, 1); // vs
