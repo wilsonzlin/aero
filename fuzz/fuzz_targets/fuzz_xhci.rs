@@ -6,7 +6,7 @@ use libfuzzer_sys::fuzz_target;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::memory::MemoryBus;
-use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
+use aero_usb::xhci::context::{EndpointContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::{regs, trb::*, XhciController};
 
 const MEM_SIZE: usize = 256 * 1024;
@@ -19,10 +19,13 @@ const MAX_OPS: usize = 1024;
 const DCBAA_BASE: u64 = 0x1000;
 const DEV_CTX_BASE: u64 = 0x2000;
 const INPUT_CTX_BASE: u64 = 0x3000;
+const CONFIG_INPUT_CTX_BASE: u64 = 0x3800;
 const CMD_RING_BASE: u64 = 0x4000;
 const EVENT_RING_BASE: u64 = 0x5000;
 const ERST_BASE: u64 = 0x6000;
 const EP0_TR_BASE: u64 = 0x7000;
+const EP1_TR_BASE: u64 = 0x8000;
+const EP1_BUF_BASE: u64 = 0x9000;
 
 /// Bounded guest-physical memory for xHCI ring fuzzing.
 ///
@@ -169,11 +172,68 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
 
     // Input EP0 context requests MPS=64 and Interval=5.
     bus.write_u32(INPUT_CTX_BASE + 0x40, 5u32 << 16);
-    bus.write_u32(INPUT_CTX_BASE + 0x40 + 4, 64u32 << 16);
+    // Endpoint type=Control, MPS=64.
+    bus.write_u32(INPUT_CTX_BASE + 0x40 + 4, (4u32 << 3) | (64u32 << 16));
     // TR Dequeue Pointer (masked to 16-byte alignment) + DCS=1 so an all-zero ring reads as empty.
     let tr_raw = EP0_TR_BASE | 1;
     bus.write_u32(INPUT_CTX_BASE + 0x40 + 8, tr_raw as u32);
     bus.write_u32(INPUT_CTX_BASE + 0x40 + 12, (tr_raw >> 32) as u32);
+
+    // Configure Endpoint input context (separate region so Address Device's ICC flags remain valid).
+    // Add Slot Context + EP1 IN (endpoint_id=3).
+    bus.write_u32(CONFIG_INPUT_CTX_BASE, 0);
+    bus.write_u32(CONFIG_INPUT_CTX_BASE + 0x04, (1 << 0) | (1 << 3));
+    {
+        let mut slot_ctx = SlotContext::default();
+        slot_ctx.set_root_hub_port_number(1);
+        slot_ctx.set_route_string(0);
+        // EP1 IN is context index 3, so ContextEntries should be >= 3.
+        slot_ctx.set_context_entries(3);
+        slot_ctx.write_to(bus, CONFIG_INPUT_CTX_BASE + CONTEXT_SIZE as u64);
+    }
+    {
+        // Endpoint context for EP1 IN (endpoint_id=3) lives at (endpoint_id + 1) * CONTEXT_SIZE
+        // within the input context (see xHCI spec / `cmd_configure_endpoint`).
+        const EP1_IN_ENDPOINT_ID: u8 = 3;
+        let input_off = (u64::from(EP1_IN_ENDPOINT_ID) + 1) * CONTEXT_SIZE as u64;
+        let mut ep_ctx = EndpointContext::default();
+        ep_ctx.set_interval(1);
+        // Endpoint type=Interrupt IN (7), MPS=8 (boot keyboard report size).
+        ep_ctx.set_dword(1, (7u32 << 3) | (8u32 << 16));
+        ep_ctx.set_tr_dequeue_pointer(EP1_TR_BASE, true);
+        ep_ctx.write_to(bus, CONFIG_INPUT_CTX_BASE + input_off);
+    }
+
+    // Seed an EP0 control TD (SET_CONFIGURATION(1)) so interrupt transfers can return data.
+    {
+        let setup_param = u64::from_le_bytes([0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let mut setup = Trb::new(setup_param, 0, 0);
+        setup.set_trb_type(TrbType::SetupStage);
+        setup.set_cycle(true);
+        bus.write_trb(EP0_TR_BASE, setup);
+    }
+    {
+        let mut status = Trb::new(0, 0, 0);
+        status.set_trb_type(TrbType::StatusStage);
+        status.set_dir_in(true);
+        status.control |= Trb::CONTROL_IOC_BIT;
+        status.set_cycle(true);
+        bus.write_trb(EP0_TR_BASE + TRB_LEN as u64, status);
+    }
+    {
+        let mut stop = Trb::new(0, 0, 0);
+        stop.set_trb_type(TrbType::NoOp);
+        stop.set_cycle(false);
+        bus.write_trb(EP0_TR_BASE + 2 * TRB_LEN as u64, stop);
+    }
+
+    // Leave EP1 IN transfer ring empty by default (cycle=0 sentinel).
+    {
+        let mut stop = Trb::new(0, 0, 0);
+        stop.set_trb_type(TrbType::NoOp);
+        stop.set_cycle(false);
+        bus.write_trb(EP1_TR_BASE, stop);
+    }
 
     // Command ring:
     //  - TRB0: Enable Slot (cycle=1)
@@ -221,6 +281,8 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
 enum CommandRingSeed {
     EnableSlot,
     AddressDeviceAndEvaluateContext,
+    ConfigureEndpointEp1In,
+    EndpointCommandsEp1In,
 }
 
 fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: CommandRingSeed) {
@@ -274,10 +336,74 @@ fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: Comman
                 bus.write_trb(CMD_RING_BASE + 2 * TRB_LEN as u64, stop);
             }
         }
+        CommandRingSeed::ConfigureEndpointEp1In => {
+            // Program Configure Endpoint (slot 1, config input context) to enable EP1 IN.
+            let mut trb0 = Trb::new(CONFIG_INPUT_CTX_BASE, 0, 0);
+            trb0.set_trb_type(TrbType::ConfigureEndpointCommand);
+            trb0.set_slot_id(1);
+            trb0.set_cycle(true);
+            bus.write_trb(CMD_RING_BASE, trb0);
+
+            let mut stop = Trb::new(0, 0, 0);
+            stop.set_trb_type(TrbType::NoOpCommand);
+            stop.set_cycle(false);
+            bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, stop);
+        }
+        CommandRingSeed::EndpointCommandsEp1In => {
+            // Stop/Reset/SetTRDP for EP1 IN (slot 1, endpoint_id=3) to exercise endpoint-management
+            // commands.
+            const SLOT_ID: u8 = 1;
+            const EP_ID: u8 = 3;
+            {
+                let mut trb0 = Trb::new(0, 0, 0);
+                trb0.set_trb_type(TrbType::StopEndpointCommand);
+                trb0.set_slot_id(SLOT_ID);
+                trb0.set_endpoint_id(EP_ID);
+                trb0.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE, trb0);
+            }
+            {
+                let mut trb1 = Trb::new(0, 0, 0);
+                trb1.set_trb_type(TrbType::ResetEndpointCommand);
+                trb1.set_slot_id(SLOT_ID);
+                trb1.set_endpoint_id(EP_ID);
+                trb1.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, trb1);
+            }
+            {
+                let mut trb2 = Trb::new(EP1_TR_BASE | 1, 0, 0);
+                trb2.set_trb_type(TrbType::SetTrDequeuePointerCommand);
+                trb2.set_slot_id(SLOT_ID);
+                trb2.set_endpoint_id(EP_ID);
+                trb2.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE + 2 * TRB_LEN as u64, trb2);
+            }
+            {
+                let mut stop = Trb::new(0, 0, 0);
+                stop.set_trb_type(TrbType::NoOpCommand);
+                stop.set_cycle(false);
+                bus.write_trb(CMD_RING_BASE + 3 * TRB_LEN as u64, stop);
+            }
+        }
     }
     xhci.mmio_write(regs::REG_CRCR_LO, 4, CMD_RING_BASE | 1);
     xhci.mmio_write(regs::REG_CRCR_HI, 4, CMD_RING_BASE >> 32);
     xhci.mmio_write(u64::from(regs::DBOFF_VALUE), 4, 0);
+}
+
+fn seed_ep1_in_td(bus: &mut FuzzBus, trb_ptr: u64, cycle: bool, len: u32) {
+    let len = len.min(Trb::STATUS_TRANSFER_LEN_MASK);
+
+    let mut trb0 = Trb::new(EP1_BUF_BASE, len, 0);
+    trb0.set_trb_type(TrbType::Normal);
+    trb0.control |= Trb::CONTROL_IOC_BIT;
+    trb0.set_cycle(cycle);
+    bus.write_trb(trb_ptr, trb0);
+
+    let mut stop = Trb::new(0, 0, 0);
+    stop.set_trb_type(TrbType::NoOp);
+    stop.set_cycle(!cycle);
+    bus.write_trb(trb_ptr + TRB_LEN as u64, stop);
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -313,6 +439,28 @@ fuzz_target!(|data: &[u8]| {
     rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::AddressDeviceAndEvaluateContext);
     xhci.tick_1ms(&mut bus);
 
+    // Configure EP1 IN via Configure Endpoint so we can ring an interrupt endpoint doorbell later.
+    rearm_command_ring(&mut bus, &mut xhci, CommandRingSeed::ConfigureEndpointEp1In);
+    xhci.tick_1ms(&mut bus);
+
+    // Execute a control transfer (EP0) to set the keyboard configuration so interrupt IN can
+    // deliver reports.
+    let db1 = u64::from(regs::DBOFF_VALUE) + u64::from(regs::doorbell::DOORBELL_STRIDE);
+    xhci.mmio_write(db1, 4, 1);
+    xhci.tick_1ms(&mut bus);
+
+    // Queue one report and poll it via EP1 IN so the transfer-ring executor paths are exercised
+    // even for tiny seeds.
+    kbd.key_event(0x04, true); // 'A'
+    if let Some(ring) = xhci
+        .slot_state(1)
+        .and_then(|slot| slot.transfer_ring(3))
+    {
+        seed_ep1_in_td(&mut bus, ring.dequeue_ptr(), ring.cycle_state(), 8);
+        xhci.mmio_write(db1, 4, 3);
+        xhci.tick_1ms(&mut bus);
+    }
+
     let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
     let port_count = usize::from(xhci.port_count());
 
@@ -338,10 +486,11 @@ fuzz_target!(|data: &[u8]| {
             7 => {
                 // Rearm the command ring back to a known, small sequence and ring DB0.
                 let mode: u8 = u.arbitrary().unwrap_or(0);
-                let seed = if (mode & 1) == 0 {
-                    CommandRingSeed::EnableSlot
-                } else {
-                    CommandRingSeed::AddressDeviceAndEvaluateContext
+                let seed = match mode % 4 {
+                    0 => CommandRingSeed::EnableSlot,
+                    1 => CommandRingSeed::AddressDeviceAndEvaluateContext,
+                    2 => CommandRingSeed::ConfigureEndpointEp1In,
+                    _ => CommandRingSeed::EndpointCommandsEp1In,
                 };
                 rearm_command_ring(&mut bus, &mut xhci, seed);
                 xhci.tick_1ms(&mut bus);
@@ -355,15 +504,28 @@ fuzz_target!(|data: &[u8]| {
                 let _ = fresh.load_state(&snap);
                 xhci = fresh;
             }
-            _ => {
-                // Toggle DMA availability and inject keyboard events.
-                if let Some(flag) = u.arbitrary::<u8>().ok() {
-                    bus.dma = (flag & 1) != 0;
+            9 => {
+                let sub: u8 = u.arbitrary().unwrap_or(0);
+                if (sub & 1) == 0 {
+                    // Toggle DMA availability and inject keyboard events.
+                    bus.dma = (sub & 2) != 0;
+                    let usage: u8 = u.arbitrary().unwrap_or(0);
+                    let pressed: bool = u.arbitrary().unwrap_or(false);
+                    kbd.key_event(usage, pressed);
+                } else {
+                    // Rearm EP1 IN with a single Normal TRB and ring slot 1's doorbell.
+                    if let Some(ring) = xhci
+                        .slot_state(1)
+                        .and_then(|slot| slot.transfer_ring(3))
+                    {
+                        let len: u32 = u.arbitrary::<u8>().unwrap_or(0).into();
+                        seed_ep1_in_td(&mut bus, ring.dequeue_ptr(), ring.cycle_state(), len);
+                        xhci.mmio_write(db1, 4, 3);
+                        xhci.tick_1ms(&mut bus);
+                    }
                 }
-                let usage: u8 = u.arbitrary().unwrap_or(0);
-                let pressed: bool = u.arbitrary().unwrap_or(false);
-                kbd.key_event(usage, pressed);
             }
+            _ => {}
         }
     }
 });
