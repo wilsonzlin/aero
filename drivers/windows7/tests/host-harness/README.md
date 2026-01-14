@@ -1255,7 +1255,7 @@ This repo includes an **opt-in** workflow for running the host harness end-to-en
 - Trigger: `workflow_dispatch` only (no automatic PR runs)
 - Runner label: `aero-win7-harness`
 - Logs artifact: `win7-virtio-harness-logs` (serial + harness output + HTTP request log; QEMU stderr sidecar (placeholder when not produced); empty serial/HTTP logs are replaced with a placeholder line)
-- Job summary: surfaces key PASS/FAIL markers (including guest `virtio-blk-counters` and legacy virtio-blk miniport diag lines), QEMU stderr/argv, and (on failure) collapsible tails of the logs above
+- Job summary: surfaces key PASS/FAIL markers (including guest `virtio-blk-counters` and legacy virtio-blk miniport diag lines), the last NOTE/WARNING/FAIL/ERROR lines, QEMU stderr/argv, and (on failure) collapsible tails of the logs above
 
 ### Runner setup
 
