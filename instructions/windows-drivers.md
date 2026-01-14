@@ -443,14 +443,15 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --qemu-system qemu-system-x86_64 \
   --disk-image ./win7-aero-tests.qcow2 \
   --snapshot \
-  --with-input-tablet-events \
+  --with-tablet-events \
   --timeout-seconds 600
 ```
 
-Note: `--with-input-tablet-events` requires a guest image provisioned with tablet event testing enabled
-(so the guest selftest runs with `--test-input-tablet-events` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`).
+Note: `--with-input-tablet-events` (alias: `--with-tablet-events`) requires a guest image provisioned with tablet event
+testing enabled (so the guest selftest runs with `--test-input-tablet-events` (alias: `--test-tablet-events`) / env var
+`AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
 
-When `--with-input-tablet-events` is set:
+When `--with-input-tablet-events` / `--with-tablet-events` is set:
 
 - If the guest emits `virtio-input-tablet-events|SKIP|flag_not_set`, the harness will fail
   (PowerShell: `VIRTIO_INPUT_TABLET_EVENTS_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: ...`).

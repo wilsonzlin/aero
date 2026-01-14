@@ -209,7 +209,8 @@ Notes:
       - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...` or `...|FAIL|reason=...|...`
   - Tablet / absolute pointer (`virtio-input-tablet-events`):
     - Default (not enabled): `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set`
-    - When `--test-input-tablet-events` (or `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1`) is enabled:
+    - When `--test-input-tablet-events` (alias: `--test-tablet-events`) (or `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` /
+      `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`) is enabled:
       - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY` once the read loop is armed
       - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...` or `...|FAIL|reason=...|...`
   - The overall selftest `RESULT` is only affected by these tests when the corresponding flag/env var is enabled.

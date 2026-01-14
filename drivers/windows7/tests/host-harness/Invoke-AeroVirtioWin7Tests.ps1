@@ -1787,7 +1787,7 @@ try {
       )
     } catch {
       if ($needInputEvents -or $needInputTabletEvents) {
-        throw "Failed to allocate QMP port required for -WithInputEvents/-WithInputWheel/-WithInputTabletEvents: $_"
+        throw "Failed to allocate QMP port required for -WithInputEvents/-WithInputWheel/-WithInputTabletEvents/-WithTabletEvents: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -1841,7 +1841,7 @@ try {
       )
       if ($needInputTabletEvents) {
         if (-not $haveVirtioTablet) {
-          throw "QEMU does not advertise virtio-tablet-pci but -WithInputTabletEvents was enabled. Upgrade QEMU or omit -WithInputTabletEvents."
+          throw "QEMU does not advertise virtio-tablet-pci but -WithInputTabletEvents/-WithTabletEvents was enabled. Upgrade QEMU or omit -WithInputTabletEvents/-WithTabletEvents."
         }
         $tabletArg = "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)"
         if ($VirtioMsixVectors -gt 0) { $tabletArg += ",vectors=$VirtioMsixVectors" }
@@ -1851,7 +1851,7 @@ try {
       }
     } else {
       if ($needInputEvents -or $needInputTabletEvents) {
-        throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputEvents/-WithInputWheel/-WithInputTabletEvents was enabled. Upgrade QEMU or omit input event injection."
+        throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputEvents/-WithInputWheel/-WithInputTabletEvents/-WithTabletEvents was enabled. Upgrade QEMU or omit input event injection."
       }
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
     }
@@ -2157,7 +2157,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_TABLET_EVENTS_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while -WithInputTabletEvents was enabled"
+      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while -WithInputTabletEvents/-WithTabletEvents was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
