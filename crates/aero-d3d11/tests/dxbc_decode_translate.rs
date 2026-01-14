@@ -3120,7 +3120,7 @@ fn decodes_integer_compare_ignores_saturate_flag() {
 
     let module = decode_program(&program).expect("SM4 decode");
     assert!(matches!(
-        module.instructions[0],
+        &module.instructions[0],
         Sm4Inst::Cmp { dst, .. } if !dst.saturate
     ));
 }

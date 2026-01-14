@@ -22353,6 +22353,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                     entry_point: "vs_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
+                    sm4_module: None,
                     wgsl_source: String::new(),
                 },
             );
@@ -22366,6 +22368,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                     entry_point: "ps_main",
                     vs_input_signature: Vec::new(),
                     reflection: ShaderReflection::default(),
+                    sm4_metadata: Sm4ShaderMetadata::default(),
+                    sm4_module: None,
                     wgsl_source: String::new(),
                 },
             );
