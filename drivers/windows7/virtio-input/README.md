@@ -141,7 +141,13 @@ To catch accidental INF edits that would break Aero’s Windows 7 virtio-input p
 .\scripts\verify-inf.ps1
 ```
 
-This performs a lightweight static check (string/regex based) over `inf/aero_virtio_input.inf` and exits non-zero with an actionable error list if anything required is missing.
+This performs a lightweight static check (string/regex based) over `inf/aero_virtio_input.inf` by default and exits non-zero with an actionable error list if anything required is missing.
+
+To validate the optional legacy alias INF (generic fallback) as well:
+
+```powershell
+.\scripts\verify-inf.ps1 -InfPath .\inf\virtio-input.inf.disabled
+```
 
 If your emulator/QEMU build uses a different PCI device ID, update:
 
