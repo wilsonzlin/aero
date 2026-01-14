@@ -428,6 +428,22 @@ mod tests {
     }
 
     #[test]
+    fn stage_ex_decodes_extended_d3d11_shader_stages() {
+        assert_eq!(
+            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 2),
+            Some(ShaderStage::Geometry)
+        );
+        assert_eq!(
+            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 3),
+            Some(ShaderStage::Hull)
+        );
+        assert_eq!(
+            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 4),
+            Some(ShaderStage::Domain)
+        );
+    }
+
+    #[test]
     fn srv_texture_and_buffer_are_mutually_exclusive() {
         let mut stage = StageBindings::default();
 
