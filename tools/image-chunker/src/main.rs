@@ -3070,6 +3070,49 @@ fn retry_backoff(attempt: usize) -> Duration {
         );
     }
 
+    #[tokio::test]
+    async fn compute_image_version_sha256_hashes_virtual_disk_bytes_for_aerosparse() -> Result<()> {
+        use std::io::Write;
+
+        use aero_storage::{AeroSparseConfig, AeroSparseDisk, MemBackend};
+
+        let disk_size_bytes = 16 * 1024u64;
+
+        // Create an AeroSparse image whose physical file is smaller than the virtual disk
+        // (unallocated tail blocks remain implicit zeros).
+        let backend = MemBackend::new();
+        let mut disk = AeroSparseDisk::create(
+            backend,
+            AeroSparseConfig {
+                disk_size_bytes,
+                block_size_bytes: 4096,
+            },
+        )?;
+        disk.write_at(0, b"hello")?;
+        disk.flush()?;
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&disk.into_backend().into_vec())
+            .context("write aerosparse image")?;
+        tmp.as_file_mut().flush().context("flush aerosparse image")?;
+
+        let physical_len = tmp.as_file().metadata().context("stat temp image")?.len();
+        assert!(
+            physical_len < disk_size_bytes,
+            "expected aerosparse physical file ({physical_len}) < virtual disk ({disk_size_bytes})"
+        );
+
+        // Compute the expected hash from the guest-visible byte stream.
+        let mut expected = vec![0u8; disk_size_bytes as usize];
+        expected[0..5].copy_from_slice(b"hello");
+        let expected_version = format!("sha256-{}", sha256_hex(&expected));
+
+        let version = compute_image_version_sha256(tmp.path(), InputFormat::Auto).await?;
+        assert_eq!(version, expected_version);
+        Ok(())
+    }
+
     #[test]
     fn chunk_count_rounds_up() {
         assert_eq!(chunk_count(0, 8), 0);
