@@ -203,16 +203,20 @@ def _has_testsigning_policy_gate(text: str) -> bool:
     block = _label_block(text, "maybe_enable_testsigning")
     if block is None:
         return False
+    block = _strip_batch_comment_lines(block)
 
     sp_var = r"(?:%SIGNING_POLICY%|!SIGNING_POLICY!)"
     ft_var = r"(?:%ARG_FORCE_TESTSIGN%|!ARG_FORCE_TESTSIGN!)"
 
     # Current implementation uses a combined IF with an early exit /b 0. Accept
     # minor variations (whitespace, delayed expansion) but keep semantics.
-    return re.search(
-        rf'(?is)if\s+/i\s+not\s+"{sp_var}"\s*==\s*"test"\s+if\s+not\s+"{ft_var}"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0',
-        block,
-    ) is not None
+    return (
+        re.search(
+            rf'(?ims)^\s*if\s+/i\s+not\s+"{sp_var}"\s*==\s*"test"\s+if\s+not\s+"{ft_var}"\s*==\s*"1"\s*\([\s\S]*?^\s*exit\s+/b\s+0\b',
+            block,
+        )
+        is not None
+    )
 
 
 def _check_mode_dispatch_precedes_admin_requirement(text: str) -> bool:
@@ -263,18 +267,24 @@ def _has_cleanupstorage_force_gate(text: str) -> bool:
     block = _label_block(text, "maybe_cleanup_storage_preseed")
     if block is None:
         return False
+    block = _strip_batch_comment_lines(block)
 
     af_var = r"(?:%ARG_FORCE%|!ARG_FORCE!)"
     csf_var = r"(?:%ARG_CLEANUP_STORAGE_FORCE%|!ARG_CLEANUP_STORAGE_FORCE!)"
 
     # Require a "force-mode gate" that exits early unless cleanupstorageforce is set.
-    return re.search(
-        rf'(?is)if\s+"{af_var}"\s*==\s*"1"\s+if\s+not\s+"{csf_var}"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0',
-        block,
-    ) is not None or re.search(
-        rf'(?is)if\s+"{af_var}"\s*==\s*"1"\s+if\s+"{csf_var}"\s*==\s*"0"\s*\(.*?exit\s+/b\s+0',
-        block,
-    ) is not None
+    return (
+        re.search(
+            rf'(?ims)^\s*if\s+"{af_var}"\s*==\s*"1"\s+if\s+not\s+"{csf_var}"\s*==\s*"1"\s*\([\s\S]*?^\s*exit\s+/b\s+0\b',
+            block,
+        )
+        is not None
+        or re.search(
+            rf'(?ims)^\s*if\s+"{af_var}"\s*==\s*"1"\s+if\s+"{csf_var}"\s*==\s*"0"\s*\([\s\S]*?^\s*exit\s+/b\s+0\b',
+            block,
+        )
+        is not None
+    )
 
 
 def _read_text(path: Path) -> str:
@@ -585,7 +595,9 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="Calls write_installed_media_state during install",
             expected_hint="call :write_installed_media_state",
-            predicate=_regex(r"(?i)\bcall\s+:?write_installed_media_state\b"),
+            predicate=lambda text: _regex(r"(?im)^\s*call\s+:?write_installed_media_state\b")(
+                _strip_batch_comment_lines(text)
+            ),
         ),
     ]
 
