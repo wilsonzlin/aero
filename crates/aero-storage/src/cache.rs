@@ -81,13 +81,32 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
         }
 
         if let Some((evicted_idx, evicted)) = self.cache.push(block_idx, entry) {
+            // `LruCache::push` evicts immediately. If the evicted entry is dirty and its write-back
+            // fails, we must restore it back into the cache; otherwise the dirty data is lost.
+            if let Err(err) = self.write_back_block(evicted_idx, &evicted) {
+                // Best-effort rollback: remove the newly inserted entry and restore the evicted
+                // entry. This keeps the cache in a consistent state and preserves dirty data.
+                //
+                // Note: this may perturb LRU ordering on error, but the cache contents are
+                // restored and the error is propagated.
+                let removed = self.cache.pop(&block_idx);
+                debug_assert!(
+                    removed.is_some(),
+                    "cache missing inserted block while rolling back failed eviction"
+                );
+                let double_evict = self.cache.push(evicted_idx, evicted);
+                debug_assert!(
+                    double_evict.is_none(),
+                    "restoring a rolled-back eviction should not evict another entry"
+                );
+                return Err(err);
+            }
             self.stats.evictions += 1;
-            self.write_back_block(evicted_idx, evicted)?;
         }
         Ok(())
     }
 
-    fn write_back_block(&mut self, block_idx: u64, entry: CacheEntry) -> Result<()> {
+    fn write_back_block(&mut self, block_idx: u64, entry: &CacheEntry) -> Result<()> {
         if !entry.dirty {
             return Ok(());
         }
