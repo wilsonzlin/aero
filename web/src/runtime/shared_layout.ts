@@ -103,6 +103,8 @@ export const StatusIndex = {
   IoHidDetachCounter: 13,
   IoHidInputReportCounter: 14,
   IoHidInputReportDropCounter: 19,
+  // Main thread WebHID output/feature report telemetry (bounded send queue drops).
+  IoHidOutputReportDropCounter: 35,
 
   // Device-bus state observed by the CPU worker.
   //

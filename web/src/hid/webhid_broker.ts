@@ -553,6 +553,14 @@ export class WebHidBroker {
   #recordOutputSendDrop(deviceId: number): void {
     this.#outputSendDropped += 1;
     this.#outputSendDroppedByDevice.set(deviceId, (this.#outputSendDroppedByDevice.get(deviceId) ?? 0) + 1);
+    const status = this.#status;
+    if (status) {
+      try {
+        Atomics.add(status, StatusIndex.IoHidOutputReportDropCounter, 1);
+      } catch {
+        // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+      }
+    }
     this.#warnOutputSendDrop(deviceId);
   }
 

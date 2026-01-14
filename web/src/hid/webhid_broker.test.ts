@@ -1423,6 +1423,9 @@ describe("hid/WebHidBroker", () => {
       const port = new FakePort();
       broker.attachWorkerPort(port as unknown as MessagePort);
 
+      const status = new Int32Array(new SharedArrayBuffer(64 * 4));
+      broker.setInputReportRing(null, status);
+
       const device = new FakeHidDevice();
       device.sendReport.mockImplementationOnce(() => new Promise<void>(() => {}));
       const id = await broker.attachDevice(device as unknown as HIDDevice);
@@ -1460,6 +1463,7 @@ describe("hid/WebHidBroker", () => {
       expect(warnMsg).toBeTruthy();
       expect(warnMsg).toContain("pending=1");
       expect(warnMsg).toContain("maxPendingDeviceSends=1");
+      expect(Atomics.load(status, StatusIndex.IoHidOutputReportDropCounter)).toBeGreaterThan(0);
 
       broker.destroy();
     } finally {
