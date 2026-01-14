@@ -1106,3 +1106,102 @@ fn ehci_periodic_fstn_self_loop_sets_hse_and_halts() {
     assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
     assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
 }
+
+#[test]
+fn ehci_async_qh_budget_exceeded_sets_hse_and_halts() {
+    const QH_COUNT: usize = 16 * 1024;
+    let mut mem = TestMemory::new(0x100000);
+
+    let head: u32 = 0x1000;
+
+    // Construct an overlong async QH ring. Each QH is otherwise inert (no qTD chain) so the walker
+    // exercises only the traversal budget logic.
+    for i in 0..QH_COUNT {
+        let qh = head + (i as u32) * 0x20;
+        let next = if i + 1 == QH_COUNT { head } else { qh + 0x20 };
+        mem.write_u32(qh + 0x00, qh_link_ptr_qh(next));
+        mem.write_u32(qh + 0x04, 0); // speed invalid; QH processing is a no-op.
+        mem.write_u32(qh + 0x10, LINK_TERMINATE); // no qTDs
+    }
+
+    let mut c = EhciController::new();
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, head);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_async_qtd_budget_exceeded_sets_hse_and_halts() {
+    const QTD_COUNT: usize = 16 * 1024;
+    let mut mem = TestMemory::new(0x100000);
+    let mut c = EhciController::new();
+    c.hub_mut().attach(0, Box::new(TestDevice));
+
+    reset_port(&mut c, &mut mem, 0);
+
+    // Build a long chain of already-inactive qTDs. EHCI will quickly advance through these without
+    // invoking any device logic, exercising the per-QH qTD step budget.
+    let first_qtd: u32 = 0x2000;
+    for i in 0..QTD_COUNT {
+        let addr = first_qtd + (i as u32) * 0x20;
+        let next = if i + 1 == QTD_COUNT { LINK_TERMINATE } else { addr + 0x20 };
+        write_qtd(
+            &mut mem,
+            addr,
+            next,
+            qtd_token(QTD_TOKEN_PID_OUT, 0, false, false),
+            0,
+        );
+    }
+
+    let ep_char = qh_epchar(0, 0, 64);
+    write_qh(&mut mem, ASYNC_QH, qh_link_ptr_qh(ASYNC_QH), ep_char, first_qtd);
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, ASYNC_QH);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_periodic_link_budget_exceeded_sets_hse_and_halts() {
+    const LINK_COUNT: usize = 64 * 1024;
+    let mut mem = TestMemory::new(0x220000);
+
+    let fl_base: u32 = 0x7000;
+    let first: u32 = 0x1000;
+
+    mem.write_u32(fl_base, first & LINK_ADDR_MASK);
+    for i in 0..LINK_COUNT {
+        let addr = first + (i as u32) * 0x20;
+        let next = if i + 1 == LINK_COUNT {
+            LINK_TERMINATE
+        } else {
+            addr + 0x20
+        };
+        // iTD dword0 is the Next Link Pointer; use iTD type (00).
+        mem.write_u32(addr + 0x00, next);
+    }
+
+    let mut c = EhciController::new();
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
