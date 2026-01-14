@@ -488,3 +488,27 @@ async fn sha256_mismatch_is_deterministic_error() {
 
     let _ = shutdown.send(());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn http_errors_redact_url_query() {
+    // Create a URL that should fail to connect (unused local port), but embeds a query token.
+    // The returned error message should not leak the query string.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let url = Url::parse(&format!(
+        "http://127.0.0.1:{port}/manifest.json?token=supersecret"
+    ))
+    .unwrap();
+    let cache_dir = tempdir().unwrap();
+    let config = ChunkedStreamingDiskConfig::new(url, cache_dir.path());
+    let err = ChunkedStreamingDisk::open(config).await.err().unwrap();
+    let ChunkedStreamingDiskError::Http(msg) = err else {
+        panic!("expected Http error, got {err:?}");
+    };
+    assert!(
+        !msg.contains("token=supersecret"),
+        "error message should not contain query tokens: {msg}"
+    );
+}
