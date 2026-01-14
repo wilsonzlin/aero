@@ -4500,8 +4500,9 @@ impl Machine {
     /// - Once the guest claims WDDM scanout (writes a valid `SCANOUT0_*` config and enables it),
     ///   WDDM owns scanout and legacy VGA/VBE is ignored by presentation even if legacy MMIO/PIO
     ///   continues to accept writes for compatibility.
-    /// - Clearing `SCANOUT0_ENABLE` releases WDDM ownership and allows legacy VGA/VBE presentation
-    ///   to become visible again. Device reset also clears the claim.
+    /// - Clearing `SCANOUT0_ENABLE` blanks WDDM presentation (0x0 resolution) but keeps WDDM
+    ///   ownership sticky until the VM resets.
+    /// - Device reset clears the claim and allows legacy VGA/VBE presentation again.
     pub fn active_scanout_source(&self) -> ScanoutSource {
         if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
             let state = aerogpu_mmio.borrow().scanout0_state();
@@ -8744,26 +8745,20 @@ impl Machine {
             };
 
             if let Some(update) = dev.take_scanout0_state_update() {
-                // `AeroGpuMmioDevice` publishes a WDDM "disabled" descriptor (all zeros) when a
-                // previously-claimed scanout is explicitly disabled via `SCANOUT0_ENABLE=0`.
+                // Once WDDM scanout has been claimed, `AeroGpuMmioDevice` publishes a WDDM "disabled"
+                // descriptor (all zeros) when `SCANOUT0_ENABLE=0`.
                 //
-                // For host presentation we want to fall back to the BIOS legacy text/VBE scanout in
-                // that case, so override the WDDM disabled update with a legacy descriptor.
-                if update.source == SCANOUT_SOURCE_WDDM && !dev.scanout0_state().enable {
-                    publish_legacy_scanout_descriptor(scanout_state);
-                } else {
-                    scanout_state.publish(update);
-                }
+                // Preserve that disabled WDDM state rather than falling back to a legacy scanout.
+                scanout_state.publish(update);
             } else {
                 // If the shared scanout descriptor currently indicates WDDM scanout but the device
                 // itself has not claimed WDDM ownership (e.g. after a reset/restore mismatch),
-                // revert the shared scanout descriptor back to the legacy BIOS source so the host
-                // presentation layer can fall back to text/VBE.
+                // revert the shared scanout descriptor back to the legacy BIOS source.
                 //
                 // This cannot be handled inside `AeroGpuMmioDevice` because it does not have access
                 // to BIOS VBE state (for correct legacy mode reporting).
                 if scanout_state.snapshot().source == SCANOUT_SOURCE_WDDM
-                    && (!dev.scanout0_state().wddm_scanout_active || !dev.scanout0_state().enable)
+                    && !dev.scanout0_state().wddm_scanout_active
                 {
                     publish_legacy_scanout_descriptor(scanout_state);
                 }

@@ -251,19 +251,22 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     );
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
-    // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until WDDM explicitly
-    // disables scanout. Disabling scanout should release WDDM ownership and allow legacy
-    // presentation to become visible again.
+    // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until reset. Disabling
+    // scanout blanks the WDDM output but keeps ownership sticky (Win7 uses this as a visibility
+    // toggle).
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
     m.display_present();
-    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
-    assert_eq!(m.display_resolution(), (720, 400));
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.display_resolution(), (0, 0));
+    assert!(m.display_framebuffer().is_empty());
 
-    // Legacy text memory changes should now be visible again.
+    // Legacy text memory changes should not become visible while the WDDM claim is held.
     m.write_physical_u8(0xB8000, b'Z');
     m.write_physical_u8(0xB8001, 0x1F);
     m.display_present();
-    assert_eq!(m.display_resolution(), (720, 400));
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.display_resolution(), (0, 0));
+    assert!(m.display_framebuffer().is_empty());
 
     // Reset returns scanout ownership to legacy.
     m.reset();

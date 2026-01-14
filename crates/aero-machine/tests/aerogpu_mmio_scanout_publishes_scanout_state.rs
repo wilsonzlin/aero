@@ -74,7 +74,8 @@ fn aerogpu_scanout0_enable_publishes_wddm_scanout_state() {
     assert_eq!(snap.pitch_bytes, 800 * 4);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 
-    // Disabling scanout should publish a disabled descriptor (width/height=0) so presentation can fall back.
+    // Disabling scanout should publish a disabled descriptor (width/height=0) while keeping the
+    // scanout source in WDDM mode (blanked).
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
     m.process_aerogpu();
     let snap2 = scanout_state.snapshot();

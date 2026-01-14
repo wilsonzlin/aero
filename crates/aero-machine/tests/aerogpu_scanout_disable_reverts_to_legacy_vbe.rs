@@ -158,14 +158,16 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
     m.process_aerogpu();
     assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_WDDM);
 
-    // Explicitly disable WDDM scanout and ensure the shared scanout descriptor falls back to the
-    // BIOS legacy VBE source (including panning/stride encoded in base + pitch).
+    // Explicitly disable WDDM scanout. Even though a legacy VBE scanout remains configured
+    // (including panning/stride), WDDM ownership is sticky and the disabled state is represented as
+    // a blank WDDM scanout.
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
     m.process_aerogpu();
 
     let snap = scanout_state.snapshot();
-    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-    assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
-    assert_eq!(snap.base_paddr(), expected_legacy_base);
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), 0);
+    assert_eq!(snap.width, 0);
+    assert_eq!(snap.height, 0);
+    assert_eq!(snap.pitch_bytes, 0);
 }
-

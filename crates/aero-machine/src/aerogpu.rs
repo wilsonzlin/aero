@@ -1453,6 +1453,10 @@ impl AeroGpuMmioDevice {
                     self.wddm_scanout_active = false;
                 }
                 if self.scanout0_enable && !new_enable {
+                    // Disabling scanout stops vblank scheduling and flushes any vsync-paced fences.
+                    //
+                    // Note: once WDDM scanout has been claimed, ownership remains sticky even while
+                    // the guest toggles `SCANOUT0_ENABLE` (Win7 uses this as a visibility toggle).
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
                     // Do not leave any vsync-paced fences blocked forever once scanout is disabled.
@@ -1460,15 +1464,6 @@ impl AeroGpuMmioDevice {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
-                }
-                if !new_enable {
-                    // Explicitly disabling scanout releases the WDDM ownership claim so the host can
-                    // fall back to legacy BIOS text/VBE scanout.
-                    //
-                    // This matches Win7 KMD behavior (it may disable scanout while switching
-                    // display modes) and is required for the machine-level presentation policy
-                    // enforced by `Machine::display_present`.
-                    self.wddm_scanout_active = false;
                 }
                 self.scanout0_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
