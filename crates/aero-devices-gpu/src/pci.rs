@@ -781,7 +781,10 @@ impl MmioHandler for AeroGpuLegacyVgaMmio {
         let vram = self.vram.borrow();
         let mut out = 0u64;
         for i in 0..size {
-            let addr = offset.wrapping_add(i as u64);
+            // Guard against wrapping physical address arithmetic on malformed offsets.
+            let Some(addr) = offset.checked_add(i as u64) else {
+                continue;
+            };
             if addr >= LEGACY_VGA_VRAM_BYTES {
                 continue;
             }
@@ -801,7 +804,10 @@ impl MmioHandler for AeroGpuLegacyVgaMmio {
 
         let mut vram = self.vram.borrow_mut();
         for i in 0..size {
-            let addr = offset.wrapping_add(i as u64);
+            // Guard against wrapping physical address arithmetic on malformed offsets.
+            let Some(addr) = offset.checked_add(i as u64) else {
+                continue;
+            };
             if addr >= LEGACY_VGA_VRAM_BYTES {
                 continue;
             }

@@ -79,6 +79,29 @@ fn legacy_vga_mmio_writes_alias_to_expected_vram_offsets() {
 }
 
 #[test]
+fn legacy_vga_mmio_does_not_wrap_on_offset_overflow() {
+    let dev = AeroGpuPciDevice::default();
+    let vram = dev.vram_shared();
+
+    // Seed a known value at the start of VRAM so we can detect accidental wraparound.
+    {
+        let mut vram = vram.borrow_mut();
+        vram[0] = 0xAA;
+        vram[1] = 0xBB;
+    }
+
+    let mut legacy = dev.legacy_vga_mmio_handler();
+
+    // Reads/writes with overflowing offsets must not wrap around and touch VRAM[0..].
+    assert_eq!(legacy.read(u64::MAX, 2), 0);
+    legacy.write(u64::MAX, 2, 0x1122);
+
+    let vram = vram.borrow();
+    assert_eq!(vram[0], 0xAA);
+    assert_eq!(vram[1], 0xBB);
+}
+
+#[test]
 fn legacy_vga_alias_checks_window_bounds() {
     assert_eq!(
         AeroGpuPciDevice::legacy_vga_paddr_to_vram_offset(LEGACY_VGA_PADDR_BASE),

@@ -337,7 +337,7 @@ mod tests {
         use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
         assert_eq!(AEROGPU_RING_MAGIC, 0x474E_5241);
-        assert_eq!(AEROGPU_ABI_VERSION_U32, 0x0001_0003);
+        assert_eq!(AEROGPU_ABI_VERSION_U32, 0x0001_0004);
 
         assert_eq!(AEROGPU_RING_HEADER_SIZE_BYTES, 64);
         assert_eq!(RING_MAGIC_OFFSET, 0);
