@@ -247,6 +247,10 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                         Sm4Inst::Dp4 { .. } => "dp4",
                         Sm4Inst::Min { .. } => "min",
                         Sm4Inst::Max { .. } => "max",
+                        Sm4Inst::IAddC { .. } => "iaddc",
+                        Sm4Inst::UAddC { .. } => "uaddc",
+                        Sm4Inst::ISubC { .. } => "isubc",
+                        Sm4Inst::USubB { .. } => "usubb",
                         Sm4Inst::UDiv { .. } => "udiv",
                         Sm4Inst::IDiv { .. } => "idiv",
                         Sm4Inst::Rcp { .. } => "rcp",
@@ -515,6 +519,10 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                         Sm4Inst::Dp4 { .. } => "dp4",
                         Sm4Inst::Min { .. } => "min",
                         Sm4Inst::Max { .. } => "max",
+                        Sm4Inst::IAddC { .. } => "iaddc",
+                        Sm4Inst::UAddC { .. } => "uaddc",
+                        Sm4Inst::ISubC { .. } => "isubc",
+                        Sm4Inst::USubB { .. } => "usubb",
                         Sm4Inst::UDiv { .. } => "udiv",
                         Sm4Inst::IDiv { .. } => "idiv",
                         Sm4Inst::Rcp { .. } => "rcp",
@@ -614,12 +622,22 @@ fn scan_src_operand(
     match &src.kind {
         SrcKind::Register(reg) => {
             bump_reg_max(*reg, max_temp_reg, max_output_reg);
-            if reg.file == RegFile::Input {
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
-                });
+            match reg.file {
+                RegFile::Temp | RegFile::Output => {}
+                RegFile::Input => {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode,
+                        msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
+                    });
+                }
+                RegFile::OutputDepth => {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode,
+                        msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                    });
+                }
             }
             if reg.file == RegFile::OutputDepth {
                 return Err(GsTranslateError::UnsupportedOperand {

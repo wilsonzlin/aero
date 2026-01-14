@@ -14152,24 +14152,22 @@ mod tests {
                  );
              }
 
-            // Dummy vertex buffer required to activate the GS passthrough vertex path (avoids
-            // needing an input layout for this unit test).
-            const VB: u32 = 3;
-            let vb = exec.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("gap mrt trim vb"),
-                size: 16,
-                usage: wgpu::BufferUsages::VERTEX,
-                mapped_at_creation: false,
-            });
-            exec.resources.buffers.insert(
-                VB,
-                BufferResource {
-                    buffer: vb,
-                    size: 16,
-                    gpu_size: 16,
-                    usage: wgpu::BufferUsages::VERTEX,
-                    backing: None,
-                    dirty: None,
+            // Minimal input layout so pipeline creation succeeds. This VS uses only builtins, so we
+            // don't need any actual vertex attributes.
+            const ILAY: u32 = 3;
+            exec.resources.input_layouts.insert(
+                ILAY,
+                InputLayoutResource {
+                    layout: InputLayoutDesc {
+                        header: crate::input_layout::InputLayoutBlobHeader {
+                            magic: crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+                            version: crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+                            element_count: 0,
+                        },
+                        elements: Vec::new(),
+                    },
+                    used_slots: Vec::new(),
+                    mapping_cache: HashMap::new(),
                 },
             );
 
@@ -14251,14 +14249,7 @@ mod tests {
 
             exec.state.vs = Some(VS);
             exec.state.ps = Some(PS);
-            // Treat a bound CS as "GS emulation active" so the pipeline builder uses the internal
-            // GS passthrough vertex path instead of requiring an input layout.
-            exec.state.cs = Some(1);
-            exec.state.vertex_buffers[0] = Some(VertexBufferBinding {
-                buffer: VB,
-                stride_bytes: 16,
-                offset_bytes: 0,
-            });
+            exec.state.input_layout = Some(ILAY);
             exec.state.render_targets = vec![Some(RT0), None, Some(RT2)];
             exec.state.depth_stencil = None;
 
@@ -14351,32 +14342,30 @@ mod tests {
                 },
             );
 
-            // Dummy vertex buffer required to activate the GS passthrough vertex path (avoids
-            // needing an input layout for this unit test).
-            const VB: u32 = 101;
-            let vb = exec.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("depth_only_pipeline_trims_pixel_shader_outputs vb"),
-                size: 16,
-                usage: wgpu::BufferUsages::VERTEX,
-                mapped_at_creation: false,
-            });
-            exec.resources.buffers.insert(
-                VB,
-                BufferResource {
-                    buffer: vb,
-                    size: 16,
-                    gpu_size: 16,
-                    usage: wgpu::BufferUsages::VERTEX,
-                    backing: None,
-                    dirty: None,
+            // Minimal input layout so pipeline creation succeeds. This VS uses only builtins, so we
+            // don't need any actual vertex attributes.
+            const ILAY: u32 = 101;
+            exec.resources.input_layouts.insert(
+                ILAY,
+                InputLayoutResource {
+                    layout: InputLayoutDesc {
+                        header: crate::input_layout::InputLayoutBlobHeader {
+                            magic: crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+                            version: crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+                            element_count: 0,
+                        },
+                        elements: Vec::new(),
+                    },
+                    used_slots: Vec::new(),
+                    mapping_cache: HashMap::new(),
                 },
             );
 
             const VS: u32 = 102;
             const PS: u32 = 103;
 
-            // VS is only used for signature checks in the GS-emulation path; it doesn't need any
-            // varyings for this test.
+            // This VS uses only builtins; it doesn't need any vertex attributes or varyings for
+            // this test.
             let vs_wgsl = r#"
                 struct VsOut {
                     @builtin(position) pos: vec4<f32>,
@@ -14447,14 +14436,7 @@ mod tests {
 
             exec.state.vs = Some(VS);
             exec.state.ps = Some(PS);
-            // Treat a bound CS as "GS emulation active" so the pipeline builder uses the internal
-            // passthrough VS and doesn't require an input layout.
-            exec.state.cs = Some(1);
-            exec.state.vertex_buffers[0] = Some(VertexBufferBinding {
-                buffer: VB,
-                stride_bytes: 16,
-                offset_bytes: 0,
-            });
+            exec.state.input_layout = Some(ILAY);
             exec.state.render_targets.clear();
             exec.state.depth_stencil = Some(DS);
 
