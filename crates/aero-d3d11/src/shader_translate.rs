@@ -52,6 +52,7 @@ pub enum Builtin {
     VertexIndex,
     InstanceIndex,
     PrimitiveIndex,
+    DomainLocation,
     GsInstanceIndex,
     FrontFacing,
     GlobalInvocationId,
@@ -439,6 +440,21 @@ pub fn translate_sm4_module_to_wgsl(
                 .or(signatures.psgn.as_ref())
                 .ok_or(ShaderTranslateError::MissingSignature("PCSG/PSGN"))?;
             translate_hs(module, isgn, osgn, pcsg, rdef)
+        }
+        (ShaderStage::Domain, rdef) => {
+            let isgn = signatures
+                .isgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("ISGN"))?;
+            let osgn = signatures
+                .osgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
+            let psgn = signatures
+                .psgn
+                .as_ref()
+                .ok_or(ShaderTranslateError::MissingSignature("PSGN"))?;
+            translate_ds(module, isgn, psgn, osgn, rdef)
         }
         (ShaderStage::Compute, rdef) => translate_cs(module, rdef),
         (other, _rdef) => Err(ShaderTranslateError::UnsupportedStage(other)),
@@ -851,6 +867,194 @@ fn translate_hs(
     })
 }
 
+fn translate_ds(
+    module: &Sm4Module,
+    isgn: &DxbcSignature,
+    psgn: &DxbcSignature,
+    osgn: &DxbcSignature,
+    rdef: Option<RdefChunk>,
+) -> Result<ShaderTranslation, ShaderTranslateError> {
+    // Domain shaders are executed via compute emulation. We currently support a minimal subset:
+    // - domain("tri")
+    // - partitioning("integer")
+    //
+    // The fixed-function tessellator is emulated by mapping `@builtin(global_invocation_id)` to:
+    // - `id.y` = patch (primitive) id
+    // - `id.x` = vertex index within that patch
+    //
+    // Domain location (`SV_DomainLocation`) is derived from the patch tess factor and `id.x`
+    // assuming a uniform triangular grid.
+
+    // Validate declared tessellation metadata when present in the IR. Older decoders may not
+    // populate these declarations yet, so absence is treated as "unknown" rather than an error.
+    for decl in &module.decls {
+        match decl {
+            Sm4Decl::HsDomain { domain } => {
+                if *domain != crate::sm4_ir::HsDomain::Tri {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("ds_domain_{domain:?}"),
+                    });
+                }
+            }
+            Sm4Decl::HsPartitioning { partitioning } => {
+                if *partitioning != crate::sm4_ir::HsPartitioning::Integer {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("ds_partitioning_{partitioning:?}"),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let io = build_ds_io_maps(module, isgn, psgn, osgn)?;
+    let resources = scan_resources(module, rdef.as_ref())?;
+
+    let reflection = ShaderReflection {
+        inputs: io.inputs_reflection(),
+        outputs: io.outputs_reflection_vertex(),
+        bindings: resources.bindings(ShaderStage::Domain),
+        rdef,
+    };
+
+    // These strides must match the buffers produced by HS emulation.
+    let cp_in_stride = isgn
+        .parameters
+        .iter()
+        .filter(|p| !is_sv_domain_location(&p.semantic_name) && !is_sv_primitive_id(&p.semantic_name))
+        .map(|p| p.register)
+        .max()
+        .map(|m| m.saturating_add(1))
+        .unwrap_or(1)
+        .max(1);
+    let pc_in_stride = psgn
+        .parameters
+        .iter()
+        .map(|p| p.register)
+        .max()
+        .map(|m| m.saturating_add(1))
+        .unwrap_or(1)
+        .max(1);
+
+    let pos_reg = io.vs_position_register.ok_or(ShaderTranslateError::MissingSignature(
+        "domain output SV_Position",
+    ))?;
+
+    let mut w = WgslWriter::new();
+
+    // DS stage interface buffers for compute emulation.
+    w.line("struct DsRegBuffer { data: array<vec4<f32>> };");
+    w.line("@group(0) @binding(0) var<storage, read> ds_in_cp: DsRegBuffer;");
+    w.line("@group(0) @binding(1) var<storage, read> ds_in_pc: DsRegBuffer;");
+    w.line("");
+
+    // Output struct mirrors `VsOut`, but without stage I/O attributes (written to a storage buffer).
+    w.line("struct DsOut {");
+    w.indent();
+    w.line("pos: vec4<f32>,");
+    for p in io.outputs.values() {
+        if p.param.register == pos_reg {
+            continue;
+        }
+        w.line(&format!("{}: vec4<f32>,", p.field_name('o')));
+    }
+    w.dedent();
+    w.line("};");
+    w.line("");
+
+    w.line("struct DsOutBuffer { data: array<DsOut> };");
+    w.line("@group(0) @binding(2) var<storage, read_write> ds_out: DsOutBuffer;");
+    w.line("");
+
+    resources.emit_decls(&mut w, ShaderStage::Domain)?;
+
+    w.line(&format!("const DS_CP_IN_STRIDE: u32 = {cp_in_stride}u;"));
+    w.line(&format!("const DS_PC_IN_STRIDE: u32 = {pc_in_stride}u;"));
+    w.line("const DS_MAX_CONTROL_POINTS: u32 = 32u;");
+    w.line("");
+
+    // DS body function (returns a struct so `ret` can map to `return out;`).
+    w.line("fn ds_invoke(patch_id: u32, domain_location: vec3<f32>, primitive_id: u32) -> DsOut {");
+    w.indent();
+    w.line("let ds_patch_id: u32 = patch_id;");
+    w.line("let ds_domain_location: vec3<f32> = domain_location;");
+    w.line("let ds_primitive_id: u32 = primitive_id;");
+    w.line("let ds_pc_base: u32 = ds_patch_id * DS_PC_IN_STRIDE;");
+    w.line("");
+    w.line("var out: DsOut;");
+    w.line("");
+
+    emit_temp_and_output_decls(&mut w, module, &io)?;
+    let ctx = EmitCtx {
+        stage: ShaderStage::Domain,
+        io: &io,
+        resources: &resources,
+    };
+    emit_instructions(&mut w, module, &ctx)?;
+
+    w.line("");
+    // `DsOut` uses the same field names as `VsOut` (pos + `o#`), so reuse the VS return emitter.
+    io.emit_vs_return(&mut w)?;
+    w.dedent();
+    w.line("}");
+    w.line("");
+
+    // ---- DS compute entry point (tessellator emulation) ----
+    //
+    // Workgroup size is an arbitrary default; the runtime is expected to dispatch enough
+    // invocations for the patch grid.
+    w.line("@compute @workgroup_size(64)");
+    w.line("fn ds_main(@builtin(global_invocation_id) id: vec3<u32>) {");
+    w.indent();
+    w.line("let patch_id: u32 = id.y;");
+    w.line("let vert_in_patch: u32 = id.x;");
+    w.line("let pc_base: u32 = patch_id * DS_PC_IN_STRIDE;");
+    w.line("");
+
+    // For now, derive a single tess level from patch constant register 0.x (integer partition).
+    // Clamp to at least 1 to avoid division-by-zero.
+    w.line("let tess_f: f32 = ds_in_pc.data[pc_base + 0u].x;");
+    w.line("let tess: u32 = max(1u, u32(round(tess_f)));");
+    w.line("let verts_per_patch: u32 = (tess + 1u) * (tess + 2u) / 2u;");
+    w.line("if (vert_in_patch >= verts_per_patch) { return; }");
+    w.line("");
+
+    // Map `vert_in_patch` to barycentric coords (u,v,w) for a triangular grid.
+    w.line("var idx: u32 = vert_in_patch;");
+    w.line("var row: u32 = 0u;");
+    w.line("var row_len: u32 = tess + 1u;");
+    w.line("loop {");
+    w.indent();
+    w.line("if (idx < row_len) { break; }");
+    w.line("idx = idx - row_len;");
+    w.line("row = row + 1u;");
+    w.line("row_len = row_len - 1u;");
+    w.dedent();
+    w.line("}");
+    w.line("let col: u32 = idx;");
+    w.line("let n: f32 = f32(tess);");
+    w.line("let u: f32 = f32(row) / n;");
+    w.line("let v: f32 = f32(col) / n;");
+    w.line("let w_bary: f32 = 1.0 - u - v;");
+    w.line("let domain_loc: vec3<f32> = vec3<f32>(u, v, w_bary);");
+    w.line("");
+
+    w.line("let prim_id: u32 = patch_id;");
+    w.line("let out_index: u32 = patch_id * verts_per_patch + vert_in_patch;");
+    w.line("let out_vertex: DsOut = ds_invoke(patch_id, domain_loc, prim_id);");
+    w.line("ds_out.data[out_index] = out_vertex;");
+    w.dedent();
+    w.line("}");
+
+    Ok(ShaderTranslation {
+        wgsl: w.finish(),
+        stage: ShaderStage::Domain,
+        reflection,
+    })
+}
+
 fn translate_vs(
     module: &Sm4Module,
     isgn: &DxbcSignature,
@@ -1238,6 +1442,30 @@ fn build_io_maps(
         cs_inputs: BTreeMap::new(),
         hs_inputs: BTreeMap::new(),
     })
+}
+
+fn build_ds_io_maps(
+    module: &Sm4Module,
+    isgn: &DxbcSignature,
+    psgn: &DxbcSignature,
+    osgn: &DxbcSignature,
+) -> Result<IoMaps, ShaderTranslateError> {
+    // Domain shader inputs are split between:
+    // - ISGN: control point data + per-invocation system values (SV_DomainLocation, SV_PrimitiveID)
+    // - PSGN: patch constant data produced by the hull shader
+    //
+    // Our IR model uses a single non-indexed `v#` register file for patch-constant inputs and
+    // system values. Merge the patch constant signature with the system-value subset of ISGN.
+    let mut combined_params = psgn.parameters.clone();
+    for p in &isgn.parameters {
+        if is_sv_domain_location(&p.semantic_name) || is_sv_primitive_id(&p.semantic_name) {
+            combined_params.push(p.clone());
+        }
+    }
+    let combined_isgn = DxbcSignature {
+        parameters: combined_params,
+    };
+    build_io_maps(module, &combined_isgn, osgn)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -2427,6 +2655,28 @@ impl IoMaps {
                     p.param.mask,
                 ))
             }
+            ShaderStage::Domain => {
+                let p = self.inputs.get(&reg).ok_or(
+                    ShaderTranslateError::SignatureMissingRegister {
+                        io: "input",
+                        register: reg,
+                    },
+                )?;
+                if p.sys_value == Some(D3D_NAME_DOMAIN_LOCATION) {
+                    return Ok(expand_to_vec4("ds_domain_location", p));
+                }
+                if p.sys_value == Some(D3D_NAME_PRIMITIVE_ID) {
+                    return Ok(expand_to_vec4("bitcast<f32>(ds_primitive_id)", p));
+                }
+
+                // Domain shader patch-constant inputs are provided via HS patch-constant output
+                // buffers. Treat all other `v#` inputs as patch-constant registers, even when the
+                // signature marks them as system values (e.g. tess factors).
+                Ok(apply_sig_mask_to_vec4(
+                    &format!("ds_in_pc.data[ds_pc_base + {reg}u]"),
+                    p.param.mask,
+                ))
+            }
             _ => Err(ShaderTranslateError::UnsupportedStage(stage)),
         }
     }
@@ -2440,6 +2690,8 @@ const D3D_NAME_IS_FRONT_FACE: u32 = 9;
 // D3D10+ geometry-shader instancing builtin (`SV_GSInstanceID`). This value is shared between
 // signature `system_value_type` and `dcl_input_siv` declaration encodings.
 const D3D_NAME_GS_INSTANCE_ID: u32 = 11;
+// Domain shader builtin: `SV_DomainLocation` (barycentric / domain coordinates).
+const D3D_NAME_DOMAIN_LOCATION: u32 = 12;
 // Hull shader built-in: `SV_OutputControlPointID`.
 const D3D_NAME_OUTPUT_CONTROL_POINT_ID: u32 = 17;
 const D3D_NAME_DISPATCH_THREAD_ID: u32 = 20;
@@ -2457,6 +2709,7 @@ fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
         D3D_NAME_VERTEX_ID => Some(Builtin::VertexIndex),
         D3D_NAME_PRIMITIVE_ID => Some(Builtin::PrimitiveIndex),
         D3D_NAME_INSTANCE_ID => Some(Builtin::InstanceIndex),
+        D3D_NAME_DOMAIN_LOCATION => Some(Builtin::DomainLocation),
         D3D_NAME_GS_INSTANCE_ID => Some(Builtin::GsInstanceIndex),
         D3D_NAME_IS_FRONT_FACE => Some(Builtin::FrontFacing),
         D3D_NAME_DISPATCH_THREAD_ID => Some(Builtin::GlobalInvocationId),
@@ -2489,6 +2742,9 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     }
     if is_sv_primitive_id(name) {
         return Some(D3D_NAME_PRIMITIVE_ID);
+    }
+    if is_sv_domain_location(name) {
+        return Some(D3D_NAME_DOMAIN_LOCATION);
     }
     if is_sv_instance_id(name) {
         return Some(D3D_NAME_INSTANCE_ID);
@@ -2539,6 +2795,10 @@ fn is_sv_vertex_id(name: &str) -> bool {
 
 fn is_sv_primitive_id(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_PrimitiveID") || name.eq_ignore_ascii_case("SV_PRIMITIVEID")
+}
+
+fn is_sv_domain_location(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_DomainLocation") || name.eq_ignore_ascii_case("SV_DOMAINLOCATION")
 }
 
 fn is_sv_instance_id(name: &str) -> bool {
@@ -5587,7 +5847,7 @@ fn emit_instructions(
                 }
 
                 match ctx.stage {
-                    ShaderStage::Vertex => ctx.io.emit_vs_return(w)?,
+                    ShaderStage::Vertex | ShaderStage::Domain => ctx.io.emit_vs_return(w)?,
                     ShaderStage::Pixel => ctx.io.emit_ps_return(w)?,
                     ShaderStage::Compute | ShaderStage::Hull => {
                         // Compute entry points return `()`.
@@ -5633,7 +5893,12 @@ fn emit_src_vec4(
             RegFile::OutputDepth => ctx.io.ps_depth_var()?,
             RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
         },
-        SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
+        SrcKind::GsInput { reg, vertex } => match ctx.stage {
+            ShaderStage::Domain => format!(
+                "ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u]"
+            ),
+            _ => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
+        },
         SrcKind::ConstantBuffer { slot, reg } => {
             // Size is determined by scanning, so the declared array is always
             // large enough.
@@ -5683,12 +5948,12 @@ fn emit_src_vec4_u32(
             };
             format!("bitcast<vec4<u32>>({expr})")
         }
-        SrcKind::GsInput { .. } => {
-            return Err(ShaderTranslateError::UnsupportedInstruction {
-                inst_index,
-                opcode: format!("{opcode} (gs per-vertex input)"),
-            });
-        }
+        SrcKind::GsInput { reg, vertex } => match ctx.stage {
+            ShaderStage::Domain => format!(
+                "bitcast<vec4<u32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+            ),
+            _ => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
+        },
         SrcKind::ConstantBuffer { slot, reg } => {
             let _ = ctx.resources.cbuffers.get(slot);
             format!("cb{slot}.regs[{reg}]")
@@ -5773,12 +6038,12 @@ fn emit_src_vec4_i32(
             };
             format!("bitcast<vec4<i32>>({expr})")
         }
-        SrcKind::GsInput { .. } => {
-            return Err(ShaderTranslateError::UnsupportedInstruction {
-                inst_index,
-                opcode: format!("{opcode} (gs per-vertex input)"),
-            });
-        }
+        SrcKind::GsInput { reg, vertex } => match ctx.stage {
+            ShaderStage::Domain => format!(
+                "bitcast<vec4<i32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+            ),
+            _ => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
+        },
         SrcKind::ConstantBuffer { slot, reg } => {
             let _ = ctx.resources.cbuffers.get(slot);
             format!("bitcast<vec4<i32>>(cb{slot}.regs[{reg}])")

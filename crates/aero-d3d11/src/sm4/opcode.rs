@@ -735,6 +735,12 @@ mod tests {
             // constants are aliases for readability (e.g. `OPCODE_IFC = OPCODE_IF`), and those
             // should not participate in uniqueness checks.
             let value_str = value_str.replace('_', "");
+            // Ignore alias/derived opcode constants (e.g. `pub const OPCODE_IFC: u32 = OPCODE_IF;`)
+            // since this test only aims to assert that the *numeric opcode IDs* are globally unique.
+            if !value_str.starts_with("0x") && !value_str.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+
             let value = if let Some(hex) = value_str.strip_prefix("0x") {
                 u32::from_str_radix(hex, 16).expect("invalid hex opcode const value")
             } else if value_str.chars().all(|c| c.is_ascii_digit()) {
