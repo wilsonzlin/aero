@@ -17,7 +17,7 @@ use aero_devices_gpu::ring::{
 };
 use aero_devices_gpu::AeroGpuPciDevice;
 use aero_io_snapshot::io::state::{
-    codec::Encoder, IoSnapshot, SnapshotError, SnapshotReader, SnapshotWriter,
+    codec::Encoder, IoSnapshot, SnapshotError, SnapshotReader, SnapshotVersion, SnapshotWriter,
 };
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
@@ -1383,5 +1383,152 @@ fn snapshot_restore_rejects_pending_submissions_with_too_many_entries() {
     assert_eq!(
         err,
         SnapshotError::InvalidFieldEncoding("pending_submissions")
+    );
+}
+
+#[test]
+fn snapshot_restore_rejects_pending_fence_completions_with_too_many_entries() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_PENDING_FENCE_COMPLETIONS: u16 = 14;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // Declared completion count exceeds the device's defensive cap.
+    let pending_bytes = Encoder::new().u32(65_537).finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_PENDING_FENCE_COMPLETIONS, pending_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("pending_fence_completions")
+    );
+}
+
+#[test]
+fn snapshot_restore_v1_1_accepts_legacy_pending_fence_completions_tag() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_EXECUTOR: u16 = 2;
+    const TAG_PENDING_FENCE_COMPLETIONS: u16 = 14;
+    const TAG_PENDING_FENCE_COMPLETIONS_LEGACY: u16 = 10;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+    };
+
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(cfg.clone());
+
+    // Ring layout in guest memory (one no-op submission that signals fence=42).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    let fence = 42u64;
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence);
+
+    let fence_gpa = 0x3000u64;
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
+
+    // Process the submission with DMA enabled so it becomes in-flight.
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    // Disable bus mastering and queue a completion.
+    dev.config_mut().set_command(1 << 1);
+    dev.complete_fence(&mut mem, fence);
+
+    // Start from the current snapshot (v1.2), but re-encode it as v1.1 with the legacy
+    // pending-fence-completions tag.
+    let snap = dev.save_state();
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+    let executor = reader
+        .bytes(TAG_EXECUTOR)
+        .expect("saved snapshot missing TAG_EXECUTOR")
+        .to_vec();
+    let pending_fence_completions = reader
+        .bytes(TAG_PENDING_FENCE_COMPLETIONS)
+        .expect("expected pending fence completions tag in source snapshot")
+        .to_vec();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        SnapshotVersion::new(1, 1),
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_EXECUTOR, executor);
+    writer.field_bytes(
+        TAG_PENDING_FENCE_COMPLETIONS_LEGACY,
+        pending_fence_completions,
+    );
+    let v1_1 = writer.finish();
+
+    // Restore into a device with DMA enabled: the pending completion should be applied.
+    let mut restored = AeroGpuPciDevice::new(cfg);
+    restored.config_mut().set_command((1 << 1) | (1 << 2));
+    restored.load_state(&v1_1).unwrap();
+    restored.tick(&mut mem, 0);
+
+    assert_eq!(restored.regs.completed_fence, fence);
+    assert_ne!(restored.regs.irq_status & irq_bits::FENCE, 0);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        fence
     );
 }
