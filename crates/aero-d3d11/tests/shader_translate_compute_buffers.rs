@@ -207,3 +207,119 @@ fn translates_compute_buffer_load_store_structured() {
         translated.wgsl
     );
 }
+
+#[test]
+fn translates_compute_buffer_uav_load_raw() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let zero = SrcOperand {
+        kind: SrcKind::ImmediateF32([0; 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: aero_d3d11::OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::LdUavRaw {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                addr: zero,
+                uav: aero_d3d11::UavRef { slot: 0 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("u0.data["),
+        "expected UAV load to index u0.data:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("t0.data["),
+        "unexpected SRV buffer access in UAV-only shader:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_compute_buffer_uav_load_structured() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let zero = SrcOperand {
+        kind: SrcKind::ImmediateF32([0; 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: aero_d3d11::OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 16,
+                kind: BufferKind::Structured,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::LdStructuredUav {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                index: zero.clone(),
+                offset: zero,
+                uav: aero_d3d11::UavRef { slot: 0 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("* 16u"),
+        "expected structured stride (16 bytes) to appear in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("u0.data["),
+        "expected structured UAV load to index u0.data:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("t0.data["),
+        "unexpected SRV buffer access in UAV-only shader:\n{}",
+        translated.wgsl
+    );
+}

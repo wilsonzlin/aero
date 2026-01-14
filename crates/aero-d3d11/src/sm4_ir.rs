@@ -583,6 +583,16 @@ pub enum Sm4Inst {
         offset: SrcOperand,
         buffer: BufferRef,
     },
+    /// `ld_structured dst, index, offset, u#` (structured UAV buffer load; `RWStructuredBuffer.Load`).
+    ///
+    /// Like [`Sm4Inst::LdStructured`], but reads from an unordered access view (`u#`). Stride comes
+    /// from the corresponding UAV declaration.
+    LdStructuredUav {
+        dst: DstOperand,
+        index: SrcOperand,
+        offset: SrcOperand,
+        uav: UavRef,
+    },
     /// `store_structured u#, index, offset, value`
     ///
     /// `index` is the structured element index and `offset` is the byte offset

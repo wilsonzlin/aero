@@ -1265,13 +1265,38 @@ fn decode_ld_raw(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4
     let mut dst = decode_dst(r)?;
     dst.saturate = saturate;
     let addr = decode_src(r)?;
-    let buffer = decode_buffer_ref(r)?;
-    if !r.is_eof() {
-        return Ok(Sm4Inst::Unknown {
-            opcode: OPCODE_LD_RAW,
+    let buf_op = decode_raw_operand(r)?;
+    if buf_op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("buffer operand cannot be immediate"),
         });
     }
-    Ok(Sm4Inst::LdRaw { dst, addr, buffer })
+
+    let slot = one_index(buf_op.ty, &buf_op.indices, r.base_at)?;
+    let inst = match buf_op.ty {
+        OPERAND_TYPE_RESOURCE => Sm4Inst::LdRaw {
+            dst,
+            addr,
+            buffer: BufferRef { slot },
+        },
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW => Sm4Inst::LdUavRaw {
+            dst,
+            addr,
+            uav: UavRef { slot },
+        },
+        _ => {
+            return Err(Sm4DecodeError {
+                at_dword: r.base_at + r.pos.saturating_sub(1),
+                kind: Sm4DecodeErrorKind::UnsupportedOperandType { ty: buf_op.ty },
+            })
+        }
+    };
+
+    if !r.is_eof() {
+        return Ok(Sm4Inst::Unknown { opcode: OPCODE_LD_RAW });
+    }
+    Ok(inst)
 }
 
 fn decode_ld_uav_raw(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
@@ -1312,18 +1337,42 @@ fn decode_ld_structured(
     dst.saturate = saturate;
     let index = decode_src(r)?;
     let offset = decode_src(r)?;
-    let buffer = decode_buffer_ref(r)?;
+    let buf_op = decode_raw_operand(r)?;
+    if buf_op.imm32.is_some() {
+        return Err(Sm4DecodeError {
+            at_dword: r.base_at + r.pos.saturating_sub(1),
+            kind: Sm4DecodeErrorKind::UnsupportedOperand("buffer operand cannot be immediate"),
+        });
+    }
+
+    let slot = one_index(buf_op.ty, &buf_op.indices, r.base_at)?;
+    let inst = match buf_op.ty {
+        OPERAND_TYPE_RESOURCE => Sm4Inst::LdStructured {
+            dst,
+            index,
+            offset,
+            buffer: BufferRef { slot },
+        },
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW => Sm4Inst::LdStructuredUav {
+            dst,
+            index,
+            offset,
+            uav: UavRef { slot },
+        },
+        _ => {
+            return Err(Sm4DecodeError {
+                at_dword: r.base_at + r.pos.saturating_sub(1),
+                kind: Sm4DecodeErrorKind::UnsupportedOperandType { ty: buf_op.ty },
+            })
+        }
+    };
+
     if !r.is_eof() {
         return Ok(Sm4Inst::Unknown {
             opcode: OPCODE_LD_STRUCTURED,
         });
     }
-    Ok(Sm4Inst::LdStructured {
-        dst,
-        index,
-        offset,
-        buffer,
-    })
+    Ok(inst)
 }
 
 fn decode_store_structured(r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
