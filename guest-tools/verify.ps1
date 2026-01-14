@@ -987,8 +987,10 @@ function Parse-InfMetadata([string]$path) {
                 for ($i = 1; $i -lt $parts.Length; $i++) {
                     $p = ("" + $parts[$i]).Trim()
                     $p = $p.Trim('"')
-                    if ($p -match '^(?i)(PCI|USB|HID|ACPI|ROOT|SW)\\') {
-                        $hwids[$p.ToUpper()] = $p
+                    $mTok = [regex]::Match($p, '^(?i)((?:PCI|USB|HID|ACPI|ROOT|SW)\\[^\s,;"=]+)')
+                    if ($mTok.Success) {
+                        $hw = $mTok.Groups[1].Value
+                        $hwids[$hw.ToUpper()] = $hw
                     }
                 }
             }
@@ -1192,7 +1194,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.4"
+         version = "2.5.5"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
