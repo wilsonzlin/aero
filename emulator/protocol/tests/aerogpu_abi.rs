@@ -2729,7 +2729,17 @@ fn rust_layout_matches_c_headers() {
         28
     );
 
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION"), 9);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_SCANOUT"), 10);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_ERROR"), 14);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_READ_GPA_MAX_BYTES"), 4096);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"),
+        1u64 << 31
+    );
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"), 1);
 
     // UMD-private discovery blob (UMDRIVERPRIVATE).
     assert_off!(

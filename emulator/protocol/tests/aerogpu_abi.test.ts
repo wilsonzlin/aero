@@ -1185,13 +1185,19 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE"), 1n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2"), 7n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE"), 8n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION"), 9n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_SCANOUT"), 10n);
 
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_FENCE"), 2n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING_V2"), 6n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_CURSOR"), 11n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_ERROR"), 14n);
+  assert.equal(konst("AEROGPU_DBGCTL_READ_GPA_MAX_BYTES"), 4096n);
 
   assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN"), 0n);
   assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_LEGACY"), 1n);
@@ -1202,6 +1208,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID"), 2n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED"), 1n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"), 1n << 31n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"), 1n);
 
   // -------------------------- Exhaustive ABI constant coverage --------------------------
   //
