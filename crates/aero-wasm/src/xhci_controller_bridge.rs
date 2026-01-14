@@ -87,9 +87,14 @@ fn parse_xhci_usb_path(path: JsValue, port_count: u8) -> Result<Vec<u8>, JsValue
             "xHCI root port out of range (expected 0..={max})"
         )));
     }
-    if root == WEBUSB_ROOT_PORT as u32 {
+    let reserved_port = if port_count > WEBUSB_ROOT_PORT {
+        WEBUSB_ROOT_PORT
+    } else {
+        0
+    };
+    if root == reserved_port as u32 {
         return Err(js_error(format!(
-            "xHCI root port {WEBUSB_ROOT_PORT} is reserved for WebUSB passthrough"
+            "xHCI root port {reserved_port} is reserved for WebUSB passthrough"
         )));
     }
 
@@ -147,6 +152,15 @@ impl XhciControllerBridge {
         self.webusb
             .get_or_insert_with(|| UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High))
             .clone()
+    }
+
+    fn webusb_root_port(&self) -> u8 {
+        let port_count = self.ctrl.port_count();
+        if port_count > WEBUSB_ROOT_PORT {
+            WEBUSB_ROOT_PORT
+        } else {
+            0
+        }
     }
 }
 
@@ -315,6 +329,7 @@ impl XhciControllerBridge {
         match (was_connected, connected) {
             (true, true) | (false, false) => {}
             (false, true) => {
+                let root_port = self.webusb_root_port();
                 // xHCI models a USB 2.0 root hub, so default the passthrough device to high-speed.
                 //
                 // We keep the handle alive across disconnects so action IDs remain monotonic across
@@ -324,15 +339,15 @@ impl XhciControllerBridge {
                     .get_or_insert_with(|| UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High));
                 // Ensure the device is attached at a stable root port so guest activity routes into
                 // the shared passthrough handle.
-                let _ = attach_device_at_path(&mut self.ctrl, &[WEBUSB_ROOT_PORT], Box::new(dev.clone()));
+                let _ = attach_device_at_path(&mut self.ctrl, &[root_port], Box::new(dev.clone()));
                 self.webusb_connected = true;
             }
             (true, false) => {
-                let _ = detach_device_at_path(&mut self.ctrl, &[WEBUSB_ROOT_PORT]);
+                let root_port = self.webusb_root_port();
+                let _ = detach_device_at_path(&mut self.ctrl, &[root_port]);
                 self.webusb_connected = false;
-                // Preserve pre-existing semantics: disconnecting the device drops any queued
-                // actions and in-flight state, but we keep the handle alive so
-                // `UsbPassthroughDevice.next_id` remains monotonic across reconnects.
+                // Preserve UHCI semantics: disconnect drops queued/in-flight host state, but keep
+                // the handle alive so `UsbPassthroughDevice.next_id` remains monotonic.
                 if let Some(dev) = self.webusb.as_ref() {
                     dev.reset();
                 }
@@ -340,26 +355,24 @@ impl XhciControllerBridge {
         }
     }
 
-    /// Drain queued WebUSB passthrough host actions as plain JS objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
         if !self.webusb_connected {
             return Ok(JsValue::NULL);
-        };
+        }
         let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
-
         let actions: Vec<UsbHostAction> = dev.drain_actions();
         if actions.is_empty() {
             return Ok(JsValue::NULL);
         }
-        serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&actions).map_err(|e| js_error(e))
     }
 
-    /// Push a host completion into the WebUSB passthrough device.
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
-        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let completion: UsbHostCompletion =
+            serde_wasm_bindgen::from_value(completion).map_err(|e| js_error(e))?;
+
         if self.webusb_connected {
             if let Some(dev) = self.webusb.as_ref() {
                 dev.push_completion(completion);
@@ -367,8 +380,6 @@ impl XhciControllerBridge {
         }
         Ok(())
     }
-
-    /// Reset the WebUSB passthrough device without disturbing the rest of the xHCI controller.
     pub fn reset(&mut self) {
         if self.webusb_connected {
             if let Some(dev) = self.webusb.as_ref() {
@@ -377,15 +388,14 @@ impl XhciControllerBridge {
         }
     }
 
-    /// Return a debug summary of queued actions/completions for the WebUSB passthrough device.
     pub fn pending_summary(&self) -> Result<JsValue, JsValue> {
         if !self.webusb_connected {
             return Ok(JsValue::NULL);
-        };
+        }
         let Some(summary) = self.webusb.as_ref().map(|d| d.pending_summary()) else {
             return Ok(JsValue::NULL);
         };
-        serde_wasm_bindgen::to_value(&summary).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&summary).map_err(|e| js_error(e))
     }
 
     /// Serialize the current xHCI controller state into a deterministic snapshot blob.
@@ -476,9 +486,10 @@ impl XhciControllerBridge {
     /// preserve xHCI route-string constraints (hub port numbers are encoded as 4-bit nibbles).
     pub fn attach_hub(&mut self, root_port: u32, port_count: u32) -> Result<(), JsValue> {
         let ctrl_ports = self.ctrl.port_count();
-        if root_port == WEBUSB_ROOT_PORT as u32 {
+        let reserved_port = self.webusb_root_port();
+        if root_port == reserved_port as u32 {
             return Err(js_error(format!(
-                "xHCI root port {WEBUSB_ROOT_PORT} is reserved for WebUSB passthrough"
+                "xHCI root port {reserved_port} is reserved for WebUSB passthrough"
             )));
         }
         if root_port >= ctrl_ports as u32 {
