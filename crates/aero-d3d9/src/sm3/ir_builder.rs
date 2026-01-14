@@ -1399,8 +1399,9 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
     // Build a v# -> @location(n) remap table for *all* declared input registers, not just the ones
     // referenced by the instruction stream.
     //
-    // Even unused declarations must be remapped so host-side semantic reflection (`semantic_locations`)
-    // stays consistent and doesn't observe collisions between remapped used regs and raw unused regs.
+    // Even unused declarations must be remapped so host-side semantic reflection
+    // (`semantic_locations`) stays consistent and doesn't observe collisions between remapped used
+    // regs and raw unused regs.
     for decl in &ir.inputs {
         if decl.reg.file != RegFile::Input {
             continue;
