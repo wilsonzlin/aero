@@ -175,7 +175,7 @@ fn align_up_u32(v: u32, align: u32) -> u32 {
     if align == 0 {
         return v;
     }
-    (v + (align - 1)) / align * align
+    v.div_ceil(align) * align
 }
 
 fn align_down_u32(v: u32, align: u32) -> u32 {
@@ -207,24 +207,21 @@ fn range_limits_descriptor(preferred: Timing, preferred_dtd: &[u8; 18]) -> [u8; 
     };
 
     // Baseline modes: 50-75Hz vertical, 30-80kHz horizontal, 80MHz max pixel clock.
-    let min_v_rate_hz = preferred.refresh_hz.min(50).max(1) as u8;
+    let min_v_rate_hz = preferred.refresh_hz.clamp(1, 50) as u8;
     let max_v_rate_hz = preferred
         .refresh_hz
         .saturating_add(15)
-        .max(75)
-        .min(255) as u8;
+        .clamp(75, 255) as u8;
 
-    let min_h_rate_khz = h_freq_khz.min(30).max(1).min(255) as u8;
+    let min_h_rate_khz = h_freq_khz.clamp(1, 30) as u8;
     let max_h_rate_khz = h_freq_khz
         .saturating_add(10)
-        .max(80)
-        .min(255) as u8;
+        .clamp(80, 255) as u8;
 
-    let required_pclk_10mhz = (pixel_clock_hz + 9_999_999) / 10_000_000;
+    let required_pclk_10mhz = pixel_clock_hz.div_ceil(10_000_000);
     let max_pixel_clock_10mhz = required_pclk_10mhz
         .saturating_add(1)
-        .max(8)
-        .min(255) as u8;
+        .clamp(8, 255) as u8;
 
     let mut desc = [0u8; 18];
     desc[0] = 0;
@@ -334,7 +331,7 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
     let refresh_hz = timing.refresh_hz as u32;
 
     // Horizontal blanking: ~20% of active, at least 160px, aligned to 8px.
-    let mut h_blank = align_up_u32((h_active + 4) / 5, 8).max(160);
+    let mut h_blank = align_up_u32(h_active.div_ceil(5), 8).max(160);
     h_blank = h_blank.min(0x0FFF);
 
     // Vertical blanking: ~5% of active, at least enough for porches.
@@ -342,7 +339,7 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
     let v_sync_width: u32 = 6;
     let v_back_porch_min: u32 = 6;
     let min_v_blank = v_front_porch + v_sync_width + v_back_porch_min;
-    let mut v_blank = ((v_active + 19) / 20).max(min_v_blank).min(0x0FFF);
+    let mut v_blank = v_active.div_ceil(20).max(min_v_blank).min(0x0FFF);
 
     // If the synthesized total would exceed the maximum EDID DTD pixel clock,
     // reduce blanking until it fits (or fall back).
