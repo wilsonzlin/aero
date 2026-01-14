@@ -3352,6 +3352,28 @@ impl Machine {
         })
     }
 
+    fn validate_cpu_count(cpu_count: u32) -> Result<u8, JsValue> {
+        if !(1..=u32::from(u8::MAX)).contains(&cpu_count) {
+            let msg = format!(
+                "invalid cpu_count {cpu_count} (must be between 1 and {})",
+                u8::MAX
+            );
+            #[cfg(target_arch = "wasm32")]
+            {
+                return Err(JsValue::from_str(&msg));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                // `wasm-bindgen` does not implement string constructors for `JsValue` on non-wasm
+                // targets (they panic). Host-side unit tests still exercise error paths, so return
+                // a sentinel `JsValue` instead.
+                let _ = msg;
+                return Err(JsValue::NULL);
+            }
+        }
+        Ok(cpu_count as u8)
+    }
+
     /// Create a new canonical full-system Aero machine.
     ///
     /// # vCPU count / SMP
@@ -3395,9 +3417,10 @@ impl Machine {
     /// robust multi-vCPU environment yet). For real guest boots, prefer `cpu_count=1`.
     ///
     /// See `docs/21-smp.md#status-today` and `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
-    pub fn new_with_cpu_count(ram_size_bytes: u32, cpu_count: u8) -> Result<Self, JsValue> {
+    #[wasm_bindgen]
+    pub fn new_with_cpu_count(ram_size_bytes: u32, cpu_count: u32) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
-        cfg.cpu_count = cpu_count;
+        cfg.cpu_count = Self::validate_cpu_count(cpu_count)?;
         Self::new_with_native_config(cfg)
     }
 
@@ -3414,11 +3437,11 @@ impl Machine {
         ram_size_bytes: u32,
         enable_aerogpu: bool,
         enable_vga: Option<bool>,
-        cpu_count: Option<u8>,
+        cpu_count: Option<u32>,
     ) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
         if let Some(cpu_count) = cpu_count {
-            cfg.cpu_count = cpu_count;
+            cfg.cpu_count = Self::validate_cpu_count(cpu_count)?;
         }
         cfg.enable_aerogpu = enable_aerogpu;
         cfg.enable_vga = enable_vga.unwrap_or(!enable_aerogpu);
@@ -6078,6 +6101,31 @@ mod machine_mouse_button_cache_tests {
         m.inject_mouse_buttons_mask(0x18);
         let packet: Vec<u8> = (0..4).map(|_| m.inner.io_read(0x60, 1) as u8).collect();
         assert_eq!(packet, vec![0x08, 0x00, 0x00, 0x30]);
+    }
+}
+
+#[cfg(test)]
+mod machine_cpu_count_tests {
+    use super::Machine;
+
+    #[test]
+    fn new_with_cpu_count_rejects_zero() {
+        let res = Machine::new_with_cpu_count(16 * 1024 * 1024, 0);
+        assert!(res.is_err(), "expected cpu_count=0 to be rejected");
+    }
+
+    #[test]
+    fn new_with_cpu_count_rejects_too_large() {
+        let res = Machine::new_with_cpu_count(16 * 1024 * 1024, 256);
+        assert!(res.is_err(), "expected cpu_count=256 to be rejected");
+    }
+
+    #[test]
+    fn new_with_cpu_count_sets_config() {
+        // `aero_machine::Machine::read_lapic_u32` asserts that `cpu_index < cfg.cpu_count`.
+        let mut m = Machine::new_with_cpu_count(16 * 1024 * 1024, 2)
+            .expect("Machine::new_with_cpu_count should succeed");
+        let _ = m.inner.read_lapic_u32(1, 0);
     }
 }
 
