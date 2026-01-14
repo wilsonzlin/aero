@@ -40,6 +40,7 @@ pub struct SamplerResource {
 #[derive(Debug)]
 pub struct ShaderModuleResource {
     pub module: wgpu::ShaderModule,
+    pub wgsl: String,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

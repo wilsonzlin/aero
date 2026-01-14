@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use aero_gpu::bindings::bind_group_cache::{
@@ -879,7 +880,13 @@ impl D3D11Runtime {
             });
         self.resources
             .shaders
-            .insert(shader_id, ShaderModuleResource { module });
+            .insert(
+                shader_id,
+                ShaderModuleResource {
+                    module,
+                    wgsl: wgsl.to_owned(),
+                },
+            );
         Ok(())
     }
 
@@ -911,6 +918,32 @@ impl D3D11Runtime {
             .shaders
             .get(&fs_shader)
             .ok_or_else(|| anyhow!("unknown shader module {fs_shader}"))?;
+
+        // WebGPU requires every fragment `@location(N)` output to have a corresponding
+        // `ColorTargetState` at index N. This runtime protocol only exposes a single color target
+        // (RT0) in `CreateRenderPipeline`, but real D3D shaders may declare additional MRT outputs.
+        // D3D discards writes to unbound RTV slots; emulate this by trimming outputs to location 0.
+        let keep_output_locations = BTreeSet::from([0u32]);
+        let declared_outputs = super::wgsl_link::declared_ps_output_locations(&fs.wgsl)?;
+        let missing_outputs: BTreeSet<u32> = declared_outputs
+            .difference(&keep_output_locations)
+            .copied()
+            .collect();
+
+        let trimmed_fs_module = if missing_outputs.is_empty() {
+            None
+        } else {
+            let trimmed_wgsl =
+                super::wgsl_link::trim_ps_outputs_to_locations(&fs.wgsl, &keep_output_locations);
+            Some(
+                self.device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("aero-d3d11 trimmed fragment shader"),
+                        source: wgpu::ShaderSource::Wgsl(trimmed_wgsl.into()),
+                    }),
+            )
+        };
+        let fs_module_for_pipeline = trimmed_fs_module.as_ref().unwrap_or(&fs.module);
 
         let color_format = map_texture_format(color_format)?;
         let depth_stencil = if depth_format == DxgiFormat::Unknown {
@@ -1027,7 +1060,7 @@ impl D3D11Runtime {
                         buffers: &vertex_buffers,
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &fs.module,
+                        module: fs_module_for_pipeline,
                         entry_point: "fs_main",
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         targets: &color_target_states,
@@ -2133,7 +2166,8 @@ fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_gpu::protocol_d3d11::CmdWriter;
+    use aero_gpu::protocol_d3d11::{CmdWriter, RenderPipelineDesc};
+    use std::borrow::Cow;
 
     #[test]
     fn take_bytes_extracts_prefix() {
@@ -2150,6 +2184,129 @@ mod tests {
         let w0 = u32::from_ne_bytes([1, 2, 3, 4]);
         let payload = [0u32, 0, 0, 5, w0];
         assert!(D3D11Runtime::take_bytes(&payload, 3).is_err());
+    }
+
+    #[test]
+    fn create_render_pipeline_trims_unbound_fragment_outputs() {
+        // Regression test: wgpu/WebGPU requires that every fragment `@location(N)` output has a
+        // corresponding `ColorTargetState` at index N. D3D discards writes to unbound RTV slots.
+        //
+        // This runtime protocol only supports a single color target (RT0). Ensure pipeline
+        // creation succeeds even when the fragment shader declares extra MRT outputs.
+        pollster::block_on(async {
+            let mut rt = match D3D11Runtime::new_for_tests().await {
+                Ok(rt) => rt,
+                Err(err) => {
+                    eprintln!("skipping {}: wgpu unavailable ({err:#})", module_path!());
+                    return;
+                }
+            };
+
+            let vs_wgsl = r#"
+                @vertex
+                fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
+                    var pos = array<vec2<f32>, 3>(
+                        vec2<f32>(-1.0, -1.0),
+                        vec2<f32>( 3.0, -1.0),
+                        vec2<f32>(-1.0,  3.0),
+                    );
+                    return vec4<f32>(pos[idx], 0.0, 1.0);
+                }
+            "#;
+
+            let fs_wgsl = r#"
+                struct PsOut {
+                    @location(0) o0: vec4<f32>,
+                    @location(1) o1: vec4<f32>,
+                };
+
+                @fragment
+                fn fs_main() -> PsOut {
+                    var out: PsOut;
+                    out.o0 = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+                    out.o1 = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            // Baseline: the untrimmed shader should fail validation when paired with a single
+            // color target.
+            let vs = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("d3d11 runtime mrt baseline vs"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(vs_wgsl)),
+            });
+            let fs = rt.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("d3d11 runtime mrt baseline fs"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(fs_wgsl)),
+            });
+            let layout = rt
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("d3d11 runtime mrt baseline layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let _ = rt.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("d3d11 runtime mrt baseline pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &vs,
+                    entry_point: "vs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs,
+                    entry_point: "fs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(
+                err.is_some(),
+                "untrimmed MRT shader should fail validation with a single color target"
+            );
+
+            // Now go through the D3D11 runtime command path; the runtime should trim outputs and
+            // pipeline creation should succeed without validation errors.
+            let mut writer = CmdWriter::new();
+            writer.create_shader_module_wgsl(1, vs_wgsl);
+            writer.create_shader_module_wgsl(2, fs_wgsl);
+            writer.create_render_pipeline(
+                3,
+                RenderPipelineDesc {
+                    vs_shader: 1,
+                    fs_shader: 2,
+                    color_format: DxgiFormat::R8G8B8A8Unorm,
+                    depth_format: DxgiFormat::Unknown,
+                    topology: PrimitiveTopology::TriangleList,
+                    vertex_buffers: &[],
+                    bindings: &[],
+                },
+            );
+
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            rt.execute(&writer.finish())
+                .expect("runtime should create pipeline with trimmed outputs");
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while creating trimmed pipeline: {err:?}"
+            );
+        });
     }
 
     #[test]
