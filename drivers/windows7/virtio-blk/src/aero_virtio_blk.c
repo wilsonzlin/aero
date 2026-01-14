@@ -2310,6 +2310,21 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
 #endif
 
+#ifdef SRB_FUNCTION_RESET_TARGET
+  /*
+   * Some StorPort stacks issue RESET_TARGET for timeout recovery. Treat it as a
+   * device reset (single target).
+   */
+  case SRB_FUNCTION_RESET_TARGET:
+    InterlockedIncrement(&devExt->ResetDeviceSrbCount);
+    if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+      return TRUE;
+    }
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
   case SRB_FUNCTION_RESET_BUS: {
     InterlockedIncrement(&devExt->ResetBusSrbCount);
     if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
@@ -2319,6 +2334,20 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return TRUE;
   }
+
+#ifdef SRB_FUNCTION_RESET_PORT
+  /*
+   * Some stacks use RESET_PORT instead of RESET_BUS. Treat it as a bus reset.
+   */
+  case SRB_FUNCTION_RESET_PORT:
+    InterlockedIncrement(&devExt->ResetBusSrbCount);
+    if (!devExt->Removed && !AerovblkDeviceBringUp(devExt, FALSE)) {
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+      return TRUE;
+    }
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
 
 #ifdef SRB_FUNCTION_RESET_ADAPTER
   /*
