@@ -171,7 +171,10 @@ mod tests {
             assert_eq!(args[spec_start + i], *spec);
         }
 
-        assert_eq!(args[spec_start + INPUT_E2E_SPECS.len()], "--project=chromium");
+        assert_eq!(
+            args[spec_start + INPUT_E2E_SPECS.len()],
+            "--project=chromium"
+        );
     }
 
     #[test]
@@ -183,5 +186,25 @@ mod tests {
                 "duplicate Playwright spec path in INPUT_E2E_SPECS: {spec}"
             );
         }
+    }
+
+    #[test]
+    fn curated_e2e_specs_keep_malformed_batch_near_io_worker_input_specs() {
+        fn idx(spec: &str) -> usize {
+            INPUT_E2E_SPECS
+                .iter()
+                .position(|&s| s == spec)
+                .unwrap_or_else(|| panic!("expected {spec} to exist in INPUT_E2E_SPECS"))
+        }
+
+        let capture_io_worker = idx("tests/e2e/input_capture_io_worker.spec.ts");
+        let malformed_batch = idx("tests/e2e/input_batch_malformed.spec.ts");
+        let i8042 = idx("tests/e2e/io_worker_i8042.spec.ts");
+
+        assert!(
+            capture_io_worker < malformed_batch && malformed_batch < i8042,
+            "expected input_batch_malformed.spec.ts to stay adjacent to IO-worker input specs \
+             (after input_capture_io_worker and before io_worker_i8042)"
+        );
     }
 }
