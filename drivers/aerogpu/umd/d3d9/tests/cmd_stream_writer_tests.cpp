@@ -1088,6 +1088,241 @@ bool TestFixedPacketPadding() {
   return ValidateStream(buf, sizeof(buf));
 }
 
+struct ExpectedBindShadersPacket {
+  aerogpu_handle_t vs = 0;
+  aerogpu_handle_t ps = 0;
+  aerogpu_handle_t cs = 0;
+  aerogpu_handle_t reserved0 = 0;
+
+  bool has_tail = false;
+  aerogpu_handle_t gs = 0;
+  aerogpu_handle_t hs = 0;
+  aerogpu_handle_t ds = 0;
+};
+
+bool CheckBindShadersPacket(const uint8_t* buf, size_t len, const ExpectedBindShadersPacket& expected) {
+  if (!Check(buf != nullptr, "bind_shaders buffer non-null")) {
+    return false;
+  }
+  if (!Check(len >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr),
+             "bind_shaders stream has header + cmd")) {
+    return false;
+  }
+  if (!Check(ValidateStream(buf, len), "bind_shaders stream validates")) {
+    return false;
+  }
+
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
+  const size_t off = sizeof(aerogpu_cmd_stream_header);
+  const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+  if (!Check(hdr->opcode == AEROGPU_CMD_BIND_SHADERS, "bind_shaders opcode")) {
+    return false;
+  }
+
+  const size_t expected_size =
+      expected.has_tail ? sizeof(aerogpu_cmd_bind_shaders) + 3 * sizeof(aerogpu_handle_t)
+                        : sizeof(aerogpu_cmd_bind_shaders);
+  if (!Check(hdr->size_bytes == AlignUp(expected_size, 4), "bind_shaders size_bytes")) {
+    return false;
+  }
+  if (!Check(stream->size_bytes == off + hdr->size_bytes, "bind_shaders stream size_bytes")) {
+    return false;
+  }
+
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+  if (!Check(cmd->vs == expected.vs, "bind_shaders vs")) {
+    return false;
+  }
+  if (!Check(cmd->ps == expected.ps, "bind_shaders ps")) {
+    return false;
+  }
+  if (!Check(cmd->cs == expected.cs, "bind_shaders cs")) {
+    return false;
+  }
+  if (!Check(cmd->reserved0 == expected.reserved0, "bind_shaders reserved0")) {
+    return false;
+  }
+
+  if (expected.has_tail) {
+    aerogpu_handle_t tail[3] = {};
+    std::memcpy(tail, buf + off + sizeof(aerogpu_cmd_bind_shaders), sizeof(tail));
+    if (!Check(tail[0] == expected.gs, "bind_shaders tail gs")) {
+      return false;
+    }
+    if (!Check(tail[1] == expected.hs, "bind_shaders tail hs")) {
+      return false;
+    }
+    if (!Check(tail[2] == expected.ds, "bind_shaders tail ds")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TestBindShadersHelpers() {
+  // Validate the convenience helpers on the concrete writers (`SpanCmdStreamWriter` and
+  // `VectorCmdStreamWriter`) match the protocol's append-only BIND_SHADERS extension:
+  // - base 24-byte packet: {vs,ps,cs,reserved0}
+  // - extended packet: appends {gs,hs,ds} and (by default) keeps reserved0=0.
+
+  ExpectedBindShadersPacket expected{};
+
+  // SpanCmdStreamWriter: base packet (reserved0=0).
+  {
+    uint8_t buf[256] = {};
+    SpanCmdStreamWriter w(buf, sizeof(buf));
+    w.reset();
+    auto* cmd = w.bind_shaders(1, 2, 3);
+    if (!Check(cmd != nullptr, "SpanCmdStreamWriter.bind_shaders")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 0;
+    expected.has_tail = false;
+    if (!CheckBindShadersPacket(buf, sizeof(buf), expected)) {
+      return false;
+    }
+  }
+
+  // SpanCmdStreamWriter: legacy GS encoding in reserved0.
+  {
+    uint8_t buf[256] = {};
+    SpanCmdStreamWriter w(buf, sizeof(buf));
+    w.reset();
+    auto* cmd = w.bind_shaders_with_gs(1, 2, 3, 4);
+    if (!Check(cmd != nullptr, "SpanCmdStreamWriter.bind_shaders_with_gs")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 4;
+    expected.has_tail = false;
+    if (!CheckBindShadersPacket(buf, sizeof(buf), expected)) {
+      return false;
+    }
+  }
+
+  // SpanCmdStreamWriter: extended packet, default reserved0=0.
+  {
+    uint8_t buf[256] = {};
+    SpanCmdStreamWriter w(buf, sizeof(buf));
+    w.reset();
+    auto* cmd = w.bind_shaders_ex(1, 2, 3, 4, 5, 6);
+    if (!Check(cmd != nullptr, "SpanCmdStreamWriter.bind_shaders_ex")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 0;
+    expected.has_tail = true;
+    expected.gs = 4;
+    expected.hs = 5;
+    expected.ds = 6;
+    if (!CheckBindShadersPacket(buf, sizeof(buf), expected)) {
+      return false;
+    }
+  }
+
+  // SpanCmdStreamWriter: extended packet, mirroring gs into reserved0.
+  {
+    uint8_t buf[256] = {};
+    SpanCmdStreamWriter w(buf, sizeof(buf));
+    w.reset();
+    auto* cmd = w.bind_shaders_ex(1, 2, 3, 4, 5, 6, /*mirror_gs_to_reserved0=*/true);
+    if (!Check(cmd != nullptr, "SpanCmdStreamWriter.bind_shaders_ex(mirror)")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 4;
+    expected.has_tail = true;
+    expected.gs = 4;
+    expected.hs = 5;
+    expected.ds = 6;
+    if (!CheckBindShadersPacket(buf, sizeof(buf), expected)) {
+      return false;
+    }
+  }
+
+  // SpanCmdStreamWriter: HS/DS-only sugar (extended packet with vs/ps/cs/gs unbound).
+  {
+    uint8_t buf[256] = {};
+    SpanCmdStreamWriter w(buf, sizeof(buf));
+    w.reset();
+    auto* cmd = w.bind_shaders_hs_ds(5, 6);
+    if (!Check(cmd != nullptr, "SpanCmdStreamWriter.bind_shaders_hs_ds")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 0;
+    expected.ps = 0;
+    expected.cs = 0;
+    expected.reserved0 = 0;
+    expected.has_tail = true;
+    expected.gs = 0;
+    expected.hs = 5;
+    expected.ds = 6;
+    if (!CheckBindShadersPacket(buf, sizeof(buf), expected)) {
+      return false;
+    }
+  }
+
+  // VectorCmdStreamWriter: ensure it produces the same bytes as the span-backed writer for a
+  // representative extended packet.
+  {
+    VectorCmdStreamWriter vec;
+    vec.reset();
+    auto* vec_cmd = vec.bind_shaders_ex(1, 2, 3, 4, 5, 6, /*mirror_gs_to_reserved0=*/true);
+    if (!Check(vec_cmd != nullptr, "VectorCmdStreamWriter.bind_shaders_ex(mirror)")) {
+      return false;
+    }
+    vec.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 4;
+    expected.has_tail = true;
+    expected.gs = 4;
+    expected.hs = 5;
+    expected.ds = 6;
+    if (!CheckBindShadersPacket(vec.data(), vec.bytes_used(), expected)) {
+      return false;
+    }
+
+    uint8_t span_buf[256] = {};
+    SpanCmdStreamWriter span(span_buf, sizeof(span_buf));
+    span.reset();
+    auto* span_cmd = span.bind_shaders_ex(1, 2, 3, 4, 5, 6, /*mirror_gs_to_reserved0=*/true);
+    if (!Check(span_cmd != nullptr, "SpanCmdStreamWriter.bind_shaders_ex(mirror) parity")) {
+      return false;
+    }
+    span.finalize();
+    if (!Check(vec.bytes_used() == span.bytes_used(), "bind_shaders_ex span/vector size match")) {
+      return false;
+    }
+    if (!Check(std::memcmp(vec.data(), span.data(), vec.bytes_used()) == 0, "bind_shaders_ex span/vector bytes match")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool EmitRepresentativeCommands(CmdStreamWriter& w, const uint8_t* dxbc, size_t dxbc_len) {
   w.reset();
 
@@ -40367,6 +40602,7 @@ int main() {
   RUN_TEST(TestOutOfSpaceReturnsNullptrAndSetsError);
   RUN_TEST(TestCmdStreamWriterOverflowReturnsNullAndSetsError);
   RUN_TEST(TestFixedPacketPadding);
+  RUN_TEST(TestBindShadersHelpers);
   RUN_TEST(TestOwnedAndBorrowedStreamsMatch);
   RUN_TEST(TestEventQueryGetDataSemantics);
   RUN_TEST(TestDeviceFuncsIncludePatchAndProcessVertices);
