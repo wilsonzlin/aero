@@ -185,10 +185,10 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetShaderResourceBuffers) => {
-                    if let Ok((cmd_srb, _bindings)) =
+                    if let Ok((cmd_srv, _bindings)) =
                         pkt.decode_set_shader_resource_buffers_payload_le()
                     {
-                        let _ = cmd::decode_stage_ex(cmd_srb.shader_stage, cmd_srb.reserved0);
+                        let _ = cmd::decode_stage_ex(cmd_srv.shader_stage, cmd_srv.reserved0);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetUnorderedAccessBuffers) => {
@@ -1648,8 +1648,37 @@ fuzz_target!(|data: &[u8]| {
     //
     // This stream is small and synthetically constructed, but hits the new parsing surface even
     // when the raw fuzzer input doesn't naturally form these layouts.
+    let stage_ex_buf_handle = buf_handle.wrapping_add(10);
+    let stage_ex_sampler_handle = 1000u32;
+    let stage_ex_cb_binding = [cmd::AerogpuConstantBufferBinding {
+        buffer: stage_ex_buf_handle,
+        offset_bytes: 0,
+        size_bytes: 4,
+        reserved0: 0,
+    }];
+    let stage_ex_srv_binding = [cmd::AerogpuShaderResourceBufferBinding {
+        buffer: stage_ex_buf_handle,
+        offset_bytes: 0,
+        size_bytes: 4,
+        reserved0: 0,
+    }];
+    let stage_ex_uav_binding = [cmd::AerogpuUnorderedAccessBufferBinding {
+        buffer: stage_ex_buf_handle,
+        offset_bytes: 0,
+        size_bytes: 4,
+        initial_count: 0,
+    }];
+    let stage_ex_constants_f = [0.0f32, 1.0, -1.0, f32::from_bits(u32::MAX)];
+
     let mut w = AerogpuCmdWriter::new();
-    // Host-backed texture so bindings can succeed without allocations.
+    // Host-backed resources so the stream is self-contained (no allocation table required).
+    w.create_buffer(
+        stage_ex_buf_handle,
+        cmd::AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER | cmd::AEROGPU_RESOURCE_USAGE_STORAGE,
+        /*size_bytes=*/ 4,
+        /*backing_alloc_id=*/ 0,
+        /*backing_offset_bytes=*/ 0,
+    );
     w.create_texture2d(
         tex_handle,
         /*usage_flags=*/ 0,
@@ -1662,10 +1691,44 @@ fuzz_target!(|data: &[u8]| {
         /*backing_alloc_id=*/ 0,
         /*backing_offset_bytes=*/ 0,
     );
+    w.create_sampler(
+        stage_ex_sampler_handle,
+        cmd::AerogpuSamplerFilter::Nearest,
+        cmd::AerogpuSamplerAddressMode::ClampToEdge,
+        cmd::AerogpuSamplerAddressMode::ClampToEdge,
+        cmd::AerogpuSamplerAddressMode::ClampToEdge,
+    );
+
     // stage_ex encoding uses (shader_stage=COMPUTE, reserved0=stage_ex).
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Geometry, /*slot=*/ 0, tex_handle);
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Hull, /*slot=*/ 1, tex_handle);
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Domain, /*slot=*/ 2, tex_handle);
+    w.set_samplers_ex(
+        cmd::AerogpuShaderStageEx::Vertex,
+        /*start_slot=*/ 0,
+        &[stage_ex_sampler_handle],
+    );
+    w.set_constant_buffers_ex(
+        cmd::AerogpuShaderStageEx::Compute,
+        /*start_slot=*/ 0,
+        &stage_ex_cb_binding,
+    );
+    w.set_shader_resource_buffers_ex(
+        cmd::AerogpuShaderStageEx::Geometry,
+        /*start_slot=*/ 0,
+        &stage_ex_srv_binding,
+    );
+    w.set_unordered_access_buffers_ex(
+        cmd::AerogpuShaderStageEx::Hull,
+        /*start_slot=*/ 0,
+        &stage_ex_uav_binding,
+    );
+    w.set_shader_constants_f_ex(
+        cmd::AerogpuShaderStageEx::Domain,
+        /*start_register=*/ 0,
+        &stage_ex_constants_f,
+    );
+
     // Emit the append-only extended BIND_SHADERS payload using the cmd_writer helper so we keep
     // size_bytes/padding rules canonical.
     w.bind_shaders_ex(
