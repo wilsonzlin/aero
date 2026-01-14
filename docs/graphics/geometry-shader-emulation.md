@@ -245,8 +245,8 @@ To bind resources for additional D3D stages (GS/HS/DS) without breaking ABI, the
   - use `reserved0` as a small `stage_ex` tag (values match DXBC program types for non-zero types):
     - `1 = Vertex`, `2 = Geometry`, `3 = Hull`, `4 = Domain`, `5 = Compute`
   - for compatibility, `reserved0 == 0` is treated as “legacy compute” in binding packets; any
-    non-zero `stage_ex` value selects an extended stage (GS/HS/DS). (Pixel shaders use the legacy
-    `shader_stage = PIXEL` field; `0` is reserved for legacy compute.)
+    non-zero `stage_ex` value selects the stage encoded by `stage_ex` (commonly GS/HS/DS). (Pixel
+    shaders use the legacy `shader_stage = PIXEL` field; `0` is reserved for legacy compute.)
 
 This keeps older hosts/guests forward-compatible while letting newer versions express GS-stage bindings.
 

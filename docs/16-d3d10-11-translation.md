@@ -626,8 +626,9 @@ struct aerogpu_cmd_set_texture {
   - GS resources: `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (2)
   - HS resources: `shader_stage = COMPUTE`, `stage_ex = HULL`     (3)
   - DS resources: `shader_stage = COMPUTE`, `stage_ex = DOMAIN`   (4)
-  - Other values (`stage_ex = VERTEX/PIXEL/COMPUTE`) are reserved and should not be used in binding
-    commands.
+  - `stage_ex = COMPUTE` (5) is allowed but redundant; producers should prefer the legacy encoding
+    (`stage_ex = 0`) for compute bindings.
+  - `stage_ex = VERTEX` (1) is currently unused/reserved in binding commands.
 
 **GS note:** because `enum aerogpu_shader_stage` includes `GEOMETRY = 3`, GS resource bindings may be
 encoded either as:
