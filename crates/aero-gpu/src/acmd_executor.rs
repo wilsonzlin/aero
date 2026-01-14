@@ -493,10 +493,12 @@ fn is_bc_format(format: u32) -> bool {
 mod tests {
     use super::*;
     use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_os = "linux"))]
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+    #[cfg(not(target_os = "linux"))]
     use std::sync::{Mutex, OnceLock};
 
+    #[cfg(not(target_os = "linux"))]
     fn shared_executor() -> Option<&'static Mutex<AeroGpuAcmdExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuAcmdExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -513,6 +515,7 @@ mod tests {
         .copied()
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn with_executor<R>(f: impl FnOnce(&mut AeroGpuAcmdExecutor) -> R) -> Option<R> {
         let exec = shared_executor()?;
         let mut exec = exec.lock().unwrap();

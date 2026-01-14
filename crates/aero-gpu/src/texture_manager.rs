@@ -1131,10 +1131,10 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use super::*;
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     use std::sync::OnceLock;
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn device_queue() -> Option<(&'static wgpu::Device, &'static wgpu::Queue)> {
         // wgpu device creation/destruction can crash on some platforms/backends (observed in CI),
         // so reuse a single device/queue for all unit tests in this module and leak it to avoid

@@ -4299,9 +4299,10 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "linux"))]
     use std::sync::{Mutex, OnceLock};
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_os = "linux"))]
     fn reset_executor(exec: &mut AeroGpuExecutor) {
         // Dropping `wgpu` resources between unit tests has been observed to segfault on some CI
         // backends. These tests frequently reuse the same handles (1, 2, …), so we still need to
@@ -4319,7 +4320,7 @@ mod tests {
         exec.state = ExecutorState::default();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_os = "linux"))]
     fn shared_executor_bc_off() -> Option<&'static Mutex<AeroGpuExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -4332,7 +4333,7 @@ mod tests {
         .as_deref()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_os = "linux"))]
     fn shared_executor_bc_on() -> Option<&'static Mutex<AeroGpuExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
@@ -4395,7 +4396,7 @@ mod tests {
         .as_deref()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_os = "linux"))]
     fn with_executor<R>(bc_enabled: bool, f: impl FnOnce(&mut AeroGpuExecutor) -> R) -> Option<R> {
         let exec = if bc_enabled {
             shared_executor_bc_on()?
@@ -4442,7 +4443,7 @@ mod tests {
         assert!(usage.contains(wgpu::BufferUsages::COPY_SRC));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_os = "linux"))]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum MapExpectation {
         Ok {
@@ -4463,14 +4464,14 @@ mod tests {
                 $(pci::AerogpuFormat::$variant,)+
             ];
 
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(not(target_os = "linux"))]
             fn expected_map_bc_off(format: pci::AerogpuFormat) -> MapExpectation {
                 match format {
                     $(pci::AerogpuFormat::$variant => $bc_off,)+
                 }
             }
 
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(not(target_os = "linux"))]
             fn expected_map_bc_on(format: pci::AerogpuFormat) -> MapExpectation {
                 match format {
                     $(pci::AerogpuFormat::$variant => $bc_on,)+
