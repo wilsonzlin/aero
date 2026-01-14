@@ -4896,7 +4896,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="N",
         help=(
             "Override virtio-snd MSI-X vectors via `-device virtio-snd-pci,...,vectors=N` "
-            "(requires QEMU virtio `vectors` property and --with-virtio-snd)."
+            "(requires QEMU virtio `vectors` property and --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd)."
         ),
     )
     parser.add_argument(
@@ -5431,11 +5431,11 @@ def main() -> int:
     # also requires QMP, but remains opt-in via:
     # - --with-input-events / --with-virtio-input-events / --require-virtio-input-events / --enable-virtio-input-events
     # - --with-input-media-keys / --with-virtio-input-media-keys / --require-virtio-input-media-keys / --enable-virtio-input-media-keys
-    # - --with-input-wheel
+    # - --with-input-wheel / --with-virtio-input-wheel / --require-virtio-input-wheel / --enable-virtio-input-wheel
     # - --with-input-events-extended / --with-input-events-extra
     # - --with-input-tablet-events / --with-tablet-events / --with-virtio-input-tablet-events / --require-virtio-input-tablet-events / --enable-virtio-input-tablet-events
     # - --with-net-link-flap / --with-virtio-net-link-flap / --require-virtio-net-link-flap / --enable-virtio-net-link-flap
-    # - --with-blk-resize
+    # - --with-blk-resize / --with-virtio-blk-resize / --require-virtio-blk-resize / --enable-virtio-blk-resize
     # - --require-virtio-*-msix
     # - --qemu-preflight-pci / --qmp-preflight-pci
     use_qmp = (

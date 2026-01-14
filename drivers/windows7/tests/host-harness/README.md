@@ -907,6 +907,8 @@ To enable end-to-end testing:
    - When generating provisioning media with `New-AeroWin7TestImage.ps1`, you can bake this in via:
      `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
 2. Run the host harness with blk-resize enabled so it:
+    - PowerShell: `-WithBlkResize`
+    - Python: `--with-blk-resize` (aliases: `--with-virtio-blk-resize`, `--require-virtio-blk-resize`, `--enable-virtio-blk-resize`)
     - waits for `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>`
     - computes `new_bytes = old_bytes + delta` (default delta: 64 MiB)
     - issues a QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
