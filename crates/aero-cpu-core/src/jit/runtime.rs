@@ -139,6 +139,16 @@ pub struct PageVersionTracker {
     /// This is intentionally a dense table so it can be exposed to generated JIT code as a
     /// contiguous `u32` array (one entry per page). Pages outside the table implicitly have
     /// version 0.
+    ///
+    /// Versions are treated as modulo-2^32 counters. Every observed write bumps the version for
+    /// each touched page by `1` using wrapping arithmetic (`u32::MAX + 1 == 0`). Compiled blocks
+    /// snapshot the current versions of the pages they cover and later validate them by simple
+    /// equality checks.
+    ///
+    /// Wraparound could in theory cause a stale snapshot to appear valid again, but this would
+    /// require `2^32` writes to the same page between taking a snapshot and validating it. In
+    /// practice this is vanishingly unlikely, and will become even less so if we only bump code
+    /// pages in the future.
     versions: Box<[Cell<u32>]>,
 }
 
@@ -281,7 +291,7 @@ impl PageVersionTracker {
         let end_idx = end_page as usize;
         for i in start_idx..=end_idx {
             let cell = &self.versions[i];
-            cell.set(cell.get().saturating_add(1));
+            cell.set(cell.get().wrapping_add(1));
         }
     }
 
@@ -778,6 +788,43 @@ mod tests {
 
     fn make_runtime(config: JitConfig) -> JitRuntime<DummyBackend, MockCompileSink> {
         JitRuntime::new(config, DummyBackend, MockCompileSink::default())
+    }
+
+    #[test]
+    fn page_versions_bump_wraps_u32() {
+        let tracker = PageVersionTracker::default();
+        let page = 0u64;
+        tracker.set_version(page, u32::MAX);
+        tracker.bump_write(page << PAGE_SHIFT, 1);
+        assert_eq!(tracker.version(page), 0);
+    }
+
+    #[test]
+    fn page_versions_snapshot_validation_invalidates_on_write() {
+        let entry_rip = 0x1000u64;
+        let code_paddr = 0x2000u64;
+        let config = JitConfig {
+            // Keep hotness-based compilation out of the way; we only want requests triggered by
+            // invalidation.
+            hot_threshold: 100,
+            ..Default::default()
+        };
+        let mut jit = make_runtime(config);
+
+        let meta = jit.snapshot_meta(code_paddr, 1);
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index: 0,
+            meta,
+        });
+        assert!(jit.is_compiled(entry_rip));
+        assert!(jit.prepare_block(entry_rip).is_some());
+
+        // Mutate the page after installation; the cached block should now be considered stale.
+        jit.on_guest_write(code_paddr, 1);
+        assert!(jit.prepare_block(entry_rip).is_none());
+        assert!(!jit.is_compiled(entry_rip));
+        assert_eq!(jit.compile.requests, vec![entry_rip]);
     }
 
     #[test]
