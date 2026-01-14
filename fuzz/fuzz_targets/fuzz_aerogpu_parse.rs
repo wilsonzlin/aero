@@ -102,6 +102,12 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                 let _ = cmd::resolve_stage(a1, reserved0);
                 let _ = cmd::resolve_shader_stage_with_ex(a0, reserved0);
                 let _ = cmd::resolve_shader_stage_with_ex(a1, reserved0);
+                // Also exercise the stage_ex reserved0 encoder (safe path only).
+                let stage_ex = cmd::AerogpuShaderStageEx::from_u32(reserved0);
+                let _ = cmd::encode_stage_ex_reserved0(cmd::AerogpuShaderStage::Compute, stage_ex);
+                if let Some(stage) = cmd::AerogpuShaderStage::from_u32(a0) {
+                    let _ = cmd::encode_stage_ex_reserved0(stage, None);
+                }
             }
             match pkt.opcode {
                 Some(cmd::AerogpuCmdOpcode::CreateShaderDxbc) => {
@@ -195,7 +201,6 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         let _ = cmd::decode_stage_ex(cmd_sc.stage, cmd_sc.reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(cmd_sc.stage, cmd_sc.reserved0);
                         let _ = cmd::resolve_stage(cmd_sc.stage, cmd_sc.reserved0);
-                        let _ = cmd_sc.resolved_stage();
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
@@ -220,10 +225,20 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     if pkt.payload.len() >= 16 {
                         let shader_stage =
                             u32::from_le_bytes(pkt.payload[0..4].try_into().unwrap());
+                        let slot = u32::from_le_bytes(pkt.payload[4..8].try_into().unwrap());
+                        let texture = u32::from_le_bytes(pkt.payload[8..12].try_into().unwrap());
                         let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
                         let _ = cmd::decode_stage_ex(shader_stage, reserved0);
                         let _ = cmd::resolve_stage(shader_stage, reserved0);
                         let _ = cmd::resolve_shader_stage_with_ex(shader_stage, reserved0);
+                        let cmd_set_texture = cmd::AerogpuCmdSetTexture {
+                            hdr: pkt.hdr,
+                            shader_stage,
+                            slot,
+                            texture,
+                            reserved0,
+                        };
+                        let _ = cmd_set_texture.resolved_shader_stage();
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetSamplers) => {
@@ -235,7 +250,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_samplers.shader_stage,
                             cmd_samplers.reserved0,
                         );
-                        let _ = cmd::resolve_stage(cmd_samplers.shader_stage, cmd_samplers.reserved0);
+                        let _ = cmd_samplers.resolved_shader_stage();
                     }
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
                         let _ = cmd::decode_cmd_set_samplers_handles_le(packet_bytes);
@@ -260,11 +275,11 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_hdr.shader_stage,
                             cmd_hdr.reserved0,
                         );
+                        let _ = cmd_hdr.resolved_shader_stage();
                         // Touch a couple binding fields to exercise packed/unaligned field reads.
                         for binding in bindings.iter().take(4) {
                             let _ = (binding.buffer, binding.offset_bytes, binding.size_bytes);
                         }
-                        let _ = cmd::resolve_stage(cmd_hdr.shader_stage, cmd_hdr.reserved0);
                     }
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
                         let _ = cmd::decode_cmd_set_constant_buffers_bindings_le(packet_bytes);
@@ -280,7 +295,6 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_srv.shader_stage,
                             cmd_srv.reserved0,
                         );
-                        let _ = cmd::resolve_stage(cmd_srv.shader_stage, cmd_srv.reserved0);
                     }
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
                         let _ = cmd::decode_cmd_set_shader_resource_buffers_bindings_le(packet_bytes);
@@ -296,7 +310,6 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                             cmd_uav.shader_stage,
                             cmd_uav.reserved0,
                         );
-                        let _ = cmd::resolve_stage(cmd_uav.shader_stage, cmd_uav.reserved0);
                     }
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
                         let _ =
