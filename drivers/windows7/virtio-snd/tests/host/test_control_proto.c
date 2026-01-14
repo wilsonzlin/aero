@@ -450,7 +450,54 @@ static void test_pcm_format_selection_matrix(void)
     TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_S24);
     TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
 
+    /* Channels fallback: pick the lowest supported channel count if preferred is out of range. */
+    info.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    info.direction = VIRTIO_SND_D_OUTPUT;
+    info.channels_min = 4;
+    info.channels_max = 4;
+    info.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 4);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
+
+    /* stream_id must match the requested StreamId parameter. */
+    info.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    info.direction = VIRTIO_SND_D_OUTPUT;
+    info.channels_min = 2;
+    info.channels_max = 2;
+    info.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_CAPTURE_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    /* direction must match the stream direction. */
+    info.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    info.direction = VIRTIO_SND_D_INPUT;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+    /* Capture stream selection uses 1 channel when available. */
+    RtlZeroMemory(&info, sizeof(info));
+    info.stream_id = VIRTIO_SND_CAPTURE_STREAM_ID;
+    info.direction = VIRTIO_SND_D_INPUT;
+    info.channels_min = 1;
+    info.channels_max = 2;
+    info.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_CAPTURE_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 1);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
+
     /* Completely unsupported masks => fail. */
+    info.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    info.direction = VIRTIO_SND_D_OUTPUT;
+    info.channels_min = 2;
+    info.channels_max = 2;
     info.formats = 0;
     info.rates = 0;
     status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
