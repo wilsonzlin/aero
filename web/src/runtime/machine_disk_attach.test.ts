@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { planMachineBootDiskAttachment } from "./machine_disk_attach";
+import type { MachineHandle } from "./wasm_loader";
+import { attachMachineBootDisk, planMachineBootDiskAttachment } from "./machine_disk_attach";
 import type { DiskImageMetadata } from "../storage/metadata";
 
 describe("runtime/machine_disk_attach (metadata compatibility)", () => {
@@ -80,3 +81,63 @@ describe("runtime/machine_disk_attach (metadata compatibility)", () => {
   });
 });
 
+describe("runtime/machine_disk_attach (Machine attach method selection)", () => {
+  function cdMeta(): DiskImageMetadata {
+    return {
+      source: "local",
+      id: "cd1",
+      name: "cd",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "win7.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    };
+  }
+
+  it("prefers attach_install_media_iso_opfs_existing_and_set_overlay_ref when present (back-compat)", async () => {
+    const meta = cdMeta();
+    const plan = planMachineBootDiskAttachment(meta, "cd");
+
+    const attach = vi.fn(async (_path: string) => {});
+    const setRef = vi.fn((_base: string, _overlay: string) => {});
+    const machine = {
+      attach_install_media_iso_opfs_existing_and_set_overlay_ref: attach,
+      set_ide_secondary_master_atapi_overlay_ref: setRef,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "cd", meta);
+
+    expect(attach).toHaveBeenCalledWith(plan.opfsPath);
+    expect(setRef).not.toHaveBeenCalled();
+  });
+
+  it("falls back to attach_install_media_iso_opfs_existing + set_ide_secondary_master_atapi_overlay_ref", async () => {
+    const meta = cdMeta();
+    const plan = planMachineBootDiskAttachment(meta, "cd");
+
+    const calls: string[] = [];
+    let gotPath: string | null = null;
+    async function attach_install_media_iso_opfs_existing(path: string): Promise<void> {
+      gotPath = path;
+      calls.push("attach");
+    }
+    let gotRef: { base: string; overlay: string } | null = null;
+    function set_ide_secondary_master_atapi_overlay_ref(base: string, overlay: string): void {
+      gotRef = { base, overlay };
+      calls.push("setRef");
+    }
+    const machine = {
+      attach_install_media_iso_opfs_existing,
+      set_ide_secondary_master_atapi_overlay_ref,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "cd", meta);
+
+    expect(calls).toEqual(["attach", "setRef"]);
+    expect(gotPath).toBe(plan.opfsPath);
+    expect(gotRef).toEqual({ base: plan.opfsPath, overlay: "" });
+    expect(plan.opfsPath).toContain("win7.iso");
+  });
+});
