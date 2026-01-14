@@ -185,7 +185,7 @@ cargo xtask conformance \
 
 If your repo layout differs from the defaults, override directories:
 
-- `AERO_NODE_DIR` / `--node-dir`: the directory containing `package.json`
+- `AERO_NODE_DIR` / `--node-dir`: the directory containing `package.json` (deprecated aliases: `AERO_WEB_DIR`, `WEB_DIR`)
 - `AERO_WASM_CRATE_DIR` / `--wasm-crate-dir`: the crate directory containing the WASM `Cargo.toml`
 
 To see what directory CI/local tooling will select by default, run:

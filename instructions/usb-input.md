@@ -246,6 +246,7 @@ cargo xtask input --node-dir web
 # (Equivalent env var forms.)
 AERO_NODE_DIR=web cargo xtask input
 AERO_WEB_DIR=web cargo xtask input
+WEB_DIR=web cargo xtask input
 
 # Run only the Rust USB/input tests (skips Node + Playwright; does not require `node_modules`).
 cargo xtask input --rust-only
@@ -326,7 +327,7 @@ cargo xtask input --e2e
 bash ./scripts/safe-run.sh cargo xtask input
 # If your Node workspace is `web/`, you can also use:
 AERO_NODE_DIR=web bash ./scripts/safe-run.sh cargo xtask input
-# (Or: AERO_WEB_DIR=web)
+# (Or: AERO_WEB_DIR=web / WEB_DIR=web)
 bash ./scripts/safe-run.sh cargo xtask input --rust-only
 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test webusb_uhci_bridge \

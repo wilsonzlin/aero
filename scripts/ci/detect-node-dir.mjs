@@ -25,7 +25,7 @@ function usageAndExit() {
             "",
             "Options:",
             "  --root <dir>            Checkout root directory to search (default: repo root).",
-            "  --node-dir <path>        Override workspace directory (same as AERO_NODE_DIR).",
+            "  --node-dir <path>        Override workspace directory (same as AERO_NODE_DIR; deprecated aliases: AERO_WEB_DIR, WEB_DIR).",
             "  --require-lockfile       Fail if package-lock.json is missing in the workspace.",
             "  --allow-missing           Exit 0 with empty outputs when no workspace is found.",
             "  --github-output <path>    Append outputs to the given GitHub output file.",
@@ -69,7 +69,7 @@ function resolveWorkspace(searchRoot, dirArg, reason) {
     if (!existsSync(pkgJson)) {
         die(
             `${reason} directory '${toPosixPath(dirArg)}' does not contain package.json. ` +
-                "Set AERO_NODE_DIR/--node-dir to a directory that contains package.json.",
+                "Set AERO_NODE_DIR/--node-dir (deprecated: AERO_WEB_DIR/WEB_DIR) to a directory that contains package.json.",
         );
     }
     return dirAbs;
@@ -220,7 +220,9 @@ if (!workspaceAbs) {
         );
         process.exit(0);
     }
-    die("unable to locate package.json; pass --node-dir <path> or set AERO_NODE_DIR");
+    die(
+        "unable to locate package.json; pass --node-dir <path> or set AERO_NODE_DIR (deprecated: AERO_WEB_DIR/WEB_DIR)",
+    );
 }
 
 const lockfileAbs = path.join(workspaceAbs, "package-lock.json");
