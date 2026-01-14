@@ -6036,7 +6036,8 @@ struct FixedFuncVsTableEntry {
 
 static constexpr FixedFuncVsTableEntry kFixedFuncVsTable[] = {
     /*NONE*/ {},
-    /*RHW_COLOR*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColor)},
+    /*RHW_COLOR*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColor),
+                   AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColorFog)},
     /*RHW_COLOR_TEX1*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColorTex1),
                         AEROGPU_FIXEDFUNC_VS_BYTES(kVsPassthroughPosColorTex1Fog)},
     /*XYZ_COLOR*/ {AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosColor), AEROGPU_FIXEDFUNC_VS_BYTES(kVsWvpPosColorFog)},
