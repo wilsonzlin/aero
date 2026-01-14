@@ -7,6 +7,10 @@ use std::process::Command;
 fn boots_fixture_and_prints_serial() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let disk = repo_root.join("tests/fixtures/boot/boot_vga_serial_8s.img");
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let tmp_disk = tmp.path().join("disk.img");
+    std::fs::copy(&disk, &tmp_disk).expect("failed to copy disk fixture");
+    let tmp_png = tmp.path().join("vga.png");
 
     // Avoid relying on `CARGO_BIN_EXE_*` (Cargo does not guarantee it is set for all test
     // invocation modes). Use the workspace `target/` dir path instead.
@@ -31,13 +35,15 @@ fn boots_fixture_and_prints_serial() {
     let output = Command::new(exe)
         .args([
             "--disk",
-            disk.to_str().expect("disk path should be UTF-8"),
+            tmp_disk.to_str().expect("disk path should be UTF-8"),
             "--ram",
             "64",
             "--max-insts",
             "100000",
             "--serial-out",
             "stdout",
+            "--vga-png",
+            tmp_png.to_str().expect("png path should be UTF-8"),
         ])
         .output()
         .expect("failed to run aero-machine CLI");
@@ -58,5 +64,12 @@ fn boots_fixture_and_prints_serial() {
         "stdout did not contain expected serial bytes.\nstdout:\n{:?}\nstderr:\n{}",
         output.stdout,
         String::from_utf8_lossy(&output.stderr)
+    );
+
+    let png = std::fs::read(&tmp_png).expect("expected vga.png to be written");
+    assert!(
+        png.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "vga.png did not look like a PNG (first bytes = {:?})",
+        &png.get(..8)
     );
 }

@@ -500,9 +500,11 @@ name = "aero-machine-cli"
 version = "0.1.0"
 dependencies = [
  "aero-machine",
+ "aero-storage",
  "anyhow",
  "clap",
  "image",
+ "tempfile",
 ]
 
 [[package]]

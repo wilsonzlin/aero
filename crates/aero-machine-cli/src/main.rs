@@ -16,10 +16,10 @@ mod native {
     use std::time::{Duration, Instant};
 
     use aero_machine::{Machine, MachineConfig, RunExit};
+    use aero_storage::{RawDisk, StdFileBackend, VirtualDisk, SECTOR_SIZE};
     use anyhow::{anyhow, bail, Context, Result};
     use clap::{ArgGroup, Parser};
 
-    const DISK_SECTOR_SIZE: usize = 512;
     const SLICE_INST_BUDGET: u64 = 100_000;
 
     #[derive(Debug, Parser)]
@@ -77,9 +77,9 @@ mod native {
         let mut machine = Machine::new(MachineConfig::win7_storage_defaults(ram_bytes))
             .map_err(|e| anyhow!("{e}"))?;
 
-        let disk_bytes = load_disk(&args.disk)?;
+        let disk_backend = open_disk_backend(&args.disk)?;
         machine
-            .set_disk_image(disk_bytes)
+            .set_disk_backend(disk_backend)
             .map_err(|e| anyhow!("{e}"))?;
         // `Machine::new` performs an initial BIOS POST + boot attempt. Re-run POST after attaching
         // the user's disk so the guest starts executing from the boot sector.
@@ -153,17 +153,25 @@ mod native {
         Ok(())
     }
 
-    fn load_disk(path: &Path) -> Result<Vec<u8>> {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("failed to read disk image: {}", path.display()))?;
-        if bytes.len() % DISK_SECTOR_SIZE != 0 {
+    fn open_disk_backend(path: &Path) -> Result<Box<dyn VirtualDisk + Send>> {
+        let meta = std::fs::metadata(path)
+            .with_context(|| format!("failed to stat disk image: {}", path.display()))?;
+        let len = meta.len();
+        if len == 0 {
+            bail!("disk image is empty (expected at least one 512-byte sector)");
+        }
+        if len % SECTOR_SIZE as u64 != 0 {
             bail!(
                 "disk image length {} is not a multiple of {} bytes",
-                bytes.len(),
-                DISK_SECTOR_SIZE
+                len,
+                SECTOR_SIZE
             );
         }
-        Ok(bytes)
+        let backend = StdFileBackend::open_rw(path)
+            .map_err(|e| anyhow!("failed to open disk image {}: {e}", path.display()))?;
+        let disk = RawDisk::open(backend)
+            .map_err(|e| anyhow!("failed to open raw disk backend {}: {e}", path.display()))?;
+        Ok(Box::new(disk))
     }
 
     fn open_serial_sink(serial_out: &str) -> Result<Box<dyn Write>> {
