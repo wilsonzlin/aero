@@ -219,10 +219,13 @@ fn build_gs_point_to_triangle_offset_by_cb0_xy() -> Vec<u8> {
         ]);
     };
 
-    // Centered clockwise triangle.
-    emit_tri_vertex(&mut tokens, -0.5, -0.5, 0.0, 1.0);
-    emit_tri_vertex(&mut tokens, 0.0, 0.5, 0.0, 1.0);
-    emit_tri_vertex(&mut tokens, 0.5, -0.5, 0.0, 1.0);
+    // Small centered clockwise triangle.
+    //
+    // This is intentionally smaller than the executor's placeholder prepass triangle so this test
+    // can detect if we accidentally fell back to the placeholder prepass (which also reads GS cb0).
+    emit_tri_vertex(&mut tokens, -0.25, -0.25, 0.0, 1.0);
+    emit_tri_vertex(&mut tokens, 0.0, 0.25, 0.0, 1.0);
+    emit_tri_vertex(&mut tokens, 0.25, -0.25, 0.0, 1.0);
 
     tokens.push(cut_token);
     tokens.push(ret_token);
@@ -288,8 +291,9 @@ fn aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass() {
             offset: [2.0, 0.0, 0.0, 0.0],
         });
 
-        let w = 64u32;
-        let h = 64u32;
+        // Use an odd render target size so NDC (0,0) maps exactly to the center pixel.
+        let w = 65u32;
+        let h = 65u32;
 
         let mut writer = AerogpuCmdWriter::new();
         writer.create_buffer(
@@ -435,6 +439,9 @@ fn aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass() {
 
         // With offset (0,0), the triangle should cover the center pixel.
         assert_eq!(px(&pixels0, w / 2, h / 2), [0, 255, 0, 255]);
+        // The translated GS emits a small triangle, so a pixel above the center should remain the
+        // clear color. The placeholder prepass triangle would cover this pixel.
+        assert_eq!(px(&pixels0, w / 2, h / 2 - 10), [255, 0, 0, 255]);
         // With offset (+2,0), the triangle shifts away, leaving the center as the clear color.
         assert_eq!(px(&pixels1, w / 2, h / 2), [255, 0, 0, 255]);
     });
