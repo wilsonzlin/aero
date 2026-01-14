@@ -66,13 +66,15 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 To intentionally exercise the Aero virtio drivers' **multi-vector MSI-X** paths, the harness can request a specific
 MSI-X table size from QEMU by appending `,vectors=N` to each virtio-pci device it creates:
 
-- PowerShell: `-VirtioMsixVectors N`
-- Python: `--virtio-msix-vectors N`
+- PowerShell (global): `-VirtioMsixVectors N`
+- PowerShell (per device): `-VirtioNetVectors N`, `-VirtioBlkVectors N`, `-VirtioInputVectors N`, `-VirtioSndVectors N`
+- Python (global): `--virtio-msix-vectors N`
+- Python (per device): `--virtio-net-vectors N`, `--virtio-blk-vectors N`, `--virtio-input-vectors N`, `--virtio-snd-vectors N`
 
 Notes:
 
 - This is **best-effort** and only works on QEMU builds where the virtio device exposes the `vectors` property.
-  On older QEMU builds, QEMU may exit early with an "unknown property" error when `vectors=N` is passed.
+  When unsupported, the harness warns and runs without the override (upgrade QEMU to exercise multi-vector paths).
 - Typical values to try are `2`, `4`, or `8`.
 - Windows may still allocate **fewer** MSI-X messages than requested (for example due to platform/OS limits). The Aero
   drivers are expected to fall back to the number of vectors actually granted (including single-vector MSI-X or INTx), so
@@ -252,9 +254,15 @@ To enable end-to-end testing:
    or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
 2. Run the host harness with `-WithInputTabletEvents` (alias: `-WithTabletEvents`) /
    `--with-input-tablet-events` (alias: `--with-tablet-events`) so it:
-    - attaches `virtio-tablet-pci`
-    - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
-    - requires the guest marker to PASS
+     - attaches `virtio-tablet-pci`
+     - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
+     - requires the guest marker to PASS
+
+To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
+enumeration), use:
+
+- PowerShell: `-WithVirtioTablet`
+- Python: `--with-virtio-tablet`
 
 The injected sequence is:
 
