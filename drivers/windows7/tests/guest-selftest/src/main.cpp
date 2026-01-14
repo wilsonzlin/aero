@@ -745,7 +745,10 @@ static HANDLE OpenPhysicalDriveForIoctl(Logger& log, DWORD disk_number) {
 }
 
 static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& log, HANDLE hPhysicalDrive) {
-  if (hPhysicalDrive == INVALID_HANDLE_VALUE) return std::nullopt;
+  if (hPhysicalDrive == INVALID_HANDLE_VALUE) {
+    SetLastError(ERROR_INVALID_HANDLE);
+    return std::nullopt;
+  }
 
   std::vector<BYTE> buf(sizeof(SRB_IO_CONTROL) + sizeof(AEROVBLK_QUERY_INFO));
   auto* ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
@@ -759,7 +762,10 @@ static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& 
   DWORD bytes = 0;
   if (!DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_MINIPORT, buf.data(), static_cast<DWORD>(buf.size()),
                        buf.data(), static_cast<DWORD>(buf.size()), &bytes, nullptr)) {
-    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(AEROVBLK_IOCTL_QUERY) failed err=%lu", GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(AEROVBLK_IOCTL_QUERY) failed err=%lu", err);
+    // Preserve the DeviceIoControl() failure code for callers (log.Logf() may clobber LastError).
+    SetLastError(err);
     return std::nullopt;
   }
   constexpr size_t kQueryInfoV1Len = offsetof(AEROVBLK_QUERY_INFO, InterruptMode);
@@ -806,7 +812,10 @@ static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& 
 
 static bool ForceAerovblkMiniportReset(Logger& log, HANDLE hPhysicalDrive, bool* out_performed) {
   if (out_performed) *out_performed = false;
-  if (hPhysicalDrive == INVALID_HANDLE_VALUE) return false;
+  if (hPhysicalDrive == INVALID_HANDLE_VALUE) {
+    SetLastError(ERROR_INVALID_HANDLE);
+    return false;
+  }
 
   std::vector<BYTE> buf(sizeof(SRB_IO_CONTROL));
   auto* ctrl = reinterpret_cast<SRB_IO_CONTROL*>(buf.data());
@@ -820,7 +829,10 @@ static bool ForceAerovblkMiniportReset(Logger& log, HANDLE hPhysicalDrive, bool*
   DWORD bytes = 0;
   if (!DeviceIoControl(hPhysicalDrive, IOCTL_SCSI_MINIPORT, buf.data(), static_cast<DWORD>(buf.size()),
                        buf.data(), static_cast<DWORD>(buf.size()), &bytes, nullptr)) {
-    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(AEROVBLK_IOCTL_FORCE_RESET) failed err=%lu", GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-blk: IOCTL_SCSI_MINIPORT(AEROVBLK_IOCTL_FORCE_RESET) failed err=%lu", err);
+    // Preserve the DeviceIoControl() failure code for callers (log.Logf() may clobber LastError).
+    SetLastError(err);
     return false;
   }
   if (bytes < sizeof(SRB_IO_CONTROL)) {
