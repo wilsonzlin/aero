@@ -633,23 +633,115 @@ async function openDiskFromMetadata(
   mode: OpenMode,
   overlayBlockSizeBytes?: number,
 ): Promise<DiskEntry> {
-  if (meta.source === "remote") {
+  // Treat persisted + postMessage-provided metadata as untrusted. Validate the top-level
+  // discriminant via an own property check so prototype pollution (e.g.
+  // `Object.prototype.source = "remote"`) cannot change how this record is interpreted.
+  if (!isRecord(meta)) {
+    throw new Error("invalid disk metadata (expected object)");
+  }
+  const metaRec = meta as unknown as Record<string, unknown>;
+  const source = hasOwn(metaRec, "source") ? metaRec.source : undefined;
+
+  if (source === "remote") {
+    // Remote disk metadata is persisted in OPFS/IDB and must be treated as untrusted. Read nested
+    // objects via `hasOwn` so missing fields cannot be satisfied by prototype pollution (e.g.
+    // `Object.prototype.urls = { url: ... }`).
+    const remoteRaw = hasOwn(metaRec, "remote") ? metaRec.remote : undefined;
+    const cacheRaw = hasOwn(metaRec, "cache") ? metaRec.cache : undefined;
+    if (!isRecord(remoteRaw) || !isRecord(cacheRaw)) {
+      throw new Error("invalid remote disk metadata (missing remote/cache)");
+    }
+    const remoteRec = remoteRaw as Record<string, unknown>;
+    const cacheRec = cacheRaw as Record<string, unknown>;
+
+    const diskKindRaw = hasOwn(metaRec, "kind") ? metaRec.kind : undefined;
+    const diskKind = diskKindRaw === "hdd" || diskKindRaw === "cd" ? diskKindRaw : undefined;
+    if (!diskKind) {
+      throw new Error(`invalid disk kind=${String(diskKindRaw)}`);
+    }
+    const diskFormatRaw = hasOwn(metaRec, "format") ? metaRec.format : undefined;
+    const diskFormat =
+      diskFormatRaw === "raw" ||
+      diskFormatRaw === "iso" ||
+      diskFormatRaw === "qcow2" ||
+      diskFormatRaw === "vhd" ||
+      diskFormatRaw === "aerospar" ||
+      diskFormatRaw === "unknown"
+        ? diskFormatRaw
+        : undefined;
+    if (!diskFormat) {
+      throw new Error(`invalid disk format=${String(diskFormatRaw)}`);
+    }
+    const sizeBytesRaw = hasOwn(metaRec, "sizeBytes") ? metaRec.sizeBytes : undefined;
+    if (typeof sizeBytesRaw !== "number" || !Number.isSafeInteger(sizeBytesRaw) || sizeBytesRaw <= 0) {
+      throw new Error(`invalid sizeBytes=${String(sizeBytesRaw)}`);
+    }
+    const sizeBytes = sizeBytesRaw;
+
+    const remoteCacheBackendRaw = hasOwn(cacheRec, "backend") ? cacheRec.backend : undefined;
+    if (remoteCacheBackendRaw !== "opfs" && remoteCacheBackendRaw !== "idb") {
+      throw new Error(`unsupported remote cache backend ${String(remoteCacheBackendRaw)}`);
+    }
+    const remoteCacheBackend = remoteCacheBackendRaw;
+
+    const deliveryRaw = hasOwn(remoteRec, "delivery") ? remoteRec.delivery : undefined;
+    if (deliveryRaw !== "range" && deliveryRaw !== "chunked") {
+      throw new Error(`unsupported remote delivery ${String(deliveryRaw)}`);
+    }
+    const delivery = deliveryRaw;
+
+    const imageIdRaw = hasOwn(remoteRec, "imageId") ? remoteRec.imageId : undefined;
+    if (typeof imageIdRaw !== "string" || !imageIdRaw.trim()) {
+      throw new Error("invalid remote imageId");
+    }
+    const imageId = imageIdRaw;
+
+    const versionRaw = hasOwn(remoteRec, "version") ? remoteRec.version : undefined;
+    if (typeof versionRaw !== "string" || !versionRaw.trim()) {
+      throw new Error("invalid remote version");
+    }
+    const version = versionRaw;
+
+    const chunkSizeBytesRaw = hasOwn(cacheRec, "chunkSizeBytes") ? cacheRec.chunkSizeBytes : undefined;
+    if (typeof chunkSizeBytesRaw !== "number" || !Number.isSafeInteger(chunkSizeBytesRaw) || chunkSizeBytesRaw <= 0) {
+      throw new Error(`invalid chunkSizeBytes=${String(chunkSizeBytesRaw)}`);
+    }
+    const chunkSizeBytes = chunkSizeBytesRaw;
+
+    const cacheFileNameRaw = hasOwn(cacheRec, "fileName") ? cacheRec.fileName : undefined;
+    if (typeof cacheFileNameRaw !== "string" || !cacheFileNameRaw.trim()) {
+      throw new Error("invalid cache.fileName");
+    }
+    const cacheFileName = cacheFileNameRaw;
+
+    const overlayFileNameRaw = hasOwn(cacheRec, "overlayFileName") ? cacheRec.overlayFileName : undefined;
+    if (typeof overlayFileNameRaw !== "string" || !overlayFileNameRaw.trim()) {
+      throw new Error("invalid cache.overlayFileName");
+    }
+    const overlayFileName = overlayFileNameRaw;
+
+    const overlayBlockSizeBytesRaw = hasOwn(cacheRec, "overlayBlockSizeBytes") ? cacheRec.overlayBlockSizeBytes : undefined;
+    if (
+      typeof overlayBlockSizeBytesRaw !== "number" ||
+      !Number.isSafeInteger(overlayBlockSizeBytesRaw) ||
+      overlayBlockSizeBytesRaw <= 0
+    ) {
+      throw new Error(`invalid cache.overlayBlockSizeBytes=${String(overlayBlockSizeBytesRaw)}`);
+    }
+    const overlayBlockSizeBytes = overlayBlockSizeBytesRaw;
+
+    const cacheLimitBytesRaw = hasOwn(cacheRec, "cacheLimitBytes") ? cacheRec.cacheLimitBytes : undefined;
     // Preserve `null` to mean "unbounded cache" (no eviction), while `undefined` selects the
-    // default bounded cache size.
+    // default bounded cache size. Ignore inherited `cacheLimitBytes` (prototype pollution).
     const cacheLimitBytes =
-      meta.cache.cacheLimitBytes === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : meta.cache.cacheLimitBytes;
-
-    const remoteCacheBackend = meta.cache.backend;
-    if (remoteCacheBackend !== "opfs" && remoteCacheBackend !== "idb") {
-      throw new Error(`unsupported remote cache backend ${String(remoteCacheBackend)}`);
-    }
-    if (meta.remote.delivery !== "range" && meta.remote.delivery !== "chunked") {
-      throw new Error(`unsupported remote delivery ${meta.remote.delivery}`);
+      cacheLimitBytesRaw === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : (cacheLimitBytesRaw as number | null);
+    if (cacheLimitBytes !== null) {
+      if (typeof cacheLimitBytes !== "number" || !Number.isSafeInteger(cacheLimitBytes) || cacheLimitBytes < 0) {
+        throw new Error(`invalid cacheLimitBytes=${String(cacheLimitBytesRaw)}`);
+      }
     }
 
-    // Treat persisted + postMessage-provided metadata as untrusted: never observe inherited fields
-    // (prototype pollution) when selecting remote URLs or validators.
-    const validatorRaw = meta.remote.validator as unknown;
+    const validatorRaw = hasOwn(remoteRec, "validator") ? remoteRec.validator : undefined;
     const validatorRec = isRecord(validatorRaw) ? (validatorRaw as Record<string, unknown>) : null;
     const etag = validatorRec && hasOwn(validatorRec, "etag") ? validatorRec.etag : undefined;
     const lastModified = validatorRec && hasOwn(validatorRec, "lastModified") ? validatorRec.lastModified : undefined;
@@ -660,7 +752,7 @@ async function openDiskFromMetadata(
           ? { kind: "lastModified" as const, value: lastModified }
           : undefined;
 
-    const urlsRaw = (meta.remote as unknown as { urls?: unknown }).urls;
+    const urlsRaw = hasOwn(remoteRec, "urls") ? remoteRec.urls : undefined;
     const urlsRec = isRecord(urlsRaw) ? (urlsRaw as Record<string, unknown>) : (Object.create(null) as Record<string, unknown>);
     const stableUrlRaw = hasOwn(urlsRec, "url") ? urlsRec.url : undefined;
     const leaseEndpointRaw = hasOwn(urlsRec, "leaseEndpoint") ? urlsRec.leaseEndpoint : undefined;
@@ -668,32 +760,30 @@ async function openDiskFromMetadata(
     const leaseEndpoint = typeof leaseEndpointRaw === "string" ? leaseEndpointRaw.trim() : "";
 
     const deliveryType =
-      meta.remote.delivery === "range"
-        ? remoteRangeDeliveryType(meta.cache.chunkSizeBytes)
-        : remoteChunkedDeliveryType(meta.cache.chunkSizeBytes);
+      delivery === "range" ? remoteRangeDeliveryType(chunkSizeBytes) : remoteChunkedDeliveryType(chunkSizeBytes);
 
     const base: RemoteCacheBinding["base"] = {
-      imageId: meta.remote.imageId,
-      version: meta.remote.version,
+      imageId,
+      version,
       deliveryType,
       ...(leaseEndpoint ? { leaseEndpoint } : {}),
       ...(expectedValidator ? { expectedValidator } : {}),
-      chunkSize: meta.cache.chunkSizeBytes,
+      chunkSize: chunkSizeBytes,
     };
 
-    const readOnly = meta.kind === "cd" || meta.format === "iso";
+    const readOnly = diskKind === "cd" || diskFormat === "iso";
     const candidateSnapshot: DiskBackendSnapshot = {
       kind: "remote",
       backend: remoteCacheBackend,
-      diskKind: meta.kind,
-      sizeBytes: meta.sizeBytes,
+      diskKind,
+      sizeBytes,
       base,
       overlay: {
-        fileName: meta.cache.overlayFileName,
-        diskSizeBytes: meta.sizeBytes,
-        blockSizeBytes: meta.cache.overlayBlockSizeBytes,
+        fileName: overlayFileName,
+        diskSizeBytes: sizeBytes,
+        blockSizeBytes: overlayBlockSizeBytes,
       },
-      cache: { fileName: meta.cache.fileName, cacheLimitBytes },
+      cache: { fileName: cacheFileName, cacheLimitBytes },
     };
 
     const loc = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
@@ -712,38 +802,38 @@ async function openDiskFromMetadata(
     let backendSnapshot: DiskBackendSnapshot | null = null;
     let baseDisk: AsyncSectorDisk;
 
-    if (meta.remote.delivery === "range") {
+    if (delivery === "range") {
       const shouldUseSparseRangeDisk =
         remoteCacheBackend === "opfs" && cacheLimitBytes === null && hasOpfsSyncAccessHandle();
 
       if (shouldUseSparseRangeDisk) {
-        await ensureRemoteCacheBinding(base, meta.cache.fileName);
+        await ensureRemoteCacheBinding(base, cacheFileName);
 
-        const cacheKeyParts = { imageId: meta.remote.imageId, version: meta.remote.version, deliveryType: base.deliveryType };
-        const metadataStore = opfsRemoteRangeDiskMetadataStore(remoteRangeMetaFileName(meta.cache.fileName));
+        const cacheKeyParts = { imageId, version, deliveryType: base.deliveryType };
+        const metadataStore = opfsRemoteRangeDiskMetadataStore(remoteRangeMetaFileName(cacheFileName));
         const sparseCacheFactory = {
-          open: async (_cacheId: string) => await OpfsAeroSparseDisk.open(meta.cache.fileName),
+          open: async (_cacheId: string) => await OpfsAeroSparseDisk.open(cacheFileName),
           create: async (_cacheId: string, opts: { diskSizeBytes: number; blockSizeBytes: number }) =>
-            await OpfsAeroSparseDisk.create(meta.cache.fileName, opts),
+            await OpfsAeroSparseDisk.create(cacheFileName, opts),
           delete: async (_cacheId: string) => {
-            await opfsDeleteDisk(meta.cache.fileName);
+            await opfsDeleteDisk(cacheFileName);
           },
         };
 
         if (stableUrl) {
           baseDisk = await RemoteRangeDisk.open(stableUrl, {
             cacheKeyParts,
-            chunkSize: meta.cache.chunkSizeBytes,
+            chunkSize: chunkSizeBytes,
             metadataStore,
             sparseCacheFactory,
           });
         } else if (leaseEndpoint) {
           const lease = createDiskAccessLeaseFromLeaseEndpoint(leaseEndpoint, { delivery: "range" });
           baseDisk = await RemoteRangeDisk.openWithLease(
-            { sourceId: meta.remote.imageId, lease },
+            { sourceId: imageId, lease },
             {
               cacheKeyParts,
-              chunkSize: meta.cache.chunkSizeBytes,
+              chunkSize: chunkSizeBytes,
               metadataStore,
               sparseCacheFactory,
             },
@@ -751,34 +841,34 @@ async function openDiskFromMetadata(
         } else {
           throw new Error("remote disk metadata missing urls.url and urls.leaseEndpoint");
         }
-        if (baseDisk.capacityBytes !== meta.sizeBytes) {
+        if (baseDisk.capacityBytes !== sizeBytes) {
           await baseDisk.close?.();
-          throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${baseDisk.capacityBytes}`);
+          throw new Error(`disk size mismatch: expected=${sizeBytes} actual=${baseDisk.capacityBytes}`);
         }
       } else {
         const expectedEtag = expectedValidator?.kind === "etag" ? expectedValidator.value : undefined;
         if (stableUrl) {
           baseDisk = await RemoteStreamingDisk.open(stableUrl, {
-            blockSize: meta.cache.chunkSizeBytes,
+            blockSize: chunkSizeBytes,
             cacheBackend: remoteCacheBackend,
             cacheLimitBytes,
             credentials: "same-origin",
-            cacheImageId: meta.remote.imageId,
-            cacheVersion: meta.remote.version,
+            cacheImageId: imageId,
+            cacheVersion: version,
             cacheEtag: expectedEtag,
-            expectedSizeBytes: meta.sizeBytes,
+            expectedSizeBytes: sizeBytes,
           });
         } else if (leaseEndpoint) {
           const lease = createDiskAccessLeaseFromLeaseEndpoint(leaseEndpoint, { delivery: "range" });
           await lease.refresh();
-          baseDisk = await RemoteStreamingDisk.openWithLease({ sourceId: meta.remote.imageId, lease }, {
-            blockSize: meta.cache.chunkSizeBytes,
+          baseDisk = await RemoteStreamingDisk.openWithLease({ sourceId: imageId, lease }, {
+            blockSize: chunkSizeBytes,
             cacheBackend: remoteCacheBackend,
             cacheLimitBytes,
-            cacheImageId: meta.remote.imageId,
-            cacheVersion: meta.remote.version,
+            cacheImageId: imageId,
+            cacheVersion: version,
             cacheEtag: expectedEtag,
-            expectedSizeBytes: meta.sizeBytes,
+            expectedSizeBytes: sizeBytes,
           });
         } else {
           throw new Error("remote disk metadata missing urls.url and urls.leaseEndpoint");
@@ -792,31 +882,31 @@ async function openDiskFromMetadata(
         // remain safe because we persist only the lease endpoint, not the resolved URL.
         backendSnapshot = candidateSnapshot;
       }
-    } else if (meta.remote.delivery === "chunked") {
+    } else if (delivery === "chunked") {
       if (stableUrl) {
         baseDisk = await RemoteChunkedDisk.open(stableUrl, {
           cacheBackend: remoteCacheBackend,
           cacheLimitBytes,
           credentials: "same-origin",
-          cacheImageId: meta.remote.imageId,
-          cacheVersion: meta.remote.version,
+          cacheImageId: imageId,
+          cacheVersion: version,
         });
       } else if (leaseEndpoint) {
         const lease = createDiskAccessLeaseFromLeaseEndpoint(leaseEndpoint, { delivery: "chunked" });
         // `RemoteChunkedDisk.openWithLease` expects `lease.url` to be set.
         await lease.refresh();
-        baseDisk = await RemoteChunkedDisk.openWithLease({ sourceId: meta.remote.imageId, lease }, {
+        baseDisk = await RemoteChunkedDisk.openWithLease({ sourceId: imageId, lease }, {
           cacheBackend: remoteCacheBackend,
           cacheLimitBytes,
-          cacheImageId: meta.remote.imageId,
-          cacheVersion: meta.remote.version,
+          cacheImageId: imageId,
+          cacheVersion: version,
         });
       } else {
         throw new Error("remote chunked disk metadata missing urls.url and urls.leaseEndpoint");
       }
-      if (baseDisk.capacityBytes !== meta.sizeBytes) {
+      if (baseDisk.capacityBytes !== sizeBytes) {
         await baseDisk.close?.();
-        throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${baseDisk.capacityBytes}`);
+        throw new Error(`disk size mismatch: expected=${sizeBytes} actual=${baseDisk.capacityBytes}`);
       }
 
       if (stableUrl) {
@@ -827,7 +917,7 @@ async function openDiskFromMetadata(
         backendSnapshot = candidateSnapshot;
       }
     } else {
-      throw new Error(`unsupported remote delivery ${meta.remote.delivery}`);
+      throw new Error(`unsupported remote delivery ${delivery}`);
     }
 
     if (readOnly) {
@@ -836,17 +926,17 @@ async function openDiskFromMetadata(
 
     try {
       if (remoteCacheBackend === "idb") {
-        await ensureIdbRemoteOverlayBinding(base, meta.cache.overlayFileName);
-        const disk = await IdbCowDisk.open(baseDisk, meta.cache.overlayFileName, meta.sizeBytes);
+        await ensureIdbRemoteOverlayBinding(base, overlayFileName);
+        const disk = await IdbCowDisk.open(baseDisk, overlayFileName, sizeBytes);
         return { disk, readOnly, backendSnapshot };
       }
 
-      await ensureRemoteOverlayBinding(base, meta.cache.overlayFileName);
+      await ensureRemoteOverlayBinding(base, overlayFileName);
       let overlay: OpfsAeroSparseDisk | null = null;
       try {
-        overlay = await openOpfsSparseDisk(meta.cache.overlayFileName, {
-          diskSizeBytes: meta.sizeBytes,
-          blockSizeBytes: meta.cache.overlayBlockSizeBytes,
+        overlay = await openOpfsSparseDisk(overlayFileName, {
+          diskSizeBytes: sizeBytes,
+          blockSizeBytes: overlayBlockSizeBytes,
         });
         return { disk: new OpfsCowDisk(baseDisk, overlay), readOnly, backendSnapshot };
       } catch (err) {
@@ -861,47 +951,89 @@ async function openDiskFromMetadata(
     throw new Error("openDiskFromMetadata(remote): unreachable");
   }
 
-  if (meta.source !== "local") {
+  if (source !== "local") {
     throw new Error("expected local disk metadata");
   }
 
-  const localMeta = meta;
-  const readOnly = localMeta.kind === "cd" || localMeta.format === "iso";
-  const hasRemoteBase = !!localMeta.remote;
-  if (localMeta.backend === "opfs") {
-    const fileName = localMeta.fileName;
-    const sizeBytes = localMeta.sizeBytes;
-    const dirPath = typeof localMeta.opfsDirectory === "string" && localMeta.opfsDirectory.trim() ? localMeta.opfsDirectory.trim() : undefined;
+  const idRaw = hasOwn(metaRec, "id") ? metaRec.id : undefined;
+  if (typeof idRaw !== "string" || !idRaw.trim()) {
+    throw new Error("invalid local disk id");
+  }
+  const id = idRaw;
+
+  const backendRaw = hasOwn(metaRec, "backend") ? metaRec.backend : undefined;
+  if (backendRaw !== "opfs" && backendRaw !== "idb") {
+    throw new Error(`unsupported local disk backend ${String(backendRaw)}`);
+  }
+  const backend = backendRaw;
+
+  const diskKindRaw = hasOwn(metaRec, "kind") ? metaRec.kind : undefined;
+  const diskKind = diskKindRaw === "hdd" || diskKindRaw === "cd" ? diskKindRaw : undefined;
+  if (!diskKind) {
+    throw new Error(`invalid disk kind=${String(diskKindRaw)}`);
+  }
+
+  const diskFormatRaw = hasOwn(metaRec, "format") ? metaRec.format : undefined;
+  const diskFormat =
+    diskFormatRaw === "raw" ||
+    diskFormatRaw === "iso" ||
+    diskFormatRaw === "qcow2" ||
+    diskFormatRaw === "vhd" ||
+    diskFormatRaw === "aerospar" ||
+    diskFormatRaw === "unknown"
+      ? diskFormatRaw
+      : undefined;
+  if (!diskFormat) {
+    throw new Error(`invalid disk format=${String(diskFormatRaw)}`);
+  }
+
+  const fileNameRaw = hasOwn(metaRec, "fileName") ? metaRec.fileName : undefined;
+  if (typeof fileNameRaw !== "string" || !fileNameRaw.trim()) {
+    throw new Error("invalid local fileName");
+  }
+  const fileName = fileNameRaw;
+
+  const sizeBytesRaw = hasOwn(metaRec, "sizeBytes") ? metaRec.sizeBytes : undefined;
+  if (typeof sizeBytesRaw !== "number" || !Number.isSafeInteger(sizeBytesRaw) || sizeBytesRaw <= 0) {
+    throw new Error(`invalid sizeBytes=${String(sizeBytesRaw)}`);
+  }
+  const sizeBytes = sizeBytesRaw;
+
+  const readOnly = diskKind === "cd" || diskFormat === "iso";
+
+  // Legacy remote-streaming local disk metadata (`LocalDiskImageMetadata.remote`).
+  // Treat as untrusted and do not observe inherited values.
+  const legacyRemoteRaw = hasOwn(metaRec, "remote") ? metaRec.remote : undefined;
+  const hasLegacyRemoteBase = !!legacyRemoteRaw;
+
+  if (backend === "opfs") {
+    const dirPathRaw = hasOwn(metaRec, "opfsDirectory") ? (metaRec as { opfsDirectory?: unknown }).opfsDirectory : undefined;
+    const dirPath = typeof dirPathRaw === "string" && dirPathRaw.trim() ? dirPathRaw.trim() : undefined;
     const snapshotDirPath = dirPath && dirPath !== OPFS_DISKS_PATH ? dirPath : undefined;
 
     async function openBase(): Promise<AsyncSectorDisk> {
-      if (localMeta.remote) {
-        // Legacy remote-streaming metadata is persisted; treat it as untrusted and ignore inherited
-        // URL fields (prototype pollution).
-        const remoteRaw = localMeta.remote as unknown;
-        const remoteRec = isRecord(remoteRaw) ? (remoteRaw as Record<string, unknown>) : null;
+      if (legacyRemoteRaw) {
+        const remoteRec = isRecord(legacyRemoteRaw) ? (legacyRemoteRaw as Record<string, unknown>) : null;
         const urlRaw = remoteRec && hasOwn(remoteRec, "url") ? remoteRec.url : undefined;
         const url = typeof urlRaw === "string" ? urlRaw.trim() : "";
         if (!url) throw new Error("remote disk metadata missing remote.url");
+
         // Legacy remote-streaming local disks always use RemoteStreamingDisk + OPFS chunk cache.
         // The base image is treated as read-only; HDD writes go to a runtime COW overlay.
         const blockSizeBytes = remoteRec && hasOwn(remoteRec, "blockSizeBytes") ? remoteRec.blockSizeBytes : undefined;
-        const cacheLimitBytesRaw = remoteRec && hasOwn(remoteRec, "cacheLimitBytes") ? remoteRec.cacheLimitBytes : undefined;
+        const cacheLimitBytes = remoteRec && hasOwn(remoteRec, "cacheLimitBytes") ? remoteRec.cacheLimitBytes : undefined;
         const prefetchSequentialBlocks =
           remoteRec && hasOwn(remoteRec, "prefetchSequentialBlocks") ? remoteRec.prefetchSequentialBlocks : undefined;
-        let cacheLimitBytes: number | null | undefined = undefined;
-        if (typeof cacheLimitBytesRaw === "number" || cacheLimitBytesRaw === null) {
-          cacheLimitBytes = cacheLimitBytesRaw;
-        }
         return await RemoteStreamingDisk.open(url, {
           blockSize: typeof blockSizeBytes === "number" ? blockSizeBytes : undefined,
-          cacheLimitBytes,
+          cacheLimitBytes: typeof cacheLimitBytes === "number" || cacheLimitBytes === null ? (cacheLimitBytes as any) : undefined,
           prefetchSequentialBlocks: typeof prefetchSequentialBlocks === "number" ? prefetchSequentialBlocks : undefined,
           cacheBackend: "opfs",
           expectedSizeBytes: sizeBytes,
         });
       }
-      switch (localMeta.format) {
+
+      switch (diskFormat) {
         case "aerospar": {
           const disk = await OpfsAeroSparseDisk.open(fileName, { dirPath });
           if (disk.capacityBytes !== sizeBytes) {
@@ -921,7 +1053,7 @@ async function openDiskFromMetadata(
             const detected = await sniffContainerFormatForRawOpen(await fh.getFile());
             if (detected) {
               throw new Error(
-                `disk format mismatch: metadata says ${localMeta.format} but file looks like ${detected} (convert to aerospar first)`,
+                `disk format mismatch: metadata says ${diskFormat} but file looks like ${detected} (convert to aerospar first)`,
               );
             }
           } catch (err) {
@@ -932,7 +1064,9 @@ async function openDiskFromMetadata(
           return await OpfsRawDisk.open(fileName, { create: false, sizeBytes, dirPath });
         case "qcow2":
         case "vhd":
-          throw new Error(`unsupported OPFS disk format ${localMeta.format} (convert to aerospar first)`);
+          throw new Error(`unsupported OPFS disk format ${diskFormat} (convert to aerospar first)`);
+        default:
+          throw new Error(`unsupported OPFS disk format ${String(diskFormat)}`);
       }
     }
 
@@ -942,10 +1076,10 @@ async function openDiskFromMetadata(
       let overlay: OpfsAeroSparseDisk | null = null;
       try {
         base = await openBase();
-        const overlayName = `${localMeta.id}.overlay.aerospar`;
+        const overlayName = `${id}.overlay.aerospar`;
 
         overlay = await openOpfsSparseDisk(overlayName, {
-          diskSizeBytes: localMeta.sizeBytes,
+          diskSizeBytes: sizeBytes,
           blockSizeBytes: overlayBlockSizeBytes ?? 1024 * 1024,
           dirPath,
         });
@@ -955,19 +1089,19 @@ async function openDiskFromMetadata(
           readOnly: false,
           // Remote-streaming local disks cannot currently be snapshotted because the backend snapshot
           // format does not capture the remote base URL/options.
-          backendSnapshot: localMeta.remote
+          backendSnapshot: hasLegacyRemoteBase
             ? null
             : {
                 kind: "local",
                 backend: "opfs",
-                key: localMeta.fileName,
+                key: fileName,
                 ...(snapshotDirPath ? { dirPath: snapshotDirPath } : {}),
-                format: localMeta.format,
-                diskKind: localMeta.kind,
-                sizeBytes: localMeta.sizeBytes,
+                format: diskFormat,
+                diskKind,
+                sizeBytes,
                 overlay: {
                   fileName: overlayName,
-                  diskSizeBytes: localMeta.sizeBytes,
+                  diskSizeBytes: sizeBytes,
                   blockSizeBytes: overlay.blockSizeBytes,
                 },
               },
@@ -975,14 +1109,14 @@ async function openDiskFromMetadata(
       } catch (err) {
         await overlay?.close?.();
         await base?.close?.();
-        if (localMeta.remote) {
+        if (hasLegacyRemoteBase) {
           // The remote base is read-only, so we cannot fall back to direct writes.
           const msg = err instanceof Error ? err.message : String(err);
-          throw new Error(`failed to open COW overlay for remote-streaming disk (id=${localMeta.id}): ${msg}`);
+          throw new Error(`failed to open COW overlay for remote-streaming disk (id=${id}): ${msg}`);
         }
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
-        if (localMeta.format !== "raw" && localMeta.format !== "iso" && localMeta.format !== "unknown") throw err;
+        if (diskFormat !== "raw" && diskFormat !== "unknown") throw err;
       }
     }
 
@@ -991,33 +1125,33 @@ async function openDiskFromMetadata(
       disk,
       // Treat remote-streaming local disks as read-only unless explicitly opened with a
       // COW overlay above.
-      readOnly: readOnly || hasRemoteBase,
+      readOnly: readOnly || hasLegacyRemoteBase,
       // Remote-streaming local disks cannot currently be snapshotted because the backend snapshot
       // format does not capture the remote base URL/options.
-      backendSnapshot: localMeta.remote
+      backendSnapshot: hasLegacyRemoteBase
         ? null
         : {
             kind: "local",
             backend: "opfs",
-            key: localMeta.fileName,
+            key: fileName,
             ...(snapshotDirPath ? { dirPath: snapshotDirPath } : {}),
-            format: localMeta.format,
-            diskKind: localMeta.kind,
-            sizeBytes: localMeta.sizeBytes,
+            format: diskFormat,
+            diskKind,
+            sizeBytes,
           },
     };
   }
 
   // IndexedDB backend: disk data is stored in the `chunks` store (sparse).
-  if (localMeta.format !== "raw" && localMeta.format !== "iso" && localMeta.format !== "unknown") {
-    throw new Error(`unsupported IndexedDB disk format ${localMeta.format} (convert to aerospar first)`);
+  if (diskFormat !== "raw" && diskFormat !== "iso" && diskFormat !== "unknown") {
+    throw new Error(`unsupported IndexedDB disk format ${diskFormat} (convert to aerospar first)`);
   }
-  const disk = await IdbChunkDisk.open(localMeta.id, localMeta.sizeBytes);
+  const disk = await IdbChunkDisk.open(id, sizeBytes);
   try {
-    const detected = await sniffContainerFormatForIdbRawOpen(disk, localMeta.sizeBytes);
+    const detected = await sniffContainerFormatForIdbRawOpen(disk, sizeBytes);
     if (detected) {
       throw new Error(
-        `disk format mismatch: metadata says ${localMeta.format} but disk bytes look like ${detected} (convert to aerospar first)`,
+        `disk format mismatch: metadata says ${diskFormat} but disk bytes look like ${detected} (convert to aerospar first)`,
       );
     }
     return {
@@ -1026,10 +1160,10 @@ async function openDiskFromMetadata(
       backendSnapshot: {
         kind: "local",
         backend: "idb",
-        key: localMeta.id,
-        format: localMeta.format,
-        diskKind: localMeta.kind,
-        sizeBytes: localMeta.sizeBytes,
+        key: id,
+        format: diskFormat,
+        diskKind,
+        sizeBytes,
       },
     };
   } catch (err) {
