@@ -4325,6 +4325,172 @@ bool TestCreateStateBlockVertexStateDoesNotCaptureTextures() {
   return true;
 }
 
+bool TestCreateStateBlockVertexStateDoesNotCaptureSamplerState() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "pfnCreateStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetSamplerState != nullptr, "pfnSetSamplerState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  constexpr uint32_t kStage0 = 0u;
+  constexpr uint32_t kStateMagFilter = 5u; // D3DSAMP_MAGFILTER
+  constexpr uint32_t kValueA = 1u;         // D3DTEXF_POINT
+  constexpr uint32_t kValueB = 2u;         // D3DTEXF_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetSamplerState(cleanup.hDevice, kStage0, kStateMagFilter, kValueA);
+  if (!Check(hr == S_OK, "SetSamplerState(stage0, MAGFILTER=A)")) {
+    return false;
+  }
+
+  // D3DSBT_VERTEXSTATE = 3 (matches d3d9types.h). Vertex state blocks should not
+  // capture/apply sampler state.
+  constexpr uint32_t kD3dSbtVertexState = 3u;
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnCreateStateBlock(cleanup.hDevice, kD3dSbtVertexState, &hSb);
+  if (!Check(hr == S_OK, "CreateStateBlock(VERTEXSTATE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "CreateStateBlock returned handle")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetSamplerState(cleanup.hDevice, kStage0, kStateMagFilter, kValueB);
+  if (!Check(hr == S_OK, "SetSamplerState(stage0, MAGFILTER=B)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(VERTEXSTATE)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->sampler_states[kStage0][kStateMagFilter] == kValueB,
+               "ApplyStateBlock(VERTEXSTATE) leaves sampler state unchanged")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock VertexState sampler state)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SAMPLER_STATE) == 0,
+             "ApplyStateBlock(VERTEXSTATE) emits no SET_SAMPLER_STATE")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestCreateStateBlockPixelStateDoesNotCaptureTransform() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "pfnCreateStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+
+  D3DMATRIX world_a = identity;
+  world_a.m[3][0] = 2.0f;
+  world_a.m[3][1] = 3.0f;
+  world_a.m[3][2] = 4.0f;
+
+  D3DMATRIX world_b = identity;
+  world_b.m[3][0] = 9.0f;
+  world_b.m[3][1] = 8.0f;
+  world_b.m[3][2] = 7.0f;
+
+  HRESULT hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_a);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=A)")) {
+    return false;
+  }
+
+  // D3DSBT_PIXELSTATE = 2 (matches d3d9types.h). Pixel state blocks should not
+  // capture/apply transform state.
+  constexpr uint32_t kD3dSbtPixelState = 2u;
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnCreateStateBlock(cleanup.hDevice, kD3dSbtPixelState, &hSb);
+  if (!Check(hr == S_OK, "CreateStateBlock(PIXELSTATE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "CreateStateBlock returned handle")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &world_b);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=B)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(PIXELSTATE)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(std::memcmp(dev->transform_matrices[kD3dTransformWorld0], &world_b, 16u * sizeof(float)) == 0,
+               "ApplyStateBlock(PIXELSTATE) leaves WORLD transform unchanged")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockRenderStateCapturesRedundantSet() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -24562,6 +24728,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestCreateStateBlockVertexStateDoesNotCaptureTextures()) {
+    return 1;
+  }
+  if (!aerogpu::TestCreateStateBlockVertexStateDoesNotCaptureSamplerState()) {
+    return 1;
+  }
+  if (!aerogpu::TestCreateStateBlockPixelStateDoesNotCaptureTransform()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockRenderStateCapturesRedundantSet()) {
