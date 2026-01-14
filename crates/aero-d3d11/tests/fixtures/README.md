@@ -42,6 +42,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `cs_5_0`
   * Chunks: `SHEX`
   * Behavior: `[numthreads(1,1,1)]`, `dcl_uav_raw u0`, `store_raw u0.x, 0, 0x12345678`, `ret`
+* `vs_emit_stream1.dxbc`
+  * Shader model: `vs_5_0`
+  * Chunks: `SHEX`
+  * Behavior: `emit_stream(1)`, `ret` (invalid as a real VS; used to exercise SM5 stream-index policy)
 
 These fixtures are **hand-authored** DXBC containers with the standard D3D10+
 signature chunk layout. The SM4 token streams are intentionally tiny:

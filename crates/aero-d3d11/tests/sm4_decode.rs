@@ -1736,3 +1736,27 @@ fn decodes_store_structured_with_mask() {
         }
     );
 }
+
+#[test]
+fn decodes_emit_stream_and_cut_stream_with_stream_index() {
+    let mut body = Vec::<u32>::new();
+
+    // emit_stream(2)
+    body.push(opcode_token(OPCODE_EMIT_STREAM, 3));
+    body.extend_from_slice(&imm32_scalar(2));
+    // cut_stream(3)
+    body.push(opcode_token(OPCODE_CUT_STREAM, 3));
+    body.extend_from_slice(&imm32_scalar(3));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 2 is geometry shader.
+    let tokens = make_sm5_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions,
+        vec![Sm4Inst::Emit { stream: 2 }, Sm4Inst::Cut { stream: 3 }, Sm4Inst::Ret]
+    );
+}
