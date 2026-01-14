@@ -51,6 +51,25 @@ pub(crate) struct TlbEntry {
     page_size: PageSize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TlbHit<'a> {
+    pub(crate) entry: &'a TlbEntry,
+    set: u8,
+    way: u8,
+}
+
+impl<'a> TlbHit<'a> {
+    #[inline]
+    pub(crate) fn set(&self) -> usize {
+        self.set as usize
+    }
+
+    #[inline]
+    pub(crate) fn way(&self) -> usize {
+        self.way as usize
+    }
+}
+
 const FLAG_USER: u8 = 1 << 0;
 const FLAG_WRITABLE: u8 = 1 << 1;
 const FLAG_NX: u8 = 1 << 2;
@@ -140,16 +159,6 @@ impl TlbEntry {
     }
 
     #[inline]
-    pub(crate) fn vbase(&self) -> u64 {
-        self.vbase
-    }
-
-    #[inline]
-    pub(crate) fn page_size(&self) -> PageSize {
-        self.page_size
-    }
-
-    #[inline]
     pub(crate) fn user(&self) -> bool {
         self.flags & FLAG_USER != 0
     }
@@ -228,7 +237,7 @@ impl TlbSet {
     }
 
     #[inline]
-    fn lookup(&self, vaddr: u64, pcid: u16, page_sizes: TlbLookupPageSizes) -> Option<&TlbEntry> {
+    fn lookup(&self, vaddr: u64, pcid: u16, page_sizes: TlbLookupPageSizes) -> Option<TlbHit<'_>> {
         // Common case: TLB contains only 4KiB entries (no large pages have been
         // inserted since the last full flush), so we can skip page-size probes
         // and the page-size compare in the way loop.
@@ -240,7 +249,11 @@ impl TlbSet {
                 let entry = &self.entries[set][way];
                 if entry.vbase == vbase && entry.matches_pcid(pcid) {
                     debug_assert_eq!(entry.page_size, PageSize::Size4K);
-                    return Some(entry);
+                    return Some(TlbHit {
+                        entry,
+                        set: set as u8,
+                        way: way as u8,
+                    });
                 }
             }
             return None;
@@ -258,7 +271,11 @@ impl TlbSet {
                         && entry.vbase == vbase
                         && entry.matches_pcid(pcid)
                     {
-                        return Some(entry);
+                        return Some(TlbHit {
+                            entry,
+                            set: set as u8,
+                            way: way as u8,
+                        });
                     }
                 }
             }};
@@ -501,17 +518,10 @@ impl TlbSet {
     }
 
     #[inline]
-    fn set_dirty_known(&mut self, vbase: u64, page_size: PageSize, pcid: u16) -> bool {
-        let tag = vbase >> 12;
-        let set = set_index(tag);
-        for way in 0..WAYS {
-            let entry = &mut self.entries[set][way];
-            if entry.page_size == page_size && entry.vbase == vbase && entry.matches_pcid(pcid) {
-                entry.set_dirty();
-                return true;
-            }
-        }
-        false
+    fn set_dirty_hit(&mut self, set: usize, way: usize) {
+        let entry = &mut self.entries[set][way];
+        debug_assert!(entry.valid());
+        entry.set_dirty();
     }
 }
 
@@ -543,7 +553,7 @@ impl Tlb {
         is_exec: bool,
         pcid: u16,
         page_sizes: TlbLookupPageSizes,
-    ) -> Option<&TlbEntry> {
+    ) -> Option<TlbHit<'_>> {
         if is_exec {
             self.itlb.lookup(vaddr, pcid, page_sizes)
         } else {
@@ -573,11 +583,11 @@ impl Tlb {
     }
 
     #[inline]
-    pub(crate) fn set_dirty(&mut self, vbase: u64, page_size: PageSize, is_exec: bool, pcid: u16) {
+    pub(crate) fn set_dirty_slot(&mut self, is_exec: bool, set: usize, way: usize) {
         if is_exec {
-            let _ = self.itlb.set_dirty_known(vbase, page_size, pcid);
+            self.itlb.set_dirty_hit(set, way);
         } else {
-            let _ = self.dtlb.set_dirty_known(vbase, page_size, pcid);
+            self.dtlb.set_dirty_hit(set, way);
         }
     }
 

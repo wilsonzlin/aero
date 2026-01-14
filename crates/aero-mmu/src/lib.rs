@@ -885,7 +885,8 @@ impl Mmu {
             }
         }
 
-        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
+        if let Some(hit) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
+            let entry = hit.entry;
             #[cfg(feature = "stats")]
             {
                 if is_exec {
@@ -942,8 +943,8 @@ impl Mmu {
                     if !entry.dirty() {
                         let leaf_addr = entry.leaf_addr;
                         let leaf_is_64 = entry.leaf_is_64();
-                        let tlb_vbase = entry.vbase();
-                        let tlb_page_size = entry.page_size();
+                        let tlb_set = hit.set();
+                        let tlb_way = hit.way();
 
                         if leaf_is_64 {
                             let val = bus.read_u64(leaf_addr);
@@ -952,7 +953,7 @@ impl Mmu {
                             let val = bus.read_u32(leaf_addr);
                             bus.write_u32(leaf_addr, val | (PTE_D as u32));
                         }
-                        self.tlb.set_dirty(tlb_vbase, tlb_page_size, is_exec, pcid);
+                        self.tlb.set_dirty_slot(is_exec, tlb_set, tlb_way);
                     }
 
                     return Ok(paddr);
@@ -1042,7 +1043,8 @@ impl Mmu {
 
         // Probe mode may consult the internal TLB, but must not update guest
         // page tables (and thus must not lazily set dirty bits on hits).
-        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
+        if let Some(hit) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
+            let entry = hit.entry;
             #[cfg(feature = "stats")]
             {
                 if is_exec {
