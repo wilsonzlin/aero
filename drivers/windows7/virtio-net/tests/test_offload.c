@@ -231,6 +231,27 @@ static void test_ipv4_udp_checksum_only(void)
     assert(info.L4Protocol == 17);
 }
 
+static void test_no_offload(void)
+{
+    uint8_t pkt[14 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+    AEROVNET_VIRTIO_NET_HDR zero;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 0);
+    build_tcp_header(pkt + 14 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    memset(&hdr, 0xA5, sizeof(hdr));
+    memset(&zero, 0, sizeof(zero));
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(memcmp(&hdr, &zero, sizeof(hdr)) == 0);
+}
+
 static void test_ipv6_tcp_checksum_only(void)
 {
     uint8_t pkt[14 + 40 + 20];
@@ -509,6 +530,7 @@ int main(void)
 {
     test_ipv4_tcp_checksum_only();
     test_ipv4_udp_checksum_only();
+    test_no_offload();
     test_ipv6_tcp_checksum_only();
     test_ipv4_vlan_tcp_checksum_only();
     test_ipv4_ip_options_tcp_checksum_only();
