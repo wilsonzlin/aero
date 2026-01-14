@@ -1892,6 +1892,84 @@ mod tests {
     use crate::hid::UsbHidKeyboardHandle;
 
     #[test]
+    fn hub_drains_downstream_remote_wakeup_requests_when_remote_wakeup_disabled() {
+        #[derive(Default)]
+        struct WakeState {
+            suspended: bool,
+            wake_pending: bool,
+        }
+
+        #[derive(Clone)]
+        struct WakeDevice(Rc<RefCell<WakeState>>);
+
+        impl WakeDevice {
+            fn new() -> Self {
+                Self(Rc::new(RefCell::new(WakeState::default())))
+            }
+
+            fn request_wake(&self) {
+                self.0.borrow_mut().wake_pending = true;
+            }
+
+            fn wake_pending(&self) -> bool {
+                self.0.borrow().wake_pending
+            }
+        }
+
+        impl UsbDeviceModel for WakeDevice {
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+
+            fn set_suspended(&mut self, suspended: bool) {
+                self.0.borrow_mut().suspended = suspended;
+            }
+
+            fn poll_remote_wakeup(&mut self) -> bool {
+                let mut st = self.0.borrow_mut();
+                if st.suspended && st.wake_pending {
+                    st.wake_pending = false;
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        let mut hub = UsbHubDevice::new_with_ports(1);
+        hub.configuration = 1;
+        hub.remote_wakeup_enabled = false;
+        let wake = WakeDevice::new();
+        hub.attach(1, Box::new(wake.clone()));
+
+        // Ensure the downstream port is both powered and enabled so remote-wakeup polling reaches it.
+        hub.ports[0].set_powered(true);
+        hub.ports[0].set_enabled(true);
+
+        // Suspend the upstream link so `poll_remote_wakeup_internal` is active.
+        hub.set_suspended(true);
+
+        wake.request_wake();
+        assert!(wake.wake_pending(), "expected wake request to be pending");
+
+        // Hub remote wake is disabled, so the wake must not propagate upstream...
+        assert!(
+            !hub.poll_remote_wakeup_internal(),
+            "hub must not propagate remote wakeup when DEVICE_REMOTE_WAKEUP is disabled"
+        );
+
+        // ...but the wake signal should still be drained so it cannot be replayed later.
+        assert!(
+            !wake.wake_pending(),
+            "expected hub to drain downstream wake request even when propagation is disabled"
+        );
+    }
+
+    #[test]
     fn root_hub_portsc_lsda_is_set_only_for_low_speed() {
         const LSDA: u16 = 1 << 8;
 
