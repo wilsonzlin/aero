@@ -616,7 +616,7 @@ fn ehci_keyboard_remote_wakeup_enters_resume_state_through_external_hub() {
 }
 
 #[test]
-fn ehci_keyboard_remote_wakeup_propagates_through_external_hub_without_hub_remote_wakeup() {
+fn ehci_keyboard_remote_wakeup_does_not_propagate_through_external_hub_without_hub_remote_wakeup() {
     let mut ehci = EhciController::new_with_port_count(1);
 
     // Root port 0: external hub.
@@ -731,38 +731,27 @@ fn ehci_keyboard_remote_wakeup_propagates_through_external_hub_without_hub_remot
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_ne!(portsc & PORTSC_SUSP, 0, "expected port to be suspended");
 
-    // Inject a keypress while suspended. Remote wakeup is driven by the downstream device's
-    // DEVICE_REMOTE_WAKEUP feature; intermediate hubs do not need DEVICE_REMOTE_WAKEUP enabled for
-    // the resume signal to propagate upstream.
+    // Inject a keypress while suspended. Since the hub does not have DEVICE_REMOTE_WAKEUP enabled,
+    // it must not propagate the downstream remote wake request upstream.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
-    ehci.tick_1ms(&mut mem);
+    for _ in 0..5 {
+        ehci.tick_1ms(&mut mem);
+    }
 
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(
+    assert_eq!(
         portsc & PORTSC_FPR,
         0,
-        "expected EHCI resume state after remote wakeup through external hub (hub remote wake need not be enabled)"
+        "unexpected EHCI resume state even though hub remote wake is disabled"
     );
     assert_ne!(
         portsc & PORTSC_SUSP,
         0,
-        "port should remain suspended while resuming"
+        "port should remain suspended"
     );
-    assert_eq!(
-        portsc & PORTSC_LS_MASK,
-        0b01 << 10,
-        "expected K-state while resuming"
-    );
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
     assert!(
         ehci.hub_mut().device_mut_for_address(2).is_none(),
         "device should not be reachable while the root port remains suspended"
     );
-
-    for _ in 0..20 {
-        ehci.tick_1ms(&mut mem);
-    }
-    let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
-    assert!(ehci.hub_mut().device_mut_for_address(2).is_some());
 }

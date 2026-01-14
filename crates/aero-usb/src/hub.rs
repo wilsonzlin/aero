@@ -1115,11 +1115,18 @@ impl UsbHubDevice {
             return false;
         }
 
-        // If the upstream link is suspended and a downstream device requests remote wakeup,
-        // propagate the resume event upstream.
         if !self.upstream_suspended {
             return false;
         }
+
+        // If the upstream link is suspended and a downstream device requests remote wakeup, the
+        // hub may propagate the resume event upstream when DEVICE_REMOTE_WAKEUP is enabled on the
+        // hub itself.
+        //
+        // We still drain downstream remote wake signals even when propagation is disabled to avoid
+        // "replaying" stale wake events if the guest later enables remote wakeup without an
+        // additional user action.
+        let mut wake_requested = false;
         for port in &mut self.ports {
             if !(port.enabled && port.powered) {
                 continue;
@@ -1128,17 +1135,20 @@ impl UsbHubDevice {
                 Some(dev) => dev.model_mut().poll_remote_wakeup(),
                 None => false,
             };
-            if wake {
-                // If the downstream port was selectively suspended, remote wake should resume it
-                // so that the device is active once the upstream link resumes.
-                if port.suspended {
-                    port.set_suspended(false);
-                }
-                return true;
+            if !wake {
+                continue;
+            }
+            wake_requested = true;
+
+            // If the downstream port was selectively suspended, remote wake should resume it so
+            // that the device is active once the upstream link resumes. Only apply this when the
+            // wake will actually propagate upstream.
+            if self.remote_wakeup_enabled && port.suspended {
+                port.set_suspended(false);
             }
         }
 
-        false
+        wake_requested && self.remote_wakeup_enabled
     }
 }
 
@@ -1668,11 +1678,6 @@ impl UsbDeviceModel for UsbHubDevice {
     }
 
     fn poll_remote_wakeup(&mut self) -> bool {
-        // If the upstream link is suspended and a downstream device requests remote wakeup,
-        // propagate the resume event upstream.
-        //
-        // Note: this is driven by the downstream device's DEVICE_REMOTE_WAKEUP feature; the hub's
-        // own DEVICE_REMOTE_WAKEUP feature does not gate propagation.
         self.poll_remote_wakeup_internal()
     }
 }
