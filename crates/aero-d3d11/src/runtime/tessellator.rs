@@ -230,6 +230,95 @@ pub fn wgsl_tri_tessellator_lib_default() -> String {
     wgsl_tri_tessellator_lib(MAX_TESS_FACTOR)
 }
 
+/// Integer barycentric coordinates for a tessellated triangle domain point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TriIntegerBarycentric {
+    pub i: u32,
+    pub j: u32,
+    pub k: u32,
+}
+
+/// Vertex count for integer-partitioned triangle domain with tess factor `n`.
+///
+/// `V(n) = (n + 1)(n + 2)/2`.
+pub fn tri_integer_vertex_count(n: u32) -> u32 {
+    // Use u64 to avoid intermediate overflow for callers that don't clamp `n`.
+    let n = n as u64;
+    (((n + 1) * (n + 2)) / 2) as u32
+}
+
+/// Index count for integer-partitioned triangle domain with tess factor `n`.
+///
+/// `I(n) = n² * 3`.
+pub fn tri_integer_index_count(n: u32) -> u32 {
+    let n = n as u64;
+    (n * n * 3) as u32
+}
+
+/// Map `local_vertex_index -> (i, j, k)` integer barycentric coordinates where `i + j + k = n`.
+///
+/// This follows the canonical tessellator vertex enumeration described in the module docs:
+/// - rows `i = 0..=n`
+/// - columns `j = 0..=(n - i)`
+/// - `k = n - i - j`
+pub fn tri_integer_vertex_ijk(n: u32, local_vertex_index: u32) -> TriIntegerBarycentric {
+    let vertex_count = tri_integer_vertex_count(n);
+    assert!(
+        local_vertex_index < vertex_count,
+        "local_vertex_index {local_vertex_index} out of bounds for n={n} (vertex_count={vertex_count})"
+    );
+
+    let mut idx = local_vertex_index;
+    for i in 0..=n {
+        let row_len = n - i + 1;
+        if idx < row_len {
+            let j = idx;
+            let k = n - i - j;
+            return TriIntegerBarycentric { i, j, k };
+        }
+        idx -= row_len;
+    }
+
+    unreachable!("index bounds checked above; scan must have returned")
+}
+
+/// Generate clockwise (CW) triangle list indices for triangle-domain integer partitioning.
+///
+/// Returns a flat index buffer with length [`tri_integer_index_count`]. Each consecutive triplet is
+/// a triangle.
+pub fn tri_integer_indices_cw(n: u32) -> Vec<u32> {
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let mut out = Vec::with_capacity(tri_integer_index_count(n) as usize);
+
+    // Use the same triangle ordering as `tri_index_to_vertex_indices` (row-major, interleaved up
+    // and down triangles), but emit vertices in CW order in the `(j, k)` lattice.
+    for i in 0..n {
+        let row_n = n - i;
+        for j in 0..row_n {
+            // Base (CCW) order: (i,j), (i+1,j), (i,j+1).
+            // CW order swaps the last two vertices.
+            let a = tri_vertex_index(n, i, j);
+            let b = tri_vertex_index(n, i + 1, j);
+            let c = tri_vertex_index(n, i, j + 1);
+            out.extend_from_slice(&[a, c, b]);
+
+            if j + 1 < row_n {
+                // Base (CCW) order: (i+1,j), (i+1,j+1), (i,j+1).
+                let a = b;
+                let b = tri_vertex_index(n, i + 1, j + 1);
+                let c = c;
+                out.extend_from_slice(&[a, c, b]);
+            }
+        }
+    }
+
+    debug_assert_eq!(out.len(), tri_integer_index_count(n) as usize);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
