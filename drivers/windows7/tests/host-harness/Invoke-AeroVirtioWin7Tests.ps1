@@ -556,6 +556,10 @@ if ($HttpPath -match "\s") {
   throw "-HttpPath must not contain whitespace."
 }
 
+if ($QemuSystem -match "[\\/\\\\]" -and (Test-Path -LiteralPath $QemuSystem -PathType Container)) {
+  throw "-QemuSystem must be a QEMU system binary path (got a directory): $QemuSystem"
+}
+
 if ($MemoryMB -le 0) {
   throw "-MemoryMB must be a positive integer."
 }
@@ -6638,6 +6642,12 @@ if ($DryRun) {
   # printed argv is still useful in CI/debugging environments.
   try { $DiskImagePath = [System.IO.Path]::GetFullPath($DiskImagePath) } catch { }
   try { $SerialLogPath = [System.IO.Path]::GetFullPath($SerialLogPath) } catch { }
+  if (Test-Path -LiteralPath $DiskImagePath -PathType Container) {
+    throw "-DiskImagePath must be a disk image file path (got a directory): $DiskImagePath"
+  }
+  if (Test-Path -LiteralPath $SerialLogPath -PathType Container) {
+    throw "-SerialLogPath must be a file path (got a directory): $SerialLogPath"
+  }
 } else {
   $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
   if (Test-Path -LiteralPath $DiskImagePath -PathType Container) {
