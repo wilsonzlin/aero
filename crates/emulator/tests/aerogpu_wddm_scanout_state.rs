@@ -151,3 +151,50 @@ fn reset_clears_torn_fb_gpa_tracking() {
     assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap.base_paddr(), fb);
 }
+
+#[test]
+fn enable_before_fb_gpa_does_not_steal_legacy_until_config_valid() {
+    let mut mem = DummyMemory;
+    let scanout_state = Arc::new(ScanoutState::new());
+    let mut dev = new_test_device(scanout_state.clone());
+
+    // Program everything except FB_GPA, then enable scanout. Windows drivers may briefly enable
+    // scanout while FB_GPA=0 during early initialization; the device must not claim WDDM scanout in
+    // this state (or it would blank the boot display).
+    const WIDTH: u32 = 640;
+    const HEIGHT: u32 = 480;
+    const BYTES_PER_PIXEL: u32 = 4;
+    const PITCH_BYTES: u32 = WIDTH * BYTES_PER_PIXEL;
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, WIDTH);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, HEIGHT);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
+
+    let legacy = scanout_state.snapshot();
+    assert_eq!(legacy.source, SCANOUT_SOURCE_LEGACY_TEXT);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    let snap_after_enable = scanout_state.snapshot();
+    assert_eq!(snap_after_enable, legacy);
+
+    // Program a real framebuffer address while ENABLE remains 1. Claim/publish must occur only
+    // once the combined 64-bit FB_GPA has been committed (HI written).
+    let fb = 0x1234_5678_9abc_def0u64;
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb as u32);
+    let snap_after_lo = scanout_state.snapshot();
+    assert_eq!(snap_after_lo, legacy);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb >> 32) as u32);
+    let snap_after_hi = scanout_state.snapshot();
+    assert_eq!(snap_after_hi.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap_after_hi.base_paddr(), fb);
+    assert_eq!(snap_after_hi.width, WIDTH);
+    assert_eq!(snap_after_hi.height, HEIGHT);
+    assert_eq!(snap_after_hi.pitch_bytes, PITCH_BYTES);
+}
