@@ -78,6 +78,43 @@ class DryRunQemuCmdTests(unittest.TestCase):
 
             mock_run.assert_not_called()
             mock_popen.assert_not_called()
+            # Dry-run should not start any host-side servers.
+            # (No HTTP server, UDP echo server, etc.)
+
+    def test_dry_run_does_not_start_host_servers(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            disk = tmp / "win7.qcow2"
+            disk.write_bytes(b"")
+            serial = tmp / "serial.log"
+
+            argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                str(disk),
+                "--serial-log",
+                str(serial),
+                "--dry-run",
+            ]
+
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(self.harness.subprocess, "run") as mock_run,
+                mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                mock.patch.object(self.harness, "_ReusableTcpServer") as mock_httpd,
+                mock.patch.object(self.harness, "_UdpEchoServer") as mock_udp,
+                contextlib.redirect_stdout(out),
+            ):
+                rc = self.harness.main()
+
+            self.assertEqual(rc, 0)
+            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
+            mock_httpd.assert_not_called()
+            mock_udp.assert_not_called()
 
     def test_dry_run_with_virtio_disable_msix_does_not_spawn_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as td:
