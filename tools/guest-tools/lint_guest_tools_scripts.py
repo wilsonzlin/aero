@@ -86,6 +86,87 @@ def _label_block(text: str, label: str) -> str | None:
     return text[start:end]
 
 
+def _has_install_certs_policy_gate(text: str) -> bool:
+    """
+    Guardrail for production/none certificate policy.
+
+    We expect setup.cmd to *skip* importing certificates by default when
+    SIGNING_POLICY != test (production/none Guest Tools media should not ship certs),
+    and to do so *before* any certutil -addstore operations occur.
+
+    This check is intentionally heuristic and tolerant to small refactors.
+    """
+
+    block = _label_block(text, "install_certs")
+    if block is None:
+        return False
+
+    # Find non-test gating checks and ensure they lead to an early "exit /b 0"
+    # soon afterwards (so it is actually a skip-by-policy, not just a warning).
+    for m in re.finditer(r"(?im)^\s*if\b[^\r\n]*%SIGNING_POLICY%[^\r\n]*$", block):
+        line = m.group(0)
+        is_non_test_policy_check = (
+            re.search(r'(?i)\bnot\s+"%SIGNING_POLICY%"\s*==\s*"test"', line) is not None
+            or re.search(r'(?i)"%SIGNING_POLICY%"\s*==\s*"(production|none)"', line) is not None
+        )
+        if not is_non_test_policy_check:
+            continue
+
+        # If the policy gate mentions ARG_INSTALL_CERTS, ensure it's the skip-side
+        # condition (NOT the override-side warning branch).
+        if re.search(r"(?i)%ARG_INSTALL_CERTS%", line) is not None and re.search(
+            r'(?i)\bnot\s+"%ARG_INSTALL_CERTS%"\s*==\s*"1"', line
+        ) is None:
+            continue
+
+        # Look for an early return close to the if line (avoid accidentally
+        # matching the normal function epilogue).
+        post = block[m.end() : m.end() + 800]
+        if re.search(r"(?i)\bexit\s+/b\s+0\b", post) is not None:
+            return True
+
+    return False
+
+
+def _check_mode_dispatch_precedes_admin_requirement(text: str) -> bool:
+    """
+    Ensure /check mode runs before any "install mode" admin gate.
+
+    setup.cmd intentionally supports a non-destructive validation path that does not
+    require elevation. If the jump to :check_mode is accidentally moved below the
+    admin check, /check becomes unusable for non-admin users/automation.
+    """
+
+    admin_positions: list[int] = []
+    for pat in [
+        r"(?im)^\s*call\s+:?require_admin_stdout\b",
+        r"(?im)^\s*call\s+:?require_admin\b",
+    ]:
+        m = re.search(pat, text)
+        if m:
+            admin_positions.append(m.start())
+    if not admin_positions:
+        # If the script no longer has an explicit admin gate, we can't enforce the
+        # ordering invariant (and /check is trivially before it).
+        return True
+
+    admin_pos = min(admin_positions)
+
+    dispatch_positions: list[int] = []
+    for pat in [
+        r'(?im)^\s*if\b[^\r\n]*"%ARG_CHECK%"\s*==\s*"1"[^\r\n]*goto\s+:?check_mode\b',
+        r'(?im)^\s*if\b[^\r\n]*"/check"[^\r\n]*goto\s+:?check_mode\b',
+        r'(?im)^\s*if\b[^\r\n]*"/validate"[^\r\n]*goto\s+:?check_mode\b',
+    ]:
+        m = re.search(pat, text)
+        if m:
+            dispatch_positions.append(m.start())
+    if not dispatch_positions:
+        return False
+
+    return min(dispatch_positions) < admin_pos
+
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -197,6 +278,11 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             ),
         ),
         Invariant(
+            description="In /check mode, bypasses admin requirement (jump occurs before require_admin*)",
+            expected_hint='The /check/:check_mode dispatch should happen before any `call :require_admin_stdout` or `call :require_admin`.',
+            predicate=_check_mode_dispatch_precedes_admin_requirement,
+        ),
+        Invariant(
             description="In /check mode, logs to %TEMP% (does not require Administrator access to C:\\AeroGuestTools)",
             expected_hint='Under :check_mode, sets INSTALL_ROOT to a %TEMP% path (e.g. set "INSTALL_ROOT=%TEMP%\\AeroGuestToolsCheck")',
             predicate=lambda text: (
@@ -257,12 +343,7 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
                 'If signing_policy != test, setup should skip importing certs by default '
                 '(e.g. `if /i not \"%SIGNING_POLICY%\"==\"test\" if not \"%ARG_INSTALL_CERTS%\"==\"1\" (...) exit /b 0`).'
             ),
-            predicate=lambda text: (
-                re.search(r"/installcerts", text, re.IGNORECASE) is not None
-                and _regex(
-                    r'(?is)if\s+/i\s+not\s+"%SIGNING_POLICY%"\s*==\s*"test"\s+if\s+not\s+"%ARG_INSTALL_CERTS%"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0'
-                )(text)
-            ),
+            predicate=_has_install_certs_policy_gate,
         ),
     ]
 

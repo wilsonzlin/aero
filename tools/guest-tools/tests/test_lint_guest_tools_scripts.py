@@ -79,14 +79,19 @@ def _synthetic_setup_text(
         lines.append('if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"')
 
     if include_cert_install_skip_policy:
+        lines.append("/installcerts")
+
+    # Certificate policy gating lives in :install_certs in the real setup.cmd.
+    lines.append(":install_certs")
+    if include_cert_install_skip_policy:
         lines.extend(
             [
-                "/installcerts",
                 'if /i not "%SIGNING_POLICY%"=="test" if not "%ARG_INSTALL_CERTS%"=="1" (',
                 "  exit /b 0",
                 ")",
             ]
         )
+    lines.append('"%SYS32%\\certutil.exe" -addstore -f Root "%CERT_FILE%"')
 
     return "\n".join(lines) + "\n"
 
