@@ -2634,7 +2634,6 @@ impl IoSnapshot for XhciController {
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
-        const TAG_HOST_CONTROLLER_ERROR: u16 = 12;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
@@ -2643,12 +2642,23 @@ impl IoSnapshot for XhciController {
         const TAG_INTR0_ERSTSZ: u16 = 8;
         const TAG_INTR0_ERSTBA: u16 = 9;
         const TAG_INTR0_ERDP: u16 = 10;
-        const TAG_PORTS: u16 = 11;
         const TAG_CONFIG: u16 = 13;
         const TAG_MFINDEX: u16 = 14;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        // Snapshot tags must remain stable within a major version. xHCI snapshot version 0.3 used:
+        // - 11: host_controller_error
+        // - 12: ports
+        //
+        // Version 0.4 swapped those tags to resolve a collision introduced in 0.3, so we accept
+        // either mapping based on the snapshot minor version.
+        let (tag_host_controller_error, tag_ports) = if r.header().device_version.minor <= 3 {
+            (11u16, 12u16)
+        } else {
+            (12u16, 11u16)
+        };
 
         let port_count = r.u8(TAG_PORT_COUNT)?.unwrap_or(DEFAULT_PORT_COUNT).max(1);
         let preserved_ports = if port_count == self.port_count {
@@ -2669,7 +2679,7 @@ impl IoSnapshot for XhciController {
         // USBSTS.EINT/HCH/HCE are derived bits in the controller model.
         self.usbsts = saved_usbsts & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
         self.host_controller_error = r
-            .bool(TAG_HOST_CONTROLLER_ERROR)?
+            .bool(tag_host_controller_error)?
             .unwrap_or((saved_usbsts & regs::USBSTS_HCE) != 0);
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
         self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
@@ -2696,7 +2706,7 @@ impl IoSnapshot for XhciController {
             self.interrupter0.restore_erdp(v);
         }
 
-        if let Some(buf) = r.bytes(TAG_PORTS) {
+        if let Some(buf) = r.bytes(tag_ports) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count != self.ports.len() {
