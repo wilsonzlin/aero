@@ -480,6 +480,9 @@ export class RingBuffer {
   }
 
   pushBlocking(payload: Uint8Array, timeoutMs?: number): void {
+    if (payload.byteLength > MAX_PAYLOAD_LEN) {
+      throw new Error("payload too large for ring buffer");
+    }
     const recordSize = alignUp(4 + payload.byteLength, RECORD_ALIGN);
     if (recordSize > this.cap) throw new Error("payload too large for ring buffer");
 
