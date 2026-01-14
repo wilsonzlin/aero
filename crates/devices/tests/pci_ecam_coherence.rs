@@ -199,6 +199,88 @@ fn pci_bar_probe_via_ecam_dword_write_sets_probe_flag() {
 }
 
 #[test]
+fn pci_ecam_unaligned_cross_dword_bar_write_updates_both_bars() {
+    struct Stub {
+        cfg: PciConfigSpace,
+    }
+
+    impl PciDevice for Stub {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    let cfg_ports = Rc::new(RefCell::new(PciConfigPorts::new()));
+    let bdf = PciBdf::new(0, 2, 0);
+
+    cfg_ports.borrow_mut().bus_mut().add_device(
+        bdf,
+        Box::new(Stub {
+            cfg: {
+                let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+                cfg.set_bar_definition(
+                    0,
+                    PciBarDefinition::Mmio32 {
+                        size: BAR0_SIZE,
+                        prefetchable: false,
+                    },
+                );
+                cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+                cfg
+            },
+        }),
+    );
+
+    let ecam_base = 0xC000_0000;
+    let ecam_cfg = PciEcamConfig {
+        segment: 0,
+        start_bus: 0,
+        end_bus: 0,
+    };
+
+    let mut mem = Bus::new(0);
+    mem.map_mmio(
+        ecam_base,
+        ecam_cfg.window_size_bytes(),
+        Box::new(PciEcamMmio::new(cfg_ports.clone(), ecam_cfg)),
+    );
+
+    // Perform an unaligned 16-bit config write that straddles BAR0's last byte and BAR1's first
+    // byte. This is possible via ECAM (MMCONFIG) and should be treated like a byte-enable access,
+    // updating both BAR dwords rather than being dropped.
+    mem.write(ecam_addr(ecam_base, 0, 2, 0, 0x13), 2, 0xA55A);
+
+    // Byte 0x5A is written to BAR0[31:24]; BAR0 is MMIO32 so flags are 0 and the base is masked
+    // to the BAR alignment.
+    assert_eq!(
+        mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x10), 4) as u32,
+        0x5A00_0000
+    );
+
+    // Byte 0xA5 is written to BAR1[7:0]. BAR1 is an IO BAR, so bit0 must remain set and the base
+    // is masked to the IO window alignment.
+    assert_eq!(
+        mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x14), 4) as u32,
+        0x0000_00A1
+    );
+
+    // Verify the same values are observable via the legacy config mechanism #1 ports (shared bus).
+    cfg_ports
+        .borrow_mut()
+        .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x10));
+    assert_eq!(cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4), 0x5A00_0000);
+
+    cfg_ports
+        .borrow_mut()
+        .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x14));
+    assert_eq!(cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4), 0x0000_00A1);
+}
+
+#[test]
 fn pci_mmio64_bar_probe_via_ecam_qword_write_is_observed() {
     struct Stub {
         cfg: PciConfigSpace,
