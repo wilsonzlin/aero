@@ -509,8 +509,8 @@ emit zero primitives. Recommended debug workflow:
    - `maxvertexcount`
    - input/output signatures (semantics + component masks)
 2. Confirm the command stream is binding the expected GS/HS/DS shader handles (via the extended
-   `BIND_SHADERS` packet, or via the legacy `reserved0` GS slot) and that stage-specific resources
-   are being populated (via `stage_ex`).
+    `BIND_SHADERS` packet, or via the legacy `reserved0` GS slot) and that stage-specific resources
+    are being populated (via `shader_stage = GEOMETRY` bindings or the `stage_ex` encoding).
 3. Enable wgpu/WebGPU validation and inspect errors around the expansion compute pass and the
    subsequent indirect draw (binding visibility, usage flags, and out-of-bounds writes are common
    root causes).
@@ -523,9 +523,12 @@ that keeps old drivers valid (they still write zeros).
 
 #### 1.1) `stage_ex` in resource-binding opcodes
 
-The legacy `enum aerogpu_shader_stage` is extended with `GEOMETRY = 3`, but most GS/HS/DS resource
-bindings use a `stage_ex` extension so compute-shader bindings (`@group(2)`) and emulated-stage
-bindings (`@group(3)`) do not trample each other.
+The legacy `enum aerogpu_shader_stage` is extended with `GEOMETRY = 3`, so GS resources can be
+bound directly using `shader_stage = GEOMETRY` with `reserved0 = 0`.
+
+To represent additional D3D11 stages (HS/DS) without extending the legacy stage enum (and as an
+optional GS compatibility encoding), many binding packets overload their trailing `reserved0` field
+as a `stage_ex` selector when `shader_stage == COMPUTE`.
 
 Many AeroGPU binding packets already carry a `shader_stage` plus a trailing `reserved0` field:
 
@@ -542,7 +545,10 @@ used to represent HS/DS creation without extending the legacy stage enum.
 For GS/HS/DS we need to bind D3D resources **per stage**, but the D3D11 executor’s stable binding
 model only has stage-scoped bind groups for **VS/PS/CS** (`@group(0..2)`). We therefore treat GS/HS/DS
 as “compute-like” stages but route their bindings into a reserved extended-stage bind group
-(`@group(3)`), using a small `stage_ex` tag carried in the trailing reserved field.
+(`@group(3)`), using either:
+
+- the direct `shader_stage = GEOMETRY` encoding (preferred for GS), or
+- a small `stage_ex` tag carried in the trailing reserved field (required for HS/DS).
 
 This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageEx` + helpers
 `encode_stage_ex`/`decode_stage_ex` (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
@@ -641,9 +647,10 @@ encoded either as:
 - `shader_stage = GEOMETRY`, `stage_ex = 0` (direct/legacy GS encoding), or
 - `shader_stage = COMPUTE`, `stage_ex = GEOMETRY` (uniform “stage_ex” encoding shared with HS/DS).
 
-Implementations should accept both. Producers should prefer the `stage_ex` encoding for consistency
-across GS/HS/DS, but must ensure they do not accidentally clobber CS bindings on hosts that do not
-support the extension.
+Implementations should accept both. Producers should prefer the direct `shader_stage = GEOMETRY`
+encoding for GS for better backward compatibility; HS/DS require the `stage_ex` encoding. The
+`stage_ex` encoding may still be used for GS for compatibility with components that only implement
+the extension.
 
 The host maintains separate binding tables for CS vs GS/HS/DS so that compute dispatch and
 graphics-tess/GS pipelines do not trample each other’s bindings. At the WGSL interface level this
