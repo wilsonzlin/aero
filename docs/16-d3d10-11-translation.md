@@ -295,6 +295,12 @@ Note: The authoritative token bitfield layout is defined in the Windows SDK head
 `d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h` (e.g. instruction length lives in
 bits 24..30 of the opcode token, operand type in bits 12..19, saturate in bit 13, etc.).
 
+Note: SM4/SM5 also distinguishes **ordered** vs **unordered** floating-point comparisons in the
+tokenized program format. For `setp` (predicate set) the `*_U` suffix in
+`D3D10_SB_INSTRUCTION_COMPARISON` / `D3D11_SB_INSTRUCTION_COMPARISON` means **unordered**
+(NaN-aware): the comparison is true if either operand is NaN. This is separate from unsigned integer
+comparisons, which are encoded via distinct opcodes (e.g. `ult`/`uge`).
+
 At the time of writing, Aero's checked-in SM4/SM5 fixtures and unit tests use a simplified
 token encoding for bring-up (see `crates/aero-d3d11/src/sm4/opcode.rs`), so not all of the official
 DXBC bitfield layout is reflected in the current decoder implementation yet.
