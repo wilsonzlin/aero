@@ -84,6 +84,13 @@ Minimum supported commands:
   Prints the last submitted fence and last completed fence, plus sticky error
   counters (`error_irq_count` / `last_error_fence`) when supported by the KMD.
 
+- `aerogpu_dbgctl --query-error`  
+  Dumps the last recorded device error snapshot via `AEROGPU_ESCAPE_OP_QUERY_ERROR`, including:
+  - whether the device error is currently latched (`latched=true/false` on newer KMDs)
+  - an error code (when available; ABI 1.3+ devices expose `ERROR_CODE`)
+  - the associated fence (when available; ABI 1.3+ devices expose `ERROR_FENCE`)
+  - an error count (when available; ABI 1.3+ devices expose `ERROR_COUNT` and the KMD also tracks `error_irq_count`)
+
 - `aerogpu_dbgctl --watch-fence --samples N --interval-ms M [--timeout-ms T]`  
   Polls `--query-fence` in a loop and prints **one line per sample** with:
   - the current submitted/completed fences,
