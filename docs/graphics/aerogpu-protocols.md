@@ -36,7 +36,9 @@ Note on the canonical machine (`aero_machine::Machine`):
   a reusable PCI wrapper. Command execution is provided by host-side executors/backends (GPU worker
   execution via the submission bridge, or optional in-process backends such as the feature-gated
   wgpu backend). When no backend/bridge is installed, `aero-machine` completes fences without
-  executing ACMD so guests can boot. See [`docs/graphics/status.md`](./status.md).
+  executing ACMD so guests can boot.
+  - For an explicit breakdown of these executor modes, see [`docs/graphics/aerogpu-executor-modes.md`](./aerogpu-executor-modes.md).
+  - For a broader “what’s implemented vs missing” checklist, see [`docs/graphics/status.md`](./status.md).
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
   when `MachineConfig::enable_vga=true`. When the PC platform is enabled, the VBE LFB MMIO aperture
   is mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).

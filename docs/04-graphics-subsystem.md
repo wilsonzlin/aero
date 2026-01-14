@@ -12,6 +12,8 @@ If you are looking for deeper background on the AeroGPU/WDDM direction, start wi
 - `docs/graphics/win7-wddm11-aerogpu-driver.md` (Windows driver model + guest strategy)
 - `docs/16-gpu-command-abi.md` and `docs/abi/gpu-command-protocol.md` (command ABI/protocol)
 - `docs/graphics/aerogpu-protocols.md` (map of similarly named in-tree “GPU protocol” docs)
+- `docs/graphics/aerogpu-executor-modes.md` (canonical machine execution/fence completion modes: no-op bring-up vs submission bridge vs in-process backend)
+- `docs/graphics/aerogpu-backing-alloc-id.md` (stable `backing_alloc_id` semantics for Win7/WDDM 1.1 guest-backed resources)
 
 ## What exists today (summary)
 
