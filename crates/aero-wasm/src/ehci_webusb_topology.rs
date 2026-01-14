@@ -210,6 +210,29 @@ mod tests {
         assert_eq!(found[0].0, vec![crate::webusb_ports::WEBUSB_ROOT_PORT]);
     }
 
+    #[test]
+    fn connect_moves_webusb_from_root_port_zero_to_reserved_root_port() {
+        let mut ctrl = EhciController::new();
+        ctrl.hub_mut()
+            .attach_at_path(
+                &[0],
+                Box::new(UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High)),
+            )
+            .unwrap();
+
+        let mut handle: Option<UsbWebUsbPassthroughDevice> = None;
+        assert!(set_ehci_webusb_connected(&mut ctrl, &mut handle, true));
+
+        // The original EHCI-only WebUSB passthrough prototype attached directly on root port 0,
+        // clobbering any external hub. Normalization must move the device to the reserved port so
+        // root port 0 remains available.
+        assert!(ctrl.hub_mut().port_device(0).is_none());
+
+        let found = collect_ehci_webusb_devices(&mut ctrl);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, vec![crate::webusb_ports::WEBUSB_ROOT_PORT]);
+    }
+
     const NO_DATA_CONTROL_OUT: SetupPacket = SetupPacket {
         bm_request_type: 0x00,
         b_request: 0x00,
@@ -254,6 +277,30 @@ mod tests {
         } else {
             last_id.wrapping_add(1).max(1)
         }
+    }
+
+    #[test]
+    fn disconnect_and_reconnect_preserve_monotonic_action_ids() {
+        let mut ctrl = EhciController::new();
+        let mut handle: Option<UsbWebUsbPassthroughDevice> = None;
+        assert!(set_ehci_webusb_connected(&mut ctrl, &mut handle, true));
+
+        let Some(active) = handle.as_ref() else {
+            panic!("expected active WebUSB handle");
+        };
+        let expected_next_id = advance_passthrough_next_id(active, 3);
+
+        assert!(!set_ehci_webusb_connected(&mut ctrl, &mut handle, false));
+        assert!(set_ehci_webusb_connected(&mut ctrl, &mut handle, true));
+
+        let Some(active_after) = handle.as_ref() else {
+            panic!("expected reconnected WebUSB handle");
+        };
+        let id = run_no_data_control_out_roundtrip(active_after);
+        assert_eq!(
+            id, expected_next_id,
+            "expected passthrough id counter to remain monotonic across disconnect/reconnect"
+        );
     }
 
     #[test]
