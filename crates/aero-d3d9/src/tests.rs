@@ -45,8 +45,11 @@ fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     v
 }
 
-// Some tests build SM3 shaders explicitly (vs_3_0/ps_3_0). These helpers are currently identical to
-// the generic encoders above; they exist to make intent explicit at call sites.
+// Some tests build SM3 shaders explicitly (vs_3_0/ps_3_0). These helpers are currently identical
+// to the generic encoders above; they exist to make intent explicit at call sites.
+fn enc_inst_sm3(opcode: u16, params: &[u32]) -> Vec<u32> {
+    enc_inst(opcode, params)
+}
 #[allow(dead_code)]
 fn enc_inst_with_extra_sm3(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     enc_inst_with_extra(opcode, extra, params)
@@ -1079,7 +1082,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c0, -2.0, -2.0, -2.0, -2.0
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 0, 0xF),
@@ -1090,7 +1093,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
         ],
     ));
     // def c1, 2.0, 2.0, 2.0, 2.0
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 1, 0xF),
@@ -1101,7 +1104,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
         ],
     ));
     // def c2, 0.25, 0.25, 0.25, 0.25
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 2, 0xF),
@@ -1112,7 +1115,7 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
         ],
     ));
     // def c3, 2.0, 2.0, 2.0, 2.0
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0051,
         &[
             enc_dst(2, 3, 0xF),
@@ -1124,44 +1127,44 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
     ));
 
     // exp r0, c0
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x000E,
         &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
     ));
     // log r1, c1
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x000F,
         &[enc_dst(0, 1, 0xF), enc_src(2, 1, 0xE4)],
     ));
     // pow r2, c2, c3
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0020,
         &[enc_dst(0, 2, 0xF), enc_src(2, 2, 0xE4), enc_src(2, 3, 0xE4)],
     ));
 
     // mov r3, r0
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0001,
         &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)],
     ));
     // mov r3.y, r1.x
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0001,
         &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)],
     ));
     // mov r3.z, r2.x
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0001,
         &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)],
     ));
     // mov r3.w, r1.x
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0001,
         &[enc_dst(0, 3, 0x8), enc_src(0, 1, 0x00)],
     ));
 
     // mov oC0, r3
-    out.extend(enc_inst(
+    out.extend(enc_inst_sm3(
         0x0001,
         &[enc_dst(8, 0, 0xF), enc_src(0, 3, 0xE4)],
     ));

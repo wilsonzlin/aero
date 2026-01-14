@@ -675,6 +675,178 @@ fn decodes_and_translates_switch_shader_from_dxbc() {
 }
 
 #[test]
+fn switch_groups_consecutive_case_labels() {
+    const DCL_INPUT: u32 = 0x100;
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_input v0.x
+    body.push(opcode_token(DCL_INPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // switch v0.x
+    let selector = reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XXXX);
+    body.push(opcode_token(OPCODE_SWITCH, 1 + selector.len() as u32));
+    body.extend_from_slice(&selector);
+
+    // case 0:
+    let case0 = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_CASE, 1 + case0.len() as u32));
+    body.extend_from_slice(&case0);
+    // case 1:
+    let case1 = imm32_scalar(1);
+    body.push(opcode_token(OPCODE_CASE, 1 + case1.len() as u32));
+    body.extend_from_slice(&case1);
+
+    // mov o0, vec4(1,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + red.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    // default:
+    body.push(opcode_token(OPCODE_DEFAULT, 1));
+    // mov o0, vec4(0,0,1,1)
+    let blue = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + blue.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&blue);
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    body.push(opcode_token(OPCODE_ENDSWITCH, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b0001)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("case 0i, 1i"),
+        "expected grouped WGSL case labels:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn switch_falls_through_when_break_is_omitted() {
+    const DCL_INPUT: u32 = 0x100;
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_input v0.x
+    body.push(opcode_token(DCL_INPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // switch v0.x
+    let selector = reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XXXX);
+    body.push(opcode_token(OPCODE_SWITCH, 1 + selector.len() as u32));
+    body.extend_from_slice(&selector);
+
+    // case 0:
+    let case0 = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_CASE, 1 + case0.len() as u32));
+    body.extend_from_slice(&case0);
+    // mov o0, vec4(1,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + red.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+    // no break; should fall through
+
+    // case 1:
+    let case1 = imm32_scalar(1);
+    body.push(opcode_token(OPCODE_CASE, 1 + case1.len() as u32));
+    body.extend_from_slice(&case1);
+    // mov o0, vec4(0,1,0,1)
+    let green = imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + green.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&green);
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    body.push(opcode_token(OPCODE_ENDSWITCH, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b0001)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let wgsl = &translated.wgsl;
+    assert!(
+        !wgsl.contains("fallthrough;"),
+        "WGSL should not require an explicit fallthrough statement:\n{wgsl}"
+    );
+
+    let idx_case0 = wgsl.find("case 0i").expect("case 0");
+    let idx_case1 = wgsl.find("case 1i").expect("case 1");
+    assert!(
+        !wgsl[idx_case0..idx_case1].contains("break;"),
+        "expected case 0 to fall through to case 1 (no `break;` between labels):\n{wgsl}"
+    );
+}
+
+#[test]
 fn decodes_and_translates_if_else_endif() {
     let mut body = Vec::<u32>::new();
 

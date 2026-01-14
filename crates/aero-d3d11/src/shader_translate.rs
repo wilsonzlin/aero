@@ -3090,15 +3090,10 @@ fn emit_instructions(
         saw_default: bool,
     }
 
-    #[derive(Debug, Default)]
-    struct CaseFrame {
-        last_was_break: bool,
-    }
-
     #[derive(Debug)]
     enum CfFrame {
         Switch(SwitchFrame),
-        Case(CaseFrame),
+        Case,
     }
 
     let mut blocks: Vec<BlockKind> = Vec::new();
@@ -3143,18 +3138,11 @@ fn emit_instructions(
             .join(", ")
     };
 
-    let close_case_body = |w: &mut WgslWriter,
-                           cf_stack: &mut Vec<CfFrame>,
-                           fallthrough_to_next: bool|
-     -> Result<(), ShaderTranslateError> {
-        let Some(CfFrame::Case(case_frame)) = cf_stack.last() else {
+    let close_case_body =
+        |w: &mut WgslWriter, cf_stack: &mut Vec<CfFrame>| -> Result<(), ShaderTranslateError> {
+        let Some(CfFrame::Case) = cf_stack.last() else {
             return Ok(());
         };
-        let last_was_break = case_frame.last_was_break;
-
-        if fallthrough_to_next && !last_was_break {
-            w.line("fallthrough;");
-        }
 
         // Close the WGSL case block.
         w.dedent();
@@ -3193,39 +3181,37 @@ fn emit_instructions(
 
         let last_label = *pending_labels.last().expect("pending_labels non-empty");
 
-        // If the label set contains a default label, we may need an extra fallthrough stub, since
+        // If the label set contains a default label, we may need an extra empty clause stub, since
         // WGSL can't combine `default` with `case` selectors in a single clause.
         match (has_default, last_label) {
             (false, _) => {
                 let selectors = fmt_case_values(&case_values);
                 w.line(&format!("case {selectors}: {{"));
                 w.indent();
-                cf_stack.push(CfFrame::Case(CaseFrame::default()));
+                cf_stack.push(CfFrame::Case);
             }
             (true, SwitchLabel::Default) => {
                 if !case_values.is_empty() {
                     let selectors = fmt_case_values(&case_values);
                     w.line(&format!("case {selectors}: {{"));
                     w.indent();
-                    w.line("fallthrough;");
                     w.dedent();
                     w.line("}");
                 }
                 w.line("default: {");
                 w.indent();
-                cf_stack.push(CfFrame::Case(CaseFrame::default()));
+                cf_stack.push(CfFrame::Case);
             }
             (true, SwitchLabel::Case(_)) => {
-                // Emit the default fallthrough stub first so it can reach the case body.
+                // Emit the default empty clause first so it can reach the case body.
                 w.line("default: {");
                 w.indent();
-                w.line("fallthrough;");
                 w.dedent();
                 w.line("}");
                 let selectors = fmt_case_values(&case_values);
                 w.line(&format!("case {selectors}: {{"));
                 w.indent();
-                cf_stack.push(CfFrame::Case(CaseFrame::default()));
+                cf_stack.push(CfFrame::Case);
             }
         }
 
@@ -3252,7 +3238,7 @@ fn emit_instructions(
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
             Sm4Inst::Case { value } => {
-                close_case_body(w, &mut cf_stack, true)?;
+                close_case_body(w, &mut cf_stack)?;
 
                 let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
@@ -3264,7 +3250,7 @@ fn emit_instructions(
                 continue;
             }
             Sm4Inst::Default => {
-                close_case_body(w, &mut cf_stack, true)?;
+                close_case_body(w, &mut cf_stack)?;
 
                 let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
@@ -3277,9 +3263,9 @@ fn emit_instructions(
                 continue;
             }
             Sm4Inst::EndSwitch => {
-                // Close any open case body without an implicit fallthrough: reaching the end of a
-                // switch clause breaks out of the switch.
-                close_case_body(w, &mut cf_stack, false)?;
+                // Close any open case body. If the clause falls through naturally (no `break;`),
+                // reaching the end of the final clause still exits the `switch`.
+                close_case_body(w, &mut cf_stack)?;
 
                 let Some(CfFrame::Switch(_)) = cf_stack.last() else {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
@@ -3296,7 +3282,7 @@ fn emit_instructions(
                 // If there are pending labels but no body, emit an empty clause.
                 if pending_labels_nonempty {
                     flush_pending_labels(w, &mut cf_stack, inst_index)?;
-                    close_case_body(w, &mut cf_stack, false)?;
+                    close_case_body(w, &mut cf_stack)?;
                 }
 
                 // WGSL `switch` allows omitting `default`, but we always emit one so that
@@ -3324,11 +3310,6 @@ fn emit_instructions(
             flush_pending_labels(w, &mut cf_stack, inst_index)?;
         }
 
-        // Any regular statement resets the fallthrough detector.
-        if let Some(CfFrame::Case(case_frame)) = cf_stack.last_mut() {
-            case_frame.last_was_break = false;
-        }
-
         let maybe_saturate = |dst: &crate::sm4_ir::DstOperand, expr: String| {
             if dst.saturate {
                 format!("clamp(({expr}), vec4<f32>(0.0), vec4<f32>(1.0))")
@@ -3345,14 +3326,13 @@ fn emit_instructions(
                 cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
             }
             Sm4Inst::Break => {
-                let Some(CfFrame::Case(case_frame)) = cf_stack.last_mut() else {
+                let Some(CfFrame::Case) = cf_stack.last() else {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
                         inst_index,
                         opcode: "break".to_owned(),
                     });
                 };
                 w.line("break;");
-                case_frame.last_was_break = true;
             }
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
@@ -4225,10 +4205,6 @@ fn emit_instructions(
                 // at top-level the translation already emits a stage-appropriate return sequence.
                 if blocks.is_empty() && cf_stack.is_empty() {
                     break;
-                }
-
-                if let Some(CfFrame::Case(case_frame)) = cf_stack.last_mut() {
-                    case_frame.last_was_break = true;
                 }
 
                 match ctx.stage {

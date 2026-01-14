@@ -416,16 +416,16 @@ pub enum DxgiFormatComponentType {
     I32,
     U16,
     I16,
-    /// Unsigned normalized 16-bit integer in memory (maps to float in the shader).
-    Unorm16,
-    /// Signed normalized 16-bit integer in memory (maps to float in the shader).
-    Snorm16,
     U8,
     I8,
     /// Unsigned normalized integer in memory (maps to float in the shader).
     Unorm8,
     /// Signed normalized integer in memory (maps to float in the shader).
     Snorm8,
+    /// Unsigned normalized 16-bit integer in memory (maps to float in the shader).
+    Unorm16,
+    /// Signed normalized 16-bit integer in memory (maps to float in the shader).
+    Snorm16,
     /// Packed `R10G10B10A2_UNORM` (10:10:10:2).
     Unorm10_10_10_2,
 }
