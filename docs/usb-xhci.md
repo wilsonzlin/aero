@@ -371,7 +371,7 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
   - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`,
     `CRCR`, `PORT_COUNT`, `DCBAAP`, and Interrupter 0 regs: `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`)
-    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.2` (slot state is not snapshotted yet).
+    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.3` (slot state is not snapshotted yet).
   - Current limitations: the `XHCI` snapshot does **not** yet capture per-port state, pending event
     TRBs, or slot/endpoint contexts; restores should be treated as “best-effort bring-up” rather
     than a bit-perfect resume of an in-flight xHCI driver.
