@@ -23,6 +23,11 @@ import {
 } from "../ipc/scanout_state";
 import { CURSOR_STATE_GENERATION_BUSY_BIT, CursorStateIndex } from "../ipc/cursor_state";
 
+// These worker-thread integration tests can be sensitive to scheduling jitter in CI/agent
+// sandboxes (especially on newer Node majors). Keep timeouts generous to avoid flakes.
+const WORKER_MESSAGE_TIMEOUT_MS = 20_000;
+const TEST_TIMEOUT_MS = 70_000;
+
 async function waitForWorkerMessage(
   worker: Worker,
   predicate: (msg: unknown) => boolean,
@@ -190,7 +195,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -210,7 +215,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -220,7 +225,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -238,7 +243,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads RGBX scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -293,7 +298,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -313,7 +318,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -323,7 +328,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -341,7 +346,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads BGRA scanout from guest RAM (honors pitch, preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -397,7 +402,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -417,7 +422,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -427,7 +432,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -445,7 +450,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB BGRA scanout from guest RAM (linearizes, preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -502,7 +507,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -522,7 +527,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -532,7 +537,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -545,7 +550,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB X8 scanout formats from guest RAM (linearizes, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -585,7 +590,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -605,7 +610,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       // Case 1: BGRX sRGB (R byte is in the 3rd position).
@@ -630,7 +635,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
             (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
             (msg as { type?: unknown }).type === "screenshot" &&
             (msg as { requestId?: unknown }).requestId === requestId,
-          10_000,
+          WORKER_MESSAGE_TIMEOUT_MS,
         );
         worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
         const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
@@ -660,7 +665,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
             (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
             (msg as { type?: unknown }).type === "screenshot" &&
             (msg as { requestId?: unknown }).requestId === requestId,
-          10_000,
+          WORKER_MESSAGE_TIMEOUT_MS,
         );
         worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
         const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
@@ -671,7 +676,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads BGRX scanout from the shared VRAM aperture when base_paddr points into BAR1", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -728,7 +733,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -748,7 +753,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -758,7 +763,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -773,7 +778,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB BGRX scanout from the shared VRAM aperture (linearizes, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -831,7 +836,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -851,7 +856,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -861,7 +866,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -874,7 +879,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("decodes sRGB BGRA scanout from the shared VRAM aperture (linearizes, preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -932,7 +937,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -952,7 +957,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -962,7 +967,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -975,7 +980,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads BGRX scanout from VRAM when the WorkerInitMessage vramBasePaddr is overridden", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1035,7 +1040,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1055,7 +1060,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1065,7 +1070,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1080,7 +1085,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads BGRX scanout from the shared VRAM aperture even when last-row pitch padding is out of bounds", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1140,7 +1145,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1160,7 +1165,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1170,7 +1175,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1185,7 +1190,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads RGBX scanout from the shared VRAM aperture when base_paddr points into BAR1", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1243,7 +1248,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1263,7 +1268,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1273,7 +1278,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1291,7 +1296,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads RGBA scanout from the shared VRAM aperture when base_paddr points into BAR1 (preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1349,7 +1354,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1369,7 +1374,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1379,7 +1384,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1397,7 +1402,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads BGRA scanout from the shared VRAM aperture when base_paddr points into BAR1 (preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1454,7 +1459,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1474,7 +1479,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1484,7 +1489,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1499,7 +1504,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads BGRA scanout from the shared VRAM aperture with an unaligned base_paddr (byte fallback preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1557,7 +1562,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1577,7 +1582,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1587,7 +1592,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1605,7 +1610,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("returns a stub screenshot for legacy VBE LFB scanout when base_paddr is 0", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1652,7 +1657,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1672,7 +1677,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1682,7 +1687,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1693,7 +1698,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads legacy VBE LFB scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1749,7 +1754,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1769,7 +1774,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1779,7 +1784,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1797,7 +1802,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads legacy VBE LFB scanout from the shared VRAM aperture when base_paddr points into BAR1", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1855,7 +1860,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1875,7 +1880,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1885,7 +1890,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -1903,7 +1908,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("returns a stub screenshot quickly when scanout/cursor seqlock busy bits are stuck", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -1957,7 +1962,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -1977,7 +1982,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -1987,7 +1992,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({
         protocol: GPU_PROTOCOL_NAME,
@@ -2004,5 +2009,5 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 }); 
