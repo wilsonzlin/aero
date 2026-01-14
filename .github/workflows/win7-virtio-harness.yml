@@ -18,6 +18,16 @@ on:
         required: false
         default: "600"
         type: string
+      memory_mb:
+        description: QEMU guest RAM size (MiB)
+        required: false
+        default: "2048"
+        type: string
+      smp:
+        description: QEMU guest vCPU count
+        required: false
+        default: "2"
+        type: string
       http_port:
         description: HTTP port on the runner for the harness file server (guest reaches it as 10.0.2.2:<port>)
         required: false
@@ -274,6 +284,8 @@ jobs:
             echo "  disk_image_path: '${{ inputs.disk_image_path }}'"
             echo "  qemu_system: '${{ inputs.qemu_system }}'"
             echo "  timeout_seconds: '${{ inputs.timeout_seconds }}'"
+            echo "  memory_mb: '${{ inputs.memory_mb }}'"
+            echo "  smp: '${{ inputs.smp }}'"
             echo "  http_port: '${{ inputs.http_port }}'"
             echo "  udp_port: '${{ inputs.udp_port }}'"
             echo "  disable_udp: '${{ inputs.disable_udp }}'"
@@ -320,6 +332,8 @@ jobs:
             disk_image_path="${{ inputs.disk_image_path }}"
             qemu_system="${{ inputs.qemu_system }}"
             timeout_seconds="${{ inputs.timeout_seconds }}"
+            memory_mb="${{ inputs.memory_mb }}"
+            smp="${{ inputs.smp }}"
             http_port="${{ inputs.http_port }}"
             udp_port="${{ inputs.udp_port }}"
 
@@ -346,6 +360,22 @@ jobs:
 
             if [[ -z "${timeout_seconds}" || ! "${timeout_seconds}" =~ ^[0-9]+$ ]]; then
               echo "ERROR: workflow input 'timeout_seconds' must be an integer number of seconds, got: '${timeout_seconds}'"
+              exit 1
+            fi
+            if [[ -z "${memory_mb}" || ! "${memory_mb}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: workflow input 'memory_mb' must be an integer (MiB), got: '${memory_mb}'"
+              exit 1
+            fi
+            if (( memory_mb <= 0 )); then
+              echo "ERROR: workflow input 'memory_mb' must be > 0, got: '${memory_mb}'"
+              exit 1
+            fi
+            if [[ -z "${smp}" || ! "${smp}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: workflow input 'smp' must be an integer vCPU count, got: '${smp}'"
+              exit 1
+            fi
+            if (( smp <= 0 )); then
+              echo "ERROR: workflow input 'smp' must be > 0, got: '${smp}'"
               exit 1
             fi
             if [[ -z "${http_port}" || ! "${http_port}" =~ ^[0-9]+$ ]]; then
@@ -503,6 +533,8 @@ jobs:
               python3 -u drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py
               --qemu-system "${qemu_system}"
               --disk-image "${disk_image_path}"
+              --memory-mb "${memory_mb}"
+              --smp "${smp}"
               --serial-log "${serial_log}"
               --http-log "${http_log}"
               --http-port "${http_port}"

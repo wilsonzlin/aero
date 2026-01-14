@@ -1164,6 +1164,9 @@ On the self-hosted runner you need:
 > `New-AeroWin7TestImage.ps1 -UdpPort <port>`).
 > To run against older guest selftest binaries that do not implement the UDP test marker, set `disable_udp=true`.
 
+By default the workflow runs QEMU with `memory_mb=2048` and `smp=2`. Override these via the workflow inputs if your
+runner has different resource constraints.
+
 To enable the optional host-side QEMU PCI ID preflight (`query-pci` via QMP), set the workflow input
 `qemu_preflight_pci=true`. This helps catch missing/ignored `x-pci-revision=0x01` (REV_01) configuration early.
 
