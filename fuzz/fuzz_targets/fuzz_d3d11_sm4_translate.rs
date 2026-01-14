@@ -97,6 +97,60 @@ fn build_signature_chunk_v0(params: &[SigParam<'_>]) -> Vec<u8> {
     dxbc_test_utils::build_signature_chunk_v0(&entries)
 }
 
+fn build_signature_chunk_v1(params: &[SigParam<'_>]) -> Vec<u8> {
+    // v1 signature layout:
+    // - header: param_count (u32), param_offset (u32)
+    // - entries: 32 bytes each
+    // - string table: null-terminated semantic names
+    const HEADER_LEN: usize = 8;
+    const ENTRY_LEN: usize = 32;
+
+    let param_count = params.len().min(MAX_SYNTH_SIGNATURE_PARAMS);
+    let table_offset = HEADER_LEN;
+    let table_len = ENTRY_LEN * param_count;
+    let mut out = Vec::with_capacity(HEADER_LEN + table_len + 64);
+
+    out.extend_from_slice(&(param_count as u32).to_le_bytes());
+    out.extend_from_slice(&(table_offset as u32).to_le_bytes());
+
+    // Reserve entry table space.
+    out.resize(HEADER_LEN + table_len, 0);
+
+    // Emit semantic names after the entry table.
+    let mut string_base = HEADER_LEN + table_len;
+    for (idx, p) in params.iter().take(param_count).enumerate() {
+        let entry_off = HEADER_LEN + idx * ENTRY_LEN;
+        let name_off = string_base as u32;
+
+        // Semantic name bytes must be valid UTF-8 for the signature parser.
+        let name = if core::str::from_utf8(p.semantic_name).is_ok() {
+            p.semantic_name
+        } else {
+            b"BADSEM"
+        };
+
+        // entry[0..4] = semantic_name_offset
+        out[entry_off..entry_off + 4].copy_from_slice(&name_off.to_le_bytes());
+        out[entry_off + 4..entry_off + 8].copy_from_slice(&p.semantic_index.to_le_bytes());
+        out[entry_off + 8..entry_off + 12].copy_from_slice(&p.system_value_type.to_le_bytes());
+        out[entry_off + 12..entry_off + 16].copy_from_slice(&p.component_type.to_le_bytes());
+        out[entry_off + 16..entry_off + 20].copy_from_slice(&p.register.to_le_bytes());
+
+        // mask/rw bytes + reserved bytes.
+        out[entry_off + 20] = p.mask;
+        out[entry_off + 21] = p.read_write_mask;
+        // bytes 22..23 left as 0.
+        out[entry_off + 24..entry_off + 28].copy_from_slice(&(p.stream as u32).to_le_bytes());
+        // min_precision at 28..32 left as 0.
+
+        out.extend_from_slice(name);
+        out.push(0);
+        string_base = out.len();
+    }
+
+    out
+}
+
 #[derive(Clone)]
 struct DxbcChunkOwned {
     fourcc: [u8; 4],
@@ -517,6 +571,7 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
     let cfg = u.arbitrary::<u8>().unwrap_or(0);
     let is_vertex = (cfg & 1) == 0;
     let major = if (cfg & 2) == 0 { 4u8 } else { 5u8 };
+    let sg1_mode = (cfg >> 2) & 3;
 
     let (tokens, max_input_reg_count) = gen_sm4_tokens(&mut u, is_vertex, major);
     let shader_bytes = tokens_to_bytes(&tokens);
@@ -573,20 +628,61 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
         FOURCC_SHDR.0
     };
 
-    let chunks = vec![
-        DxbcChunkOwned {
-            fourcc: *b"ISGN",
-            data: build_signature_chunk_v0(&sig_in),
-        },
-        DxbcChunkOwned {
-            fourcc: *b"OSGN",
-            data: build_signature_chunk_v0(&sig_out),
-        },
-        DxbcChunkOwned {
-            fourcc: shader_fourcc,
-            data: shader_bytes,
-        },
-    ];
+    let mut chunks = Vec::new();
+
+    // Always include v0 `*SGN` chunks so we have a fallback path when `*SG1` is missing or malformed.
+    chunks.push(DxbcChunkOwned {
+        fourcc: *b"ISGN",
+        data: build_signature_chunk_v0(&sig_in),
+    });
+    chunks.push(DxbcChunkOwned {
+        fourcc: *b"OSGN",
+        data: build_signature_chunk_v0(&sig_out),
+    });
+
+    // Also include optional `*SG1` variants to exercise:
+    // - preferred `*SG1` parsing
+    // - `*SG1` entry-size fallback (when we intentionally store a v0 layout under `*SG1`)
+    // - `*SG1` -> `*SGN` fallback when the preferred ID exists but is malformed.
+    match sg1_mode {
+        0 => {}
+        1 => {
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"ISG1",
+                data: build_signature_chunk_v0(&sig_in),
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"OSG1",
+                data: build_signature_chunk_v0(&sig_out),
+            });
+        }
+        2 => {
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"ISG1",
+                data: build_signature_chunk_v1(&sig_in),
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"OSG1",
+                data: build_signature_chunk_v1(&sig_out),
+            });
+        }
+        _ => {
+            // Truncated chunk headers (fail fast before any allocations).
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"ISG1",
+                data: vec![0u8; 4],
+            });
+            chunks.push(DxbcChunkOwned {
+                fourcc: *b"OSG1",
+                data: vec![0u8; 4],
+            });
+        }
+    }
+
+    chunks.push(DxbcChunkOwned {
+        fourcc: shader_fourcc,
+        data: shader_bytes,
+    });
 
     build_dxbc_container(chunks)
 }
