@@ -26613,9 +26613,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnRotateResourceIdentities, device_rotate_resource_identities);
-  pDeviceFuncs->pfnPresent = device_present;
-  pDeviceFuncs->pfnPresentEx = device_present_ex;
-  pDeviceFuncs->pfnFlush = device_flush;
+  AEROGPU_SET_D3D9DDI_FN(pfnPresent, device_present);
+  AEROGPU_SET_D3D9DDI_FN(pfnPresentEx, device_present_ex);
+  AEROGPU_SET_D3D9DDI_FN(pfnFlush, device_flush);
   AEROGPU_SET_D3D9DDI_FN(pfnSetMaximumFrameLatency, device_set_maximum_frame_latency);
   AEROGPU_SET_D3D9DDI_FN(pfnGetMaximumFrameLatency, device_get_maximum_frame_latency);
   AEROGPU_SET_D3D9DDI_FN(pfnGetPresentStats, device_get_present_stats);
