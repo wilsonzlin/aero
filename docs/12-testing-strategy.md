@@ -359,39 +359,56 @@ These tests are implemented against the minimal deterministic SMP/APIC model in:
 ### Boot Tests
 
 ```rust
+use aero_machine::{BootDevice, Machine, MachineConfig, RunExit};
+
 #[test]
 fn test_boot_sector_fixture_writes_vga_text() {
-    let mut vm = VirtualMachine::new(Config {
-        memory: 16 * MB,
-        boot_device: BootDevice::HardDisk,
-    });
-
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 16 * 1024 * 1024,
+        boot_device: BootDevice::Hdd,
+        ..Default::default()
+    })
+    .unwrap();
+ 
     // CI-safe: generated from source via `cargo xtask fixtures`.
-    vm.load_disk("tests/fixtures/boot/boot_vga_serial_8s.img");
-
-    vm.run_for(Duration::from_millis(50));
-
+    m.set_disk_image(std::fs::read("tests/fixtures/boot/boot_vga_serial_8s.img").unwrap())
+        .unwrap();
+    m.reset();
+ 
+    // Run a bounded instruction budget (Aero does not model real wall-clock time here).
+    for _ in 0..100 {
+        match m.run_slice(10_000) {
+            RunExit::Completed { .. } | RunExit::Halted { .. } => {}
+            other => panic!("unexpected exit: {other:?}"),
+        }
+    }
+ 
     // VGA text mode memory starts at 0xB8000.
-    let vga = vm.read_physical(0xB8000, 10);
+    let vga = m.read_physical_bytes(0xB8000, 10);
     assert_eq!(vga, tests::fixtures::boot::boot_vga_serial::EXPECTED_VGA_TEXT_BYTES);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_windows_7_boot() {
-    let mut vm = VirtualMachine::new(Config {
-        memory: 2 * GB,
-        boot_device: BootDevice::HardDisk,
-    });
-    
+    let mut m = Machine::new(MachineConfig::win7_storage_defaults(2 * 1024 * 1024 * 1024)).unwrap();
+     
     // Aero does not ship Windows images. This test is opt-in and requires a
     // locally-provided disk image path.
     let win7_image = std::env::var("AERO_WINDOWS7_IMAGE")
         .expect("set AERO_WINDOWS7_IMAGE to a locally-provided Windows 7 disk image");
-    vm.load_disk(&win7_image).await;
-    
-    // Boot to login screen
-    let screenshot = vm.run_until_stable_frame(Duration::from_secs(120)).await;
-    
+    let bytes = tokio::fs::read(&win7_image).await.unwrap();
+    m.set_disk_image(bytes).unwrap();
+    m.reset();
+     
+    // Boot (bounded instruction budget) and periodically present the display so the host can
+    // capture frames for visual regression checks.
+    for _ in 0..1000 {
+        let _ = m.run_slice(100_000);
+        m.display_present();
+        // In a real test you would detect a stable framebuffer or some guest-visible milestone.
+    }
+    let screenshot = m.display_framebuffer().to_vec();
+     
     // Visual regression test
     assert!(image_matches(screenshot, "expected/win7_login.png", 0.95));
 }
