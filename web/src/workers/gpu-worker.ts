@@ -656,7 +656,7 @@ const tryReadHwCursorImageRgba8 = (
   const base = Number(basePaddr);
   if (!Number.isFinite(base) || base < 0) return null;
 
-  const ramBytes = layout.guest_size >>> 0;
+  const ramBytes = guest.byteLength;
   try {
     if (!guestRangeInBoundsRaw(ramBytes, base, requiredBytes)) return null;
   } catch {
