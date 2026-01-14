@@ -4,6 +4,13 @@
 // - Header: Int32Array (little-endian) with atomic-friendly fields.
 // - Pixel data: RGBA8888 bytes with optional stride padding per row.
 //
+// Color space note:
+// - The framebuffer bytes are treated as **linear** RGBA8 by the GPU runtime and the
+//   canonical presenters.
+// - Canvas2D `putImageData` expects sRGB-encoded bytes, so Canvas2D presenters encode
+//   linear→sRGB for display (and do so on a copy when the source bytes are used for
+//   deterministic hashing).
+//
 // The header is intentionally small and stable; extend by bumping VERSION and
 // appending fields (never reorder existing ones).
 

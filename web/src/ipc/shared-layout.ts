@@ -5,6 +5,10 @@
 //
 // The layout is intentionally "boring": a small atomic header followed by two
 // framebuffer slots (double buffering) and optional per-slot dirty-tile bitsets.
+//
+// Color space note:
+// - Framebuffer bytes are treated as **linear RGBA8** by the GPU worker runtime.
+// - Presenter backends perform any required linear→sRGB encoding during the final blit.
 
 // Stored in an Int32Array header (Atomics requires a signed typed array), so
 // the u32 literal is converted via ToInt32 and becomes negative in JS.
