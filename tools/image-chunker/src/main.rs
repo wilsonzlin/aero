@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use aero_storage::{DiskFormat, DiskImage, FileBackend, VirtualDisk, SECTOR_SIZE};
 use anyhow::{anyhow, bail, Context, Result};
@@ -15,6 +16,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -160,19 +162,27 @@ struct PublishArgs {
 }
 
 #[derive(Debug, Parser)]
-#[command(group(
-    clap::ArgGroup::new("location")
-        .required(true)
-        .args(["prefix", "manifest_key"])
-        .multiple(false)
-))]
 struct VerifyArgs {
-    /// Destination bucket name.
-    #[arg(long)]
-    bucket: String,
+    /// URL to a `manifest.json` (HTTP GET).
+    #[arg(long, conflicts_with_all = ["manifest_file", "bucket"])]
+    manifest_url: Option<String>,
+
+    /// Local path to a `manifest.json`.
+    #[arg(long, conflicts_with_all = ["manifest_url", "bucket"])]
+    manifest_file: Option<PathBuf>,
+
+    /// Extra HTTP headers to include when fetching the manifest and chunk objects.
+    ///
+    /// Repeatable; format: `Header-Name: value`
+    #[arg(long, value_name = "HEADER")]
+    header: Vec<String>,
+
+    /// Destination bucket name (S3 mode).
+    #[arg(long, conflicts_with_all = ["manifest_url", "manifest_file"])]
+    bucket: Option<String>,
 
     /// Prefix of a versioned image (e.g. `images/<imageId>/<version>/`) or an image root
-    /// (e.g. `images/<imageId>/`) when combined with `--image-version`.
+    /// (e.g. `images/<imageId>/`) when combined with `--image-version` (S3 mode).
     ///
     /// The tool will fetch `<prefix>/manifest.json` (versioned prefix) or
     /// `<prefix>/<imageVersion>/manifest.json` (image root + `--image-version`).
@@ -180,13 +190,11 @@ struct VerifyArgs {
     /// If `<prefix>/manifest.json` is not found and `--image-version` is not provided, the tool
     /// will attempt to resolve `latest.json` under the given prefix and verify the referenced
     /// versioned manifest instead.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "manifest_key")]
     prefix: Option<String>,
 
-    /// Explicit object key of `manifest.json` to verify.
-    ///
-    /// Mutually exclusive with `--prefix`.
-    #[arg(long)]
+    /// Explicit object key of `manifest.json` to verify (S3 mode).
+    #[arg(long, conflicts_with = "prefix")]
     manifest_key: Option<String>,
 
     /// Expected image identifier (validated against the manifest).
@@ -197,15 +205,15 @@ struct VerifyArgs {
     #[arg(long)]
     image_version: Option<String>,
 
-    /// Custom S3 endpoint URL (e.g. http://localhost:9000 for MinIO).
+    /// Custom S3 endpoint URL (e.g. http://localhost:9000 for MinIO) (S3 mode).
     #[arg(long)]
     endpoint: Option<String>,
 
-    /// Use path-style addressing (required for some S3-compatible endpoints).
+    /// Use path-style addressing (required for some S3-compatible endpoints) (S3 mode).
     #[arg(long, default_value_t = false)]
     force_path_style: bool,
 
-    /// AWS region.
+    /// AWS region (S3 mode).
     #[arg(long, default_value = "us-east-1")]
     region: String,
 
@@ -588,6 +596,388 @@ async fn publish(args: PublishArgs) -> Result<()> {
 async fn verify(args: VerifyArgs) -> Result<()> {
     validate_verify_args(&args)?;
 
+    if args.manifest_url.is_some() || args.manifest_file.is_some() {
+        verify_http_or_file(&args).await
+    } else {
+        verify_s3(&args).await
+    }
+}
+
+#[derive(Clone, Debug)]
+enum VerifyHttpSource {
+    File { base_dir: PathBuf },
+    Url { manifest_url: reqwest::Url, client: reqwest::Client },
+}
+
+async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
+    let started_at = Instant::now();
+
+    let (manifest_bytes, source) = if let Some(url) = &args.manifest_url {
+        let manifest_url: reqwest::Url = url.parse().context("parse --manifest-url")?;
+        let client = build_reqwest_client(&args.header)?;
+        let bytes = download_http_bytes(&client, manifest_url.clone())
+            .await
+            .context("download manifest.json")?;
+        (bytes, VerifyHttpSource::Url { manifest_url, client })
+    } else if let Some(path) = &args.manifest_file {
+        let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let bytes = tokio::fs::read(path)
+            .await
+            .with_context(|| format!("read {}", path.display()))?;
+        (bytes, VerifyHttpSource::File { base_dir })
+    } else {
+        bail!("either --manifest-url or --manifest-file is required");
+    };
+
+    let manifest: ManifestV1 =
+        serde_json::from_slice(&manifest_bytes).context("parse manifest.json")?;
+    validate_manifest_v1(&manifest, args.max_chunks)?;
+    validate_manifest_identity(&manifest, args)?;
+
+    eprintln!(
+        "Verifying imageId={} version={} chunkSize={} chunkCount={} totalSize={}",
+        manifest.image_id,
+        manifest.version,
+        manifest.chunk_size,
+        manifest.chunk_count,
+        manifest.total_size
+    );
+
+    let manifest = Arc::new(manifest);
+    let chunk_count = manifest.chunk_count;
+
+    let verify_all = match args.chunk_sample {
+        None => true,
+        Some(n) => n.saturating_add(1) >= chunk_count,
+    };
+    let indices: Option<Vec<u64>> = if verify_all {
+        None
+    } else {
+        let mut rng = match args.chunk_sample_seed {
+            Some(seed) => fastrand::Rng::with_seed(seed),
+            None => fastrand::Rng::new(),
+        };
+        Some(select_sampled_chunk_indices(
+            chunk_count,
+            args.chunk_sample.unwrap(),
+            &mut rng,
+        )?)
+    };
+    let total_chunks_to_verify = indices
+        .as_ref()
+        .map(|v| v.len() as u64)
+        .unwrap_or(chunk_count);
+
+    let verified_chunks = Arc::new(AtomicU64::new(0));
+    let verified_bytes = Arc::new(AtomicU64::new(0));
+    let cancelled = Arc::new(AtomicBool::new(false));
+
+    let (work_tx, work_rx) = async_channel::bounded::<u64>(args.concurrency * 2);
+    let (err_tx, mut err_rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Error>();
+
+    let mut workers = Vec::with_capacity(args.concurrency);
+    for _ in 0..args.concurrency {
+        let work_rx = work_rx.clone();
+        let err_tx = err_tx.clone();
+        let source = source.clone();
+        let manifest = Arc::clone(&manifest);
+        let verified_chunks = Arc::clone(&verified_chunks);
+        let verified_bytes = Arc::clone(&verified_bytes);
+        let cancelled = Arc::clone(&cancelled);
+        workers.push(tokio::spawn(async move {
+            while let Ok(index) = work_rx.recv().await {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                match verify_http_chunk(index, &manifest, &source).await {
+                    Ok(bytes) => {
+                        verified_chunks.fetch_add(1, Ordering::SeqCst);
+                        verified_bytes.fetch_add(bytes, Ordering::SeqCst);
+                    }
+                    Err(err) => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        let _ = err_tx.send(err);
+                        break;
+                    }
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        }));
+    }
+    drop(err_tx);
+
+    let send_jobs = async {
+        if let Some(indices) = indices {
+            for index in indices {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::select! {
+                    res = work_tx.send(index) => {
+                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+                    }
+                    Some(err) = err_rx.recv() => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        return Err(err);
+                    }
+                }
+            }
+        } else {
+            for index in 0..chunk_count {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::select! {
+                    res = work_tx.send(index) => {
+                        res.map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+                    }
+                    Some(err) = err_rx.recv() => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        return Err(err);
+                    }
+                }
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let send_result = send_jobs.await;
+    drop(work_tx);
+
+    if let Err(err) = send_result {
+        for handle in &workers {
+            handle.abort();
+        }
+        for handle in workers {
+            let _ = handle.await;
+        }
+        return Err(err);
+    }
+
+    if let Some(err) = err_rx.recv().await {
+        for handle in &workers {
+            handle.abort();
+        }
+        for handle in workers {
+            let _ = handle.await;
+        }
+        return Err(err);
+    }
+
+    for handle in workers {
+        handle
+            .await
+            .map_err(|err| anyhow!("verify worker panicked: {err}"))??;
+    }
+
+    let elapsed = started_at.elapsed();
+    let done = verified_chunks.load(Ordering::SeqCst);
+    let bytes = verified_bytes.load(Ordering::SeqCst);
+    println!(
+        "Verified {done}/{total_chunks_to_verify} chunks ({bytes} bytes) in {elapsed:.2?}"
+    );
+    Ok(())
+}
+
+fn validate_manifest_identity(manifest: &ManifestV1, args: &VerifyArgs) -> Result<()> {
+    if let Some(expected) = &args.image_id {
+        if manifest.image_id != *expected {
+            bail!(
+                "manifest imageId mismatch: expected '{expected}', got '{}'",
+                manifest.image_id
+            );
+        }
+    }
+    if let Some(expected) = &args.image_version {
+        if manifest.version != *expected {
+            bail!(
+                "manifest version mismatch: expected '{expected}', got '{}'",
+                manifest.version
+            );
+        }
+    }
+    Ok(())
+}
+
+fn build_reqwest_client(headers: &[String]) -> Result<reqwest::Client> {
+    let mut header_map = HeaderMap::new();
+    for raw in headers {
+        let (name, value) = parse_header(raw)?;
+        header_map.insert(name, value);
+    }
+    reqwest::Client::builder()
+        .default_headers(header_map)
+        .build()
+        .context("build http client")
+}
+
+fn parse_header(raw: &str) -> Result<(HeaderName, HeaderValue)> {
+    let (name, value) = raw
+        .split_once(':')
+        .ok_or_else(|| anyhow!("invalid header {raw:?} (expected 'Header-Name: value')"))?;
+    let name = HeaderName::from_bytes(name.trim().as_bytes())
+        .with_context(|| format!("invalid header name in {raw:?}"))?;
+    let value = HeaderValue::from_str(value.trim())
+        .with_context(|| format!("invalid header value in {raw:?}"))?;
+    Ok((name, value))
+}
+
+async fn download_http_bytes(client: &reqwest::Client, url: reqwest::Url) -> Result<Vec<u8>> {
+    let resp = client
+        .get(url.clone())
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("GET {url} failed with HTTP {status}");
+    }
+    resp.bytes()
+        .await
+        .with_context(|| format!("read body for GET {url}"))
+        .map(|b| b.to_vec())
+}
+
+async fn verify_http_chunk(
+    index: u64,
+    manifest: &ManifestV1,
+    source: &VerifyHttpSource,
+) -> Result<u64> {
+    let expected_size = expected_chunk_size(manifest, index)?;
+    let expected_sha256 = expected_chunk_sha256(manifest, index)?;
+
+    let chunk_index_width: usize = manifest.chunk_index_width.try_into().map_err(|_| {
+        anyhow!(
+            "manifest chunkIndexWidth {} does not fit into usize",
+            manifest.chunk_index_width
+        )
+    })?;
+    let chunk_key = chunk_object_key_with_width(index, chunk_index_width)?;
+
+    match source {
+        VerifyHttpSource::File { base_dir } => {
+            let path = base_dir.join(&chunk_key);
+            verify_chunk_file(index, &path, expected_size, expected_sha256).await
+        }
+        VerifyHttpSource::Url {
+            manifest_url,
+            client,
+        } => {
+            let url = manifest_url
+                .join(&chunk_key)
+                .with_context(|| format!("resolve chunk url {chunk_key:?} relative to {manifest_url}"))?;
+            verify_chunk_http(index, client, url, expected_size, expected_sha256).await
+        }
+    }
+}
+
+async fn verify_chunk_file(
+    index: u64,
+    path: &Path,
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+) -> Result<u64> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("open chunk {index} at {}", path.display()))?;
+    let mut hasher = expected_sha256.map(|_| Sha256::new());
+    let mut buf = [0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let n = file
+            .read(&mut buf)
+            .await
+            .with_context(|| format!("read chunk {index} at {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        total = total
+            .checked_add(n as u64)
+            .ok_or_else(|| anyhow!("chunk {index} size overflows u64"))?;
+        if let Some(hasher) = &mut hasher {
+            hasher.update(&buf[..n]);
+        }
+    }
+    verify_chunk_integrity(
+        index,
+        &format!("file://{}", path.display()),
+        total,
+        expected_size,
+        hasher,
+        expected_sha256,
+    )?;
+    Ok(total)
+}
+
+async fn verify_chunk_http(
+    index: u64,
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+) -> Result<u64> {
+    let mut resp = client
+        .get(url.clone())
+        .send()
+        .await
+        .with_context(|| format!("GET {url} (chunk {index})"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("GET {url} failed with HTTP {status} (chunk {index})");
+    }
+
+    let mut hasher = expected_sha256.map(|_| Sha256::new());
+    let mut total: u64 = 0;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .with_context(|| format!("read body for GET {url} (chunk {index})"))?
+    {
+        total = total
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| anyhow!("chunk {index} size overflows u64"))?;
+        if let Some(hasher) = &mut hasher {
+            hasher.update(&chunk);
+        }
+    }
+    verify_chunk_integrity(index, &url.to_string(), total, expected_size, hasher, expected_sha256)?;
+    Ok(total)
+}
+
+fn verify_chunk_integrity(
+    index: u64,
+    location: &str,
+    actual_size: u64,
+    expected_size: u64,
+    hasher: Option<Sha256>,
+    expected_sha256: Option<&str>,
+) -> Result<()> {
+    if actual_size != expected_size {
+        bail!(
+            "size mismatch for chunk {index} ({location}): expected {expected_size} bytes, got {actual_size} bytes"
+        );
+    }
+    if let Some(expected) = expected_sha256 {
+        let actual = hex::encode(
+            hasher
+                .ok_or_else(|| anyhow!("internal error: missing hasher for chunk {index}"))?
+                .finalize(),
+        );
+        if !actual.eq_ignore_ascii_case(expected) {
+            bail!(
+                "sha256 mismatch for chunk {index} ({location}): expected {expected}, got {actual}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn verify_s3(args: &VerifyArgs) -> Result<()> {
+    let bucket = args
+        .bucket
+        .as_deref()
+        .ok_or_else(|| anyhow!("--bucket is required for S3 verification"))?;
+
     let s3 = build_s3_client(
         args.endpoint.as_deref(),
         args.force_path_style,
@@ -596,7 +986,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
     .await?;
 
     let mut manifest_key = resolve_verify_manifest_key(&args)?;
-    eprintln!("Downloading s3://{}/{}...", args.bucket, manifest_key);
+    eprintln!("Downloading s3://{}/{}...", bucket, manifest_key);
 
     // If the user provided `--prefix` without `--image-version`, the prefix may refer to either a
     // versioned image prefix (`.../<version>/`) or an image root (`.../<imageId>/`). If
@@ -605,7 +995,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
 
     let manifest: ManifestV1 = match download_json_object_with_retry(
         &s3,
-        &args.bucket,
+        bucket,
         &manifest_key,
         args.retries,
     )
@@ -621,11 +1011,11 @@ async fn verify(args: VerifyArgs) -> Result<()> {
             let latest_key = latest_object_key(&image_root_prefix);
             eprintln!(
                 "Note: manifest not found at s3://{}/{}; trying s3://{}/{}...",
-                args.bucket, manifest_key, args.bucket, latest_key
+                bucket, manifest_key, bucket, latest_key
             );
             let latest = download_json_object_optional_with_retry::<LatestV1>(
                 &s3,
-                &args.bucket,
+                bucket,
                 &latest_key,
                 args.retries,
             )
@@ -633,17 +1023,17 @@ async fn verify(args: VerifyArgs) -> Result<()> {
             .ok_or_else(|| {
                 err.context(format!(
                     "manifest.json was not found at s3://{}/{}. If --prefix is an image root prefix, either pass --image-version, or publish a latest pointer at s3://{}/{}.",
-                    args.bucket, manifest_key, args.bucket, latest_key
+                    bucket, manifest_key, bucket, latest_key
                 ))
             })?;
 
             manifest_key = latest.manifest_key.clone();
             eprintln!(
                 "Downloading s3://{}/{} (from latest.json)...",
-                args.bucket, manifest_key
+                bucket, manifest_key
             );
             let manifest: ManifestV1 =
-                download_json_object_with_retry(&s3, &args.bucket, &manifest_key, args.retries)
+                download_json_object_with_retry(&s3, bucket, &manifest_key, args.retries)
                     .await?;
             latest_from_prefix = Some((image_root_prefix, latest));
             manifest
@@ -714,7 +1104,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
             let latest_key = latest_object_key(&image_root_prefix);
             match download_json_object_optional_with_retry::<LatestV1>(
                 &s3,
-                &args.bucket,
+                bucket,
                 &latest_key,
                 args.retries,
             )
@@ -723,7 +1113,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
                 None => {
                     eprintln!(
                         "Note: s3://{}/{} not found; skipping latest pointer validation.",
-                        args.bucket, latest_key
+                        bucket, latest_key
                     );
                 }
                 Some(latest) => {
@@ -737,7 +1127,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
                     if latest.manifest_key != manifest_key {
                         head_object_with_retry(
                             &s3,
-                            &args.bucket,
+                            bucket,
                             &latest.manifest_key,
                             args.retries,
                         )
@@ -745,7 +1135,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
                         .with_context(|| {
                             format!(
                                 "latest.json points at missing manifest s3://{}/{}",
-                                args.bucket, latest.manifest_key
+                                bucket, latest.manifest_key
                             )
                         })?;
                     }
@@ -756,7 +1146,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
 
     verify_chunks(
         &s3,
-        &args.bucket,
+        bucket,
         &version_prefix,
         Arc::clone(&manifest),
         args.concurrency,
@@ -779,6 +1169,29 @@ fn validate_verify_args(args: &VerifyArgs) -> Result<()> {
     }
     if args.max_chunks > MAX_CHUNKS {
         bail!("--max-chunks cannot exceed {MAX_CHUNKS}");
+    }
+    let is_http_or_file = args.manifest_url.is_some() || args.manifest_file.is_some();
+    if is_http_or_file {
+        if args.bucket.is_some()
+            || args.prefix.is_some()
+            || args.manifest_key.is_some()
+            || args.endpoint.is_some()
+        {
+            bail!("--manifest-url/--manifest-file cannot be combined with S3 options like --bucket/--prefix/--manifest-key/--endpoint");
+        }
+        if !args.header.is_empty() && args.manifest_url.is_none() {
+            bail!("--header can only be used with --manifest-url");
+        }
+    } else {
+        if args.bucket.is_none() {
+            bail!("either --manifest-url/--manifest-file or --bucket is required");
+        }
+        if args.prefix.is_none() && args.manifest_key.is_none() {
+            bail!("--prefix or --manifest-key is required with --bucket");
+        }
+        if !args.header.is_empty() {
+            bail!("--header is only valid with --manifest-url");
+        }
     }
     Ok(())
 }
@@ -2352,5 +2765,138 @@ mod tests {
             err.to_string().contains("--chunk-sample"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn verify_local_manifest_and_chunks_succeeds() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        tokio::fs::create_dir_all(dir.path().join("chunks"))
+            .await
+            .context("create chunks dir")?;
+
+        let chunk_size: u64 = 512;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = b"xyz".to_vec();
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let chunk0_path = dir.path().join(chunk_object_key(0)?);
+        let chunk1_path = dir.path().join(chunk_object_key(1)?);
+        tokio::fs::write(&chunk0_path, &chunk0)
+            .await
+            .with_context(|| format!("write {}", chunk0_path.display()))?;
+        tokio::fs::write(&chunk1_path, &chunk1)
+            .await
+            .with_context(|| format!("write {}", chunk1_path.display()))?;
+
+        let sha256_by_index = vec![
+            Some(sha256_hex(&chunk0)),
+            Some(sha256_hex(&chunk1)),
+        ];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_path = dir.path().join("manifest.json");
+        tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+            .await
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+
+        verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: DEFAULT_RETRIES,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_detects_corrupted_chunk() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        tokio::fs::create_dir_all(dir.path().join("chunks"))
+            .await
+            .context("create chunks dir")?;
+
+        let chunk_size: u64 = 512;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = b"xyz".to_vec();
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let chunk0_path = dir.path().join(chunk_object_key(0)?);
+        let chunk1_path = dir.path().join(chunk_object_key(1)?);
+        tokio::fs::write(&chunk0_path, &chunk0)
+            .await
+            .with_context(|| format!("write {}", chunk0_path.display()))?;
+        tokio::fs::write(&chunk1_path, &chunk1)
+            .await
+            .with_context(|| format!("write {}", chunk1_path.display()))?;
+
+        let sha256_by_index = vec![
+            Some(sha256_hex(&chunk0)),
+            Some(sha256_hex(&chunk1)),
+        ];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_path = dir.path().join("manifest.json");
+        tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+            .await
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+
+        // Flip a byte but keep the same size so only sha256 verification trips.
+        let mut corrupted = chunk0.clone();
+        corrupted[0] ^= 0xff;
+        tokio::fs::write(&chunk0_path, &corrupted)
+            .await
+            .with_context(|| format!("corrupt {}", chunk0_path.display()))?;
+
+        let err = verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: DEFAULT_RETRIES,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("sha256 mismatch") && msg.contains("chunk 0"),
+            "unexpected error message: {msg}"
+        );
+        Ok(())
     }
 }
