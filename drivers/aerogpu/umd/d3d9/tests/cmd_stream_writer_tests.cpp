@@ -13802,7 +13802,7 @@ bool TestSetShaderConstIBEmitsCommands() {
   return TestSetShaderConstIBEmitsCommandsImpl<D3D9DDI_DEVICEFUNCS>();
 }
 
-template <typename DeviceFuncsT>
+template <typename DeviceFuncsT, uint32_t D3dStage, uint32_t ExpectedStage>
 bool TestApplyStateBlockEmitsShaderConstIBImpl() {
   if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
                 !HasPfnSetShaderConstB<DeviceFuncsT>::value) {
@@ -13901,7 +13901,7 @@ bool TestApplyStateBlockEmitsShaderConstIBImpl() {
     const uint32_t int_count = 2;
     const int32_t ints_a[int_count * 4] = {1, 2, 3, 4, 5, 6, 7, 8};
     hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice,
-                                                 kD3d9ShaderStagePs,
+                                                 D3dStage,
                                                  int_start,
                                                  ints_a,
                                                  int_count);
@@ -13914,7 +13914,7 @@ bool TestApplyStateBlockEmitsShaderConstIBImpl() {
     const uint32_t bool_count = 2;
     const BOOL bools_a[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(0)};
     hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice,
-                                                 kD3d9ShaderStagePs,
+                                                 D3dStage,
                                                  bool_start,
                                                  bools_a,
                                                  bool_count);
@@ -13934,7 +13934,7 @@ bool TestApplyStateBlockEmitsShaderConstIBImpl() {
     // Change the constants to different values so ApplyStateBlock must re-upload.
     const int32_t ints_b[int_count * 4] = {-1, -2, -3, -4, -5, -6, -7, -8};
     hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice,
-                                                 kD3d9ShaderStagePs,
+                                                 D3dStage,
                                                  int_start,
                                                  ints_b,
                                                  int_count);
@@ -13944,7 +13944,7 @@ bool TestApplyStateBlockEmitsShaderConstIBImpl() {
 
     const BOOL bools_b[bool_count] = {static_cast<BOOL>(0), static_cast<BOOL>(1)};
     hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice,
-                                                 kD3d9ShaderStagePs,
+                                                 D3dStage,
                                                  bool_start,
                                                  bools_b,
                                                  bool_count);
@@ -13970,7 +13970,7 @@ bool TestApplyStateBlockEmitsShaderConstIBImpl() {
       return false;
     }
     const auto* i_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_i*>(i_loc.hdr);
-    if (!Check(i_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "ApplyStateBlock I stage")) {
+    if (!Check(i_cmd->stage == ExpectedStage, "ApplyStateBlock I stage")) {
       return false;
     }
     if (!Check(i_cmd->start_register == int_start, "ApplyStateBlock I start_register")) {
@@ -13990,7 +13990,7 @@ bool TestApplyStateBlockEmitsShaderConstIBImpl() {
       return false;
     }
     const auto* b_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_b*>(b_loc.hdr);
-    if (!Check(b_cmd->stage == AEROGPU_SHADER_STAGE_PIXEL, "ApplyStateBlock B stage")) {
+    if (!Check(b_cmd->stage == ExpectedStage, "ApplyStateBlock B stage")) {
       return false;
     }
     if (!Check(b_cmd->start_register == bool_start, "ApplyStateBlock B start_register")) {
@@ -14007,7 +14007,17 @@ bool TestApplyStateBlockEmitsShaderConstIBImpl() {
 }
 
 bool TestApplyStateBlockEmitsShaderConstIB() {
-  return TestApplyStateBlockEmitsShaderConstIBImpl<D3D9DDI_DEVICEFUNCS>();
+  return TestApplyStateBlockEmitsShaderConstIBImpl<
+      D3D9DDI_DEVICEFUNCS,
+      kD3d9ShaderStagePs,
+      static_cast<uint32_t>(AEROGPU_SHADER_STAGE_PIXEL)>();
+}
+
+bool TestApplyStateBlockEmitsShaderConstIBVs() {
+  return TestApplyStateBlockEmitsShaderConstIBImpl<
+      D3D9DDI_DEVICEFUNCS,
+      kD3d9ShaderStageVs,
+      static_cast<uint32_t>(AEROGPU_SHADER_STAGE_VERTEX)>();
 }
 
 bool TestDestroyBoundShaderUnbinds() {
@@ -37579,6 +37589,7 @@ int main() {
   RUN_TEST(TestInvalidPayloadArgs);
   RUN_TEST(TestSetShaderConstIBEmitsCommands);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIB);
+  RUN_TEST(TestApplyStateBlockEmitsShaderConstIBVs);
   RUN_TEST(TestDestroyBoundShaderUnbinds);
   RUN_TEST(TestPartialShaderStageBindingVsOnlyBindsFixedfuncPsAndDraws);
   RUN_TEST(TestPartialShaderStageBindingPsOnlyBindsFixedfuncVsAndDraws);
