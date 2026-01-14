@@ -129,3 +129,23 @@ fn xhci_snapshot_load_accepts_time_ms_encoded_under_tag_last_tick_without_tag_ti
         0
     );
 }
+
+#[test]
+fn xhci_snapshot_load_rejects_invalid_time_tick_field_shapes() {
+    // `xhci/snapshot.rs` has shape-based compatibility for several historical layouts, but should
+    // still reject nonsensical encodings instead of silently mis-parsing them.
+    //
+    // In particular, tag 28 is expected to be a u32 when tag 27 is a u64 (canonical mapping), or a
+    // u64 when tag 27 is a u32 (swapped mapping). If both are u64s, the encoding is ambiguous and
+    // must be rejected.
+    let mut w = SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 7));
+    w.field_u64(TAG_TIME_MS, 1);
+    w.field_u64(TAG_LAST_TICK_DMA_DWORD, 2);
+    let bytes = w.finish();
+
+    let mut ctrl = XhciController::new();
+    assert!(
+        ctrl.load_state(&bytes).is_err(),
+        "expected invalid time/tick tag shapes to be rejected"
+    );
+}
