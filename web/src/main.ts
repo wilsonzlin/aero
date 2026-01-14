@@ -6893,7 +6893,13 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         workerCoordinator.start(config, { platformFeatures });
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
-          usbBroker.attachWorkerPort(ioWorker);
+          // WebUSB passthrough currently targets the legacy IO worker USB stack. In vmRuntime=machine,
+          // the IO worker runs in host-only mode (no guest USB controller/device models), so avoid
+          // attaching the broker to it (which would otherwise allocate SharedArrayBuffer rings and
+          // polling timers that can never be used).
+          if ((config.vmRuntime ?? "legacy") !== "machine") {
+            usbBroker.attachWorkerPort(ioWorker);
+          }
           // WebHID passthrough is currently only supported in the legacy runtime.
           // In machine runtime the IO worker is a host-only stub and will ignore passthrough messages.
           if ((config.vmRuntime ?? "legacy") !== "machine") {
@@ -7232,7 +7238,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         usbBroker.detachWorkerPort(attachedIoWorker);
       }
       if (ioWorker) {
-        usbBroker.attachWorkerPort(ioWorker);
+        if (vmRuntime !== "machine") {
+          usbBroker.attachWorkerPort(ioWorker);
+        }
         if (vmRuntime !== "machine") {
           wireIoWorkerForWebHid(ioWorker, webHidManager);
           void webHidManager.resyncAttachedDevices();
