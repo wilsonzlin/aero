@@ -176,13 +176,9 @@ def main() -> int:
                 ),
                 _require(
                     body,
-                    "AeroGpuBuildAndAttachMeta allocBytes sizing",
-                    r"RtlSizeTMult\s*\(\s*[^,]*\bAllocationCount\b[^,]*,\s*sizeof\s*\(\s*aerogpu_legacy_submission_desc_allocation\s*\)\s*,\s*&allocBytes\s*\)",
-                ),
-                _require(
-                    body,
-                    "AeroGpuBuildAndAttachMeta metaSize sizing",
-                    r"RtlSizeTAdd\s*\(\s*FIELD_OFFSET\s*\(\s*AEROGPU_SUBMISSION_META\s*,\s*Allocations\s*\)\s*,\s*allocBytes\s*,\s*&metaSize\s*\)",
+                    "AeroGpuBuildAndAttachMeta checked sizing",
+                    r"RtlSizeTMult\s*\(\s*\(\s*SIZE_T\s*\)\s*AllocationCount\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<alloc_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
+                    r"RtlSizeTAdd\s*\(\s*(?:FIELD_OFFSET|offsetof)\s*\(\s*AEROGPU_SUBMISSION_META\s*,\s*Allocations\s*\)\s*,\s*(?P=alloc_var)\s*,\s*&(?P<meta_var>[A-Za-z0-9_]+)\s*\)",
                 ),
             ]
             if e
@@ -203,13 +199,9 @@ def main() -> int:
                 ),
                 _require(
                     body,
-                    "AeroGpuDdiSubmitCommand allocBytes sizing",
-                    r"RtlSizeTMult\s*\(\s*[^,]*\ballocCount\b[^,]*,\s*sizeof\s*\(\s*aerogpu_legacy_submission_desc_allocation\s*\)\s*,\s*&allocBytes\s*\)",
-                ),
-                _require(
-                    body,
-                    "AeroGpuDdiSubmitCommand descSize sizing",
-                    r"RtlSizeTAdd\s*\(\s*[^,]*\baerogpu_legacy_submission_desc_header\b[^,]*,\s*allocBytes\s*,\s*&descSize\s*\)",
+                    "AeroGpuDdiSubmitCommand checked sizing",
+                    r"RtlSizeTMult\s*\(\s*\(\s*SIZE_T\s*\)\s*allocCount\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<alloc_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
+                    r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:aerogpu_legacy_submission_desc_header|struct\s+aerogpu_legacy_submission_desc_header)\b[^,]*,\s*(?P=alloc_var)\s*,\s*&descSize\s*\)",
                 ),
             ]
             if e
@@ -230,13 +222,9 @@ def main() -> int:
                 ),
                 _require(
                     body,
-                    "AeroGpuBuildAllocTable entriesBytes sizing",
-                    r"RtlSizeTMult\s*\(\s*[^,]*\bentryCount\b[^,]*,\s*sizeof\s*\(\s*struct\s+aerogpu_alloc_entry\s*\)\s*,\s*&entriesBytes\s*\)",
-                ),
-                _require(
-                    body,
-                    "AeroGpuBuildAllocTable tableSizeBytes sizing",
-                    r"RtlSizeTAdd\s*\(\s*[^,]*\bstruct\s+aerogpu_alloc_table_header\b[^,]*,\s*entriesBytes\s*,\s*&tableSizeBytes\s*\)",
+                    "AeroGpuBuildAllocTable checked sizing",
+                    r"RtlSizeTMult\s*\(\s*\(\s*SIZE_T\s*\)\s*entryCount\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<entries_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
+                    r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:struct\s+)?aerogpu_alloc_table_header\b[^,]*,\s*(?P=entries_var)\s*,\s*&(?P<table_var>[A-Za-z0-9_]+)\s*\)",
                 ),
             ]
             if e
@@ -253,17 +241,13 @@ def main() -> int:
                 _require(
                     body,
                     "AeroGpuAllocTableScratchAllocBlock tmpBytes sizing",
-                    r"RtlSizeTMult\s*\(\s*[^,]*\bTmpEntriesCap\b[^,]*,\s*sizeof\s*\(\s*struct\s+aerogpu_alloc_entry\s*\)\s*,\s*&tmpBytes\s*\)",
+                    r"RtlSizeTMult\s*\(\s*\(\s*SIZE_T\s*\)\s*TmpEntriesCap\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<tmp_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
+                    r"RtlSizeTAdd\s*\(\s*off\s*,\s*(?P=tmp_var)\s*,\s*&off\s*\)",
                 ),
                 _require(
                     body,
                     "AeroGpuAllocTableScratchAllocBlock hash/meta sizing",
                     r"RtlSizeTMult\s*\(\s*[^,]*\bHashCap\b[^,]*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&[A-Za-z0-9_]*Bytes\s*\)",
-                ),
-                _require(
-                    body,
-                    "AeroGpuAllocTableScratchAllocBlock offset accumulation",
-                    r"RtlSizeTAdd\s*\(\s*off\s*,\s*tmpBytes\s*,\s*&off\s*\)",
                 ),
             ]
             if e
