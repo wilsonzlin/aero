@@ -66,7 +66,24 @@ fn aerogpu_cmd_emulation_indirect_smoke() {
         const PS_DXBC: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
         const ILAY: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 
+        // Triangle-list adjacency primitives consume 6 vertices per triangle (3 main vertices + 3
+        // adjacent vertices). The placeholder emulation prepass does not currently read the guest
+        // vertex buffer, but keep the draw parameters well-formed so this stays valid as the
+        // emulation path matures.
         let vertices = [
+            Vertex {
+                pos: [-1.0, -1.0, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [-1.0, 3.0, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+            },
+            Vertex {
+                pos: [3.0, -1.0, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+            },
+            // Adjacent vertices (arbitrary for this smoke test).
             Vertex {
                 pos: [-1.0, -1.0, 0.0],
                 color: [0.0, 1.0, 0.0, 1.0],
@@ -237,7 +254,7 @@ fn aerogpu_cmd_emulation_indirect_smoke() {
         // Second draw: should go through compute-prepass + indirect draw and output a *red*
         // fullscreen triangle, overriding the green one.
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::Draw as u32);
-        stream.extend_from_slice(&3u32.to_le_bytes()); // vertex_count
+        stream.extend_from_slice(&6u32.to_le_bytes()); // vertex_count (1x triangle-list-adj primitive)
         stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
         stream.extend_from_slice(&0u32.to_le_bytes()); // first_vertex
         stream.extend_from_slice(&0u32.to_le_bytes()); // first_instance

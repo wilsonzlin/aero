@@ -78,8 +78,9 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
         writer.draw(3, 1, 0, 0);
 
         let mut stream = writer.finish();
-        // Patch to D3D11 `D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST` (33).
-        patch_first_set_primitive_topology(&mut stream, 33);
+        // Patch to D3D11 `D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST` (35) so the
+        // primitive count remains 1 for a 3-vertex draw.
+        patch_first_set_primitive_topology(&mut stream, 35);
 
         let mut guest_mem = VecGuestMemory::new(0);
         if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {

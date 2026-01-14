@@ -13354,7 +13354,7 @@ mod tests {
     }
 
     #[test]
-    fn patchlist_topology_is_accepted_but_draw_requires_emulation() {
+    fn patchlist_topology_is_accepted_and_draw_runs_through_emulation() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
@@ -13364,11 +13364,25 @@ mod tests {
                 }
             };
 
-            // Build a minimal stream that attempts to draw with a D3D11 patchlist topology.
-            //
-            // The current executor has no tessellation emulation path, but it must still accept the
-            // `SET_PRIMITIVE_TOPOLOGY` value and defer the error to draw time.
+            if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
+                skip_or_panic(
+                    module_path!(),
+                    "backend lacks compute/indirect execution required for GS/HS/DS emulation",
+                );
+                return;
+            }
+
+            // Build a minimal stream that draws using a D3D11 patchlist topology. This should
+            // route through the compute-prepass + indirect draw path.
             const RT: u32 = 1;
+            const VS: u32 = 2;
+            const PS: u32 = 3;
+
+            const DXBC_VS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            const DXBC_PS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
                 RT,
@@ -13383,40 +13397,25 @@ mod tests {
                 0,
             );
             writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 1.0, 1.0, 0.0, 1.0);
+            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.bind_shaders(VS, PS, 0);
             writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
             writer.draw(3, 1, 0, 0);
             let stream = writer.finish();
 
             let mut guest_mem = VecGuestMemory::new(0);
-            let err = exec
-                .execute_cmd_stream(&stream, None, &mut guest_mem)
-                .expect_err("patchlist draw should error until tessellation emulation is implemented");
-            let err_str = err.to_string();
-            if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
-                assert!(
-                    err_str.contains(
-                        "GS/HS/DS emulation requires compute shaders and indirect execution; missing"
-                    ),
-                    "unexpected error: {err:#}"
-                );
-                if !exec.caps.supports_compute {
-                    assert!(
-                        err_str.contains("COMPUTE_SHADERS"),
-                        "unexpected error: {err:#}"
-                    );
-                }
-                if !exec.caps.supports_indirect_execution {
-                    assert!(
-                        err_str.contains("INDIRECT_EXECUTION"),
-                        "unexpected error: {err:#}"
-                    );
-                }
-            } else {
-                assert!(
-                    err_str.contains("patchlist topology requires tessellation emulation"),
-                    "unexpected error: {err:#}"
-                );
-            }
+            exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect("patchlist draw should succeed through emulation path");
+            exec.poll_wait();
+
+            let pixels = exec
+                .read_texture_rgba8(RT)
+                .await
+                .expect("readback should succeed");
+            assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
 
             assert_eq!(
                 exec.state.primitive_topology,
@@ -13528,7 +13527,7 @@ mod tests {
     }
 
     #[test]
-    fn adjacency_topology_is_accepted_but_draw_requires_emulation() {
+    fn adjacency_topology_is_accepted_and_draw_runs_through_emulation() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
@@ -13538,11 +13537,26 @@ mod tests {
                 }
             };
 
-            // Build a minimal stream that attempts to draw with a D3D11 adjacency topology.
-            //
-            // The current executor has no geometry shader emulation path, but it must still accept
-            // the `SET_PRIMITIVE_TOPOLOGY` value and defer the error to draw time.
+            if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
+                skip_or_panic(
+                    module_path!(),
+                    "backend lacks compute/indirect execution required for GS/HS/DS emulation",
+                );
+                return;
+            }
+
+            // Build a minimal stream that draws with a D3D11 adjacency topology. This is not
+            // directly representable in WebGPU pipelines, so it must route through the emulation
+            // compute-prepass + indirect draw path.
             const RT: u32 = 1;
+            const VS: u32 = 2;
+            const PS: u32 = 3;
+
+            const DXBC_VS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            const DXBC_PS_PASSTHROUGH: &[u8] =
+                include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
+
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
                 RT,
@@ -13557,19 +13571,25 @@ mod tests {
                 0,
             );
             writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 1.0, 1.0, 0.0, 1.0);
+            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.bind_shaders(VS, PS, 0);
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleListAdj);
-            writer.draw(3, 1, 0, 0);
+            writer.draw(6, 1, 0, 0);
             let stream = writer.finish();
 
             let mut guest_mem = VecGuestMemory::new(0);
-            let err = exec.execute_cmd_stream(&stream, None, &mut guest_mem).expect_err(
-                "adjacency draw should error until geometry shader emulation is implemented",
-            );
-            assert!(
-                err.to_string()
-                    .contains("adjacency primitive topology requires geometry shader emulation"),
-                "unexpected error: {err:#}"
-            );
+            exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect("adjacency draw should succeed through emulation path");
+            exec.poll_wait();
+
+            let pixels = exec
+                .read_texture_rgba8(RT)
+                .await
+                .expect("readback should succeed");
+            assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
 
             assert_eq!(exec.state.primitive_topology, CmdPrimitiveTopology::TriangleListAdj);
         });
