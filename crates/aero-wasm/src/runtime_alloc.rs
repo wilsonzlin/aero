@@ -123,9 +123,7 @@ impl RuntimeAllocator {
         }
 
         unsafe {
-            self.heap
-                .lock()
-                .init(heap_base_ptr, heap_end - heap_base);
+            self.heap.lock().init(heap_base_ptr, heap_end - heap_base);
         }
     }
 }

@@ -64,12 +64,12 @@ fn aerogpu_ring_reset_with_overflowing_ring_gpa_is_nonpanicking_and_records_oob_
     m.process_aerogpu();
 
     let error_code = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_CODE));
-    let error_fence = (u64::from(
-        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI)),
-    ) << 32)
-        | u64::from(m.read_physical_u32(
-            bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO),
-        ));
+    let error_fence =
+        (u64::from(m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI)))
+            << 32)
+            | u64::from(
+                m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO)),
+            );
     let error_count = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_COUNT));
     let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_eq!(error_code, pci::AerogpuErrorCode::Oob as u32);
@@ -112,12 +112,12 @@ fn aerogpu_doorbell_with_overflowing_ring_gpa_records_oob_error() {
     m.process_aerogpu();
 
     let error_code = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_CODE));
-    let error_fence = (u64::from(
-        m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI)),
-    ) << 32)
-        | u64::from(m.read_physical_u32(
-            bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO),
-        ));
+    let error_fence =
+        (u64::from(m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI)))
+            << 32)
+            | u64::from(
+                m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO)),
+            );
     let error_count = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_ERROR_COUNT));
     let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_eq!(error_code, pci::AerogpuErrorCode::Oob as u32);

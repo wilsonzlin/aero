@@ -2397,8 +2397,12 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     let r_f_name = format!("udiv_rf{inst_index}");
                     w.line(&format!("let {a_name}: vec4<u32> = {a_u};"));
                     w.line(&format!("let {b_name}: vec4<u32> = {b_u};"));
-                    w.line(&format!("let {q_name}: vec4<u32> = ({a_name}) / ({b_name});"));
-                    w.line(&format!("let {r_name}: vec4<u32> = ({a_name}) % ({b_name});"));
+                    w.line(&format!(
+                        "let {q_name}: vec4<u32> = ({a_name}) / ({b_name});"
+                    ));
+                    w.line(&format!(
+                        "let {r_name}: vec4<u32> = ({a_name}) % ({b_name});"
+                    ));
                     w.line(&format!(
                         "let {q_f_name}: vec4<f32> = bitcast<vec4<f32>>({q_name});"
                     ));
@@ -2439,8 +2443,12 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     let r_f_name = format!("idiv_rf{inst_index}");
                     w.line(&format!("let {a_name}: vec4<i32> = {a_i};"));
                     w.line(&format!("let {b_name}: vec4<i32> = {b_i};"));
-                    w.line(&format!("let {q_name}: vec4<i32> = ({a_name}) / ({b_name});"));
-                    w.line(&format!("let {r_name}: vec4<i32> = ({a_name}) % ({b_name});"));
+                    w.line(&format!(
+                        "let {q_name}: vec4<i32> = ({a_name}) / ({b_name});"
+                    ));
+                    w.line(&format!(
+                        "let {r_name}: vec4<i32> = ({a_name}) % ({b_name});"
+                    ));
                     w.line(&format!(
                         "let {q_f_name}: vec4<f32> = bitcast<vec4<f32>>({q_name});"
                     ));
