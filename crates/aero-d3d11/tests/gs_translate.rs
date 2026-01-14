@@ -1,5 +1,6 @@
 use aero_d3d11::runtime::gs_translate::{
-    translate_gs_module_to_wgsl_compute_prepass, GsTranslateError,
+    translate_gs_module_to_wgsl_compute_prepass, translate_gs_module_to_wgsl_compute_prepass_packed,
+    GsTranslateError,
 };
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
@@ -121,6 +122,135 @@ fn wgsl_from_tokens(mut tokens: Vec<u32>) -> String {
     };
     let module = decode_program(&program).expect("decode");
     translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate")
+}
+
+#[test]
+fn sm4_gs_packed_varying_o2_translates_to_expanded_vertex_v0() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(5),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 2,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass_packed(&module, &[2]).expect("translate");
+    assert!(
+        wgsl.contains("out_vertices.data[vtx_idx].v0 = o2;"),
+        "expected packed output register o2 to be written to ExpandedVertex.v0:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_packed_varying_missing_output_register_defaults_to_zero() {
+    // The shader never writes `o5`, but the packed layout requests it. The translator should still
+    // declare `o5` (zero-initialized) and pack it into the expanded-vertex buffer.
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(5),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass_packed(&module, &[5]).expect("translate");
+    assert!(
+        wgsl.contains("var o5: vec4<f32> = vec4<f32>(0.0);"),
+        "expected output register o5 to be declared/zero-initialized:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("out_vertices.data[vtx_idx].v0 = o5;"),
+        "expected packed output register o5 to be written to ExpandedVertex.v0:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn gs_translate_packed_rejects_location_0() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(5),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+        ],
+        instructions: vec![Sm4Inst::Ret],
+    };
+
+    let err = translate_gs_module_to_wgsl_compute_prepass_packed(&module, &[0])
+        .expect_err("expected location 0 to be rejected (reserved for position)");
+    assert_eq!(err, GsTranslateError::InvalidVaryingLocation { loc: 0 });
 }
 
 #[test]

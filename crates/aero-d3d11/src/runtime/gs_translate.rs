@@ -55,6 +55,12 @@ struct InputSivInfo {
 pub enum GsTranslateError {
     NotGeometryStage(ShaderStage),
     MissingDecl(&'static str),
+    InvalidVaryingLocation {
+        /// Output register location (`o#`) requested as a varying.
+        ///
+        /// Location 0 is reserved for position in the expanded-vertex scheme.
+        loc: u32,
+    },
     UnsupportedInputPrimitive {
         primitive: u32,
     },
@@ -96,6 +102,10 @@ impl fmt::Display for GsTranslateError {
             GsTranslateError::MissingDecl(name) => {
                 write!(f, "GS translate: missing required declaration {name}")
             }
+            GsTranslateError::InvalidVaryingLocation { loc } => write!(
+                f,
+                "GS translate: invalid output varying location {loc} (location 0 is reserved for position in the expanded-vertex scheme)"
+            ),
             GsTranslateError::UnsupportedInputPrimitive { primitive } => write!(
                 f,
                 "GS translate: unsupported input primitive {primitive} (dcl_inputprimitive)"
@@ -291,6 +301,31 @@ pub struct GsPrepassTranslation {
 }
 
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
+/// geometry prepass, parameterizing the expanded-vertex layout.
+///
+/// `varyings` is a sorted, de-duplicated list of D3D output register locations (`o#`) that should be
+/// packed into the expanded vertex buffer. Location 0 is reserved for position (`o0`) and must not
+/// be included in `varyings`.
+///
+/// The generated WGSL uses the following fixed bind group layout:
+/// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
+/// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
+/// - `@group(0) @binding(2)` indirect args buffer (`DrawIndexedIndirectArgs`, read_write)
+/// - `@group(0) @binding(3)` uniform params (`GsPrepassParams`)
+/// - `@group(0) @binding(4)` GS input payload (`Vec4F32Buffer`, read)
+pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
+    module: &Sm4Module,
+    varyings: &[u32],
+) -> Result<String, GsTranslateError> {
+    Ok(translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
+        module,
+        "cs_main",
+        varyings,
+    )?
+    .wgsl)
+}
+
+/// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
 /// geometry prepass.
 ///
 /// The generated WGSL uses the following fixed bind group layout:
@@ -305,7 +340,7 @@ pub struct GsPrepassTranslation {
 pub fn translate_gs_module_to_wgsl_compute_prepass(
     module: &Sm4Module,
 ) -> Result<String, GsTranslateError> {
-    Ok(translate_gs_module_to_wgsl_compute_prepass_with_entry_point(module, "cs_main")?.wgsl)
+    translate_gs_module_to_wgsl_compute_prepass_packed(module, &[1])
 }
 
 /// Variant of [`translate_gs_module_to_wgsl_compute_prepass`] that allows overriding the compute
@@ -314,8 +349,20 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     module: &Sm4Module,
     entry_point: &str,
 ) -> Result<GsPrepassTranslation, GsTranslateError> {
+    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(module, entry_point, &[1])
+}
+
+fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
+    module: &Sm4Module,
+    entry_point: &str,
+    varyings: &[u32],
+) -> Result<GsPrepassTranslation, GsTranslateError> {
     if module.stage != ShaderStage::Geometry {
         return Err(GsTranslateError::NotGeometryStage(module.stage));
+    }
+
+    if let Some(&loc) = varyings.iter().find(|&&loc| loc == 0) {
+        return Err(GsTranslateError::InvalidVaryingLocation { loc });
     }
 
     let mut input_primitive: Option<GsInputPrimitive> = None;
@@ -743,9 +790,13 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
         }
     }
 
-    // Ensure we always declare at least o0/o1 so the expanded vertex format is well-defined even if
-    // the shader never touches o1.
-    max_output_reg = max_output_reg.max(1);
+    // Ensure we always declare at least o0, plus any registers referenced by the requested packed
+    // expanded-vertex layout. This allows missing GS outputs to default to `vec4<f32>(0.0)` via the
+    // zero-initialized output register file.
+    max_output_reg = max_output_reg.max(0);
+    if let Some(max_varying) = varyings.iter().copied().max() {
+        max_output_reg = max_output_reg.max(max_varying as i32);
+    }
 
     let temp_reg_count = (max_temp_reg + 1).max(0) as u32;
     let output_reg_count = (max_output_reg + 1).max(0) as u32;
@@ -759,7 +810,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("struct ExpandedVertex {");
     w.indent();
     w.line("pos: vec4<f32>,");
-    w.line("o1: vec4<f32>,");
+    for (i, _) in varyings.iter().enumerate() {
+        w.line(&format!("v{i}: vec4<f32>,"));
+    }
     w.dedent();
     w.line("};");
     w.line("");
@@ -863,12 +916,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("}");
     w.line("");
 
-    // Emit semantics: append a vertex (built from o0/o1) and produce list indices based on the
-    // GS output topology (point list, line strip, triangle strip).
+    // Emit semantics: append a vertex (built from o0 + requested varyings) and produce list indices
+    // based on the GS output topology (point list, line strip, triangle strip).
     w.line("fn gs_emit(");
     w.indent();
     w.line("o0: vec4<f32>,");
-    w.line("o1: vec4<f32>,");
+    for &loc in varyings {
+        w.line(&format!("o{loc}: vec4<f32>,"));
+    }
     w.line("emitted_count: ptr<function, u32>,");
     w.line("strip_len: ptr<function, u32>,");
     w.line("strip_prev0: ptr<function, u32>,");
@@ -892,7 +947,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("}");
     w.line("");
     w.line("out_vertices.data[vtx_idx].pos = o0;");
-    w.line("out_vertices.data[vtx_idx].o1 = o1;");
+    for (i, &loc) in varyings.iter().enumerate() {
+        w.line(&format!("out_vertices.data[vtx_idx].v{i} = o{loc};"));
+    }
     w.line("");
     match output_topology_kind {
         OutputTopologyKind::PointList => {
@@ -1185,6 +1242,12 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
         };
         Ok(format!("{a} {op_str} {b}"))
     };
+
+    let mut gs_emit_args = String::from("o0");
+    for &loc in varyings {
+        gs_emit_args.push_str(&format!(", o{loc}"));
+    }
+    gs_emit_args.push_str(", &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow");
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
         match inst {
@@ -1577,15 +1640,13 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 emit_write_masked(&mut w, inst_index, "max", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Emit { stream: _ } => {
-                w.line("gs_emit(o0, o1, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emit");
+                w.line(&format!("gs_emit({gs_emit_args}); // emit"));
             }
             Sm4Inst::Cut { stream: _ } => {
                 w.line("gs_cut(&strip_len); // cut");
             }
             Sm4Inst::EmitThenCut { stream: _ } => {
-                w.line(
-                    "gs_emit(o0, o1, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emitthen_cut",
-                );
+                w.line(&format!("gs_emit({gs_emit_args}); // emitthen_cut"));
                 w.line("gs_cut(&strip_len); // emitthen_cut");
             }
             Sm4Inst::Ret => {
