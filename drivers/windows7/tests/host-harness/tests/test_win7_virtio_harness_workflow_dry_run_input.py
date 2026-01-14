@@ -30,8 +30,8 @@ class Win7VirtioHarnessWorkflowDryRunInputTests(unittest.TestCase):
             "NOTE: workflow input 'disk_image_path' is empty; using placeholder for dry_run:",
             self.text,
         )
-        self.assertIn('disk_image_path="disk.img"', self.text)
-        self.assertIn('disk_image_path_was_empty="true"', self.text)
+        self.assertIn('disk_image_path="${log_dir}/dry-run-disk.img"', self.text)
+        self.assertIn('touch "${disk_image_path}"', self.text)
 
 
 if __name__ == "__main__":
