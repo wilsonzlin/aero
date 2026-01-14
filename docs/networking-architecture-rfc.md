@@ -242,6 +242,7 @@ For the legacy socket-level relays (Phase 0 `/tcp`, DoH, UDP datagrams), use:
 
 - `backend/aero-gateway` for TCP + DNS (`/tcp`, `/tcp-mux`, `/dns-query`, `/dns-json`; see `docs/backend/openapi.yaml`)
 - `proxy/webrtc-udp-relay` for UDP datagrams (`/webrtc/*`, `/udp`; see `proxy/webrtc-udp-relay/PROTOCOL.md`)
+  - DoS hardening: the relay configures pion/SCTP message-size caps to bound receive-side buffering/allocation before `DataChannel.OnMessage` runs (`WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` + `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES`) and closes half-open sessions after `WEBRTC_SESSION_CONNECT_TIMEOUT`.
 - `net-proxy/` can be used as a local dev relay (`/tcp`, `/tcp-mux`, `/udp`, plus DoH `/dns-query` + `/dns-json`).
   - Note: the DoH endpoints are `fetch()`-based; for browser clients you generally want them to be same-origin with your
     frontend (e.g. proxy via Vite), or enable the explicit CORS allowlist (`AERO_PROXY_DOH_CORS_ALLOW_ORIGINS`).
