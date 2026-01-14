@@ -1925,6 +1925,13 @@ impl XhciController {
                 self.active_endpoints.swap_remove(i);
             }
         }
+
+        // If the active endpoint list is longer than the per-tick budget, rotate it so endpoints
+        // that didn't get a chance to run this tick are processed first next tick. Without this,
+        // endpoints later in the list can starve indefinitely.
+        if budget == 0 && i < self.active_endpoints.len() {
+            self.active_endpoints.rotate_left(i);
+        }
     }
 
     /// Returns whether the IRQ line for interrupter 0 should be asserted.
