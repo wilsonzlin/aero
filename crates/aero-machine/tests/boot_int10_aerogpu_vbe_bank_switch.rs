@@ -22,7 +22,7 @@ fn build_int10_vbe_bank_switch_boot_sector() -> [u8; 512] {
     // mov ax, 0x4F05 (VBE Display Window Control / bank switching)
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x05, 0x4F]);
     i += 3;
-    // xor bx, bx (BH=0x00 "set", BL=0x00 "window A")
+    // xor bx, bx (BH=0x00 "window A", BL=0x00 "set")
     sector[i..i + 2].copy_from_slice(&[0x31, 0xDB]);
     i += 2;
     // mov dx, 0x0001 (bank 1)

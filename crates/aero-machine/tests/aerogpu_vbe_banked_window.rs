@@ -18,7 +18,7 @@ fn build_int10_vbe_banked_window_boot_sector(bank: u16, value: u8) -> [u8; 512] 
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
     i += 2;
 
-    // int 10h AX=4F05: Set bank (BH=subfunction=0, BL=window=0, DX=bank).
+    // int 10h AX=4F05: Set bank (BH=window=0, BL=subfunction=0, DX=bank).
     // mov ax, 0x4F05
     sector[i..i + 3].copy_from_slice(&[0xB8, 0x05, 0x4F]);
     i += 3;
