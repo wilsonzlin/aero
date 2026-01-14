@@ -1473,6 +1473,11 @@ export class AerogpuCmdWriter {
   }
 
   createShaderDxbcEx(shaderHandle: AerogpuHandle, stageEx: AerogpuShaderStageEx, dxbcBytes: Uint8Array): void {
+    if ((stageEx >>> 0) === AerogpuShaderStageEx.Pixel) {
+      throw new Error(
+        "CREATE_SHADER_DXBC stageEx cannot encode DXBC Pixel program type (0); use createShaderDxbc(stage=Pixel) instead",
+      );
+    }
     const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
     this.view.setUint32(base + 8, shaderHandle, true);

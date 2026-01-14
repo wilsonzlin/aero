@@ -516,6 +516,23 @@ struct aerogpu_cmd_create_shader_dxbc {
   aerogpu_handle_t shader_handle;
   uint32_t stage; /* enum aerogpu_shader_stage */
   uint32_t dxbc_size_bytes;
+  /*
+   * stage_ex: enum aerogpu_shader_stage_ex
+   *
+   * Used by the "stage_ex" ABI extension to represent additional DXBC program types (GS/HS/DS)
+   * without extending the legacy `stage` enum.
+   *
+   * Encoding:
+   * - Legacy: `stage = VERTEX/PIXEL/COMPUTE` and `stage_ex = 0`.
+   * - Stage-ex: set `stage = COMPUTE` and set `stage_ex` to a non-zero DXBC program type:
+   *   - GS: stage_ex = GEOMETRY (2) (alternative to legacy `stage = GEOMETRY` where supported)
+   *   - HS: stage_ex = HULL     (3)
+   *   - DS: stage_ex = DOMAIN   (4)
+   *
+   * Note: `stage_ex == 0` is reserved for legacy/default (old guests always write 0 into reserved
+   * fields). As a result, DXBC `stage_ex == 0` (Pixel) is not encodable here; pixel shaders must
+   * use the legacy `stage = PIXEL` encoding.
+   */
   uint32_t reserved0;
 };
 #pragma pack(pop)

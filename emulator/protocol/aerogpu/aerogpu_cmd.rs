@@ -477,6 +477,21 @@ pub struct AerogpuCmdCreateShaderDxbc {
     pub shader_handle: AerogpuHandle,
     pub stage: u32,
     pub dxbc_size_bytes: u32,
+    /// `stage_ex` ABI extension tag.
+    ///
+    /// Used by `CREATE_SHADER_DXBC` to represent additional DXBC program types (GS/HS/DS) without
+    /// extending the legacy `stage` enum.
+    ///
+    /// Encoding:
+    /// - Legacy: `stage = VERTEX/PIXEL/COMPUTE` and `stage_ex = 0`.
+    /// - Stage-ex: set `stage = COMPUTE` and set `stage_ex` to a non-zero DXBC program type:
+    ///   - GS: `stage_ex = GEOMETRY` (2) (alternative to legacy `stage = GEOMETRY` where supported)
+    ///   - HS: `stage_ex = HULL`     (3)
+    ///   - DS: `stage_ex = DOMAIN`   (4)
+    ///
+    /// Note: `stage_ex == 0` is reserved for legacy/default (old guests always write 0 into
+    /// reserved fields). As a result, DXBC `stage_ex == 0` (Pixel) is not encodable here; pixel
+    /// shaders must use the legacy `stage = PIXEL` encoding.
     pub reserved0: u32,
 }
 
