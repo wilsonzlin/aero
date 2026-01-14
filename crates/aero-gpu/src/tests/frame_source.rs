@@ -244,3 +244,45 @@ fn frame_source_poll_frame_clamps_out_of_range_active_index() {
     assert_eq!(frame.active_buf_seq, frame.seq);
     assert_eq!(frame.pixels[0], 0x33);
 }
+
+#[test]
+fn frame_source_does_not_clear_frame_dirty_until_acked() {
+    let layout = SharedFramebufferLayout::new_rgba8(16, 16, /*tile_size=*/ 0).unwrap();
+    let mut words = alloc_words(layout);
+    let shared = unsafe {
+        SharedFramebuffer::from_raw_parts(words.as_mut_ptr() as *mut u8, layout)
+            .expect("backing store must be aligned")
+    };
+    shared.header().init(layout);
+
+    let mut source =
+        unsafe { FrameSource::from_shared_memory(words.as_mut_ptr() as *mut u8, 0) }.unwrap();
+
+    let writer = SharedFramebufferWriter::new(shared);
+    writer.write_frame(|buf, _dirty, _layout| buf.fill(0x11));
+    assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
+
+    let frame = source.poll_frame().expect("new frame must be visible");
+    assert_eq!(frame.seq, 1);
+
+    // Polling must not clear `frame_dirty` since the frame buffer is still exposed by reference.
+    assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
+    let seq1 = frame.seq;
+    drop(frame);
+    source.ack_frame(seq1);
+    assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 0);
+
+    // Publishing a new frame sets `frame_dirty` again.
+    writer.write_frame(|buf, _dirty, _layout| buf.fill(0x22));
+    assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
+
+    // ACKing an older frame sequence must not clear a newer frame.
+    source.ack_frame(seq1);
+    assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
+
+    let frame2 = source.poll_frame().expect("new frame must be visible");
+    let seq2 = frame2.seq;
+    drop(frame2);
+    source.ack_frame(seq2);
+    assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 0);
+}
