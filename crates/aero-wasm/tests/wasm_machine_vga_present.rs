@@ -1,6 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_wasm::{Machine, RunExitKind};
+use js_sys::Reflect;
+use wasm_bindgen::JsValue;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 // Keep constants in sync with:
@@ -88,6 +90,22 @@ fn ensure_runtime_reserved_floor() {
             "wasm memory.grow failed while reserving runtime pages (requested {delta} pages)"
         );
     }
+}
+
+fn is_node_js() -> bool {
+    let global = js_sys::global();
+    let proc = Reflect::get(&global, &JsValue::from_str("process")).ok();
+    let Some(proc) = proc else {
+        return false;
+    };
+    if proc.is_undefined() || proc.is_null() {
+        return false;
+    }
+    let versions = Reflect::get(&proc, &JsValue::from_str("versions")).ok();
+    let Some(versions) = versions else {
+        return true;
+    };
+    Reflect::has(&versions, &JsValue::from_str("node")).unwrap_or(false)
 }
 
 fn boot_sector_write_a_to_b8000() -> [u8; 512] {
@@ -619,6 +637,13 @@ fn wasm_machine_vbe_8bpp_mode_falls_back_to_legacy_text_scanout_state() {
 
 #[wasm_bindgen_test]
 fn wasm_machine_aerogpu_config_disables_vga_by_default_and_displays_text_mode() {
+    // `std::time::Instant` is not available under wasm32 when executing tests in Node.js (it
+    // panics with "time not implemented on this platform"). AeroGPU currently uses `Instant`
+    // internally for vblank timing, so skip this coverage in the Node test runner.
+    if is_node_js() {
+        return;
+    }
+
     let boot = boot_sector_write_a_to_b8000();
     // Enable AeroGPU via the wasm wrapper and rely on its default to disable VGA.
     let mut machine = Machine::new_with_config(16 * 1024 * 1024, true, None, None)
