@@ -29,12 +29,14 @@ const MAX_CONTROLLER_OUTPUT_QUEUE = 1024;
 const MAX_KEYBOARD_OUTPUT_QUEUE = 1024;
 const MAX_MOUSE_OUTPUT_QUEUE = 1024;
 
-type OutputSource = "controller" | "keyboard" | "mouse";
-
-interface OutputByte {
-  value: number;
-  source: OutputSource;
-}
+// Output source encoding used both on the wire (snapshots) and internally.
+//
+// Note: We intentionally keep this as small integers (rather than strings) because the controller
+// output queue is hot under heavy input; reducing per-byte allocations helps avoid GC churn.
+const OUTPUT_SOURCE_CONTROLLER = 0;
+const OUTPUT_SOURCE_KEYBOARD = 1;
+const OUTPUT_SOURCE_MOUSE = 2;
+type OutputSource = 0 | 1 | 2;
 
 export interface I8042SystemControlSink {
   setA20(enabled: boolean): void;
@@ -165,30 +167,27 @@ class ByteReader {
 }
 
 function encodeOutputSource(source: OutputSource): number {
+  // Defensive: this is only used for snapshots; clamp unknown values to controller.
   switch (source) {
-    case "controller":
-      return 0;
-    case "keyboard":
-      return 1;
-    case "mouse":
-      return 2;
-    default: {
-      const neverSource: never = source;
-      throw new Error(`Unknown OutputSource: ${String(neverSource)}`);
-    }
+    case OUTPUT_SOURCE_CONTROLLER:
+    case OUTPUT_SOURCE_KEYBOARD:
+    case OUTPUT_SOURCE_MOUSE:
+      return source & 0xff;
+    default:
+      return OUTPUT_SOURCE_CONTROLLER;
   }
 }
 
 function decodeOutputSource(code: number): OutputSource {
   switch (code & 0xff) {
-    case 0:
-      return "controller";
-    case 1:
-      return "keyboard";
-    case 2:
-      return "mouse";
+    case OUTPUT_SOURCE_CONTROLLER:
+      return OUTPUT_SOURCE_CONTROLLER;
+    case OUTPUT_SOURCE_KEYBOARD:
+      return OUTPUT_SOURCE_KEYBOARD;
+    case OUTPUT_SOURCE_MOUSE:
+      return OUTPUT_SOURCE_MOUSE;
     default:
-      return "controller";
+      return OUTPUT_SOURCE_CONTROLLER;
   }
 }
 
@@ -975,8 +974,18 @@ export class I8042Controller implements PortIoHandler {
   #pendingCommand: number | null = null;
   #lastWriteWasCommand = false;
 
-  #outQueue: OutputByte[] = [];
-  #irqLastHead: OutputByte | null = null;
+  // Packed output queue entries:
+  // - low 8 bits: value
+  // - bits 8..9: OutputSource
+  // - upper bits: monotonically increasing sequence number
+  //
+  // Including the sequence number avoids missing IRQ pulses when consecutive head bytes have the
+  // same value+source (object identity previously provided this property).
+  #outQueue: number[] = [];
+  #outSeq = 1;
+  #irqLastHead: number | null = null;
+  // When both devices have pending output, alternate which device gets priority so bytes can
+  // interleave (mirrors Rust's `prefer_mouse` behavior).
   #preferMouse = false;
 
   #outputPort = OUTPUT_PORT_RESET;
@@ -995,10 +1004,10 @@ export class I8042Controller implements PortIoHandler {
 
     switch (port & 0xffff) {
       case 0x0060: {
-        const item = this.#outQueue.shift() ?? null;
+        const item = this.#outQueue.shift();
         this.#pumpDeviceQueues();
         this.#syncStatusAndIrq();
-        return item ? item.value & 0xff : 0x00;
+        return typeof item === "number" ? item & 0xff : 0x00;
       }
       case 0x0064:
         return this.#readStatus();
@@ -1179,18 +1188,18 @@ export class I8042Controller implements PortIoHandler {
     this.#lastWriteWasCommand = true;
     this.#status |= STATUS_IBF;
     try {
-      switch (cmd & 0xff) {
-        case 0x20: // Read command byte
-          this.#enqueue(this.#commandByte, "controller");
+        switch (cmd & 0xff) {
+          case 0x20: // Read command byte
+          this.#enqueue(this.#commandByte, OUTPUT_SOURCE_CONTROLLER);
           return;
         case 0x60: // Write command byte (next data byte)
           this.#pendingCommand = 0x60;
           return;
         case 0xaa: // Self test
-          this.#enqueue(0x55, "controller");
+          this.#enqueue(0x55, OUTPUT_SOURCE_CONTROLLER);
           return;
         case 0xd0: // Read output port
-          this.#enqueue(this.#outputPort, "controller");
+          this.#enqueue(this.#outputPort, OUTPUT_SOURCE_CONTROLLER);
           return;
         case 0xd1: // Write output port (next data byte)
           this.#pendingCommand = 0xd1;
@@ -1212,10 +1221,10 @@ export class I8042Controller implements PortIoHandler {
           this.#syncStatusAndIrq();
           return;
         case 0xa9: // Test mouse port
-          this.#enqueue(0x00, "controller");
+          this.#enqueue(0x00, OUTPUT_SOURCE_CONTROLLER);
           return;
         case 0xab: // Test keyboard port
-          this.#enqueue(0x00, "controller");
+          this.#enqueue(0x00, OUTPUT_SOURCE_CONTROLLER);
           return;
         case 0xad: // Disable keyboard
           this.#commandByte |= 0x10;
@@ -1269,14 +1278,14 @@ export class I8042Controller implements PortIoHandler {
       if (this.#pendingCommand === 0xd2) {
         this.#pendingCommand = null;
         // Bypass translation and device state; this is a controller command.
-        this.#enqueue(data, "keyboard");
+        this.#enqueue(data, OUTPUT_SOURCE_KEYBOARD);
         return;
       }
 
       if (this.#pendingCommand === 0xd3) {
         this.#pendingCommand = null;
         // Same as 0xD2, but marks the byte as mouse-originated (AUX).
-        this.#enqueue(data, "mouse");
+        this.#enqueue(data, OUTPUT_SOURCE_MOUSE);
         return;
       }
 
@@ -1311,9 +1320,21 @@ export class I8042Controller implements PortIoHandler {
     return (this.#commandByte & 0x20) === 0;
   }
 
+  #packOut(value: number, source: OutputSource): number {
+    const v = value & 0xff;
+    const s = source & 0x03;
+    const seq = this.#outSeq++;
+    // See `#outQueue` comment for layout.
+    return seq * 1024 + (s << 8) + v;
+  }
+
+  #outSource(packed: number): OutputSource {
+    return ((packed >>> 8) & 0x03) as OutputSource;
+  }
+
   #enqueue(value: number, source: OutputSource): void {
     if (this.#outQueue.length >= MAX_CONTROLLER_OUTPUT_QUEUE) return;
-    this.#outQueue.push({ value: value & 0xff, source });
+    this.#outQueue.push(this.#packOut(value, source));
     this.#syncStatusAndIrq();
   }
 
@@ -1331,11 +1352,11 @@ export class I8042Controller implements PortIoHandler {
       if (kb === null) return false;
       if (this.#translationEnabled()) {
         const out = this.#translator.feed(kb);
-        if (out !== null) {
-          this.#outQueue.push({ value: out & 0xff, source: "keyboard" });
+        if (out !== null && this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
+          this.#outQueue.push(this.#packOut(out, OUTPUT_SOURCE_KEYBOARD));
         }
-      } else {
-        this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
+      } else if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
+        this.#outQueue.push(this.#packOut(kb, OUTPUT_SOURCE_KEYBOARD));
       }
       // Return true if we consumed a device byte, even if translation produced no output (e.g. F0 prefix).
       return true;
@@ -1345,7 +1366,9 @@ export class I8042Controller implements PortIoHandler {
       if (!this.#mousePortEnabled()) return false;
       const ms = this.#mouse.popOutputByte();
       if (ms === null) return false;
-      this.#outQueue.push({ value: ms & 0xff, source: "mouse" });
+      if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
+        this.#outQueue.push(this.#packOut(ms, OUTPUT_SOURCE_MOUSE));
+      }
       return true;
     };
 
@@ -1371,8 +1394,8 @@ export class I8042Controller implements PortIoHandler {
     else this.#status &= ~STATUS_OBF;
 
     const head = this.#outQueue[0] ?? null;
-    const headSource = head?.source ?? null;
-    if (headSource === "mouse") this.#status |= STATUS_AUX_OBF;
+    const headSource = head === null ? null : this.#outSource(head);
+    if (headSource === OUTPUT_SOURCE_MOUSE) this.#status |= STATUS_AUX_OBF;
     else this.#status &= ~STATUS_AUX_OBF;
 
     // i8042 IRQs (IRQ1 keyboard, IRQ12 mouse) behave like edge-triggered sources for the legacy
@@ -1384,15 +1407,15 @@ export class I8042Controller implements PortIoHandler {
       this.#irqLastHead = head;
       // Update the interleaving preference to match the byte we just loaded into the output buffer.
       // When the output buffer becomes empty, keep the previous preference (mirrors Rust behavior).
-      if (head) {
-        this.#preferMouse = head.source === "keyboard";
+      if (head !== null) {
+        this.#preferMouse = headSource === OUTPUT_SOURCE_KEYBOARD;
       }
-      if (headSource === "keyboard") {
+      if (headSource === OUTPUT_SOURCE_KEYBOARD) {
         if ((this.#commandByte & 0x01) !== 0) {
           this.#irq.raiseIrq(1);
           this.#irq.lowerIrq(1);
         }
-      } else if (headSource === "mouse") {
+      } else if (headSource === OUTPUT_SOURCE_MOUSE) {
         if ((this.#commandByte & 0x02) !== 0) {
           this.#irq.raiseIrq(12);
           this.#irq.lowerIrq(12);
@@ -1432,8 +1455,8 @@ export class I8042Controller implements PortIoHandler {
     w.u32(outLen);
     for (let i = 0; i < outLen; i++) {
       const item = this.#outQueue[i]!;
-      w.u8(item.value);
-      w.u8(encodeOutputSource(item.source));
+      w.u8(item & 0xff);
+      w.u8((item >>> 8) & 0x03);
     }
 
     this.#keyboard.saveState(w);
@@ -1499,12 +1522,13 @@ export class I8042Controller implements PortIoHandler {
     }
 
     this.#outQueue.length = 0;
+    this.#outSeq = 1;
     const outLenRaw = r.u32();
     const outLen = Math.min(outLenRaw, MAX_CONTROLLER_OUTPUT_QUEUE);
     for (let i = 0; i < outLen; i++) {
       const value = r.u8() & 0xff;
       const source = decodeOutputSource(r.u8());
-      this.#outQueue.push({ value, source });
+      this.#outQueue.push(this.#packOut(value, source));
     }
     if (outLenRaw > outLen) {
       // Each entry is (value:u8, source:u8).
@@ -1518,8 +1542,8 @@ export class I8042Controller implements PortIoHandler {
     // its source (see Rust `prefer_mouse` contract). Override the snapshot flag for backwards
     // compatibility with older snapshots that did not record this bit.
     const head = this.#outQueue[0] ?? null;
-    if (head) {
-      this.#preferMouse = head.source === "keyboard";
+    if (head !== null) {
+      this.#preferMouse = this.#outSource(head) === OUTPUT_SOURCE_KEYBOARD;
     }
 
     // Restore derived status bits. Snapshot restore should not emit spurious IRQ pulses for any
