@@ -2893,9 +2893,16 @@ impl aero_platform::io::PortIoDevice for AeroGpuVgaPortWindow {
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+struct AeroGpuVgaDacSnapshotV1 {
+    pel_mask: u8,
+    palette: [[u8; 3]; 256],
+}
+
+#[derive(Debug, Clone)]
 struct AeroGpuSnapshotV1 {
     bar0: crate::aerogpu::AeroGpuMmioSnapshotV1,
     vram: Vec<u8>,
+    vga_dac: Option<AeroGpuVgaDacSnapshotV1>,
 }
 
 // AeroGPU snapshots can be surprisingly large (VRAM can be tens of MiB), and wasm builds in
@@ -2994,6 +3001,18 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     // snapshot/restore deterministic even if the VM is checkpointed between the two dword writes.
     out.extend_from_slice(&regs.scanout0_fb_gpa_pending_lo.to_le_bytes());
     out.extend_from_slice(&(regs.scanout0_fb_gpa_lo_pending as u32).to_le_bytes());
+
+    // Optional trailing VGA DAC state (palette + PEL mask).
+    //
+    // This is required for deterministic 8bpp VBE output when the guest programs colors via VGA
+    // DAC ports (`0x3C8/0x3C9`). The BIOS VBE palette snapshot does not capture port-driven DAC
+    // updates, so store the DAC state here.
+    out.extend_from_slice(b"DACP");
+    out.push(vram.pel_mask);
+    for entry in &vram.dac_palette {
+        out.extend_from_slice(entry);
+    }
+
     out
 }
 
@@ -3086,6 +3105,30 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
         } else {
             (0, false)
         };
+    let vga_dac = {
+        const TAG: &[u8; 4] = b"DACP";
+        const PALETTE_LEN: usize = 256 * 3;
+        const TOTAL_LEN: usize = 4 + 1 + PALETTE_LEN;
+
+        if bytes.get(off..off.saturating_add(4)) == Some(TAG.as_slice())
+            && bytes.len() >= off.saturating_add(TOTAL_LEN)
+        {
+            let pel_mask = bytes.get(off + 4).copied().unwrap_or(0xFF);
+            let pal_bytes = bytes
+                .get((off + 5)..(off + 5 + PALETTE_LEN))
+                .unwrap_or(&[]);
+            let mut palette = [[0u8; 3]; 256];
+            for idx in 0..256usize {
+                let base = idx * 3;
+                if base + 2 < pal_bytes.len() {
+                    palette[idx] = [pal_bytes[base], pal_bytes[base + 1], pal_bytes[base + 2]];
+                }
+            }
+            Some(AeroGpuVgaDacSnapshotV1 { pel_mask, palette })
+        } else {
+            None
+        }
+    };
     // Forward-compatible: ignore trailing bytes from future versions.
 
     Some(AeroGpuSnapshotV1 {
@@ -3126,6 +3169,7 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             wddm_scanout_active,
         },
         vram,
+        vga_dac,
     })
 }
 
@@ -3133,7 +3177,7 @@ fn apply_aerogpu_snapshot_v2(
     bytes: &[u8],
     vram: &mut AeroGpuDevice,
     bar0: &mut AeroGpuMmioDevice,
-) -> Option<()> {
+) -> Option<bool> {
     fn read_u8(bytes: &[u8], off: &mut usize) -> Option<u8> {
         let b = *bytes.get(*off)?;
         *off += 1;
@@ -3249,6 +3293,32 @@ fn apply_aerogpu_snapshot_v2(
         } else {
             (0, false)
         };
+    let restored_dac = {
+        const TAG: &[u8; 4] = b"DACP";
+        const PALETTE_LEN: usize = 256 * 3;
+        const TOTAL_LEN: usize = 4 + 1 + PALETTE_LEN;
+
+        if bytes.get(off..off.saturating_add(4)) == Some(TAG.as_slice())
+            && bytes.len() >= off.saturating_add(TOTAL_LEN)
+        {
+            let pel_mask = bytes.get(off + 4).copied().unwrap_or(0xFF);
+            let pal_bytes = bytes
+                .get((off + 5)..(off + 5 + PALETTE_LEN))
+                .unwrap_or(&[]);
+            let mut palette = [[0u8; 3]; 256];
+            for idx in 0..256usize {
+                let base = idx * 3;
+                if base + 2 < pal_bytes.len() {
+                    palette[idx] = [pal_bytes[base], pal_bytes[base + 1], pal_bytes[base + 2]];
+                }
+            }
+            vram.pel_mask = pel_mask;
+            vram.dac_palette = palette;
+            true
+        } else {
+            false
+        }
+    };
     // Forward-compatible: ignore trailing bytes from future versions.
 
     bar0.reset();
@@ -3289,7 +3359,7 @@ fn apply_aerogpu_snapshot_v2(
         wddm_scanout_active,
     });
 
-    Some(())
+    Some(restored_dac)
 }
 
 // -----------------------------------------------------------------------------
@@ -10915,28 +10985,33 @@ impl snapshot::SnapshotTarget for Machine {
                             let copy_len = decoded.vram.len().min(dev.vram.len());
                             dev.vram[..copy_len].copy_from_slice(&decoded.vram[..copy_len]);
 
-                            // Restore the VGA DAC palette from the BIOS VBE palette state. The BIOS
-                            // snapshot captures VBE palette entries (B,G,R,0), and AeroGPU-backed
-                            // 8bpp VBE rendering uses the emulated DAC palette.
-                            let bits = self.bios.video.vbe.dac_width_bits;
-                            let pal = &self.bios.video.vbe.palette;
-                            dev.vga_port_write_u8(0x3C8, 0); // set DAC write index
-                            for idx in 0..256usize {
-                                let base = idx * 4;
-                                let b = pal[base];
-                                let g = pal[base + 1];
-                                let r = pal[base + 2];
+                            if let Some(dac) = &decoded.vga_dac {
+                                dev.pel_mask = dac.pel_mask;
+                                dev.dac_palette = dac.palette;
+                            } else {
+                                // Restore the VGA DAC palette from the BIOS VBE palette state. The BIOS
+                                // snapshot captures VBE palette entries (B,G,R,0), and AeroGPU-backed
+                                // 8bpp VBE rendering uses the emulated DAC palette.
+                                let bits = self.bios.video.vbe.dac_width_bits;
+                                let pal = &self.bios.video.vbe.palette;
+                                dev.vga_port_write_u8(0x3C8, 0); // set DAC write index
+                                for idx in 0..256usize {
+                                    let base = idx * 4;
+                                    let b = pal[base];
+                                    let g = pal[base + 1];
+                                    let r = pal[base + 2];
 
-                                let (r, g, b) = if bits >= 8 {
-                                    (r >> 2, g >> 2, b >> 2)
-                                } else {
-                                    (r & 0x3F, g & 0x3F, b & 0x3F)
-                                };
+                                    let (r, g, b) = if bits >= 8 {
+                                        (r >> 2, g >> 2, b >> 2)
+                                    } else {
+                                        (r & 0x3F, g & 0x3F, b & 0x3F)
+                                    };
 
-                                // VGA DAC write order is R, G, B.
-                                dev.vga_port_write_u8(0x3C9, r);
-                                dev.vga_port_write_u8(0x3C9, g);
-                                dev.vga_port_write_u8(0x3C9, b);
+                                    // VGA DAC write order is R, G, B.
+                                    dev.vga_port_write_u8(0x3C9, r);
+                                    dev.vga_port_write_u8(0x3C9, g);
+                                    dev.vga_port_write_u8(0x3C9, b);
+                                }
                             }
                         }
 
@@ -10951,7 +11026,35 @@ impl snapshot::SnapshotTarget for Machine {
                 if let (Some(vram_dev), Some(bar0_dev)) = (&self.aerogpu, &self.aerogpu_mmio) {
                     let mut vram = vram_dev.borrow_mut();
                     let mut bar0 = bar0_dev.borrow_mut();
-                    let _ = apply_aerogpu_snapshot_v2(&state.data, &mut vram, &mut bar0);
+                    let restored_dac =
+                        apply_aerogpu_snapshot_v2(&state.data, &mut vram, &mut bar0).unwrap_or(false);
+                    drop(bar0);
+
+                    // Backward-compatibility: v2 snapshots initially did not include VGA DAC state.
+                    // Keep the AeroGPU-emulated DAC palette coherent with the BIOS VBE palette so
+                    // 8bpp VBE output is deterministic even when restoring older snapshots.
+                    if !restored_dac {
+                        let bits = self.bios.video.vbe.dac_width_bits;
+                        let pal = &self.bios.video.vbe.palette;
+                        vram.vga_port_write_u8(0x3C8, 0); // set DAC write index
+                        for idx in 0..256usize {
+                            let base = idx * 4;
+                            let b = pal[base];
+                            let g = pal[base + 1];
+                            let r = pal[base + 2];
+
+                            let (r, g, b) = if bits >= 8 {
+                                (r >> 2, g >> 2, b >> 2)
+                            } else {
+                                (r & 0x3F, g & 0x3F, b & 0x3F)
+                            };
+
+                            // VGA DAC write order is R, G, B.
+                            vram.vga_port_write_u8(0x3C9, r);
+                            vram.vga_port_write_u8(0x3C9, g);
+                            vram.vga_port_write_u8(0x3C9, b);
+                        }
+                    }
                 }
             }
         }
