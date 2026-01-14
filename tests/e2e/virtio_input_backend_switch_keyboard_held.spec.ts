@@ -42,8 +42,8 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    // Keep guest RAM modest; the test only needs enough space for the virtio queue.
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: 0 });
+    // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers.
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
     const guestBase = views.guestLayout.guest_base >>> 0;

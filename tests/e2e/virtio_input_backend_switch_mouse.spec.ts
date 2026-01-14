@@ -39,7 +39,10 @@ test(
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: 0 });
+    // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers. Keep it
+    // small to avoid unnecessary memory pressure when Playwright runs tests fully-parallel across
+    // multiple browsers.
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
 
     const status = views.status;

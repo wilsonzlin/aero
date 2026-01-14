@@ -42,9 +42,10 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    // Keep the guest RAM allocation modest to avoid unnecessary memory pressure when Playwright
-    // runs tests fully-parallel across multiple browsers.
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: 0 });
+    // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers. Keep it
+    // small to avoid unnecessary memory pressure when Playwright runs tests fully-parallel across
+    // multiple browsers.
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
     const guestBase = views.guestLayout.guest_base >>> 0;

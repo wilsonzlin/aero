@@ -43,7 +43,9 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: 0 });
+    // This spec uses a few low guest RAM addresses for UHCI frame/TD buffers, so a minimal guest
+    // RAM size is sufficient and keeps parallel Playwright runs from allocating unnecessary memory.
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
 
     // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`
