@@ -85,6 +85,12 @@ describe("mountInputDiagnosticsPanel", () => {
     Atomics.store(status, StatusIndex.IoInputEventCounter, 123);
     Atomics.store(status, StatusIndex.IoKeyboardBackendSwitchCounter, 4);
     Atomics.store(status, StatusIndex.IoMouseBackendSwitchCounter, 5);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyUs, 1500);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyEwmaUs, 2000);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyMaxUs, 2500);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyAvgUs, 500);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyEwmaUs, 600);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyMaxUs, 700);
 
     panel.setSnapshot(readInputDiagnosticsSnapshotFromStatus(status));
     expect((host as any).textContent).toContain("keyboard_backend=ps2");
@@ -100,6 +106,12 @@ describe("mountInputDiagnosticsPanel", () => {
     expect((host as any).textContent).toContain("io.events_processed=123");
     expect((host as any).textContent).toContain("io.keyboard_backend_switches=4");
     expect((host as any).textContent).toContain("io.mouse_backend_switches=5");
+    expect((host as any).textContent).toContain("io.batch_send_latency_us=1500 us (1.500 ms)");
+    expect((host as any).textContent).toContain("io.batch_send_latency_ewma_us=2000 us (2.000 ms)");
+    expect((host as any).textContent).toContain("io.batch_send_latency_max_us=2500 us (2.500 ms)");
+    expect((host as any).textContent).toContain("io.event_latency_avg_us=500 us (0.500 ms)");
+    expect((host as any).textContent).toContain("io.event_latency_ewma_us=600 us (0.600 ms)");
+    expect((host as any).textContent).toContain("io.event_latency_max_us=700 us (0.700 ms)");
 
     Atomics.store(status, StatusIndex.IoInputKeyboardBackend, encodeInputBackendStatus("virtio"));
     Atomics.store(status, StatusIndex.IoInputMouseBackend, encodeInputBackendStatus("virtio"));
@@ -115,6 +127,12 @@ describe("mountInputDiagnosticsPanel", () => {
     Atomics.store(status, StatusIndex.IoInputEventCounter, 999);
     Atomics.store(status, StatusIndex.IoKeyboardBackendSwitchCounter, 6);
     Atomics.store(status, StatusIndex.IoMouseBackendSwitchCounter, 7);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyUs, 3000);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyEwmaUs, 3500);
+    Atomics.store(status, StatusIndex.IoInputBatchSendLatencyMaxUs, 4000);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyAvgUs, 800);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyEwmaUs, 900);
+    Atomics.store(status, StatusIndex.IoInputEventLatencyMaxUs, 1000);
 
     panel.setSnapshot(readInputDiagnosticsSnapshotFromStatus(status));
     expect((host as any).textContent).toContain("keyboard_backend=virtio");
@@ -130,5 +148,11 @@ describe("mountInputDiagnosticsPanel", () => {
     expect((host as any).textContent).toContain("io.events_processed=999");
     expect((host as any).textContent).toContain("io.keyboard_backend_switches=6");
     expect((host as any).textContent).toContain("io.mouse_backend_switches=7");
+    expect((host as any).textContent).toContain("io.batch_send_latency_us=3000 us (3.000 ms)");
+    expect((host as any).textContent).toContain("io.batch_send_latency_ewma_us=3500 us (3.500 ms)");
+    expect((host as any).textContent).toContain("io.batch_send_latency_max_us=4000 us (4.000 ms)");
+    expect((host as any).textContent).toContain("io.event_latency_avg_us=800 us (0.800 ms)");
+    expect((host as any).textContent).toContain("io.event_latency_ewma_us=900 us (0.900 ms)");
+    expect((host as any).textContent).toContain("io.event_latency_max_us=1000 us (1.000 ms)");
   });
 });

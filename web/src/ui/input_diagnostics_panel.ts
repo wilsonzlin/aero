@@ -17,6 +17,12 @@ export type InputDiagnosticsSnapshot = {
   eventsProcessed: number;
   keyboardBackendSwitches: number;
   mouseBackendSwitches: number;
+  batchSendLatencyUs: number;
+  batchSendLatencyEwmaUs: number;
+  batchSendLatencyMaxUs: number;
+  eventLatencyAvgUs: number;
+  eventLatencyEwmaUs: number;
+  eventLatencyMaxUs: number;
 };
 
 export function readInputDiagnosticsSnapshotFromStatus(status: Int32Array): InputDiagnosticsSnapshot {
@@ -38,6 +44,12 @@ export function readInputDiagnosticsSnapshotFromStatus(status: Int32Array): Inpu
     eventsProcessed: Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0,
     keyboardBackendSwitches: Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0,
     mouseBackendSwitches: Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0,
+    batchSendLatencyUs: Atomics.load(status, StatusIndex.IoInputBatchSendLatencyUs) >>> 0,
+    batchSendLatencyEwmaUs: Atomics.load(status, StatusIndex.IoInputBatchSendLatencyEwmaUs) >>> 0,
+    batchSendLatencyMaxUs: Atomics.load(status, StatusIndex.IoInputBatchSendLatencyMaxUs) >>> 0,
+    eventLatencyAvgUs: Atomics.load(status, StatusIndex.IoInputEventLatencyAvgUs) >>> 0,
+    eventLatencyEwmaUs: Atomics.load(status, StatusIndex.IoInputEventLatencyEwmaUs) >>> 0,
+    eventLatencyMaxUs: Atomics.load(status, StatusIndex.IoInputEventLatencyMaxUs) >>> 0,
   };
 }
 
@@ -61,6 +73,12 @@ function formatMouseButtonsHeld(mask: number): string {
   if ((mask & 0x08) !== 0) names.push("back");
   if ((mask & 0x10) !== 0) names.push("forward");
   return names.length ? names.join(",") : "(none)";
+}
+
+function formatLatencyUs(value: number): string {
+  const us = value >>> 0;
+  const ms = us / 1000;
+  return `${us} us (${ms.toFixed(3)} ms)`;
 }
 
 export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { initial?: InputDiagnosticsSnapshot | null }): InputDiagnosticsPanelApi {
@@ -103,6 +121,12 @@ export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { init
       `io.events_processed=${snapshot.eventsProcessed >>> 0}`,
       `io.keyboard_backend_switches=${snapshot.keyboardBackendSwitches >>> 0}`,
       `io.mouse_backend_switches=${snapshot.mouseBackendSwitches >>> 0}`,
+      `io.batch_send_latency_us=${formatLatencyUs(snapshot.batchSendLatencyUs)}`,
+      `io.batch_send_latency_ewma_us=${formatLatencyUs(snapshot.batchSendLatencyEwmaUs)}`,
+      `io.batch_send_latency_max_us=${formatLatencyUs(snapshot.batchSendLatencyMaxUs)}`,
+      `io.event_latency_avg_us=${formatLatencyUs(snapshot.eventLatencyAvgUs)}`,
+      `io.event_latency_ewma_us=${formatLatencyUs(snapshot.eventLatencyEwmaUs)}`,
+      `io.event_latency_max_us=${formatLatencyUs(snapshot.eventLatencyMaxUs)}`,
     ].join("\n");
   };
 
