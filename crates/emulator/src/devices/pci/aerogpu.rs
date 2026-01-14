@@ -35,6 +35,16 @@ impl Default for AeroGpuDeviceConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Scanout0Descriptor {
+    enable: bool,
+    width: u32,
+    height: u32,
+    pitch_bytes: u32,
+    format: AeroGpuFormat,
+    fb_gpa: u64,
+}
+
 pub struct AeroGpuPciDevice {
     config: PciConfigSpace,
     pub bar0: u32,
@@ -45,6 +55,12 @@ pub struct AeroGpuPciDevice {
     irq_level: bool,
 
     scanout_state: Option<Arc<ScanoutState>>,
+    last_published_scanout0: Option<Scanout0Descriptor>,
+    /// Set after a write to `SCANOUT0_FB_GPA_LO` and cleared on `SCANOUT0_FB_GPA_HI`.
+    ///
+    /// This ensures we don't publish a scanout state update with a torn 64-bit `fb_gpa`
+    /// (drivers typically write LO then HI).
+    scanout0_fb_gpa_lo_pending: bool,
 
     boot_time: Instant,
     vblank_interval: Option<Duration>,
@@ -98,9 +114,22 @@ impl AeroGpuPciDevice {
             executor: AeroGpuExecutor::new(cfg.executor),
             irq_level: false,
             scanout_state: None,
+            last_published_scanout0: None,
+            scanout0_fb_gpa_lo_pending: false,
             boot_time: Instant::now(),
             vblank_interval,
             next_vblank: None,
+        }
+    }
+
+    fn scanout0_descriptor(&self) -> Scanout0Descriptor {
+        Scanout0Descriptor {
+            enable: self.regs.scanout0.enable,
+            width: self.regs.scanout0.width,
+            height: self.regs.scanout0.height,
+            pitch_bytes: self.regs.scanout0.pitch_bytes,
+            format: self.regs.scanout0.format,
+            fb_gpa: self.regs.scanout0.fb_gpa,
         }
     }
 
@@ -132,6 +161,9 @@ impl AeroGpuPciDevice {
     }
 
     pub fn tick(&mut self, mem: &mut dyn MemoryBus, now: Instant) {
+        // Coalesce any deferred scanout register updates (page flips / dynamic reprogramming).
+        self.maybe_publish_wddm_scanout0_state();
+
         let dma_enabled = self.bus_master_enabled();
 
         // Polling completions and flushing fences may write guest memory (fence page / writeback).
@@ -219,6 +251,9 @@ impl AeroGpuPciDevice {
 
     pub fn set_scanout_state(&mut self, scanout_state: Option<Arc<ScanoutState>>) {
         self.scanout_state = scanout_state;
+        // If scanout is already enabled, publish the current scanout descriptor immediately so
+        // consumers don't have to wait for the next register write / tick.
+        self.maybe_publish_wddm_scanout0_state();
     }
 
     pub fn read_presented_scanout_rgba8(
@@ -253,23 +288,42 @@ impl AeroGpuPciDevice {
         Some((scanout.width, scanout.height, scanout.rgba8))
     }
 
-    fn publish_wddm_scanout_state(&self) {
+    fn maybe_publish_wddm_scanout0_state(&mut self) {
         let Some(state) = &self.scanout_state else {
             return;
         };
 
-        let fb_gpa = self.regs.scanout0.fb_gpa;
+        // Do not publish while `fb_gpa` is mid-update (LO written without HI).
+        if self.scanout0_fb_gpa_lo_pending {
+            return;
+        }
+
+        let desc = self.scanout0_descriptor();
+
+        // Keep last-published state scoped to "enabled" so re-enabling always publishes.
+        if !desc.enable {
+            self.last_published_scanout0 = None;
+            return;
+        }
+
+        if self.last_published_scanout0 == Some(desc) {
+            return;
+        }
+
+        let fb_gpa = desc.fb_gpa;
         state.publish(ScanoutStateUpdate {
             source: SCANOUT_SOURCE_WDDM,
             base_paddr_lo: fb_gpa as u32,
             base_paddr_hi: (fb_gpa >> 32) as u32,
-            width: self.regs.scanout0.width,
-            height: self.regs.scanout0.height,
-            pitch_bytes: self.regs.scanout0.pitch_bytes,
+            width: desc.width,
+            height: desc.height,
+            pitch_bytes: desc.pitch_bytes,
             // `ScanoutState` currently only has a single format value; treat the WDDM scanout
             // surface as the canonical Windows/VBE-style BGRA/X8 format.
             format: SCANOUT_FORMAT_B8G8R8X8,
         });
+
+        self.last_published_scanout0 = Some(desc);
     }
 
     fn publish_legacy_scanout_state(&self) {
@@ -440,34 +494,51 @@ impl AeroGpuPciDevice {
                         self.executor.flush_pending_fences(&mut self.regs, mem);
                     }
                     self.update_irq_level();
-                    self.publish_legacy_scanout_state();
-                } else if !old_enable && new_enable {
-                    // WDDM claims scanout by programming the scanout registers and then
-                    // transitioning ENABLE from 0->1. Publish the descriptor for the
-                    // presentation layer (browser worker, native UI, etc).
-                    self.publish_wddm_scanout_state();
                 }
                 self.regs.scanout0.enable = new_enable;
+                if !new_enable {
+                    // Reset torn-update tracking so a stale LO write can't block future publishes.
+                    self.scanout0_fb_gpa_lo_pending = false;
+                    self.last_published_scanout0 = None;
+                }
+
+                if old_enable && !new_enable {
+                    self.publish_legacy_scanout_state();
+                } else {
+                    // WDDM claims scanout by programming the scanout registers and then
+                    // transitioning ENABLE from 0->1. While enabled, it may also reprogram
+                    // the scanout registers for page flips / mode changes.
+                    self.maybe_publish_wddm_scanout0_state();
+                }
             }
             mmio::SCANOUT0_WIDTH => {
                 self.regs.scanout0.width = value;
+                self.maybe_publish_wddm_scanout0_state();
             }
             mmio::SCANOUT0_HEIGHT => {
                 self.regs.scanout0.height = value;
+                self.maybe_publish_wddm_scanout0_state();
             }
             mmio::SCANOUT0_FORMAT => {
                 self.regs.scanout0.format = AeroGpuFormat::from_u32(value);
+                self.maybe_publish_wddm_scanout0_state();
             }
             mmio::SCANOUT0_PITCH_BYTES => {
                 self.regs.scanout0.pitch_bytes = value;
+                self.maybe_publish_wddm_scanout0_state();
             }
             mmio::SCANOUT0_FB_GPA_LO => {
                 self.regs.scanout0.fb_gpa =
                     (self.regs.scanout0.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid publishing a torn 64-bit `fb_gpa` update. Defer until the HI write.
+                self.scanout0_fb_gpa_lo_pending = true;
             }
             mmio::SCANOUT0_FB_GPA_HI => {
                 self.regs.scanout0.fb_gpa =
                     (self.regs.scanout0.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                // Drivers typically write LO then HI; treat HI as the commit point.
+                self.scanout0_fb_gpa_lo_pending = false;
+                self.maybe_publish_wddm_scanout0_state();
             }
 
             mmio::CURSOR_ENABLE => self.regs.cursor.enable = value != 0,
