@@ -552,6 +552,55 @@ impl AeroGpuMmioDevice {
         }
     }
 
+    fn scanout0_config_is_valid_for_wddm(&self) -> bool {
+        if !self.scanout0_enable {
+            return false;
+        }
+        if self.scanout0_width == 0 || self.scanout0_height == 0 {
+            return false;
+        }
+        if self.scanout0_fb_gpa == 0 {
+            return false;
+        }
+
+        // WDDM scanout is currently limited to formats that the host scanout path understands and
+        // that are compatible with the shared scanout descriptor (B8G8R8X8-compatible layouts).
+        match self.scanout0_format {
+            x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {}
+            _ => return false,
+        }
+
+        // Today we only accept 32-bit pixel formats.
+        let bytes_per_pixel = 4u64;
+        let Some(row_bytes) = u64::from(self.scanout0_width).checked_mul(bytes_per_pixel) else {
+            return false;
+        };
+        let pitch = u64::from(self.scanout0_pitch_bytes);
+        pitch >= row_bytes
+    }
+
+    fn maybe_claim_wddm_scanout(&mut self) {
+        if self.wddm_scanout_active {
+            return;
+        }
+        if !self.scanout0_config_is_valid_for_wddm() {
+            return;
+        }
+
+        // Sticky handoff: once a valid WDDM scanout config has been programmed, claim scanout even
+        // if `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence).
+        self.wddm_scanout_active = true;
+
+        // Mark dirty so scanout consumers see the transition immediately.
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        {
+            self.scanout0_dirty = true;
+        }
+    }
+
     /// Consume any pending scanout0 register updates and produce a new shared scanout descriptor.
     ///
     /// Returns `None` when:
@@ -567,10 +616,15 @@ impl AeroGpuMmioDevice {
         }
         self.scanout0_dirty = false;
 
+        // Do not publish WDDM scanout state until scanout has been *claimed* by a valid config.
+        // This prevents premature handoff when the guest enables scanout with `FB_GPA=0` during
+        // early initialization.
+        if !self.wddm_scanout_active {
+            return None;
+        }
+
         if !self.scanout0_enable {
-            return self
-                .wddm_scanout_active
-                .then_some(Self::scanout0_disabled_update());
+            return Some(Self::scanout0_disabled_update());
         }
         Some(self.scanout0_to_scanout_state_update())
     }
@@ -887,15 +941,16 @@ impl AeroGpuMmioDevice {
                 if self.scanout0_enable && !new_enable {
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-                }
-                if new_enable && !self.scanout0_enable {
-                    self.wddm_scanout_active = true;
+                    // Explicit disable releases the WDDM scanout claim so legacy scanout can take
+                    // back over.
+                    self.wddm_scanout_active = false;
                 }
                 self.scanout0_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
                     self.scanout0_dirty = true;
                 }
+                self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64 => {
                 self.scanout0_width = value;
@@ -903,6 +958,7 @@ impl AeroGpuMmioDevice {
                 {
                     self.scanout0_dirty = true;
                 }
+                self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64 => {
                 self.scanout0_height = value;
@@ -910,6 +966,7 @@ impl AeroGpuMmioDevice {
                 {
                     self.scanout0_dirty = true;
                 }
+                self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64 => {
                 self.scanout0_format = value;
@@ -917,6 +974,7 @@ impl AeroGpuMmioDevice {
                 {
                     self.scanout0_dirty = true;
                 }
+                self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64 => {
                 self.scanout0_pitch_bytes = value;
@@ -924,6 +982,7 @@ impl AeroGpuMmioDevice {
                 {
                     self.scanout0_dirty = true;
                 }
+                self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64 => {
                 self.scanout0_fb_gpa =
@@ -932,6 +991,7 @@ impl AeroGpuMmioDevice {
                 {
                     self.scanout0_dirty = true;
                 }
+                self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64 => {
                 self.scanout0_fb_gpa =
@@ -940,6 +1000,7 @@ impl AeroGpuMmioDevice {
                 {
                     self.scanout0_dirty = true;
                 }
+                self.maybe_claim_wddm_scanout();
             }
 
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64 => self.cursor_enable = value != 0,

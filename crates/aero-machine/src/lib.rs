@@ -6901,6 +6901,44 @@ Track progress: docs/21-smp.md\n\
         if let Some(scanout_state) = &self.scanout_state {
             if let Some(update) = dev.take_scanout0_state_update() {
                 scanout_state.publish(update);
+            } else {
+                // If WDDM previously claimed scanout and has since been explicitly disabled, revert
+                // the shared scanout descriptor back to the legacy BIOS source so the host
+                // presentation layer can fall back to text/VBE.
+                //
+                // This cannot be handled inside `AeroGpuMmioDevice` because it does not have access
+                // to BIOS VBE state (for correct legacy mode reporting).
+                if scanout_state.snapshot().source == SCANOUT_SOURCE_WDDM
+                    && !dev.scanout0_state().wddm_scanout_active
+                {
+                    match self.bios.video.vbe.current_mode {
+                        None => {
+                            scanout_state.publish(ScanoutStateUpdate {
+                                source: SCANOUT_SOURCE_LEGACY_TEXT,
+                                base_paddr_lo: 0,
+                                base_paddr_hi: 0,
+                                width: 0,
+                                height: 0,
+                                pitch_bytes: 0,
+                                format: SCANOUT_FORMAT_B8G8R8X8,
+                            });
+                        }
+                        Some(mode) => {
+                            if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                                let base = u64::from(self.bios.video.vbe.lfb_base);
+                                scanout_state.publish(ScanoutStateUpdate {
+                                    source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                                    base_paddr_lo: base as u32,
+                                    base_paddr_hi: (base >> 32) as u32,
+                                    width: u32::from(mode_info.width),
+                                    height: u32::from(mode_info.height),
+                                    pitch_bytes: u32::from(self.bios.video.vbe.bytes_per_scan_line),
+                                    format: SCANOUT_FORMAT_B8G8R8X8,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
     }
