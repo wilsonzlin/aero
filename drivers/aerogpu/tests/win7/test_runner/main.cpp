@@ -1072,6 +1072,7 @@ int main(int argc, char** argv) {
       "d3d9_process_vertices_sanity",
       "dwm_flush_pacing",
       "d3d9ex_triangle",
+      "d3d9ex_ps_only_triangle",
       "d3d9_mipmapped_texture_smoke",
       "d3d9_fixedfunc_xyz_diffuse",
       "d3d9_fixedfunc_xyz_diffuse_tex1",
