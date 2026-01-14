@@ -4279,8 +4279,8 @@ Track progress: docs/21-smp.md\n\
     /// This attaches a host-side ISO backend to the IDE secondary master ATAPI device without
     /// mutating guest-visible tray/media state (it uses the snapshot-restore attachment path).
     ///
-    /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so we intentionally accept
-    /// a non-`Send` `VirtualDisk` trait object.
+    /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so this method has a
+    /// wasm32-specific signature without the `Send` bound.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_install_media_iso(
         &mut self,
