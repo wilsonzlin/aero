@@ -452,7 +452,7 @@ impl LayoutPassPipeline {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(4),
+                        min_binding_size: wgpu::BufferSize::new(layout_pass::DEBUG_OUT_SIZE_BYTES),
                     },
                     count: None,
                 },

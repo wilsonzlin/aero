@@ -209,8 +209,9 @@ pub struct ShaderProgram {
     /// Texture type declared for each sampler register (`dcl_2d`, `dcl_cube`, etc).
     ///
     /// The AeroGPU D3D9 executor supports `texture_2d<f32>` and `texture_cube<f32>` samplers.
-    /// Used samplers declared as other texture types (3D/1D/unknown) are rejected by the
-    /// high-level shader translator (`shader_translate`); unused declarations are tolerated.
+    ///
+    /// Used samplers declared as other texture types (3D/1D/unknown) are rejected by the high-level
+    /// shader translator (`shader_translate`); unused declarations are tolerated.
     pub sampler_texture_types: HashMap<u16, TextureType>,
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,
@@ -352,6 +353,11 @@ fn decode_src_modifier(modifier: u8) -> Result<SrcModifier, ShaderError> {
 }
 
 fn decode_src(token: u32) -> Result<Src, ShaderError> {
+    // Operand tokens must not consume the `end` opcode token. Treat it as an unexpected end of
+    // stream so malformed instruction length encodings are rejected cleanly.
+    if token == 0x0000_FFFF {
+        return Err(ShaderError::UnexpectedEof);
+    }
     if (token & RELATIVE_ADDR) != 0 {
         return Err(ShaderError::RelativeAddressingUnsupported);
     }
@@ -442,6 +448,11 @@ fn validate_src_for_stage(stage: ShaderStage, src: &Src) -> Result<(), ShaderErr
 }
 
 fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
+    // Operand tokens must not consume the `end` opcode token. Treat it as an unexpected end of
+    // stream so malformed instruction length encodings are rejected cleanly.
+    if token == 0x0000_FFFF {
+        return Err(ShaderError::UnexpectedEof);
+    }
     if (token & RELATIVE_ADDR) != 0 {
         return Err(ShaderError::RelativeAddressingUnsupported);
     }

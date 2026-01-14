@@ -12,6 +12,19 @@
 
 use super::{tessellator::wgsl_tri_tessellator_lib, MAX_TESS_FACTOR_SUPPORTED};
 
+/// Whether the layout pass includes debug counters in its `DebugOut` buffer.
+///
+/// This is enabled in unit tests so they can assert on the computed total vertex/index counts.
+pub(crate) const INCLUDE_DEBUG_COUNTERS: bool =
+    cfg!(any(test, feature = "tessellation_debug_counters"));
+
+/// Size in bytes of the `DebugOut` storage buffer written by [`wgsl_tessellation_layout_pass`].
+///
+/// This must match the WGSL `DebugOut` struct layout:
+/// - 4 bytes when counters are disabled (`flag: u32`)
+/// - 16 bytes when counters are enabled (`flag + 2x counters + padding`)
+pub(crate) const DEBUG_OUT_SIZE_BYTES: u64 = if INCLUDE_DEBUG_COUNTERS { 16 } else { 4 };
+
 /// Returns a WGSL compute shader implementing the tessellation layout pass.
 ///
 /// Bindings:
@@ -31,7 +44,7 @@ pub fn wgsl_tessellation_layout_pass(
     let tri_lib = wgsl_tri_tessellator_lib(MAX_TESS_FACTOR_SUPPORTED);
 
     // When enabled, the layout pass writes counters that can be read back in tests.
-    let include_counters = cfg!(any(test, feature = "tessellation_debug_counters"));
+    let include_counters = INCLUDE_DEBUG_COUNTERS;
     let (debug_struct, debug_init, debug_write) = if include_counters {
         (
             r#"

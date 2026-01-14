@@ -2188,9 +2188,9 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
                 return Ok(Sm4Decl::Unknown { opcode });
             }
             let count = r.read_u32()?;
-            if !r.is_eof() {
-                return Ok(Sm4Decl::Unknown { opcode });
-            }
+            // Some toolchains appear to emit extra DWORDs after the control-point count (e.g.
+            // extended metadata). We only need the count for executor validation, so decode it
+            // even if trailing tokens are present.
             return Ok(Sm4Decl::InputControlPointCount { count });
         }
         OPCODE_DCL_GS_INPUT_PRIMITIVE => {

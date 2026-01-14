@@ -7314,7 +7314,11 @@ impl AerogpuD3d11Executor {
             };
             let debug_alloc = self
                 .expansion_scratch
-                .alloc_metadata(&self.device, 4, 4)
+                .alloc_metadata(
+                    &self.device,
+                    super::tessellation::layout_pass::DEBUG_OUT_SIZE_BYTES,
+                    4,
+                )
                 .map_err(|e| anyhow!("tessellation prepass: alloc layout debug: {e}"))?;
             let layout_bg = layout_pipeline.create_bind_group_group3(
                 &self.device,
@@ -21004,8 +21008,8 @@ mod tests {
             }
 
             // Draw via the patchlist topology (tessellation input). Real HS/DS emulation isn't
-            // implemented yet, but the executor should route patchlist draws through the compute
-            // prepass plumbing and emit placeholder geometry.
+            // implemented yet, but the executor should route patchlist draws through the
+            // tessellation compute-prepass plumbing and emit placeholder geometry.
             const RT: u32 = 1;
             const VS: u32 = 2;
             const PS: u32 = 3;
