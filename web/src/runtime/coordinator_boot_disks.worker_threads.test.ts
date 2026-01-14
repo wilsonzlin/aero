@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { perf } from "../perf/perf";
-import type { DiskImageMetadata } from "../storage/metadata";
+import type { DiskImageMetadata, MountConfig } from "../storage/metadata";
 import { WorkerCoordinator } from "./coordinator";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "./boot_disks_protocol";
 import { createSharedMemoryViews } from "./shared_layout";
@@ -51,6 +51,13 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     return { ...meta, source: "local" };
   }
 
+  function makeMounts(value: { hddId?: string; cdId?: string }): MountConfig {
+    const mounts: MountConfig = Object.create(null) as MountConfig;
+    if (value.hddId) mounts.hddId = value.hddId;
+    if (value.cdId) mounts.cdId = value.cdId;
+    return mounts;
+  }
+
   function allocateTestSegments() {
     return allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
@@ -69,6 +76,68 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     terminateWorker: (role: string) => void;
     onWorkerMessage: (role: string, instanceId: number, message: unknown) => void;
   };
+
+  it("ignores inherited mount IDs / metadata fields (prototype pollution)", () => {
+    const hddIdExisting = Object.getOwnPropertyDescriptor(Object.prototype, "hddId");
+    const remoteExisting = Object.getOwnPropertyDescriptor(Object.prototype, "remote");
+    const opfsDirExisting = Object.getOwnPropertyDescriptor(Object.prototype, "opfsDirectory");
+    if (
+      (hddIdExisting && hddIdExisting.configurable === false) ||
+      (remoteExisting && remoteExisting.configurable === false) ||
+      (opfsDirExisting && opfsDirExisting.configurable === false)
+    ) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "hddId", {
+        get() {
+          throw new Error("polluted hddId getter");
+        },
+        configurable: true,
+      });
+      Object.defineProperty(Object.prototype, "remote", {
+        get() {
+          throw new Error("polluted remote getter");
+        },
+        configurable: true,
+      });
+      Object.defineProperty(Object.prototype, "opfsDirectory", {
+        get() {
+          throw new Error("polluted opfsDirectory getter");
+        },
+        configurable: true,
+      });
+
+      const coordinator = new WorkerCoordinator();
+      const hdd = makeLocalDisk({
+        id: "hdd1",
+        name: "disk.img",
+        backend: "opfs",
+        kind: "hdd",
+        format: "raw",
+        fileName: "disk.img",
+        sizeBytes: 1024,
+        createdAtMs: 0,
+      });
+
+      expect(() => coordinator.setBootDisks({}, hdd, null)).not.toThrow();
+
+      const bootDisks = coordinator.getBootDisks();
+      expect(bootDisks?.type).toBe("setBootDisks");
+      expect(Object.getPrototypeOf(bootDisks!.mounts)).toBe(null);
+      expect("hddId" in (bootDisks!.mounts as object)).toBe(false);
+      expect("cdId" in (bootDisks!.mounts as object)).toBe(false);
+    } finally {
+      if (hddIdExisting) Object.defineProperty(Object.prototype, "hddId", hddIdExisting);
+      else Reflect.deleteProperty(Object.prototype, "hddId");
+      if (remoteExisting) Object.defineProperty(Object.prototype, "remote", remoteExisting);
+      else Reflect.deleteProperty(Object.prototype, "remote");
+      if (opfsDirExisting) Object.defineProperty(Object.prototype, "opfsDirectory", opfsDirExisting);
+      else Reflect.deleteProperty(Object.prototype, "opfsDirectory");
+    }
+  });
 
   it("resends boot disk selection to the CPU worker when vmRuntime=machine and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
@@ -112,7 +181,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const expectedCpuMessage = {
       ...emptySetBootDisksMessage(),
-      mounts: { hddId: "hdd1", cdId: "cd1" },
+      mounts: makeMounts({ hddId: "hdd1", cdId: "cd1" }),
       hdd,
       cd,
       bootDevice: "cdrom",
@@ -187,7 +256,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(restartedCpuWorker.posted).toContainEqual({
       message: {
         ...emptySetBootDisksMessage(),
-        mounts: { hddId: "hdd1", cdId: "cd1" },
+        mounts: makeMounts({ hddId: "hdd1", cdId: "cd1" }),
         hdd,
         cd,
         bootDevice: "hdd",
@@ -597,7 +666,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       expect(entry).toEqual({
         message: {
           ...emptySetBootDisksMessage(),
-          mounts: { hddId: "hdd1", cdId: "cd1" },
+          mounts: makeMounts({ hddId: "hdd1", cdId: "cd1" }),
           hdd,
           cd,
           bootDevice: "hdd",
@@ -820,7 +889,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       {
         message: {
           ...emptySetBootDisksMessage(),
-          mounts: { hddId: "hdd1" },
+          mounts: makeMounts({ hddId: "hdd1" }),
           hdd: resizedHdd,
           cd: null,
           bootDevice: "hdd",
@@ -885,7 +954,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       {
         message: {
           ...emptySetBootDisksMessage(),
-          mounts: { hddId: "hdd1" },
+          mounts: makeMounts({ hddId: "hdd1" }),
           hdd: updatedRemoteHdd,
           cd: null,
           bootDevice: "hdd",
@@ -931,7 +1000,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     const expectedIoMessage = {
       ...emptySetBootDisksMessage(),
-      mounts: { hddId: "hdd1", cdId: "cd1" },
+      mounts: makeMounts({ hddId: "hdd1", cdId: "cd1" }),
       hdd,
       cd,
       bootDevice: "cdrom",

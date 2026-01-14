@@ -213,6 +213,32 @@ function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ownString(obj: unknown, key: string): string | undefined {
+  if (!isRecord(obj)) return undefined;
+  const value = hasOwn(obj, key) ? obj[key] : undefined;
+  return typeof value === "string" ? value : undefined;
+}
+
+function ownNumber(obj: unknown, key: string): number | undefined {
+  if (!isRecord(obj)) return undefined;
+  const value = hasOwn(obj, key) ? obj[key] : undefined;
+  return typeof value === "number" ? value : undefined;
+}
+
+function ownRecord(obj: unknown, key: string): Record<string, unknown> | null {
+  if (!isRecord(obj)) return null;
+  const value = hasOwn(obj, key) ? obj[key] : undefined;
+  return isRecord(value) ? (value as Record<string, unknown>) : null;
+}
+
 function maybeGetHudPerfChannel(): PerfChannel | null {
   const aero = (globalThis as unknown as { aero?: unknown }).aero as { perf?: unknown } | undefined;
   const perfApi = aero?.perf as { getChannel?: () => PerfChannel | null } | undefined;
@@ -1112,15 +1138,29 @@ export class WorkerCoordinator {
     // metadata objects. The metadata can briefly be null (e.g. missing/late-loaded) while the mounts
     // still express the user's intent. Comparing mount IDs avoids accidentally resetting boot-device
     // policy when only metadata changes.
-    const sanitizeMountId = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
-    const prevMountHddId = sanitizeMountId(prev?.mounts?.hddId);
-    const prevMountCdId = sanitizeMountId(prev?.mounts?.cdId);
-    const nextMountHddId = sanitizeMountId(mounts?.hddId);
-    const nextMountCdId = sanitizeMountId(mounts?.cdId);
+    const sanitizeMountId = (rec: unknown, key: "hddId" | "cdId"): string => {
+      const value = ownString(rec, key);
+      return typeof value === "string" ? value.trim() : "";
+    };
+    const prevMountHddId = sanitizeMountId(prev?.mounts, "hddId");
+    const prevMountCdId = sanitizeMountId(prev?.mounts, "cdId");
+    const nextMountHddId = sanitizeMountId(mounts, "hddId");
+    const nextMountCdId = sanitizeMountId(mounts, "cdId");
 
-    const canonicalMounts: MountConfig = {};
+    // Preserve the `emptySetBootDisksMessage()` invariant: mount config objects are null-prototype
+    // so inherited `Object.prototype.hddId`/`cdId` pollution cannot affect disk selection.
+    const canonicalMounts: MountConfig = Object.create(null) as MountConfig;
     if (nextMountHddId) canonicalMounts.hddId = nextMountHddId;
     if (nextMountCdId) canonicalMounts.cdId = nextMountCdId;
+
+    const normalizeDiskId = (meta: DiskImageMetadata | null | undefined): string => {
+      const id = ownString(meta, "id");
+      return typeof id === "string" ? id.trim() : "";
+    };
+    const normalizeDiskKind = (meta: DiskImageMetadata | null | undefined): unknown => {
+      const kind = ownString(meta, "kind");
+      return kind;
+    };
 
     const normalizeDisk = <TKind extends "hdd" | "cd">(
       kind: TKind,
@@ -1130,10 +1170,11 @@ export class WorkerCoordinator {
     ): DiskImageMetadata | null => {
       if (!next && !mountId) return null;
 
-      const nextKind = next ? ((next as unknown as { kind?: unknown }).kind as unknown) : undefined;
-      const nextId = next ? String((next as unknown as { id?: unknown }).id ?? "").trim() : "";
-      const prevKind = prevMeta ? ((prevMeta as unknown as { kind?: unknown }).kind as unknown) : undefined;
-      const prevId = prevMeta ? String((prevMeta as unknown as { id?: unknown }).id ?? "").trim() : "";
+      // Treat metadata objects as untrusted: ignore inherited `kind`/`id` (prototype pollution).
+      const nextKind = normalizeDiskKind(next);
+      const nextId = normalizeDiskId(next);
+      const prevKind = normalizeDiskKind(prevMeta);
+      const prevId = normalizeDiskId(prevMeta);
 
       // When mount IDs are present (DiskManager selection), treat them as canonical and preserve
       // the prior metadata object if a transient refresh fails to provide it.
@@ -1154,14 +1195,16 @@ export class WorkerCoordinator {
     // the disk metadata IDs. This keeps machine-runtime boot-device policy stable even when disk
     // metadata is temporarily null, while still letting legacy callers that omit mounts behave
     // sensibly.
-    const prevSelHddId = prevMountHddId || sanitizeMountId(prev?.hdd?.id);
-    const prevSelCdId = prevMountCdId || sanitizeMountId(prev?.cd?.id);
-    const nextSelHddId = nextMountHddId || sanitizeMountId(nextHdd?.id);
-    const nextSelCdId = nextMountCdId || sanitizeMountId(nextCd?.id);
+    const prevSelHddId = prevMountHddId || normalizeDiskId(prev?.hdd);
+    const prevSelCdId = prevMountCdId || normalizeDiskId(prev?.cd);
+    const nextSelHddId = nextMountHddId || normalizeDiskId(nextHdd);
+    const nextSelCdId = nextMountCdId || normalizeDiskId(nextCd);
     const disksChanged = prevSelHddId !== nextSelHddId || prevSelCdId !== nextSelCdId;
 
     const defaultBootDevice = nextSelCdId ? "cdrom" : "hdd";
-    const bootDevice = disksChanged ? defaultBootDevice : prev?.bootDevice ?? defaultBootDevice;
+    const prevBootDeviceRaw = prev && typeof prev === "object" && hasOwn(prev as object, "bootDevice") ? (prev as { bootDevice?: unknown }).bootDevice : undefined;
+    const prevBootDevicePolicy = prevBootDeviceRaw === "hdd" || prevBootDeviceRaw === "cdrom" ? prevBootDeviceRaw : undefined;
+    const bootDevice = disksChanged ? defaultBootDevice : prevBootDevicePolicy ?? defaultBootDevice;
 
     const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts: canonicalMounts, hdd: nextHdd, cd: nextCd, bootDevice };
     this.bootDisks = msg;
@@ -1171,50 +1214,95 @@ export class WorkerCoordinator {
     // reattachment.
     const diskOpenKey = (meta: DiskImageMetadata | null | undefined): string => {
       if (!meta) return "";
-      if (meta.source === "local") {
-        const dirRaw = typeof meta.opfsDirectory === "string" ? meta.opfsDirectory.trim() : "";
-        const dir = dirRaw && dirRaw !== OPFS_DISKS_PATH ? dirRaw : "";
-        const remote = meta.remote
-          ? {
-              url: meta.remote.url,
-              ...(meta.remote.blockSizeBytes !== undefined ? { blockSizeBytes: meta.remote.blockSizeBytes } : {}),
-              ...(meta.remote.cacheLimitBytes !== undefined ? { cacheLimitBytes: meta.remote.cacheLimitBytes } : {}),
-              ...(meta.remote.prefetchSequentialBlocks !== undefined ? { prefetchSequentialBlocks: meta.remote.prefetchSequentialBlocks } : {}),
-            }
-          : null;
-        return JSON.stringify({
+      // Treat metadata as untrusted: ignore inherited discriminants (prototype pollution) and avoid
+      // throwing on partially-corrupt objects.
+      const source = ownString(meta, "source");
+      if (source === "local") {
+        const dirRaw = ownString(meta, "opfsDirectory");
+        const dirTrimmed = typeof dirRaw === "string" ? dirRaw.trim() : "";
+        const dir = dirTrimmed && dirTrimmed !== OPFS_DISKS_PATH ? dirTrimmed : "";
+
+        const legacyRemote = ownRecord(meta, "remote");
+        const remoteUrl = legacyRemote ? ownString(legacyRemote, "url") : undefined;
+        const blockSizeBytes = legacyRemote ? ownNumber(legacyRemote, "blockSizeBytes") : undefined;
+        const prefetchSequentialBlocks = legacyRemote ? ownNumber(legacyRemote, "prefetchSequentialBlocks") : undefined;
+        const cacheLimitBytes =
+          legacyRemote && hasOwn(legacyRemote, "cacheLimitBytes") ? (legacyRemote as { cacheLimitBytes?: unknown }).cacheLimitBytes : undefined;
+        const remote =
+          typeof remoteUrl === "string" && remoteUrl.trim()
+            ? {
+                url: remoteUrl,
+                ...(typeof blockSizeBytes === "number" ? { blockSizeBytes } : {}),
+                ...(cacheLimitBytes !== undefined ? { cacheLimitBytes } : {}),
+                ...(typeof prefetchSequentialBlocks === "number" ? { prefetchSequentialBlocks } : {}),
+              }
+            : null;
+
+        const id = normalizeDiskId(meta as DiskImageMetadata);
+        const backend = ownString(meta, "backend");
+        const kind = ownString(meta, "kind");
+        const format = ownString(meta, "format");
+        const fileName = ownString(meta, "fileName");
+        const sizeBytes = ownNumber(meta, "sizeBytes");
+        const keyObj = {
           source: "local",
-          id: meta.id,
-          backend: meta.backend,
-          kind: meta.kind,
-          format: meta.format,
-          fileName: meta.fileName,
+          ...(id ? { id } : {}),
+          ...(backend ? { backend } : {}),
+          ...(kind ? { kind } : {}),
+          ...(format ? { format } : {}),
+          ...(fileName ? { fileName } : {}),
           ...(dir ? { opfsDirectory: dir } : {}),
-          sizeBytes: meta.sizeBytes,
+          ...(typeof sizeBytes === "number" ? { sizeBytes } : {}),
           ...(remote ? { remote } : {}),
-        });
+        };
+        try {
+          return JSON.stringify(keyObj);
+        } catch {
+          return "";
+        }
       }
 
-      const stableUrl =
-        typeof meta.remote.urls.url === "string" && meta.remote.urls.url.trim() ? meta.remote.urls.url.trim() : undefined;
-      const leaseEndpoint =
-        typeof meta.remote.urls.leaseEndpoint === "string" && meta.remote.urls.leaseEndpoint.trim()
-          ? meta.remote.urls.leaseEndpoint.trim()
-          : undefined;
-      const validatorEtag = typeof meta.remote.validator?.etag === "string" ? meta.remote.validator.etag : undefined;
-      const validatorLastModified =
-        typeof meta.remote.validator?.lastModified === "string" ? meta.remote.validator.lastModified : undefined;
+      if (source !== "remote") return "";
 
-      return JSON.stringify({
+      const id = normalizeDiskId(meta as DiskImageMetadata);
+      const kind = ownString(meta, "kind");
+      const format = ownString(meta, "format");
+      const sizeBytes = ownNumber(meta, "sizeBytes");
+      const remoteRec = ownRecord(meta, "remote");
+      const cacheRec = ownRecord(meta, "cache");
+      const imageId = remoteRec ? ownString(remoteRec, "imageId") : undefined;
+      const version = remoteRec ? ownString(remoteRec, "version") : undefined;
+      const delivery = remoteRec && hasOwn(remoteRec, "delivery") ? remoteRec.delivery : undefined;
+
+      const urlsRec = remoteRec ? ownRecord(remoteRec, "urls") : null;
+      const stableUrlRaw = urlsRec ? ownString(urlsRec, "url") : undefined;
+      const stableUrl = typeof stableUrlRaw === "string" && stableUrlRaw.trim() ? stableUrlRaw.trim() : undefined;
+      const leaseEndpointRaw = urlsRec ? ownString(urlsRec, "leaseEndpoint") : undefined;
+      const leaseEndpoint = typeof leaseEndpointRaw === "string" && leaseEndpointRaw.trim() ? leaseEndpointRaw.trim() : undefined;
+
+      const validatorRec = remoteRec ? ownRecord(remoteRec, "validator") : null;
+      const validatorEtag = validatorRec ? ownString(validatorRec, "etag") : undefined;
+      const validatorLastModified = validatorRec ? ownString(validatorRec, "lastModified") : undefined;
+
+      const cacheBackend = cacheRec && hasOwn(cacheRec, "backend") ? cacheRec.backend : undefined;
+      const chunkSizeBytes = cacheRec ? ownNumber(cacheRec, "chunkSizeBytes") : undefined;
+      const cacheFileName = cacheRec ? ownString(cacheRec, "fileName") : undefined;
+      const overlayFileName = cacheRec ? ownString(cacheRec, "overlayFileName") : undefined;
+      const overlayBlockSizeBytes = cacheRec ? ownNumber(cacheRec, "overlayBlockSizeBytes") : undefined;
+
+      const cacheLimitBytes =
+        cacheRec && hasOwn(cacheRec, "cacheLimitBytes") ? (cacheRec as { cacheLimitBytes?: unknown }).cacheLimitBytes : undefined;
+
+      const keyObj = {
         source: "remote",
-        id: meta.id,
-        kind: meta.kind,
-        format: meta.format,
-        sizeBytes: meta.sizeBytes,
+        ...(id ? { id } : {}),
+        ...(kind ? { kind } : {}),
+        ...(format ? { format } : {}),
+        ...(typeof sizeBytes === "number" ? { sizeBytes } : {}),
         remote: {
-          imageId: meta.remote.imageId,
-          version: meta.remote.version,
-          delivery: meta.remote.delivery,
+          ...(typeof imageId === "string" && imageId.trim() ? { imageId } : {}),
+          ...(typeof version === "string" && version.trim() ? { version } : {}),
+          ...(delivery === "range" || delivery === "chunked" ? { delivery } : {}),
           ...(stableUrl ? { url: stableUrl } : {}),
           ...(leaseEndpoint ? { leaseEndpoint } : {}),
           ...(validatorEtag || validatorLastModified
@@ -1227,21 +1315,28 @@ export class WorkerCoordinator {
             : {}),
         },
         cache: {
-          backend: meta.cache.backend,
-          chunkSizeBytes: meta.cache.chunkSizeBytes,
-          fileName: meta.cache.fileName,
-          overlayFileName: meta.cache.overlayFileName,
-          overlayBlockSizeBytes: meta.cache.overlayBlockSizeBytes,
-          ...(meta.cache.cacheLimitBytes !== undefined ? { cacheLimitBytes: meta.cache.cacheLimitBytes } : {}),
+          ...(cacheBackend ? { backend: cacheBackend } : {}),
+          ...(typeof chunkSizeBytes === "number" ? { chunkSizeBytes } : {}),
+          ...(cacheFileName ? { fileName: cacheFileName } : {}),
+          ...(overlayFileName ? { overlayFileName } : {}),
+          ...(typeof overlayBlockSizeBytes === "number" ? { overlayBlockSizeBytes } : {}),
+          ...(cacheLimitBytes !== undefined ? { cacheLimitBytes } : {}),
         },
-      });
+      };
+      try {
+        return JSON.stringify(keyObj);
+      } catch {
+        return "";
+      }
     };
 
     const prevHddKey = diskOpenKey(prev?.hdd);
     const prevCdKey = diskOpenKey(prev?.cd);
     const nextHddKey = diskOpenKey(nextHdd);
     const nextCdKey = diskOpenKey(nextCd);
-    const prevBootDevice = prev?.bootDevice ?? "";
+    const prevBootDeviceRaw2 =
+      prev && typeof prev === "object" && hasOwn(prev as object, "bootDevice") ? (prev as { bootDevice?: unknown }).bootDevice : undefined;
+    const prevBootDevice = prevBootDeviceRaw2 === "hdd" || prevBootDeviceRaw2 === "cdrom" ? prevBootDeviceRaw2 : "";
     if (
       prev &&
       prevMountHddId === nextMountHddId &&
@@ -2862,13 +2957,20 @@ export class WorkerCoordinator {
         // a reset, but ordering between postMessage and the ring-buffer `resetRequest` event is not
         // guaranteed. Apply a coordinator-side fallback so a reset request cannot accidentally
         // loop back into install media when both HDD and CD are present.
-        if ((this.activeConfig?.vmRuntime ?? "legacy") === "machine" && this.bootDisks?.bootDevice === "cdrom") {
-          const mounts = this.bootDisks.mounts;
-          const hasHdd =
-            !!this.bootDisks.hdd || (typeof mounts?.hddId === "string" && mounts.hddId.trim().length > 0);
-          const hasCd = !!this.bootDisks.cd || (typeof mounts?.cdId === "string" && mounts.cdId.trim().length > 0);
+        const bootDisks = this.bootDisks;
+        const bootDevice =
+          bootDisks && typeof bootDisks === "object" && hasOwn(bootDisks as object, "bootDevice")
+            ? (bootDisks as { bootDevice?: unknown }).bootDevice
+            : undefined;
+        if ((this.activeConfig?.vmRuntime ?? "legacy") === "machine" && bootDevice === "cdrom" && bootDisks) {
+          const mounts = bootDisks.mounts;
+          // Treat mount IDs as untrusted; ignore inherited fields (prototype pollution).
+          const hddId = ownString(mounts, "hddId");
+          const cdId = ownString(mounts, "cdId");
+          const hasHdd = !!bootDisks.hdd || (typeof hddId === "string" && hddId.trim().length > 0);
+          const hasCd = !!bootDisks.cd || (typeof cdId === "string" && cdId.trim().length > 0);
           if (hasHdd && hasCd) {
-            this.bootDisks = { ...this.bootDisks, bootDevice: "hdd" };
+            this.bootDisks = { ...bootDisks, bootDevice: "hdd" };
           }
         }
         this.reset("resetRequest");
