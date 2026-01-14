@@ -1,6 +1,6 @@
 #![no_main]
 
-use aero_cpu_core::interp::tier0::{exec::step_with_config, Tier0Config};
+use aero_cpu_core::interp::tier0::exec;
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_RESERVED1};
 use core::ffi::c_char;
@@ -104,6 +104,6 @@ fuzz_target!(|data: &[u8]| {
     instr[..n].copy_from_slice(&code_src[..n]);
     bus.load(rip, &instr);
 
-    let cfg = Tier0Config::default();
-    let _ = step_with_config(&cfg, &mut cpu, &mut bus);
+    // The only property is "no panic / no UB"; exceptions/assists are ignored.
+    let _ = exec::step(&mut cpu, &mut bus);
 });
