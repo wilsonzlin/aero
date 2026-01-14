@@ -4331,11 +4331,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                   requestId: req.requestId,
                   width,
                   height,
-                  rgba8: out.buffer,
+                  rgba8: out.buffer as ArrayBuffer,
                   origin: "top-left",
                   ...(typeof seq === "number" ? { frameSeq: seq } : {}),
                 },
-                [out.buffer],
+                [out.buffer as ArrayBuffer],
               );
               return true;
             } catch {
@@ -4437,11 +4437,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 requestId: req.requestId,
                 width,
                 height,
-                rgba8: out.buffer,
+                rgba8: out.buffer as ArrayBuffer,
                 origin: "top-left",
                 ...(typeof frameSeq === "number" ? { frameSeq } : {}),
               },
-              [out.buffer],
+              [out.buffer as ArrayBuffer],
             );
             return true;
           };
@@ -4682,11 +4682,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                       requestId: req.requestId,
                       width: shot.width,
                       height: shot.height,
-                      rgba8: outView.buffer,
+                      rgba8: outView.buffer as ArrayBuffer,
                       origin: "top-left",
                       ...(typeof seq === "number" ? { frameSeq: seq } : {}),
                     },
-                    [outView.buffer],
+                    [outView.buffer as ArrayBuffer],
                   );
                   return;
                 }
@@ -4733,11 +4733,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 requestId: req.requestId,
                 width: frame.width,
                 height: frame.height,
-                rgba8: out.buffer,
+                rgba8: out.buffer as ArrayBuffer,
                 origin: "top-left",
                 frameSeq: frame.frameSeq,
               },
-              [out.buffer],
+              [out.buffer as ArrayBuffer],
             );
             return;
           }
