@@ -2932,6 +2932,7 @@ static VOID AerovNetCtrlVlanConfigureFromRegistry(_Inout_ AEROVNET_ADAPTER* Adap
   ULONG VlanIdsBytes;
   NDIS_STATUS Status;
   const WCHAR* P;
+  const WCHAR* End;
   USHORT VidList[64];
   ULONG VidCount;
   ULONG I;
@@ -2971,15 +2972,19 @@ static VOID AerovNetCtrlVlanConfigureFromRegistry(_Inout_ AEROVNET_ADAPTER* Adap
     MaxVidCount = (ULONG)(sizeof(VidList) / sizeof(VidList[0]));
     VidCount = 0;
     P = VlanIds;
-    while (P && *P) {
+    End = (const WCHAR*)((const UCHAR*)VlanIds + (ULONG)VlanIdsBytes + (2 * sizeof(WCHAR)));
+    while (P && P < End && *P) {
       ULONG Parsed;
       ULONG Len;
       BOOLEAN Duplicate;
 
       // Compute length of current string.
       Len = 0;
-      while (P[Len] != L'\0') {
+      while (P + Len < End && P[Len] != L'\0') {
         Len++;
+      }
+      if (P + Len >= End) {
+        break;
       }
 
       Parsed = 0;
