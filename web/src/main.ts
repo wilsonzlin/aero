@@ -4269,7 +4269,16 @@ function renderAudioPanel(): HTMLElement {
     error?: string;
   };
 
+  type HdaSnapshotStateResultMessage = {
+    type: "hda.snapshotStateResult";
+    requestId: number;
+    ok: boolean;
+    bytes?: Uint8Array;
+    error?: string;
+  };
+
   let hdaCodecDebugRequestId = 1;
+  let hdaSnapshotStateRequestId = 1;
   let qaBundleScreenshotRequestId = 1;
   const exportHdaCodecStateButton = el("button", {
     text: "Export HDA codec state (json)",
@@ -4522,6 +4531,48 @@ function renderAudioPanel(): HTMLElement {
             path: `${dir}/hda-codec-state.json`,
             data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: message }, null, 2)),
           });
+        }
+
+        // HDA controller snapshot bytes (best-effort). Useful for debugging guest driver behavior;
+        // this is a small deterministic blob (no guest RAM).
+        try {
+          const ioWorker = workerCoordinator.getIoWorker();
+          if (!ioWorker) throw new Error("I/O worker is not running.");
+          const requestId = hdaSnapshotStateRequestId++;
+          const response = await new Promise<HdaSnapshotStateResultMessage>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              cleanup();
+              reject(new Error("Timed out waiting for IO worker HDA snapshot state response."));
+            }, 3000);
+            (timeout as unknown as { unref?: () => void }).unref?.();
+
+            const onMessage = (ev: MessageEvent<unknown>) => {
+              const msg = ev.data as Partial<HdaSnapshotStateResultMessage> | null;
+              if (!msg || msg.type !== "hda.snapshotStateResult") return;
+              if (msg.requestId !== requestId) return;
+              cleanup();
+              resolve(msg as HdaSnapshotStateResultMessage);
+            };
+
+            const cleanup = () => {
+              window.clearTimeout(timeout);
+              ioWorker.removeEventListener("message", onMessage);
+            };
+
+            ioWorker.addEventListener("message", onMessage);
+            ioWorker.postMessage({ type: "hda.snapshotState", requestId });
+          });
+
+          if (!response.ok) {
+            throw new Error(response.error || "Failed to fetch HDA snapshot state.");
+          }
+          if (!(response.bytes instanceof Uint8Array)) {
+            throw new Error("Invalid HDA snapshot state response.");
+          }
+          entries.push({ path: `${dir}/hda-controller-state.bin`, data: response.bytes });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/hda-controller-state-error.txt`, data: encoder.encode(message) });
         }
 
         // Guest screenshot (best-effort).

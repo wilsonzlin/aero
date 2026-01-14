@@ -3029,6 +3029,25 @@ type HdaCodecDebugStateResultMessage =
       ok: false;
       error: string;
     };
+
+type HdaSnapshotStateRequestMessage = {
+  type: "hda.snapshotState";
+  requestId: number;
+};
+
+type HdaSnapshotStateResultMessage =
+  | {
+      type: "hda.snapshotStateResult";
+      requestId: number;
+      ok: true;
+      bytes: Uint8Array;
+    }
+  | {
+      type: "hda.snapshotStateResult";
+      requestId: number;
+      ok: false;
+      error: string;
+    };
 type ActiveDisk = { handle: number; sectorSize: number; capacityBytes: number; readOnly: boolean };
 let diskClient: RuntimeDiskClient | null = null;
 let activeDisk: ActiveDisk | null = null;
@@ -4606,6 +4625,61 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const res: HdaCodecDebugStateResultMessage = { type: "hda.codecDebugStateResult", requestId, ok: false, error: message };
+        ctx.postMessage(res);
+      }
+      return;
+    }
+
+    if ((data as Partial<HdaSnapshotStateRequestMessage>).type === "hda.snapshotState") {
+      const msg = data as Partial<HdaSnapshotStateRequestMessage>;
+      const requestId = msg.requestId;
+      if (typeof requestId !== "number") return;
+
+      const bridge = resolveAudioHdaSnapshotBridge();
+      if (!bridge) {
+        const res: HdaSnapshotStateResultMessage = {
+          type: "hda.snapshotStateResult",
+          requestId,
+          ok: false,
+          error: "HDA snapshot state is unavailable (no bridge).",
+        };
+        ctx.postMessage(res);
+        return;
+      }
+
+      const save =
+        (bridge as unknown as { save_state?: unknown }).save_state ?? (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+      if (typeof save !== "function") {
+        const res: HdaSnapshotStateResultMessage = {
+          type: "hda.snapshotStateResult",
+          requestId,
+          ok: false,
+          error: "HDA snapshot state export unavailable (missing save_state/snapshot_state).",
+        };
+        ctx.postMessage(res);
+        return;
+      }
+
+      try {
+        const bytes = save.call(bridge) as unknown;
+        if (!(bytes instanceof Uint8Array)) {
+          const res: HdaSnapshotStateResultMessage = {
+            type: "hda.snapshotStateResult",
+            requestId,
+            ok: false,
+            error: "HDA snapshot export returned unexpected type.",
+          };
+          ctx.postMessage(res);
+          return;
+        }
+        // Copy so callers always receive a standalone ArrayBuffer-backed view (not a WASM memory view).
+        const copy = new Uint8Array(bytes.byteLength);
+        copy.set(bytes);
+        const res: HdaSnapshotStateResultMessage = { type: "hda.snapshotStateResult", requestId, ok: true, bytes: copy };
+        ctx.postMessage(res);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const res: HdaSnapshotStateResultMessage = { type: "hda.snapshotStateResult", requestId, ok: false, error: message };
         ctx.postMessage(res);
       }
       return;
