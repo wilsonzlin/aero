@@ -11,6 +11,8 @@
 "\x08\x00\x00\x00"
 # 48 (TOC len for 1 frame)
 "\x30\x00\x00\x00"
+# 80 (TOC len for 2 frames)
+"\x50\x00\x00\x00"
 # 56 (AEROGPU_SUBMISSION_RECORD_HEADER_SIZE)
 "\x38\x00\x00\x00"
 # 1 (TOC version / AEROGPU_SUBMISSION_RECORD_VERSION)
@@ -23,6 +25,7 @@
 # Common little-endian u64 values used by the container format (offset/len fields).
 "\x20\x00\x00\x00\x00\x00\x00\x00"
 "\x30\x00\x00\x00\x00\x00\x00\x00"
+"\x50\x00\x00\x00\x00\x00\x00\x00"
 "\x38\x00\x00\x00\x00\x00\x00\x00"
 
 # A few high-bit u64 patterns that commonly show up in comparison-based dictionaries.
