@@ -218,6 +218,10 @@ param(
   #
   # For virtio-net, this also requires the guest to report running in MSI-X mode via:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|...
+  # Tip: to make the guest fail-fast, provision it with:
+  #   aero-virtio-selftest.exe --require-net-msix
+  # (or env var AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1). When provisioning via New-AeroWin7TestImage.ps1,
+  # pass -RequireNetMsix.
   #
   # For virtio-blk, this also requires the guest to report running in MSI-X mode via:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...
@@ -238,14 +242,11 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
  
-  # If set, require the guest virtio-input-bind marker to report PASS (virtio-input PCI function bound to the expected
-  # Aero driver service name). In default (non-transitional) mode this is already enforced via per-test marker
-  # requirements; this flag is useful to enforce the same check in -VirtioTransitional mode.
-  [Parameter(Mandatory = $false)]
-  [switch]$RequireVirtioInputBinding,
-
   # If set, require the guest virtio-input-binding marker to PASS (ensures at least one virtio-input PCI device is
   # present and bound to the expected Aero driver service).
+  #
+  # In default (non-transitional) mode this is already enforced via per-test marker requirements; this flag is useful
+  # to enforce the same check in -VirtioTransitional mode.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputBinding,
 
