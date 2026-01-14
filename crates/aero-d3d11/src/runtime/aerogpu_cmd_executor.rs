@@ -29067,6 +29067,7 @@ fn cs_main() {
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
+                internal_buffers: &[],
             };
             let bound = provider
                 .srv_buffer(0)
