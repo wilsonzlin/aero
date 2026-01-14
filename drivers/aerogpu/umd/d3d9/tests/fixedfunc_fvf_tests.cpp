@@ -2989,22 +2989,68 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       }
     }
 
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* name) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      if (hr2 == S_OK) {
+        return true;
+      }
+      std::fprintf(stderr, "FAIL: %s: SetTextureStageState(%s) hr=0x%08x\n", c.name, name, static_cast<unsigned>(hr2));
+      return false;
+    };
+
     // Override stage0 state.
     //
-    // NOTE: This test intentionally mutates `Device::texture_stage_states` directly
-    // (instead of calling SetTextureStageState repeatedly). The AeroGPU UMD updates
-    // the fixed-function stage0 PS selection on each SetTextureStageState call, so
-    // setting multiple states one-by-one would create intermediate PS variants and
-    // emit extra CREATE_SHADER_DXBC packets, making the caching assertions below
-    // (create exactly once across two draws) much noisier.
+    // SetTextureStageState normally updates the stage0 fixed-function PS selection on
+    // each call. To avoid creating intermediate PS variants (and emitting extra
+    // CREATE_SHADER_DXBC packets), temporarily bind a dummy user PS so the stage0
+    // selection hook is suppressed until we're done setting all state.
     {
-      std::lock_guard<std::mutex> lock(dev->mutex);
-      dev->texture_stage_states[0][kD3dTssColorOp] = c.color_op;
-      dev->texture_stage_states[0][kD3dTssColorArg1] = c.color_arg1;
-      dev->texture_stage_states[0][kD3dTssColorArg2] = c.color_arg2;
-      dev->texture_stage_states[0][kD3dTssAlphaOp] = c.alpha_op;
-      dev->texture_stage_states[0][kD3dTssAlphaArg1] = c.alpha_arg1;
-      dev->texture_stage_states[0][kD3dTssAlphaArg2] = c.alpha_arg2;
+      const uint8_t dummy_dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x11, 0x22, 0x33, 0x44};
+      D3D9DDI_HSHADER hDummyPs{};
+      hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                                kD3dShaderStagePs,
+                                                dummy_dxbc,
+                                                static_cast<uint32_t>(sizeof(dummy_dxbc)),
+                                                &hDummyPs);
+      if (!Check(hr == S_OK, "CreateShader(dummy PS)")) {
+        return false;
+      }
+      cleanup.shaders.push_back(hDummyPs);
+
+      hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hDummyPs);
+      if (!Check(hr == S_OK, "SetShader(PS=dummy)")) {
+        return false;
+      }
+
+      if (!SetTextureStageState(/*stage=*/0, kD3dTssColorOp, c.color_op, "COLOROP")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0, kD3dTssColorArg1, c.color_arg1, "COLORARG1")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0, kD3dTssColorArg2, c.color_arg2, "COLORARG2")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaOp, c.alpha_op, "ALPHAOP")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaArg1, c.alpha_arg1, "ALPHAARG1")) {
+        return false;
+      }
+      if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaArg2, c.alpha_arg2, "ALPHAARG2")) {
+        return false;
+      }
+
+      D3D9DDI_HSHADER null_shader{};
+      hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, null_shader);
+      if (!Check(hr == S_OK, "SetShader(PS=NULL)")) {
+        return false;
+      }
     }
 
     // Draw twice: the first draw may create/bind the internal fixed-function PS,
