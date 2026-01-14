@@ -3706,8 +3706,9 @@ impl XhciController {
         ep_ctx.set_endpoint_state(state.raw());
         ep_ctx.write_to(mem, ctx_base);
 
-        // Keep controller-local shadow context in sync so snapshot/restore preserves the halted
-        // state even if the guest doesn't re-run Configure Endpoint.
+        // If the guest Device Context exists, keep the controller-local shadow context in sync so
+        // snapshot/restore preserves the halted state even if the guest doesn't re-run Configure
+        // Endpoint.
         slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
         slot.device_context_ptr = dev_ctx_ptr;
         true

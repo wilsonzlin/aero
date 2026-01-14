@@ -2297,6 +2297,23 @@ impl IoSnapshot for UsbHidPassthrough {
                 });
         }
 
+        // Ensure the request ID allocator will not reuse an in-flight request ID (which host
+        // integrations may use to correlate asynchronous completions). Older snapshots always start
+        // from ID=1, so bump the counter above the maximum restored ID.
+        let mut max_request_id = 0u32;
+        for req in &self.feature_report_request_queue {
+            max_request_id = max_request_id.max(req.request_id);
+        }
+        for &request_id in self.feature_report_requests_pending.values() {
+            max_request_id = max_request_id.max(request_id);
+        }
+        for &request_id in self.feature_report_requests_failed.values() {
+            max_request_id = max_request_id.max(request_id);
+        }
+        self.next_feature_report_request_id = self
+            .next_feature_report_request_id
+            .max(max_request_id.wrapping_add(1).max(1));
+
         Ok(())
     }
 }
@@ -4091,5 +4108,66 @@ mod tests {
             Err(SnapshotError::InvalidFieldEncoding("feature report requests pending")) => {}
             other => panic!("expected InvalidFieldEncoding, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn snapshot_restore_bumps_next_feature_report_request_id_past_inflight_ids() {
+        const TAG_NEXT_FEATURE_REPORT_REQUEST_ID: u16 = 26;
+        const TAG_FEATURE_REPORT_REQUEST_QUEUE: u16 = 27;
+
+        let queue = Encoder::new().u32(1).u32(5).u8(3).finish();
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_u32(TAG_NEXT_FEATURE_REPORT_REQUEST_ID, 5);
+            w.field_bytes(TAG_FEATURE_REPORT_REQUEST_QUEUE, queue);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+        dev.load_state(&snapshot).expect("load snapshot");
+        configure_device(&mut dev);
+
+        // Enqueue a new feature report request. Without bumping the request ID counter, this would
+        // allocate request_id=5 again and create duplicate IDs.
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0xA1, // DeviceToHost | Class | Interface
+                    b_request: HID_REQUEST_GET_REPORT,
+                    w_value: (3u16 << 8) | 4u16, // Feature report, report_id=4.
+                    w_index: 0,
+                    w_length: 64,
+                },
+                None,
+            ),
+            ControlResponse::Nak
+        );
+
+        let first = dev
+            .pop_feature_report_request()
+            .expect("expected restored request");
+        assert_eq!(first.request_id, 5);
+        assert_eq!(first.report_id, 3);
+
+        let second = dev
+            .pop_feature_report_request()
+            .expect("expected newly enqueued request");
+        assert_eq!(second.request_id, 6);
+        assert_eq!(second.report_id, 4);
     }
 }

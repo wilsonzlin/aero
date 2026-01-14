@@ -75,7 +75,11 @@ fn usb2_port_mux_ehci_portsc_reports_device_speed() {
     // During resume at low/full speed, the host should report a K-state (D- high) via the LS bits.
     mux.ehci_write_portsc_masked(0, EHCI_PORT_SUSP, EHCI_PORT_SUSP);
     let portsc = mux.ehci_read_portsc(0);
-    assert_ne!(portsc & EHCI_PORT_SUSP, 0, "expected SUSP set after suspend request");
+    assert_ne!(
+        portsc & EHCI_PORT_SUSP,
+        0,
+        "expected SUSP set after suspend request"
+    );
 
     mux.ehci_write_portsc_masked(0, EHCI_PORT_FPR, EHCI_PORT_FPR);
     let portsc = mux.ehci_read_portsc(0);
@@ -136,14 +140,22 @@ fn usb2_port_mux_ehci_line_status_flips_to_k_state_during_resume_for_full_speed(
 
     let portsc = mux.ehci_read_portsc(0);
     assert_eq!(portsc & EHCI_PORT_HSP, 0);
-    assert_eq!(portsc & EHCI_PORT_LS_MASK, 0b10 << 10, "expected J-state when idle");
+    assert_eq!(
+        portsc & EHCI_PORT_LS_MASK,
+        0b10 << 10,
+        "expected J-state when idle"
+    );
 
     // Suspend, then force resume and verify LS reports K-state while resuming.
     mux.ehci_write_portsc_masked(0, EHCI_PORT_SUSP, EHCI_PORT_SUSP);
     mux.ehci_write_portsc_masked(0, EHCI_PORT_FPR, EHCI_PORT_FPR);
     let portsc = mux.ehci_read_portsc(0);
     assert_ne!(portsc & EHCI_PORT_FPR, 0, "expected FPR set while resuming");
-    assert_eq!(portsc & EHCI_PORT_LS_MASK, 0b01 << 10, "expected K-state while resuming");
+    assert_eq!(
+        portsc & EHCI_PORT_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
 
     // After the resume timer expires, the port should return to J state.
     for _ in 0..20 {
