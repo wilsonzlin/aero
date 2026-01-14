@@ -433,6 +433,25 @@ static bool IsAbsolutePathW(const std::wstring& path) {
   return false;
 }
 
+static bool IsDriveRootLikePathW(const std::wstring& path) {
+  return path.size() == 2 &&
+         path[1] == L':' &&
+         ((path[0] >= L'A' && path[0] <= L'Z') || (path[0] >= L'a' && path[0] <= L'z'));
+}
+
+static bool IsUncShareRootPathW(const std::wstring& path) {
+  // UNC path: \\server\share
+  if (path.size() < 5 || path[0] != L'\\' || path[1] != L'\\') {
+    return false;
+  }
+  const size_t server_end = path.find_first_of(L"\\/", 2);
+  if (server_end == std::wstring::npos) {
+    return false;
+  }
+  const size_t share_end = path.find_first_of(L"\\/", server_end + 1);
+  return share_end == std::wstring::npos;
+}
+
 static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err) {
   if (path.empty()) {
     return true;
@@ -449,6 +468,35 @@ static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err)
   }
   if (dir.empty()) {
     return true;
+  }
+
+  // Base cases for non-creatable roots.
+  if (IsDriveRootLikePathW(dir)) {
+    // `C:` is not a creatable directory. Treat it as a drive root and verify it exists.
+    std::wstring root = dir;
+    root.push_back(L'\\');
+    DWORD attr = GetFileAttributesW(root.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+      return true;
+    }
+    if (err) {
+      const DWORD e = GetLastError();
+      *err = "drive root not accessible: " + aerogpu_test::Win32ErrorToString(e);
+    }
+    return false;
+  }
+  if (IsUncShareRootPathW(dir)) {
+    // `\\server\share` is not creatable via CreateDirectory; it must already exist.
+    DWORD attr = GetFileAttributesW(dir.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+      return true;
+    }
+    if (err) {
+      const DWORD e = GetLastError();
+      *err = "UNC share root not accessible (" + aerogpu_test::WideToUtf8(dir) + "): " +
+             aerogpu_test::Win32ErrorToString(e);
+    }
+    return false;
   }
 
   DWORD attr = GetFileAttributesW(dir.c_str());
