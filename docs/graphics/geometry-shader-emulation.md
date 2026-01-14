@@ -178,6 +178,9 @@ Aero’s binding model is stage-scoped. In the AeroGPU command-stream executor (
 - `@group(2)`: CS resources
 - `@group(3)`: GS/HS/DS (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
 - `@group(4)`: internal emulation pipelines (vertex pulling, expansion scratch, counters, indirect args)
+  - This requires a device limit `maxBindGroups >= 5`. The baseline WebGPU-friendly design can
+    instead merge internal-only bindings into `@group(3)` using the reserved
+    `@binding >= BINDING_BASE_INTERNAL` range (see [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
 
 GS/HS/DS stages are emulated using compute passes, but their **D3D-stage resource bindings** are
 tracked independently and are expected to be provided to the emulation pipelines via a reserved
