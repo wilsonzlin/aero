@@ -322,25 +322,25 @@ The current implementation targets:
 - **Render targets / swapchain backbuffers**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`,
   `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
 - **Depth/stencil**: `D3DFMT_D24S8`
-  - **Mipmapped textures**: default-pool textures with `MipLevels > 1` (and array layers via `Depth > 1`) are supported for
+- **Mipmapped textures**: default-pool textures with `MipLevels > 1` (and array layers via `Depth > 1`) are supported for
   common uncompressed formats (validated by `d3d9_mipmapped_texture_smoke`). BC/DXT mip chains are also supported when BC
   formats are exposed (see “BC/DXT textures” below).
-  - Cube textures are supported (advertised via `D3DPTEXTURECAPS_CUBEMAP`) and are represented as 2D array textures with
-    6 layers (`Depth/array_layers == 6`). Some runtime/header combinations may not populate a meaningful `Depth` field for
-    cube resources (it may be `Depth == 1`); the UMD normalizes `D3DRTYPE_CUBETEXTURE` resources to 6 layers. Cube
-    textures must be square; invalid descriptors are rejected at `CreateResource` / `OpenResource` time. Volume textures
-    (`D3DRTYPE_VOLUME` / `D3DRTYPE_VOLUMETEXTURE`) are not supported.
-  - Compatibility: some D3D9 runtimes/WDK header vintages may pass `Type == 0` for non-buffer surface resources; the UMD
-    treats it as a non-array 2D surface descriptor (`Depth == 1`) rather than rejecting it as an unknown type.
-  - On the Win7/WDDM path, multi-subresource textures currently fall back to **host-backed storage** (no guest allocation /
-    `alloc_id`), because guest-backed allocations are single-subresource today (see `force_host_backing` in
-    `device_create_resource()`).
-  - Shared resources still require `MipLevels == 1` and `Depth == 1` (single-allocation MVP shared-surface policy).
-  - `pfnGenerateMipSubLevels` is implemented as a CPU downsample for:
-    - `A8R8G8B8` / `X8R8G8B8` / `A8B8G8R8`
-    - packed 16-bit RGB formats: `R5G6B5` / `X1R5G5B5` / `A1R5G5B5`
-    - block-compressed formats: `D3DFMT_DXT1..DXT5` (when exposed; see “BC/DXT textures” below)
-    - see `device_generate_mip_sub_levels()` in `src/aerogpu_d3d9_driver.cpp`.
+- Cube textures are supported (advertised via `D3DPTEXTURECAPS_CUBEMAP`) and are represented as 2D array textures with
+  6 layers (`Depth/array_layers == 6`). Some runtime/header combinations may not populate a meaningful `Depth` field for
+  cube resources (it may be `Depth == 1`); the UMD normalizes `D3DRTYPE_CUBETEXTURE` resources to 6 layers. Cube textures
+  must be square; invalid descriptors are rejected at `CreateResource` / `OpenResource` time. Volume textures
+  (`D3DRTYPE_VOLUME` / `D3DRTYPE_VOLUMETEXTURE`) are not supported.
+- Compatibility: some D3D9 runtimes/WDK header vintages may pass `Type == 0` for non-buffer surface resources; the UMD
+  treats it as a non-array 2D surface descriptor (`Depth == 1`) rather than rejecting it as an unknown type.
+- On the Win7/WDDM path, multi-subresource textures currently fall back to **host-backed storage** (no guest allocation /
+  `alloc_id`), because guest-backed allocations are single-subresource today (see `force_host_backing` in
+  `device_create_resource()`).
+- Shared resources still require `MipLevels == 1` and `Depth == 1` (single-allocation MVP shared-surface policy).
+- `pfnGenerateMipSubLevels` is implemented as a CPU downsample for:
+  - `A8R8G8B8` / `X8R8G8B8` / `A8B8G8R8`
+  - packed 16-bit RGB formats: `R5G6B5` / `X1R5G5B5` / `A1R5G5B5`
+  - block-compressed formats: `D3DFMT_DXT1..DXT5` (when exposed; see “BC/DXT textures” below)
+  - see `device_generate_mip_sub_levels()` in `src/aerogpu_d3d9_driver.cpp`.
 - **Packed 16-bit RGB formats**: `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5` are supported for
   render targets (including swapchain backbuffers) and texture sampling (validated by `d3d9ex_texture_16bit_formats`;
   `d3d9_texture_16bit_sampling` additionally exercises `R5G6B5` and optionally `A1R5G5B5`). `X1R5G5B5` is treated as
