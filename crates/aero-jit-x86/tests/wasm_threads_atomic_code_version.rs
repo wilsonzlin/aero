@@ -28,6 +28,7 @@ where
     false
 }
 
+#[cfg(feature = "tier1-inline-tlb")]
 fn wasm_count_operator<F>(wasm: &[u8], mut f: F) -> usize
 where
     F: FnMut(&Operator<'_>) -> bool,
