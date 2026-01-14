@@ -4271,4 +4271,323 @@ mod tests {
         assert_eq!(cqe.status & 0x1, 0);
         assert_eq!(cqe.status & !0x1, 0);
     }
+
+    #[test]
+    fn admin_delete_io_sq_clears_pending_doorbell_updates() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // Create CQ1 + SQ1 directly.
+        let cq_cmd = NvmeCommand {
+            opc: 0x05,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x10000,
+            prp2: 0,
+            cdw10: 1, // qid=1, qsize=1
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_create_io_cq(cq_cmd);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+
+        let sq_cmd = NvmeCommand {
+            opc: 0x01,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x20000,
+            prp2: 0,
+            cdw10: 1, // qid=1, qsize=1
+            cdw11: 1, // CQID=1
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_create_io_sq(sq_cmd);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+
+        // Simulate a deferred SQ tail doorbell write so the queue has a pending entry.
+        ctrl.pending_sq_tail.insert(1, 1);
+        assert!(ctrl.pending_sq_tail.contains_key(&1));
+
+        let del_sq = NvmeCommand {
+            opc: 0x00,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 1, // qid=1
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_delete_io_sq(del_sq);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+        assert!(!ctrl.io_sqs.contains_key(&1));
+        assert!(!ctrl.pending_sq_tail.contains_key(&1));
+    }
+
+    #[test]
+    fn admin_delete_io_cq_rejects_in_use_and_then_allows_delete() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // Create CQ1 + SQ1 directly.
+        let cq_cmd = NvmeCommand {
+            opc: 0x05,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x10000,
+            prp2: 0,
+            cdw10: 1, // qid=1, qsize=1
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_create_io_cq(cq_cmd);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+
+        let sq_cmd = NvmeCommand {
+            opc: 0x01,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0x20000,
+            prp2: 0,
+            cdw10: 1, // qid=1, qsize=1
+            cdw11: 1, // CQID=1
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_create_io_sq(sq_cmd);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+
+        // Cannot delete CQ1 while SQ1 still targets it.
+        let del_cq = NvmeCommand {
+            opc: 0x04,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 1,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_delete_io_cq(del_cq);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
+        assert!(ctrl.io_cqs.contains_key(&1));
+
+        // Delete SQ1 first, then delete CQ1.
+        let del_sq = NvmeCommand {
+            opc: 0x00,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 1,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_delete_io_sq(del_sq);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+
+        let del_cq = NvmeCommand {
+            opc: 0x04,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 1,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_delete_io_cq(del_cq);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+        assert!(!ctrl.io_cqs.contains_key(&1));
+    }
+
+    #[test]
+    fn admin_delete_io_queues_nonexistent_returns_invalid_qid() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        let del_sq = NvmeCommand {
+            opc: 0x00,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 1,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_delete_io_sq(del_sq);
+        assert_eq!(status, NvmeStatus::INVALID_QID);
+
+        let del_cq = NvmeCommand {
+            opc: 0x04,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 1,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_delete_io_cq(del_cq);
+        assert_eq!(status, NvmeStatus::INVALID_QID);
+    }
+
+    #[test]
+    fn admin_get_set_features_number_of_queues_interrupt_coalescing_and_unsupported() {
+        let disk = TestDisk::new(1024);
+        let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+
+        // Defaults: report max supported IO queues (0-based).
+        let get_nq = NvmeCommand {
+            opc: 0x0a,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x07,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, result) = ctrl.cmd_get_features(get_nq);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+        let max = (NVME_MAX_IO_QUEUES as u32) - 1;
+        assert_eq!(result, (max << 16) | max);
+
+        // Set Number of Queues: request 2 SQs (1) + 4 CQs (3) (both 0-based).
+        let set_nq = NvmeCommand {
+            opc: 0x09,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x07,
+            cdw11: (1u32 << 16) | 3u32,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, result) = ctrl.cmd_set_features(set_nq);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+        assert_eq!(result, (1u32 << 16) | 3u32);
+        assert_eq!(ctrl.feature_num_io_sqs, 1);
+        assert_eq!(ctrl.feature_num_io_cqs, 3);
+
+        // Interrupt Coalescing roundtrip.
+        let set_ic = NvmeCommand {
+            opc: 0x09,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x08,
+            cdw11: 0x1234,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, result) = ctrl.cmd_set_features(set_ic);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+        assert_eq!(result, 0x1234);
+
+        let get_ic = NvmeCommand {
+            opc: 0x0a,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x08,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, result) = ctrl.cmd_get_features(get_ic);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+        assert_eq!(result, 0x1234);
+
+        // Unsupported FID should be rejected.
+        let get_unsupported = NvmeCommand {
+            opc: 0x0a,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x01,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_get_features(get_unsupported);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
+
+        let set_unsupported = NvmeCommand {
+            opc: 0x09,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x01,
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, _) = ctrl.cmd_set_features(set_unsupported);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
+    }
 }
