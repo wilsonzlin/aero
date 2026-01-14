@@ -247,4 +247,28 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         (u32::from(width), u32::from(height))
     );
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
+
+    // Once WDDM has claimed scanout, disabling scanout should not fall back to legacy VGA/VBE
+    // presentation (ownership persists until reset).
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
+    m.display_present();
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.display_resolution(), (0, 0));
+
+    // Even if legacy text memory changes, the display should remain blank while WDDM owns scanout.
+    m.write_physical_u8(0xB8000, b'Z');
+    m.write_physical_u8(0xB8001, 0x1F);
+    m.display_present();
+    assert_eq!(m.display_resolution(), (0, 0));
+
+    // Reset returns scanout ownership to legacy.
+    m.reset();
+    m.write_physical(0xB8000, &vec![0u8; 0x8000]);
+    m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
+    m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
+    m.write_physical_u8(0xB8000, b'R');
+    m.write_physical_u8(0xB8001, 0x1F);
+    assert_ne!(m.active_scanout_source(), ScanoutSource::Wddm);
+    m.display_present();
+    assert_ne!(m.display_resolution(), (0, 0));
 }

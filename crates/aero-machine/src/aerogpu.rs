@@ -1193,9 +1193,6 @@ impl AeroGpuMmioDevice {
                 if self.scanout0_enable && !new_enable {
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-                    // Explicit disable releases the WDDM scanout claim so legacy scanout can take
-                    // back over.
-                    self.wddm_scanout_active = false;
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_lo_pending = false;
                 }
