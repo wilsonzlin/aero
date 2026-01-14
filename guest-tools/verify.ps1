@@ -3536,7 +3536,8 @@ try {
                     count = [int]$extMap[$k]
                 }
             }
-            $extStats = @($extStats | Sort-Object count -Descending, extension)
+            # Deterministic ordering for report stability: count desc, then extension desc.
+            $extStats = @($extStats | Sort-Object count, extension -Descending)
 
             $toolsData.files = $files
             $toolsData.exe_files = $exeFiles
