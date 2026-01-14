@@ -118,7 +118,7 @@ Then copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and any alloc-table dump that dbgctl p
 Notes:
 
 - On Win7 x64, `aerogpu_dbgctl.exe` is intentionally an **x86 (32-bit)** binary and runs under **WOW64**
-  (even when invoked from `X:\drivers\amd64\...`).
+  (even when invoked from `X:\drivers\amd64\...`), so you can run it directly from the mounted media without editing `PATH`.
 - This requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
   `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 - If dbgctl refuses to dump due to the default size cap (1 MiB), re-run with `--force`:
