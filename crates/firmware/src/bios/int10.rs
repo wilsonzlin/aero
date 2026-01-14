@@ -194,6 +194,24 @@ impl Bios {
                             let color = cpu.rbx as u32;
                             memory.write_u32(addr, color);
                         }
+                        return;
+                    }
+
+                    // VBE packed-pixel 8bpp modes use the same AL/CX/DX calling convention as VGA.
+                    if mode.bpp == 8 && mode.bytes_per_pixel() == 1 {
+                        let width = mode.width.max(1);
+                        let height = mode.height.max(1);
+                        if x >= width || y >= height {
+                            return;
+                        }
+
+                        let base = u64::from(self.video.vbe.lfb_base);
+                        let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
+                        let off =
+                            u64::from(y).saturating_mul(pitch).saturating_add(u64::from(x));
+                        if let Some(addr) = base.checked_add(off) {
+                            memory.write_u8(addr, cpu.al());
+                        }
                     }
 
                     return;
@@ -240,8 +258,31 @@ impl Bios {
                             let color = memory.read_u32(addr);
                             cpu.rbx = (cpu.rbx & !0xFFFF_FFFF) | u64::from(color);
                         }
+                        return;
                     }
 
+                    if mode.bpp == 8 && mode.bytes_per_pixel() == 1 {
+                        let width = mode.width.max(1);
+                        let height = mode.height.max(1);
+                        if x >= width || y >= height {
+                            cpu.set_al(0);
+                            return;
+                        }
+
+                        let base = u64::from(self.video.vbe.lfb_base);
+                        let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
+                        let off =
+                            u64::from(y).saturating_mul(pitch).saturating_add(u64::from(x));
+                        if let Some(addr) = base.checked_add(off) {
+                            cpu.set_al(memory.read_u8(addr));
+                        } else {
+                            cpu.set_al(0);
+                        }
+                        return;
+                    }
+
+                    // For other VBE modes, treat pixel read as unsupported and return 0.
+                    cpu.set_al(0);
                     return;
                 }
 
