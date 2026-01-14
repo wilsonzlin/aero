@@ -11640,12 +11640,19 @@ impl AerogpuD3d11Executor {
         };
         // A `t#` register can be either a texture SRV or a buffer SRV. Route the binding to the
         // appropriate slot table based on the resource handle type when known.
-        let stage_bindings = self.bindings.stage_mut(stage);
         match texture {
-            None => stage_bindings.set_texture(slot, None),
+            None => self.bindings.stage_mut(stage).set_texture(slot, None),
             Some(handle) => {
                 if self.resources.buffers.contains_key(&handle) {
-                    stage_bindings.set_srv_buffer(
+                    // D3D11 does not allow the same resource to be bound as both an input (SRV) and
+                    // output (UAV) at the same time. Mirror that behavior by unbinding any UAV
+                    // buffer views that refer to the newly bound SRV resource (across all stages).
+                    for other_stage in ALL_SHADER_STAGES {
+                        self.bindings
+                            .stage_mut(other_stage)
+                            .clear_uav_buffer_handle(handle);
+                    }
+                    self.bindings.stage_mut(stage).set_srv_buffer(
                         slot,
                         Some(BoundBuffer {
                             buffer: handle,
@@ -11654,7 +11661,13 @@ impl AerogpuD3d11Executor {
                         }),
                     );
                 } else {
-                    stage_bindings.set_texture(slot, Some(handle));
+                    // SRV texture binding should also unbind UAV views of the same texture.
+                    for other_stage in ALL_SHADER_STAGES {
+                        self.bindings
+                            .stage_mut(other_stage)
+                            .clear_uav_texture_handle(handle);
+                    }
+                    self.bindings.stage_mut(stage).set_texture(slot, Some(handle));
 
                     // Mirror D3D11 hazard behavior: binding a texture as an SRV should unbind it
                     // from any currently bound render targets / depth-stencil outputs.
@@ -19789,6 +19802,86 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                     .uav_buffer(0)
                     .is_none(),
                 "binding an SRV buffer must unbind UAV buffer views of the same resource"
+            );
+            assert_eq!(
+                exec.bindings.stage(ShaderStage::Vertex).srv_buffer(0),
+                Some(BoundBuffer {
+                    buffer: BUF,
+                    offset: 0,
+                    size: None,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn set_texture_with_buffer_handle_unbinds_uav_buffers_with_same_resource() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const BUF: u32 = 1;
+            let allocs = AllocTable::new(None).unwrap();
+
+            let mut create_cmd = Vec::new();
+            create_cmd.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+            create_cmd.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+            create_cmd.extend_from_slice(&BUF.to_le_bytes());
+            create_cmd.extend_from_slice(&AEROGPU_RESOURCE_USAGE_STORAGE.to_le_bytes());
+            create_cmd.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+            create_cmd.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            create_cmd.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            create_cmd.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            exec.exec_create_buffer(&create_cmd, &allocs)
+                .expect("CREATE_BUFFER should succeed");
+
+            // Bind BUF as a UAV buffer in compute (u0).
+            let mut uav_cmd = Vec::new();
+            uav_cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32).to_le_bytes(),
+            );
+            uav_cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            uav_cmd.extend_from_slice(&2u32.to_le_bytes()); // stage = compute
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            uav_cmd.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            uav_cmd.extend_from_slice(&BUF.to_le_bytes());
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            uav_cmd.extend_from_slice(&0u32.to_le_bytes()); // initial_count
+            exec.exec_set_unordered_access_buffers(&uav_cmd)
+                .expect("SET_UNORDERED_ACCESS_BUFFERS should succeed");
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Compute)
+                    .uav_buffer(0)
+                    .is_some(),
+                "expected UAV buffer binding to be set before SET_TEXTURE"
+            );
+
+            // Bind the same resource as an SRV buffer in vertex via `SET_TEXTURE` (t0). D3D11 unbinds
+            // UAV views when binding an SRV.
+            let mut srv_cmd = Vec::new();
+            srv_cmd.extend_from_slice(&(AerogpuCmdOpcode::SetTexture as u32).to_le_bytes());
+            srv_cmd.extend_from_slice(&24u32.to_le_bytes()); // size_bytes
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // slot
+            srv_cmd.extend_from_slice(&BUF.to_le_bytes()); // buffer handle (SRV)
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            exec.exec_set_texture(&srv_cmd)
+                .expect("SET_TEXTURE should succeed");
+
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Compute)
+                    .uav_buffer(0)
+                    .is_none(),
+                "binding an SRV via SET_TEXTURE must unbind UAV buffer views of the same resource"
             );
             assert_eq!(
                 exec.bindings.stage(ShaderStage::Vertex).srv_buffer(0),
