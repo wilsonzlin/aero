@@ -602,6 +602,7 @@ impl PciConfigSpace {
 
         self.sync_capabilities_from_config();
         self.sync_capabilities_to_config();
+        self.sync_capabilities_list_to_config();
     }
 
     fn allocate_capability_offset(&mut self, len: u8) -> u8 {
@@ -622,6 +623,15 @@ impl PciConfigSpace {
         self.bytes[PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2].copy_from_slice(&new.to_le_bytes());
     }
 
+    fn clear_status_bit(&mut self, bit: u16) {
+        let current = u16::from_le_bytes([
+            self.bytes[PCI_STATUS_OFFSET],
+            self.bytes[PCI_STATUS_OFFSET + 1],
+        ]);
+        let new = current & !bit;
+        self.bytes[PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2].copy_from_slice(&new.to_le_bytes());
+    }
+
     fn sync_capabilities_to_config(&mut self) {
         for cap in &self.capabilities {
             cap.sync_to_config(&mut self.bytes);
@@ -631,6 +641,39 @@ impl PciConfigSpace {
     fn sync_capabilities_from_config(&mut self) {
         for cap in &mut self.capabilities {
             cap.sync_from_config(&mut self.bytes);
+        }
+    }
+
+    /// Rebuild the PCI capabilities list pointers (and related read-only header bytes) from the
+    /// internally registered capabilities.
+    ///
+    /// Guests cannot modify these bytes (they are treated as read-only in `write_with_effects`),
+    /// but snapshot restore may provide corrupt or hostile config bytes. Keeping the list pointer
+    /// chain consistent avoids panics in code that traverses the list and then performs bounded
+    /// reads/writes relative to the discovered offsets.
+    fn sync_capabilities_list_to_config(&mut self) {
+        if self.capabilities.is_empty() {
+            self.bytes[PCI_CAP_PTR_OFFSET] = 0;
+            self.clear_status_bit(PCI_STATUS_CAPABILITIES_LIST);
+            return;
+        }
+
+        self.bytes[PCI_CAP_PTR_OFFSET] = self.capabilities[0].offset();
+        self.set_status_bit(PCI_STATUS_CAPABILITIES_LIST);
+
+        for (index, cap) in self.capabilities.iter().enumerate() {
+            let base = cap.offset() as usize;
+            // Offsets are allocated with bounds checks; this is defensive against corrupt
+            // capability implementations.
+            if base + 1 >= PCI_CONFIG_SPACE_SIZE {
+                continue;
+            }
+
+            self.bytes[base] = cap.id();
+            self.bytes[base + 1] = self
+                .capabilities
+                .get(index + 1)
+                .map_or(0, |next| next.offset());
         }
     }
 
@@ -911,7 +954,7 @@ pub trait PciDevice {
 #[cfg(test)]
 mod tests {
     use super::{PciBarDefinition, PciConfigSpace, PciDevice};
-    use crate::pci::capabilities::PCI_STATUS_CAPABILITIES_LIST;
+    use crate::pci::capabilities::{PCI_CAP_PTR_OFFSET, PCI_STATUS_CAPABILITIES_LIST, PCI_STATUS_OFFSET};
     use crate::pci::msi::{MsiCapability, PCI_CAP_ID_MSI};
     use crate::pci::msix::{MsixCapability, PCI_CAP_ID_MSIX};
     use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
@@ -1363,6 +1406,50 @@ mod tests {
 
         assert_eq!(restored.bar_range(1).unwrap().base, 0x1234_5660);
         assert_eq!(restored.read(0x14, 4), 0x1234_5661);
+    }
+
+    #[test]
+    fn restore_state_rebuilds_capability_list_pointers() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        let msi_off = cfg.add_capability(Box::new(MsiCapability::new()));
+        cfg.add_capability(Box::new(MsixCapability::new(2, 0, 0x1000, 0, 0x2000)));
+        let mut state = cfg.snapshot_state();
+
+        // Corrupt the capabilities list so it points at a bogus MSI-X capability near the end of
+        // config space. If left unsanitized, `find_capability()` would return this offset and
+        // subsequent reads relative to it could panic due to out-of-bounds accesses.
+        state.bytes[PCI_CAP_PTR_OFFSET] = 0xfd;
+        state.bytes[0xfd] = PCI_CAP_ID_MSIX;
+        state.bytes[0xfe] = msi_off;
+        state.bytes[msi_off as usize + 1] = 0;
+
+        // Clear the Capabilities List status bit too; restore should re-assert it.
+        let status = u16::from_le_bytes([
+            state.bytes[PCI_STATUS_OFFSET],
+            state.bytes[PCI_STATUS_OFFSET + 1],
+        ]);
+        let status = status & !PCI_STATUS_CAPABILITIES_LIST;
+        state.bytes[PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2].copy_from_slice(&status.to_le_bytes());
+
+        let mut restored = PciConfigSpace::new(0xabcd, 0xef01);
+        let expected_msi = restored.add_capability(Box::new(MsiCapability::new()));
+        let expected_msix =
+            restored.add_capability(Box::new(MsixCapability::new(2, 0, 0x1000, 0, 0x2000)));
+        restored.restore_state(&state);
+
+        let status_after = restored.read(0x06, 2) as u16;
+        assert_ne!(
+            status_after & PCI_STATUS_CAPABILITIES_LIST,
+            0,
+            "restore should re-assert the Capabilities List status bit"
+        );
+
+        assert_eq!(restored.find_capability(PCI_CAP_ID_MSI), Some(expected_msi));
+        assert_eq!(restored.find_capability(PCI_CAP_ID_MSIX), Some(expected_msix));
+
+        // Verify the returned offset is safe to use for subsequent reads.
+        let msix_off = restored.find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
+        let _ = restored.read(msix_off + 0x02, 2);
     }
 
     #[test]
