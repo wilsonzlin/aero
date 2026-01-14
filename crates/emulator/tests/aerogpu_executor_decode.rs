@@ -10,7 +10,7 @@ use emulator::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs};
 use emulator::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuSubmitDesc, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
-    RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+    FENCE_PAGE_COMPLETED_FENCE_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 use emulator::gpu_worker::aerogpu_backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
@@ -1035,11 +1035,17 @@ fn fence_wrap_completion_requires_extended_64bit_fences() {
 
     regs.ring_gpa = ring_gpa;
     regs.ring_size_bytes = ring_size;
+    regs.fence_gpa = 0x2000u64;
     regs.ring_control = ring_control::ENABLE;
 
     exec.process_doorbell(&mut regs, &mut mem);
 
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 2);
     assert_eq!(regs.completed_fence, fence1);
+    assert_eq!(
+        mem.read_u64(regs.fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        regs.completed_fence
+    );
+    assert!(regs.completed_fence > u64::from(u32::MAX));
     assert_eq!(regs.stats.malformed_submissions, 0);
 }
