@@ -8,8 +8,10 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 #[test]
 fn aerogpu_cmd_dispatch_stage_ex_vertex_value_is_rejected() {
     pollster::block_on(async {
-        const TEST_NAME: &str =
-            concat!(module_path!(), "::aerogpu_cmd_dispatch_stage_ex_vertex_value_is_rejected");
+        const TEST_NAME: &str = concat!(
+            module_path!(),
+            "::aerogpu_cmd_dispatch_stage_ex_vertex_value_is_rejected"
+        );
 
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -31,8 +33,8 @@ fn aerogpu_cmd_dispatch_stage_ex_vertex_value_is_rejected() {
         // `stage_ex == 1` is the DXBC program type for Vertex, but it is intentionally invalid in
         // the AeroGPU stage_ex encoding (0 is reserved for legacy/default compute; Vertex must be
         // encoded via the legacy shader_stage value).
-        let dispatch_reserved0_offset =
-            AerogpuCmdStreamHeader::SIZE_BYTES + core::mem::offset_of!(AerogpuCmdDispatch, reserved0);
+        let dispatch_reserved0_offset = AerogpuCmdStreamHeader::SIZE_BYTES
+            + core::mem::offset_of!(AerogpuCmdDispatch, reserved0);
         stream[dispatch_reserved0_offset..dispatch_reserved0_offset + 4]
             .copy_from_slice(&1u32.to_le_bytes());
 
@@ -47,4 +49,3 @@ fn aerogpu_cmd_dispatch_stage_ex_vertex_value_is_rejected() {
         );
     });
 }
-

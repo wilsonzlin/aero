@@ -1272,7 +1272,7 @@ fn compute_can_vertex_pull_u16_and_i16_formats_unaligned_shift16() {
         push_u16(&mut vb, 32767); // r16g16_sint.y = 32767
         push_u16(&mut vb, 0); // r16g16_uint.x = 0
         push_u16(&mut vb, 65535); // r16g16_uint.y = 65535
-        // r16g16b16a16_sint = (-32768,-2,2,32767)
+                                  // r16g16b16a16_sint = (-32768,-2,2,32767)
         push_u16(&mut vb, (-32768i16) as u16);
         push_u16(&mut vb, (-2i16) as u16);
         push_u16(&mut vb, 2);
@@ -1293,7 +1293,7 @@ fn compute_can_vertex_pull_u16_and_i16_formats_unaligned_shift16() {
         push_u16(&mut vb, (-1234i16) as u16); // r16g16_sint.y = -1234
         push_u16(&mut vb, 42); // r16g16_uint.x = 42
         push_u16(&mut vb, 43); // r16g16_uint.y = 43
-        // r16g16b16a16_sint = (100,0,-100,-32768)
+                               // r16g16b16a16_sint = (100,0,-100,-32768)
         push_u16(&mut vb, 100);
         push_u16(&mut vb, 0);
         push_u16(&mut vb, (-100i16) as u16);
@@ -1427,19 +1427,19 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
         let expected = [
             // v0
-            [-12345.0, 0.0, 0.0, 1.0],              // r16_sint
-            [54321.0, 0.0, 0.0, 1.0],               // r16_uint
-            [-1.0, 32767.0, 0.0, 1.0],              // r16g16_sint
-            [0.0, 65535.0, 0.0, 1.0],               // r16g16_uint
-            [-32768.0, -2.0, 2.0, 32767.0],         // r16g16b16a16_sint
-            [1.0, 2.0, 65534.0, 65535.0],           // r16g16b16a16_uint
+            [-12345.0, 0.0, 0.0, 1.0],      // r16_sint
+            [54321.0, 0.0, 0.0, 1.0],       // r16_uint
+            [-1.0, 32767.0, 0.0, 1.0],      // r16g16_sint
+            [0.0, 65535.0, 0.0, 1.0],       // r16g16_uint
+            [-32768.0, -2.0, 2.0, 32767.0], // r16g16b16a16_sint
+            [1.0, 2.0, 65534.0, 65535.0],   // r16g16b16a16_uint
             // v1
-            [0.0, 0.0, 0.0, 1.0],                   // r16_sint
-            [1.0, 0.0, 0.0, 1.0],                   // r16_uint
-            [1234.0, -1234.0, 0.0, 1.0],            // r16g16_sint
-            [42.0, 43.0, 0.0, 1.0],                 // r16g16_uint
-            [100.0, 0.0, -100.0, -32768.0],         // r16g16b16a16_sint
-            [10.0, 20.0, 30.0, 40.0],               // r16g16b16a16_uint
+            [0.0, 0.0, 0.0, 1.0],           // r16_sint
+            [1.0, 0.0, 0.0, 1.0],           // r16_uint
+            [1234.0, -1234.0, 0.0, 1.0],    // r16g16_sint
+            [42.0, 43.0, 0.0, 1.0],         // r16g16_uint
+            [100.0, 0.0, -100.0, -32768.0], // r16g16b16a16_sint
+            [10.0, 20.0, 30.0, 40.0],       // r16g16b16a16_uint
         ];
 
         for (i, exp) in expected.iter().enumerate() {

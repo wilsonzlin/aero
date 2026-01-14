@@ -5,10 +5,11 @@ use aero_virtio::devices::snd::{
     JACK_ID_SPEAKER, VIRTIO_SND_EVT_JACK_CONNECTED, VIRTIO_SND_QUEUE_EVENT,
 };
 use aero_virtio::pci::{
-    VIRTIO_PCI_LEGACY_GUEST_FEATURES, VIRTIO_PCI_LEGACY_HOST_FEATURES, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY,
-    VIRTIO_PCI_LEGACY_QUEUE_NUM, VIRTIO_PCI_LEGACY_QUEUE_PFN, VIRTIO_PCI_LEGACY_QUEUE_SEL,
-    VIRTIO_PCI_LEGACY_STATUS, VIRTIO_PCI_LEGACY_VRING_ALIGN, VIRTIO_STATUS_ACKNOWLEDGE,
-    VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_PCI_LEGACY_GUEST_FEATURES, VIRTIO_PCI_LEGACY_HOST_FEATURES,
+    VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_PCI_LEGACY_QUEUE_NUM, VIRTIO_PCI_LEGACY_QUEUE_PFN,
+    VIRTIO_PCI_LEGACY_QUEUE_SEL, VIRTIO_PCI_LEGACY_STATUS, VIRTIO_PCI_LEGACY_VRING_ALIGN,
+    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
+    VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_WRITE};
 use aero_wasm::VirtioSndPciBridge;
@@ -223,8 +224,8 @@ fn virtio_snd_pci_bridge_legacy_only_eventq_does_not_raise_irq_when_avail_no_int
 }
 
 #[wasm_bindgen_test]
-fn virtio_snd_pci_bridge_transitional_eventq_does_not_raise_irq_when_avail_no_interrupt_is_set_via_legacy_io(
-) {
+fn virtio_snd_pci_bridge_transitional_eventq_does_not_raise_irq_when_avail_no_interrupt_is_set_via_legacy_io()
+ {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
     let guest = common::GuestRegion {
         base: guest_base,
@@ -299,4 +300,3 @@ fn virtio_snd_pci_bridge_transitional_eventq_does_not_raise_irq_when_avail_no_in
         "IRQ should remain deasserted when VIRTQ_AVAIL_F_NO_INTERRUPT is set"
     );
 }
-

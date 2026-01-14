@@ -761,7 +761,10 @@ fn decodes_and_translates_predicated_ret() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(&module.instructions[2], Sm4Inst::Predicated { .. }));
+    assert!(matches!(
+        &module.instructions[2],
+        Sm4Inst::Predicated { .. }
+    ));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated {

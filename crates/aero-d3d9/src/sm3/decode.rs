@@ -954,14 +954,10 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
         }
 
         let Some((length, predicate, operands, dcl, comment_data)) = decoded else {
-            return Err(
-                first_err
-                    .or(last_err)
-                    .unwrap_or_else(|| DecodeError {
-                    token_index,
-                    message: "failed to decode instruction".to_owned(),
-                }),
-            );
+            return Err(first_err.or(last_err).unwrap_or_else(|| DecodeError {
+                token_index,
+                message: "failed to decode instruction".to_owned(),
+            }));
         };
 
         instructions.push(DecodedInstruction {

@@ -128,7 +128,12 @@ fn vertex_decl_pos4() -> Vec<u8> {
 
 fn pixel_at(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let idx = ((y * width + x) * 4) as usize;
-    [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]
+    [
+        pixels[idx],
+        pixels[idx + 1],
+        pixels[idx + 2],
+        pixels[idx + 3],
+    ]
 }
 
 #[test]
@@ -169,8 +174,8 @@ fn d3d9_cmd_stream_runtime_ib_constants_affect_sm3_shaders() {
         AerogpuFormat::R8G8B8A8Unorm as u32,
         width,
         height,
-        1, // mip_levels
-        1, // array_layers
+        1,         // mip_levels
+        1,         // array_layers
         width * 4, // row_pitch_bytes
         0,         // backing_alloc_id
         0,         // backing_offset_bytes
@@ -264,10 +269,16 @@ fn d3d9_cmd_stream_runtime_ib_constants_affect_sm3_shaders() {
     };
 
     assert_eq!(left[3], 255);
-    assert!(approx_eq(left[1], 64) && left[0] < 4 && left[2] < 4, "left={left:?}");
+    assert!(
+        approx_eq(left[1], 64) && left[0] < 4 && left[2] < 4,
+        "left={left:?}"
+    );
 
     assert_eq!(middle[3], 255);
-    assert!(approx_eq(middle[0], 64) && middle[1] < 4 && middle[2] < 4, "middle={middle:?}");
+    assert!(
+        approx_eq(middle[0], 64) && middle[1] < 4 && middle[2] < 4,
+        "middle={middle:?}"
+    );
 
     assert_eq!(right[3], 255);
     assert!(
