@@ -201,7 +201,7 @@ NTSTATUS VirtioPciWdmInterruptConnect(
         Interrupts->u.Message.DpcInFlight = 0;
 
         RtlZeroMemory(&params, sizeof(params));
-        params.Version = 2; /* CONNECT_MESSAGE_BASED */
+        params.Version = CONNECT_MESSAGE_BASED;
         params.MessageBased.PhysicalDeviceObject = PhysicalDeviceObject;
         params.MessageBased.ServiceRoutine = VirtioPciWdmMessageIsr;
         params.MessageBased.ServiceContext = Interrupts;
@@ -267,7 +267,7 @@ VOID VirtioPciWdmInterruptDisconnect(_Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrup
     if (Interrupts->u.Message.ConnectionContext != NULL) {
         IO_DISCONNECT_INTERRUPT_PARAMETERS params;
         RtlZeroMemory(&params, sizeof(params));
-        params.Version = 2; /* CONNECT_MESSAGE_BASED */
+        params.Version = CONNECT_MESSAGE_BASED;
         params.MessageBased.ConnectionContext = Interrupts->u.Message.ConnectionContext;
         IoDisconnectInterruptEx(&params);
         Interrupts->u.Message.ConnectionContext = NULL;

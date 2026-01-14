@@ -550,6 +550,43 @@ static void test_disconnect_cancels_queued_dpc(void)
     assert(intr.Initialized == FALSE);
 }
 
+static void test_set_message_route_validation(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+    volatile UCHAR isr_reg = 0;
+
+    /* NULL interrupt state pointer. */
+    status = VirtioPciWdmInterruptSetMessageRoute(NULL, 0, TRUE, 0);
+    assert(status == STATUS_INVALID_PARAMETER);
+
+    /* Uninitialized state object. */
+    RtlZeroMemory(&intr, sizeof(intr));
+    status = VirtioPciWdmInterruptSetMessageRoute(&intr, 0, TRUE, 0);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+
+    /* INTx mode should reject message route updates. */
+    desc = make_int_desc();
+    status = VirtioPciWdmInterruptConnect(&dev, NULL, &desc, &isr_reg, NULL, NULL, NULL, NULL, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeIntx);
+    status = VirtioPciWdmInterruptSetMessageRoute(&intr, 0, TRUE, 0);
+    assert(status == STATUS_INVALID_DEVICE_STATE);
+    VirtioPciWdmInterruptDisconnect(&intr);
+
+    /* Out-of-range MessageId. */
+    desc = make_msg_desc(2);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+    status = VirtioPciWdmInterruptSetMessageRoute(&intr, 2, TRUE, 0);
+    assert(status == STATUS_INVALID_PARAMETER);
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 int main(void)
 {
     test_connect_validation();
@@ -563,6 +600,7 @@ int main(void)
     test_intx_evt_dpc_override();
     test_disconnect_waits_for_inflight_dpc();
     test_disconnect_cancels_queued_dpc();
+    test_set_message_route_validation();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");
     return 0;
