@@ -981,6 +981,11 @@ internal bind group at `@group(0)` (separate from the stage-scoped `@group(3)` G
 - `@binding(3)`: atomic counters (read_write)
 - `@binding(4)`: uniform params (uniform)
 - `@binding(5)`: `gs_inputs` (read)
+ 
+If the GS references D3D constant buffers (`cb#[]`), the translator also declares them in the
+executor’s shared internal/emulation bind group:
+ 
+- `@group(3) @binding(BINDING_BASE_CBUFFER + slot)`: `cb#[]` uniform buffers
 
 When wiring that translator into the executor, either adapt its declarations to the baseline
 internal scheme, or bind a separate internal group(0) for the GS pass (the current point-list GS

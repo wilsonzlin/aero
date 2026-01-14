@@ -318,8 +318,11 @@ pub struct GsPrepassTranslation {
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
 /// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
 /// - `@group(0) @binding(2)` indirect args buffer (`DrawIndexedIndirectArgs`, read_write)
-/// - `@group(0) @binding(3)` uniform params (`GsPrepassParams`)
-/// - `@group(0) @binding(4)` GS input payload (`Vec4F32Buffer`, read)
+/// - `@group(0) @binding(3)` atomic counters (`GsPrepassCounters`, read_write)
+/// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
+/// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read)
+/// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
+///   model (`@binding(BINDING_BASE_CBUFFER + slot)`)
 pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
     module: &Sm4Module,
     varyings: &[u32],
