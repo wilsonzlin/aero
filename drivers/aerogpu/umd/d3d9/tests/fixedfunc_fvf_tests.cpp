@@ -3322,6 +3322,161 @@ bool TestApplyStateBlockStreamSourceAndIndexBufferEmitCommands() {
   return true;
 }
 
+bool TestApplyStateBlockRenderTargetEmitsSetRenderTargets() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto CreateRenderTarget = [&](uint32_t width, uint32_t height, const char* what, D3DDDI_HRESOURCE* out_res) -> bool {
+    if (!out_res) {
+      return false;
+    }
+    D3D9DDIARG_CREATERESOURCE create_rt{};
+    create_rt.type = 1u;    // D3DRTYPE_SURFACE
+    create_rt.format = 22u; // D3DFMT_X8R8G8B8
+    create_rt.width = width;
+    create_rt.height = height;
+    create_rt.depth = 1;
+    create_rt.mip_levels = 1;
+    create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+    create_rt.pool = 0;
+    create_rt.size = 0;
+    create_rt.hResource.pDrvPrivate = nullptr;
+    create_rt.pSharedHandle = nullptr;
+    create_rt.pPrivateDriverData = nullptr;
+    create_rt.PrivateDriverDataSize = 0;
+    create_rt.wddm_hAllocation = 0;
+
+    const HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+    if (!Check(hr == S_OK, what)) {
+      return false;
+    }
+    if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+      return false;
+    }
+    cleanup.resources.push_back(create_rt.hResource);
+    *out_res = create_rt.hResource;
+    return true;
+  };
+
+  D3DDDI_HRESOURCE rt_a{};
+  D3DDDI_HRESOURCE rt_b{};
+  if (!CreateRenderTarget(/*width=*/64u, /*height=*/64u, "CreateResource(RT A)", &rt_a)) {
+    return false;
+  }
+  if (!CreateRenderTarget(/*width=*/64u, /*height=*/64u, "CreateResource(RT B)", &rt_b)) {
+    return false;
+  }
+
+  auto* rt_a_res = reinterpret_cast<Resource*>(rt_a.pDrvPrivate);
+  auto* rt_b_res = reinterpret_cast<Resource*>(rt_b.pDrvPrivate);
+  if (!Check(rt_a_res && rt_b_res, "RT resource pointers")) {
+    return false;
+  }
+
+  // Start from RT A.
+  HRESULT hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt_a);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT A)")) {
+    return false;
+  }
+
+  // Record RT B in a state block.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(SetRenderTarget B)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt_b);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(SetRenderTarget B)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore RT A before applying the state block.
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt_a);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT A) restore before apply")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(SetRenderTarget B)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->render_targets[0] == rt_b_res, "ApplyStateBlock updates RT0")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock render target)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_rt = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_TARGETS)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_targets)) {
+      continue;
+    }
+    const auto* rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(hdr);
+    if (rt->color_count >= 1 && rt->colors[0] == rt_b_res->handle) {
+      saw_rt = true;
+      break;
+    }
+  }
+  if (!Check(saw_rt, "ApplyStateBlock emits SET_RENDER_TARGETS for expected RT0")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockToleratesUnsupportedTextureStageState() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -20464,6 +20619,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockStreamSourceAndIndexBufferEmitCommands()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockRenderTargetEmitsSetRenderTargets()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockToleratesUnsupportedTextureStageState()) {
