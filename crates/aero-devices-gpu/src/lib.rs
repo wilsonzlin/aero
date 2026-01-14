@@ -37,9 +37,10 @@ pub use pci::{
 };
 pub use regs::{feature_bits, irq_bits, mmio, ring_control, AeroGpuRegs};
 pub use ring::{
-    AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
-    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
-    AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, FENCE_PAGE_ABI_VERSION_OFFSET,
-    FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+    AeroGpuAllocEntry, AeroGpuAllocTable, AeroGpuAllocTableError, AeroGpuAllocTableHeader,
+    AeroGpuRingHeader, AeroGpuSubmitDesc, AeroGpuSubmitDescError, AEROGPU_ALLOC_TABLE_MAGIC,
+    AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES, AEROGPU_RING_HEADER_SIZE_BYTES,
+    AEROGPU_RING_MAGIC, FENCE_PAGE_ABI_VERSION_OFFSET, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+    FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 pub use scanout::{AeroGpuCursorConfig, AeroGpuFormat, AeroGpuScanoutConfig};
