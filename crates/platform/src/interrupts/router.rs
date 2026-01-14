@@ -505,7 +505,7 @@ impl PlatformInterrupts {
     pub fn cpu_count(&self) -> usize {
         self.lapics.len()
     }
-
+ 
     /// Iterate over all local APICs (LAPICs) in APIC ID order.
     ///
     /// The platform stores LAPICs as `Arc<LocalApic>` to allow machine integrations to hold stable
@@ -514,7 +514,7 @@ impl PlatformInterrupts {
     ///
     /// This helper avoids exposing the internal `lapics: Vec<Arc<LocalApic>>` field directly and
     /// is used by interrupt delivery helpers (e.g. broadcast and logical destination modes).
-    pub fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> {
+    pub fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
         self.lapics.iter().map(|lapic| lapic.as_ref())
     }
     pub fn lapic(&self, cpu_index: usize) -> &LocalApic {

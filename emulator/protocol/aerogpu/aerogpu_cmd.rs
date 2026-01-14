@@ -1982,6 +1982,75 @@ pub fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, AerogpuC
     Ok(false)
 }
 
+/// Returns whether the command stream contains a vsync'd PRESENT without requiring the caller to
+/// build a full byte slice of the stream.
+///
+/// `read` must copy `buf.len()` bytes starting at `gpa` into `buf`.
+///
+/// This helper is intended for device models that want to inspect command stream contents for fence
+/// pacing, but do not want to allocate/copy potentially large streams in the common case.
+pub fn cmd_stream_has_vsync_present_reader<F>(
+    mut read: F,
+    cmd_gpa: u64,
+    cmd_size_bytes: u32,
+) -> Result<bool, ()>
+where
+    F: FnMut(u64, &mut [u8]),
+{
+    let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| ())?;
+    if cmd_size < AerogpuCmdStreamHeader::SIZE_BYTES {
+        return Err(());
+    }
+
+    let mut stream_hdr_bytes = [0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
+    read(cmd_gpa, &mut stream_hdr_bytes);
+    let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes).map_err(|_| ())?;
+
+    let declared_size = stream_hdr.size_bytes as usize;
+    if declared_size > cmd_size {
+        return Err(());
+    }
+
+    let mut offset = AerogpuCmdStreamHeader::SIZE_BYTES;
+    while offset < declared_size {
+        let rem = declared_size - offset;
+        if rem < AerogpuCmdHdr::SIZE_BYTES {
+            return Err(());
+        }
+
+        let cmd_hdr_gpa = cmd_gpa.checked_add(offset as u64).ok_or(())?;
+        let mut cmd_hdr_bytes = [0u8; AerogpuCmdHdr::SIZE_BYTES];
+        read(cmd_hdr_gpa, &mut cmd_hdr_bytes);
+        let cmd_hdr = decode_cmd_hdr_le(&cmd_hdr_bytes).map_err(|_| ())?;
+
+        let packet_size = cmd_hdr.size_bytes as usize;
+        let end = offset.checked_add(packet_size).ok_or(())?;
+        if end > declared_size {
+            return Err(());
+        }
+
+        if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
+            || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
+            // flags is always at offset 12 (hdr + scanout_id).
+            if packet_size < 16 {
+                return Err(());
+            }
+            let flags_gpa = cmd_hdr_gpa.checked_add(12).ok_or(())?;
+            let mut flags_bytes = [0u8; 4];
+            read(flags_gpa, &mut flags_bytes);
+            let flags = u32::from_le_bytes(flags_bytes);
+            if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
+                return Ok(true);
+            }
+        }
+
+        offset += packet_size;
+    }
+
+    Ok(false)
+}
+
 pub struct AerogpuCmdStreamView<'a> {
     pub header: AerogpuCmdStreamHeader,
     pub packets: Vec<AerogpuCmdPacket<'a>>,

@@ -5,10 +5,7 @@ use std::collections::VecDeque;
 
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
-use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_PRESENT_FLAG_VSYNC,
-};
+use aero_protocol::aerogpu::aerogpu_cmd::cmd_stream_has_vsync_present_reader;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
@@ -1265,7 +1262,13 @@ impl AeroGpuMmioDevice {
         let kind = if self.vblank_pacing_active()
             && desc.cmd_gpa != 0
             && desc.cmd_size_bytes != 0
-            && cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes).unwrap_or(false)
+            && desc.cmd_size_bytes <= MAX_CMD_STREAM_SIZE_BYTES
+            && cmd_stream_has_vsync_present_reader(
+                |gpa, buf| mem.read_physical(gpa, buf),
+                desc.cmd_gpa,
+                desc.cmd_size_bytes,
+            )
+            .unwrap_or(false)
         {
             PendingFenceKind::Vblank
         } else {
@@ -1750,70 +1753,6 @@ impl PciBarMmioHandler for AeroGpuMmioDevice {
             _ => {}
         }
     }
-}
-
-fn cmd_stream_has_vsync_present(
-    mem: &mut dyn MemoryBus,
-    cmd_gpa: u64,
-    cmd_size_bytes: u32,
-) -> Result<bool, ()> {
-    let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| ())?;
-    if cmd_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
-        return Err(());
-    }
-    if cmd_size < ProtocolCmdStreamHeader::SIZE_BYTES {
-        return Err(());
-    }
-
-    let mut stream_hdr_bytes = [0u8; ProtocolCmdStreamHeader::SIZE_BYTES];
-    mem.read_physical(cmd_gpa, &mut stream_hdr_bytes);
-    let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes).map_err(|_| ())?;
-
-    if stream_hdr.size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
-        return Err(());
-    }
-
-    let declared_size = stream_hdr.size_bytes as usize;
-    if declared_size > cmd_size {
-        return Err(());
-    }
-
-    let mut offset = ProtocolCmdStreamHeader::SIZE_BYTES;
-    while offset < declared_size {
-        let rem = declared_size - offset;
-        if rem < AerogpuCmdHdr::SIZE_BYTES {
-            return Err(());
-        }
-
-        let cmd_hdr_gpa = cmd_gpa.checked_add(offset as u64).ok_or(())?;
-        let mut cmd_hdr_bytes = [0u8; AerogpuCmdHdr::SIZE_BYTES];
-        mem.read_physical(cmd_hdr_gpa, &mut cmd_hdr_bytes);
-        let cmd_hdr = decode_cmd_hdr_le(&cmd_hdr_bytes).map_err(|_| ())?;
-
-        let cmd_size = cmd_hdr.size_bytes as usize;
-        let end = offset.checked_add(cmd_size).ok_or(())?;
-        if end > declared_size {
-            return Err(());
-        }
-
-        if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
-            || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
-        {
-            // flags is always at offset 12 (hdr + scanout_id).
-            if cmd_size < 16 {
-                return Err(());
-            }
-            let flags_gpa = cmd_hdr_gpa.checked_add(12).ok_or(())?;
-            let flags = mem.read_u32(flags_gpa);
-            if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
-                return Ok(true);
-            }
-        }
-
-        offset += cmd_size;
-    }
-
-    Ok(false)
 }
 
 impl PciDevice for AeroGpuMmioDevice {

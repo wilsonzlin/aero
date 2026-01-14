@@ -1,6 +1,6 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    cmd_stream_has_vsync_present_bytes, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
+    cmd_stream_has_vsync_present_bytes, cmd_stream_has_vsync_present_reader, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
@@ -40,6 +40,18 @@ fn detects_vsync_present_packets() {
 
     assert!(cmd_stream_has_vsync_present_bytes(&stream).unwrap());
 
+    let base_gpa = 0x1000u64;
+    let stream_copy = stream.clone();
+    let read = |gpa: u64, buf: &mut [u8]| {
+        let off = usize::try_from(gpa - base_gpa).unwrap();
+        let end = off + buf.len();
+        buf.copy_from_slice(&stream_copy[off..end]);
+    };
+    assert_eq!(
+        cmd_stream_has_vsync_present_reader(read, base_gpa, stream.len() as u32).unwrap(),
+        true
+    );
+
     // PRESENT without VSYNC.
     let mut stream = build_cmd_stream_header();
     push_u32(&mut stream, AerogpuCmdOpcode::Present as u32);
@@ -49,6 +61,18 @@ fn detects_vsync_present_packets() {
     patch_stream_size(&mut stream);
 
     assert!(!cmd_stream_has_vsync_present_bytes(&stream).unwrap());
+
+    let base_gpa = 0x2000u64;
+    let stream_copy = stream.clone();
+    let read = |gpa: u64, buf: &mut [u8]| {
+        let off = usize::try_from(gpa - base_gpa).unwrap();
+        let end = off + buf.len();
+        buf.copy_from_slice(&stream_copy[off..end]);
+    };
+    assert_eq!(
+        cmd_stream_has_vsync_present_reader(read, base_gpa, stream.len() as u32).unwrap(),
+        false
+    );
 
     // PRESENT_EX with VSYNC.
     let mut stream = build_cmd_stream_header();
@@ -61,4 +85,15 @@ fn detects_vsync_present_packets() {
     patch_stream_size(&mut stream);
 
     assert!(cmd_stream_has_vsync_present_bytes(&stream).unwrap());
+
+    let base_gpa = 0x3000u64;
+    let stream_copy = stream.clone();
+    let read = |gpa: u64, buf: &mut [u8]| {
+        let off = usize::try_from(gpa - base_gpa).unwrap();
+        let end = off + buf.len();
+        buf.copy_from_slice(&stream_copy[off..end]);
+    };
+    assert!(
+        cmd_stream_has_vsync_present_reader(read, base_gpa, stream.len() as u32).unwrap(),
+    );
 }
