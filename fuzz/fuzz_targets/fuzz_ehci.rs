@@ -347,7 +347,7 @@ fuzz_target!(|data: &[u8]| {
     let ports = ctl.hub().num_ports();
     for _ in 0..ops {
         let tag: u8 = u.arbitrary().unwrap_or(0);
-        match tag % 8 {
+        match tag % 9 {
             0 | 1 | 2 => {
                 let offset = biased_offset(&mut u, ports);
                 let size = decode_size(tag >> 3);
@@ -364,14 +364,22 @@ fuzz_target!(|data: &[u8]| {
                 rearm_interrupt_qtd(&mut bus);
                 ctl.tick_1ms(&mut bus);
             }
-            _ => {
+            7 => {
                 // Snapshot roundtrip to stress TLV encode/decode and nested hub snapshots.
                 let snap = ctl.save_state();
                 let mut fresh = EhciController::new();
+                // Pre-attach the keyboard so the restored snapshot applies onto the same Rc handle
+                // (preserves out-of-band key-event injection).
+                fresh.hub_mut().attach(0, Box::new(kbd.clone()));
                 let _ = fresh.load_state(&snap);
                 ctl = fresh;
+            }
+            _ => {
+                // Inject key events to generate interrupt IN traffic.
+                let usage: u8 = u.arbitrary().unwrap_or(0);
+                let pressed: bool = u.arbitrary().unwrap_or(false);
+                kbd.key_event(usage, pressed);
             }
         }
     }
 });
-
