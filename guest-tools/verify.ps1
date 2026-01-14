@@ -6,8 +6,9 @@ param(
     # Optional: attempt to play a system .wav using System.Media.SoundPlayer.
     [switch]$PlayTestSound,
 
-    # Optional: run aerogpu_dbgctl.exe (if present on the Guest Tools media) and embed its output in the report.
-    # This is intended for richer AeroGPU diagnostics in bug reports.
+    # Optional: run extended aerogpu_dbgctl diagnostics (best-effort) and embed output in the report.
+    # Note: verify.ps1 will still attempt a safe dbgctl --version / /? capture when dbgctl is present;
+    # this switch enables the more detailed --status run (when AeroGPU is detected and healthy).
     [switch]$RunDbgctl,
 
     # Optional: run aerogpu_dbgctl.exe --selftest (requires AeroGPU to be present and healthy).
@@ -1328,9 +1329,10 @@ try {
             $unsupportedSchema = $false
             $schemaStr = $null
             if ($schema -ne $null) { $schemaStr = ("" + $schema).Trim() }
-            if ($schemaStr -and -not (@("2", "3", "4") -contains $schemaStr)) {
+            # Known manifest schema versions: 1/2/3/4. Warn (but do not fail) if we see an unknown schema.
+            if ($schemaStr -and -not (@("1","2","3","4") -contains $schemaStr)) {
                 $unsupportedSchema = $true
-                $mDetails += ("WARN: Unsupported manifest schema_version=" + $schemaStr + " (supported: 2, 3, 4). Integrity checks will continue, but newer manifest fields may be ignored.")
+                $mDetails += ("WARN: Unknown manifest schema_version=" + $schemaStr + " (known: 1/2/3/4). verify.ps1 may be out of date.")
             }
 
             $pkg = $null
@@ -1563,7 +1565,7 @@ try {
                 if ($unsupportedSchema) { $mStatus = Merge-Status $mStatus "WARN" }
 
                 $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", size_mismatch=" + $sizeMismatchCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
-                if ($unsupportedSchema) { $mSummary += "; schema_version=" + $schemaStr + " (unsupported)" }
+                if ($unsupportedSchema) { $mSummary += "; schema_version=" + $schemaStr + " (unknown)" }
                 if ($gtSigningPolicy) {
                     $mSummary += "; signing_policy=" + $gtSigningPolicy
                     if ($gtCertsRequired -ne $null) { $mSummary += ", certs_required=" + $gtCertsRequired }
@@ -1615,7 +1617,6 @@ try {
                 # Guest Tools versions, which can lead to subtle driver binding issues.
                 try {
                     $expected = @{}
-                    $expectedHasTools = $false
                     foreach ($r in $mediaIntegrity.file_results) {
                         if (-not $r -or -not $r.path) { continue }
                         $p = ("" + $r.path).Trim()
@@ -1626,7 +1627,6 @@ try {
                         if ($p.Length -eq 0) { continue }
                         $pl = $p.ToLower()
                         $expected[$pl] = $true
-                        if (-not $expectedHasTools -and $pl.StartsWith("tools/")) { $expectedHasTools = $true }
                     }
                     # manifest.json itself is intentionally treated as expected even if the
                     # manifest's files[] list does not include it.
@@ -1638,10 +1638,50 @@ try {
                     if (-not ($prefix.EndsWith("\") -or $prefix.EndsWith("/"))) { $prefix += "\" }
                     $prefixLower = $prefix.ToLower()
 
+                    # Exclude the report output directory (C:\AeroGuestTools\) from the scan when
+                    # the Guest Tools root is located on the system drive (e.g. extracted/copy-run).
+                    $outDirFull = $null
+                    try { $outDirFull = [System.IO.Path]::GetFullPath($outDir) } catch { $outDirFull = $outDir }
+                    $outDirFullLower = ""
+                    try { $outDirFullLower = ("" + $outDirFull).ToLower() } catch { $outDirFullLower = "" }
+                    $outDirPrefixLower = $outDirFullLower
+                    if ($outDirPrefixLower -and (-not ($outDirPrefixLower.EndsWith("\") -or $outDirPrefixLower.EndsWith("/")))) { $outDirPrefixLower += "\" }
+
+                    $outDirEqualsRoot = $false
+                    $outDirWithinRoot = $false
+                    try {
+                        if ($outDirFullLower -and $rootFull -and ($outDirFullLower -eq ("" + $rootFull).ToLower())) {
+                            $outDirEqualsRoot = $true
+                            $outDirWithinRoot = $true
+                        } elseif ($outDirFullLower -and $outDirFullLower.StartsWith($prefixLower)) {
+                            $outDirWithinRoot = $true
+                        }
+                    } catch { }
+
+                    # If the Guest Tools root equals the output dir, exclude only known output artifacts.
+                    $skipOutputRelWhenRoot = @(
+                        "report.json",
+                        "report.txt",
+                        "dbgctl_status.txt",
+                        "dbgctl_version.txt",
+                        "install.log",
+                        "installed-driver-packages.txt",
+                        "installed-certs.txt",
+                        "installed-media.txt",
+                        "testsigning.enabled-by-aero.txt",
+                        "nointegritychecks.enabled-by-aero.txt",
+                        "storage-preseed.skipped.txt"
+                    )
+
                     $diskFiles = @()
                     foreach ($it in (Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction Stop)) {
                         if ($it.PSIsContainer) { continue }
                         $full = "" + $it.FullName
+                        if ($outDirWithinRoot -and (-not $outDirEqualsRoot) -and $outDirPrefixLower) {
+                            try {
+                                if ($full -and ($full.ToLower().StartsWith($outDirPrefixLower))) { continue }
+                            } catch { }
+                        }
                         $rel = $null
                         if ($full -and ($full.ToLower().StartsWith($prefixLower))) {
                             $rel = $full.Substring($prefix.Length)
@@ -1652,11 +1692,10 @@ try {
                         if ($rel.StartsWith("./")) { $rel = $rel.Substring(2) }
                         while ($rel.StartsWith("/")) { $rel = $rel.Substring(1) }
                         if (-not $rel -or $rel.Length -eq 0) { continue }
-                        # tools\ is an optional diagnostics payload; it may be present/absent and may
-                        # not be listed in manifest.json depending on packaging mode. Treat it as
-                        # out-of-scope for the mixed-media warning so we don't generate noisy WARNs,
-                        # unless the manifest explicitly lists tools\ paths.
-                        if ((-not $expectedHasTools) -and ($rel.ToLower().StartsWith("tools/"))) { continue }
+                        if ($outDirEqualsRoot) {
+                            # When output dir == root, skip only known artifacts instead of skipping the whole scan.
+                            if ($skipOutputRelWhenRoot -contains $rel.ToLower()) { continue }
+                        }
                         $diskFiles += $rel
                     }
 
@@ -2940,6 +2979,31 @@ try {
         $sigSummary = ""
         $sigDetails = @()
 
+        $is64 = $false
+        if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
+            $is64 = ("" + $report.checks.os.data.architecture) -match '64'
+        } else {
+            $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+        }
+
+        $policy = $gtSigningPolicy
+        if (-not $policy -and $report.media_integrity -and ($report.media_integrity -is [hashtable]) -and $report.media_integrity.signing_policy) {
+            $policy = "" + $report.media_integrity.signing_policy
+        }
+        $policyLower = ""
+        if ($policy) { $policyLower = ("" + $policy).Trim().ToLower() }
+        if (-not $policyLower -or $policyLower.Length -eq 0) { $policyLower = "unknown" }
+
+        $signingExpected = $false
+        if ($policyLower -eq "production" -or $policyLower -eq "test") {
+            $signingExpected = $true
+        } elseif ($policyLower -eq "none") {
+            $signingExpected = $false
+        } else {
+            # Unknown policy: on Win7 x64 assume signing is expected unless signature enforcement is bypassed.
+            $signingExpected = $is64
+        }
+
         $sigData = @{
             relevant_devices = (if ($devices) { $devices.Count } else { 0 })
             devices_with_signed_driver = 0
@@ -2947,6 +3011,9 @@ try {
             missing_provider = 0
             missing_signer = 0
             unknown_is_signed = 0
+            signing_policy = $policyLower
+            signing_expected = $signingExpected
+            is_64bit = $is64
             issue_devices = @()
         }
 
@@ -2995,7 +3062,6 @@ try {
                     if ($unknownSigned) { $sigData.unknown_is_signed++ }
 
                     if ($unsigned -or $unknownSigned -or $missingProvider -or $missingSigner) {
-                        $sigStatus = "WARN"
                         $sigData.issue_devices += @{
                             name = "" + $d.name
                             pnp_device_id = "" + $d.pnp_device_id
@@ -3017,14 +3083,25 @@ try {
                     }
                 }
 
-                if ($sigStatus -eq "PASS") {
+                $hasIssues = (($sigData.unsigned_devices -gt 0) -or ($sigData.unknown_is_signed -gt 0) -or ($sigData.missing_provider -gt 0) -or ($sigData.missing_signer -gt 0))
+                if (-not $hasIssues) {
+                    $sigStatus = "PASS"
                     $sigSummary = "All relevant devices with signed driver data report IsSigned=True (" + $withSd.Count + " device(s))."
                 } else {
-                    $sigSummary = "Signature issues: unsigned=" + $sigData.unsigned_devices + ", unknown IsSigned=" + $sigData.unknown_is_signed + ", missing provider=" + $sigData.missing_provider + ", missing signer=" + $sigData.missing_signer + " (devices with signed driver data: " + $withSd.Count + ")."
+                    if ($signingExpected -and $sigData.unsigned_devices -gt 0) {
+                        $sigStatus = "FAIL"
+                    } else {
+                        $sigStatus = "WARN"
+                    }
+
+                    $sigSummary = "Signature issues: unsigned=" + $sigData.unsigned_devices + ", unknown IsSigned=" + $sigData.unknown_is_signed + ", missing provider=" + $sigData.missing_provider + ", missing signer=" + $sigData.missing_signer + " (devices with signed driver data: " + $withSd.Count + "; signing_policy=" + $policyLower + ", signing_expected=" + $signingExpected + ")."
                     $sigDetails += "Remediation:"
                     $sigDetails += "  - If signing_policy=test: re-run Guest Tools setup as Administrator to install the driver certificate(s) (see Certificate Store check)."
                     $sigDetails += "  - Verify SHA-256 support hotfixes are installed (KB3033929; KB4474419 once available)."
                     $sigDetails += "  - Verify the system clock/timezone is correct (invalid clocks can break signature validation)."
+                    if ($policyLower -eq "none") {
+                        $sigDetails += "  - Note: signing_policy=none implies signature enforcement may be bypassed (nointegritychecks). This is not recommended for general use."
+                    }
                 }
             }
         }
@@ -4369,7 +4446,7 @@ try {
     Add-Check "smoke_graphics" "Smoke Test: Graphics" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
-# --- AeroGPU dbgctl (optional in-guest diagnostics) ---
+# --- AeroGPU dbgctl (best-effort diagnostics) ---
 try {
     $dbgStatus = "PASS"
     $summary = ""
@@ -4390,14 +4467,25 @@ try {
         found = $false
         path = $null
         searched = @()
-        args = @("--status","--timeout-ms","2000")
-        tool_timeout_ms = 2000
+        # Always run a safe, fast command when dbgctl exists.
+        args = @("--version")
+        fallback_args = @("/?")
         host_timeout_ms = 5000
         exit_code = $null
         stdout = $null
         stderr = $null
         timed_out = $false
         output_path = $null
+        attempts = @()
+
+        # Optional extended diagnostic run (only if -RunDbgctl is set and AeroGPU is healthy).
+        status_args = @("--status","--timeout-ms","2000")
+        status_tool_timeout_ms = 2000
+        status_exit_code = $null
+        status_stdout = $null
+        status_stderr = $null
+        status_timed_out = $false
+        status_output_path = $null
     }
 
     # Resolve expected path early so it is always present in report.json surfaces
@@ -4441,78 +4529,140 @@ try {
         }
     }
 
-    if (-not $dbgctlEnabled) {
-        $summary = "Skipped: -RunDbgctl / -RunDbgctlSelftest not set."
-    } elseif (-not $data.aerogpu_detected) {
-        $summary = "Skipped: no AeroGPU device detected."
-    } elseif (-not $data.aerogpu_healthy) {
-        $codes = @($data.aerogpu_config_manager_error_codes | Sort-Object -Unique)
-        $summary = "Skipped: AeroGPU device detected but not healthy (ConfigManagerErrorCode != 0)."
-        if ($codes -and $codes.Count -gt 0) { $summary += " CM=" + ($codes -join ",") }
+    # Prefer the canonical packaged location, then fall back to a broader search.
+    if (Test-Path $expectedPath) {
+        $data.found = $true
+        $data.path = $expectedPath
+        $data.searched = @($expectedPath)
     } else {
-        # Prefer the canonical packaged location, then fall back to a broader search.
-        if (Test-Path $expectedPath) {
-            $data.found = $true
-            $data.path = $expectedPath
-            $data.searched = @($expectedPath)
-        } else {
-            $dbgctlInfo = Find-AeroGpuDbgctl $scriptDir $is64
-            $data.found = $dbgctlInfo.found
-            $data.path = $dbgctlInfo.path
-            $data.searched = $dbgctlInfo.searched
-        }
+        $dbgctlInfo = Find-AeroGpuDbgctl $scriptDir $is64
+        $data.found = $dbgctlInfo.found
+        $data.path = $dbgctlInfo.path
+        $data.searched = $dbgctlInfo.searched
+    }
 
-        if (-not $data.found -or -not $data.path) {
+    if (-not $data.found -or -not $data.path) {
+        if ($dbgctlEnabled) {
             $dbgStatus = "WARN"
             $summary = "aerogpu_dbgctl.exe not found on Guest Tools media; skipping dbgctl diagnostics."
             $details += "Expected: " + $expectedPath
         } else {
-            $cap = Invoke-CaptureWithTimeout $data.path $data.args $data.host_timeout_ms
-            $data.exit_code = $cap.exit_code
-            $data.stdout = $cap.stdout
-            $data.stderr = $cap.stderr
-            $data.timed_out = $cap.timed_out
+            $summary = "aerogpu_dbgctl.exe not found on Guest Tools media (optional)."
+        }
+    } else {
+        # Always run a safe/bounded command for basic provenance (version/help).
+        $attempts = @()
+        $cap = Invoke-CaptureWithTimeout $data.path $data.args $data.host_timeout_ms
+        $attempts += @{
+            args = $data.args
+            exit_code = $cap.exit_code
+            stdout = $cap.stdout
+            stderr = $cap.stderr
+            timed_out = $cap.timed_out
+        }
 
-            if ($cap.timed_out -or ($cap.exit_code -ne 0)) {
-                $dbgStatus = "WARN"
+        $combined = ("" + $cap.stdout + $cap.stderr)
+        if ($cap.timed_out -or ($cap.exit_code -ne 0) -or (-not $combined) -or $combined.Trim().Length -eq 0) {
+            $cap2 = Invoke-CaptureWithTimeout $data.path $data.fallback_args $data.host_timeout_ms
+            $attempts += @{
+                args = $data.fallback_args
+                exit_code = $cap2.exit_code
+                stdout = $cap2.stdout
+                stderr = $cap2.stderr
+                timed_out = $cap2.timed_out
             }
+        }
 
-            $summary = "aerogpu_dbgctl --status exit_code=" + (if ($cap.exit_code -ne $null) { $cap.exit_code } else { "null" })
-            if ($cap.timed_out) { $summary += " (timed out)" }
-
-            $details += "Tool: " + $data.path
-            $details += "Args: " + ($data.args -join " ")
-            if ($cap.exit_code -ne $null) { $details += "Exit code: " + $cap.exit_code }
-            if ($cap.timed_out) { $details += ("Timed out: true (host timeout " + $data.host_timeout_ms + " ms)") }
-
-            # Save output as a convenience artifact for bug reports.
-            $statusFile = Join-Path $outDir "dbgctl_status.txt"
-            try {
-                $toWrite = $cap.stdout
-                if (-not $toWrite) { $toWrite = "" }
-                if ($cap.stderr) { $toWrite += "`r`n--- STDERR ---`r`n" + $cap.stderr }
-                Set-Content -Path $statusFile -Value $toWrite -Encoding UTF8
-                $data.output_path = $statusFile
-                $details += "Saved: " + $statusFile
-            } catch { }
-
-            if ($cap.stdout) {
-                $details += "Stdout:"
-                foreach ($line in ($cap.stdout -split "`r?`n")) {
-                    if ($line -eq $null) { continue }
-                    $t = ("" + $line).TrimEnd()
-                    if ($t.Length -eq 0) { continue }
-                    $details += ("  " + $t)
-                }
+        # Choose the "best" attempt: prefer non-timeout, exit_code=0, and some output.
+        $best = $null
+        foreach ($a in $attempts) {
+            $outText = ("" + $a.stdout + $a.stderr)
+            $hasOut = ($outText -and $outText.Trim().Length -gt 0)
+            if (($a.timed_out -ne $true) -and ($a.exit_code -eq 0) -and $hasOut) { $best = $a; break }
+        }
+        if (-not $best) {
+            foreach ($a in $attempts) {
+                $outText = ("" + $a.stdout + $a.stderr)
+                $hasOut = ($outText -and $outText.Trim().Length -gt 0)
+                if (($a.timed_out -ne $true) -and $hasOut) { $best = $a; break }
             }
-            if ($cap.stderr) {
-                $details += "Stderr:"
-                foreach ($line in ($cap.stderr -split "`r?`n")) {
-                    if ($line -eq $null) { continue }
-                    $t = ("" + $line).TrimEnd()
-                    if ($t.Length -eq 0) { continue }
-                    $details += ("  " + $t)
+        }
+        if (-not $best) { $best = $attempts[0] }
+
+        $data.attempts = $attempts
+        $data.args = $best.args
+        $data.exit_code = $best.exit_code
+        $data.stdout = $best.stdout
+        $data.stderr = $best.stderr
+        $data.timed_out = $best.timed_out
+
+        if ($best.timed_out -or ($best.exit_code -ne 0)) {
+            $dbgStatus = "WARN"
+        }
+
+        $summary = "aerogpu_dbgctl " + ($best.args -join " ") + " exit_code=" + (if ($best.exit_code -ne $null) { $best.exit_code } else { "null" })
+        if ($best.timed_out) { $summary += " (timed out)" }
+
+        $details += "Tool: " + $data.path
+        $details += "Args: " + ($best.args -join " ")
+        if ($best.exit_code -ne $null) { $details += "Exit code: " + $best.exit_code }
+        if ($best.timed_out) { $details += ("Timed out: true (host timeout " + $data.host_timeout_ms + " ms)") }
+
+        # Save output as a convenience artifact for bug reports.
+        $versionFile = Join-Path $outDir "dbgctl_version.txt"
+        try {
+            $toWrite = $best.stdout
+            if (-not $toWrite) { $toWrite = "" }
+            if ($best.stderr) { $toWrite += "`r`n--- STDERR ---`r`n" + $best.stderr }
+            Set-Content -Path $versionFile -Value $toWrite -Encoding UTF8
+            $data.output_path = $versionFile
+            $details += "Saved: " + $versionFile
+        } catch { }
+
+        $excerpt = Get-TextExcerpt (($best.stdout + "`r`n" + $best.stderr)) 30 8000
+        if ($excerpt -and $excerpt.Trim().Length -gt 0) {
+            $details += "Output excerpt:"
+            foreach ($line in ($excerpt -split "`r?`n")) {
+                if ($line -eq $null) { continue }
+                $t = ("" + $line).TrimEnd()
+                if ($t.Length -eq 0) { continue }
+                $details += ("  " + $t)
+            }
+        }
+
+        # Optional extended status run, only if requested and AeroGPU is present+healthy.
+        if ($RunDbgctl) {
+            if (-not $data.aerogpu_detected) {
+                $details += "Extended dbgctl: skipped --status (no AeroGPU device detected)."
+            } elseif (-not $data.aerogpu_healthy) {
+                $codes = @($data.aerogpu_config_manager_error_codes | Sort-Object -Unique)
+                $details += "Extended dbgctl: skipped --status (AeroGPU device not healthy; ConfigManagerErrorCode != 0)."
+                if ($codes -and $codes.Count -gt 0) { $details += ("AeroGPU CM codes: " + ($codes -join ",")) }
+            } else {
+                $capS = Invoke-CaptureWithTimeout $data.path $data.status_args $data.host_timeout_ms
+                $data.status_exit_code = $capS.exit_code
+                $data.status_stdout = $capS.stdout
+                $data.status_stderr = $capS.stderr
+                $data.status_timed_out = $capS.timed_out
+
+                if ($capS.timed_out -or ($capS.exit_code -ne 0)) {
+                    $dbgStatus = Merge-Status $dbgStatus "WARN"
                 }
+
+                $details += "Extended dbgctl: ran --status"
+                $details += "Status args: " + ($data.status_args -join " ")
+                if ($capS.exit_code -ne $null) { $details += "Status exit code: " + $capS.exit_code }
+                if ($capS.timed_out) { $details += ("Status timed out: true (host timeout " + $data.host_timeout_ms + " ms)") }
+
+                $statusFile = Join-Path $outDir "dbgctl_status.txt"
+                try {
+                    $toWrite = $capS.stdout
+                    if (-not $toWrite) { $toWrite = "" }
+                    if ($capS.stderr) { $toWrite += "`r`n--- STDERR ---`r`n" + $capS.stderr }
+                    Set-Content -Path $statusFile -Value $toWrite -Encoding UTF8
+                    $data.status_output_path = $statusFile
+                    $details += "Saved: " + $statusFile
+                } catch { }
             }
         }
     }
@@ -4523,9 +4673,18 @@ try {
         expected_path_template = $data.expected_path_template
         expected_path = $data.expected_path
         path = $data.path
+        args = $data.args
         exit_code = $data.exit_code
         stdout = $data.stdout
         stderr = $data.stderr
+        timed_out = $data.timed_out
+        output_path = $data.output_path
+        status_args = $data.status_args
+        status_exit_code = $data.status_exit_code
+        status_stdout = $data.status_stdout
+        status_stderr = $data.status_stderr
+        status_timed_out = $data.status_timed_out
+        status_output_path = $data.status_output_path
     }
 
     Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" $dbgStatus $summary $data $details
