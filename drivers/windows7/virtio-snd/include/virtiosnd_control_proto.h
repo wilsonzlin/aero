@@ -82,11 +82,11 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmInfoReq(_Out_ VIRTIO_SND_PCM
  * Resp points at the raw device-written response bytes beginning with the
  * status field (VIRTIO_SND_HDR_RESP).
  */
- _Must_inspect_result_ NTSTATUS VirtioSndCtrlParsePcmInfoResp(
-     _In_reads_bytes_(RespLen) const void* Resp,
-     _In_ ULONG RespLen,
-     _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo,
-     _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo);
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlParsePcmInfoResp(
+    _In_reads_bytes_(RespLen) const void* Resp,
+    _In_ ULONG RespLen,
+    _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo,
+    _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo);
 
 /*
  * Build a VIRTIO_SND_R_PCM_SET_PARAMS request for a fixed-format contract-v1
