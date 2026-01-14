@@ -787,6 +787,53 @@ For a tri-domain patch tessellated at level `T`:
 - Triangles per patch: `P_patch = T * T`
 - Indices per patch (triangle list): `I_patch = 3 * P_patch`
 
+**Tri-domain grid enumeration (P2a; concrete)**
+
+To make DS evaluation and index generation implementable, we define a concrete enumeration of the
+uniform tri-domain grid.
+
+Let `T >= 1` be the patch tessellation level.
+
+**Vertex enumeration**
+
+Vertices are enumerated in “rows” `r = 0..T`, each containing `L_r = (T - r + 1)` vertices, with
+column `c = 0..(L_r - 1)`.
+
+The barycentric `SV_DomainLocation` for vertex `(r, c)` is:
+
+- `u = f32(c) / f32(T)`
+- `v = f32(r) / f32(T)`
+- `w = 1.0 - u - v`
+
+The linear index of `(r, c)` within the patch vertex array is:
+
+```
+row_start(r) = r * (T + 1) - (r * (r - 1)) / 2
+idx(r, c) = row_start(r) + c
+```
+
+**Triangle list indices**
+
+For each row `r = 0..(T - 1)`:
+
+- Emit the “lower-left” triangle for `c = 0..(T - r - 1)`:
+  - `a = idx(r, c)`
+  - `b = idx(r, c + 1)`
+  - `c0 = idx(r + 1, c)`
+  - triangle = `(a, b, c0)`
+- Emit the “upper-right” triangle for `c = 0..(T - r - 2)`:
+  - `a = idx(r, c + 1)`
+  - `b = idx(r + 1, c + 1)`
+  - `c0 = idx(r + 1, c)`
+  - triangle = `(a, b, c0)`
+
+This produces exactly `T*T` triangles and `(T+1)(T+2)/2` vertices.
+
+Winding:
+
+- For `outputtopology("triangle_ccw")`, use the triangle order above.
+- For `outputtopology("triangle_cw")`, swap `b` and `c0` for each triangle (reverse winding).
+
 Total sizes for a draw (pre-GS) are:
 
 - `V_total = patch_count * instance_count * V_patch`
