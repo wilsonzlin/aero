@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_stream_writer.h"
+#include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
 
 namespace aerogpu {
@@ -25,8 +26,19 @@ constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex
 
 // D3DTSS_* texture stage state IDs (from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;
+constexpr uint32_t kD3dTssColorArg1 = 2u;
+constexpr uint32_t kD3dTssColorArg2 = 3u;
+constexpr uint32_t kD3dTssAlphaOp = 4u;
+constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+constexpr uint32_t kD3dTssAlphaArg2 = 6u;
 // D3DTEXTUREOP values (from d3d9types.h).
+constexpr uint32_t kD3dTopDisable = 1u;
 constexpr uint32_t kD3dTopSelectArg1 = 2u;
+constexpr uint32_t kD3dTopModulate = 4u;
+
+// D3DTA_* source selector (from d3d9types.h).
+constexpr uint32_t kD3dTaDiffuse = 0u;
+constexpr uint32_t kD3dTaTexture = 2u;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -34,6 +46,17 @@ bool Check(bool cond, const char* msg) {
     return false;
   }
   return true;
+}
+
+template <size_t N>
+bool ShaderBytecodeEquals(const Shader* shader, const uint32_t (&expected)[N]) {
+  if (!shader) {
+    return false;
+  }
+  if (shader->bytecode.size() != sizeof(expected)) {
+    return false;
+  }
+  return std::memcmp(shader->bytecode.data(), expected, sizeof(expected)) == 0;
 }
 
 size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
@@ -814,6 +837,17 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
 
+  // Ensure a known starting point for stage0 state (matches D3D9 defaults).
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
+    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  }
+
   const VertexXyzrhwDiffuseTex1 tri[3] = {
       {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
       {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
@@ -826,11 +860,27 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
 
+  // Default stage0: COLOR = TEXTURE * DIFFUSE, ALPHA = TEXTURE.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 created")) {
+      return false;
+    }
+    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (default)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+               "default fixed-function PS bytecode (modulate/texture)")) {
+      return false;
+    }
+  }
+
   // Mutate cached stage state directly (portable tests don't have a DDI entrypoint
   // for SetTextureStageState in the minimal header).
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg1;
+    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
   }
 
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
@@ -839,34 +889,101 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
 
+  // Stage0: COLOR = TEXTURE, ALPHA = TEXTURE.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (select texture)")) {
+      return false;
+    }
+    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (select texture)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0TextureTexture),
+               "fixed-function PS bytecode (texture/texture)")) {
+      return false;
+    }
+  }
+
+  // Stage0: COLOR = DIFFUSE, ALPHA = TEXTURE.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaDiffuse;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(third)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (select diffuse)")) {
+      return false;
+    }
+    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (select diffuse)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0DiffuseTexture),
+               "fixed-function PS bytecode (diffuse/texture)")) {
+      return false;
+    }
+  }
+
+  // Stage0: COLOR = DIFFUSE, ALPHA = TEXTURE * DIFFUSE.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopModulate;
+    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(fourth)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (alpha modulate)")) {
+      return false;
+    }
+    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (alpha modulate)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0DiffuseModulate),
+               "fixed-function PS bytecode (diffuse/modulate)")) {
+      return false;
+    }
+  }
+
+  // Stage0: COLOROP=DISABLE disables the entire stage, so alpha comes from diffuse/current.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopDisable;
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(fifth)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps_tex1 != nullptr, "fixedfunc_ps_tex1 present (disable)")) {
+      return false;
+    }
+    if (!Check(dev->ps == dev->fixedfunc_ps_tex1, "fixed-function PS is bound (disable)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+               "fixed-function PS bytecode (disable -> passthrough)")) {
+      return false;
+    }
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
   if (!Check(ValidateStream(buf, len), "ValidateStream(stage-state change)")) {
-    return false;
-  }
-
-  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
-  if (!Check(!binds.empty(), "BIND_SHADERS present")) {
-    return false;
-  }
-
-  // The driver implements stage0 texture-stage-state-based pixel shader
-  // selection. Changing stage0 COLOROP should therefore cause a different
-  // fixed-function PS variant to be bound.
-  if (!Check(binds.size() >= 2, "stage-state change rebinds shaders (BIND_SHADERS count >= 2)")) {
-    return false;
-  }
-
-  std::unordered_set<aerogpu_handle_t> ps_handles;
-  for (const aerogpu_cmd_hdr* hdr : binds) {
-    const auto* cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
-    if (!Check(cmd->vs != 0 && cmd->ps != 0, "BIND_SHADERS uses non-zero VS/PS")) {
-      return false;
-    }
-    ps_handles.insert(cmd->ps);
-  }
-  if (!Check(ps_handles.size() >= 2, "stage-state change binds a different PS handle")) {
     return false;
   }
 
