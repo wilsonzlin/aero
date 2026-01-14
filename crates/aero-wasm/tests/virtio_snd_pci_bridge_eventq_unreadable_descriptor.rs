@@ -122,7 +122,15 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_next_descriptor_is_unreadable
         2,
     );
     // Descriptor 1: valid writable buffer.
-    write_desc(&guest, desc_table, 1, ok_buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        &guest,
+        desc_table,
+        1,
+        ok_buf as u64,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
 
     guest.write_u16(avail, 0);
     guest.write_u16(avail + 2, 2);
@@ -159,4 +167,3 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_next_descriptor_is_unreadable
     guest.read_into(bad_buf, &mut bad);
     assert_eq!(&bad, &[0xAAu8; 8]);
 }
-

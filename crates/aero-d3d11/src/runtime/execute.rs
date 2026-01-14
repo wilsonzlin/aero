@@ -541,15 +541,14 @@ impl D3D11Runtime {
                     | BufferUsage::STORAGE
                     | BufferUsage::INDIRECT,
             );
-        let shadow = if self.emulate_strip_restart
-            && (usage.contains(BufferUsage::INDEX) || is_copy_only)
-        {
-            usize::try_from(size)
-                .ok()
-                .map(|shadow_len| vec![0u8; shadow_len])
-        } else {
-            None
-        };
+        let shadow =
+            if self.emulate_strip_restart && (usage.contains(BufferUsage::INDEX) || is_copy_only) {
+                usize::try_from(size)
+                    .ok()
+                    .map(|shadow_len| vec![0u8; shadow_len])
+            } else {
+                None
+            };
 
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 buffer"),

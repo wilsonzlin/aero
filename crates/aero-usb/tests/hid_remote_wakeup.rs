@@ -435,7 +435,10 @@ fn hid_mouse_remote_wakeup_sets_uhci_resume_detect_through_external_hub_from_boo
         (cur_portsc | PORTSC_PED | PORTSC_SUSP) as u32,
     );
     let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
-    assert!(portsc & PORTSC_SUSP != 0, "expected root port to be suspended");
+    assert!(
+        portsc & PORTSC_SUSP != 0,
+        "expected root port to be suspended"
+    );
     assert_eq!(
         portsc & PORTSC_RD,
         0,
