@@ -265,8 +265,21 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
     return reporter.Pass();
   }
 
+  // Fixed-function state: keep this test deterministic by disabling common
+  // state that could affect color output (textures/blending/depth).
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
   dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+  dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+  dev->SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
+  dev->SetTexture(0, NULL);
+  dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+  dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+  dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+  dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
+  dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+  dev->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
 
   const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
   bool ran_any = false;
