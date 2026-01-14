@@ -52,6 +52,12 @@ const MAX_SYNTH_SIGNATURE_PARAMS: usize = 16;
 const MAX_SIGNATURE_CHUNK_BYTES: usize = 16 * 1024;
 const MAX_SIGNATURE_ENTRIES: usize = 256;
 
+/// Cap signature register indices before running the full translator. Some translation paths (notably
+/// tessellation/domain-shader helpers) may iterate up to `max_register + 1` when emitting output
+/// structs; keeping register numbers small avoids pathological WGSL generation even when the number
+/// of signature entries is tiny.
+const MAX_SIGNATURE_REGISTER_INDEX: u32 = 256;
+
 /// Reflection parsing (`RDEF`/`RD11`) can allocate entry tables and strings based on declared
 /// counts/offsets. Keep chunk sizes and declared entry counts bounded when running the full
 /// translation pipeline on raw DXBC inputs.
@@ -788,6 +794,20 @@ fn should_parse_signature_chunk(bytes: &[u8]) -> bool {
     signature_param_count(bytes).unwrap_or(0) <= MAX_SIGNATURE_ENTRIES
 }
 
+fn signature_registers_within_caps(sigs: &aero_d3d11::ShaderSignatures) -> bool {
+    fn sig_ok(sig: &Option<aero_d3d11::DxbcSignature>) -> bool {
+        match sig.as_ref() {
+            Some(sig) => sig
+                .parameters
+                .iter()
+                .all(|p| p.register <= MAX_SIGNATURE_REGISTER_INDEX),
+            None => true,
+        }
+    }
+
+    sig_ok(&sigs.isgn) && sig_ok(&sigs.osgn) && sig_ok(&sigs.psgn) && sig_ok(&sigs.pcsg)
+}
+
 fn should_parse_rdef_chunk(bytes: &[u8]) -> bool {
     if bytes.len() > MAX_RDEF_CHUNK_BYTES {
         return false;
@@ -920,6 +940,11 @@ fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {
     });
     let signatures = if safe_for_signatures {
         aero_d3d11::parse_signatures(&dxbc).unwrap_or_default()
+    } else {
+        Default::default()
+    };
+    let signatures = if signature_registers_within_caps(&signatures) {
+        signatures
     } else {
         Default::default()
     };

@@ -16,6 +16,8 @@
 
 "SV_Position"
 "SV_Target"
+"SV_TessFactor"
+"SV_InsideTessFactor"
 "POSITION"
 "TEXCOORD"
 
