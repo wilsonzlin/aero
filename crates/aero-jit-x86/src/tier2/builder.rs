@@ -1363,6 +1363,7 @@ pub fn lower_tier1_ir_block_for_test(ir: &IrBlock) -> Block {
         const_values: HashMap::new(),
         instrs: Vec::new(),
         unsupported: false,
+        const_values: HashMap::new(),
     };
     lower.lower_block(ir);
 
