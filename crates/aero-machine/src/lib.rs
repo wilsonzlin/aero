@@ -340,8 +340,8 @@ impl Default for MachineConfig {
             enable_virtio_input: false,
             enable_uhci: false,
             enable_ehci: false,
-            enable_vga: true,
             enable_aerogpu: false,
+            enable_vga: true,
             enable_serial: true,
             enable_debugcon: true,
             enable_i8042: true,
@@ -390,8 +390,8 @@ impl MachineConfig {
             enable_virtio_input: false,
             enable_uhci: false,
             enable_ehci: false,
-            enable_vga: true,
             enable_aerogpu: false,
+            enable_vga: true,
             enable_serial: true,
             enable_debugcon: true,
             enable_i8042: true,
@@ -3829,8 +3829,8 @@ Track progress: docs/21-smp.md\n\
     ///
     /// Note: When VGA is disabled, the firmware keeps the LFB inside conventional RAM so BIOS-only
     /// helpers do not scribble over the canonical PCI MMIO window.
-    pub fn vbe_lfb_base(&self) -> u32 {
-        self.bios.video.vbe.lfb_base
+    pub fn vbe_lfb_base(&self) -> u64 {
+        u64::from(self.bios.video.vbe.lfb_base)
     }
     /// Install an external scanout descriptor that should receive legacy VGA/VBE mode updates.
     ///
@@ -12290,7 +12290,7 @@ mod tests {
         );
         assert_eq!(
             dst.vbe_lfb_base(),
-            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
         );
     }
 

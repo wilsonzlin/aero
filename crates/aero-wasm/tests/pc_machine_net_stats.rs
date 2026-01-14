@@ -101,7 +101,7 @@ fn get_bigint(obj: &JsValue, key: &str) -> BigInt {
 
 #[wasm_bindgen_test]
 fn pc_machine_net_stats_smoke() {
-    let mut m = PcMachine::new(2 * 1024 * 1024).expect("PcMachine::new");
+    let mut m = PcMachine::new(2 * 1024 * 1024, None).expect("PcMachine::new");
 
     // No backend attached yet.
     assert!(m.net_stats().is_null());
@@ -156,7 +156,7 @@ fn pc_machine_net_stats_smoke() {
 
 #[wasm_bindgen_test]
 fn pc_machine_attach_l2_tunnel_from_io_ipc_sab_smoke() {
-    let mut m = PcMachine::new(2 * 1024 * 1024).expect("PcMachine::new");
+    let mut m = PcMachine::new(2 * 1024 * 1024, None).expect("PcMachine::new");
     assert!(m.net_stats().is_null());
 
     let io_ipc = make_io_ipc_sab(64);
@@ -167,7 +167,7 @@ fn pc_machine_attach_l2_tunnel_from_io_ipc_sab_smoke() {
 
 #[wasm_bindgen_test]
 fn pc_machine_net_stats_marks_rx_broken_after_corrupt_record() {
-    let mut m = PcMachine::new(2 * 1024 * 1024).expect("PcMachine::new");
+    let mut m = PcMachine::new(2 * 1024 * 1024, None).expect("PcMachine::new");
 
     let net_tx = make_shared_ring(64);
     let (net_rx_sab, net_rx, net_rx_test) = make_shared_ring_pair(64);
