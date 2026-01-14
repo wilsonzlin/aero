@@ -308,7 +308,9 @@ During driver installation (or on boot), Windows reports an error like:
 1. Verify the guest clock/date/time is correct.
 2. Ensure KB3033929 is installed if your drivers are SHA-256-signed.
 3. Replace the Guest Tools ISO with a fresh copy (don’t mix driver folders across versions).
-4. Re-run `setup.cmd` as Administrator (or use the manual install fallback).
+4. (Optional) Validate the new media before installing:
+   - `setup.cmd /check /verify-media`
+5. Re-run `setup.cmd` as Administrator (or use the manual install fallback).
 
 ## Issue: Guest Tools media integrity check fails (manifest hash mismatch)
 
