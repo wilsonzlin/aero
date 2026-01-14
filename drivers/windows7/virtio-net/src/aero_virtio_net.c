@@ -3255,7 +3255,15 @@ static NDIS_STATUS AerovNetOidQuery(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ P
       NDIS_OFFLOAD Offload;
       BOOLEAN UseCurrent = (Oid == OID_TCP_OFFLOAD_CURRENT_CONFIG) ? TRUE : FALSE;
 
-      AerovNetBuildNdisOffload(Adapter, UseCurrent, &Offload);
+      // Serialize reads of the current enablement flags with OID set updates so
+      // the returned config is internally consistent (best-effort).
+      if (UseCurrent) {
+        NdisAcquireSpinLock(&Adapter->Lock);
+        AerovNetBuildNdisOffload(Adapter, TRUE, &Offload);
+        NdisReleaseSpinLock(&Adapter->Lock);
+      } else {
+        AerovNetBuildNdisOffload(Adapter, FALSE, &Offload);
+      }
       BytesNeeded = Offload.Header.Size;
       if (OutLen < BytesNeeded) {
         break;
