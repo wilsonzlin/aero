@@ -1,4 +1,7 @@
-use super::{msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability, PciBdf, PciDevice, SharedPciConfigPorts};
+use super::{
+    msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability, PciBdf, PciDevice,
+    SharedPciConfigPorts,
+};
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -15,6 +18,10 @@ use std::rc::Rc;
 /// synchronized with the canonical config space on every MMIO access by mirroring:
 /// - the PCI command register (offset `0x04`), and
 /// - the base address of the accessed BAR.
+///
+/// In addition, this wrapper mirrors the guest-programmed MSI/MSI-X capability state (when
+/// present) so device models that deliver interrupts from MMIO side effects observe the correct
+/// interrupt configuration.
 ///
 /// This is intentionally BAR-scoped: it only syncs the BAR index passed at construction.
 ///
@@ -64,12 +71,13 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
         };
 
         let mut dev = self.dev.borrow_mut();
-        dev.config_mut().set_command(command);
+        let cfg = dev.config_mut();
+        cfg.set_command(command);
         if bar_base != 0 {
-            dev.config_mut().set_bar_base(self.bar, bar_base);
+            cfg.set_bar_base(self.bar, bar_base);
         }
 
-        // Keep MSI/MSI-X enable state synchronized as well. Some device models (e.g. xHCI) may
+        // Keep MSI/MSI-X state synchronized as well. Some device models (e.g. xHCI) may
         // assert an interrupt condition as a side-effect of an MMIO write, and MSI delivery is
         // edge-triggered. If the device model observes the interrupt edge before it sees MSI
         // enabled, it can miss the MSI pulse and then suppress legacy INTx once MSI becomes active.
@@ -78,24 +86,39 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
         // deterministic and matches what real hardware does (the programmed MSI registers live in
         // PCI config space, not in the BAR window).
         if let Some((enabled, addr, data, mask, pending)) = msi_state {
-            if let Some(off) = dev.config_mut().find_capability(PCI_CAP_ID_MSI) {
+            if let Some(off) = cfg.find_capability(PCI_CAP_ID_MSI) {
                 let base = u16::from(off);
-                dev.config_mut().write(base + 0x04, 4, addr as u32);
-                dev.config_mut().write(base + 0x08, 4, (addr >> 32) as u32);
-                dev.config_mut().write(base + 0x0c, 2, u32::from(data));
-                dev.config_mut().write(base + 0x10, 4, mask);
-                dev.config_mut().write(base + 0x14, 4, pending);
+                let ctrl = cfg.read(base + 0x02, 2) as u16;
+                let is_64bit = (ctrl & (1 << 7)) != 0;
+                let per_vector_masking = (ctrl & (1 << 8)) != 0;
 
-                let ctrl = dev.config_mut().read(base + 0x02, 2) as u16;
+                cfg.write(base + 0x04, 4, addr as u32);
+                if is_64bit {
+                    cfg.write(base + 0x08, 4, (addr >> 32) as u32);
+                    cfg.write(base + 0x0c, 2, u32::from(data));
+                    if per_vector_masking {
+                        cfg.write(base + 0x10, 4, mask);
+                        cfg.write(base + 0x14, 4, pending);
+                    }
+                } else {
+                    cfg.write(base + 0x08, 2, u32::from(data));
+                    if per_vector_masking {
+                        cfg.write(base + 0x0c, 4, mask);
+                        cfg.write(base + 0x10, 4, pending);
+                    }
+                }
+
+                // Write Message Control last so the enabled bit is only observed after
+                // address/data are synchronized.
                 let new_ctrl = if enabled { ctrl | 0x0001 } else { ctrl & !0x0001 };
-                dev.config_mut().write(base + 0x02, 2, u32::from(new_ctrl));
+                cfg.write(base + 0x02, 2, u32::from(new_ctrl));
             }
         }
 
         if let Some((enabled, function_masked)) = msix_state {
-            if let Some(off) = dev.config_mut().find_capability(PCI_CAP_ID_MSIX) {
+            if let Some(off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
                 let base = u16::from(off);
-                let ctrl = dev.config_mut().read(base + 0x02, 2) as u16;
+                let ctrl = cfg.read(base + 0x02, 2) as u16;
                 let mut new_ctrl = ctrl;
                 if enabled {
                     new_ctrl |= 1 << 15;
@@ -107,7 +130,7 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
                 } else {
                     new_ctrl &= !(1 << 14);
                 }
-                dev.config_mut().write(base + 0x02, 2, u32::from(new_ctrl));
+                cfg.write(base + 0x02, 2, u32::from(new_ctrl));
             }
         }
     }
@@ -152,7 +175,9 @@ fn all_ones(size: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::PciConfigSyncedMmioBar;
+    use crate::pci::msi::PCI_CAP_ID_MSI;
     use crate::pci::{PciBarDefinition, PciBdf, PciConfigPorts, PciConfigSpace, PciDevice};
+    use crate::pci::MsiCapability;
     use memory::MmioHandler;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -301,6 +326,136 @@ mod tests {
             assert_eq!(dev.last_command, 0);
             assert_eq!(dev.last_bar_base, 0x5678_0000);
         }
+    }
+
+    #[test]
+    fn pci_config_synced_mmio_bar_syncs_msi_capability_state() {
+        let bdf = PciBdf::new(0, 4, 0);
+        let bar = 0;
+
+        struct TestPciConfigDeviceMsi {
+            config: PciConfigSpace,
+        }
+
+        impl TestPciConfigDeviceMsi {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0x1234, 0x5678);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                config.add_capability(Box::new(MsiCapability::new()));
+                Self { config }
+            }
+        }
+
+        impl PciDevice for TestPciConfigDeviceMsi {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        struct TestMmioDeviceMsi {
+            config: PciConfigSpace,
+            msi_enabled: bool,
+            msi_addr: u64,
+            msi_data: u16,
+        }
+
+        impl TestMmioDeviceMsi {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0xabcd, 0xef01);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                config.add_capability(Box::new(MsiCapability::new()));
+                Self {
+                    config,
+                    msi_enabled: false,
+                    msi_addr: 0,
+                    msi_data: 0,
+                }
+            }
+        }
+
+        impl PciDevice for TestMmioDeviceMsi {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        impl MmioHandler for TestMmioDeviceMsi {
+            fn read(&mut self, _offset: u64, _size: usize) -> u64 {
+                let cap = self
+                    .config
+                    .capability::<MsiCapability>()
+                    .expect("missing MSI capability");
+                self.msi_enabled = cap.enabled();
+                self.msi_addr = cap.message_address();
+                self.msi_data = cap.message_data();
+                0
+            }
+
+            fn write(&mut self, _offset: u64, _size: usize, _value: u64) {
+                let cap = self
+                    .config
+                    .capability::<MsiCapability>()
+                    .expect("missing MSI capability");
+                self.msi_enabled = cap.enabled();
+                self.msi_addr = cap.message_address();
+                self.msi_data = cap.message_data();
+            }
+        }
+
+        let pci_cfg = Rc::new(RefCell::new(PciConfigPorts::new()));
+        pci_cfg
+            .borrow_mut()
+            .bus_mut()
+            .add_device(bdf, Box::new(TestPciConfigDeviceMsi::new(bar)));
+
+        let dev = Rc::new(RefCell::new(TestMmioDeviceMsi::new(bar)));
+        let mut mmio = PciConfigSyncedMmioBar::new(pci_cfg.clone(), dev.clone(), bdf, bar);
+
+        // Program MSI in the canonical config space.
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("missing config device");
+            let cap_off = cfg
+                .find_capability(PCI_CAP_ID_MSI)
+                .expect("canonical config missing MSI capability") as u16;
+
+            cfg.write(cap_off + 0x04, 4, 0xfee0_0000);
+            cfg.write(cap_off + 0x08, 4, 0);
+            cfg.write(cap_off + 0x0c, 2, 0x0045);
+            let ctrl = cfg.read(cap_off + 0x02, 2) as u16;
+            cfg.write(cap_off + 0x02, 2, u32::from(ctrl | 0x0001));
+        }
+
+        // Trigger an MMIO read so the wrapper synchronizes PCI state into the device model.
+        mmio.read(0, 4);
+
+        let dev = dev.borrow();
+        assert!(dev.msi_enabled, "device model should observe MSI enable from platform config");
+        assert_eq!(dev.msi_addr, 0xfee0_0000);
+        assert_eq!(dev.msi_data, 0x0045);
     }
 
     #[test]
