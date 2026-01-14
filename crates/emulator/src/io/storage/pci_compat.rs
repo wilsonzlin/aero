@@ -190,6 +190,31 @@ pub fn config_write(cfg: &mut PciConfigSpace, offset: u16, size: usize, value: u
                 let shift = u32::from(byte_off - aligned) * 8;
                 let merged = (old & !(0xFF << shift)) | (byte_val << shift);
                 let merged = sanitize_bar_register_write_value(cfg, aligned, merged);
+
+                // Canonical `PciConfigSpace` treats any aligned 32-bit write of 0xFFFF_FFFF to a BAR
+                // register as a size probe. For subword writes we emulate hardware byte enables via
+                // an aligned dword read-modify-write, which can accidentally synthesize an all-ones
+                // dword for the high dword of a 64-bit BAR. Real hardware does not treat that as a
+                // probe because not all byte lanes were written.
+                if merged == 0xFFFF_FFFF {
+                    if let Some(bar_index) = pci_bar_index(aligned) {
+                        if bar_index > 0
+                            && cfg.bar_definition(bar_index).is_none()
+                            && matches!(
+                                cfg.bar_definition(bar_index - 1),
+                                Some(PciBarDefinition::Mmio64 { .. })
+                            )
+                        {
+                            if let Some(range) = cfg.bar_range(bar_index - 1) {
+                                let new_base = (range.base & 0x0000_0000_FFFF_FFFF)
+                                    | (u64::from(merged) << 32);
+                                cfg.set_bar_base(bar_index - 1, new_base);
+                                continue;
+                            }
+                        }
+                    }
+                }
+
                 cfg.write(aligned, 4, merged);
             } else {
                 // The original access started in the BAR window but can still spill into the next
@@ -524,6 +549,37 @@ mod tests {
         compat.write_u32(0x15, 1, 0x01);
         assert_eq!(compat.read_u32(0x14, 4), 0x0000_0100);
         assert_eq!(compat.read_u32(0x10, 4), expected_lo);
+    }
+
+    #[test]
+    fn mmio64_high_dword_subword_write_that_would_form_all_ones_does_not_trigger_probe() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x4000,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        // Seed BAR0 with a high dword whose upper 24 bits are all ones.
+        compat.write_u32(0x14, 4, 0xFFFF_FF00);
+        let base_before = compat
+            .with_config_mut(|cfg| cfg.bar_range(0).expect("bar0 range").base)
+            .expect("config not borrowed");
+        assert_eq!(base_before, 0xFFFF_FF00_0000_0000);
+
+        // A byte write to the low byte would produce a merged dword of 0xFFFF_FFFF if we naively
+        // forwarded the guest byte enables as a full dword write. This must be treated as a normal
+        // base update, not a size probe.
+        compat.write_u32(0x14, 1, 0xFF);
+
+        let base_after = compat
+            .with_config_mut(|cfg| cfg.bar_range(0).expect("bar0 range").base)
+            .expect("config not borrowed");
+        assert_eq!(base_after, 0xFFFF_FFFF_0000_0000);
     }
 
     #[test]
