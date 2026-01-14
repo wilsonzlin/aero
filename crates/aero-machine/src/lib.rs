@@ -5697,9 +5697,9 @@ Track progress: docs/21-smp.md\n\
 
                 // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
                 //
-                // The PC platform installs a catch-all PCI I/O BAR window over almost the entire
-                // I/O port space via `IoPortBus::register_range`, so legacy VGA ports must be wired
-                // as exact per-port mappings to avoid overlapping range registrations.
+                // The PC platform installs a range-based PCI I/O BAR router over most ports, so
+                // legacy VGA ports must be wired as exact per-port mappings to avoid overlapping
+                // range registrations (and to take precedence over the PCI I/O router).
                 self.io.register_shared_range(
                     aero_gpu_vga::VGA_LEGACY_IO_START,
                     aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
@@ -11817,7 +11817,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             headless.vbe_lfb_base(),
-            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
+            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
         );
 
         // When VGA is enabled, the BIOS should report the legacy MMIO-mapped SVGA base.
@@ -11832,7 +11832,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(vga.vbe_lfb_base(), u64::from(aero_gpu_vga::SVGA_LFB_BASE));
+        assert_eq!(vga.vbe_lfb_base(), aero_gpu_vga::SVGA_LFB_BASE);
     }
 
     #[test]
@@ -11858,7 +11858,7 @@ mod tests {
 
         let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
             .expect("LFB base should fit in u32");
-        assert_eq!(m.vbe_lfb_base(), u64::from(expected));
+        assert_eq!(m.vbe_lfb_base(), expected);
     }
 
     #[test]
