@@ -865,66 +865,6 @@ def _qmp_input_send_event_command(
     return _qmp_input_send_event_cmd(events, device=device)
 
 
-def _qmp_query_pci(endpoint: _QmpEndpoint) -> list[dict[str, object]]:
-    """
-    Query PCI devices via QMP `query-pci`.
-
-    Returns the raw `return` value (list of buses).
-    """
-    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
-        resp = _qmp_send_command(s, {"execute": "query-pci"})
-        buses = resp.get("return")
-        if not isinstance(buses, list):
-            raise RuntimeError(f"unexpected QMP query-pci response: {resp}")
-        out: list[dict[str, object]] = []
-        for b in buses:
-            if isinstance(b, dict):
-                out.append(b)
-        return out
-
-
-def _qmp_find_pci_device(
-    buses: list[dict[str, object]], *, vendor_id: int, device_id: int
-) -> Optional[dict[str, object]]:
-    for bus in buses:
-        devs = bus.get("devices")
-        if not isinstance(devs, list):
-            continue
-        for dev in devs:
-            if not isinstance(dev, dict):
-                continue
-            ident = dev.get("id")
-            if not isinstance(ident, dict):
-                continue
-            ven = ident.get("vendor")
-            did = ident.get("device")
-            if isinstance(ven, int) and isinstance(did, int) and ven == vendor_id and did == device_id:
-                return dev
-    return None
-
-
-def _qmp_pci_device_msix_enabled(dev: dict[str, object]) -> Optional[bool]:
-    """
-    Best-effort extraction of the MSI-X enable bit from `query-pci` device info.
-    """
-    caps = dev.get("capabilities")
-    if isinstance(caps, list):
-        for cap in caps:
-            if not isinstance(cap, dict):
-                continue
-            if cap.get("id") != "msix":
-                continue
-            enabled = cap.get("enabled")
-            if isinstance(enabled, bool):
-                return enabled
-    msix = dev.get("msix")
-    if isinstance(msix, dict):
-        enabled = msix.get("enabled")
-        if isinstance(enabled, bool):
-            return enabled
-    return None
-
-
 def _qmp_deterministic_keyboard_events(*, qcode: str) -> list[dict[str, object]]:
     # Press + release a single key via qcode (stable across host layouts).
     return [
