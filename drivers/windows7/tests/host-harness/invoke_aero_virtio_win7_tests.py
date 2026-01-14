@@ -338,6 +338,208 @@ class _PciMsixInfo:
         return f"{self.vendor_id:04x}:{self.device_id:04x}"
 
 
+@dataclass(frozen=True)
+class _PciId:
+    vendor_id: int
+    device_id: int
+    subsystem_vendor_id: Optional[int]
+    subsystem_id: Optional[int]
+    revision: Optional[int]
+
+
+def _iter_qmp_query_pci_devices(query_pci_result: object) -> list[_PciId]:
+    """
+    Attempt to extract vendor/device/subsystem/revision from QMP `query-pci` output.
+
+    QEMU's `query-pci` QMP schema is stable but can vary slightly between versions; we treat
+    unknown/missing fields as optional and ignore devices we can't parse.
+    """
+    devices: list[_PciId] = []
+
+    def _as_int(v: object) -> Optional[int]:
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            try:
+                return int(v, 0)
+            except ValueError:
+                return None
+        return None
+
+    if not isinstance(query_pci_result, list):
+        return devices
+
+    for bus in query_pci_result:
+        if not isinstance(bus, dict):
+            continue
+        bus_devices = bus.get("devices")
+        if not isinstance(bus_devices, list):
+            continue
+        for dev in bus_devices:
+            if not isinstance(dev, dict):
+                continue
+
+            vendor = _as_int(dev.get("vendor_id"))
+            device = _as_int(dev.get("device_id"))
+            if vendor is None or device is None:
+                continue
+
+            subsys_vendor = _as_int(dev.get("subsystem_vendor_id"))
+            subsys = _as_int(dev.get("subsystem_id"))
+            rev = _as_int(dev.get("revision"))
+            devices.append(_PciId(vendor, device, subsys_vendor, subsys, rev))
+
+    return devices
+
+
+def _summarize_pci_ids(devices: list[_PciId]) -> str:
+    """
+    Return a compact, comma-separated summary of vendor/device/rev triples.
+
+    Example: "1af4:1041@01,1af4:1052@01"
+    """
+    seen: set[tuple[int, int, Optional[int]]] = set()
+    for d in devices:
+        seen.add((d.vendor_id, d.device_id, d.revision))
+    parts: list[str] = []
+    for ven, dev, rev in sorted(seen, key=lambda t: (t[0], t[1], -1 if t[2] is None else int(t[2]))):
+        rev_str = "??" if rev is None else f"{rev:02x}"
+        parts.append(f"{ven:04x}:{dev:04x}@{rev_str}")
+    return ",".join(parts)
+
+
+def _format_pci_id_dump(devices: list[_PciId], *, max_lines: int = 32) -> str:
+    """
+    Return a human-readable multi-line dump of vendor/device/subsys/rev.
+    """
+    lines: list[str] = []
+    for d in sorted(
+        devices,
+        key=lambda x: (
+            x.vendor_id,
+            x.device_id,
+            -1 if x.subsystem_id is None else int(x.subsystem_id),
+            -1 if x.revision is None else int(x.revision),
+        ),
+    ):
+        rev_str = "?" if d.revision is None else f"0x{d.revision:02x}"
+        subsys_str = "?:?" if d.subsystem_vendor_id is None or d.subsystem_id is None else (
+            f"0x{d.subsystem_vendor_id:04x}:0x{d.subsystem_id:04x}"
+        )
+        lines.append(f"0x{d.vendor_id:04x}:0x{d.device_id:04x} subsys={subsys_str} rev={rev_str}")
+    if not lines:
+        return "  (no devices parsed from query-pci output)"
+    if len(lines) > max_lines:
+        extra = len(lines) - max_lines
+        lines = lines[:max_lines]
+        lines.append(f"... ({extra} more)")
+    return "\n".join("  " + l for l in lines)
+
+
+def _qmp_query_pci(endpoint: _QmpEndpoint) -> object:
+    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        resp = _qmp_send_command(s, {"execute": "query-pci"})
+        return resp.get("return")
+
+
+def _qmp_pci_preflight(
+    endpoint: _QmpEndpoint,
+    *,
+    virtio_transitional: bool,
+    with_virtio_snd: bool,
+    with_virtio_tablet: bool,
+) -> None:
+    """
+    Validate that QEMU is exposing the expected virtio PCI IDs for the Win7 harness.
+
+    In the default (contract v1) mode we require:
+      - VEN_1AF4 (virtio)
+      - DEV_1041 (net), DEV_1042 (blk), DEV_1052 (virtio-input keyboard + mouse [+ tablet])
+      - DEV_1059 (virtio-snd) when enabled
+      - REV_01 for those devices (Aero contract major version gating)
+
+    In transitional mode, we still assert that virtio (VEN_1AF4) devices exist, but we do not
+    require the contract-v1 device ID space or REV_01.
+    """
+    query = _qmp_query_pci(endpoint)
+    pci_devices = _iter_qmp_query_pci_devices(query)
+    virtio_devices = [d for d in pci_devices if d.vendor_id == 0x1AF4]
+
+    if not virtio_devices:
+        dump = _format_pci_id_dump(pci_devices)
+        raise RuntimeError(
+            "QMP query-pci did not report any virtio PCI devices (expected vendor_id=0x1AF4).\n"
+            "query-pci devices:\n"
+            f"{dump}"
+        )
+
+    # Transitional mode is intentionally permissive: the harness may attach legacy/transitional
+    # virtio devices with older device IDs and revision values.
+    if virtio_transitional:
+        summary = _summarize_pci_ids(virtio_devices)
+        print(
+            "AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=transitional|vendor=1af4|devices="
+            + _sanitize_marker_value(summary)
+        )
+        return
+
+    # Default (contract-v1) mode: enforce the expected modern-only virtio-pci IDs and REV_01.
+    expected_counts: dict[int, int] = {
+        0x1041: 1,  # virtio-net-pci modern-only
+        0x1042: 1,  # virtio-blk-pci modern-only
+        # virtio-keyboard-pci + virtio-mouse-pci (plus optional virtio-tablet-pci) are separate PCI
+        # functions but share the virtio-input PCI ID.
+        0x1052: 3 if with_virtio_tablet else 2,
+    }
+    if with_virtio_snd:
+        expected_counts[0x1059] = 1
+
+    missing: list[str] = []
+    for dev_id, want_count in sorted(expected_counts.items()):
+        have = sum(1 for d in virtio_devices if d.device_id == dev_id)
+        if have < want_count:
+            missing.append(f"DEV_{dev_id:04X} (need>={want_count}, got={have})")
+
+    bad_rev: list[_PciId] = []
+    for d in virtio_devices:
+        if d.device_id not in expected_counts:
+            continue
+        if d.revision != 0x01:
+            bad_rev.append(d)
+
+    if missing or bad_rev:
+        summary = _summarize_pci_ids(virtio_devices)
+        dump = _format_pci_id_dump(virtio_devices)
+        lines: list[str] = [
+            "QEMU PCI preflight failed (expected Aero contract v1 virtio PCI IDs).",
+            "Expected (vendor/device/rev): VEN_1AF4 with "
+            + "/".join(f"DEV_{k:04X}" for k in sorted(expected_counts.keys()))
+            + " and REV_01.",
+        ]
+        if missing:
+            lines.append("Missing expected device IDs: " + ", ".join(missing))
+        if bad_rev:
+            bad_str = ", ".join(
+                f"{d.vendor_id:04X}:{d.device_id:04X}@{('??' if d.revision is None else f'{d.revision:02X}')}"
+                for d in sorted(bad_rev, key=lambda x: (x.vendor_id, x.device_id, x.revision or -1))
+            )
+            lines.append("Unexpected revision IDs (expected REV_01): " + bad_str)
+        lines.append("Detected virtio devices (from query-pci):")
+        lines.append(dump)
+        lines.append("Compact summary: " + summary)
+        lines.append(
+            "Hint: in contract-v1 mode the harness expects modern-only virtio-pci devices with "
+            "'disable-legacy=on,x-pci-revision=0x01'."
+        )
+        raise RuntimeError("\n".join(lines))
+
+    summary = _summarize_pci_ids([d for d in virtio_devices if d.device_id in expected_counts])
+    print(
+        "AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=contract-v1|vendor=1af4|devices="
+        + _sanitize_marker_value(summary)
+    )
+
+
 def _read_new_bytes(path: Path, pos: int) -> tuple[bytes, int]:
     try:
         with path.open("rb") as f:
@@ -1628,6 +1830,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Attach a virtio-tablet-pci device (in addition to virtio keyboard/mouse).",
     )
     parser.add_argument(
+        "--qemu-preflight-pci",
+        "--qmp-preflight-pci",
+        dest="qemu_preflight_pci",
+        action="store_true",
+        help=(
+            "After starting QEMU and completing the QMP handshake, run a `query-pci` preflight to validate "
+            "QEMU-emitted virtio PCI Vendor/Device/Revision IDs. In the default (contract-v1) mode this enforces "
+            "VEN_1AF4 + DEV_1041/DEV_1042/DEV_1052[/DEV_1059] with REV_01. In transitional mode this is permissive "
+            "and only asserts that at least one VEN_1AF4 device exists."
+        ),
+    )
+    parser.add_argument(
         "--with-input-events",
         "--with-virtio-input-events",
         "--require-virtio-input-events",
@@ -2002,6 +2216,7 @@ def main() -> int:
     # - --with-input-tablet-events / --with-tablet-events
     # - --with-blk-resize
     # - --require-virtio-*-msix
+    # - --qemu-preflight-pci / --qmp-preflight-pci
     use_qmp = (
         (args.enable_virtio_snd and args.virtio_snd_audio_backend == "wav")
         or need_input_events
@@ -2009,6 +2224,7 @@ def main() -> int:
         or need_input_tablet_events
         or need_blk_resize
         or need_msix_check
+        or bool(args.qemu_preflight_pci)
     )
     qmp_endpoint: Optional[_QmpEndpoint] = None
     qmp_socket: Optional[Path] = None
@@ -2038,6 +2254,7 @@ def main() -> int:
                     or need_input_tablet_events
                     or need_blk_resize
                     or need_msix_check
+                    or bool(args.qemu_preflight_pci)
                 ):
                     req_flags: list[str] = []
                     if bool(args.with_input_events):
@@ -2054,6 +2271,8 @@ def main() -> int:
                         req_flags.append("--with-blk-resize")
                     if need_msix_check:
                         req_flags.append("--require-virtio-*-msix")
+                    if bool(args.qemu_preflight_pci):
+                        req_flags.append("--qemu-preflight-pci/--qmp-preflight-pci")
                     print(
                         f"ERROR: {'/'.join(req_flags)} requires QMP, but a free TCP port could not be allocated",
                         file=sys.stderr,
@@ -2072,6 +2291,7 @@ def main() -> int:
         or need_input_tablet_events
         or need_blk_resize
         or need_msix_check
+        or bool(args.qemu_preflight_pci)
     ) and qmp_endpoint is None:
         req_flags: list[str] = []
         if bool(args.with_input_events):
@@ -2088,6 +2308,8 @@ def main() -> int:
             req_flags.append("--with-blk-resize")
         if need_msix_check:
             req_flags.append("--require-virtio-*-msix")
+        if bool(args.qemu_preflight_pci):
+            req_flags.append("--qemu-preflight-pci/--qmp-preflight-pci")
         print(
             f"ERROR: {'/'.join(req_flags)} requires QMP, but a QMP endpoint could not be allocated",
             file=sys.stderr,
@@ -2384,6 +2606,21 @@ def main() -> int:
         proc = subprocess.Popen(qemu_args, stderr=stderr_f)
         result_code: Optional[int] = None
         try:
+            if args.qemu_preflight_pci:
+                if qmp_endpoint is None:
+                    raise AssertionError("--qemu-preflight-pci requested but QMP endpoint is not configured")
+                try:
+                    _qmp_pci_preflight(
+                        qmp_endpoint,
+                        virtio_transitional=bool(args.virtio_transitional),
+                        with_virtio_snd=bool(args.enable_virtio_snd),
+                        with_virtio_tablet=bool(attach_virtio_tablet),
+                    )
+                except Exception as e:
+                    print(f"FAIL: QEMU_PCI_PREFLIGHT_FAILED: {e}", file=sys.stderr)
+                    _print_qemu_stderr_tail(qemu_stderr_log)
+                    return 2
+
             pos = 0
             tail = b""
             irq_diag_markers: dict[str, dict[str, str]] = {}
