@@ -131,3 +131,46 @@ fn generate_edid_synthesized_mode_is_sane() {
     let refresh = dtd.refresh_hz();
     assert!((refresh - 60.0).abs() < 1.0, "refresh={refresh}");
 }
+
+#[test]
+fn generate_edid_high_resolution_mode_is_sane() {
+    // This timing is within the DTD pixel clock limit, but would exceed it if the
+    // generator always used the default blanking heuristic. Ensure `generate_edid`
+    // keeps refresh near the requested value (i.e. does not clamp the clock).
+    let preferred = aero_edid::Timing::new(4095, 2160, 60);
+    let edid = aero_edid::generate_edid(preferred);
+    assert!(checksum_ok(&edid));
+
+    let dtd = parse_dtd(&edid[54..72]).expect("missing preferred DTD");
+    assert_eq!(dtd.h_active, preferred.width);
+    assert_eq!(dtd.v_active, preferred.height);
+    let refresh = dtd.refresh_hz();
+    assert!((refresh - 60.0).abs() < 0.75, "refresh={refresh}");
+}
+
+#[test]
+fn generate_edid_rejects_unrepresentable_preferred_mode() {
+    // Even with minimal blanking, this would exceed 655.35MHz and cannot be represented in a DTD.
+    let edid = aero_edid::generate_edid(aero_edid::Timing::new(4095, 4095, 60));
+    // Should fall back to the legacy 1024x768@60 DTD.
+    assert_eq!(
+        &edid[54..72],
+        &[
+            0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+            0x11, 0x00, 0x00, 0x18
+        ]
+    );
+}
+
+#[test]
+fn generate_edid_rejects_excessive_refresh_rate() {
+    // EDID range limits encode rates as u8, so >255Hz cannot be represented consistently.
+    let edid = aero_edid::generate_edid(aero_edid::Timing::new(640, 480, 300));
+    assert_eq!(
+        &edid[54..72],
+        &[
+            0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
+            0x11, 0x00, 0x00, 0x18
+        ]
+    );
+}
