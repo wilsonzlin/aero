@@ -234,6 +234,7 @@ struct VertexBufferBinding {
 struct AerogpuSoftwareExecutor {
     buffers: HashMap<u32, Vec<u8>>,
     textures: HashMap<u32, FrameBuffer>,
+    texture_views: HashMap<u32, u32>,
 
     render_target: Option<u32>,
     viewport: Option<Viewport>,
@@ -268,6 +269,12 @@ impl AerogpuSoftwareExecutor {
                 }
                 Some(AerogpuCmdOpcode::CreateTexture2d) => {
                     self.cmd_create_texture2d(packet.payload, mem)?
+                }
+                Some(AerogpuCmdOpcode::CreateTextureView) => {
+                    self.cmd_create_texture_view(packet.payload)?
+                }
+                Some(AerogpuCmdOpcode::DestroyTextureView) => {
+                    self.cmd_destroy_texture_view(packet.payload)?
                 }
                 Some(AerogpuCmdOpcode::DestroyResource) => {
                     self.cmd_destroy_resource(packet.payload)?
@@ -377,6 +384,45 @@ impl AerogpuSoftwareExecutor {
         Ok(())
     }
 
+    fn cmd_create_texture_view(&mut self, payload: &[u8]) -> Result<(), String> {
+        // struct aerogpu_cmd_create_texture_view (payload excludes hdr):
+        // u32 view_handle; u32 texture_handle; u32 format; u32 base_mip_level; u32 mip_level_count;
+        // u32 base_array_layer; u32 array_layer_count; u64 reserved0;
+        if payload.len() < 36 {
+            return Err("CREATE_TEXTURE_VIEW payload too small".into());
+        }
+        let view_handle = read_u32(payload, 0);
+        let texture_handle = read_u32(payload, 4);
+        if !self.textures.contains_key(&texture_handle) {
+            return Err(format!("unknown texture {texture_handle} for CREATE_TEXTURE_VIEW"));
+        }
+        // The software executor does not model mip/array subresources; treat a view as an alias to
+        // the base texture.
+        self.texture_views.insert(view_handle, texture_handle);
+        Ok(())
+    }
+
+    fn cmd_destroy_texture_view(&mut self, payload: &[u8]) -> Result<(), String> {
+        // struct aerogpu_cmd_destroy_texture_view (payload excludes hdr):
+        // u32 view_handle; u32 reserved0;
+        if payload.len() < 8 {
+            return Err("DESTROY_TEXTURE_VIEW payload too small".into());
+        }
+        let view_handle = read_u32(payload, 0);
+        self.texture_views.remove(&view_handle);
+        Ok(())
+    }
+
+    fn resolve_texture_handle(&self, handle: u32) -> Option<u32> {
+        if self.textures.contains_key(&handle) {
+            return Some(handle);
+        }
+        self.texture_views
+            .get(&handle)
+            .copied()
+            .filter(|h| self.textures.contains_key(h))
+    }
+
     fn cmd_destroy_resource(&mut self, payload: &[u8]) -> Result<(), String> {
         if payload.len() < 8 {
             return Err("DESTROY_RESOURCE payload too small".into());
@@ -384,6 +430,8 @@ impl AerogpuSoftwareExecutor {
         let handle = read_u32(payload, 0);
         self.buffers.remove(&handle);
         self.textures.remove(&handle);
+        self.texture_views.remove(&handle);
+        self.texture_views.retain(|_, tex| *tex != handle);
         if self.render_target == Some(handle) {
             self.render_target = None;
         }
@@ -399,10 +447,10 @@ impl AerogpuSoftwareExecutor {
             self.render_target = None;
             return Ok(());
         }
-        let rt = read_u32(payload, 8);
-        if !self.textures.contains_key(&rt) {
-            return Err(format!("unknown render target texture {rt}"));
-        }
+        let rt_raw = read_u32(payload, 8);
+        let rt = self
+            .resolve_texture_handle(rt_raw)
+            .ok_or_else(|| format!("unknown render target texture/view {rt_raw}"))?;
         self.render_target = Some(rt);
         Ok(())
     }
