@@ -1345,6 +1345,66 @@ fn bus_master_status_register_is_rw1c_for_irq_and_error_bits() {
 }
 
 #[test]
+fn ata_dma_success_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(1);
+    }
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Mask interrupts (nIEN=1).
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    // READ DMA for LBA 0, 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x04);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, sector0);
+
+    // Re-enable interrupts; the latched completion should now surface.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn prd_byte_count_zero_encodes_64kib_transfer() {
     // 128 sectors * 512 bytes = 65536 bytes.
     let sectors: u64 = 128;
@@ -1738,6 +1798,86 @@ fn atapi_read_10_dma_via_bus_master() {
         0,
         "BMIDE IRQ bit should clear via RW1C"
     );
+}
+
+#[test]
+fn atapi_dma_success_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable() {
+    let mut iso = MemIso::new(1);
+    let expected: Vec<u8> = (0..2048u32)
+        .map(|i| (i as u8).wrapping_mul(9).wrapping_add(1))
+        .collect();
+    iso.data[..2048].copy_from_slice(&expected);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 2048-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 2048);
+    mem.write_u16(prd_addr + 6, 0x8000);
+
+    ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // ACK the packet-phase interrupt so the only remaining IRQ is the DMA completion.
+    assert!(ide.borrow().controller.secondary_irq_pending());
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Mask interrupts before running DMA; completion should latch internally.
+    ioports.write(SECONDARY_PORTS.ctrl_base, 1, 0x02);
+
+    ioports.write(bm_base + 8, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Re-enable interrupts; the pending completion should now surface.
+    ioports.write(SECONDARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(ide.borrow().controller.secondary_irq_pending());
+
+    let mut out = vec![0u8; 2048];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, expected);
+
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
 }
 
 #[test]
