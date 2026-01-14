@@ -913,9 +913,12 @@ fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
 }
 
 fn stage_ex_name(stage_ex: u32) -> &'static str {
-    // Mirrors `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    // Human-readable names for `stage_ex` discriminators (DXBC program type IDs).
+    //
+    // Note: `stage_ex=1` (Vertex DXBC program type) is intentionally invalid in AeroGPU; vertex
+    // shaders must be encoded via the legacy `shader_stage = VERTEX` value for clarity.
     match stage_ex {
-        1 => "Vertex",
+        1 => "InvalidVertex",
         2 => "Geometry",
         3 => "Hull",
         4 => "Domain",
