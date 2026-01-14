@@ -1978,6 +1978,13 @@ export interface WasmApi {
      * Canonical full-system VM (`aero_machine::Machine`).
      */
     Machine: {
+        /**
+         * Construct a canonical machine using the browser defaults (see `aero_machine::MachineConfig::browser_defaults`).
+         *
+         * Today this means AeroGPU is enabled by default (and the standalone VGA/VBE device model is disabled).
+         *
+         * To force the legacy VGA/VBE device model instead, use {@link new_with_config} or {@link new_with_options}.
+         */
         new (ramSizeBytes: number): MachineHandle;
         /**
          * Create a canonical machine with a custom SMBIOS System UUID seed.
@@ -2023,6 +2030,12 @@ export interface WasmApi {
          * Construct a machine with an options object that can override the default device set.
          *
          * This preserves the existing `new(ramSizeBytes)` behavior when `options` is omitted.
+         *
+         * Note: the mutually-exclusive VGA/AeroGPU device selection mirrors `new_with_config`:
+         * - If callers explicitly set `enableAerogpu` without specifying `enableVga`, VGA defaults to
+         *   `!enableAerogpu`.
+         * - If callers enable `enableVga=true` without explicitly specifying `enableAerogpu`,
+         *   AeroGPU defaults to `false`.
          *
          * Optional for older WASM builds.
          */
