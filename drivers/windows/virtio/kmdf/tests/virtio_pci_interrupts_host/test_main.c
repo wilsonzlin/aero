@@ -765,6 +765,11 @@ static void TestMsixVectorUtilizationPartialQueueVectors(void)
     WDFDEVICE dev;
     TEST_CALLBACKS cb;
     BOOLEAN handled;
+    ULONG q;
+    ULONG configAcquireBefore;
+    ULONG configReleaseBefore;
+    ULONG queueAcquireBefore[4];
+    ULONG queueReleaseBefore[4];
 
     ResetRegisterReadInstrumentation();
     PrepareMsix(&interrupts, &dev, &cb, 4 /* queues */, 3 /* config + 2 queue vectors */, NULL);
@@ -785,10 +790,26 @@ static void TestMsixVectorUtilizationPartialQueueVectors(void)
     /* Vector 1: queues 0 + 2. */
     ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
+    configAcquireBefore = interrupts.ConfigLock->AcquireCalls;
+    configReleaseBefore = interrupts.ConfigLock->ReleaseCalls;
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        queueAcquireBefore[q] = interrupts.QueueLocks[q]->AcquireCalls;
+        queueReleaseBefore[q] = interrupts.QueueLocks[q]->ReleaseCalls;
+    }
     handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
     AssertInterruptLocksReleased(&interrupts);
+    assert(interrupts.ConfigLock->AcquireCalls == configAcquireBefore);
+    assert(interrupts.ConfigLock->ReleaseCalls == configReleaseBefore);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == queueAcquireBefore[0] + 1);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == queueReleaseBefore[0] + 1);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == queueAcquireBefore[1]);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == queueReleaseBefore[1]);
+    assert(interrupts.QueueLocks[2]->AcquireCalls == queueAcquireBefore[2] + 1);
+    assert(interrupts.QueueLocks[2]->ReleaseCalls == queueReleaseBefore[2] + 1);
+    assert(interrupts.QueueLocks[3]->AcquireCalls == queueAcquireBefore[3]);
+    assert(interrupts.QueueLocks[3]->ReleaseCalls == queueReleaseBefore[3]);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 2);
     assert(cb.QueueCallsPerIndex[0] == 1);
@@ -799,10 +820,26 @@ static void TestMsixVectorUtilizationPartialQueueVectors(void)
     /* Vector 2: queues 1 + 3. */
     ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
+    configAcquireBefore = interrupts.ConfigLock->AcquireCalls;
+    configReleaseBefore = interrupts.ConfigLock->ReleaseCalls;
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        queueAcquireBefore[q] = interrupts.QueueLocks[q]->AcquireCalls;
+        queueReleaseBefore[q] = interrupts.QueueLocks[q]->ReleaseCalls;
+    }
     handled = interrupts.u.Msix.Interrupts[2]->Isr(interrupts.u.Msix.Interrupts[2], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[2]);
     AssertInterruptLocksReleased(&interrupts);
+    assert(interrupts.ConfigLock->AcquireCalls == configAcquireBefore);
+    assert(interrupts.ConfigLock->ReleaseCalls == configReleaseBefore);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == queueAcquireBefore[0]);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == queueReleaseBefore[0]);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == queueAcquireBefore[1] + 1);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == queueReleaseBefore[1] + 1);
+    assert(interrupts.QueueLocks[2]->AcquireCalls == queueAcquireBefore[2]);
+    assert(interrupts.QueueLocks[2]->ReleaseCalls == queueReleaseBefore[2]);
+    assert(interrupts.QueueLocks[3]->AcquireCalls == queueAcquireBefore[3] + 1);
+    assert(interrupts.QueueLocks[3]->ReleaseCalls == queueReleaseBefore[3] + 1);
     assert(cb.ConfigCalls == 0);
     assert(cb.QueueCallsTotal == 2);
     assert(cb.QueueCallsPerIndex[0] == 0);
@@ -957,6 +994,10 @@ static void TestMsixSingleVectorFallbackRouting(void)
     NTSTATUS st;
     BOOLEAN handled;
     ULONG q;
+    ULONG configAcquireBefore;
+    ULONG configReleaseBefore;
+    ULONG queueAcquireBefore[4];
+    ULONG queueReleaseBefore[4];
 
     memset((void*)&commonCfg, 0, sizeof(commonCfg));
     InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 4);
@@ -984,10 +1025,22 @@ static void TestMsixSingleVectorFallbackRouting(void)
     /* Vector 0: config + all queues. */
     ResetCallbackCounters(&cb);
     cb.ExpectedDevice = dev;
+    configAcquireBefore = interrupts.ConfigLock->AcquireCalls;
+    configReleaseBefore = interrupts.ConfigLock->ReleaseCalls;
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        queueAcquireBefore[q] = interrupts.QueueLocks[q]->AcquireCalls;
+        queueReleaseBefore[q] = interrupts.QueueLocks[q]->ReleaseCalls;
+    }
     handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
     assert(handled == TRUE);
     WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[0]);
     AssertInterruptLocksReleased(&interrupts);
+    assert(interrupts.ConfigLock->AcquireCalls == configAcquireBefore + 1);
+    assert(interrupts.ConfigLock->ReleaseCalls == configReleaseBefore + 1);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(interrupts.QueueLocks[q]->AcquireCalls == queueAcquireBefore[q] + 1);
+        assert(interrupts.QueueLocks[q]->ReleaseCalls == queueReleaseBefore[q] + 1);
+    }
     assert(cb.ConfigCalls == 1);
     assert(cb.QueueCallsTotal == 4);
     for (q = 0; q < interrupts.QueueCount; q++) {
