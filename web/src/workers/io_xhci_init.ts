@@ -28,13 +28,26 @@ export function tryInitXhciDevice(opts: {
     // the deployed WASM build:
     // - legacy: `new (guestBase)`
     // - current: `new (guestBase, guestSize)` (guestSize=0 means "use remainder of linear memory")
+    // - some wasm-bindgen glue versions can enforce constructor arity, so we also tolerate `new ()`
+    //   as a final fallback.
     //
     const base = opts.guestBase >>> 0;
     const size = opts.guestSize >>> 0;
     try {
-      bridge = new Bridge(base, size);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const Ctor = Bridge as any;
+      bridge = new Ctor(base, size) as typeof bridge;
     } catch {
-      bridge = new Bridge(base);
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const Ctor = Bridge as any;
+        bridge = new Ctor(base) as typeof bridge;
+      } catch {
+        // Final fallback: support glue that exposes a zero-arg constructor.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const Ctor = Bridge as any;
+        bridge = new Ctor() as typeof bridge;
+      }
     }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize xHCI controller bridge", err);

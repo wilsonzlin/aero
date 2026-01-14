@@ -82,6 +82,35 @@ describe("workers/io_xhci_init", () => {
     expect(tickCalls).toBeGreaterThan(0);
   });
 
+  it("supports XhciControllerBridge constructors that enforce zero arguments (wasm-bindgen arity quirk)", () => {
+    class FakeXhciControllerBridge {
+      readonly argCount: number;
+
+      constructor() {
+        this.argCount = arguments.length;
+        if (this.argCount !== 0) {
+          throw new Error(`expected 0 args, got ${this.argCount}`);
+        }
+      }
+
+      mmio_read(_offset: number, _size: number): number {
+        return 0;
+      }
+      mmio_write(_offset: number, _size: number, _value: number): void {}
+      irq_asserted(): boolean {
+        return false;
+      }
+      free(): void {}
+    }
+
+    const api = { XhciControllerBridge: FakeXhciControllerBridge } as unknown as WasmApi;
+    const mgr = new DeviceManager({ raiseIrq: () => {}, lowerIrq: () => {} });
+
+    const res = tryInitXhciDevice({ api, mgr, guestBase: 0x1000_0000, guestSize: 0x0200_0000 });
+    expect(res).not.toBeNull();
+    expect((res!.bridge as unknown as FakeXhciControllerBridge).argCount).toBe(0);
+  });
+
   it("falls back to auto-allocation when the canonical xHCI BDF is already occupied", () => {
     class FakeXhciControllerBridge {
       mmio_read(_offset: number, _size: number): number {
