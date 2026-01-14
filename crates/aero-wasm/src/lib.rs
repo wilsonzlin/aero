@@ -1083,6 +1083,11 @@ impl UsbHidBridge {
         self.mouse.wheel(delta);
     }
 
+    /// Inject a horizontal mouse wheel movement (positive = wheel right / AC Pan).
+    pub fn mouse_hwheel(&mut self, delta: i32) {
+        self.mouse.hwheel(delta);
+    }
+
     /// Inject an 8-byte USB HID gamepad report (packed into two 32-bit words).
     ///
     /// The packed format matches `web/src/input/gamepad.ts`:
@@ -1126,9 +1131,9 @@ impl UsbHidBridge {
 
     /// Drain the next mouse report (or return `null` if none).
     ///
-    /// In report protocol this is 4 bytes: buttons, dx, dy, wheel.
+    /// In report protocol this is 5 bytes: buttons, dx, dy, wheel, hwheel (AC Pan).
     pub fn drain_next_mouse_report(&mut self) -> JsValue {
-        match self.mouse.handle_in_transfer(0x81, 4) {
+        match self.mouse.handle_in_transfer(0x81, 5) {
             UsbInResult::Data(data) if !data.is_empty() => Uint8Array::from(data.as_slice()).into(),
             _ => JsValue::NULL,
         }

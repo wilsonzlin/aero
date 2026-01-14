@@ -53,7 +53,7 @@ fn get_report(mouse: &mut UsbHidMouse, w_length: u16) -> Vec<u8> {
 }
 
 fn poll_interrupt_in(mouse: &mut UsbHidMouse) -> Option<Vec<u8>> {
-    match mouse.handle_in_transfer(INTERRUPT_IN_EP, 4) {
+    match mouse.handle_in_transfer(INTERRUPT_IN_EP, 5) {
         UsbInResult::Data(data) => Some(data),
         UsbInResult::Nak => None,
         UsbInResult::Stall => panic!("unexpected STALL on interrupt IN"),
@@ -69,10 +69,17 @@ fn drain_interrupt_reports(mouse: &mut UsbHidMouse) -> Vec<Vec<u8>> {
     out
 }
 
-fn parse_report(data: &[u8]) -> (u8, i8, i8, Option<i8>) {
+fn parse_report(data: &[u8]) -> (u8, i8, i8, Option<i8>, Option<i8>) {
     match data {
-        [buttons, x, y] => (*buttons, *x as i8, *y as i8, None),
-        [buttons, x, y, wheel] => (*buttons, *x as i8, *y as i8, Some(*wheel as i8)),
+        [buttons, x, y] => (*buttons, *x as i8, *y as i8, None, None),
+        [buttons, x, y, wheel] => (*buttons, *x as i8, *y as i8, Some(*wheel as i8), Some(0)),
+        [buttons, x, y, wheel, hwheel] => (
+            *buttons,
+            *x as i8,
+            *y as i8,
+            Some(*wheel as i8),
+            Some(*hwheel as i8),
+        ),
         other => panic!("unexpected HID mouse report length: {}", other.len()),
     }
 }
@@ -89,8 +96,8 @@ fn mouse_motion_splits_deltas_with_saturation_and_remainder() {
     let reports = drain_interrupt_reports(&mut mouse);
     assert_eq!(reports.len(), 2);
 
-    assert_eq!(parse_report(&reports[0]), (0x00, 127, -127, Some(0)));
-    assert_eq!(parse_report(&reports[1]), (0x00, 1, -1, Some(0)));
+    assert_eq!(parse_report(&reports[0]), (0x00, 127, -127, Some(0), Some(0)));
+    assert_eq!(parse_report(&reports[1]), (0x00, 1, -1, Some(0), Some(0)));
 }
 
 #[test]
@@ -103,9 +110,9 @@ fn mouse_motion_splits_large_dx_dy_into_multiple_reports() {
     let reports = drain_interrupt_reports(&mut mouse);
     assert_eq!(reports.len(), 3);
 
-    assert_eq!(parse_report(&reports[0]), (0x00, 127, -127, Some(0)));
-    assert_eq!(parse_report(&reports[1]), (0x00, 127, -127, Some(0)));
-    assert_eq!(parse_report(&reports[2]), (0x00, 46, -46, Some(0)));
+    assert_eq!(parse_report(&reports[0]), (0x00, 127, -127, Some(0), Some(0)));
+    assert_eq!(parse_report(&reports[1]), (0x00, 127, -127, Some(0), Some(0)));
+    assert_eq!(parse_report(&reports[2]), (0x00, 46, -46, Some(0), Some(0)));
 }
 
 #[test]
@@ -119,10 +126,27 @@ fn mouse_wheel_splits_deltas_with_saturation_and_remainder() {
     let reports = drain_interrupt_reports(&mut mouse);
     assert_eq!(reports.len(), 4);
 
-    assert_eq!(parse_report(&reports[0]), (0x00, 0, 0, Some(127)));
-    assert_eq!(parse_report(&reports[1]), (0x00, 0, 0, Some(1)));
-    assert_eq!(parse_report(&reports[2]), (0x00, 0, 0, Some(-127)));
-    assert_eq!(parse_report(&reports[3]), (0x00, 0, 0, Some(-1)));
+    assert_eq!(parse_report(&reports[0]), (0x00, 0, 0, Some(127), Some(0)));
+    assert_eq!(parse_report(&reports[1]), (0x00, 0, 0, Some(1), Some(0)));
+    assert_eq!(parse_report(&reports[2]), (0x00, 0, 0, Some(-127), Some(0)));
+    assert_eq!(parse_report(&reports[3]), (0x00, 0, 0, Some(-1), Some(0)));
+}
+
+#[test]
+fn mouse_hwheel_splits_deltas_with_saturation_and_remainder() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+
+    mouse.hwheel(128);
+    mouse.hwheel(-128);
+
+    let reports = drain_interrupt_reports(&mut mouse);
+    assert_eq!(reports.len(), 4);
+
+    assert_eq!(parse_report(&reports[0]), (0x00, 0, 0, Some(0), Some(127)));
+    assert_eq!(parse_report(&reports[1]), (0x00, 0, 0, Some(0), Some(1)));
+    assert_eq!(parse_report(&reports[2]), (0x00, 0, 0, Some(0), Some(-127)));
+    assert_eq!(parse_report(&reports[3]), (0x00, 0, 0, Some(0), Some(-1)));
 }
 
 #[test]
@@ -137,8 +161,8 @@ fn mouse_buttons_4_and_5_are_reported_in_report_protocol_but_masked_in_boot_prot
 
     let reports = drain_interrupt_reports(&mut mouse);
     let last = reports.last().expect("expected button reports");
-    assert_eq!(last.len(), 4, "report protocol mouse report should be 4 bytes");
-    assert_eq!(parse_report(last), (0x19, 0, 0, Some(0)));
+    assert_eq!(last.len(), 5, "report protocol mouse report should be 5 bytes");
+    assert_eq!(parse_report(last), (0x19, 0, 0, Some(0), Some(0)));
 
     // Switching to boot protocol must mask the extra button bits. We trigger a report via motion
     // while buttons 4/5 remain held.
@@ -147,12 +171,12 @@ fn mouse_buttons_4_and_5_are_reported_in_report_protocol_but_masked_in_boot_prot
 
     let boot_report = poll_interrupt_in(&mut mouse).expect("expected boot protocol report");
     assert_eq!(boot_report.len(), 3, "boot mouse reports are 3 bytes");
-    assert_eq!(parse_report(&boot_report), (0x01, 1, 0, None));
+    assert_eq!(parse_report(&boot_report), (0x01, 1, 0, None, None));
 
     // GET_REPORT should also reflect boot protocol formatting + masking.
     let current = get_report(&mut mouse, 64);
     assert_eq!(current.len(), 3);
-    assert_eq!(parse_report(&current), (0x01, 0, 0, None));
+    assert_eq!(parse_report(&current), (0x01, 0, 0, None, None));
 }
 
 #[test]
@@ -180,12 +204,11 @@ fn snapshot_restore_preserves_pending_queue_and_button_state() {
 
     // Button state must persist across restore (including button 5 while in report protocol).
     let report = get_report(&mut restored, 64);
-    assert_eq!(report.len(), 4);
-    assert_eq!(parse_report(&report), (0x11, 0, 0, Some(0)));
+    assert_eq!(report.len(), 5);
+    assert_eq!(parse_report(&report), (0x11, 0, 0, Some(0), Some(0)));
 
     // And the button state should affect subsequently-generated reports.
     restored.movement(1, 0);
     let moved = poll_interrupt_in(&mut restored).expect("expected movement report");
-    assert_eq!(parse_report(&moved), (0x11, 1, 0, Some(0)));
+    assert_eq!(parse_report(&moved), (0x11, 1, 0, Some(0), Some(0)));
 }
-

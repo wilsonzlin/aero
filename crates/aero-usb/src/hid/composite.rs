@@ -140,6 +140,7 @@ struct MouseInterface {
     dx: i32,
     dy: i32,
     wheel: i32,
+    hwheel: i32,
 
     pending_reports: VecDeque<MouseReport>,
 }
@@ -153,6 +154,7 @@ impl MouseInterface {
             dx: 0,
             dy: 0,
             wheel: 0,
+            hwheel: 0,
             pending_reports: VecDeque::new(),
         }
     }
@@ -186,6 +188,7 @@ impl MouseInterface {
                     x: 0,
                     y: 0,
                     wheel: 0,
+                    hwheel: 0,
                 },
                 configured,
             );
@@ -203,15 +206,22 @@ impl MouseInterface {
         self.flush_motion(configured);
     }
 
+    fn hwheel(&mut self, delta: i32, configured: bool) {
+        self.hwheel += delta;
+        self.flush_motion(configured);
+    }
+
     fn flush_motion(&mut self, configured: bool) {
-        while self.dx != 0 || self.dy != 0 || self.wheel != 0 {
+        while self.dx != 0 || self.dy != 0 || self.wheel != 0 || self.hwheel != 0 {
             let step_x = self.dx.clamp(-127, 127) as i8;
             let step_y = self.dy.clamp(-127, 127) as i8;
             let step_wheel = self.wheel.clamp(-127, 127) as i8;
+            let step_hwheel = self.hwheel.clamp(-127, 127) as i8;
 
             self.dx -= step_x as i32;
             self.dy -= step_y as i32;
             self.wheel -= step_wheel as i32;
+            self.hwheel -= step_hwheel as i32;
 
             self.push_report(
                 MouseReport {
@@ -219,6 +229,7 @@ impl MouseInterface {
                     x: step_x,
                     y: step_y,
                     wheel: step_wheel,
+                    hwheel: step_hwheel,
                 },
                 configured,
             );
@@ -468,6 +479,15 @@ impl UsbCompositeHidInputHandle {
         }
     }
 
+    pub fn mouse_hwheel(&self, delta: i32) {
+        let mut dev = self.0.borrow_mut();
+        let configured = dev.configuration != 0;
+        dev.mouse.hwheel(delta, configured);
+        if dev.suspended && dev.remote_wakeup_enabled && configured {
+            dev.remote_wakeup_pending = true;
+        }
+    }
+
     pub fn gamepad_button_event(&self, button_idx: u8, pressed: bool) {
         let mut dev = self.0.borrow_mut();
         let configured = dev.configuration != 0;
@@ -567,7 +587,7 @@ impl Default for UsbCompositeHidInput {
 
 impl IoSnapshot for UsbCompositeHidInput {
     const DEVICE_ID: [u8; 4] = *b"UCMP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
@@ -591,6 +611,7 @@ impl IoSnapshot for UsbCompositeHidInput {
         const TAG_MOUSE_DY: u16 = 24;
         const TAG_MOUSE_WHEEL: u16 = 25;
         const TAG_MOUSE_PENDING_REPORTS: u16 = 26;
+        const TAG_MOUSE_HWHEEL: u16 = 27;
 
         const TAG_GAMEPAD_BUTTONS: u16 = 30;
         const TAG_GAMEPAD_HAT: u16 = 31;
@@ -639,11 +660,12 @@ impl IoSnapshot for UsbCompositeHidInput {
         w.field_i32(TAG_MOUSE_DX, self.mouse.dx);
         w.field_i32(TAG_MOUSE_DY, self.mouse.dy);
         w.field_i32(TAG_MOUSE_WHEEL, self.mouse.wheel);
+        w.field_i32(TAG_MOUSE_HWHEEL, self.mouse.hwheel);
         let pending_mouse: Vec<Vec<u8>> = self
             .mouse
             .pending_reports
             .iter()
-            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8])
+            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8, r.hwheel as u8])
             .collect();
         w.field_bytes(
             TAG_MOUSE_PENDING_REPORTS,
@@ -700,6 +722,7 @@ impl IoSnapshot for UsbCompositeHidInput {
         const TAG_MOUSE_DY: u16 = 24;
         const TAG_MOUSE_WHEEL: u16 = 25;
         const TAG_MOUSE_PENDING_REPORTS: u16 = 26;
+        const TAG_MOUSE_HWHEEL: u16 = 27;
 
         const TAG_GAMEPAD_BUTTONS: u16 = 30;
         const TAG_GAMEPAD_HAT: u16 = 31;
@@ -786,6 +809,7 @@ impl IoSnapshot for UsbCompositeHidInput {
         self.mouse.dx = r.i32(TAG_MOUSE_DX)?.unwrap_or(0);
         self.mouse.dy = r.i32(TAG_MOUSE_DY)?.unwrap_or(0);
         self.mouse.wheel = r.i32(TAG_MOUSE_WHEEL)?.unwrap_or(0);
+        self.mouse.hwheel = r.i32(TAG_MOUSE_HWHEEL)?.unwrap_or(0);
         if let Some(buf) = r.bytes(TAG_MOUSE_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
             self.mouse.pending_reports.clear();
@@ -795,15 +819,17 @@ impl IoSnapshot for UsbCompositeHidInput {
             }
             for _ in 0..count {
                 let len = d.u32()? as usize;
-                if len != 4 {
+                if len != 4 && len != 5 {
                     return Err(SnapshotError::InvalidFieldEncoding("mouse report length"));
                 }
                 let report = d.bytes(len)?;
+                let hwheel = if len == 5 { report[4] as i8 } else { 0 };
                 self.mouse.pending_reports.push_back(MouseReport {
                     buttons: report[0],
                     x: report[1] as i8,
                     y: report[2] as i8,
                     wheel: report[3] as i8,
+                    hwheel,
                 });
             }
             d.finish()?;
@@ -1078,6 +1104,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         self.mouse.dx = 0;
                         self.mouse.dy = 0;
                         self.mouse.wheel = 0;
+                        self.mouse.hwheel = 0;
 
                         self.keyboard.enqueue_current_report();
                         if self.mouse.buttons != 0 {
@@ -1087,6 +1114,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                                     x: 0,
                                     y: 0,
                                     wheel: 0,
+                                    hwheel: 0,
                                 },
                                 true,
                             );
@@ -1306,6 +1334,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                                 x: 0,
                                 y: 0,
                                 wheel: 0,
+                                hwheel: 0,
                             }
                             .to_bytes(self.mouse.protocol);
                             ControlResponse::Data(clamp_response(report, setup.w_length))
@@ -1553,8 +1582,8 @@ static CONFIG_DESCRIPTOR: [u8; 84] = [
     super::USB_DESCRIPTOR_TYPE_ENDPOINT,
     MOUSE_INTERRUPT_IN_EP, // bEndpointAddress
     0x03,                  // bmAttributes (Interrupt)
-    0x04,
-    0x00, // wMaxPacketSize (4)
+    0x05,
+    0x00, // wMaxPacketSize (5)
     0x0a, // bInterval (10ms)
     // Interface 2: Gamepad
     0x09, // bLength
@@ -1770,13 +1799,13 @@ mod tests {
         dev.mouse_movement(10, 0);
 
         assert_eq!(
-            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Nak
         );
 
         configure(&mut dev);
         assert_eq!(
-            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Nak
         );
     }
@@ -1787,14 +1816,14 @@ mod tests {
         dev.mouse_button_event(0x01, true);
 
         assert_eq!(
-            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Nak
         );
 
         configure(&mut dev);
         assert_eq!(
-            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
-            UsbInResult::Data(vec![0x01, 0x00, 0x00, 0x00])
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Data(vec![0x01, 0x00, 0x00, 0x00, 0x00])
         );
     }
 

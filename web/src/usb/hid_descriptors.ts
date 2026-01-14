@@ -71,6 +71,10 @@ export const USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR = new Uint8Array([
   0x75, 0x08, // Report Size (8)
   0x95, 0x03, // Report Count (3)
   0x81, 0x06, // Input (Data,Var,Rel) X,Y,Wheel
+  0x05, 0x0c, // Usage Page (Consumer)
+  0x0a, 0x38, 0x02, // Usage (AC Pan)
+  0x95, 0x01, // Report Count (1)
+  0x81, 0x06, // Input (Data,Var,Rel) AC Pan (horizontal wheel)
   0xc0, // End Collection
   0xc0, // End Collection
 ]);

@@ -110,19 +110,19 @@ fn mouse_idle_rate_reemits_current_report() {
 
     mouse.button_event(0x01, true); // left button
     assert_eq!(
-        poll_interrupt_in(&mut mouse, 4).unwrap(),
-        vec![0x01, 0x00, 0x00, 0x00]
+        poll_interrupt_in(&mut mouse, 5).unwrap(),
+        vec![0x01, 0x00, 0x00, 0x00, 0x00]
     );
-    assert_eq!(poll_interrupt_in(&mut mouse, 4), None);
+    assert_eq!(poll_interrupt_in(&mut mouse, 5), None);
 
     for _ in 0..7 {
         mouse.tick_1ms();
-        assert_eq!(poll_interrupt_in(&mut mouse, 4), None);
+        assert_eq!(poll_interrupt_in(&mut mouse, 5), None);
     }
     mouse.tick_1ms();
     assert_eq!(
-        poll_interrupt_in(&mut mouse, 4).unwrap(),
-        vec![0x01, 0x00, 0x00, 0x00]
+        poll_interrupt_in(&mut mouse, 5).unwrap(),
+        vec![0x01, 0x00, 0x00, 0x00, 0x00]
     );
 }
 
@@ -134,19 +134,18 @@ fn mouse_idle_rate_zero_does_not_reemit_without_changes() {
 
     mouse.button_event(0x01, true);
     assert_eq!(
-        poll_interrupt_in(&mut mouse, 4).unwrap(),
-        vec![0x01, 0x00, 0x00, 0x00]
+        poll_interrupt_in(&mut mouse, 5).unwrap(),
+        vec![0x01, 0x00, 0x00, 0x00, 0x00]
     );
 
     for _ in 0..100 {
         mouse.tick_1ms();
-        assert_eq!(poll_interrupt_in(&mut mouse, 4), None);
+        assert_eq!(poll_interrupt_in(&mut mouse, 5), None);
     }
 
     mouse.button_event(0x01, false);
     assert_eq!(
-        poll_interrupt_in(&mut mouse, 4).unwrap(),
-        vec![0x00, 0x00, 0x00, 0x00]
+        poll_interrupt_in(&mut mouse, 5).unwrap(),
+        vec![0x00, 0x00, 0x00, 0x00, 0x00]
     );
 }
-

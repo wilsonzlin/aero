@@ -1071,6 +1071,7 @@ export interface WasmApi {
         mouse_move(dx: number, dy: number): void;
         mouse_buttons(buttons: number): void;
         mouse_wheel(delta: number): void;
+        mouse_hwheel?(delta: number): void;
         gamepad_report(packedLo: number, packedHi: number): void;
         drain_next_keyboard_report(): Uint8Array | null;
         drain_next_consumer_report(): Uint8Array | null;

@@ -1676,20 +1676,20 @@ fn pc_platform_uhci_interrupt_in_reads_hid_mouse_reports_via_dma() {
 
     mouse.movement(5, -3);
 
-    // Poll interrupt endpoint 1 at address 5 (4-byte mouse report).
+    // Poll interrupt endpoint 1 at address 5 (5-byte mouse report).
     write_td(
         &mut pc,
         TD0,
         1,
         td_status(true),
-        td_token(PID_IN, 5, 1, 0, 4),
+        td_token(PID_IN, 5, 1, 0, 5),
         BUF_INT,
     );
     run_one_frame(&mut pc, TD0);
 
-    let mut report = [0u8; 4];
+    let mut report = [0u8; 5];
     pc.memory.read_physical(BUF_INT as u64, &mut report);
-    assert_eq!(report, [0x00, 5, 0xFD, 0x00]);
+    assert_eq!(report, [0x00, 5, 0xFD, 0x00, 0x00]);
 
     // Poll again without new input: should NAK and remain active.
     pc.memory.write_u32(TD0 as u64 + 4, td_status(true));
@@ -2025,19 +2025,19 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
     pc.memory.read_physical(BUF_INT as u64, &mut kbd);
     assert_eq!(kbd, [0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
 
-    // Mouse interrupt IN (addr 6, EP1, 4 bytes).
+    // Mouse interrupt IN (addr 6, EP1, 5 bytes).
     write_td(
         &mut pc,
         TD0,
         1,
         td_status(true),
-        td_token(PID_IN, 6, 1, 0, 4),
+        td_token(PID_IN, 6, 1, 0, 5),
         BUF_INT,
     );
     run_one_frame(&mut pc, TD0);
-    let mut mouse_report = [0u8; 4];
+    let mut mouse_report = [0u8; 5];
     pc.memory.read_physical(BUF_INT as u64, &mut mouse_report);
-    assert_eq!(mouse_report, [0x00, 5, 0xFD, 0x00]);
+    assert_eq!(mouse_report, [0x00, 5, 0xFD, 0x00, 0x00]);
 
     // Gamepad interrupt IN (addr 7, EP1, 8 bytes).
     write_td(
@@ -2371,13 +2371,13 @@ fn pc_platform_uhci_interrupt_in_reads_composite_hid_reports_via_dma() {
         TD0,
         1,
         td_status(true),
-        td_token(PID_IN, 5, 2, 0, 4),
+        td_token(PID_IN, 5, 2, 0, 5),
         BUF_INT,
     );
     run_one_frame(&mut pc, TD0);
-    let mut mouse = [0u8; 4];
+    let mut mouse = [0u8; 5];
     pc.memory.read_physical(BUF_INT as u64, &mut mouse);
-    assert_eq!(mouse, [0x00, 5, 0xFD, 0x00]);
+    assert_eq!(mouse, [0x00, 5, 0xFD, 0x00, 0x00]);
 
     // Gamepad report (endpoint 3 / 0x83).
     composite.gamepad_set_buttons(0x0001);

@@ -297,7 +297,7 @@ fn snapshot_roundtrip_is_deterministic_and_preserves_external_hub_reports() {
             .hub_mut()
             .device_mut_for_address(3)
             .expect("expected mouse at address 3");
-        let mouse_report = match mouse_dev.handle_in(1, 4) {
+        let mouse_report = match mouse_dev.handle_in(1, 5) {
             UsbInResult::Data(data) => data,
             other => panic!("expected mouse interrupt IN report, got {other:?}"),
         };
@@ -486,7 +486,7 @@ fn uhci_snapshot_restore_reconstructs_usb_topology_without_pre_attaching_devices
             .hub_mut()
             .device_mut_for_address(3)
             .expect("expected mouse at address 3");
-        let mouse_report = match mouse_dev.handle_in(1, 4) {
+        let mouse_report = match mouse_dev.handle_in(1, 5) {
             UsbInResult::Data(data) => data,
             other => panic!("expected mouse interrupt IN report, got {other:?}"),
         };

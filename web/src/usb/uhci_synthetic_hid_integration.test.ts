@@ -432,7 +432,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     consumerDev.push_input_report(0, consumerReport!);
 
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
-    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 5 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[3]!, ep: 1, len: 2 })).toEqual(consumerReport);
   });
@@ -631,7 +631,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     consumerDev.push_input_report(0, consumerReport!);
 
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
-    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 5 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[3]!, ep: 1, len: 2 })).toEqual(consumerReport);
   });
@@ -812,7 +812,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     consumerDev.push_input_report(0, consumerReport!);
 
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
-    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 5 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[3]!, ep: 1, len: 2 })).toEqual(consumerReport);
   });

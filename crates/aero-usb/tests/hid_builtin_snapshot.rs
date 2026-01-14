@@ -240,9 +240,9 @@ fn hid_mouse_snapshot_roundtrip_preserves_boot_protocol_and_reports() {
     assert_eq!(restored.address(), 6);
 
     assert!(
-        matches!(restored.handle_in(1, 4), UsbInResult::Data(data) if data == vec![0x00, 10, 251])
+        matches!(restored.handle_in(1, 5), UsbInResult::Data(data) if data == vec![0x00, 10, 251])
     );
-    assert!(matches!(restored.handle_in(1, 4), UsbInResult::Nak));
+    assert!(matches!(restored.handle_in(1, 5), UsbInResult::Nak));
 }
 
 #[test]
@@ -393,7 +393,7 @@ fn hid_composite_snapshot_roundtrip_preserves_multiple_queues() {
     );
 
     assert!(
-        matches!(restored.handle_in(2, 4), UsbInResult::Data(data) if data == vec![0x00, 10, 251])
+        matches!(restored.handle_in(2, 5), UsbInResult::Data(data) if data == vec![0x00, 10, 251])
     );
 
     assert!(

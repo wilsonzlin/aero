@@ -35,6 +35,7 @@ pub struct MouseReport {
     pub x: i8,
     pub y: i8,
     pub wheel: i8,
+    pub hwheel: i8,
 }
 
 impl MouseReport {
@@ -42,12 +43,14 @@ impl MouseReport {
         match protocol {
             // Boot mouse protocol is fixed-format and only defines 3 buttons.
             HidProtocol::Boot => vec![self.buttons & 0x07, self.x as u8, self.y as u8],
-            // Report protocol uses our full report descriptor, which supports 5 buttons.
+            // Report protocol uses our full report descriptor, which supports 5 buttons + wheel +
+            // horizontal wheel (AC Pan).
             HidProtocol::Report => vec![
                 self.buttons & 0x1f,
                 self.x as u8,
                 self.y as u8,
                 self.wheel as u8,
+                self.hwheel as u8,
             ],
         }
     }
@@ -71,6 +74,7 @@ pub struct UsbHidMouse {
     dx: i32,
     dy: i32,
     wheel: i32,
+    hwheel: i32,
 
     pending_reports: VecDeque<MouseReport>,
 }
@@ -98,6 +102,10 @@ impl UsbHidMouseHandle {
 
     pub fn wheel(&self, delta: i32) {
         self.0.borrow_mut().wheel(delta);
+    }
+
+    pub fn hwheel(&self, delta: i32) {
+        self.0.borrow_mut().hwheel(delta);
     }
 }
 
@@ -147,7 +155,7 @@ impl Default for UsbHidMouse {
 
 impl IoSnapshot for UsbHidMouse {
     const DEVICE_ID: [u8; 4] = *b"UMSE";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
@@ -165,6 +173,7 @@ impl IoSnapshot for UsbHidMouse {
         const TAG_PENDING_REPORTS: u16 = 13;
         const TAG_TICKS_MS: u16 = 14;
         const TAG_LAST_INTERRUPT_IN_MS: u16 = 15;
+        const TAG_HWHEEL: u16 = 16;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -182,11 +191,12 @@ impl IoSnapshot for UsbHidMouse {
         w.field_i32(TAG_DX, self.dx);
         w.field_i32(TAG_DY, self.dy);
         w.field_i32(TAG_WHEEL, self.wheel);
+        w.field_i32(TAG_HWHEEL, self.hwheel);
 
         let pending: Vec<Vec<u8>> = self
             .pending_reports
             .iter()
-            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8])
+            .map(|r| vec![r.buttons, r.x as u8, r.y as u8, r.wheel as u8, r.hwheel as u8])
             .collect();
         w.field_bytes(
             TAG_PENDING_REPORTS,
@@ -212,6 +222,7 @@ impl IoSnapshot for UsbHidMouse {
         const TAG_PENDING_REPORTS: u16 = 13;
         const TAG_TICKS_MS: u16 = 14;
         const TAG_LAST_INTERRUPT_IN_MS: u16 = 15;
+        const TAG_HWHEEL: u16 = 16;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -240,6 +251,7 @@ impl IoSnapshot for UsbHidMouse {
         self.dx = r.i32(TAG_DX)?.unwrap_or(0);
         self.dy = r.i32(TAG_DY)?.unwrap_or(0);
         self.wheel = r.i32(TAG_WHEEL)?.unwrap_or(0);
+        self.hwheel = r.i32(TAG_HWHEEL)?.unwrap_or(0);
 
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
@@ -250,7 +262,9 @@ impl IoSnapshot for UsbHidMouse {
             }
             for _ in 0..count {
                 let len = d.u32()? as usize;
-                if len != 4 {
+                // Version 1.1 stored 4-byte mouse reports (buttons, dx, dy, wheel).
+                // Version 1.2 adds a 5th byte for the horizontal wheel (AC Pan).
+                if len != 4 && len != 5 {
                     return Err(SnapshotError::InvalidFieldEncoding("mouse report length"));
                 }
                 let report = d.bytes(len)?;
@@ -259,6 +273,7 @@ impl IoSnapshot for UsbHidMouse {
                     x: report[1] as i8,
                     y: report[2] as i8,
                     wheel: report[3] as i8,
+                    hwheel: report.get(4).copied().unwrap_or(0) as i8,
                 });
             }
             d.finish()?;
@@ -298,6 +313,7 @@ impl UsbHidMouse {
             dx: 0,
             dy: 0,
             wheel: 0,
+            hwheel: 0,
             pending_reports: VecDeque::new(),
         }
     }
@@ -340,6 +356,7 @@ impl UsbHidMouse {
                 x: 0,
                 y: 0,
                 wheel: 0,
+                hwheel: 0,
             });
         }
     }
@@ -355,21 +372,29 @@ impl UsbHidMouse {
         self.flush_motion();
     }
 
+    pub fn hwheel(&mut self, delta: i32) {
+        self.hwheel += delta;
+        self.flush_motion();
+    }
+
     fn flush_motion(&mut self) {
-        while self.dx != 0 || self.dy != 0 || self.wheel != 0 {
+        while self.dx != 0 || self.dy != 0 || self.wheel != 0 || self.hwheel != 0 {
             let step_x = self.dx.clamp(-127, 127) as i8;
             let step_y = self.dy.clamp(-127, 127) as i8;
             let step_wheel = self.wheel.clamp(-127, 127) as i8;
+            let step_hwheel = self.hwheel.clamp(-127, 127) as i8;
 
             self.dx -= step_x as i32;
             self.dy -= step_y as i32;
             self.wheel -= step_wheel as i32;
+            self.hwheel -= step_hwheel as i32;
 
             self.push_report(MouseReport {
                 buttons: self.buttons,
                 x: step_x,
                 y: step_y,
                 wheel: step_wheel,
+                hwheel: step_hwheel,
             });
         }
     }
@@ -501,6 +526,7 @@ impl UsbDeviceModel for UsbHidMouse {
                         self.dx = 0;
                         self.dy = 0;
                         self.wheel = 0;
+                        self.hwheel = 0;
                     } else if prev == 0 {
                         // We drop motion/button reports while unconfigured. When the host
                         // configures the device, enqueue the current button state (if any) so held
@@ -510,12 +536,14 @@ impl UsbDeviceModel for UsbHidMouse {
                         self.dx = 0;
                         self.dy = 0;
                         self.wheel = 0;
+                        self.hwheel = 0;
                         if self.buttons != 0 {
                             self.push_report(MouseReport {
                                 buttons: self.buttons,
                                 x: 0,
                                 y: 0,
                                 wheel: 0,
+                                hwheel: 0,
                             });
                         }
                     }
@@ -641,6 +669,7 @@ impl UsbDeviceModel for UsbHidMouse {
                         x: 0,
                         y: 0,
                         wheel: 0,
+                        hwheel: 0,
                     }
                     .to_bytes(self.protocol);
                     ControlResponse::Data(clamp_response(report, setup.w_length))
@@ -716,6 +745,7 @@ impl UsbDeviceModel for UsbHidMouse {
                     x: 0,
                     y: 0,
                     wheel: 0,
+                    hwheel: 0,
                 }
                 .to_bytes(self.protocol);
                 return UsbInResult::Data(report);
@@ -808,12 +838,12 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     USB_DESCRIPTOR_TYPE_ENDPOINT,
     INTERRUPT_IN_EP, // bEndpointAddress
     0x03,            // bmAttributes (Interrupt)
-    0x04,
-    0x00, // wMaxPacketSize (4)
+    0x05,
+    0x00, // wMaxPacketSize (5)
     0x0a, // bInterval (10ms)
 ];
 
-pub(super) static HID_REPORT_DESCRIPTOR: [u8; 52] = [
+pub(super) static HID_REPORT_DESCRIPTOR: [u8; 61] = [
     0x05, 0x01, // Usage Page (Generic Desktop)
     0x09, 0x02, // Usage (Mouse)
     0xa1, 0x01, // Collection (Application)
@@ -839,6 +869,10 @@ pub(super) static HID_REPORT_DESCRIPTOR: [u8; 52] = [
     0x75, 0x08, // Report Size (8)
     0x95, 0x03, // Report Count (3)
     0x81, 0x06, // Input (Data,Var,Rel) X,Y,Wheel
+    0x05, 0x0c, // Usage Page (Consumer)
+    0x0a, 0x38, 0x02, // Usage (AC Pan)
+    0x95, 0x01, // Report Count (1)
+    0x81, 0x06, // Input (Data,Var,Rel) AC Pan (horizontal wheel)
     0xc0, // End Collection
     0xc0, // End Collection
 ];
@@ -853,7 +887,7 @@ mod tests {
     }
 
     fn poll_interrupt_in(dev: &mut UsbHidMouse) -> Option<Vec<u8>> {
-        match dev.handle_in_transfer(INTERRUPT_IN_EP, 4) {
+        match dev.handle_in_transfer(INTERRUPT_IN_EP, 5) {
             UsbInResult::Data(data) => Some(data),
             UsbInResult::Nak => None,
             UsbInResult::Stall => panic!("unexpected STALL on interrupt IN"),
@@ -929,10 +963,10 @@ mod tests {
         mouse.movement(200, 0);
 
         let r1 = poll_interrupt_in(&mut mouse).unwrap();
-        assert_eq!(r1, vec![0x00, 127u8, 0u8, 0u8]);
+        assert_eq!(r1, vec![0x00, 127u8, 0u8, 0u8, 0u8]);
 
         let r2 = poll_interrupt_in(&mut mouse).unwrap();
-        assert_eq!(r2, vec![0x00, 73u8, 0u8, 0u8]);
+        assert_eq!(r2, vec![0x00, 73u8, 0u8, 0u8, 0u8]);
     }
 
     #[test]
@@ -941,7 +975,7 @@ mod tests {
         configure_mouse(&mut mouse);
         mouse.button_event(0x01, true);
         let r = poll_interrupt_in(&mut mouse).unwrap();
-        assert_eq!(r, vec![0x01, 0, 0, 0]);
+        assert_eq!(r, vec![0x01, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -1025,7 +1059,7 @@ mod tests {
 
         configure_mouse(&mut mouse);
         let report = poll_interrupt_in(&mut mouse).expect("expected report for held button");
-        assert_eq!(report, vec![0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(report, vec![0x01, 0x00, 0x00, 0x00, 0x00]);
     }
 
     #[test]

@@ -2187,13 +2187,13 @@ fn uhci_composite_hid_device_exposes_keyboard_mouse_gamepad() {
         TD0,
         1,
         td_status(true, false),
-        td_token(PID_IN, 5, 2, 0, 4),
+        td_token(PID_IN, 5, 2, 0, 5),
         BUF_INT,
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
     assert_eq!(
-        mem.slice(BUF_INT as usize..BUF_INT as usize + 4),
-        [0x00, 10u8, (-5i8) as u8, 0x00]
+        mem.slice(BUF_INT as usize..BUF_INT as usize + 5),
+        [0x00, 10u8, (-5i8) as u8, 0x00, 0x00]
     );
 
     // Poll gamepad interrupt endpoint 3.

@@ -6036,6 +6036,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           if (dz !== 0) {
             usbHid?.mouse_wheel(dz);
           }
+          if (dx !== 0) {
+            usbHid?.mouse_hwheel?.(dx);
+          }
         }
         break;
       }
