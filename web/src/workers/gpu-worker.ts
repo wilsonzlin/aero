@@ -158,7 +158,6 @@ import {
   type AerogpuCpuExecutorState,
 } from "./aerogpu-acmd-executor.ts";
 import {
-  AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
   cmdPacketHasVsyncPresent,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
@@ -3250,29 +3249,27 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
   lastPresentUploadKind = "full";
 };
 
-type AerogpuCmdStreamAnalysis = { vsyncPaced: boolean; presentCount: bigint; requiresD3d9: boolean };
+type AerogpuCmdStreamAnalysis = { vsyncPaced: boolean; requiresD3d9: boolean };
 
 const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalysis => {
   try {
     const iter = new AerogpuCmdStreamIter(cmdStream);
     let vsyncPaced = false;
-    let presentCount = 0n;
     let requiresD3d9 = false;
 
     for (const packet of iter) {
       const opcode = packet.hdr.opcode;
       if (!vsyncPaced && cmdPacketHasVsyncPresent(packet)) vsyncPaced = true;
-      if (opcode === AerogpuCmdOpcode.Present || opcode === AerogpuCmdOpcode.PresentEx) presentCount += 1n;
 
-      if (requiresD3d9) continue;
-      if (!aerogpuCpuExecutorSupportsOpcode(opcode)) requiresD3d9 = true;
+      if (!requiresD3d9 && !aerogpuCpuExecutorSupportsOpcode(opcode)) requiresD3d9 = true;
+      if (vsyncPaced && requiresD3d9) break;
     }
 
-    return { vsyncPaced, presentCount, requiresD3d9 };
+    return { vsyncPaced, requiresD3d9 };
   } catch {
     // Malformed streams should not gate completion on tick (avoid deadlocks) and should not
     // force a wasm executor path selection.
-    return { vsyncPaced: false, presentCount: 0n, requiresD3d9: false };
+    return { vsyncPaced: false, requiresD3d9: false };
   }
 };
 const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
