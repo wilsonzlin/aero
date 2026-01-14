@@ -1544,7 +1544,7 @@ fn decodes_integer_compare_ops() {
     ieq.extend_from_slice(&b);
     body.extend_from_slice(&ieq);
 
-    // ult r3, r4, r5
+    // ine r3, r4, r5
     let a = reg_src(
         OPERAND_TYPE_TEMP,
         &[4],
@@ -1557,13 +1557,13 @@ fn decodes_integer_compare_ops() {
         Swizzle::XYZW,
         OperandModifier::None,
     );
-    let mut ult = vec![opcode_token(OPCODE_ULT, (1 + 2 + a.len() + b.len()) as u32)];
-    ult.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
-    ult.extend_from_slice(&a);
-    ult.extend_from_slice(&b);
-    body.extend_from_slice(&ult);
+    let mut ine = vec![opcode_token(OPCODE_INE, (1 + 2 + a.len() + b.len()) as u32)];
+    ine.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    ine.extend_from_slice(&a);
+    ine.extend_from_slice(&b);
+    body.extend_from_slice(&ine);
 
-    // uge r6, r7, r8
+    // ilt r6, r7, r8
     let a = reg_src(
         OPERAND_TYPE_TEMP,
         &[7],
@@ -1576,8 +1576,65 @@ fn decodes_integer_compare_ops() {
         Swizzle::XYZW,
         OperandModifier::None,
     );
+    let mut ilt = vec![opcode_token(OPCODE_ILT, (1 + 2 + a.len() + b.len()) as u32)];
+    ilt.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    ilt.extend_from_slice(&a);
+    ilt.extend_from_slice(&b);
+    body.extend_from_slice(&ilt);
+
+    // ige r9, r10, r11
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[10],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[11],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut ige = vec![opcode_token(OPCODE_IGE, (1 + 2 + a.len() + b.len()) as u32)];
+    ige.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 9, WriteMask::XYZW));
+    ige.extend_from_slice(&a);
+    ige.extend_from_slice(&b);
+    body.extend_from_slice(&ige);
+
+    // ult r12, r13, r14
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[13],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[14],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut ult = vec![opcode_token(OPCODE_ULT, (1 + 2 + a.len() + b.len()) as u32)];
+    ult.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 12, WriteMask::XYZW));
+    ult.extend_from_slice(&a);
+    ult.extend_from_slice(&b);
+    body.extend_from_slice(&ult);
+
+    // uge r15, r16, r17
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[16],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[17],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
     let mut uge = vec![opcode_token(OPCODE_UGE, (1 + 2 + a.len() + b.len()) as u32)];
-    uge.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    uge.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 15, WriteMask::XYZW));
     uge.extend_from_slice(&a);
     uge.extend_from_slice(&b);
     body.extend_from_slice(&uge);
@@ -1606,8 +1663,8 @@ fn decodes_integer_compare_ops() {
             dst: dst(RegFile::Temp, 3, WriteMask::XYZW),
             a: src_reg(RegFile::Temp, 4),
             b: src_reg(RegFile::Temp, 5),
-            op: aero_d3d11::CmpOp::Lt,
-            ty: aero_d3d11::CmpType::U32,
+            op: aero_d3d11::CmpOp::Ne,
+            ty: aero_d3d11::CmpType::I32,
         }
     );
     assert_eq!(
@@ -1616,6 +1673,36 @@ fn decodes_integer_compare_ops() {
             dst: dst(RegFile::Temp, 6, WriteMask::XYZW),
             a: src_reg(RegFile::Temp, 7),
             b: src_reg(RegFile::Temp, 8),
+            op: aero_d3d11::CmpOp::Lt,
+            ty: aero_d3d11::CmpType::I32,
+        }
+    );
+    assert_eq!(
+        module.instructions[3],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 9, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 10),
+            b: src_reg(RegFile::Temp, 11),
+            op: aero_d3d11::CmpOp::Ge,
+            ty: aero_d3d11::CmpType::I32,
+        }
+    );
+    assert_eq!(
+        module.instructions[4],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 12, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 13),
+            b: src_reg(RegFile::Temp, 14),
+            op: aero_d3d11::CmpOp::Lt,
+            ty: aero_d3d11::CmpType::U32,
+        }
+    );
+    assert_eq!(
+        module.instructions[5],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 15, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 16),
+            b: src_reg(RegFile::Temp, 17),
             op: aero_d3d11::CmpOp::Ge,
             ty: aero_d3d11::CmpType::U32,
         }
