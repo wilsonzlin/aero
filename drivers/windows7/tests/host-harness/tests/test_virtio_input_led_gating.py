@@ -21,45 +21,41 @@ def _load_harness():
     return module
 
 
-class VirtioInputLedGatingTests(unittest.TestCase):
+class VirtioInputLedGatingSawFlagsTests(unittest.TestCase):
+    """
+    test_input_led_gating.py already covers the tail-scanning behavior (PASS/FAIL/SKIP/missing marker).
+
+    This file focuses on the additional `saw_*` boolean flags that the main harness loop passes into
+    the helper to survive rolling-tail truncation.
+    """
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.harness = _load_harness()
 
-    def test_required_marker_pass(self) -> None:
+    def test_saw_fail_flag_fails_even_if_tail_lacks_marker(self) -> None:
         h = self.harness
-        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS|sent=6\n"
-        self.assertIsNone(h._virtio_input_led_required_failure_message(tail))
-
-    def test_required_marker_pass_via_saw_flag_even_if_tail_truncated(self) -> None:
-        h = self.harness
-        # The main harness loop uses a rolling tail buffer; ensure the helper honors the tracked
-        # `saw_pass` flag so PASS cannot be lost due to tail truncation.
         tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
-        self.assertIsNone(h._virtio_input_led_required_failure_message(tail, saw_pass=True))
-
-    def test_required_marker_fail(self) -> None:
-        h = self.harness
-        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|reason=no_statusq_completion|err=1460\n"
-        msg = h._virtio_input_led_required_failure_message(tail)
+        msg = h._virtio_input_led_required_failure_message(tail, saw_fail=True)
         self.assertIsNotNone(msg)
         self.assertTrue(str(msg).startswith("FAIL: VIRTIO_INPUT_LED_FAILED:"))
 
-    def test_required_marker_skip_flag_not_set(self) -> None:
+    def test_saw_skip_flag_fails_even_if_tail_lacks_marker(self) -> None:
         h = self.harness
-        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set\n"
-        msg = h._virtio_input_led_required_failure_message(tail)
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        msg = h._virtio_input_led_required_failure_message(tail, saw_skip=True)
         self.assertIsNotNone(msg)
         self.assertTrue(str(msg).startswith("FAIL: VIRTIO_INPUT_LED_SKIPPED:"))
 
-    def test_required_marker_missing(self) -> None:
+    def test_saw_pass_takes_precedence_over_saw_fail(self) -> None:
         h = self.harness
         tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
-        msg = h._virtio_input_led_required_failure_message(tail)
-        self.assertIsNotNone(msg)
-        self.assertTrue(str(msg).startswith("FAIL: MISSING_VIRTIO_INPUT_LED:"))
+        # The helper is used as a final gate when RESULT=PASS; if we saw PASS earlier, allow it even
+        # if the rolling tail lost the marker.
+        self.assertIsNone(
+            h._virtio_input_led_required_failure_message(tail, saw_pass=True, saw_fail=True)
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
-
