@@ -302,7 +302,9 @@ fn build_internal_bind_group_draw_stream(draws: u32) -> Vec<GpuCmd> {
         out.push(GpuCmd::SetBindGroup {
             slot: 0,
             bind_group: BindGroupId(1),
-            dynamic_offsets: vec![0],
+            // Keep this empty so we benchmark optimizer behavior rather than per-iteration
+            // allocation overhead from cloning thousands of tiny Vecs.
+            dynamic_offsets: Vec::new(),
         });
         out.push(GpuCmd::SetVertexBuffer {
             slot: 0,
