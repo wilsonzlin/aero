@@ -22,6 +22,22 @@ class MemoryFile {
     return this.data.byteLength;
   }
 
+  // Provide a minimal `Blob`/`File` slice API so code under test can safely read prefixes.
+  //
+  // Real `FileSystemFileHandle.getFile()` returns a `File` which implements `slice()`. Some
+  // production code (e.g. aerospar header sniffing) relies on this to avoid reading whole
+  // multi-gigabyte disk images into memory. Our in-memory OPFS test double should match that
+  // contract.
+  slice(start?: number, end?: number): MemoryFile {
+    const size = this.data.byteLength;
+    const clamp = (n: number): number => Math.max(0, Math.min(size, n));
+    const s = start === undefined ? 0 : start < 0 ? clamp(size + start) : clamp(start);
+    const e = end === undefined ? size : end < 0 ? clamp(size + end) : clamp(end);
+    const from = Math.min(s, e);
+    const to = Math.max(s, e);
+    return new MemoryFile(this.data.subarray(from, to).slice(), this.lastModified);
+  }
+
   async text(): Promise<string> {
     return new TextDecoder().decode(this.data);
   }
