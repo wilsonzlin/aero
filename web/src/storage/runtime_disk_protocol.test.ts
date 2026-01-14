@@ -310,4 +310,22 @@ describe("runtime disk worker protocol", () => {
     expect(sabResp.ok).toBe(false);
     expect(String(sabResp.error.message)).toMatch(/SharedArrayBuffer/i);
   });
+
+  it("rejects unknown request ops instead of hanging", async () => {
+    const posted: any[] = [];
+    const disk = {
+      sectorSize: 512,
+      capacityBytes: 4096,
+      async readSectors() {},
+      async writeSectors() {},
+      async flush() {},
+    };
+    const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    await worker.handleMessage({ type: "request", requestId: 1, op: "nope", payload: {} } as any);
+    const resp = posted.shift();
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error.message)).toMatch(/unsupported runtime disk op/i);
+  });
 });

@@ -1499,6 +1499,14 @@ export class RuntimeDiskWorker {
         this.postOk(msg.requestId, results);
         return;
       }
+
+      default: {
+        // Defensive: the protocol evolves over time, and structured-cloned messages can
+        // be malformed. Always reply with an error instead of silently dropping the request,
+        // otherwise the client will hang forever waiting for a response.
+        const op = (msg as unknown as { op?: unknown }).op;
+        throw new Error(`unsupported runtime disk op ${String(op)}`);
+      }
     }
   }
 }
