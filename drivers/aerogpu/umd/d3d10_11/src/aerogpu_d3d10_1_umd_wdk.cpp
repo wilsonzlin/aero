@@ -7718,6 +7718,28 @@ void AEROGPU_APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,
   cmd->first_instance = start_instance_location;
 }
 
+void AEROGPU_APIENTRY DrawAuto(D3D10DDI_HDEVICE hDevice) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  AEROGPU_D3D10_TRACEF_VERBOSE("DrawAuto hDevice=%p", hDevice.pDrvPrivate);
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    return;
+  }
+
+  // `DrawAuto` draws based on the vertex count written by stream output. We do
+  // not implement stream output yet, so treat it as a no-op draw that keeps the
+  // runtime/app alive without returning E_NOTIMPL.
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  TrackDrawStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  cmd->vertex_count = 0;
+  cmd->instance_count = 1;
+  cmd->first_vertex = 0;
+  cmd->first_instance = 0;
+}
+
 HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRESENT* pPresent) {
   AEROGPU_D3D10_TRACEF("Present hDevice=%p syncInterval=%u",
                        hDevice.pDrvPrivate,
@@ -8575,7 +8597,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
   pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DrawInstanced;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced = &DrawIndexedInstanced;
-  AEROGPU_D3D10_ASSIGN_STUB(pfnDrawAuto, DrawAuto);
+  pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DrawAuto;
 #undef AEROGPU_D3D10_ASSIGN_STUB
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
@@ -8769,7 +8791,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
   pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DrawInstanced;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced = &DrawIndexedInstanced;
-  pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawAuto)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DrawAuto;
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
   pCreateDevice->pDeviceFuncs->pfnRotateResourceIdentities = &RotateResourceIdentities;
