@@ -1023,6 +1023,29 @@ static std::string ReadJsonFileOrEmpty(const std::wstring& path) {
   return TrimAsciiWhitespace(std::string(bytes.begin(), bytes.end()));
 }
 
+static bool ContainsJsonKeyWithColon(const std::string& obj, const char* key) {
+  if (!key || !*key) {
+    return false;
+  }
+  const std::string needle = std::string("\"") + key + "\"";
+  size_t pos = obj.find(needle);
+  while (pos != std::string::npos) {
+    size_t i = pos + needle.size();
+    while (i < obj.size()) {
+      const char c = obj[i];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+        break;
+      }
+      i++;
+    }
+    if (i < obj.size() && obj[i] == ':') {
+      return true;
+    }
+    pos = obj.find(needle, pos + 1);
+  }
+  return false;
+}
+
 static bool LooksLikeTestReportJsonObject(const std::string& obj) {
   if (obj.size() < 2) {
     return false;
@@ -1032,16 +1055,16 @@ static bool LooksLikeTestReportJsonObject(const std::string& obj) {
   }
   // Very small sanity checks to avoid embedding truncated/corrupted output into the suite JSON.
   // We intentionally do not attempt to fully parse JSON here (no dependency and no STL iostreams).
-  if (obj.find("\"schema_version\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "schema_version")) {
     return false;
   }
-  if (obj.find("\"test_name\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "test_name")) {
     return false;
   }
-  if (obj.find("\"status\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "status")) {
     return false;
   }
-  if (obj.find("\"exit_code\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "exit_code")) {
     return false;
   }
   return true;
