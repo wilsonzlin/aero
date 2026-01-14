@@ -206,7 +206,6 @@ fn inf_functional_bytes(contents: &[u8]) -> &[u8] {
 
     panic!("INF did not contain a section header (e.g. [Version])");
 }
-
 fn inf_model_entry_for_hwid(
     contents: &str,
     section_name: &str,
@@ -563,16 +562,6 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         );
         let (mouse_desc, mouse_install) = mouse_entries[0].clone();
 
-        assert_eq!(
-            kbd_install, mouse_install,
-            "{section}: install section mismatch"
-        );
-
-        assert!(
-            !kbd_desc.eq_ignore_ascii_case(&mouse_desc),
-            "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
-        );
-
         let fallback_entries = inf_model_entries_for_hwid(&inf_contents, section, hwid_fallback);
         assert_eq!(
             fallback_entries.len(),
@@ -583,8 +572,25 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         let (fallback_desc, fallback_install) = fallback_entries[0].clone();
 
         assert_eq!(
+            kbd_install, mouse_install,
+            "{section}: install section mismatch"
+        );
+        assert_eq!(
             fallback_install, kbd_install,
             "{section}: generic fallback install section mismatch"
+        );
+
+        assert!(
+            !kbd_desc.eq_ignore_ascii_case(&mouse_desc),
+            "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
+        );
+        assert!(
+            !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
+            "{section}: fallback DeviceDesc token must be distinct from keyboard DeviceDesc token"
+        );
+        assert!(
+            !fallback_desc.eq_ignore_ascii_case(&mouse_desc),
+            "{section}: fallback DeviceDesc token must be distinct from mouse DeviceDesc token"
         );
 
         let kbd_desc_str = resolve_inf_device_desc(&kbd_desc, &strings);
@@ -644,31 +650,30 @@ fn windows_device_contract_virtio_input_alias_inf_is_strict_filename_alias() {
     // `aero_virtio_input.inf`, kept for compatibility with older tooling/workflows that still
     // reference `virtio-input.inf`.
     //
-    // Contract: the alias INF is a *filename alias only*. If it exists, it must match the
-    // canonical INF byte-for-byte from the first section header (`[Version]`) onward (only the
-    // leading banner/comments may differ).
+    // Contract:
+    // - The repo must carry `virtio-input.inf.disabled` (checked in disabled-by-default).
+    // - `virtio-input.inf` and `virtio-input.inf.disabled` must not both exist.
+    // - From the first section header (`[Version]`) onward, the alias must be byte-for-byte
+    //   identical to the canonical INF, including models sections.
+    // - Banner/comments above `[Version]` may differ.
+    // - Because it is identical, it does not change HWID matching behavior.
 
     let inf_dir = repo_root().join("drivers/windows7/virtio-input/inf");
     let alias_enabled = inf_dir.join("virtio-input.inf");
     let alias_disabled = inf_dir.join("virtio-input.inf.disabled");
 
-    if alias_enabled.exists() && alias_disabled.exists() {
-        panic!(
-            "both legacy alias paths exist; keep only one: {} and {}",
-            alias_enabled.display(),
-            alias_disabled.display(),
-        );
-    }
-
-    let alias_path = if alias_enabled.exists() {
-        alias_enabled
-    } else if alias_disabled.exists() {
-        alias_disabled
-    } else {
-        // The alias INF is optional for local development. CI has a separate guardrail that keeps
-        // the in-tree `.inf.disabled` file present.
-        return;
-    };
+    assert!(
+        alias_disabled.exists(),
+        "missing required virtio-input legacy filename alias INF at {} (expected to be checked in disabled-by-default as *.inf.disabled)",
+        alias_disabled.display(),
+    );
+    assert!(
+        !alias_enabled.exists(),
+        "both {} and {} exist; keep only one to avoid two overlapping INFs (alias is normally checked in as *.inf.disabled)",
+        alias_enabled.display(),
+        alias_disabled.display(),
+    );
+    let alias_path = alias_disabled;
 
     let canonical_path = inf_dir.join("aero_virtio_input.inf");
     let canonical_bytes = std::fs::read(&canonical_path).expect("read canonical virtio-input INF");
