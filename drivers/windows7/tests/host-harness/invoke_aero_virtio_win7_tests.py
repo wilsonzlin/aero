@@ -765,6 +765,29 @@ def _read_new_bytes(path: Path, pos: int) -> tuple[bytes, int]:
         return b"", pos
 
 
+_SERIAL_TAIL_CAP_BYTES = 131072
+
+
+def _append_serial_tail(tail: bytes, chunk: bytes) -> bytes:
+    """
+    Append a newly read serial chunk to the rolling `tail` buffer.
+
+    Unlike naive `tail += chunk; tail = tail[-cap:]`, this ensures we never truncate away the newly
+    read chunk when the tail is near the cap (important for reliable marker detection).
+    """
+    if not chunk:
+        return tail
+
+    cap = _SERIAL_TAIL_CAP_BYTES
+    if len(chunk) >= cap:
+        return chunk[-cap:]
+
+    max_old = cap - len(chunk)
+    if len(tail) > max_old:
+        tail = tail[-max_old:]
+    return tail + chunk
+
+
 def _stop_process(proc: subprocess.Popen[bytes]) -> None:
     if proc.poll() is not None:
         return
@@ -4429,7 +4452,7 @@ def main() -> int:
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
                         carry=virtio_snd_msix_marker_carry,
                     )
-                    tail += chunk
+                    tail = _append_serial_tail(tail, chunk)
                     if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
                         expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
                         if args.require_expect_blk_msi and expect_blk_msi_config == "0":
@@ -4460,8 +4483,6 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
-                    if len(tail) > 131072:
-                        tail = tail[-131072:]
                     if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
                         marker = _parse_virtio_input_msix_marker(tail)
                         if marker is not None:
@@ -6373,7 +6394,7 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|",
                             carry=virtio_snd_msix_marker_carry,
                         )
-                        tail += chunk2
+                        tail = _append_serial_tail(tail, chunk2)
                         if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
                             expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
                         if udp_port_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
@@ -6395,8 +6416,6 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
-                        if len(tail) > 131072:
-                            tail = tail[-131072:]
                         if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
                             marker = _parse_virtio_input_msix_marker(tail)
                             if marker is not None:
