@@ -30,6 +30,8 @@ See also:
 
 - `aero_storage::StorageBackend` (sync, **byte-addressed**, resizable backend)\
   Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
+- `aero_storage::StdFileBackend` / `aero_storage::FileBackend` (sync, byte-addressed native `std::fs::File` backend; non-wasm32)\
+  Defined in: [`crates/aero-storage/src/backend.rs`](../crates/aero-storage/src/backend.rs)
 - `aero_storage::VirtualDisk` (sync, fixed-capacity virtual disk; byte addressing + sector helpers)\
   Defined in: [`crates/aero-storage/src/disk.rs`](../crates/aero-storage/src/disk.rs)
 - `aero_storage::streaming::ChunkStore` (sync, chunk-addressed cache store used by `aero_storage::StreamingDisk`)\
@@ -106,6 +108,8 @@ This is the trait that disk image formats should be generic over.
 Examples of implementations:
 
 - `aero_storage::MemBackend` (tests)
+- `aero_storage::FileBackend` / `aero_storage::StdFileBackend` (native filesystem backend; non-wasm32)\
+  Used by host-side tooling such as [`tools/aero-disk-convert`](../tools/aero-disk-convert/src/main.rs).
 - `aero_opfs::OpfsByteStorage` (browser OPFS SyncAccessHandle; wasm32 only)
 
 ### Layer 3 (disk image formats): canonical = `aero_storage::VirtualDisk` (+ `StorageBackend`)

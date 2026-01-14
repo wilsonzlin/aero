@@ -245,6 +245,54 @@ impl AhciController {
 }
 ```
 
+### Supported ATA commands (AHCI, current implementation)
+
+The canonical AHCI implementation used by the Rust storage controller stack lives in:
+
+- [`crates/aero-devices-storage/src/ahci.rs`](../crates/aero-devices-storage/src/ahci.rs)
+- ATA drive model + IDENTIFY data: [`crates/aero-devices-storage/src/ata.rs`](../crates/aero-devices-storage/src/ata.rs)
+
+As of the current implementation, the AHCI path supports the following ATA commands:
+
+- `IDENTIFY DEVICE` (`0xEC`)
+- `READ DMA` (28-bit) (`0xC8`)
+- `WRITE DMA` (28-bit) (`0xCA`)
+- `READ DMA EXT` (48-bit) (`0x25`)
+- `WRITE DMA EXT` (48-bit) (`0x35`)
+- `FLUSH CACHE` (`0xE7`) and `FLUSH CACHE EXT` (`0xEA`)
+- `SET FEATURES` (`0xEF`)
+  - `0x02` = enable write cache
+  - `0x82` = disable write cache
+
+Notes:
+
+- These commands are executed via AHCI DMA (PRDT scatter/gather) against an `AtaDrive` backed by an
+  `aero_storage::VirtualDisk`.
+- PIO read/write commands are **not** implemented on the AHCI path; the legacy IDE controller model
+  is the place where PIO commands are implemented for BIOS/early-boot compatibility (see
+  [`crates/aero-devices-storage/src/ide.rs`](../crates/aero-devices-storage/src/ide.rs)).
+
+### AHCI port reset / COMRESET handling (PxSCTL.DET)
+
+Real AHCI drivers (including Windows 7’s in-box `msahci.sys`) commonly perform a SATA link reset by
+toggling `PxSCTL.DET`:
+
+1. `PxSCTL.DET = 1` (COMRESET)
+2. `PxSCTL.DET = 0` (idle)
+3. Poll `PxSSTS` and `PxTFD` until the link/device are ready, then issue commands.
+
+Aero models this flow in a minimal, synchronous way:
+
+- While COMRESET is asserted (`DET=1`), the port reports a link-down/resetting view, clears
+  in-flight state (`PxCI`/`PxSACT`/`PxIS`/`PxSERR`), and sets `PxTFD.BSY` when a drive is present.
+- When COMRESET is deasserted (`DET` transitions `1 → 0`), link-up completion happens immediately
+  and the port restores `PxSSTS`/`PxSIG` and asserts `PxIS.DHRS` for an attached drive.
+- `DET=4` (and the commonly-seen `DET=2`) are treated as “port disable / PHY offline” until the
+  guest writes `DET=0` again.
+
+See the `PxSCTL` handling and link-ready gating in
+[`crates/aero-devices-storage/src/ahci.rs`](../crates/aero-devices-storage/src/ahci.rs).
+
 ---
 
 ## Virtual Disk Implementation
@@ -290,6 +338,24 @@ The canonical Rust disk image formats live in `crates/aero-storage/` and current
   [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 - **QCOW2 v2/v3** (common unencrypted, uncompressed images; no backing files).
 - **VHD fixed and dynamic** (unallocated blocks read as zeros; writes allocate blocks and update BAT/bitmap).
+
+### Block cache (`aero_storage::BlockCachedDisk`)
+
+For synchronous controller paths, it is common to place a block cache in front of the “real” disk
+image backend to reduce the overhead of many small sector operations.
+
+`aero_storage::BlockCachedDisk` is a fixed-block-size **LRU write-back cache** wrapper around an
+`aero_storage::VirtualDisk`:
+
+- Implementation: [`crates/aero-storage/src/cache.rs`](../crates/aero-storage/src/cache.rs)
+- Property-test coverage (including write-back-on-evict): [`crates/aero-storage/tests/prop_storage.rs`](../crates/aero-storage/tests/prop_storage.rs)
+
+Robustness notes (current behavior):
+
+- Dirty blocks are written back on `flush()` **and** when evicted due to LRU pressure (to avoid
+  dropping modified data under memory pressure).
+- Write-back clamps the final partial block to disk capacity and uses checked offset arithmetic to
+  avoid panics on edge cases (e.g. near-`u64::MAX` offsets).
 
 ### OPFS Backend
 

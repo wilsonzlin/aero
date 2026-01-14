@@ -1,6 +1,6 @@
 # `aero-image-chunker`
 
-Chunks a large **raw disk image** into fixed-size objects and uploads them to an **S3-compatible object store** (AWS S3, MinIO, etc.), along with a `manifest.json`.
+Chunks a large **disk image** into fixed-size objects and uploads them to an **S3-compatible object store** (AWS S3, MinIO, etc.), along with a `manifest.json`.
 
 This enables CDN-friendly delivery without relying on HTTP `Range` requests: clients fetch `manifest.json`, then fetch `chunks/00000000.bin`, `chunks/00000001.bin`, … as needed.
 
@@ -21,6 +21,20 @@ Binary path:
 Credentials are resolved via the standard AWS SDK chain (env vars, `~/.aws/config`, profiles, IAM role, etc.).
 
 Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size). The default is **4 MiB** (`4194304`).
+
+### Input format (`--format`)
+
+By default, the tool assumes `--format raw` (the input file bytes are already the guest-visible disk bytes).
+
+To publish other disk image formats, use `--format`:
+
+- `raw`: treat the input as a raw disk image (`.img`).
+- `qcow2`: open QCOW2 v2/v3 and publish the *expanded disk view*.
+- `vhd`: open VHD (fixed/dynamic/differencing) and publish the *expanded disk view*.
+- `aerospar`: open Aero sparse (`AEROSPAR`) and publish the *expanded disk view*.
+- `auto`: auto-detect the format from magic values.
+
+For container formats (`qcow2`, `vhd`, `aerospar`), the published chunks correspond to the **logical disk byte stream** (what the guest sees), not the on-disk container file bytes.
 
 ### CDN-ready HTTP metadata (Cache-Control, Content-Encoding)
 
@@ -72,6 +86,7 @@ and optionally updates `images/<imageId>/latest.json`:
 ```bash
 ./tools/image-chunker/target/release/aero-image-chunker publish \
   --file ./disk.img \
+  --format raw \
   --bucket my-bucket \
   --prefix images/<imageId>/ \
   --compute-version sha256 \

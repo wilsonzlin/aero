@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
+aero-storage = { path = "../../crates/aero-storage" }
 anyhow = "1"
 async-channel = "2"
 aws-config = "1"

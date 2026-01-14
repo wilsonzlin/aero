@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use aero_storage::{DiskFormat, DiskImage, FileBackend, VirtualDisk};
 use anyhow::{anyhow, bail, Context, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::BehaviorVersion;
@@ -42,7 +43,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Chunk a raw disk image and publish it to an S3-compatible object store.
+    /// Chunk a disk image and publish it to an S3-compatible object store.
     Publish(PublishArgs),
     /// Verify a published chunked disk image (manifest + chunks) for integrity and correctness.
     Verify(VerifyArgs),
@@ -50,9 +51,17 @@ enum Commands {
 
 #[derive(Debug, Parser)]
 struct PublishArgs {
-    /// Path to a raw disk image file.
+    /// Path to an input disk image file.
     #[arg(long)]
     file: PathBuf,
+
+    /// Input disk image format.
+    ///
+    /// Chunks always contain the *expanded* guest-visible disk byte stream (a raw "disk view").
+    /// For container formats like qcow2/vhd/aerospar, this means the output chunks are not the
+    /// same as the input file bytes.
+    #[arg(long, value_enum, default_value_t = InputFormat::Raw)]
+    format: InputFormat,
 
     /// Destination bucket name.
     #[arg(long)]
@@ -89,7 +98,7 @@ struct PublishArgs {
     /// Compute a full-image version identifier from the entire disk image content.
     ///
     /// When set to `sha256`, the tool computes `sha256-<digest>` over the entire disk image
-    /// content before uploading (this requires reading the input file twice: hash, then upload).
+    /// content before uploading (this requires reading the expanded disk bytes twice: hash, then upload).
     ///
     /// If `--image-version` is omitted, the computed hash becomes the manifest `version` and is
     /// used for the versioned upload prefix.
@@ -218,6 +227,21 @@ struct VerifyArgs {
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
+enum InputFormat {
+    /// Interpret the input file bytes directly as the guest-visible disk bytes.
+    Raw,
+    /// Interpret the input as an Aero sparse disk image (`AEROSPAR`).
+    #[value(name = "aerospar")]
+    AeroSparse,
+    /// Interpret the input as a QCOW2 v2/v3 disk image.
+    Qcow2,
+    /// Interpret the input as a VHD disk image (fixed/dynamic/differencing).
+    Vhd,
+    /// Auto-detect the disk format from magic values.
+    Auto,
+}
+
+#[derive(Debug, Copy, Clone, ValueEnum)]
 enum ChecksumAlgorithm {
     None,
     Sha256,
@@ -333,10 +357,8 @@ async fn publish(args: PublishArgs) -> Result<()> {
     validate_args(&args)?;
 
     let prefix = normalize_prefix(&args.prefix);
-    let file_metadata = tokio::fs::metadata(&args.file)
-        .await
-        .with_context(|| format!("stat {}", args.file.display()))?;
-    let total_size = file_metadata.len();
+    let (input_format, total_size) =
+        inspect_input_disk(&args.file, args.format).context("open input disk")?;
     let chunk_count = chunk_count(total_size, args.chunk_size);
     if chunk_count > MAX_CHUNKS {
         bail!(
@@ -351,7 +373,7 @@ async fn publish(args: PublishArgs) -> Result<()> {
                 "Computing full-image SHA-256 version from {}...",
                 args.file.display()
             );
-            Some(compute_image_version_sha256(&args.file).await?)
+            Some(compute_image_version_sha256(&args.file, args.format).await?)
         }
     };
 
@@ -369,8 +391,9 @@ async fn publish(args: PublishArgs) -> Result<()> {
     .await?;
 
     eprintln!(
-        "Publishing {}\n  imageId: {}\n  version: {}\n  total size: {} bytes\n  chunk size: {} bytes\n  chunk count: {}\n  destination: s3://{}/{}",
+        "Publishing {}\n  input format: {:?}\n  imageId: {}\n  version: {}\n  total size: {} bytes\n  chunk size: {} bytes\n  chunk count: {}\n  destination: s3://{}/{}",
         args.file.display(),
+        input_format,
         image_id,
         version,
         total_size,
@@ -425,32 +448,38 @@ async fn publish(args: PublishArgs) -> Result<()> {
     }
     drop(result_tx);
 
-    let mut file = tokio::fs::File::open(&args.file)
+    let reader_path = args.file.clone();
+    let reader_format = args.format;
+    let reader_chunk_size = args.chunk_size;
+    let reader_chunk_count = chunk_count;
+    let reader_total_size = total_size;
+    let reader_handle = tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut disk = open_input_disk(&reader_path, reader_format)?;
+
+        for index in 0..reader_chunk_count {
+            let offset = index
+                .checked_mul(reader_chunk_size)
+                .ok_or_else(|| anyhow!("chunk offset overflows u64"))?;
+            let remaining = reader_total_size.saturating_sub(offset);
+            let expected = std::cmp::min(reader_chunk_size, remaining);
+            let expected_usize: usize = expected
+                .try_into()
+                .map_err(|_| anyhow!("chunk size {expected} does not fit into usize"))?;
+            let mut buf = vec![0u8; expected_usize];
+            disk.read_at(offset, &mut buf)
+                .with_context(|| format!("read chunk {index} at offset {offset}"))?;
+
+            let bytes = Bytes::from(buf);
+            work_tx
+                .send_blocking(ChunkJob { index, bytes })
+                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+        }
+        Ok(())
+    });
+
+    reader_handle
         .await
-        .with_context(|| format!("open {}", args.file.display()))?;
-
-    for index in 0..chunk_count {
-        let offset = index
-            .checked_mul(args.chunk_size)
-            .ok_or_else(|| anyhow!("chunk offset overflows u64"))?;
-        let remaining = total_size.saturating_sub(offset);
-        let expected = std::cmp::min(args.chunk_size, remaining);
-        let expected_usize: usize = expected
-            .try_into()
-            .map_err(|_| anyhow!("chunk size {expected} does not fit into usize"))?;
-        let mut buf = vec![0u8; expected_usize];
-        file.read_exact(&mut buf)
-            .await
-            .with_context(|| format!("read chunk {index} at offset {offset}"))?;
-
-        let bytes = Bytes::from(buf);
-        work_tx
-            .send(ChunkJob { index, bytes })
-            .await
-            .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
-    }
-
-    drop(work_tx);
+        .map_err(|err| anyhow!("disk reader panicked: {err}"))??;
 
     for handle in workers {
         handle
@@ -1831,23 +1860,62 @@ fn looks_like_sha256_version(version: &str) -> bool {
     hex_digest.len() == 64 && hex_digest.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-async fn compute_image_version_sha256(path: &Path) -> Result<String> {
-    let mut file = tokio::fs::File::open(path)
-        .await
-        .with_context(|| format!("open {} for hashing", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 1024 * 1024];
-    loop {
-        let n = file
-            .read(&mut buf)
-            .await
-            .with_context(|| format!("read {} while hashing", path.display()))?;
-        if n == 0 {
-            break;
+fn open_input_disk(path: &Path, format: InputFormat) -> Result<DiskImage<FileBackend>> {
+    let backend =
+        FileBackend::open_read_only(path).with_context(|| format!("open {}", path.display()))?;
+
+    let disk =
+        match format {
+            InputFormat::Raw => DiskImage::open_with_format(DiskFormat::Raw, backend)
+                .context("open raw disk image")?,
+            InputFormat::AeroSparse => DiskImage::open_with_format(DiskFormat::AeroSparse, backend)
+                .context("open aerospar disk image")?,
+            InputFormat::Qcow2 => DiskImage::open_with_format(DiskFormat::Qcow2, backend)
+                .context("open qcow2 disk image")?,
+            InputFormat::Vhd => DiskImage::open_with_format(DiskFormat::Vhd, backend)
+                .context("open vhd disk image")?,
+            InputFormat::Auto => DiskImage::open_auto(backend).context("open disk image (auto)")?,
+        };
+
+    Ok(disk)
+}
+
+fn inspect_input_disk(path: &Path, format: InputFormat) -> Result<(DiskFormat, u64)> {
+    let disk = open_input_disk(path, format)?;
+    Ok((disk.format(), disk.capacity_bytes()))
+}
+
+async fn compute_image_version_sha256(path: &Path, format: InputFormat) -> Result<String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let mut disk = open_input_disk(&path, format)?;
+        let total_size = disk.capacity_bytes();
+
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 1024 * 1024];
+        let mut offset = 0u64;
+
+        while offset < total_size {
+            let remaining = total_size - offset;
+            let len = (buf.len() as u64).min(remaining) as usize;
+            disk.read_at(offset, &mut buf[..len]).with_context(|| {
+                format!(
+                    "read {} while hashing at offset={} len={}",
+                    path.display(),
+                    offset,
+                    len
+                )
+            })?;
+            hasher.update(&buf[..len]);
+            offset = offset
+                .checked_add(len as u64)
+                .ok_or_else(|| anyhow!("hash offset overflows u64"))?;
         }
-        hasher.update(&buf[..n]);
-    }
-    Ok(sha256_version_from_digest(hasher.finalize()))
+
+        Ok::<_, anyhow::Error>(sha256_version_from_digest(hasher.finalize()))
+    })
+    .await
+    .map_err(|err| anyhow!("hash worker panicked: {err}"))?
 }
 
 async fn upload_json_object<T: Serialize>(
@@ -1978,6 +2046,7 @@ mod tests {
     fn resolve_publish_destination_infers_from_versioned_prefix() -> Result<()> {
         let args = PublishArgs {
             file: PathBuf::from("disk.img"),
+            format: InputFormat::Raw,
             bucket: "bucket".to_string(),
             prefix: "images/win7/sha256-abc/".to_string(),
             image_id: None,
@@ -2009,6 +2078,7 @@ mod tests {
     fn resolve_publish_destination_appends_computed_version_to_image_root() -> Result<()> {
         let args = PublishArgs {
             file: PathBuf::from("disk.img"),
+            format: InputFormat::Raw,
             bucket: "bucket".to_string(),
             prefix: "images/win7/".to_string(),
             image_id: None,
