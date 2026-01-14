@@ -54,11 +54,16 @@ for lockfile in "${lockfiles[@]}"; do
     exit 1
   fi
 
-  echo "- $manifest"
+  echo "- $lockfile (manifest: $manifest)"
 
   # `cargo metadata` does not need to print anything; we only care that it
   # succeeds with --locked.
-  cargo metadata --locked --format-version 1 --manifest-path "$manifest" >/dev/null
+  if ! cargo metadata --locked --format-version 1 --manifest-path "$manifest" >/dev/null; then
+    echo "error: Cargo.lock drift detected for $lockfile." >&2
+    echo "hint: run: cargo metadata --format-version 1 --manifest-path \"$manifest\" >/dev/null" >&2
+    echo "hint: then commit the updated lockfile(s)." >&2
+    exit 1
+  fi
 done
 
 end_group
