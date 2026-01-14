@@ -10,7 +10,7 @@
 # Default limits (override via environment):
 #   AERO_TIMEOUT=600      (10 minutes)
 #   AERO_MEM_LIMIT=12G    (12 GB virtual address space)
-#   AERO_NODE_TEST_MEM_LIMIT=32G  (fallback RLIMIT_AS for WASM-heavy Node test runs when AERO_MEM_LIMIT is unset)
+#   AERO_NODE_TEST_MEM_LIMIT=128G  (fallback RLIMIT_AS for WASM-heavy Node test runs when AERO_MEM_LIMIT is unset)
 #
 # Note: `cargo fuzz run` uses AddressSanitizer, which reserves a very large virtual address space
 # for shadow memory (~16 TB on x86_64). Under `RLIMIT_AS` (as used by `run_limited.sh`), the default
@@ -913,7 +913,7 @@ if [[ $# -lt 1 ]]; then
     echo "Environment variables:" >&2
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G; for 'cargo fuzz run' safe-run defaults to 'unlimited' due to ASAN shadow memory)" >&2
-    echo "  AERO_NODE_TEST_MEM_LIMIT=32G  Fallback memory limit for WASM-heavy Node test runners when AERO_MEM_LIMIT is unset (helps under RLIMIT_AS; applies to node --test, npm/vitest, wasm-pack --node)" >&2
+    echo "  AERO_NODE_TEST_MEM_LIMIT=128G  Fallback memory limit for WASM-heavy Node test runners when AERO_MEM_LIMIT is unset (helps under RLIMIT_AS; applies to node --test, npm/vitest, wasm-pack --node)" >&2
     echo "  AERO_PLAYWRIGHT_MEM_LIMIT=256G  Fallback memory limit for Playwright/browser E2E runs when AERO_MEM_LIMIT is unset (browsers reserve huge virtual memory; too-low RLIMIT_AS can crash Chromium or break WebAssembly.Memory)" >&2
     echo "  AERO_ISOLATE_CARGO_HOME=1|<path>  Isolate Cargo state to ./.cargo-home (or a custom dir) to avoid registry lock contention on shared hosts" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
@@ -970,7 +970,7 @@ if [[ "${cmd0_basename}" == "node" || "${cmd0_basename}" == "node.exe" ]]; then
     # the caller didn't explicitly pick an `AERO_MEM_LIMIT`, bump the default address-space cap to a
     # higher value that leaves enough headroom for V8/Wasm reservations.
     if [[ "${wants_test}" == "true" && -z "${AERO_MEM_LIMIT:-}" ]]; then
-        MEM_LIMIT="${AERO_NODE_TEST_MEM_LIMIT:-32G}"
+        MEM_LIMIT="${AERO_NODE_TEST_MEM_LIMIT:-128G}"
     fi
 
     if [[ "${wants_test}" == "true" && "${has_concurrency}" == "false" ]]; then
@@ -1017,7 +1017,7 @@ if [[ -z "${AERO_MEM_LIMIT:-}" ]]; then
             if [[ "${wants_playwright_mem}" == "true" ]]; then
                 MEM_LIMIT="${AERO_PLAYWRIGHT_MEM_LIMIT:-256G}"
             elif [[ "${wants_node_wasm_mem}" == "true" ]]; then
-                MEM_LIMIT="${AERO_NODE_TEST_MEM_LIMIT:-32G}"
+                MEM_LIMIT="${AERO_NODE_TEST_MEM_LIMIT:-128G}"
             fi
             unset wants_node_wasm_mem wants_playwright_mem arg 2>/dev/null || true
             ;;
