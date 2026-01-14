@@ -31,6 +31,18 @@ class VirtioSndBufferLimitsGatingTests(unittest.TestCase):
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|mode=large\n"
         self.assertIsNone(h._virtio_snd_buffer_limits_required_failure_message(tail))
 
+    def test_required_marker_pass_via_saw_flag_even_if_tail_truncated(self) -> None:
+        h = self.harness
+        # The main harness loop uses a rolling 128KiB tail buffer; this unit test ensures the helper
+        # honors the tracked `saw_pass` flag so PASS cannot be lost due to tail truncation.
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        self.assertIsNone(
+            h._virtio_snd_buffer_limits_required_failure_message(
+                tail,
+                saw_pass=True,
+            )
+        )
+
     def test_required_marker_fail(self) -> None:
         h = self.harness
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL|reason=hr|hr=0x80004005\n"
@@ -55,4 +67,3 @@ class VirtioSndBufferLimitsGatingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
