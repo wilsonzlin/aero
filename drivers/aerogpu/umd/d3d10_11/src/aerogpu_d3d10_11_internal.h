@@ -11,9 +11,11 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -148,6 +150,48 @@ inline bool ConsumeWddmAllocPrivV2(const void* priv_data, size_t priv_data_size,
   }
 
   return false;
+}
+
+// Validates that a packed DDI function table contains no NULL entries.
+//
+// The Win7 D3D runtimes treat NULL function pointers as fatal; for bring-up we
+// prefer failing early at device creation time instead of crashing later inside
+// the runtime when it attempts to call through a missing entrypoint.
+inline bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
+  if (!table || bytes == 0) {
+    return false;
+  }
+  if ((bytes % sizeof(void*)) != 0) {
+    return false;
+  }
+
+  const auto* raw = reinterpret_cast<const unsigned char*>(table);
+  const size_t count = bytes / sizeof(void*);
+  for (size_t i = 0; i < count; ++i) {
+    const size_t offset = i * sizeof(void*);
+    bool all_zero = true;
+    for (size_t j = 0; j < sizeof(void*); ++j) {
+      if (raw[offset + j] != 0) {
+        all_zero = false;
+        break;
+      }
+    }
+    if (!all_zero) {
+      continue;
+    }
+
+#if defined(_WIN32)
+    char buf[256] = {};
+    std::snprintf(buf, sizeof(buf), "aerogpu-d3d10_11: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
+    OutputDebugStringA(buf);
+#endif
+
+#if !defined(NDEBUG)
+    assert(false && "NULL DDI function pointer");
+#endif
+    return false;
+  }
+  return true;
 }
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;

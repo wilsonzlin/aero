@@ -72,6 +72,7 @@ using aerogpu::d3d10_11::ResetObject;
 using aerogpu::d3d10_11::kD3D10DeviceLiveCookie;
 using aerogpu::d3d10_11::HasLiveCookie;
 using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
+using aerogpu::d3d10_11::ValidateNoNullDdiTable;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
@@ -1596,51 +1597,6 @@ struct SoSetTargetsImpl<void(AEROGPU_APIENTRY*)(D3D10DDI_HDEVICE, UINT, TargetsP
     SetError(hDevice, E_NOTIMPL);
   }
 };
-
-// Validates that the runtime will never see a NULL DDI function pointer.
-//
-// This is intentionally enabled in release builds. If our stub-fill lists ever
-// fall out of sync with the WDK's `d3d10umddi.h` layout, this check should fail
-// fast (OpenAdapter/CreateDevice return `E_NOINTERFACE`) instead of allowing a
-// later NULL-call crash inside the D3D10 runtime.
-static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
-  if (!table || bytes == 0) {
-    return false;
-  }
-
-  if ((bytes % sizeof(void*)) != 0) {
-    return false;
-  }
-
-  const auto* raw = reinterpret_cast<const unsigned char*>(table);
-  const size_t count = bytes / sizeof(void*);
-  for (size_t i = 0; i < count; ++i) {
-    const size_t offset = i * sizeof(void*);
-    bool all_zero = true;
-    for (size_t j = 0; j < sizeof(void*); ++j) {
-      if (raw[offset + j] != 0) {
-        all_zero = false;
-        break;
-      }
-    }
-    if (!all_zero) {
-      continue;
-    }
-
-#if defined(_WIN32)
-    char buf[256] = {};
-    snprintf(buf, sizeof(buf), "aerogpu-d3d10: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
-    OutputDebugStringA(buf);
-#endif
-
-#if !defined(NDEBUG)
-    assert(false && "NULL DDI function pointer");
-#endif
-    return false;
-  }
-
-  return true;
-}
 
 // Full `D3D10DDI_DEVICEFUNCS` surface (104 function pointers in Win7-era WDKs).
 #define AEROGPU_D3D10_DEVICEFUNCS_FIELDS(X)      \

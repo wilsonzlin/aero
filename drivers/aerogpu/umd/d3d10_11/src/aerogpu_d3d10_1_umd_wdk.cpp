@@ -159,6 +159,7 @@ using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
 using aerogpu::shared_surface::D3d9FormatToDxgi;
 using aerogpu::shared_surface::FixupLegacyPrivForOpenResource;
 using aerogpu::d3d10_11::ConsumeWddmAllocPrivV2;
+using aerogpu::d3d10_11::ValidateNoNullDdiTable;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -1496,50 +1497,6 @@ struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
     }
   }
 };
-
-// Validates that the runtime will never see a NULL DDI function pointer.
-//
-// This is intentionally enabled in release builds. If our stub-fill lists ever
-// fall out of sync with WDK header revisions, this check should fail fast
-// (OpenAdapter/CreateDevice return `E_NOINTERFACE`) instead of allowing a later
-// NULL-call crash inside the D3D runtime.
-static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
-  if (!table || bytes == 0) {
-    return false;
-  }
-  // These tables are expected to contain only function pointers, densely packed.
-  if ((bytes % sizeof(void*)) != 0) {
-    return false;
-  }
-
-  const auto* raw = reinterpret_cast<const unsigned char*>(table);
-  const size_t count = bytes / sizeof(void*);
-  for (size_t i = 0; i < count; ++i) {
-    const size_t offset = i * sizeof(void*);
-    bool all_zero = true;
-    for (size_t j = 0; j < sizeof(void*); ++j) {
-      if (raw[offset + j] != 0) {
-        all_zero = false;
-        break;
-      }
-    }
-    if (!all_zero) {
-      continue;
-    }
-
-#if defined(_WIN32)
-    char buf[256] = {};
-    snprintf(buf, sizeof(buf), "aerogpu-d3d10_1: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
-    OutputDebugStringA(buf);
-#endif
-
-#if !defined(NDEBUG)
-    assert(false && "NULL DDI function pointer");
-#endif
-    return false;
-  }
-  return true;
-}
 
 #define AEROGPU_D3D10_DEVICEFUNCS_FIELDS(X)      \
   X(pfnBegin)                                    \

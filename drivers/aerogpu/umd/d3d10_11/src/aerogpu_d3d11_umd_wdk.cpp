@@ -1657,51 +1657,6 @@ static Device* DeviceFromHandle(T) {
   return nullptr;
 }
 
-// Validates that the runtime will never see a NULL DDI function pointer.
-//
-// This is intentionally enabled in release builds. If our `__if_exists` field
-// lists ever fall out of sync with the WDK's `d3d11umddi.h` layout, this check
-// should fail fast (OpenAdapter/CreateDevice return `E_NOINTERFACE`) instead of
-// allowing a later NULL-call crash inside the D3D11 runtime.
-static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
-  if (!table || bytes == 0) {
-    return false;
-  }
-
-  // These tables are expected to contain only function pointers, densely packed.
-  if ((bytes % sizeof(void*)) != 0) {
-    return false;
-  }
-
-  const auto* raw = reinterpret_cast<const unsigned char*>(table);
-  const size_t count = bytes / sizeof(void*);
-  for (size_t i = 0; i < count; ++i) {
-    const size_t offset = i * sizeof(void*);
-    bool all_zero = true;
-    for (size_t j = 0; j < sizeof(void*); ++j) {
-      if (raw[offset + j] != 0) {
-        all_zero = false;
-        break;
-      }
-    }
-    if (!all_zero) {
-      continue;
-    }
-
-#if defined(_WIN32)
-    char buf[256] = {};
-    snprintf(buf, sizeof(buf), "aerogpu-d3d11: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
-    OutputDebugStringA(buf);
-#endif
-
-#if !defined(NDEBUG)
-    assert(false && "NULL DDI function pointer");
-#endif
-    return false;
-  }
-  return true;
-}
-
 #define AEROGPU_D3D11_DEVICEFUNCS_FIELDS(X)                                                                     \
   X(pfnDestroyDevice)                                                                                            \
   X(pfnCalcPrivateResourceSize)                                                                                  \
