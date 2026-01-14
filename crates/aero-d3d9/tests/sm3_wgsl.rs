@@ -436,6 +436,62 @@ fn wgsl_dcl_volume_sampler_emits_texture_3d_and_xyz_coords() {
 }
 
 #[test]
+fn wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord() {
+    // ps_3_0:
+    //   dcl_1d s0
+    //   texld r0, c0, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_1d s0 (usage_raw=1 encodes Texture1D for sampler decls)
+        opcode_token(31, 1) | (1u32 << 16),
+        dst_token(10, 0, 0xF),
+        // texld r0, c0, s0
+        opcode_token(66, 3),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap();
+    assert_eq!(wgsl.bind_group_layout.sampler_group, 2);
+    assert_eq!(
+        wgsl.bind_group_layout.sampler_texture_types.get(&0),
+        Some(&TextureType::Texture1D)
+    );
+    assert!(
+        wgsl.wgsl
+            .contains("@group(2) @binding(0) var tex0: texture_1d<f32>;"),
+        "{}",
+        wgsl.wgsl
+    );
+    assert!(
+        wgsl.wgsl.contains("textureSample(tex0, samp0, (c0).x)"),
+        "{}",
+        wgsl.wgsl
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_texldp_emits_projective_divide() {
     // ps_2_0:
     //   texldp r0, c0, s0
