@@ -30,6 +30,25 @@ use crate::input_layout::{
 /// colliding with the D3D11 register-space binding ranges.
 pub const VERTEX_PULLING_GROUP: u32 = BIND_GROUP_INTERNAL_EMULATION;
 
+/// Bind placeholder empty bind groups for the reserved bind-group slots that come before
+/// [`VERTEX_PULLING_GROUP`].
+///
+/// Some internal compute pipelines (such as vertex pulling / geometry expansion) use resources in
+/// `@group(VERTEX_PULLING_GROUP)` but do not use the D3D11 stage bind groups `@group(0..=2)`. To
+/// make the pipeline layout compatible with WGSL that references `@group(3)`, those pipelines build
+/// an explicit `wgpu::PipelineLayout` that contains empty bind-group layouts for the intermediate
+/// indices. wgpu validates that *all* bind groups declared in the pipeline layout are bound before
+/// dispatch, so callers must explicitly bind empty bind groups for the placeholder slots.
+pub(crate) fn bind_empty_groups_before_vertex_pulling<'a>(
+    pass: &mut wgpu::ComputePass<'a>,
+    empty_bind_group: &'a wgpu::BindGroup,
+    start_group: u32,
+) {
+    for group_index in start_group..VERTEX_PULLING_GROUP {
+        pass.set_bind_group(group_index, empty_bind_group, &[]);
+    }
+}
+
 /// First `@binding` number reserved for vertex pulling + compute-expansion internal resources
 /// within [`VERTEX_PULLING_GROUP`].
 ///

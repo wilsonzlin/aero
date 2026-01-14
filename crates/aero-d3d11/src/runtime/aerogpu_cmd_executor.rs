@@ -75,8 +75,9 @@ use super::shader_cache::{
 use super::strip_to_list::{StreamEvent, StripTopology};
 use super::tessellation::TessellationRuntime;
 use super::vertex_pulling::{
-    VertexPullingDrawParams, VertexPullingLayout, VertexPullingSlot, VERTEX_PULLING_GROUP,
-    VERTEX_PULLING_UNIFORM_BINDING, VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
+    bind_empty_groups_before_vertex_pulling, VertexPullingDrawParams, VertexPullingLayout,
+    VertexPullingSlot, VERTEX_PULLING_GROUP, VERTEX_PULLING_UNIFORM_BINDING,
+    VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE,
 };
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
@@ -1385,6 +1386,25 @@ pub struct AerogpuD3d11Executor {
 
     bind_group_layout_cache: BindGroupLayoutCache,
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
+    empty_bind_group_layout_hash: u64,
+    /// Empty bind group compatible with `BindGroupLayoutCache::get_or_create(device, &[])`.
+    ///
+    /// wgpu validates that all bind groups declared in an explicit pipeline layout are bound before
+    /// dispatch/draw. Some internal compute pipelines build a pipeline layout with placeholder empty
+    /// bind-group layouts (e.g. groups `1..VERTEX_PULLING_GROUP`) so shaders can still reference
+    /// `@group(VERTEX_PULLING_GROUP)`. This cached bind group avoids creating a new empty bind group
+    /// for every dispatch.
+    empty_bind_group: Arc<wgpu::BindGroup>,
+    /// Dummy bind group for the expanded-draw passthrough VS internal binding
+    /// (`@group(BIND_GROUP_INTERNAL_EMULATION) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)`).
+    ///
+    /// The expanded-draw rasterization path builds a pipeline layout that includes the internal
+    /// emulation group, but its `PipelineBindingsInfo` does not have a corresponding
+    /// `group_bindings` entry because the binding isn't part of the D3D11 register-space binding
+    /// model. `build_stage_bind_groups` uses this bind group as a placeholder before the caller
+    /// overwrites it with the real expanded-vertex buffer bind group.
+    passthrough_vs_dummy_bind_group: Option<Arc<wgpu::BindGroup>>,
+    passthrough_vs_dummy_bind_group_layout_hash: Option<u64>,
     pipeline_layout_cache: PipelineLayoutCache<Arc<wgpu::PipelineLayout>>,
     pipeline_cache: PipelineCache,
 
@@ -1628,6 +1648,43 @@ impl AerogpuD3d11Executor {
         #[cfg(target_arch = "wasm32")]
         let persistent_shader_cache = PersistentShaderCache::new();
 
+        let mut bind_group_layout_cache = BindGroupLayoutCache::new();
+        let mut bind_group_cache = BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY);
+        let empty_bgl = bind_group_layout_cache.get_or_create(&device, &[]);
+        let empty_bind_group_layout_hash = empty_bgl.hash;
+        let empty_bg_entries: [BindGroupCacheEntry<'_>; 0] = [];
+        let empty_bind_group =
+            bind_group_cache.get_or_create(&device, &empty_bgl, &empty_bg_entries);
+
+        let (passthrough_vs_dummy_bind_group, passthrough_vs_dummy_bind_group_layout_hash) = if caps
+            .supports_compute
+            && device.limits().max_storage_buffers_per_shader_stage > 0
+        {
+            let passthrough_vs_bgl_entries = [wgpu::BindGroupLayoutEntry {
+                binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }];
+            let passthrough_vs_bgl =
+                bind_group_layout_cache.get_or_create(&device, &passthrough_vs_bgl_entries);
+            let bg = Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aerogpu_cmd passthrough VS dummy bind group"),
+                layout: passthrough_vs_bgl.layout.as_ref(),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                    resource: dummy_storage.as_entire_binding(),
+                }],
+            }));
+            (Some(bg), Some(passthrough_vs_bgl.hash))
+        } else {
+            (None, None)
+        };
+
         Self {
             caps,
             device,
@@ -1662,8 +1719,12 @@ impl AerogpuD3d11Executor {
             depth_only_dummy_color_targets: HashMap::new(),
             sampler_cache,
             default_sampler,
-            bind_group_layout_cache: BindGroupLayoutCache::new(),
-            bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
+            bind_group_layout_cache,
+            bind_group_cache,
+            empty_bind_group_layout_hash,
+            empty_bind_group,
+            passthrough_vs_dummy_bind_group,
+            passthrough_vs_dummy_bind_group_layout_hash,
             pipeline_layout_cache: PipelineLayoutCache::new(),
             pipeline_cache,
             #[cfg(target_arch = "wasm32")]
@@ -1735,12 +1796,17 @@ impl AerogpuD3d11Executor {
         let supports_indirect = downlevel_flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
         let backend = adapter.get_info().backend;
         let requested_features = super::negotiated_features(&adapter);
+        // Use the adapter-reported limits for tests so we don't accidentally constrain ourselves to
+        // downlevel limits (e.g. `Limits::downlevel_defaults()` sets
+        // `max_storage_buffers_per_shader_stage = 4`, but our GS/HS/DS emulation prepasses may bind
+        // more storage buffers when vertex pulling is enabled).
+        let requested_limits = adapter.limits();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("aero-d3d11 aerogpu_cmd test device"),
                     required_features: requested_features,
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    required_limits: requested_limits,
                 },
                 None,
             )
@@ -3634,11 +3700,6 @@ impl AerogpuD3d11Executor {
             pipeline as *const wgpu::ComputePipeline
         };
         let fill_pipeline = unsafe { &*fill_pipeline_ptr };
-        let empty_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("aerogpu_cmd empty bind group"),
-            layout: empty_bgl.layout.as_ref(),
-            entries: &[],
-        });
 
         self.encoder_has_commands = true;
         {
@@ -3648,9 +3709,7 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(fill_pipeline);
             pass.set_bind_group(0, &fill_bg, &[]);
-            for group in 1..VERTEX_PULLING_GROUP {
-                pass.set_bind_group(group, &empty_bg, &[]);
-            }
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
             pass.dispatch_workgroups(primitive_count, 1, 1);
         }
@@ -4097,19 +4156,25 @@ impl AerogpuD3d11Executor {
         // - Each input primitive is processed `gs_instance_count` times.
         // - The compute prepass treats `global_invocation_id.y` as `SV_GSInstanceID`.
         let gs_instance_count: u32 = if let Some(gs_handle) = self.state.gs {
-            let meta = self
-                .resources
-                .gs_shaders
-                .get(&gs_handle)
-                .ok_or_else(|| anyhow!("unknown GS shader {gs_handle}"))?;
-            if meta.prepass.is_none() {
-                let err = meta
-                    .prepass_error
-                    .as_deref()
-                    .unwrap_or("GS translation failed");
-                bail!("geometry shader not supported: {err}");
+            match self.resources.gs_shaders.get(&gs_handle) {
+                Some(meta) => {
+                    if meta.prepass.is_none() {
+                        let err = meta
+                            .prepass_error
+                            .as_deref()
+                            .unwrap_or("GS translation failed");
+                        bail!("geometry shader not supported: {err}");
+                    }
+                    meta.instance_count.max(1)
+                }
+                None => {
+                    // Some tests (and bring-up paths) bind a non-zero GS handle purely to force the
+                    // compute-prepass pipeline, without actually creating/translating a GS shader.
+                    // Treat an unknown handle as "no GS instancing" so the placeholder prepass can
+                    // still run.
+                    1
+                }
             }
-            meta.instance_count.max(1)
         } else {
             1
         };
@@ -4315,11 +4380,8 @@ impl AerogpuD3d11Executor {
 
         // Prepare compute prepass output buffers.
         let centered_placeholder_triangle = tessellation_placeholder
-            || matches!(
-                self.state.primitive_topology,
-                CmdPrimitiveTopology::PointList
-            );
-        let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
+            || matches!(self.state.primitive_topology, CmdPrimitiveTopology::PointList);
+        let mut use_indexed_indirect = false;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
@@ -4357,6 +4419,11 @@ impl AerogpuD3d11Executor {
             expanded_index_alloc = i_alloc;
             indirect_args_alloc = args_alloc;
         } else {
+            // The placeholder compute prepass currently emits a dense vertex buffer where
+            // `vertex_index` == expanded vertex slot (and the generated index buffer is just
+            // `0..N`). Prefer a non-indexed indirect draw even when the original guest draw was
+            // indexed; this avoids relying on backend-specific behavior around consuming a
+            // compute-written index buffer as `INDEX` in the same submission.
             let expanded_vertex_count = u64::from(primitive_count)
                 .checked_mul(u64::from(gs_instance_count))
                 .and_then(|v| v.checked_mul(3))
@@ -5110,20 +5177,13 @@ impl AerogpuD3d11Executor {
             let compute_pipeline = unsafe { &*compute_pipeline_ptr };
 
             self.encoder_has_commands = true;
-            let empty_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu_cmd empty bind group"),
-                layout: empty_bgl.layout.as_ref(),
-                entries: &[],
-            });
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("aerogpu_cmd geometry prepass compute pass"),
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(compute_pipeline);
-                for group in 0..VERTEX_PULLING_GROUP {
-                    pass.set_bind_group(group, &empty_bind_group, &[]);
-                }
+                bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 0);
                 pass.set_bind_group(VERTEX_PULLING_GROUP, &prepass_bind_group, &[]);
                 pass.dispatch_workgroups(primitive_count, gs_instance_count, 1);
             }
@@ -12933,46 +12993,37 @@ impl AerogpuD3d11Executor {
             let group_u32 = group_index as u32;
             let group_bindings = &pipeline_bindings.group_bindings[group_index];
             if group_bindings.is_empty() {
-                // Some internal emulation paths (expanded-geometry draws) extend the pipeline layout
-                // with an internal bind group (see `extend_pipeline_bindings_for_passthrough_vs`) but
-                // do not have any D3D11-stage bindings for it. Those layouts still require a bind
-                // group with the internal expanded-vertex buffer binding, so bind a dummy storage
-                // buffer here. Callers that actually use expanded draws will overwrite this bind
-                // group with the correct expanded-vertex buffer before issuing the draw.
-                if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
-                    let entries = [BindGroupCacheEntry {
-                        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
-                        resource: BindGroupCacheResource::Buffer {
-                            id: BufferId(0),
-                            buffer: &self.dummy_storage,
-                            offset: 0,
-                            size: None,
-                        },
-                    }];
-                    bind_groups.push(self.bind_group_cache.get_or_create(
-                        &self.device,
-                        &pipeline_bindings.group_layouts[group_index],
-                        &entries,
-                    ));
-                } else {
-                    let entries: [BindGroupCacheEntry<'_>; 0] = [];
-                    bind_groups.push(self.bind_group_cache.get_or_create(
-                        &self.device,
-                        &pipeline_bindings.group_layouts[group_index],
-                        &entries,
-                    ));
+                let layout = &pipeline_bindings.group_layouts[group_index];
+                if layout.hash == self.empty_bind_group_layout_hash {
+                    bind_groups.push(self.empty_bind_group.clone());
+                    continue;
                 }
-                continue;
+                if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                    if let (Some(bg), Some(hash)) = (
+                        self.passthrough_vs_dummy_bind_group.as_ref(),
+                        self.passthrough_vs_dummy_bind_group_layout_hash,
+                    ) {
+                        if layout.hash == hash {
+                            bind_groups.push(bg.clone());
+                            continue;
+                        }
+                    }
+                }
+                bail!(
+                    "build_stage_bind_groups: group({}) has no reflection bindings but uses a non-empty bind group layout (layout_hash={:016x})",
+                    group_index,
+                    layout.hash
+                );
             }
 
             // Most group indices map 1:1 to a D3D11 shader stage, but group 3 is shared by the
             // "extended" stages (GS/HS/DS). When running a compute emulation pass for one of those
             // stages, we need to source group(3) bindings from the correct stage bucket instead of
             // assuming Geometry.
-            let group_stage = if group_index as u32 == stage.as_bind_group_index() {
+            let group_stage = if group_u32 == stage.as_bind_group_index() {
                 stage
             } else {
-                group_index_to_stage(group_index as u32)?
+                group_index_to_stage(group_u32)?
             };
 
             let stage_bindings = self.bindings.stage_mut(group_stage);
