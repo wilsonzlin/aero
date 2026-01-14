@@ -708,8 +708,8 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
             args.retries,
             MAX_MANIFEST_JSON_BYTES,
         )
-            .await
-            .context("download manifest.json")?;
+        .await
+        .context("download manifest.json")?;
         (
             bytes,
             VerifyHttpSource::Url {
@@ -1133,11 +1133,7 @@ async fn read_http_response_bytes_with_limit(
         out.reserve(max_bytes.min(1024));
     }
 
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .context("read response body chunk")?
-    {
+    while let Some(chunk) = resp.chunk().await.context("read response body chunk")? {
         if out.len().saturating_add(chunk.len()) > max_bytes {
             bail!("response too large: max {max_bytes} bytes");
         }
@@ -2214,6 +2210,7 @@ fn is_retryable_chunk_error(err: &anyhow::Error) -> bool {
             || msg.contains("sha256 mismatch")
             || msg.contains("object not found (404)")
             || msg.contains("unexpected Content-Encoding")
+            || msg.contains("access denied (403)")
         {
             return false;
         }
@@ -2249,6 +2246,8 @@ async fn verify_chunk_once(
         .map_err(|err| {
             if is_no_such_key_error(&err) {
                 anyhow!("object not found (404)")
+            } else if is_access_denied_error(&err) {
+                anyhow!("access denied (403): {err}")
             } else {
                 anyhow!(err)
             }
@@ -2393,9 +2392,7 @@ async fn download_object_bytes_with_retry(
             Ok(output) => {
                 if let Some(content_length) = output.content_length() {
                     let len_u64: u64 = content_length.try_into().map_err(|_| {
-                        anyhow!(
-                            "invalid Content-Length {content_length} for s3://{bucket}/{key}"
-                        )
+                        anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
                     })?;
                     let max_u64: u64 = MAX_MANIFEST_JSON_BYTES.try_into().unwrap_or(u64::MAX);
                     if len_u64 > max_u64 {
@@ -2452,9 +2449,7 @@ async fn download_object_bytes_optional_with_retry(
             Ok(output) => {
                 if let Some(content_length) = output.content_length() {
                     let len_u64: u64 = content_length.try_into().map_err(|_| {
-                        anyhow!(
-                            "invalid Content-Length {content_length} for s3://{bucket}/{key}"
-                        )
+                        anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
                     })?;
                     let max_u64: u64 = MAX_MANIFEST_JSON_BYTES.try_into().unwrap_or(u64::MAX);
                     if len_u64 > max_u64 {
@@ -2519,6 +2514,27 @@ where
     // Final fallback to a best-effort string match.
     let msg = err.to_string();
     msg.contains("NoSuchKey") || msg.contains("NotFound") || msg.contains("404")
+}
+
+fn is_access_denied_error<E>(err: &aws_sdk_s3::error::SdkError<E>) -> bool
+where
+    E: aws_sdk_s3::error::ProvideErrorMetadata + std::fmt::Debug,
+{
+    if matches!(sdk_error_status_code(err), Some(403)) {
+        return true;
+    }
+
+    if let aws_sdk_s3::error::SdkError::ServiceError(service_err) = err {
+        if matches!(
+            service_err.err().meta().code(),
+            Some("AccessDenied" | "Forbidden")
+        ) {
+            return true;
+        }
+    }
+
+    let msg = err.to_string();
+    msg.contains("AccessDenied") || msg.contains("Forbidden") || msg.contains("403")
 }
 
 fn sdk_error_status_code<E>(err: &aws_sdk_s3::error::SdkError<E>) -> Option<u16> {
@@ -3245,7 +3261,11 @@ mod tests {
     async fn download_http_bytes_with_retry_rejects_oversized_response() -> Result<()> {
         let (base_url, shutdown_tx, handle) = start_test_http_server(Arc::new(|_req| {
             let body = vec![b'a'; 11];
-            (200, vec![("Content-Type".to_string(), "application/json".to_string())], body)
+            (
+                200,
+                vec![("Content-Type".to_string(), "application/json".to_string())],
+                body,
+            )
         }))
         .await?;
 
@@ -4120,7 +4140,8 @@ mod tests {
 
         let err = publish(args).await.expect_err("expected publish failure");
         assert!(
-            err.to_string().contains("exceeds the current compatibility limit"),
+            err.to_string()
+                .contains("exceeds the current compatibility limit"),
             "unexpected error: {err:?}"
         );
         Ok(())
@@ -4374,6 +4395,19 @@ mod tests {
         assert!(
             !is_retryable_chunk_error(&err),
             "expected content-encoding mismatch to be non-retryable; error chain was: {}",
+            error_chain_summary(&err)
+        );
+    }
+
+    #[test]
+    fn access_denied_is_non_retryable_even_with_context_wrapping() {
+        let err = anyhow!("access denied (403): AccessDenied");
+        let err = Err::<(), _>(err)
+            .context("GET s3://bucket/prefix/chunks/00000000.bin")
+            .unwrap_err();
+        assert!(
+            !is_retryable_chunk_error(&err),
+            "expected access denied to be non-retryable; error chain was: {}",
             error_chain_summary(&err)
         );
     }
