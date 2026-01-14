@@ -2046,17 +2046,26 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
       if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice || pnp->PnPAction == StorSurpriseRemoval) {
         STOR_LOCK_HANDLE lock;
         BOOLEAN avoidMmio;
+        BOOLEAN wasRemoved;
+        BOOLEAN treatAsSurprise;
 
         /*
          * Mark removed early (before taking the interrupt lock) so ISR/DPC paths
          * can quickly stop touching BAR0 MMIO during teardown.
          *
-         * Treat StorRemoveDevice/StorSurpriseRemoval as potential surprise
-         * removal: the device may already be gone by the time the miniport
-         * processes this SRB.
+         * Surprise removal is handled as a special case (BAR0 MMIO may fault).
+         *
+         * Some stacks may send StorRemoveDevice without a preceding stop. Treat
+         * that as potential surprise removal and avoid MMIO in that case.
          */
+        wasRemoved = devExt->Removed ? TRUE : FALSE;
+        treatAsSurprise = (pnp->PnPAction == StorSurpriseRemoval) ? TRUE : FALSE;
+        if (pnp->PnPAction == StorRemoveDevice && !wasRemoved) {
+          treatAsSurprise = TRUE;
+        }
+
         devExt->Removed = TRUE;
-        if (pnp->PnPAction == StorRemoveDevice || pnp->PnPAction == StorSurpriseRemoval) {
+        if (treatAsSurprise) {
           devExt->SurpriseRemoved = TRUE;
         }
 
@@ -2068,14 +2077,12 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
         devExt->Removed = TRUE;
 
         /*
-         * Treat StorRemoveDevice/StorSurpriseRemoval as potential surprise
-         * removal: by the time the miniport receives this action, the PCI
-         * function may already be gone.
-         * Avoid BAR0 MMIO access and clear BAR-backed pointers/caches so any
-         * accidental access becomes a no-op instead of touching unmapped MMIO.
+         * Surprise removal: BAR0 MMIO may fault. Clear BAR-backed pointers/caches
+         * so any accidental access becomes a no-op instead of touching unmapped
+         * MMIO.
          */
         avoidMmio = FALSE;
-        if (pnp->PnPAction == StorRemoveDevice || pnp->PnPAction == StorSurpriseRemoval) {
+        if (devExt->SurpriseRemoved) {
           avoidMmio = TRUE;
           devExt->Vdev.CommonCfg = NULL;
           devExt->Vdev.NotifyBase = NULL;
