@@ -1,5 +1,6 @@
 #include "aerogpu_wddm_alloc_list.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace aerogpu {
@@ -81,6 +82,36 @@ void set_write_operation(AllocationListT& entry, bool write) {
     set_write_operation_in_flags(entry.Flags, write);
   } else if constexpr (has_member_write_operation<AllocationListT>::value) {
     entry.WriteOperation = write ? 1u : 0u;
+  } else {
+    static_assert(has_member_value<AllocationListT>::value || has_member_flags<AllocationListT>::value ||
+                      has_member_write_operation<AllocationListT>::value,
+                  "D3DDDI_ALLOCATIONLIST is missing a write-operation flag field (WDDM 1.1 required)");
+  }
+}
+
+template <typename FlagsT>
+bool get_write_operation_from_flags(const FlagsT& flags) {
+  if constexpr (std::is_integral_v<std::remove_reference_t<FlagsT>>) {
+    return (static_cast<uint32_t>(flags) & 0x1u) != 0;
+  } else if constexpr (has_member_value<FlagsT>::value &&
+                       std::is_integral_v<std::remove_reference_t<decltype(std::declval<FlagsT&>().Value)>>) {
+    return (static_cast<uint32_t>(flags.Value) & 0x1u) != 0;
+  } else if constexpr (has_member_write_operation<FlagsT>::value) {
+    return flags.WriteOperation != 0;
+  } else {
+    static_assert(has_member_write_operation<FlagsT>::value,
+                  "D3DDDI_ALLOCATIONLIST flags are missing WriteOperation (WDDM 1.1 required)");
+  }
+}
+
+template <typename AllocationListT>
+bool get_write_operation(const AllocationListT& entry) {
+  if constexpr (has_member_value<AllocationListT>::value) {
+    return get_write_operation_from_flags(entry.Value);
+  } else if constexpr (has_member_flags<AllocationListT>::value) {
+    return get_write_operation_from_flags(entry.Flags);
+  } else if constexpr (has_member_write_operation<AllocationListT>::value) {
+    return entry.WriteOperation != 0;
   } else {
     static_assert(has_member_value<AllocationListT>::value || has_member_flags<AllocationListT>::value ||
                       has_member_write_operation<AllocationListT>::value,
@@ -269,6 +300,76 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
   out.list_index = idx;
   out.status = AllocRefStatus::kOk;
   return out;
+}
+
+std::vector<AllocationListTracker::TrackedAllocation> AllocationListTracker::snapshot_tracked_allocations() const {
+  std::vector<TrackedAllocation> out;
+  if (!list_base_ || list_len_ == 0) {
+    return out;
+  }
+
+  out.resize(list_len_);
+  std::vector<uint8_t> seen(list_len_, 0);
+  for (const auto& it : handle_to_entry_) {
+    const Entry& e = it.second;
+    if (e.list_index >= list_len_) {
+      continue;
+    }
+    if (seen[e.list_index]) {
+      continue;
+    }
+    seen[e.list_index] = 1;
+    const D3DDDI_ALLOCATIONLIST& list_entry = list_base_[e.list_index];
+    out[e.list_index] = TrackedAllocation{
+        list_entry.hAllocation,
+        e.alloc_id,
+        e.share_token,
+        get_write_operation(list_entry),
+    };
+  }
+
+  // If something went wrong and we didn't see all indices, compact the output so
+  // callers don't observe uninitialized entries.
+  if (std::find(seen.begin(), seen.end(), 0) != seen.end()) {
+    std::vector<TrackedAllocation> compact;
+    compact.reserve(list_len_);
+    for (UINT i = 0; i < list_len_; ++i) {
+      if (seen[i]) {
+        compact.push_back(out[i]);
+      }
+    }
+    return compact;
+  }
+
+  return out;
+}
+
+bool AllocationListTracker::replay_tracked_allocations(const std::vector<TrackedAllocation>& allocs) {
+  if (allocs.empty()) {
+    return true;
+  }
+  if (!list_base_ || list_capacity_ == 0) {
+    return false;
+  }
+  // Reserve space for a conservative number of unique allocations: snapshot
+  // entries correspond to allocation-list slots, so the required capacity is the
+  // snapshot size.
+  if (allocs.size() > list_capacity_effective()) {
+    return false;
+  }
+
+  for (const TrackedAllocation& a : allocs) {
+    AllocRef r{};
+    if (a.write) {
+      r = track_render_target_write(a.hAllocation, a.alloc_id, a.share_token);
+    } else {
+      r = track_buffer_read(a.hAllocation, a.alloc_id, a.share_token);
+    }
+    if (r.status != AllocRefStatus::kOk) {
+      return false;
+    }
+  }
+  return true;
 }
 
 } // namespace aerogpu

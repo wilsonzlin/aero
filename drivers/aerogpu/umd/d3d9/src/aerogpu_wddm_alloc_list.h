@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 // -----------------------------------------------------------------------------
 // WDDM allocation-list tracking (Win7 / WDDM 1.1)
@@ -99,15 +100,35 @@ struct AllocRef {
   // multiple times) from alloc_id collisions (different allocations accidentally sharing an ID).
   //
   // For non-shared allocations, pass share_token=0.
-  AllocRef track_buffer_read(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
-  AllocRef track_texture_read(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
-  AllocRef track_render_target_write(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
+   AllocRef track_buffer_read(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
+   AllocRef track_texture_read(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
+   AllocRef track_render_target_write(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token);
 
- private:
-  struct Entry {
-    UINT list_index = 0;
-    UINT alloc_id = 0;
-    uint64_t share_token = 0;
+   // Snapshot of an allocation-list entry tracked by this submission.
+   //
+   // This is primarily used by the D3D9 WDDM path to preserve allocation-list
+   // tracking across a submit-buffer re-acquire when the command buffer is still
+   // empty (allocations tracked, but packets not yet emitted).
+   struct TrackedAllocation {
+     WddmAllocationHandle hAllocation = 0;
+     UINT alloc_id = 0;
+     uint64_t share_token = 0;
+     bool write = false;
+   };
+
+   // Returns the set of unique allocation-list entries tracked so far (one per
+   // allocation-list slot), in allocation-list order.
+   std::vector<TrackedAllocation> snapshot_tracked_allocations() const;
+
+   // Replays a previously-captured snapshot into the current allocation list.
+   // Returns false if any entry could not be re-tracked (e.g. list is too small).
+   bool replay_tracked_allocations(const std::vector<TrackedAllocation>& allocs);
+
+  private:
+   struct Entry {
+     UINT list_index = 0;
+     UINT alloc_id = 0;
+     uint64_t share_token = 0;
   };
 
   AllocRef track_common(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token, bool write);

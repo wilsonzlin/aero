@@ -7659,6 +7659,17 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
     return true;
   }
 
+  // If the caller tracked allocations for a packet but hasn't emitted any command
+  // buffer bytes yet (cmd stream still empty), a submit-buffer re-acquire would
+  // rebind/reset the allocation-list tracker and drop those tracked alloc_ids.
+  //
+  // Preserve and replay the tracked allocations across the re-acquire so
+  // subsequent packet emission still has a correct allocation table.
+  std::vector<AllocationListTracker::TrackedAllocation> preserved_allocs;
+  if (dev->cmd.empty() && dev->alloc_list_tracker.list_len() != 0) {
+    preserved_allocs = dev->alloc_list_tracker.snapshot_tracked_allocations();
+  }
+
   // If AllocateCb handed us buffers but we never emitted anything, return them
   // before acquiring a new set.
   if (dev->wddm_context.buffers_need_deallocate && dev->cmd.empty()) {
@@ -7763,6 +7774,16 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
     // Prevent leaking AllocateCb-owned buffers if the runtime did not return the
     // full submission contract (e.g. missing DMA private data).
     wddm_deallocate_active_buffers(dev);
+  }
+  if (have_required && !preserved_allocs.empty()) {
+    if (!dev->alloc_list_tracker.replay_tracked_allocations(preserved_allocs)) {
+      logf("aerogpu-d3d9: failed to replay tracked allocations after submit-buffer re-acquire (count=%llu)\n",
+           static_cast<unsigned long long>(preserved_allocs.size()));
+      if (dev->wddm_context.buffers_need_deallocate) {
+        wddm_deallocate_active_buffers(dev);
+      }
+      return false;
+    }
   }
   return have_required;
 }
