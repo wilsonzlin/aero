@@ -17396,6 +17396,631 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
   return Check(c0 == kBlue, "DrawIndexedPrimitive: diffuse color preserved");
 }
 
+bool TestFvfXyzrhwDiffuseTex1DrawIndexedPrimitiveEmulationConvertsVertices() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
+    D3DDDI_HRESOURCE hIb{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vb = false;
+    bool has_ib = false;
+
+    ~Cleanup() {
+      if (has_ib && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hIb);
+      }
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetIndices != nullptr, "SetIndices must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawIndexedPrimitive != nullptr, "DrawIndexedPrimitive must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x144u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen, 0.25f, 0.75f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen, 0.75f, 0.75f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen, 0.50f, 0.25f};
+
+  const uint16_t indices[3] = {0, 1, 2};
+
+  // Create and fill VB.
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0;
+  create_vb.format = 0;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(verts);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pKmdAllocPrivateData = nullptr;
+  create_vb.KmdAllocPrivateDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer)")) {
+    return false;
+  }
+  cleanup.hVb = create_vb.hResource;
+  cleanup.has_vb = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(vertex buffer)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock(VB) returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, verts, sizeof(verts));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(vertex buffer)")) {
+    return false;
+  }
+
+  // Create and fill IB.
+  D3D9DDIARG_CREATERESOURCE create_ib{};
+  create_ib.type = 0;
+  create_ib.format = 0;
+  create_ib.width = 0;
+  create_ib.height = 0;
+  create_ib.depth = 0;
+  create_ib.mip_levels = 1;
+  create_ib.usage = 0;
+  create_ib.pool = 0;
+  create_ib.size = sizeof(indices);
+  create_ib.hResource.pDrvPrivate = nullptr;
+  create_ib.pSharedHandle = nullptr;
+  create_ib.pKmdAllocPrivateData = nullptr;
+  create_ib.KmdAllocPrivateDataSize = 0;
+  create_ib.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_ib);
+  if (!Check(hr == S_OK, "CreateResource(index buffer)")) {
+    return false;
+  }
+  cleanup.hIb = create_ib.hResource;
+  cleanup.has_ib = true;
+
+  lock.hResource = create_ib.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  std::memset(&box, 0, sizeof(box));
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(index buffer)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock(IB) returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, indices, sizeof(indices));
+
+  unlock.hResource = create_ib.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(index buffer)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_vb.hResource, 0, sizeof(Vertex));
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, create_ib.hResource, kD3dFmtIndex16, 0);
+  if (!Check(hr == S_OK, "SetIndices")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawIndexedPrimitive(create_dev.hDevice,
+                                                    D3DDDIPT_TRIANGLELIST,
+                                                    /*base_vertex=*/0,
+                                                    /*min_index=*/0,
+                                                    /*num_vertices=*/3,
+                                                    /*start_index=*/0,
+                                                    /*primitive_count=*/1);
+  if (!Check(hr == S_OK, "DrawIndexedPrimitive")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const size_t expected_bytes = AlignUp(sizeof(verts), 4);
+  std::vector<uint8_t> vb_upload(expected_bytes, 0);
+  size_t vb_uploaded_bytes = 0;
+
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (upload->resource_handle == up_vb_handle) {
+        const size_t payload_bytes = upload->size_bytes;
+        if (!Check(upload->offset_bytes + payload_bytes <= expected_bytes, "upload_resource(UP VB) bounds")) {
+          return false;
+        }
+        if (!Check(sizeof(*upload) + payload_bytes <= hdr->size_bytes, "upload_resource(UP VB) payload bounds")) {
+          return false;
+        }
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+        std::memcpy(vb_upload.data() + upload->offset_bytes, payload, payload_bytes);
+        vb_uploaded_bytes += payload_bytes;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+
+  if (!Check(vb_uploaded_bytes == expected_bytes, "expanded vertex upload emitted")) {
+    return false;
+  }
+
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  std::memcpy(&x0, vb_upload.data() + 0, sizeof(float));
+  std::memcpy(&y0, vb_upload.data() + 4, sizeof(float));
+  std::memcpy(&z0, vb_upload.data() + 8, sizeof(float));
+  std::memcpy(&w0, vb_upload.data() + 12, sizeof(float));
+  std::memcpy(&c0, vb_upload.data() + 16, sizeof(uint32_t));
+  std::memcpy(&u0, vb_upload.data() + 20, sizeof(float));
+  std::memcpy(&v0, vb_upload.data() + 24, sizeof(float));
+
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "DrawIndexedPrimitive TEX1: x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "DrawIndexedPrimitive TEX1: y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "DrawIndexedPrimitive TEX1: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "DrawIndexedPrimitive TEX1: w preserved")) {
+    return false;
+  }
+  if (!Check(c0 == kGreen, "DrawIndexedPrimitive TEX1: diffuse color preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "DrawIndexedPrimitive TEX1: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0 - verts[0].v) < 1e-6f, "DrawIndexedPrimitive TEX1: v preserved")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
+}
+
+bool TestFvfXyzrhwTex1DrawIndexedPrimitiveEmulationConvertsVertices() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
+    D3DDDI_HRESOURCE hIb{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vb = false;
+    bool has_ib = false;
+
+    ~Cleanup() {
+      if (has_ib && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hIb);
+      }
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetIndices != nullptr, "SetIndices must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawIndexedPrimitive != nullptr, "DrawIndexedPrimitive must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x104u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    float u;
+    float v;
+  };
+
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, 0.25f, 0.75f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, 0.75f, 0.75f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, 0.50f, 0.25f};
+
+  const uint16_t indices[3] = {0, 1, 2};
+
+  // Create and fill VB.
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0;
+  create_vb.format = 0;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(verts);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pKmdAllocPrivateData = nullptr;
+  create_vb.KmdAllocPrivateDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer)")) {
+    return false;
+  }
+  cleanup.hVb = create_vb.hResource;
+  cleanup.has_vb = true;
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_vb.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(vertex buffer)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock(VB) returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, verts, sizeof(verts));
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_vb.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(vertex buffer)")) {
+    return false;
+  }
+
+  // Create and fill IB.
+  D3D9DDIARG_CREATERESOURCE create_ib{};
+  create_ib.type = 0;
+  create_ib.format = 0;
+  create_ib.width = 0;
+  create_ib.height = 0;
+  create_ib.depth = 0;
+  create_ib.mip_levels = 1;
+  create_ib.usage = 0;
+  create_ib.pool = 0;
+  create_ib.size = sizeof(indices);
+  create_ib.hResource.pDrvPrivate = nullptr;
+  create_ib.pSharedHandle = nullptr;
+  create_ib.pKmdAllocPrivateData = nullptr;
+  create_ib.KmdAllocPrivateDataSize = 0;
+  create_ib.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_ib);
+  if (!Check(hr == S_OK, "CreateResource(index buffer)")) {
+    return false;
+  }
+  cleanup.hIb = create_ib.hResource;
+  cleanup.has_ib = true;
+
+  lock.hResource = create_ib.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  std::memset(&box, 0, sizeof(box));
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(index buffer)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock(IB) returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, indices, sizeof(indices));
+
+  unlock.hResource = create_ib.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(index buffer)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_vb.hResource, 0, sizeof(Vertex));
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, create_ib.hResource, kD3dFmtIndex16, 0);
+  if (!Check(hr == S_OK, "SetIndices")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawIndexedPrimitive(create_dev.hDevice,
+                                                    D3DDDIPT_TRIANGLELIST,
+                                                    /*base_vertex=*/0,
+                                                    /*min_index=*/0,
+                                                    /*num_vertices=*/3,
+                                                    /*start_index=*/0,
+                                                    /*primitive_count=*/1);
+  if (!Check(hr == S_OK, "DrawIndexedPrimitive")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const size_t expected_bytes = AlignUp(sizeof(verts), 4);
+  std::vector<uint8_t> vb_upload(expected_bytes, 0);
+  size_t vb_uploaded_bytes = 0;
+
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (upload->resource_handle == up_vb_handle) {
+        const size_t payload_bytes = upload->size_bytes;
+        if (!Check(upload->offset_bytes + payload_bytes <= expected_bytes, "upload_resource(UP VB) bounds")) {
+          return false;
+        }
+        if (!Check(sizeof(*upload) + payload_bytes <= hdr->size_bytes, "upload_resource(UP VB) payload bounds")) {
+          return false;
+        }
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+        std::memcpy(vb_upload.data() + upload->offset_bytes, payload, payload_bytes);
+        vb_uploaded_bytes += payload_bytes;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+
+  if (!Check(vb_uploaded_bytes == expected_bytes, "expanded vertex upload emitted")) {
+    return false;
+  }
+
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  std::memcpy(&x0, vb_upload.data() + 0, sizeof(float));
+  std::memcpy(&y0, vb_upload.data() + 4, sizeof(float));
+  std::memcpy(&z0, vb_upload.data() + 8, sizeof(float));
+  std::memcpy(&w0, vb_upload.data() + 12, sizeof(float));
+  std::memcpy(&u0, vb_upload.data() + 16, sizeof(float));
+  std::memcpy(&v0, vb_upload.data() + 20, sizeof(float));
+
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "DrawIndexedPrimitive TEX1(no diffuse): x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "DrawIndexedPrimitive TEX1(no diffuse): y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "DrawIndexedPrimitive TEX1(no diffuse): z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "DrawIndexedPrimitive TEX1(no diffuse): w preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "DrawIndexedPrimitive TEX1(no diffuse): u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0 - verts[0].v) < 1e-6f, "DrawIndexedPrimitive TEX1(no diffuse): v preserved")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
+}
+
 bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -24129,6 +24754,8 @@ int main() {
   failures += !aerogpu::TestDrawTriPatchReusesTessellationCache();
   failures += !aerogpu::TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices();
+  failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawIndexedPrimitiveEmulationConvertsVertices();
+  failures += !aerogpu::TestFvfXyzrhwTex1DrawIndexedPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb();
   failures += !aerogpu::TestDrawRectPatchTex1ValidatesStrideAndPreservesTexcoords();
   failures += !aerogpu::TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb();
