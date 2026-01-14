@@ -2357,6 +2357,9 @@ impl XhciController {
         if !mem.dma_enabled() {
             return;
         }
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+            return;
+        }
         if self.host_controller_error {
             return;
         }
