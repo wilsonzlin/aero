@@ -1,7 +1,6 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding,
@@ -11,44 +10,11 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
-use aero_d3d11::sm4::opcode::{OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, OPCODE_LEN_SHIFT, OPCODE_RET};
-
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
+const HS_TRI_INTEGER: &[u8] = include_bytes!("fixtures/hs_tri_integer.dxbc");
 const DS_TRI_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ds_tri_passthrough.dxbc");
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
-
-const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
-
-fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
-    dxbc_test_utils::build_container_owned(chunks)
-}
-
-fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
-    opcode | (len_dwords << OPCODE_LEN_SHIFT)
-}
-
-fn build_minimal_hs_dxbc_input_control_points(control_points: u32) -> Vec<u8> {
-    // hs_5_0:
-    // - dcl_inputcontrolpoints N
-    // - ret
-    let major = 5u32;
-    let minor = 0u32;
-    let program_type = 3u32; // HS
-    let version = (program_type << 16) | (major << 4) | minor;
-
-    let mut tokens: Vec<u32> = vec![version, 0 /*patched below*/];
-    tokens.push(opcode_token(OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, 2));
-    tokens.push(control_points);
-    tokens.push(opcode_token(OPCODE_RET, 1));
-    tokens[1] = tokens.len() as u32;
-
-    let mut bytes = Vec::with_capacity(tokens.len() * 4);
-    for t in tokens {
-        bytes.extend_from_slice(&t.to_le_bytes());
-    }
-    build_dxbc(&[(FOURCC_SHEX, bytes)])
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -212,8 +178,7 @@ fn aerogpu_cmd_tessellation_smoke_patchlist3_hs_ds() {
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
 
         // Tessellation stages use the `stage_ex` ABI extension.
-        let hs_dxbc = build_minimal_hs_dxbc_input_control_points(3);
-        writer.create_shader_dxbc_ex(HS, AerogpuShaderStageEx::Hull, &hs_dxbc);
+        writer.create_shader_dxbc_ex(HS, AerogpuShaderStageEx::Hull, HS_TRI_INTEGER);
         writer.create_shader_dxbc_ex(DS, AerogpuShaderStageEx::Domain, DS_TRI_PASSTHROUGH);
 
         // Bind VS+PS and HS/DS (extended append-only BIND_SHADERS payload).
