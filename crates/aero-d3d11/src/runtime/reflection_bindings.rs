@@ -696,14 +696,15 @@ mod tests {
                 kind: crate::BindingKind::Texture2D { slot: 0 },
             }];
 
-            let info =
-                build_pipeline_bindings_info(
-                    device,
-                    &mut layout_cache,
-                    [ShaderBindingSet::Guest(gs.as_slice())],
-                    BindGroupIndexValidation::GuestShaders,
-                )
-                .unwrap();
+            let info = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [ShaderBindingSet::Internal(gs.as_slice())],
+                BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                },
+            )
+            .unwrap();
 
             assert_eq!(info.group_layouts.len(), 4);
             assert_eq!(info.group_bindings.len(), 4);
