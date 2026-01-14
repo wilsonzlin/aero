@@ -235,7 +235,7 @@ Geometry shader stage (D3D10-class pipeline; required if you expect FL10_0+ GS w
 
 Rasterizer / Output merger
 * `pfnSetViewports`
-* `pfnSetScissorRects` (can be a no-op if you clamp to viewport initially)
+* `pfnSetScissorRects` (can be ignored initially if you always clamp to the viewport)
 * `pfnSetRasterizerState`
 * `pfnSetBlendState`
 * `pfnSetDepthStencilState`
@@ -500,7 +500,7 @@ Implementation note: in practice DXGI will often call into the UMD’s D3D10/11 
 Apps commonly call:
 
 * `IDXGISwapChain::ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, Flags)` to “resize to window”
-* `IDXGISwapChain::ResizeTarget(&DXGI_MODE_DESC)` sometimes, but can be a no-op for windowed-only
+* `IDXGISwapChain::ResizeTarget(&DXGI_MODE_DESC)` sometimes, but can be accepted-and-ignored for windowed-only
 
 Minimum rules:
 
