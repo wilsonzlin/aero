@@ -3896,12 +3896,16 @@ impl AerogpuD3d11Executor {
 
         let max_indices_per_prim: u64 = match gs_meta.output_topology_kind {
             GsOutputTopologyKind::PointList => u64::from(gs_meta.max_output_vertices),
-            GsOutputTopologyKind::LineStrip => u64::from(gs_meta.max_output_vertices.saturating_sub(1))
-                .checked_mul(2)
-                .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?,
-            GsOutputTopologyKind::TriangleStrip => u64::from(gs_meta.max_output_vertices.saturating_sub(2))
-                .checked_mul(3)
-                .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?,
+            GsOutputTopologyKind::LineStrip => {
+                u64::from(gs_meta.max_output_vertices.saturating_sub(1))
+                    .checked_mul(2)
+                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
+            }
+            GsOutputTopologyKind::TriangleStrip => {
+                u64::from(gs_meta.max_output_vertices.saturating_sub(2))
+                    .checked_mul(3)
+                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
+            }
         };
         let expanded_index_count = u64::from(primitive_count)
             .checked_mul(u64::from(gs_instance_count))

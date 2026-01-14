@@ -362,7 +362,8 @@ fn aerogpu_cmd_geometry_shader_output_topology_pointlist_maxvertexcount2_renders
         let idx = (((h / 2) * w + (w / 2)) * 4) as usize;
         let center: [u8; 4] = pixels[idx..idx + 4].try_into().unwrap();
         assert_eq!(
-            center, [0, 255, 0, 255],
+            center,
+            [0, 255, 0, 255],
             "expected center point to render with maxvertexcount=2"
         );
     });
