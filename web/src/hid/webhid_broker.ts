@@ -1107,7 +1107,18 @@ export class WebHidBroker {
     // this message so the per-device send FIFO preserves guest ordering.
     const ring = this.#outputRing;
     if (ring) {
-      const stopAtTail = msg.outputRingTail !== undefined ? (msg.outputRingTail >>> 0) : ring.debugState().tail;
+      const stopAtTail = (() => {
+        const fallback = ring.debugState().tail;
+        const stop = msg.outputRingTail;
+        if (stop === undefined) return fallback;
+        const { head, used } = ring.debugState();
+        const dist = ((stop >>> 0) - head) >>> 0;
+        // Only drain towards `stop` when it lies within the current [head, tail] window.
+        // If the periodic drain loop has already consumed past this tail snapshot, draining further
+        // would only make ordering worse by pulling in even newer ring records ahead of this message.
+        if (dist <= used) return stop >>> 0;
+        return head;
+      })();
       this.#drainOutputRing({ stopAtTail });
     }
 
@@ -1162,7 +1173,15 @@ export class WebHidBroker {
     // overtake them (even if the periodic ring drain timer hasn't run yet).
     const ring = this.#outputRing;
     if (ring) {
-      const stopAtTail = msg.outputRingTail !== undefined ? (msg.outputRingTail >>> 0) : ring.debugState().tail;
+      const stopAtTail = (() => {
+        const fallback = ring.debugState().tail;
+        const stop = msg.outputRingTail;
+        if (stop === undefined) return fallback;
+        const { head, used } = ring.debugState();
+        const dist = ((stop >>> 0) - head) >>> 0;
+        if (dist <= used) return stop >>> 0;
+        return head;
+      })();
       this.#drainOutputRing({ stopAtTail });
     }
     const attachPromise = this.#pendingAttachResults.get(deviceId)?.promise;

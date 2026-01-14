@@ -1599,6 +1599,65 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("does not drain ring records beyond hid.sendReport.outputRingTail when the periodic drain already passed that tail (minimizes ordering inversions)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // The message claims it was posted when the output ring tail was at 0.
+      const tailAtPost = 0;
+
+      // Write a ring record and let the periodic drain consume it, advancing the ring head beyond 0.
+      expect(outputRing.push(id, HidReportType.Output, 2, Uint8Array.of(2))).toBe(true);
+      vi.advanceTimersByTime(20);
+      await flushMicrotasks();
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport).toHaveBeenCalledWith(2, Uint8Array.of(2));
+
+      // Now queue another ring record, but do not let the timer drain it yet.
+      expect(outputRing.push(id, HidReportType.Output, 3, Uint8Array.of(3))).toBe(true);
+
+      // Deliver the older message. The broker must not synchronously drain the newer ring record (reportId=3)
+      // because the ring head has already passed `tailAtPost`; draining would only worsen ordering.
+      port.emit({
+        type: "hid.sendReport",
+        deviceId: id,
+        reportType: "output",
+        reportId: 1,
+        data: Uint8Array.of(1),
+        outputRingTail: tailAtPost,
+      });
+      await flushMicrotasks();
+
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport).toHaveBeenNthCalledWith(1, 2, Uint8Array.of(2));
+      expect(device.sendReport).toHaveBeenNthCalledWith(2, 1, Uint8Array.of(1));
+
+      // The pending ring record should be sent later.
+      vi.advanceTimersByTime(20);
+      await flushMicrotasks();
+      expect(device.sendReport).toHaveBeenCalledTimes(3);
+      expect(device.sendReport).toHaveBeenNthCalledWith(3, 3, Uint8Array.of(3));
+
+      broker.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses hid.getFeatureReport.outputRingTail to preserve feature report ordering when output ring records race ahead of message delivery", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
     vi.useFakeTimers();
