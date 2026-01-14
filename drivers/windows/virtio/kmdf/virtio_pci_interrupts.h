@@ -132,10 +132,11 @@ NTSTATUS VirtioPciInterruptsProgramMsixVectors(
  *   - Set ResetInProgress (DPCs bail out).
  *   - Disable OS interrupt delivery (WdfInterruptDisable).
  *   - If MSI-X: clear device routing (msix_config/queue_msix_vector = VIRTIO_PCI_MSI_NO_VECTOR).
- *     Note: `VIRTIO_PCI_MSI_NO_VECTOR` disables MSI-X delivery for the virtio sources, but it
- *     does not necessarily guarantee interrupts are fully suppressed. In particular, Aero's Win7
- *     virtio device contract treats NO_VECTOR as “no MSI-X vector assigned” and falls back to
- *     INTx + ISR delivery.
+ *     Note: per the virtio spec and the Aero Win7 virtio contract, when the PCI MSI-X capability
+ *     is enabled MSI-X is **exclusive**. `VIRTIO_PCI_MSI_NO_VECTOR` disables MSI-X delivery for
+ *     that source and suppresses interrupts (no MSI-X message and no INTx fallback). To use legacy
+ *     INTx + ISR semantics, MSI-X must be disabled at the PCI layer (see
+ *     docs/windows7-virtio-driver-contract.md §1.8.4).
  *   - Synchronize with in-flight DPCs (ConfigLock + per-queue locks).
  *
  * Callers must still ensure their device/queue state is otherwise quiesced.
