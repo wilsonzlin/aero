@@ -377,7 +377,7 @@ For versioned ABI submissions (`aerogpu_ring.h`), the KMD can attach a per-submi
 
 `AEROGPU_ALLOC_FLAG_READONLY` is derived **per submission** from the WDDM allocation list access metadata:
 
-- If the runtime marks an allocation as **not written** by the submission (`DXGK_ALLOCATIONLIST::WriteOperation == 0`), the KMD sets `AEROGPU_ALLOC_FLAG_READONLY` for that alloc-table entry.
+- If the runtime marks an allocation as **not written** by the submission (WDDM 1.1 `WriteOperation` bit: `DXGK_ALLOCATIONLIST::Flags.Value & 0x1 == 0`), the KMD sets `AEROGPU_ALLOC_FLAG_READONLY` for that alloc-table entry.
 - The host must reject any command that would write back into guest memory for a READONLY allocation (e.g. `COPY_*` with `WRITEBACK_DST`), preventing guest command streams from requesting writeback into allocations that were not declared writable for that submission.
 - If the KMD cannot reliably determine write access for an allocation, it leaves READONLY clear (fail-open for compatibility) and emits a DBG-only, rate-limited log.
 

@@ -232,7 +232,7 @@ READONLY means:
 ### Win7/WDDM 1.1 mapping (AeroGPU KMD)
 
 On Windows 7 (WDDM 1.1), the KMD derives `AEROGPU_ALLOC_FLAG_READONLY` from the per-submission
-allocation list entry `DXGK_ALLOCATIONLIST::Flags.WriteOperation`:
+allocation list entry write-access metadata (`WriteOperation` bit; `DXGK_ALLOCATIONLIST::Flags.Value` bit 0):
 
 - `WriteOperation == 0` → mark the alloc table entry `READONLY`
 - `WriteOperation == 1` → leave the entry writable (`flags=0`)
