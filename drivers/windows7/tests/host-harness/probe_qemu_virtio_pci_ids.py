@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -361,6 +363,21 @@ def main() -> int:
         help="Print the HMP 'info pci' output via QMP (useful for manual inspection).",
     )
     args = parser.parse_args()
+
+    # Keep behaviour consistent with the main Win7 host harness: when a qemu-system path is supplied,
+    # fail fast if it points to a directory (common copy/paste mistake, produces confusing subprocess errors).
+    try:
+        has_sep = os.sep in args.qemu_system or (os.altsep is not None and os.altsep in args.qemu_system)
+    except Exception:
+        has_sep = False
+    if has_sep:
+        try:
+            qemu_path = Path(args.qemu_system)
+            if qemu_path.exists() and qemu_path.is_dir():
+                print(f"ERROR: qemu system binary path is a directory: {qemu_path}", file=sys.stderr)
+                return 2
+        except Exception:
+            pass
 
     device_help_text: Final[str] = (
         _qemu_device_help_text(args.qemu_system) or "" if (args.with_virtio_snd or args.with_virtio_tablet) else ""
