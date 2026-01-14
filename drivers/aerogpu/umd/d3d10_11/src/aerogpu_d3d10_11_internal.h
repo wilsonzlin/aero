@@ -68,6 +68,13 @@ constexpr uint32_t kD3D11MapFlagDoNotWait = kD3DMapFlagDoNotWait;
 // Sentinel timeout values used by AeroGPU fence wait helpers.
 constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
+// Common HRESULT values used by D3D10/11 map/unmap + WDDM waits.
+constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
+constexpr HRESULT kHrNtStatusTimeout = static_cast<HRESULT>(0x10000102u); // HRESULT_FROM_NT(STATUS_TIMEOUT)
+constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
+    static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
+
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
 constexpr uint32_t kD3D11BindIndexBuffer = 0x2;

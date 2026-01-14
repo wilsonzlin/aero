@@ -60,11 +60,6 @@ constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
 
-constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
-constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
-constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
-    static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
-
 #ifndef STATUS_TIMEOUT
   #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
 #endif
@@ -9211,7 +9206,7 @@ static HRESULT MapLocked11(Device* dev,
   const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
   if (lock_hr == kDxgiErrorWasStillDrawing ||
       (do_not_wait && (lock_hr == kHrPending || lock_hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-                       lock_hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || lock_hr == static_cast<HRESULT>(0x10000102L) ||
+                       lock_hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || lock_hr == kHrNtStatusTimeout ||
                        lock_hr == kHrNtStatusGraphicsGpuBusy))) {
     if (allow_storage_map && !want_read) {
       return map_storage();

@@ -158,14 +158,13 @@ using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
 using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
+using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
+using aerogpu::d3d10_11::kHrPending;
+using aerogpu::d3d10_11::kHrNtStatusTimeout;
+using aerogpu::d3d10_11::kHrNtStatusGraphicsGpuBusy;
 
-constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
-constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 constexpr HRESULT kHrWaitTimeout = static_cast<HRESULT>(0x80070102u); // HRESULT_FROM_WIN32(WAIT_TIMEOUT)
 constexpr HRESULT kHrErrorTimeout = static_cast<HRESULT>(0x800705B4u); // HRESULT_FROM_WIN32(ERROR_TIMEOUT)
-constexpr HRESULT kHrNtStatusTimeout = static_cast<HRESULT>(0x10000102u); // HRESULT_FROM_NT(STATUS_TIMEOUT) (SUCCEEDED)
-constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
-    static_cast<HRESULT>(0xD01E0102u); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
 
 bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {

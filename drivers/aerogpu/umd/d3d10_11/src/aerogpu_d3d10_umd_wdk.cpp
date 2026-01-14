@@ -58,10 +58,10 @@ constexpr bool NtSuccess(NTSTATUS st) {
 }
 
 constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
-constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
-constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
-constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
-    static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
+using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
+using aerogpu::d3d10_11::kHrPending;
+using aerogpu::d3d10_11::kHrNtStatusTimeout;
+using aerogpu::d3d10_11::kHrNtStatusGraphicsGpuBusy;
 using aerogpu::d3d10_11::kD3DMapFlagDoNotWait;
 using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D310u;
@@ -3926,7 +3926,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   HRESULT hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
   if (hr == kDxgiErrorWasStillDrawing || hr == kHrNtStatusGraphicsGpuBusy ||
       (do_not_wait && (hr == kHrPending || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-                       hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)))) {
+                       hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == kHrNtStatusTimeout)))) {
     hr = kDxgiErrorWasStillDrawing;
   }
   if (hr == kDxgiErrorWasStillDrawing) {

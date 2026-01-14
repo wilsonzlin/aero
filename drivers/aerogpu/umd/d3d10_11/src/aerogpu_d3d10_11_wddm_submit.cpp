@@ -13,6 +13,8 @@
 
 #include <windows.h>
 
+#include "aerogpu_d3d10_11_internal.h"
+
 #include "../../../protocol/aerogpu_cmd.h"
 #include "../../../protocol/aerogpu_dbgctl_escape.h"
 #include "../../../protocol/aerogpu_win7_abi.h"
@@ -27,12 +29,6 @@
 
 namespace aerogpu::d3d10_11 {
 namespace {
-
-constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
-constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
-constexpr HRESULT kHrNtStatusTimeout = static_cast<HRESULT>(0x10000102L); // HRESULT_FROM_NT(STATUS_TIMEOUT)
-constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
-    static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
 
 constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
